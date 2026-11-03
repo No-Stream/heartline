@@ -1,9 +1,10 @@
 ---
 id: TASK-5
 title: Create layered world data model with terrain and paths
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 02:38'
 labels:
   - world
   - simulation
@@ -24,7 +25,13 @@ Terrain is layered from the start because guests can go underground. Sculpting t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Model stores surface terrain, water, carved spaces and path tiles on multiple levels, on maps of at least 512 by 512 tiles
-- [ ] #2 Tests cover connecting paths across levels and memory use at the largest map size
-- [ ] #3 Deleting terrain or a path under guests or objects leaves the world in a valid state
+- [x] #1 Model stores surface terrain, water, carved spaces and path tiles on multiple levels, on maps of at least 512 by 512 tiles
+- [x] #2 Tests cover connecting paths across levels and memory use at the largest map size
+- [x] #3 Deleting terrain or a path under guests or objects leaves the world in a valid state
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Dense surface grid plus sparse per-column carved spans and paths, quarter-tile height steps. 512x512 with typical content measured at 5.6 MB. Limits: excavations stay below the lowest surface corner, and sloped paths rise one step per tile.
+<!-- SECTION:FINAL_SUMMARY:END -->
