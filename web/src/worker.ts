@@ -50,7 +50,7 @@ function wake(): void {
   const guests = simulation.snapshot();
   const appearances = simulation.guest_appearances();
   const trainPoses = simulation.coaster_train_poses();
-  const constructionTrainPoses = simulation.construction_train_poses();
+  const constructionTrainPoses = simulation.construction_active() ? simulation.construction_train_poses() : new Float32Array();
   const constructionRiders = simulation.construction_riders();
   workerScope.postMessage(
     { type: "snapshot", tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, constructionRiders },

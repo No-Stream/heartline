@@ -24,7 +24,7 @@ import { createPathTool, type PathToolMessage } from "./path-tool";
 import { createPathPanel } from "./path-panel";
 import { pathTileFromPick } from "./path-picking";
 import { buildPathGhostQuads, decodePathPreview, pathPreviewRefusalAt } from "./render/path-ghost";
-import { buildTestingRibbon, createTestingPanel, type TestingMetric } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, createTestingPanel, type TestingMetric } from "./coaster-testing";
 import { buildLandscapingGhostQuads, createLandscapingTool, type TerrainEditResult } from "./landscaping-tool";
 import { createLandscapingPanel } from "./landscaping-panel";
 import { createToolbar, type Tool } from "./toolbar";
@@ -376,8 +376,10 @@ function dispatch(action: InputAction): void {
     const selection = renderer.pick(action.position.x, action.position.y);
     gameCanvas.dataset.selection = JSON.stringify(selection);
     if (selection && "id" in selection && selection.kind === "testing") {
-      const match = /^testing-(\d+)$/.exec(selection.id);
-      if (match) testingPanel.inspect(Number(match[1]));
+      const eventMatch = /^proximity-(\d+)$/.exec(selection.id);
+      const sampleMatch = /^testing-(\d+)$/.exec(selection.id);
+      if (eventMatch) testingPanel.inspectProximity(Number(eventMatch[1]));
+      else if (sampleMatch) testingPanel.inspect(Number(sampleMatch[1]));
     } else if (deleteMode && selection && "id" in selection) {
       const match = /^construction-track-(\d+)$/.exec(selection.id);
       if (match) dispatch({ type: "construction-delete", id: Number(match[1]) });
@@ -538,6 +540,7 @@ function frame(now: number): void {
         return quad;
       }),
       ...(testingMetric && construction?.testingReport ? buildTestingRibbon(construction.testingReport.samples, testingMetric, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
+      ...(construction?.testingReport ? buildProximityMarkers(construction.testingReport.proximityEvents, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
       ...constructionEffects.quads(now, renderCamera, renderViewport),
     ],
   ], atmosphere);

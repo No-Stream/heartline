@@ -139,7 +139,24 @@ test("the whole build loop runs from the keyboard with the panel focused", async
 
 test("testing panel shows an all-clear for a report without notes", async ({ page }) => {
   await page.goto(fixtureUrl);
-  await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({ samples: [], notes: [], rating: { excitement: 20, intensity: 30, nausea: 5 } }));
+  await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({ samples: [], notes: [], proximityEvents: [], rating: { excitement: 20, intensity: 30, nausea: 5 } }));
   await expect(page.locator("[data-notes]")).toHaveText("No concerns were noted during this test.");
   await expect(page.locator("[data-rating]")).toHaveText("Excitement: 20.0 · Intensity: 30.0 · Nausea: 5.0");
+});
+
+test("testing panel groups proximity events and shows their excitement contribution", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({
+    samples: [], notes: [], rating: { excitement: 35, intensity: 30, nausea: 5 }, proximityEvents: [
+      { kind: "nearMiss", pieceIndex: 13, distance: 14, x: 2, y: 3, z: 1, strength: 0.8 },
+      { kind: "nearMiss", pieceIndex: 8, distance: 9, x: 3, y: 3, z: 1, strength: 0.5 },
+      { kind: "dueling", pieceIndex: 7, distance: 8, x: 4, y: 3, z: 1, strength: 0.4 },
+    ],
+  }));
+  const events = page.locator("[data-proximity-events]");
+  await expect(events).toContainText("Proximity events (3)");
+  await expect(events).toContainText("Near-miss with the coaster's supports (2)");
+  await expect(events).toContainText("Dueling trains (1)");
+  await expect(events).toContainText("piece 14, very close");
+  await expect(events).toContainText("Added 2.4 excitement from proximity events.");
 });

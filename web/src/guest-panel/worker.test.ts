@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 
-const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn() }));
+const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn(), constructionActive: vi.fn(() => false), constructionTrainPoses: vi.fn(() => new Float32Array()) }));
 
 vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   default: wasmMock.initialize,
@@ -32,20 +32,20 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     coaster_ties() { return new Float32Array(); }
     coaster_supports() { return new Float32Array(); }
     coaster_train_poses() { return new Float32Array(); }
-    construction_train_poses() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
-    construction_start() {}
+    construction_start() { wasmMock.constructionActive.mockReturnValue(true); }
     construction_choices() { return ""; }
     construction_selected() { return ""; }
     construction_track() { return ""; }
     construction_rails() { return new Float32Array(); }
     construction_ties() { return new Float32Array(); }
     construction_supports() { return new Float32Array(); }
+    construction_active() { return wasmMock.constructionActive(); }
+    construction_train_poses() { return wasmMock.constructionTrainPoses(); }
     construction_placed_rails() { return new Float32Array(); }
     construction_placed_ties() { return new Float32Array(); }
     construction_placed_supports() { return new Float32Array(); }
-    construction_active() { return true; }
     construction_can_close() { return false; }
     construction_test_report_json() { return "null"; }
     construction_can_test() { return false; }
@@ -146,6 +146,21 @@ it("refreshes the world after facilities are placed or removed", async () => {
   onMessage({ data: { type: "facility-remove", id: 1 } } as MessageEvent);
   await Promise.resolve();
   expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
+});
+
+it("does not request construction train poses before a coaster is under construction", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  wasmMock.constructionTrainPoses.mockImplementation(() => { throw new Error("Construction train does not exist"); });
+  const postMessage = vi.fn();
+  vi.stubGlobal("self", { postMessage, addEventListener: vi.fn() });
+
+  await import("../worker");
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(wasmMock.constructionTrainPoses).not.toHaveBeenCalled();
+  expect(postMessage.mock.calls.some(([message]) => message.type === "snapshot" && message.constructionTrainPoses.length === 0)).toBe(true);
 });
 
 it("refreshes the world after coaster construction changes", async () => {

@@ -66,6 +66,10 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   expect(notes.length).toBeGreaterThan(0);
   await expect(page.locator("[data-notes]")).toHaveText(notes.join(" "));
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  const proximityEventCount = await page.evaluate(() => window.gameTest.testingReport()!.proximityEvents.length);
+  expect(proximityEventCount).toBeGreaterThan(0);
+  await expect(page.locator("[data-proximity-events]")).toContainText(`Proximity events (${proximityEventCount})`);
+  await expect(page.locator("[data-proximity-events]")).toContainText("excitement from proximity events");
   await page.getByLabel("Track overlay").selectOption("speed");
   const overlaySize = await canvasSize(page);
   await page.evaluate((size) => {
@@ -79,6 +83,19 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   }, overlaySize);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready), { timeout: 30_000 }).toBe(true);
   await expect(page.getByText("30 m/s+")).toBeVisible();
+  const proximityInspectionPoint = await page.evaluate((size) => {
+    const report = window.gameTest.testingReport();
+    if (!report) throw new Error("Missing coaster test report");
+    for (const [index, event] of report.proximityEvents.entries()) {
+      const position = window.gameTest.project(event);
+      if (position.x < 0 || position.x >= size.width || position.y < 0 || position.y >= size.height) continue;
+      const pick = window.gameTest.pick(position.x, position.y);
+      if (pick?.kind === "testing" && pick.id === `proximity-${index}`) return { position, index };
+    }
+    throw new Error("No proximity marker was pickable");
+  }, overlaySize);
+  await clickCanvas(page, proximityInspectionPoint.position);
+  await expect(page.locator("[data-inspection]")).toContainText(/piece .*Strength:/);
   const inspectionPoint = await page.evaluate((size) => {
     const report = window.gameTest.testingReport();
     if (!report) throw new Error("Missing coaster test report");
@@ -86,7 +103,7 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
       const position = window.gameTest.project(sample);
       if (position.x < 0 || position.x >= size.width || position.y < 0 || position.y >= size.height) continue;
       const pick = window.gameTest.pick(position.x, position.y);
-      if (pick?.kind === "testing") return position;
+      if (pick?.kind === "testing" && /^testing-\d+$/.test(pick.id)) return position;
     }
     throw new Error("No testing overlay segment was pickable");
   }, overlaySize);

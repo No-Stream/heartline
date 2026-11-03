@@ -38,12 +38,13 @@ export interface GuestTraits {
 
 export type GuestMemory =
   | { readonly kind: "ride"; readonly rideId: number; readonly enjoyment: number; readonly nausea: number; readonly tick: number }
+  | { readonly kind: "proximity"; readonly rideId: number; readonly eventKind: string; readonly position: { readonly x: number; readonly y: number; readonly z: number }; readonly strength: number; readonly tick: number }
   | { readonly kind: "food"; readonly placeId: number; readonly tick: number }
   | { readonly kind: "wait"; readonly placeId: number; readonly durationTicks: number; readonly tick: number };
 
 export interface GuestThought {
-  readonly kind: "exploring" | "hungry" | "thirsty" | "needsRestroom" | "nauseous" | "tired" | "unhappy" | "enjoyedRide" | "dislikedRide";
-  readonly data: number | null;
+  readonly kind: "exploring" | "hungry" | "thirsty" | "needsRestroom" | "nauseous" | "tired" | "unhappy" | "enjoyedRide" | "dislikedRide" | "proximity";
+  readonly data: number | { readonly rideId: number; readonly eventKind: string } | null;
 }
 
 /** Serializable guest state shown by the click-in panel. */

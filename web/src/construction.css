@@ -185,3 +185,16 @@
 @media (prefers-reduced-motion: reduce) {
   .builder *, .builder *::before, .builder *::after { animation: none !important; transition: none !important; }
 }
+[data-proximity-events] h4,
+[data-proximity-events] h5 {
+  margin: 0.65rem 0 0.25rem;
+}
+
+[data-proximity-events] ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+[data-proximity-events] li {
+  margin: 0.15rem 0;
+}
