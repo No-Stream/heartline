@@ -38,6 +38,8 @@ jobs:
           node-version: "22"
           cache: npm
       - run: make install
+      # make test rasterizes the sprite atlas through headless Chrome.
+      - run: npx playwright install --with-deps chrome
       - run: make build
       - run: make test
 

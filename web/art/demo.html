@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Park Art Proof</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --ink: #2a1b42; --paper: #fff8e8; --line: #e7d7b8; --accent: #ff5d5d; --card: #fffdf6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.45 "Trebuchet MS", "Segoe UI", sans-serif; }
+  header, section { max-width: 1440px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 24px; margin: 0; }
+  h2 { font-size: 19px; margin: 18px 0 6px; }
+  p { margin: 4px 0 10px; max-width: 80ch; }
+  #scene { display: block; width: 100%; height: 780px; border: 2px solid var(--ink); border-radius: 10px; touch-action: none; cursor: grab; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+  .controls .label { font-weight: bold; margin-left: 10px; }
+  button { font: inherit; color: var(--ink); background: #ffe9bd; border: 1.5px solid var(--ink); border-radius: 8px; padding: 4px 11px; cursor: pointer; }
+  button:hover { background: #ffd98a; }
+  button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .card h3 { margin: 0; font-size: 15px; }
+  .card small { color: #5d4d7a; min-height: 2.8em; }
+  .stage { background: #a6dc6c; border-radius: 6px; display: flex; align-items: flex-end; gap: 12px; padding: 8px; overflow-x: auto; }
+  .stage figure { margin: 0; flex: none; text-align: center; font-size: 11px; }
+  .sides { background: #9dd664; border-radius: 6px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding: 6px; }
+  canvas.sprite { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Theme park art proof</h1>
+  <p>Every picture here comes from the sprite atlas, which is rasterized from the SVG files in <code>web/art/drawings/</code>. The park below is drawn with WebGL, the way the game will draw it.</p>
+</header>
+<section>
+  <canvas id="scene"></canvas>
+  <div class="controls">
+    <button id="rotate-left" type="button">Rotate left</button>
+    <button id="rotate-right" type="button">Rotate right</button>
+    <span class="label">Zoom</span>
+    <span id="zoom-buttons" class="controls" style="margin:0"></span>
+    <span class="label">Effects</span>
+    <button id="shimmer" type="button" aria-pressed="true">Line shimmer</button>
+    <button id="grain" type="button" aria-pressed="true">Paper grain</button>
+    <span id="stats"></span>
+  </div>
+  <p>Drag the park to move around. People, buildings and rotating scenery pick the matching drawing for each camera rotation.</p>
+</section>
+<section>
+  <h2>Gallery</h2>
+  <p>Each card shows the sprite at game size and at 3x zoom. The lower row shows all sides at game size. On a high-density screen each copy keeps its layout size and uses a sharper atlas.</p>
+  <div class="controls">
+    <span class="label" style="margin-left:0">Show</span>
+    <span id="category-buttons" class="controls" style="margin:0"></span>
+    <span class="label">Rotate all</span>
+    <button id="gallery-left" type="button">Left</button>
+    <button id="gallery-right" type="button">Right</button>
+  </div>
+  <div id="gallery" class="gallery"></div>
+</section>
+<script type="module" src="./demo.ts"></script>
+</body>
+</html>

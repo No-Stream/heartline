@@ -3,7 +3,7 @@ CARGO_HOME ?= $(HOME)/.cargo
 WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
 WASM_BINDGEN_VERSION := 0.2.105
 
-.PHONY: install build test lint serve e2e ci wasm-bindgen bench
+.PHONY: install build test lint serve e2e ci wasm-bindgen art art-drawings art-demo art-screenshots bench
 
 install:
 	npm ci
@@ -17,10 +17,12 @@ build: wasm-bindgen
 wasm-bindgen:
 	@if ! "$(WASM_BINDGEN)" --version 2>/dev/null | grep -qxF "wasm-bindgen $(WASM_BINDGEN_VERSION)"; then $(CARGO) install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked --force; fi
 
-test:
+# The sprite atlas is generated from web/art/drawings/ and not committed.
+test: art
 	$(CARGO) test --workspace
 	$(CARGO) test -p theme-park-sim --features threads
 	npm test
+	npm run test:art
 
 lint:
 	$(CARGO) fmt --all -- --check
@@ -36,6 +38,22 @@ e2e: build
 
 bench:
 	$(CARGO) run --release -p theme-park-sim --features threads --example tick_bench
+
+NODE_TS := node --experimental-strip-types --disable-warning=ExperimentalWarning
+
+# Rasterizes web/art/drawings/ into the sprite atlas. Hand-replaced SVGs are picked up as they are.
+art:
+	$(NODE_TS) web/art/pipeline/build-atlas.ts
+
+# Regenerates the parametric SVGs, overwriting any drawing with the same path.
+art-drawings:
+	$(NODE_TS) web/art/generators/generate.ts
+
+art-demo:
+	npx vite web/art --host 127.0.0.1 --port 4180 --strictPort  # then open http://127.0.0.1:4180/demo.html
+
+art-screenshots:
+	$(NODE_TS) web/art/pipeline/screenshots.ts
 
 # The same checks as .github/workflows/ci.yaml, except the secret scan and dependency audit.
 ci: install build lint test e2e

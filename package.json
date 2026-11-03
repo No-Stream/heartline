@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run web/src",
+    "test:art": "vitest run --config web/art/vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "dev": "vite --config web/vite.config.ts",
     "build": "vite --config web/vite.config.ts build",
