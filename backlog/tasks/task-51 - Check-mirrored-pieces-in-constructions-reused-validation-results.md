@@ -1,9 +1,10 @@
 ---
 id: TASK-51
 title: Check mirrored pieces in construction's reused validation results
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 16:47'
+updated_date: '2026-11-03 16:47'
 labels:
   - refactor
   - coaster

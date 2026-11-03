@@ -1,9 +1,10 @@
 ---
 id: TASK-50
 title: Remove dead code and the placeholder simulation
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 16:47'
+updated_date: '2026-11-03 16:47'
 labels:
   - refactor
   - chore
