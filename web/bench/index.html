@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Renderer benchmark</title>
+  <style>
+    body { margin: 0; background: #17212a; color: #f0f3f4; font: 16px system-ui, sans-serif; }
+    header { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem; }
+    h1 { font-size: 1.25rem; margin: 0; }
+    label { display: flex; align-items: center; gap: .4rem; }
+    select, button { font: inherit; padding: .3rem; }
+    #status { margin: 0; }
+    canvas { display: block; width: min(100%, 1920px); height: auto; background: #17212a; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Renderer benchmark</h1>
+    <form id="settings">
+      <label>Renderer <select name="renderer"><option value="custom">Custom</option><option value="pixi">PixiJS</option></select></label>
+      <label>Backend <select name="backend"><option value="auto">Automatic</option><option value="webgpu">WebGPU</option><option value="webgl2">WebGL2</option></select></label>
+      <button>Run benchmark</button>
+    </form>
+    <p id="status" role="status">Starting…</p>
+  </header>
+  <canvas id="scene" width="1920" height="1080" aria-label="Animated isometric benchmark scene"></canvas>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
