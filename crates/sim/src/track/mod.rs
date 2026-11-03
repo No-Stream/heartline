@@ -233,6 +233,9 @@ pub enum PieceId {
     Corkscrew,
     HeartlineRoll,
     Lift,
+    LiftFlat,
+    LiftLevelToGentleUp,
+    LiftGentleUpToLevel,
     Brakes,
     Station,
 }
@@ -1178,6 +1181,25 @@ pub fn catalog() -> Vec<Piece> {
         piece.rebuild_arc();
         pieces.push(piece);
     }
+    for (base, id, name) in [
+        (Straight, LiftFlat, "Flat chain lift"),
+        (
+            LevelToGentleUp,
+            LiftLevelToGentleUp,
+            "Begin chain lift climb",
+        ),
+        (GentleUpToLevel, LiftGentleUpToLevel, "End chain lift climb"),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == base)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        piece.kind = PieceKind::Lift;
+        pieces.push(piece);
+    }
     pieces
 }
 
@@ -1204,6 +1226,8 @@ pub struct TrainConfiguration {
     pub rows_per_car: u8,
     pub seats_per_row: u8,
     pub length_metres: f64,
+    pub width_metres: f64,
+    pub height_metres: f64,
 }
 #[derive(Clone, Debug)]
 pub struct CoasterModel {
@@ -1255,8 +1279,14 @@ pub fn hybrid_model() -> CoasterModel {
             rows_per_car: 2,
             seats_per_row: 2,
             length_metres: 18.0,
+            width_metres: 2.0,
+            height_metres: 2.5,
         },
         track_material: Material::Steel,
         structure_material: Material::Wood,
     }
 }
+
+pub mod construction;
+
+pub mod clearance;

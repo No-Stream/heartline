@@ -9,6 +9,8 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { COLORS } from "../generators/palette.ts";
+import { themeNamed } from "../generators/themes.ts";
 
 const ART_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), "..");
 // 1x and 2x cover normal play; 3x keeps the closest camera zoom sharp without resampling.
@@ -119,9 +121,10 @@ function buildSpriteIndex(drawings: readonly Drawing[]): Record<string, { views:
 }
 
 async function main(): Promise<void> {
-  const [drawingsArgument, outputArgument] = process.argv.slice(2);
+  const [drawingsArgument, outputArgument, themeArgument] = process.argv.slice(2);
   const drawingsDirectory = drawingsArgument ?? join(ART_DIRECTORY, "drawings");
   const outputDirectory = outputArgument ?? join(ART_DIRECTORY, "atlas");
+  const theme = themeNamed(themeArgument ?? "candy");
   const drawings = listSvgFiles(drawingsDirectory).map((path) => readDrawing(path, drawingsDirectory));
   if (drawings.length === 0) throw new Error(`No drawings found under ${drawingsDirectory}`);
   const sprites = buildSpriteIndex(drawings);
@@ -185,9 +188,16 @@ async function main(): Promise<void> {
       },
     ]),
   );
+  const themeStyle = {
+    steel: theme.color(COLORS.red),
+    wood: theme.color(COLORS.wood),
+    train: theme.color(COLORS.mint),
+    ink: theme.line.color,
+    lineWeight: theme.line.weight,
+  };
   writeFileSync(
     join(outputDirectory, "atlas.json"),
-    JSON.stringify({ scales: SCALES, padding: PADDING_PIXELS, tile: { width: 64, height: 32 }, pages: pagesByScale, sprites, frames }, null, 1) + "\n",
+    JSON.stringify({ scales: SCALES, padding: PADDING_PIXELS, tile: { width: 64, height: 32 }, themeStyle, pages: pagesByScale, sprites, frames }, null, 1) + "\n",
   );
   const pageSummary = SCALES.map((scale) => `${scale}x: ${pagesByScale[scale].map(({ width, height }) => `${width}x${height}`).join(", ")}`).join("; ");
   console.info(`Packed ${drawings.length} drawings. ${pageSummary}`);

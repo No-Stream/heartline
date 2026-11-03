@@ -79,7 +79,7 @@ export const RISO: Theme = {
   hatching: 0,
   crookedness: 0.35,
   highlight: { color: PAPER, opacity: 0.55 },
-  props: { sunFace: false, binFace: false, coneStripes: false, scallops: false, curls: false, mushrooms: false, clouds: "puffs", bushes: "puffs" },
+  props: { sunFace: false, binFace: false, coneStripes: false, scallops: false, curls: false, mushrooms: false, clouds: "puffs", bushes: "puffs", ornaments: "candy" },
   tileGridOpacity: 0.06,
   people: {
     headScale: 0.56,

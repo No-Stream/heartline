@@ -57,7 +57,7 @@ export const PEN_AND_WASH: Theme = {
   hatching: 1.3,
   crookedness: 0.9,
   highlight: { color: PAPER, opacity: 0 },
-  props: { sunFace: false, binFace: false, coneStripes: false, scallops: false, curls: false, mushrooms: false, clouds: "puffs", bushes: "puffs" },
+  props: { sunFace: false, binFace: false, coneStripes: false, scallops: false, curls: false, mushrooms: false, clouds: "puffs", bushes: "puffs", ornaments: "candy" },
   tileGridOpacity: 0,
   people: {
     headScale: 0.5,

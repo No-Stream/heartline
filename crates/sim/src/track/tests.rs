@@ -571,3 +571,40 @@ fn standalone_turns_connect_straight_curvature_at_both_ends() {
         near(piece.sample(piece.length()).curvature, 0.0);
     }
 }
+
+#[test]
+fn powered_lift_pieces_match_unpowered_geometry_and_are_available() {
+    let model = hybrid_model();
+    let templates = catalog();
+    for (powered_id, unpowered_id) in [
+        (PieceId::LiftFlat, PieceId::Straight),
+        (PieceId::LiftLevelToGentleUp, PieceId::LevelToGentleUp),
+        (PieceId::LiftGentleUpToLevel, PieceId::GentleUpToLevel),
+        (PieceId::Lift, PieceId::GentleUp),
+    ] {
+        let powered = templates
+            .iter()
+            .find(|piece| piece.id == powered_id)
+            .unwrap();
+        let unpowered = templates
+            .iter()
+            .find(|piece| piece.id == unpowered_id)
+            .unwrap();
+        assert_eq!(powered.kind, PieceKind::Lift);
+        assert_eq!(powered.entry, unpowered.entry);
+        assert_eq!(powered.exit, unpowered.exit);
+        near(powered.length(), unpowered.length());
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let powered_sample = powered.sample(powered.length() * fraction);
+            let unpowered_sample = unpowered.sample(unpowered.length() * fraction);
+            near_vec(powered_sample.position, unpowered_sample.position);
+            near_vec(powered_sample.tangent, unpowered_sample.tangent);
+        }
+        assert!(
+            model
+                .available_pieces(powered.entry)
+                .iter()
+                .any(|piece| piece.id == powered_id)
+        );
+    }
+}

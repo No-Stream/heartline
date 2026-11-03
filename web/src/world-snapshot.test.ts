@@ -24,6 +24,9 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     coaster_ties() { return new Float32Array([3]); }
     coaster_supports() { return new Float32Array(); }
     coaster_train_poses() { return new Float32Array(); }
+    construction_train_poses() { return new Float32Array(); }
+    construction_message() { return ""; }
+    construction_active() { return false; }
     set_world_surface(x: number, y: number, corners: Int16Array, water: number | undefined) {
       return workerMock.setSurface(x, y, corners, water);
     }
@@ -92,7 +95,7 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   expect(snapshot.guestIds).toEqual(new Uint32Array([7]));
   expect(snapshot.guests).toEqual(new Float32Array([1, 2, 3, 1, 0, 4, 1]));
   expect(snapshot.appearances).toEqual(new Uint8Array([1, 2, 3, 4, 0]));
-  expect(transfer).toEqual([snapshot.guestIds.buffer, snapshot.guests.buffer, snapshot.appearances.buffer, snapshot.trainPoses.buffer]);
+  expect(transfer).toEqual([snapshot.guestIds.buffer, snapshot.guests.buffer, snapshot.appearances.buffer, snapshot.trainPoses.buffer, snapshot.constructionTrainPoses.buffer]);
   vi.advanceTimersByTime(34);
   expect(workerMock.tick).toHaveBeenCalledTimes(1);
 });

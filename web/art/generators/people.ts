@@ -45,7 +45,7 @@ type HairStyle =
   | "wavyBob"
   | "swoop";
 type HatStyle = "none" | "cap" | "sunhat" | "beanie";
-type LowerBody = "trousers" | "shorts" | "skirt" | "dress" | "leggings";
+type LowerBody = "trousers" | "shorts" | "cargoShorts" | "skirt" | "dress" | "leggings";
 type Accessory = "none" | "balloon" | "backpack" | "handbag" | "camera" | "iceCream" | "satchel";
 
 export interface PersonDesign {
@@ -76,6 +76,12 @@ export interface PersonDesign {
   beard?: string;
   moustache?: string;
   glasses?: string;
+  /** Glasses held on by a strap round the back of the head, drawn in every face style; the strap's colour. */
+  glassesStrap?: string;
+  /** A roller coaster printed on the front and back of the top, in this colour. */
+  coasterPrint?: string;
+  socks?: string;
+  pocketColor?: string;
   overallStraps?: boolean;
 }
 
@@ -168,6 +174,12 @@ export const CAST: PersonDesign[] = [
     height: 33, headRadius: 6, shoulderHalfWidth: 3.6, stride: 4.8, skin: "#f0c090", hair: "#6d4632", hairStyle: "shortCrop", hat: "beanie", hatColor: "#3f8cff",
     top: "#ff4d6d", sleeves: "long", lower: "trousers", lowerColor: "#39445c", shoes: "#2ec98a", accessory: "iceCream", accessoryColor: "#fff2c2",
   },
+  {
+    ...adult, ...noExtras, id: "woody", description: "Coaster enthusiast in a roller coaster T-shirt, cargo shorts and glasses on a strap",
+    height: 43, shoulderHalfWidth: 5.3, hipHalfWidth: 3.6, belly: 1.6, chest: 0.4, limbRadius: 1.85, headRadius: 6,
+    skin: "#e8b48a", hair: "#5a3a28", hairStyle: "shortCrop", top: "#39445c", coasterPrint: "#ffc531", sleeves: "short",
+    lower: "cargoShorts", lowerColor: "#c9a26b", pocketColor: "#b08550", socks: "#fffaf0", shoes: "#6d4632", glassesStrap: "#ff5d5d",
+  },
 ];
 
 interface Ball {
@@ -240,7 +252,7 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
   // Legs: planted feet slide backward under the body, then swing forward through the air.
   const skirted = person.lower === "skirt";
   const legColor =
-    person.lower === "shorts" || person.lower === "dress" ? person.skin : person.lowerColor;
+    person.lower === "shorts" || person.lower === "cargoShorts" || person.lower === "dress" ? person.skin : person.lowerColor;
   for (const side of [1, -1]) {
     const legPhase = phase + (side === 1 ? 0 : Math.PI);
     const footForward = isWalking ? person.stride * Math.cos(legPhase) : 0;
@@ -264,9 +276,21 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
       addLayer(order, [capsule(hip, knee), capsule(knee, ankle)], legColor);
       const hem: Ball = { center: lerpVector(hip.center, knee.center, 0.75), radius: person.limbRadius * 1.15 };
       addLayer(order + 0.1, [capsule(hip, hem)], person.lowerColor);
+    } else if (person.lower === "cargoShorts") {
+      // Baggy shorts down to the knee, with a patch pocket on the outside of each thigh.
+      addLayer(order, [capsule(hip, knee), capsule(knee, ankle)], legColor);
+      const hem: Ball = { center: lerpVector(hip.center, knee.center, 0.96), radius: person.limbRadius * 1.3 };
+      addLayer(order + 0.1, [capsule({ ...hip, radius: person.limbRadius * 1.3 }, hem)], person.lowerColor);
+      const outward = toView(0, side * person.limbRadius * 1.05, 0);
+      const pocketAt = (fraction: number): Vector3 => {
+        const onThigh = lerpVector(hip.center, knee.center, fraction);
+        return [onThigh[0] + outward[0], onThigh[1] + outward[1], onThigh[2]];
+      };
+      addLayer(order + 0.12, [[{ center: pocketAt(0.42), radius: person.limbRadius * 0.62 }, { center: pocketAt(0.72), radius: person.limbRadius * 0.62 }]], person.pocketColor ?? person.lowerColor, undefined, 0.7);
     } else {
       addLayer(order, [capsule(hip, knee), capsule(knee, ankle)], legColor);
     }
+    if (person.socks) addLayer(order + 0.15, [capsule({ ...ankle, radius: person.limbRadius * 0.9 }, { center: lerpVector(ankle.center, knee.center, 0.28), radius: person.limbRadius * 0.9 })], person.socks, undefined, 0.8);
     addLayer(order + 0.2, [[heel, toe]], person.shoes);
   }
 
@@ -298,7 +322,7 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     ball(0, person.hipHalfWidth * 0.5, hipCore, 2.4),
     ball(0, -person.hipHalfWidth * 0.5, hipCore, 2.4),
   ];
-  const needsLowerTorso = person.lower === "trousers" || person.lower === "shorts" || person.lower === "leggings";
+  const needsLowerTorso = person.lower === "trousers" || person.lower === "shorts" || person.lower === "cargoShorts" || person.lower === "leggings";
   addLayer(4, [torsoBalls], person.top);
   if (needsLowerTorso) {
     const beltHeight = hipCore + 1.2;
@@ -336,6 +360,12 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
       `<g clip-path="url(#${clipId})">${stripeLines.join("")}</g>`;
   }
   if (stripeMarkup) layers[layers.length - 1].extra = (layers[layers.length - 1].extra ?? "") + stripeMarkup;
+  if (person.coasterPrint) {
+    const torsoLayer = layers.find((layer) => layer.order === 4);
+    if (!torsoLayer) throw new Error("The coaster print needs the torso layer");
+    const printCenterUp = (shoulderZ + hipCore) / 2 + 0.6;
+    torsoLayer.extra = (torsoLayer.extra ?? "") + coasterPrintMarkup(person, theme, torsoBalls, toView, printCenterUp, torsoLean(printCenterUp));
+  }
 
   // Arms swing against the legs on the same side.
   let carryingHand: Ball | undefined;
@@ -471,7 +501,9 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     })
     .join("\n");
 
-  const face = facingViewer ? drawFace(person, theme, headBall, leftIsNear ? 1 : -1, animation === "idle" && frame === 1) : "";
+  const face =
+    (facingViewer ? drawFace(person, theme, headBall, leftIsNear ? 1 : -1, animation === "idle" && frame === 1) : "") +
+    (person.glassesStrap ? drawStrappedGlasses(person, theme, headBall, leftIsNear ? 1 : -1, facingViewer) : "");
 
   // Things drawn above everything else, for a held balloon or ice cream.
   let held = "";
@@ -512,19 +544,8 @@ function drawFace(
   if (theme.people.face === "none") return "";
   const ink = theme.line.color;
   const parts: string[] = [];
-  // Features are cheated towards the camera, as a character artist would: at a true three-quarter
-  // angle seen from above, the far eye falls off the head and the face sits too low to read.
-  const yawTowardCamera = (24 * Math.PI) / 180;
-  const onHead = (forward: number, left: number, up: number): Point =>
-    project(
-      headBall(
-        forward * Math.cos(yawTowardCamera) - left * nearSide * Math.sin(yawTowardCamera),
-        left * Math.cos(yawTowardCamera) + forward * nearSide * Math.sin(yawTowardCamera),
-        up + 0.2,
-        0,
-      ).center,
-    );
-  const eyeUp = person.hat === "sunhat" ? 0.02 : 0.1;
+  const onHead = (forward: number, left: number, up: number): Point => project(onFace(headBall, nearSide, forward, left, up));
+  const eyeUp = eyeHeight(person);
   const leftEye = onHead(0.86, 0.46, eyeUp);
   const rightEye = onHead(0.86, -0.46, eyeUp);
   const eyes = [leftEye, rightEye];
@@ -576,6 +597,152 @@ function drawFace(
     }
   }
   return parts.join("");
+}
+
+/** Face features are cheated towards the camera, as a character artist would: at a true three-quarter
+ * angle seen from above, the far eye falls off the head and the face sits too low to read. */
+const FACE_YAW_TOWARD_CAMERA = (24 * Math.PI) / 180;
+
+/** A point on the head in head-radius units, turned with the face towards the camera. */
+function onFace(
+  headBall: (forward: number, left: number, up: number, radiusFactor: number) => Ball,
+  nearSide: number,
+  forward: number,
+  left: number,
+  up: number,
+): Vector3 {
+  return headBall(
+    forward * Math.cos(FACE_YAW_TOWARD_CAMERA) - left * nearSide * Math.sin(FACE_YAW_TOWARD_CAMERA),
+    left * Math.cos(FACE_YAW_TOWARD_CAMERA) + forward * nearSide * Math.sin(FACE_YAW_TOWARD_CAMERA),
+    up + 0.2,
+    0,
+  ).center;
+}
+
+function eyeHeight(person: PersonDesign): number {
+  return person.hat === "sunhat" ? 0.02 : 0.1;
+}
+
+/**
+ * Glasses on a sports strap. The strap runs round the back of the head at eye height, so it reads
+ * from behind as well; the lenses show only from the front, in every face style.
+ */
+function drawStrappedGlasses(
+  person: PersonDesign,
+  theme: Theme,
+  headBall: (forward: number, left: number, up: number, radiusFactor: number) => Ball,
+  nearSide: number,
+  facingViewer: boolean,
+): string {
+  if (!person.glassesStrap) throw new Error(`${person.id} has no glasses strap`);
+  const ink = theme.line.color;
+  const outline = theme.people.outline;
+  const eyeUp = eyeHeight(person);
+  const headCenter = headBall(0, 0, 0, 0).center;
+  // Seen from the front, the face is turned towards the camera; from behind it is not.
+  const pointOnHead = (forward: number, left: number, up = eyeUp): Vector3 =>
+    facingViewer ? onFace(headBall, nearSide, forward, left, up) : headBall(forward, left, up + 0.2, 0).center;
+  const strapRadius = 1.04;
+  const runs: Point[][] = [];
+  let run: Point[] = [];
+  for (let step = 0; step <= 48; step++) {
+    const angle = (step / 48) * Math.PI * 2;
+    const forward = Math.cos(angle) * strapRadius;
+    // The strap hangs slack, dropping from the temples to the nape of the neck.
+    const sag = 0.85 * Math.max(0, -Math.cos(angle)) ** 1.4;
+    const point = pointOnHead(forward, Math.sin(angle) * strapRadius, eyeUp - sag);
+    const isOnSeenSide = depthOf([point[0] - headCenter[0], point[1] - headCenter[1], point[2] - headCenter[2]]) > -0.15 * person.headRadius;
+    // The front of the ring is the glasses themselves.
+    if (isOnSeenSide && forward < 0.62) {
+      run.push(project(point));
+    } else if (run.length > 0) {
+      runs.push(run);
+      run = [];
+    }
+  }
+  if (run.length > 0) runs.push(run);
+  const strapPath = runs
+    .filter((points) => points.length > 1)
+    .map((points) => `M${points.map(formatPoint).join("L")}`)
+    .join("");
+  const parts = [
+    `<path d="${strapPath}" fill="none" stroke="${ink}" stroke-width="${formatNumber(1.2 * outline + 0.35)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `<path d="${strapPath}" fill="none" stroke="${theme.color(person.glassesStrap)}" stroke-width="0.7" stroke-linecap="round" stroke-linejoin="round"/>`,
+  ];
+  if (facingViewer) {
+    const eyes = [pointOnHead(0.86, 0.46), pointOnHead(0.86, -0.46)].map(project);
+    const lensRadius = person.headRadius * 0.3;
+    const frameWidth = formatNumber(Math.max(0.55, 0.75 * outline));
+    for (const [eyeX, eyeY] of eyes) {
+      parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(lensRadius)}" fill="${theme.color("#ffffff")}" fill-opacity="0.45" stroke="${ink}" stroke-width="${frameWidth}"/>`);
+    }
+    parts.push(`<path d="M${formatPoint(eyes[0])}L${formatPoint(eyes[1])}" stroke="${ink}" stroke-width="${frameWidth}" fill="none"/>`);
+    if (theme.people.face !== "none") {
+      const pupilRadius = theme.people.face === "dots" ? Math.max(0.42, person.headRadius * 0.12) : person.headRadius * 0.12;
+      for (const [eyeX, eyeY] of eyes) parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(pupilRadius)}" fill="${ink}"/>`);
+    }
+  }
+  return parts.join("");
+}
+
+/**
+ * A roller coaster printed on the shirt: a lift hill, a drop and a loop, bold enough to read as a
+ * coaster at game size, with supports and a little train that only show when zoomed in. The same
+ * print is on the front and the back, so it shows from every direction; it is clipped to the torso.
+ */
+function coasterPrintMarkup(
+  person: PersonDesign,
+  theme: Theme,
+  torsoBalls: readonly Ball[],
+  toView: (forward: number, left: number, up: number) => Vector3,
+  centerUp: number,
+  centerForward: number,
+): string {
+  if (!person.coasterPrint) throw new Error(`${person.id} has no coaster print`);
+  const size = person.shoulderHalfWidth * 0.72;
+  // Like the face, the print is cheated towards the camera: it keeps only a third of the slope that
+  // a flat print on the chest would have in this view, so it reads as a picture, not a ramp.
+  const [centerX, centerY] = project(toView(centerForward, 0, centerUp));
+  const sideways = project(toView(0, 1, 0));
+  const slope = (sideways[1] / sideways[0]) * 0.3;
+  const [acrossScale, upScale] = [size * 0.74, size * 0.78];
+  /** Across runs from the viewer's left to right on whichever side is seen; up is up the shirt. */
+  const onShirt = ([across, up]: readonly [number, number]): Point => [centerX + across * acrossScale, centerY + across * acrossScale * slope - up * upScale];
+  // A straight lift hill, a steep drop and a round loop, all standing on one ground line.
+  const groundLevel = -0.9;
+  const track: [number, number][] = [[-1.4, groundLevel], [-0.32, 0.5], [-0.22, 0.58], [-0.13, 0.48], [-0.06, -0.62], [0.08, -0.84]];
+  const [loopCenterAcross, loopRadius] = [0.66, 0.6];
+  const loopBottom = -0.84;
+  for (let step = 0; step <= 24; step++) {
+    const angle = -Math.PI / 2 + (step / 24) * Math.PI * 2;
+    const drift = (step / 24) * 0.1;
+    track.push([loopCenterAcross + drift + Math.cos(angle) * loopRadius, loopBottom + loopRadius + Math.sin(angle) * loopRadius]);
+  }
+  track.push([1.2, loopBottom]);
+  const supports = [[-1.1, -0.51], [-0.82, -0.14], [-0.54, 0.22]].map(([across, top]): [number, number][] => [[across, top], [across, groundLevel]]);
+  const groundLine: [number, number][] = [[-1.25, groundLevel], [1.25, groundLevel]];
+  const trainCars: [number, number][] = [[-0.72, 0.0], [-0.6, 0.15], [-0.48, 0.31]];
+  const print = theme.color(person.coasterPrint);
+  const clipId = "shirt";
+  const torsoOutline = hullOfCircles(torsoBalls.map(screenCircle));
+  const supportMarkup = supports
+    .map((support) => `<path d="M${support.map(onShirt).map(formatPoint).join("L")}" stroke="${print}" stroke-width="0.3" stroke-opacity="0.8"/>`)
+    .join("");
+  const trainMarkup = trainCars
+    .map((car) => {
+      const [carX, carY] = onShirt(car);
+      return `<circle cx="${formatNumber(carX)}" cy="${formatNumber(carY)}" r="0.5" fill="${theme.color("#ff5d5d")}" stroke="none"/>`;
+    })
+    .join("");
+  return (
+    `<clipPath id="${clipId}"><path d="${smoothPath(torsoOutline, true)}"/></clipPath>` +
+    `<g clip-path="url(#${clipId})" fill="none" stroke-linecap="round" stroke-linejoin="round">` +
+    supportMarkup +
+    `<path d="M${groundLine.map(onShirt).map(formatPoint).join("L")}" stroke="${print}" stroke-width="0.5"/>` +
+    `<path d="${smoothPath(track.map(onShirt), false)}" stroke="${print}" stroke-width="0.8"/>` +
+    trainMarkup +
+    `</g>`
+  );
 }
 
 type HairBall = readonly [forward: number, left: number, up: number, radius: number];

@@ -6,6 +6,7 @@ export interface AtlasFrame {
   placements: Record<string, { page: number; x: number; y: number; width: number; height: number }>;
 }
 export interface Atlas {
+  themeStyle?: { steel: string; wood: string; train: string; ink: string; lineWeight: number };
   pages: Record<string, { file: string; width: number; height: number }[]>;
   frames: Record<string, AtlasFrame>;
 }

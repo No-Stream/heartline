@@ -8,11 +8,11 @@ import { COLORS } from "../palette.ts";
 import type { Theme } from "../theme.ts";
 
 const PAPER = "#f2eadb";
-const TEAL = "#2c706d";
-const CORAL = "#d4643f";
-const MUSTARD = "#e0aa45";
-const SLATE = "#4b679a";
-const PLUM = "#38304f";
+const TEAL = "#227571";
+const CORAL = "#dc5c3e";
+const MUSTARD = "#e9ab38";
+const SLATE = "#3f61a6";
+const PLUM = "#3a2e58";
 
 /** One ink laid down as a halftone tint over paper. */
 const tint = (ink: string, amount: number): string => mix(PAPER, ink, amount);
@@ -26,7 +26,7 @@ const PRINTABLE = [
   ...INKS.flatMap((ink) => TINTS.map((amount) => tint(ink, amount))),
   ...INKS.flatMap((first, firstIndex) =>
     INKS.slice(firstIndex + 1).flatMap((second) =>
-      [0.35, 0.7].flatMap((firstAmount) => [0.35, 0.7].map((secondAmount) => over(tint(first, firstAmount), tint(second, secondAmount)))),
+      [0.35, 0.6, 0.85].flatMap((firstAmount) => [0.35, 0.6, 0.85].map((secondAmount) => over(tint(first, firstAmount), tint(second, secondAmount)))),
     ),
   ),
 ];
@@ -37,8 +37,8 @@ const OVERRIDES: Record<string, string> = {
   [COLORS.grassAlternate]: over(tint(MUSTARD, 0.32), tint(TEAL, 0.44)),
   [COLORS.path]: tint(MUSTARD, 0.16),
   [COLORS.earth]: over(tint(CORAL, 0.55), tint(PLUM, 0.22)),
-  [COLORS.water]: over(tint(TEAL, 0.5), tint(SLATE, 0.18)),
-  [COLORS.sky]: tint(SLATE, 0.32),
+  [COLORS.water]: over(tint(TEAL, 0.58), tint(SLATE, 0.1)),
+  [COLORS.sky]: tint(SLATE, 0.4),
   [COLORS.trunk]: tint(PLUM, 0.75),
   [COLORS.leafGreen]: over(tint(MUSTARD, 0.5), tint(TEAL, 0.55)),
   [COLORS.leafTeal]: TEAL,
@@ -51,12 +51,12 @@ const OVERRIDES: Record<string, string> = {
   [COLORS.red]: CORAL,
   [COLORS.blue]: SLATE,
   [COLORS.yellow]: MUSTARD,
-  [COLORS.green]: over(tint(TEAL, 0.7), tint(MUSTARD, 0.4)),
-  [COLORS.purple]: over(tint(SLATE, 0.6), tint(CORAL, 0.4)),
-  [COLORS.orange]: over(tint(CORAL, 0.8), tint(MUSTARD, 0.6)),
-  [COLORS.violet]: over(tint(SLATE, 0.8), tint(PLUM, 0.35)),
+  [COLORS.green]: over(tint(MUSTARD, 0.2), tint(TEAL, 0.65)),
+  [COLORS.purple]: tint(PLUM, 0.62),
+  [COLORS.orange]: over(tint(CORAL, 0.6), tint(MUSTARD, 0.75)),
+  [COLORS.violet]: over(tint(SLATE, 1), tint(CORAL, 0.2)),
   [COLORS.pink]: tint(CORAL, 0.45),
-  [COLORS.mint]: tint(TEAL, 0.38),
+  [COLORS.mint]: tint(TEAL, 0.4),
   [COLORS.peach]: over(tint(MUSTARD, 0.42), tint(CORAL, 0.22)),
   [COLORS.plumDark]: PLUM,
   [COLORS.wood]: over(tint(MUSTARD, 0.7), tint(CORAL, 0.4)),
@@ -65,7 +65,7 @@ const OVERRIDES: Record<string, string> = {
 
 /** Everything else: calmed towards mid-century's dusky middle tones, then printed with the nearest ink mix. */
 const toPrintable = (designColor: string): string =>
-  nearestIn(PRINTABLE, regrade(designColor, { chroma: 0.8, lightnessTarget: 0.64, lightnessPull: 0.15 }), 0.7);
+  nearestIn(PRINTABLE, regrade(designColor, { chroma: 0.9, lightnessTarget: 0.64, lightnessPull: 0.12 }), 0.85);
 
 export const PRINT_MODERN: Theme = {
   name: "print-modern",
@@ -82,7 +82,7 @@ export const PRINT_MODERN: Theme = {
   hatching: 0,
   crookedness: 0.12,
   highlight: { color: PAPER, opacity: 0.3 },
-  props: { sunFace: false, binFace: false, coneStripes: false, scallops: false, curls: false, mushrooms: false, clouds: "streaks", bushes: "domes" },
+  props: { sunFace: false, binFace: false, coneStripes: false, scallops: false, curls: false, mushrooms: false, clouds: "streaks", bushes: "domes", ornaments: "plain" },
   tileGridOpacity: 0.03,
   people: {
     headScale: 0.64,

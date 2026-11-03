@@ -19,9 +19,12 @@ pub struct SupportObstacle {
     pub max: Vec3,
 }
 
-/// A bounded search found no support. This does not prove that no route exists.
+/// The outcome of attempting to route supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupportError {
+    /// An obstacle intersects a required anchor, so every brace intersects it.
+    NoRoute,
+    /// A bounded search found no support; a route may still exist.
     SearchExhausted,
 }
 
@@ -83,6 +86,20 @@ pub fn generate_supports_on_structures(
         let anchor = piece
             .sample(piece.length() * (index as f64 + 0.5) / count as f64)
             .position;
+        if obstacles
+            .iter()
+            .chain(&path_obstacles)
+            .chain(structures)
+            .any(|obstacle| {
+                intersects(
+                    anchor,
+                    anchor,
+                    &expanded(obstacle, BEAM_CLEARANCE, BEAM_CLEARANCE),
+                )
+            })
+        {
+            return Err(SupportError::NoRoute);
+        }
         let mut selected = None;
         let mut offsets: Vec<_> = (-8_i32..=8)
             .flat_map(|dx| (-8_i32..=8).map(move |dy| (dx, dy)))
@@ -824,14 +841,31 @@ mod tests {
     }
 
     #[test]
-    fn refuses_when_every_support_route_is_blocked() {
+    fn reports_no_route_when_obstacle_contains_anchor() {
         let obstacle = SupportObstacle {
             min: Vec3::new(0.0, 0.0, -1.0),
             max: Vec3::new(64.0, 64.0, 11.0),
         };
         assert_eq!(
             generate_supports(&piece(), &world(), &[obstacle]),
-            Err(SupportError::SearchExhausted)
+            Err(SupportError::NoRoute)
+        );
+    }
+
+    #[test]
+    fn reports_no_route_when_structure_intersects_anchor_beam_clearance() {
+        let anchor = piece().sample(piece().length() / 4.0).position;
+        let structure = SupportObstacle {
+            min: Vec3::new(
+                anchor.x + BEAM_CLEARANCE / 2.0,
+                anchor.y - 1.0,
+                anchor.z - 1.0,
+            ),
+            max: Vec3::new(anchor.x + 1.0, anchor.y + 1.0, anchor.z + 1.0),
+        };
+        assert_eq!(
+            generate_supports_on_structures(&piece(), &world(), &[], &[structure]),
+            Err(SupportError::NoRoute)
         );
     }
 

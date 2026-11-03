@@ -75,8 +75,8 @@ describe("coaster geometry", () => {
   });
   test("uses atlas theme and rotates riders with the car", () => {
     const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };
-    const properties = { "coaster-steel": "#ff0000", "coaster-wood": "#aa6600", "coaster-train": "#00ff00", "coaster-ink": "#221133", "coaster-line-weight": "1" };
-    const atlas: Atlas = { pages: { "1": [{ file: "test.png", width: 40, height: 60 }] }, frames: { "ground/grass_light_0/any/static/0": { ...frame, properties }, "people/maya/se/idle/0": frame } };
+    const themeStyle = { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 };
+    const atlas: Atlas = { themeStyle, pages: { "1": [{ file: "test.png", width: 40, height: 60 }] }, frames: { "ground/grass_light_0/any/static/0": frame, "people/maya/se/idle/0": frame } };
     expect(trackStyle(atlas).steel).toBe("#ff0000");
     const poses = new Float32Array([0, 1, 2, 3, 1, 0, 0, 0, 0, 1, 1]);
     const riders = buildRiderQuads(poses, { centerX: 1, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, atlas, "1");

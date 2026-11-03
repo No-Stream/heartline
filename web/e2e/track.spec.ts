@@ -12,7 +12,7 @@ test.use({ launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-a
 
 test.beforeAll(async () => {
   outDir = await mkdtemp(join(tmpdir(), "track-e2e-"));
-  const config = { configFile: false as const, root: "web", publicDir: false as const, build: { outDir, rollupOptions: { input: resolve("web/e2e/fixtures/track.html") } } };
+  const config = { configFile: false as const, root: "web", publicDir: resolve("web/art/atlas"), build: { outDir, rollupOptions: { input: resolve("web/e2e/fixtures/track.html") } } };
   await build(config);
   server = await preview({ ...config, preview: { host: "127.0.0.1", port: 0 } });
   const address = server.httpServer?.address();
@@ -91,4 +91,18 @@ test("transfers static rail and tie geometry once and refreshes supports after t
   expect(result.shared).toBe(false);
   expect(result.resent).toBe(false);
   expect(result.refreshedSupports).toBe(true);
+});
+
+test("draws and picks banked and inverted riders using the person atlas", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const riders = await page.evaluate(() => window.renderRiderOrientations());
+  expect(riders.upright.pickable).toBe(true);
+  expect(riders.banked.pickable).toBe(true);
+  expect(riders.inverted.pickable).toBe(true);
+  expect(riders.upright.hiddenByNearerGeometry).toBe(true);
+  expect(riders.upright.visibleOverFartherGeometry).toBe(true);
+  expect(riders.upright.topMinusBottom.y).toBeLessThan(0);
+  expect(Math.abs(riders.banked.topMinusBottom.x)).toBeGreaterThan(2);
+  expect(riders.inverted.topMinusBottom.y).toBeGreaterThan(0);
+  await expect(page.locator("canvas")).toHaveScreenshot("rider-orientations.png", { threshold: 0.1, maxDiffPixelRatio: 0.001 });
 });

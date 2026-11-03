@@ -38,6 +38,10 @@ export function bindInput(canvas: HTMLCanvasElement, dispatch: (action: InputAct
   const key = (event: KeyboardEvent): void => {
     let action: InputAction | undefined;
     switch (event.key.toLowerCase()) {
+      case "b": if (!event.repeat) action = { type: "construction-append" }; break;
+      case "backspace": if (!event.repeat) action = { type: "construction-undo" }; break;
+      case "c": if (!event.repeat) action = { type: "construction-close" }; break;
+      case "t": if (!event.repeat) action = { type: "construction-test" }; break;
       case "q": if (!event.repeat) action = { type: "rotate", turns: -1 }; break;
       case "e": if (!event.repeat) action = { type: "rotate", turns: 1 }; break;
       case "arrowleft": action = { type: "pan", dx: 32, dy: 0 }; break;

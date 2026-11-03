@@ -1,5 +1,5 @@
-import { projectWorld, type Rotation } from "../../src/camera";
-import { createWorldRenderer, type Atlas, type WorldView } from "../../src/render";
+import { projectWorld, type Camera, type Rotation, type Viewport } from "../../src/camera";
+import { createWorldRenderer, loadAtlas, type Atlas, type WorldView } from "../../src/render";
 import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle } from "../../src/render/track/geometry";
 
 declare global {
@@ -8,8 +8,61 @@ declare global {
     checkTrainMotion(): Promise<{ previous: number[]; current: number[]; interpolated: number[][] }>;
     demoTrackPoints(): Promise<{ x: number; y: number; z: number }[]>;
     checkCoasterTransfer(): Promise<{ rails: number; ties: number; supports: number; shared: boolean; resent: boolean; refreshedSupports: boolean }>;
+    renderRiderOrientations(): Promise<Record<"upright" | "banked" | "inverted", { pickable: boolean; hiddenByNearerGeometry: boolean; visibleOverFartherGeometry: boolean; topMinusBottom: { x: number; y: number } }>>;
   }
 }
+
+window.renderRiderOrientations = async () => {
+  const { atlas, images } = await loadAtlas(new URL("/atlas.json", location.href).href);
+  const canvas = document.createElement("canvas");
+  canvas.width = 800; canvas.height = 500; document.body.append(canvas);
+  const renderer = createWorldRenderer(canvas, atlas, images);
+  const camera = { centerX: 4, centerY: 4, zoom: 2.5, rotation: 0 as const };
+  const world: WorldView = { dimensions: new Uint16Array([8, 8]), surfaces: new Int32Array(8 * 8 * 6), paths: new Int32Array() };
+  const diagonal = Math.SQRT1_2;
+  const poses = new Float32Array([
+    0, 2, 4, 1, 1, 0, 0, 0, 0, 1, 1,
+    1, 4, 4, 1, 1, 0, 0, 0, diagonal, diagonal, 1,
+    2, 6, 4, 1, 1, 0, 0, 0, 0, -1, 1,
+  ]);
+  const riders = buildRiderQuads(poses, camera, canvas, atlas, "3");
+  const geometry = (view: Camera, viewport: Viewport, currentAtlas: Atlas, scale: string) => [
+    ...buildTrackQuads(new Float32Array(), new Float32Array(), new Float32Array(), poses, view, viewport, trackStyle(currentAtlas)),
+    ...buildRiderQuads(poses, view, viewport, currentAtlas, scale),
+  ];
+  renderer.render(world, camera, 0, [geometry]);
+  const pickRider = (rider: typeof riders[number]): boolean => {
+    const minX = Math.floor(Math.min(...rider.vertices.map((vertex) => vertex.x)));
+    const maxX = Math.ceil(Math.max(...rider.vertices.map((vertex) => vertex.x)));
+    const minY = Math.floor(Math.min(...rider.vertices.map((vertex) => vertex.y)));
+    const maxY = Math.ceil(Math.max(...rider.vertices.map((vertex) => vertex.y)));
+    for (let y = minY; y <= maxY; y += 2) for (let x = minX; x <= maxX; x += 2) {
+      const pick = renderer.pick(x, y);
+      if (pick !== null && "id" in pick && pick.id === rider.id) return true;
+    }
+    return false;
+  };
+  const pickable = riders.map(pickRider);
+  const upright = riders[0];
+  const minX = Math.min(...upright.vertices.map((vertex) => vertex.x));
+  const maxX = Math.max(...upright.vertices.map((vertex) => vertex.x));
+  const minY = Math.min(...upright.vertices.map((vertex) => vertex.y));
+  const maxY = Math.max(...upright.vertices.map((vertex) => vertex.y));
+  const renderWithOccluder = (depth: number) => {
+    const vertices = [[minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY]].map(([x, y]) => ({ x, y, depth, height: 0, u: 0, v: 0 })) as typeof upright.vertices;
+    renderer.render(world, camera, 0, [geometry, () => [{ vertices, color: [0, 0, 0, 1] as const, kind: "support", id: "occluder", tileX: 0, tileY: 0 }]]);
+  };
+  renderWithOccluder(Math.max(...upright.vertices.map((vertex) => vertex.depth)) + 1);
+  const hiddenByNearerGeometry = !pickRider(upright);
+  renderWithOccluder(Math.min(...upright.vertices.map((vertex) => vertex.depth)) - 1);
+  const visibleOverFartherGeometry = pickRider(upright);
+  renderer.render(world, camera, 0, [geometry]);
+  return Object.fromEntries(riders.map((rider, index) => {
+    const [topLeft, topRight, bottomRight, bottomLeft] = rider.vertices;
+    const topMinusBottom = { x: (topLeft.x + topRight.x - bottomLeft.x - bottomRight.x) / 2, y: (topLeft.y + topRight.y - bottomLeft.y - bottomRight.y) / 2 };
+    return [["upright", "banked", "inverted"][index], { pickable: pickable[index], hiddenByNearerGeometry, visibleOverFartherGeometry, topMinusBottom }];
+  })) as Record<"upright" | "banked" | "inverted", { pickable: boolean; hiddenByNearerGeometry: boolean; visibleOverFartherGeometry: boolean; topMinusBottom: { x: number; y: number } }>;
+};
 
 window.checkCoasterTransfer = () => new Promise((resolve, reject) => {
   const worker = new Worker(new URL("../../src/worker.ts", import.meta.url), { type: "module" });
@@ -42,9 +95,10 @@ window.renderTrackFixture = async (rotation) => {
   const image = new Image(); image.src = texture.toDataURL(); await image.decode();
   const frame = (x: number) => ({ width: 16, height: 16, anchor: { x: 8, y: 8 }, placements: { "1": { page: 0, x, y: 0, width: 16, height: 16 } } });
   const atlas: Atlas = {
+    themeStyle: { steel: "#6e264a", wood: "#91593d", train: "#2e7075", ink: "#211519", lineWeight: 1 },
     pages: { "1": [{ file: "synthetic.png", width: 48, height: 16 }] },
     frames: {
-      "ground/grass_light_0/any/static/0": { ...frame(0), properties: { "coaster-steel": "#6e264a", "coaster-wood": "#91593d", "coaster-train": "#2e7075", "coaster-ink": "#211519", "coaster-line-weight": "1" } },
+      "ground/grass_light_0/any/static/0": frame(0),
       ...Object.fromEntries(["maya", "otis", "priya", "gus"].flatMap((person) => ["se", "sw", "nw", "ne"].map((view) => [`people/${person}/${view}/idle/0`, frame(16)]))),
       ...Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`ground/path_${index.toString(2).padStart(4, "0")}/any/static/0`, frame(16)])),
       ...Object.fromEntries(["left", "right"].flatMap((side) => [0, 1, 2].flatMap((variant) => [

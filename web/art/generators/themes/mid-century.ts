@@ -56,7 +56,7 @@ export const MID_CENTURY: Theme = {
   hatching: 0,
   crookedness: 0,
   highlight: { color: PAPER, opacity: 0 },
-  props: { sunFace: false, binFace: false, coneStripes: false, scallops: false, curls: false, mushrooms: false, clouds: "streaks", bushes: "domes" },
+  props: { sunFace: false, binFace: false, coneStripes: false, scallops: false, curls: false, mushrooms: false, clouds: "streaks", bushes: "domes", ornaments: "candy" },
   tileGridOpacity: 0,
   people: {
     headScale: 0.55,

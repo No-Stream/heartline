@@ -1,13 +1,8 @@
 pub mod demo_world;
-pub mod guest_behavior;
-pub mod park_guests;
-pub mod pathfinding;
 pub mod physics;
-pub mod walking;
 
 pub mod track;
 
-pub mod visits;
 pub mod world;
 
 #[cfg(feature = "threads")]
@@ -20,7 +15,6 @@ pub struct Agent {
     velocity_x: f32,
     velocity_y: f32,
 }
-
 pub trait Executor<T> {
     fn execute<F>(&self, agent_count: usize, process: F) -> Vec<T>
     where
@@ -106,6 +100,7 @@ pub struct Simulation {
 }
 
 pub mod guests;
+pub use guests::{behavior as guest_behavior, park as park_guests, pathfinding, visits, walking};
 
 impl Simulation {
     pub fn new(seed: u64, agent_count: usize) -> Self {
@@ -329,6 +324,3 @@ mod threaded_tests {
         assert_ne!(one.state_hash(), different_seed.state_hash());
     }
 }
-
-#[cfg(test)]
-mod walking_tests;

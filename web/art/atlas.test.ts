@@ -7,9 +7,10 @@ import { describe, expect, test } from "vitest";
 interface Placement { page: number; x: number; y: number; width: number; height: number }
 interface Atlas {
   scales: number[];
+  themeStyle: { steel: string; wood: string; train: string; ink: string; lineWeight: number };
   pages: Record<string, { file: string; width: number; height: number }[]>;
   sprites: Record<string, { views: Record<string, Record<string, string[]>> }>;
-  frames: Record<string, { source: string; sourceHash: string; width: number; height: number; placements: Record<string, Placement> }>;
+  frames: Record<string, { source: string; sourceHash: string; width: number; height: number; properties?: Record<string, string>; placements: Record<string, Placement> }>;
 }
 
 const artDirectory = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,11 @@ function spritesIn(category: string): [string, Atlas["sprites"][string]][] {
 }
 
 describe("sprite atlas metadata", () => {
+  test("exports coaster colors and line weight once at atlas level", () => {
+    expect(atlas.themeStyle).toEqual({ steel: expect.any(String), wood: expect.any(String), train: expect.any(String), ink: expect.any(String), lineWeight: expect.any(Number) });
+    expect(Object.values(atlas.frames).some((frame) => Object.keys(frame.properties ?? {}).some((key) => key.startsWith("coaster-")))).toBe(false);
+  });
+
   test("covers every source drawing and nothing else, built from the current files", () => {
     const framesBySource = new Map(Object.values(atlas.frames).map((frame) => [frame.source, frame]));
     expect([...framesBySource.keys()].sort()).toEqual(listSvgFiles(drawingsDirectory).sort());

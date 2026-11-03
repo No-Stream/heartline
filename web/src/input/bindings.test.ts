@@ -42,4 +42,14 @@ describe("input bindings", () => {
     expect(actions[0]).toEqual({ type: "zoom", factor: Math.exp(0.1), anchor: { x: 100, y: 100 } });
     expect(actions.slice(1)).toEqual([{ type: "rotate", turns: -1 }, { type: "rotate", turns: 1 }]);
   });
+  it("maps construction shortcuts through the action layer", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    for (const key of ["b", "Backspace", "c", "t"]) surface.dispatchEvent(event("keydown", { key, repeat: false }));
+    expect(actions).toEqual([
+      { type: "construction-append" }, { type: "construction-undo" },
+      { type: "construction-close" }, { type: "construction-test" },
+    ]);
+  });
 });

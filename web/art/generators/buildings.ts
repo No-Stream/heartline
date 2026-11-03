@@ -57,6 +57,31 @@ function awningOnFront(
   }
 }
 
+/** Thin vertical ribs across a band of a wall, as on a pressed metal or panelled skirt. */
+function ribbed(model: Model, surface: Surface, bottom: number, height: number, ribCount: number): void {
+  for (let rib = 1; rib < ribCount; rib++) {
+    const u = (surface.width * rib) / ribCount;
+    model.lineOn(surface, [[u, bottom + 1], [u, bottom + height - 1]], 0.55, INK, 0.4);
+  }
+}
+
+/** Standing seams running from the eave up to the ridge of a flat-sheeted roof slope. */
+function seamedRoof(model: Model, slope: Surface, seamCount: number): void {
+  for (let seam = 1; seam < seamCount; seam++) {
+    const u = (slope.width * seam) / seamCount;
+    model.lineOn(slope, [[u, 0.5], [u, slope.height - 0.5]], 0.6, INK, 0.5);
+  }
+}
+
+/** A square sign plate with a person pictogram on it, skirted or not. */
+function pictogramSign(model: Model, surface: Surface, centerU: number, bottom: number, skirted: boolean, figureColor: string): void {
+  model.rect(surface, centerU - 3.8, bottom, 7.6, 9.6, COLORS.paper, 0.7);
+  model.ellipseOn(surface, centerU, bottom + 7.4, 1.2, 1.2, figureColor, 0);
+  model.paint(surface, skirted
+    ? [[centerU - 2.4, bottom + 1.4], [centerU + 2.4, bottom + 1.4], [centerU + 1, bottom + 5.8], [centerU - 1, bottom + 5.8]]
+    : [[centerU - 1.2, bottom + 1.4], [centerU + 1.2, bottom + 1.4], [centerU + 1.6, bottom + 5.8], [centerU - 1.6, bottom + 5.8]], figureColor, 0);
+}
+
 function drawBurgerStall(theme: Theme, view: number): string {
   const height = 58;
   const warp = storybookWarp([1.8, -2.4], 0.05, 1.4, height + 26, theme.crookedness);
@@ -82,7 +107,11 @@ function drawBurgerStall(theme: Theme, view: number): string {
       model.lineOn(wall, [[u, 11], [u + 0.3, height - 1]], 0.55, INK, 0.3);
     }
     model.rect(wall, 0, 0, wall.width, 11, COLORS.red, 0);
-    for (let dot = 0; dot < 6; dot++) model.ellipseOn(wall, ((dot + 0.5) / 6) * wall.width, 5.5, 2, 2.1, COLORS.paper, 0);
+    if (theme.props.ornaments === "candy") {
+      for (let dot = 0; dot < 6; dot++) model.ellipseOn(wall, ((dot + 0.5) / 6) * wall.width, 5.5, 2, 2.1, COLORS.paper, 0);
+    } else {
+      ribbed(model, wall, 0, 11, 12);
+    }
     model.lineOn(wall, [[0, 11], [wall.width, 11]], 1);
   }
 
@@ -123,7 +152,11 @@ function drawBurgerStall(theme: Theme, view: number): string {
   model.letter(roof.front, "BURGERS", roof.front.width / 2, 2, 7.4, COLORS.paper, 1.25);
   model.letter(roof.back, "YUM", roof.back.width / 2, 2, 7.4, COLORS.paper, 1.25);
   for (const wall of [roof.right, roof.left]) {
-    for (let dot = 0; dot < 8; dot++) model.ellipseOn(wall, ((dot + 0.5) / 8) * wall.width, 5.5, 2, 2, COLORS.paper, 0);
+    if (theme.props.ornaments === "candy") {
+      for (let dot = 0; dot < 8; dot++) model.ellipseOn(wall, ((dot + 0.5) / 8) * wall.width, 5.5, 2, 2, COLORS.paper, 0);
+    } else {
+      model.rect(wall, 0, 4.4, wall.width, 2.2, COLORS.paper, 0);
+    }
   }
 
   // Right side: a menu board with a little hand-drawn burger.
@@ -192,21 +225,30 @@ function drawRestroom(theme: Theme, view: number): string {
   model.group([0, 0, 20]);
   const walls = model.box(0, 0, 0, half * 2, half * 2, wallHeight, COLORS.mint, { hatch: 6 });
   for (const wall of [walls.front, walls.right, walls.back, walls.left]) {
-    const tileCount = 9;
-    for (let index = 0; index < tileCount; index++) {
-      const tileWidth = wall.width / tileCount;
-      model.rect(wall, index * tileWidth, 0, tileWidth, 5.2, index % 2 ? COLORS.paper : COLORS.leafTeal, 0);
-      model.rect(wall, index * tileWidth, 5.2, tileWidth, 5.2, index % 2 ? COLORS.leafTeal : COLORS.paper, 0);
+    if (theme.props.ornaments === "candy") {
+      const tileCount = 9;
+      for (let index = 0; index < tileCount; index++) {
+        const tileWidth = wall.width / tileCount;
+        model.rect(wall, index * tileWidth, 0, tileWidth, 5.2, index % 2 ? COLORS.paper : COLORS.leafTeal, 0);
+        model.rect(wall, index * tileWidth, 5.2, tileWidth, 5.2, index % 2 ? COLORS.leafTeal : COLORS.paper, 0);
+      }
+    } else {
+      model.rect(wall, 0, 0, wall.width, 10.4, COLORS.leafTeal, 0);
+      ribbed(model, wall, 0, 10.4, 11);
     }
     model.lineOn(wall, [[0, 10.4], [wall.width, 10.4]], 1);
   }
 
-  // Front: two doors with hearts cut in, each with a person-shaped sign above.
+  // Front: two doors, with hearts cut in and person-shaped signs, or with pictogram plates.
   const doorWidth = 19;
   for (const [doorLeft, doorColor, iconSkirted] of [[8, COLORS.pink, true], [39, COLORS.blue, false]] as const) {
     model.arch(walls.front, doorLeft, 0, doorWidth, 33, doorColor, 1.2);
     model.ellipseOn(walls.front, doorLeft + 15.8, 14, 1.1, 1.1, COLORS.yellow, 0.6);
     const heartU = doorLeft + doorWidth / 2;
+    if (theme.props.ornaments === "plain") {
+      pictogramSign(model, walls.front, heartU, 17, iconSkirted, COLORS.plumDark);
+      continue;
+    }
     model.strokeOn(walls.front, [[heartU, 23], [heartU - 2.5, 25.8], [heartU - 1.2, 27.3], [heartU, 26], [heartU + 1.2, 27.3], [heartU + 2.5, 25.8], [heartU, 23]], 1, COLORS.paper);
     // Person icon on the door.
     model.ellipseOn(walls.front, heartU, 19.4, 1.8, 1.8, COLORS.paper, 0);
@@ -250,7 +292,8 @@ function drawRestroom(theme: Theme, view: number): string {
   const slopeTwo: [Vector3, Vector3, Vector3, Vector3] = [[-edge, -edge, wallHeight - 5], [edge, -edge, wallHeight - 5], [edge, 0, ridgeHeight], [-edge, 0, ridgeHeight]];
   for (const slope of [slopeOne, slopeTwo]) {
     model.face(slope, COLORS.violet, { ink: 1.3 });
-    model.shingles(model.surface(slope), 6, 9, INK);
+    if (theme.props.ornaments === "candy") model.shingles(model.surface(slope), 6, 9, INK);
+    else seamedRoof(model, model.surface(slope), 9);
   }
 
   // Vent pipe with a little cap on the back slope.
@@ -447,7 +490,15 @@ function drawSouvenirShop(theme: Theme, view: number): string {
   model.face(gableBack, COLORS.pink, { ink: 1.1 });
   const gableFrontSurface = model.surface([[upperHalf, -upperHalf, eaveHeight], [upperHalf, upperHalf, eaveHeight], [upperHalf, upperHalf, ridgeHeight], [upperHalf, -upperHalf, ridgeHeight]]);
   model.ellipseOn(gableFrontSurface, upperHalf, 15, 10, 10, COLORS.yellow, 1.1);
-  model.strokeOn(gableFrontSurface, [[upperHalf, 8.5], [upperHalf - 7, 16], [upperHalf - 4, 21], [upperHalf, 18], [upperHalf + 4, 21], [upperHalf + 7, 16], [upperHalf, 8.5]], 1.4, COLORS.red);
+  if (theme.props.ornaments === "candy") {
+    model.strokeOn(gableFrontSurface, [[upperHalf, 8.5], [upperHalf - 7, 16], [upperHalf - 4, 21], [upperHalf, 18], [upperHalf + 4, 21], [upperHalf + 7, 16], [upperHalf, 8.5]], 1.4, COLORS.red);
+  } else {
+    // A wrapped present: a box with a ribbon across it and a bow on top.
+    model.rect(gableFrontSurface, upperHalf - 5, 9.5, 10, 8, COLORS.red, 0.8);
+    model.rect(gableFrontSurface, upperHalf - 1, 9.5, 2, 8, COLORS.paper, 0);
+    model.ellipseOn(gableFrontSurface, upperHalf - 1.8, 19, 1.8, 1.3, COLORS.paper, 0.6);
+    model.ellipseOn(gableFrontSurface, upperHalf + 1.8, 19, 1.8, 1.3, COLORS.paper, 0.6);
+  }
   const gableBackSurface = model.surface([[-upperHalf, upperHalf, eaveHeight], [-upperHalf, -upperHalf, eaveHeight], [-upperHalf, -upperHalf, ridgeHeight], [-upperHalf, upperHalf, ridgeHeight]]);
   model.ellipseOn(gableBackSurface, upperHalf, 14, 8, 8, COLORS.sky, 1);
   model.lineOn(gableBackSurface, [[upperHalf - 8, 14], [upperHalf + 8, 14]], 0.7);
@@ -456,7 +507,8 @@ function drawSouvenirShop(theme: Theme, view: number): string {
   const slopeTwo: [Vector3, Vector3, Vector3, Vector3] = [[-edge, -edge, eaveHeight - 6], [edge, -edge, eaveHeight - 6], [edge, 0, ridgeHeight], [-edge, 0, ridgeHeight]];
   for (const slope of [slopeOne, slopeTwo]) {
     model.face(slope, COLORS.blue, { ink: 1.4 });
-    model.shingles(model.surface(slope), 8, 12, INK);
+    if (theme.props.ornaments === "candy") model.shingles(model.surface(slope), 8, 12, INK);
+    else seamedRoof(model, model.surface(slope), 12);
   }
 
   // A crooked chimney on one slope, and a balloon bunch tied to the other end of the ridge.

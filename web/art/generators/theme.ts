@@ -107,6 +107,12 @@ export interface Theme {
     clouds: "puffs" | "streaks";
     /** Bushes made of round puffs, or smooth domes. */
     bushes: "puffs" | "domes";
+    /**
+     * Small decorations on buildings. "candy" has polka dots, hearts on the restroom doors,
+     * fish-scale shingles and a checkerboard base; "plain" has ribbed panels, pictogram signs and
+     * flat seamed roofs.
+     */
+    ornaments: "candy" | "plain";
   };
   /** Opacity of the faint line along the back edges of each grass tile, which shows the tile grid. */
   tileGridOpacity: number;

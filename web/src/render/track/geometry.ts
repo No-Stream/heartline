@@ -11,11 +11,10 @@ const normalize = (a: Vec): Vec => { const length = Math.hypot(...a); if (length
 const vector = (data: Float32Array, offset: number): Vec => [data[offset], data[offset+1], data[offset+2]];
 const color = (hex: string): Triangle["color"] => [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255, 1];
 export function trackStyle(atlas: Atlas): TrackStyle {
-  const properties = atlas.frames["ground/grass_light_0/any/static/0"]?.properties;
-  if (!properties?.["coaster-steel"] || !properties["coaster-wood"] || !properties["coaster-train"] || !properties["coaster-ink"] || !properties["coaster-line-weight"]) throw new Error("Atlas is missing coaster theme properties");
-  const lineWeight = Number(properties["coaster-line-weight"]);
-  if (!Number.isFinite(lineWeight) || lineWeight <= 0) throw new Error("Invalid coaster line weight");
-  return { steel: properties["coaster-steel"], wood: properties["coaster-wood"], train: properties["coaster-train"], ink: properties["coaster-ink"], lineWeight };
+  const { themeStyle } = atlas;
+  if (!themeStyle || !themeStyle.steel || !themeStyle.wood || !themeStyle.train || !themeStyle.ink) throw new Error("Atlas is missing coaster theme style");
+  if (!Number.isFinite(themeStyle.lineWeight) || themeStyle.lineWeight <= 0) throw new Error("Invalid coaster line weight");
+  return themeStyle;
 }
 
 export function interpolateTrainPoses(previous: Float32Array, current: Float32Array, interpolation: number): Float32Array {

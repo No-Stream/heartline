@@ -1,9 +1,11 @@
 use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::guests::{AgeGroup, GuestId};
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train, demo_circuit};
+use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::supports::{SupportObstacle, generate_wooden_lattice};
 use theme_park_sim::track::{
-    Piece, SupportStyle, TrackSample, TrainConfiguration, Vec3, hybrid_model,
+    Heading, Piece, PieceId, SupportStyle, TrackSample, TrackState, TrainConfiguration, Vec3,
+    catalog, hybrid_model,
 };
 use theme_park_sim::walking::WalkingSimulation;
 use theme_park_sim::world::{Direction, Position, Surface, World};
@@ -17,6 +19,12 @@ pub struct WasmSimulation {
     train: Train,
     train_configuration: TrainConfiguration,
     physics_remainder: u32,
+    construction: Option<Construction>,
+    selected: Option<PieceId>,
+    construction_message: String,
+    construction_train: Option<(Circuit, Train)>,
+    construction_slow_steps: u32,
+    construction_outcome: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -53,6 +61,12 @@ impl WasmSimulation {
             train,
             train_configuration,
             physics_remainder: 0,
+            construction: None,
+            selected: None,
+            construction_message: String::new(),
+            construction_train: None,
+            construction_slow_steps: 0,
+            construction_outcome: None,
         }
     }
 
@@ -141,6 +155,37 @@ impl WasmSimulation {
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
             self.train.step(&self.circuit);
+            if self.construction_outcome.is_none() {
+                if let Some((circuit, train)) = &mut self.construction_train {
+                    let was_recovered = !train.notes().is_empty();
+                    let previous_distance = train.distance();
+                    train.step(circuit);
+                    if !was_recovered && !train.notes().is_empty() {
+                        self.construction_message =
+                            "Train recovered to the station after rollback.".into();
+                    } else if previous_distance < circuit.length()
+                        && train.distance() >= circuit.length()
+                    {
+                        self.construction_message = "Train completed a lap.".into();
+                    }
+                    if train.speed().abs() < 0.05 {
+                        self.construction_slow_steps += 1;
+                        if self.construction_slow_steps >= 200 && train.notes().is_empty() {
+                            self.construction_message =
+                                "Train stopped before completing a lap.".into();
+                        }
+                    } else {
+                        self.construction_slow_steps = 0;
+                    }
+                    if self.construction_message == "Train recovered to the station after rollback."
+                        || self.construction_message == "Train completed a lap."
+                        || self.construction_message == "Train stopped before completing a lap."
+                    {
+                        self.construction_outcome = Some(self.construction_message.clone());
+                    }
+                    train.take_readings();
+                }
+            }
             self.physics_remainder -= 30;
         }
         self.train.take_readings();
@@ -166,77 +211,18 @@ impl WasmSimulation {
     /// Rail segments: piece index and start/end frames (position, lateral, up).
     /// Positions are in tiles; lateral and up are unit vectors.
     pub fn coaster_rails(&self) -> Vec<f32> {
-        let mut result = Vec::new();
-        for (index, piece) in self.circuit.pieces().iter().enumerate() {
-            let intervals = (piece.length() / 2.0).ceil() as usize;
-            for sample_index in 0..intervals {
-                let start = piece.sample(piece.length() * sample_index as f64 / intervals as f64);
-                let end =
-                    piece.sample(piece.length() * (sample_index + 1) as f64 / intervals as f64);
-                for offset in [-0.72, 0.72] {
-                    result.push(index as f32);
-                    for sample in [start, end] {
-                        let lateral = sample.up.cross(sample.tangent);
-                        append_vector(&mut result, (sample.position + lateral * offset) / 4.0);
-                        append_vector(&mut result, lateral);
-                        append_vector(&mut result, sample.up);
-                    }
-                }
-            }
-        }
-        result
+        render_rails(self.circuit.pieces(), &self.world)
     }
 
     /// Cross ties: piece index, endpoints, up, tangent. Positions are in tiles.
     /// Ties are spaced two metres apart over the complete circuit, including joins.
     pub fn coaster_ties(&self) -> Vec<f32> {
-        let mut result = Vec::new();
-        let mut piece_start = 0.0;
-        let mut next_tie = 0_usize;
-        for (index, piece) in self.circuit.pieces().iter().enumerate() {
-            let piece_end = piece_start + piece.length();
-            while (next_tie as f64) * 2.0 < piece_end {
-                let sample = piece.sample((next_tie as f64 * 2.0 - piece_start).max(0.0));
-                let lateral = sample.up.cross(sample.tangent);
-                result.push(index as f32);
-                append_vector(&mut result, (sample.position - lateral * 0.88) / 4.0);
-                append_vector(&mut result, (sample.position + lateral * 0.88) / 4.0);
-                append_vector(&mut result, sample.up);
-                append_vector(&mut result, sample.tangent);
-                next_tie += 1;
-            }
-            piece_start = piece_end;
-        }
-        result
+        render_ties(self.circuit.pieces(), &self.world)
     }
 
     /// Segments: piece index, start position, end position, in tiles.
     pub fn coaster_supports(&self) -> Vec<f32> {
-        let mut result = Vec::new();
-        for (index, piece) in self.circuit.pieces().iter().enumerate() {
-            let obstacles: Vec<_> = self
-                .circuit
-                .pieces()
-                .iter()
-                .enumerate()
-                .filter(|(other_index, _)| *other_index != index)
-                .flat_map(|(_, other)| track_obstacles(other))
-                .collect();
-            let supports = match hybrid_model().support_style {
-                SupportStyle::WoodenLattice => {
-                    generate_wooden_lattice(piece, &self.world, &obstacles)
-                }
-            }
-            .expect("demo support cannot be routed");
-            for support in supports {
-                if support.start != support.end {
-                    result.push(index as f32);
-                    append_vector(&mut result, support.start / 4.0);
-                    append_vector(&mut result, support.end / 4.0);
-                }
-            }
-        }
-        result
+        render_supports(self.circuit.pieces(), &self.world)
     }
 
     /// Cars: car index, position, tangent, up, occupied-seat bitmask.
@@ -307,9 +293,416 @@ impl WasmSimulation {
             .collect()
     }
 
+    pub fn construction_start(&mut self, x: i32, y: i32, z: i32, heading: u8) {
+        let heading = match heading {
+            0 => Heading::East,
+            1 => Heading::NorthEast,
+            2 => Heading::North,
+            3 => Heading::NorthWest,
+            4 => Heading::West,
+            5 => Heading::SouthWest,
+            6 => Heading::South,
+            7 => Heading::SouthEast,
+            _ => {
+                self.construction_message = "Invalid heading".into();
+                return;
+            }
+        };
+        let mut construction = Construction::new(
+            TrackState {
+                x,
+                y,
+                z,
+                heading,
+                ..TrackState::origin()
+            },
+            hybrid_model(),
+        );
+        if let Err(error) = construction.append(PieceId::Station, &self.world, &[]) {
+            self.construction_message = construction_error(error);
+            return;
+        }
+        self.construction = Some(construction);
+        self.selected = None;
+        self.select_compatible_piece();
+        self.construction_train = None;
+        self.construction_outcome = None;
+        self.construction_message.clear();
+    }
+    pub fn construction_active(&self) -> bool {
+        self.construction.is_some()
+    }
+    pub fn construction_select(&mut self, id: &str) {
+        self.selected = catalog()
+            .into_iter()
+            .find(|piece| format!("{:?}", piece.id) == id)
+            .map(|piece| piece.id);
+        self.construction_message = if self.selected.is_some() {
+            String::new()
+        } else {
+            "Unknown piece".into()
+        };
+    }
+    pub fn construction_selected(&self) -> String {
+        self.selected
+            .map(|id| format!("{id:?}"))
+            .unwrap_or_default()
+    }
+    pub fn construction_choices(&self) -> String {
+        let Some(construction) = &self.construction else {
+            return String::new();
+        };
+        let choices = construction.choices(&self.world, &[]);
+        construction
+            .model()
+            .available_pieces(construction.end())
+            .into_iter()
+            .map(|piece| {
+                let reason = choices
+                    .iter()
+                    .find(|choice| choice.id == piece.id)
+                    .expect("catalog choice")
+                    .result
+                    .err()
+                    .map(construction_error)
+                    .unwrap_or_default();
+                format!(
+                    "{:?}\t{}\t{}\t{:?}\t{:?}\t{:?}\t{}",
+                    piece.id,
+                    piece.name,
+                    piece_group(piece.id),
+                    piece.exit.heading,
+                    piece.exit.slope,
+                    piece.exit.bank,
+                    reason
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    pub fn construction_track(&self) -> String {
+        let Some(construction) = &self.construction else {
+            return String::new();
+        };
+        construction
+            .piece_ids()
+            .iter()
+            .zip(construction.pieces())
+            .chain(
+                construction
+                    .disconnected_segments()
+                    .iter()
+                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+            )
+            .map(|(id, piece)| format!("{id}\t{:?}", piece.id))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    pub fn construction_can_append(&self) -> bool {
+        self.construction
+            .as_ref()
+            .zip(self.selected)
+            .is_some_and(|(construction, selected)| {
+                construction.validate(selected, &self.world, &[]).is_ok()
+            })
+    }
+    pub fn construction_preview_valid(&self) -> bool {
+        self.construction_can_append()
+    }
+    pub fn construction_preview_reason(&self) -> String {
+        let Some((construction, selected)) = self.construction.as_ref().zip(self.selected) else {
+            return String::new();
+        };
+        construction
+            .validate(selected, &self.world, &[])
+            .err()
+            .map(construction_error)
+            .unwrap_or_default()
+    }
+    pub fn construction_can_close(&self) -> bool {
+        self.construction.as_ref().is_some_and(|construction| {
+            !construction.is_closed() && Circuit::new(construction.pieces().to_vec()).is_ok()
+        })
+    }
+    pub fn construction_can_test(&self) -> bool {
+        self.construction.as_ref().is_some_and(|construction| {
+            construction.is_closed()
+                && construction.circuit().is_ok_and(|circuit| {
+                    circuit.length() > construction.model().train.length_metres
+                })
+        })
+    }
+    pub fn construction_message(&self) -> String {
+        if self.construction_message.is_empty() {
+            self.construction_outcome.clone().unwrap_or_default()
+        } else {
+            self.construction_message.clone()
+        }
+    }
+    pub fn construction_append(&mut self) {
+        let result = self
+            .construction
+            .as_mut()
+            .zip(self.selected)
+            .ok_or("Select a piece first".to_string())
+            .and_then(|(construction, selected)| {
+                construction
+                    .append(selected, &self.world, &[])
+                    .map_err(construction_error)
+            });
+        if result.is_ok() {
+            self.select_compatible_piece();
+        }
+        self.construction_message = result.err().unwrap_or_default();
+    }
+    pub fn construction_undo(&mut self) {
+        let Some(id) = self
+            .construction
+            .as_ref()
+            .and_then(|construction| construction.piece_ids().last())
+            .copied()
+        else {
+            self.construction_message = "There is no active track to undo.".into();
+            return;
+        };
+        self.construction_delete(id);
+    }
+    pub fn construction_delete(&mut self, index: usize) {
+        let result = self
+            .construction
+            .as_mut()
+            .ok_or("Construction is inactive".to_string())
+            .and_then(|construction| construction.delete_from(index).map_err(construction_error));
+        if result.is_ok() {
+            self.construction_train = None;
+            self.construction_outcome = None;
+            self.select_compatible_piece();
+        }
+        self.construction_message = result.err().unwrap_or_default();
+    }
+    pub fn construction_close(&mut self) {
+        let result = self
+            .construction
+            .as_mut()
+            .ok_or("Construction is inactive".to_string())
+            .and_then(|construction| construction.close().map_err(construction_error));
+        self.construction_message = result.err().unwrap_or_default();
+    }
+    pub fn construction_test(&mut self) {
+        if !self.construction_can_test() {
+            self.construction_message = "A closed circuit longer than the train is required".into();
+            return;
+        }
+        let construction = self.construction.as_ref().expect("checked above");
+        let circuit = construction.circuit().expect("checked above");
+        let train = Train::new(
+            &circuit,
+            &construction.model().train,
+            PhysicsConfig {
+                lift_speed: 5.0,
+                ..PhysicsConfig::default()
+            },
+            0.0,
+            2.0,
+        );
+        self.construction_train = Some((circuit, train));
+        self.construction_slow_steps = 0;
+        self.construction_outcome = None;
+        self.construction_message = "Test train running.".into();
+    }
+    pub fn construction_rails(&self) -> Vec<f32> {
+        render_rails(&self.construction_preview(), &self.world)
+    }
+    pub fn construction_ties(&self) -> Vec<f32> {
+        render_ties(&self.construction_preview(), &self.world)
+    }
+    pub fn construction_supports(&mut self) -> Vec<f32> {
+        if !self.construction_preview_valid() {
+            return Vec::new();
+        }
+        match try_render_supports(&self.construction_preview(), &self.world) {
+            Ok(supports) => supports,
+            Err(_) => {
+                self.construction_message = "Could not route preview supports.".into();
+                Vec::new()
+            }
+        }
+    }
+    pub fn construction_placed_rails(&self) -> Vec<f32> {
+        self.construction_render(render_rails, 19)
+    }
+    pub fn construction_placed_ties(&self) -> Vec<f32> {
+        self.construction_render(render_ties, 13)
+    }
+    pub fn construction_placed_supports(&mut self) -> Vec<f32> {
+        let Some(construction) = &self.construction else {
+            return Vec::new();
+        };
+        let entries: Vec<_> = construction
+            .piece_ids()
+            .iter()
+            .zip(construction.pieces())
+            .chain(
+                construction
+                    .disconnected_segments()
+                    .iter()
+                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+            )
+            .collect();
+        let pieces: Vec<_> = entries.iter().map(|(_, piece)| (*piece).clone()).collect();
+        match try_render_supports(&pieces, &self.world) {
+            Ok(mut supports) => {
+                for record in supports.chunks_exact_mut(7) {
+                    record[0] = *entries[record[0] as usize].0 as f32;
+                }
+                supports
+            }
+            Err(_) => {
+                self.construction_message = "Could not route supports for the placed track.".into();
+                Vec::new()
+            }
+        }
+    }
+    pub fn construction_train_poses(&self) -> Vec<f32> {
+        let Some((circuit, train)) = &self.construction_train else {
+            return Vec::new();
+        };
+        let config = &self
+            .construction
+            .as_ref()
+            .expect("train requires construction")
+            .model()
+            .train;
+        let mut result = Vec::new();
+        for index in 0..usize::from(config.cars) {
+            let sample = circuit.sample(
+                train.distance() - index as f64 * config.length_metres / f64::from(config.cars),
+            );
+            result.push(index as f32);
+            append_vector(&mut result, sample.position / 4.0);
+            append_vector(&mut result, sample.tangent);
+            append_vector(&mut result, sample.up);
+            result.push(0.0);
+        }
+        result
+    }
     pub fn state_hash(&self) -> u64 {
         self.simulation.state_hash()
     }
+}
+
+impl WasmSimulation {
+    fn select_compatible_piece(&mut self) {
+        let Some(construction) = &self.construction else {
+            return;
+        };
+        let available = construction.model().available_pieces(construction.end());
+        if self
+            .selected
+            .is_some_and(|selected| available.iter().any(|piece| piece.id == selected))
+        {
+            return;
+        }
+        self.selected = available
+            .into_iter()
+            .find(|piece| construction.validate(piece.id, &self.world, &[]).is_ok())
+            .map(|piece| piece.id);
+    }
+    fn construction_render(
+        &self,
+        render: fn(&[Piece], &World) -> Vec<f32>,
+        stride: usize,
+    ) -> Vec<f32> {
+        let Some(construction) = &self.construction else {
+            return Vec::new();
+        };
+        let entries: Vec<_> = construction
+            .piece_ids()
+            .iter()
+            .zip(construction.pieces())
+            .chain(
+                construction
+                    .disconnected_segments()
+                    .iter()
+                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+            )
+            .collect();
+        let pieces: Vec<_> = entries.iter().map(|(_, piece)| (*piece).clone()).collect();
+        let mut geometry = render(&pieces, &self.world);
+        for record in geometry.chunks_exact_mut(stride) {
+            record[0] = *entries[record[0] as usize].0 as f32;
+        }
+        geometry
+    }
+    fn construction_preview(&self) -> Vec<Piece> {
+        let Some(construction) = &self.construction else {
+            return Vec::new();
+        };
+        if construction.is_closed() {
+            return Vec::new();
+        }
+        construction
+            .model()
+            .available_pieces(construction.end())
+            .into_iter()
+            .filter(|piece| Some(piece.id) == self.selected)
+            .collect()
+    }
+}
+
+fn piece_group(id: PieceId) -> &'static str {
+    let name = format!("{id:?}");
+    if name.contains("Bank") {
+        "bank"
+    } else if name.contains("Turn") {
+        "turn"
+    } else if name.contains("Loop")
+        || name.contains("Roll")
+        || name.contains("Corkscrew")
+        || name.contains("Inversion")
+    {
+        "inversion"
+    } else if name.contains("Up") || name.contains("Down") || name.contains("Vertical") {
+        "slope"
+    } else if name == "Straight" {
+        "straight"
+    } else {
+        "special"
+    }
+}
+
+fn construction_error(error: theme_park_sim::track::construction::ConstructionError) -> String {
+    use theme_park_sim::track::clearance::ClearanceCollision;
+    use theme_park_sim::track::construction::ConstructionError;
+    match error {
+        ConstructionError::Closed => "Delete track before editing a closed circuit.",
+        ConstructionError::Unavailable => "This piece cannot connect here.",
+        ConstructionError::AmbiguousConnection => "More than one track segment connects here.",
+        ConstructionError::ModelForbidden => "This coaster model cannot use this piece.",
+        ConstructionError::NoSupportRoute => "Supports cannot be placed here.",
+        ConstructionError::SupportSearchExhausted => {
+            "Support routing search exhausted; placement is unresolved."
+        }
+        ConstructionError::InvalidIndex => "That track piece does not exist.",
+        ConstructionError::NotClosed => "Close the circuit first.",
+        ConstructionError::InvalidCircuit => "The track must connect back to its station.",
+        ConstructionError::Clearance(ClearanceCollision::Terrain) => {
+            "The train would collide with terrain."
+        }
+        ConstructionError::Clearance(ClearanceCollision::Path) => {
+            "The train would collide with a path."
+        }
+        ConstructionError::Clearance(ClearanceCollision::Scenery) => {
+            "The train would collide with scenery."
+        }
+        ConstructionError::Clearance(ClearanceCollision::Track) => {
+            "The train would collide with track."
+        }
+        ConstructionError::Clearance(ClearanceCollision::OutsideWorld) => {
+            "The track would leave the park."
+        }
+    }
+    .into()
 }
 
 fn append_vector(result: &mut Vec<f32>, vector: Vec3) {
@@ -669,4 +1062,254 @@ mod world_tests {
             assert!(world.neighbours(pair.0).contains(&pair.1));
         }
     }
+}
+
+#[cfg(test)]
+mod construction_bridge_tests {
+    use super::WasmSimulation;
+
+    #[test]
+    fn construction_commands_validate_and_preview_without_mutating_on_failure() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        assert!(simulation.construction_active());
+        simulation.construction_select("Straight");
+        assert!(simulation.construction_can_append());
+        assert!(!simulation.construction_rails().is_empty());
+        simulation.construction_append();
+        assert_eq!(simulation.construction_track(), "0\tStation\n1\tStraight");
+        assert!(!simulation.construction_placed_rails().is_empty());
+        simulation.construction_select("GentleUp");
+        simulation.construction_append();
+        assert_eq!(simulation.construction_track(), "0\tStation\n1\tStraight");
+        assert!(!simulation.construction_message().is_empty());
+        simulation.construction_undo();
+        assert_eq!(simulation.construction_track(), "0\tStation");
+    }
+
+    #[test]
+    fn deleting_middle_piece_preserves_and_identifies_retained_track() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        for _ in 0..2 {
+            simulation.construction_select("Straight");
+            simulation.construction_append();
+            assert!(simulation.construction_message().is_empty());
+        }
+        simulation.construction_delete(1);
+        assert_eq!(simulation.construction_track(), "0\tStation\n2\tStraight");
+        let rails = simulation.construction_placed_rails();
+        assert!(rails.chunks_exact(19).any(|rail| rail[0] == 2.0));
+        simulation.construction_delete(2);
+        assert_eq!(simulation.construction_track(), "0\tStation");
+    }
+
+    #[test]
+    fn terrain_change_does_not_panic_when_rendering_supports() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        assert!(simulation.construction_active());
+        assert!(!simulation.construction_placed_supports().is_empty());
+        for y in 95..105 {
+            for x in 95..110 {
+                simulation.set_world_surface(x, y, vec![100; 4], None);
+            }
+        }
+        let supports = simulation.construction_placed_supports();
+        assert!(supports.is_empty());
+        assert_eq!(
+            simulation.construction_message(),
+            "Could not route supports for the placed track."
+        );
+    }
+
+    #[test]
+    fn lift_drop_circuit_completes_lap() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(100, 100, 40, 0);
+        for piece in [
+            "LiftLevelToGentleUp",
+            "Lift",
+            "Lift",
+            "Lift",
+            "Lift",
+            "Lift",
+            "LiftGentleUpToLevel",
+            "LiftFlat",
+            "Straight",
+            "Straight",
+            "TurnLargeEntry",
+            "TurnLargeExit",
+            "LevelToGentleDown",
+            "GentleDown",
+            "GentleDown",
+            "GentleDown",
+            "GentleDown",
+            "GentleDown",
+            "GentleDownToLevel",
+            "Loop",
+            "TurnLargeEntry",
+            "TurnLargeExit",
+        ] {
+            simulation.construction_select(piece);
+            simulation.construction_append();
+            assert!(
+                simulation.construction_message().is_empty(),
+                "{piece}: {}",
+                simulation.construction_message()
+            );
+        }
+        assert!(simulation.construction_can_close());
+        simulation.construction_close();
+        simulation.construction_test();
+        for _ in 0..9000 {
+            simulation.tick();
+            if simulation.construction_message() == "Train completed a lap." {
+                return;
+            }
+            if simulation.construction_outcome.is_some() {
+                break;
+            }
+        }
+        let (circuit, train) = simulation.construction_train.as_ref().unwrap();
+        let mut start = 0.0;
+        let mut piece = "unknown";
+        for candidate in circuit.pieces() {
+            if train.distance() < start + candidate.length() {
+                piece = candidate.name;
+                break;
+            }
+            start += candidate.length();
+        }
+        panic!(
+            "{}: distance={}, speed={}, length={}, piece={piece}",
+            simulation.construction_message(),
+            train.distance(),
+            train.speed(),
+            circuit.length()
+        );
+    }
+
+    #[test]
+    fn construction_closes_and_runs_physics_deterministically() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        for piece in [
+            "TurnSmallStandalone",
+            "TurnSmallStandalone",
+            "Straight",
+            "TurnSmallStandalone",
+            "TurnSmallStandalone",
+        ] {
+            simulation.construction_select(piece);
+            simulation.construction_append();
+            assert!(
+                simulation.construction_message().is_empty(),
+                "{}",
+                simulation.construction_message()
+            );
+        }
+        assert!(simulation.construction_can_close());
+        simulation.construction_close();
+        assert!(simulation.construction_can_test());
+        simulation.construction_test();
+        let initial_poses = simulation.construction_train_poses();
+        assert!(initial_poses.chunks_exact(11).all(|car| car[10] == 0.0));
+        for _ in 0..9000 {
+            simulation.tick();
+            if simulation.construction_message() == "Train stopped before completing a lap." {
+                break;
+            }
+        }
+        assert_ne!(simulation.construction_train_poses(), initial_poses);
+        assert_eq!(
+            simulation.construction_message(),
+            "Train stopped before completing a lap."
+        );
+        let stopped_poses = simulation.construction_train_poses();
+        for _ in 0..60 {
+            simulation.tick();
+        }
+        simulation.construction_select("Straight");
+        assert_eq!(simulation.construction_train_poses(), stopped_poses);
+        assert_eq!(
+            simulation.construction_message(),
+            "Train stopped before completing a lap."
+        );
+        simulation.construction_delete(5);
+        assert!(simulation.construction_train_poses().is_empty());
+        assert!(!simulation.construction_can_test());
+    }
+}
+
+fn render_rails(pieces: &[Piece], _world: &World) -> Vec<f32> {
+    let mut result = Vec::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        let intervals = (piece.length() / 2.0).ceil() as usize;
+        for sample_index in 0..intervals {
+            let start = piece.sample(piece.length() * sample_index as f64 / intervals as f64);
+            let end = piece.sample(piece.length() * (sample_index + 1) as f64 / intervals as f64);
+            for offset in [-0.72, 0.72] {
+                result.push(index as f32);
+                for sample in [start, end] {
+                    let lateral = sample.up.cross(sample.tangent);
+                    append_vector(&mut result, (sample.position + lateral * offset) / 4.0);
+                    append_vector(&mut result, lateral);
+                    append_vector(&mut result, sample.up);
+                }
+            }
+        }
+    }
+    result
+}
+
+fn render_ties(pieces: &[Piece], _world: &World) -> Vec<f32> {
+    let mut result = Vec::new();
+    let mut piece_start = 0.0;
+    let mut next_tie = 0_usize;
+    for (index, piece) in pieces.iter().enumerate() {
+        let piece_end = piece_start + piece.length();
+        while (next_tie as f64) * 2.0 < piece_end {
+            let sample = piece.sample((next_tie as f64 * 2.0 - piece_start).max(0.0));
+            let lateral = sample.up.cross(sample.tangent);
+            result.push(index as f32);
+            append_vector(&mut result, (sample.position - lateral * 0.88) / 4.0);
+            append_vector(&mut result, (sample.position + lateral * 0.88) / 4.0);
+            append_vector(&mut result, sample.up);
+            append_vector(&mut result, sample.tangent);
+            next_tie += 1;
+        }
+        piece_start = piece_end;
+    }
+    result
+}
+
+fn render_supports(pieces: &[Piece], world: &World) -> Vec<f32> {
+    try_render_supports(pieces, world).expect("demo support cannot be routed")
+}
+
+fn try_render_supports(
+    pieces: &[Piece],
+    world: &World,
+) -> Result<Vec<f32>, theme_park_sim::track::supports::SupportError> {
+    let mut result = Vec::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        let obstacles: Vec<_> = pieces
+            .iter()
+            .enumerate()
+            .filter(|(other_index, _)| *other_index != index)
+            .flat_map(|(_, other)| track_obstacles(other))
+            .collect();
+        let supports = match hybrid_model().support_style {
+            SupportStyle::WoodenLattice => generate_wooden_lattice(piece, world, &obstacles),
+        }?;
+        for support in supports {
+            if support.start != support.end {
+                result.push(index as f32);
+                append_vector(&mut result, support.start / 4.0);
+                append_vector(&mut result, support.end / 4.0);
+            }
+        }
+    }
+    Ok(result)
 }

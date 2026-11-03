@@ -17,7 +17,7 @@ export const CANDY: Theme = {
   hatching: 1,
   crookedness: 1,
   highlight: { color: "#ffffff", opacity: 1 },
-  props: { sunFace: true, binFace: true, coneStripes: true, scallops: true, curls: true, mushrooms: true, clouds: "puffs", bushes: "puffs" },
+  props: { sunFace: true, binFace: true, coneStripes: true, scallops: true, curls: true, mushrooms: true, clouds: "puffs", bushes: "puffs", ornaments: "candy" },
   tileGridOpacity: 0.14,
   people: {
     headScale: 1,

@@ -32,7 +32,7 @@ async function buildTheme(themeName: string): Promise<void> {
   rmSync(themeDirectory, { recursive: true, force: true });
   const drawings = join(themeDirectory, "drawings");
   await runNode(process.execPath, [...NODE_ARGUMENTS, join(ART_DIRECTORY, "generators", "generate.ts"), themeName, drawings]);
-  const { stdout } = await runNode(process.execPath, [...NODE_ARGUMENTS, join(ART_DIRECTORY, "pipeline", "build-atlas.ts"), drawings, join(themeDirectory, "atlas")]);
+  const { stdout } = await runNode(process.execPath, [...NODE_ARGUMENTS, join(ART_DIRECTORY, "pipeline", "build-atlas.ts"), drawings, join(themeDirectory, "atlas"), themeName]);
   console.info(`${themeName}: ${stdout.trim()}`);
 }
 
