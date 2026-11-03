@@ -1,0 +1,446 @@
+{
+  "format": "theme-park-session",
+  "version": 1,
+  "build": {
+    "gitHash": "6cc3f1550bd0f8f60eb579896fcc5f4b887fc136",
+    "mode": "development"
+  },
+  "seed": "2026",
+  "park": "new",
+  "guestCount": 12,
+  "commands": [
+    {
+      "tick": 0,
+      "command": {
+        "type": "construction-start",
+        "x": 241,
+        "y": 249,
+        "z": 20,
+        "heading": 1
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "construction-set-chain",
+        "enabled": true
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "construction-select",
+        "piece": "LevelToGentleUp"
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    }
+  ],
+  "checkpoints": [
+    {
+      "tick": 300,
+      "hash": "10299400578686726925"
+    }
+  ],
+  "finalTick": 300,
+  "inputs": [
+    {
+      "action": {
+        "type": "tool-select",
+        "tool": "coaster"
+      },
+      "time": 2066.699999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 1280,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 250,
+        "centerY": 256,
+        "zoom": 1,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "station-placement",
+        "enabled": true
+      },
+      "time": 2328.699999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 504,
+          "y": 210
+        }
+      },
+      "time": 2623.900000035763,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 504,
+          "y": 210
+        }
+      },
+      "time": 2690.199999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 504,
+          "y": 210
+        }
+      },
+      "time": 2726.199999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "select",
+        "position": {
+          "x": 504,
+          "y": 210
+        }
+      },
+      "time": 2728,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 376,
+          "y": 274
+        }
+      },
+      "time": 2807,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 376,
+          "y": 274
+        }
+      },
+      "time": 2873.600000023842,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 376,
+          "y": 274
+        }
+      },
+      "time": 2902.800000011921,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "select",
+        "position": {
+          "x": 376,
+          "y": 274
+        }
+      },
+      "time": 2903.900000035763,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 241,
+        "centerY": 250,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "chain-toggle"
+      },
+      "time": 3223.900000035763,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 239.05125732421874,
+        "centerY": 251.10625,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": null
+      },
+      "time": 3395.400000035763,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 239.05125732421874,
+        "centerY": 251.10625,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-select",
+        "piece": "LevelToGentleUp"
+      },
+      "time": 3396.5,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 239.05125732421874,
+        "centerY": 251.10625,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-append"
+      },
+      "time": 3428.600000023842,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 239.05125732421874,
+        "centerY": 251.10625,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-append"
+      },
+      "time": 3745.100000023842,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 237.05125732421874,
+        "centerY": 253.10625,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-append"
+      },
+      "time": 3961.300000011921,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 235.05125732421874,
+        "centerY": 255.10625,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "tool-select",
+        "tool": "none"
+      },
+      "time": 4239.600000023842,
+      "tick": 300,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 233.05125732421874,
+        "centerY": 257.10625,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "session-export"
+      },
+      "time": 4494.699999988079,
+      "tick": 300,
+      "viewport": {
+        "width": 1280,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 234.61375732421874,
+        "centerY": 255.54375,
+        "zoom": 2,
+        "rotation": 0
+      }
+    }
+  ],
+  "expect": {
+    "constructionPiecesAtLeast": 4,
+    "chainEnabled": true
+  }
+}

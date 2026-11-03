@@ -1,0 +1,541 @@
+{
+  "format": "theme-park-session",
+  "version": 1,
+  "build": {
+    "gitHash": "6cc3f1550bd0f8f60eb579896fcc5f4b887fc136",
+    "mode": "development"
+  },
+  "seed": "2026",
+  "park": "new",
+  "guestCount": 12,
+  "commands": [
+    {
+      "tick": 0,
+      "command": {
+        "type": "path-build",
+        "start": {
+          "x": 218,
+          "y": 251,
+          "z": 8
+        },
+        "end": {
+          "x": 218,
+          "y": 256,
+          "z": 8
+        },
+        "kind": "normal",
+        "style": 0,
+        "requestId": 1
+      }
+    },
+    {
+      "tick": 0,
+      "command": {
+        "type": "facility-place",
+        "kind": "food_stall",
+        "rotation": 0,
+        "x": 216,
+        "y": 252,
+        "height": 8
+      }
+    }
+  ],
+  "checkpoints": [
+    {
+      "tick": 300,
+      "hash": "1075525336691960919"
+    }
+  ],
+  "finalTick": 300,
+  "inputs": [
+    {
+      "action": {
+        "type": "tool-select",
+        "tool": "paths"
+      },
+      "time": 1956.2999999523163,
+      "tick": 0,
+      "viewport": {
+        "width": 1280,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 250,
+        "centerY": 256,
+        "zoom": 1,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 568,
+          "y": 178
+        }
+      },
+      "time": 2550.2999999523163,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-start",
+        "position": {
+          "x": 568,
+          "y": 178
+        }
+      },
+      "time": 2615.199999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 541.3333129882812,
+          "y": 191.3333282470703
+        }
+      },
+      "time": 2615.599999964237,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 514.6666870117188,
+          "y": 204.6666717529297
+        }
+      },
+      "time": 2666.699999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 488,
+          "y": 218
+        }
+      },
+      "time": 2700.099999964237,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 461.3333435058594,
+          "y": 231.33334350585938
+        }
+      },
+      "time": 2763.099999964237,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 434.6666564941406,
+          "y": 244.66665649414062
+        }
+      },
+      "time": 2800.099999964237,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 408,
+          "y": 258
+        }
+      },
+      "time": 2866.699999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 381.3333435058594,
+          "y": 271.3333435058594
+        }
+      },
+      "time": 2933.399999976158,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 354.6666564941406,
+          "y": 284.6666564941406
+        }
+      },
+      "time": 3000.099999964237,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 328,
+          "y": 298
+        }
+      },
+      "time": 3066.699999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 301.3333435058594,
+          "y": 311.3333435058594
+        }
+      },
+      "time": 3133.399999976158,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 274.6666564941406,
+          "y": 324.6666564941406
+        }
+      },
+      "time": 3200.099999964237,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-move",
+        "position": {
+          "x": 248,
+          "y": 338
+        }
+      },
+      "time": 3267.2999999523163,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "drag-end",
+        "position": {
+          "x": 248,
+          "y": 338
+        }
+      },
+      "time": 3331.899999976158,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": null
+      },
+      "time": 3471.899999976158,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "tool-select",
+        "tool": "facilities"
+      },
+      "time": 3472.699999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 440,
+          "y": 178
+        }
+      },
+      "time": 3750.199999988079,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 217,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": {
+          "x": 440,
+          "y": 178
+        }
+      },
+      "time": 3752.5,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 217,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "select",
+        "position": {
+          "x": 440,
+          "y": 178
+        }
+      },
+      "time": 3752.899999976158,
+      "tick": 0,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 217,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "hover",
+        "position": null
+      },
+      "time": 3868.2999999523163,
+      "tick": 300,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 217,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "tool-select",
+        "tool": "none"
+      },
+      "time": 3869,
+      "tick": 300,
+      "viewport": {
+        "width": 880,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 217,
+        "centerY": 253,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "session-export"
+      },
+      "time": 3971,
+      "tick": 300,
+      "viewport": {
+        "width": 1280,
+        "height": 676
+      },
+      "camera": {
+        "centerX": 218.5625,
+        "centerY": 251.4375,
+        "zoom": 2,
+        "rotation": 0
+      }
+    }
+  ],
+  "expect": {
+    "pathTilesAtLeast": 6,
+    "foodStallsAtLeast": 1
+  }
+}

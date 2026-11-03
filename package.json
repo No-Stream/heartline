@@ -10,7 +10,8 @@
     "dev": "vite --config web/vite.config.ts",
     "build": "vite --config web/vite.config.ts build",
     "preview": "vite --config web/vite.config.ts preview",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "sessions:rehash": "node web/e2e/rehash-sessions.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
