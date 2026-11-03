@@ -1,10 +1,10 @@
 ---
 id: TASK-21
 title: Add the multi-launch steel coaster model
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 08:06'
+updated_date: '2026-11-03 08:37'
 labels:
   - coaster
 milestone: m-2
@@ -24,6 +24,12 @@ Based on Intamin LSM launch coasters such as Taron and VelociCoaster, with a pla
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Model data is checked against real rides, with launches placeable mid-course
-- [ ] #2 Physics and art work for all its pieces, and a browser test completes a circuit
+- [x] #1 Model data is checked against real rides, with launches placeable mid-course
+- [x] #2 Physics and art work for all its pieces, and a browser test completes a circuit
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Velocity Viper by Impulse Engineering: three launch lengths, mid-course launches reaching 31.3 m/s within 0.05 m/s in tests, inversions where allowed, tubular steel track and a model chooser in the builder.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -1,10 +1,10 @@
 ---
 id: TASK-36
 title: Build the path building tool
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 06:15'
-updated_date: '2026-11-03 06:42'
+updated_date: '2026-11-03 08:37'
 labels:
   - world
   - interface
@@ -22,9 +22,15 @@ The owner named path building as a priority. Players need RCT2-style path placem
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Players lay paths by dragging, with a ghost preview, and paths follow terrain slopes
-- [ ] #2 Paths connect across levels with sloped sections, including into tunnels
-- [ ] #3 Queue path pieces exist and connect to ride and facility entrances
-- [ ] #4 Deleting paths under guests moves them sensibly, and nothing freezes
-- [ ] #5 A browser test lays a path network through the UI and guests walk it
+- [x] #1 Players lay paths by dragging, with a ghost preview, and paths follow terrain slopes
+- [x] #2 Paths connect across levels with sloped sections, including into tunnels
+- [x] #3 Queue path pieces exist and connect to ride and facility entrances
+- [x] #4 Deleting paths under guests moves them sensibly, and nothing freezes
+- [x] #5 A browser test lays a path network through the UI and guests walk it
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Drag-to-lay paths through the input layer, terrain-following slopes, tunnel entries, per-tile teal and coral previews with reasons, queue paths owned by facilities and flat rides. Coaster queues wait for station boarding (queues and boarding ticket).
+<!-- SECTION:FINAL_SUMMARY:END -->

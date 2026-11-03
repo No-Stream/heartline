@@ -1,9 +1,10 @@
 ---
 id: TASK-18
 title: 'Add terrain sculpting, tunnels, caverns and underground view'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 08:37'
 labels:
   - world
   - interface
