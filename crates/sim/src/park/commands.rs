@@ -53,13 +53,15 @@ impl Park {
         position: Position,
         direction: Direction,
     ) -> Result<u32, ParkCommandError> {
-        if facility_intersects_track(
-            kind,
-            position,
-            direction,
-            self.circuit.pieces(),
-            &self.train_configuration,
-        ) || self.construction.as_ref().is_some_and(|construction| {
+        if self.demo_coaster.as_ref().is_some_and(|coaster| {
+            facility_intersects_track(
+                kind,
+                position,
+                direction,
+                coaster.circuit.pieces(),
+                &coaster.train_configuration,
+            )
+        }) || self.construction.as_ref().is_some_and(|construction| {
             construction_intersects_facility(kind, position, direction, construction)
         }) {
             return Err(ParkCommandError::FacilityIntersectsTrack);
@@ -180,23 +182,25 @@ impl Park {
         {
             return Err(ParkCommandError::SceneryIntersectsFacility);
         }
-        if self
-            .circuit
-            .pieces()
-            .iter()
-            .any(|piece| scenery_intersects_track(bounds, piece, &self.train_configuration))
-            || self.construction.as_ref().is_some_and(|construction| {
-                construction.pieces().iter().any(|piece| {
-                    scenery_intersects_track(bounds, piece, &construction.model().train)
-                }) || construction
+        if self.demo_coaster.as_ref().is_some_and(|coaster| {
+            coaster
+                .circuit
+                .pieces()
+                .iter()
+                .any(|piece| scenery_intersects_track(bounds, piece, &coaster.train_configuration))
+        }) || self.construction.as_ref().is_some_and(|construction| {
+            construction
+                .pieces()
+                .iter()
+                .any(|piece| scenery_intersects_track(bounds, piece, &construction.model().train))
+                || construction
                     .disconnected_segments()
                     .iter()
                     .flat_map(|segment| &segment.pieces)
                     .any(|piece| {
                         scenery_intersects_track(bounds, piece, &construction.model().train)
                     })
-            })
-        {
+        }) {
             return Err(ParkCommandError::SceneryIntersectsTrack);
         }
 
@@ -267,17 +271,21 @@ impl Park {
                 Err(ClearanceCollision::Terrain)
             )
         };
-        if self
-            .circuit
-            .pieces()
-            .iter()
-            .any(|piece| clearance_worsened(piece, &self.train_configuration))
-        {
+        if self.demo_coaster.as_ref().is_some_and(|coaster| {
+            coaster
+                .circuit
+                .pieces()
+                .iter()
+                .any(|piece| clearance_worsened(piece, &coaster.train_configuration))
+        }) {
             return Err(ParkCommandError::TerrainTrackClearance);
         }
-        if circuit_support_route(&self.circuit, &self.world, &self.train_configuration).is_ok()
-            && circuit_support_route(&self.circuit, candidate, &self.train_configuration).is_err()
-        {
+        if self.demo_coaster.as_ref().is_some_and(|coaster| {
+            circuit_support_route(&coaster.circuit, &self.world, &coaster.train_configuration)
+                .is_ok()
+                && circuit_support_route(&coaster.circuit, candidate, &coaster.train_configuration)
+                    .is_err()
+        }) {
             return Err(ParkCommandError::TerrainSupportRoute);
         }
 
@@ -349,9 +357,12 @@ impl Park {
     }
 
     fn support_route_worsened_by_scenery(&self, candidate: &World) -> bool {
-        if circuit_support_route(&self.circuit, &self.world, &self.train_configuration).is_ok()
-            && circuit_support_route(&self.circuit, candidate, &self.train_configuration).is_err()
-        {
+        if self.demo_coaster.as_ref().is_some_and(|coaster| {
+            circuit_support_route(&coaster.circuit, &self.world, &coaster.train_configuration)
+                .is_ok()
+                && circuit_support_route(&coaster.circuit, candidate, &coaster.train_configuration)
+                    .is_err()
+        }) {
             return true;
         }
         let Some(construction) = &self.construction else {

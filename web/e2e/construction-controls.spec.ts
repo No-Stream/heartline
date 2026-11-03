@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build, preview, type PreviewServer } from "vite";
 import { expect, test } from "@playwright/test";
+import { choosePiece, closeCircuit, openRide, placePiece, placeStation, startPark, testRide } from "./player/driver";
 
 let server: PreviewServer;
 let outDir: string;
@@ -23,6 +24,29 @@ test.afterAll(async () => {
 
 type Window = { constructionActions: unknown[]; setConstructionState(state: object): void };
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
+
+test("player driver places a station in the live park", async ({ page }) => {
+  await startPark(page, { park: "new", seed: 2026, speed: 1 });
+  await placeStation(page, { model: "hybrid", height: 12, tile: { x: 50, y: 50, z: 2 }, direction: { x: 52, y: 50, z: 2 } });
+  await expect(page.locator("[data-track] li")).toContainText(["Station"]);
+});
+
+test("player driver uses the construction steppers and actions", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await choosePiece(page, [{ attribute: "turn", direction: "left" }], "Standalone small left turn");
+  await placePiece(page);
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ canClose: true, canTest: true }));
+  await closeCircuit(page);
+  await testRide(page);
+  await openRide(page);
+  expect(await recorded(page)).toEqual([
+    { type: "construction-select", piece: "TurnSmallStandalone" },
+    { type: "construction-append" },
+    { type: "construction-close" },
+    { type: "construction-test" },
+    { type: "construction-set-open", open: true },
+  ]);
+});
 
 test("offers the wooden twister in the model chooser @fast", async ({ page }) => {
   await page.goto(fixtureUrl);

@@ -28,4 +28,5 @@ window.checkWorldEdit = () => new Promise((resolve, reject) => {
       }
     }
   };
+  worker.postMessage({ type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false });
 });

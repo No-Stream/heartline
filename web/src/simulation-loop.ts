@@ -26,14 +26,17 @@ export function createSimulationClock(
 export function advanceSimulation(
   clock: SimulationClock,
   elapsedMs: number,
+  speed = 1,
 ): AdvanceResult {
+  if (!Number.isInteger(speed) || speed < 1 || speed > 16) throw new RangeError("Invalid game speed");
   const elapsed = Math.max(0, elapsedMs);
   const accumulatedMs = clock.accumulatorMs + elapsed;
   const availableTicks = Math.floor(accumulatedMs / clock.tickDurationMs);
-  const ticksToRun = Math.min(availableTicks, clock.maxTicksPerWakeup);
+  const wakeupsToRun = Math.min(availableTicks, clock.maxTicksPerWakeup);
+  const ticksToRun = wakeupsToRun * speed;
   const accumulatorMs = availableTicks > clock.maxTicksPerWakeup
     ? 0
-    : accumulatedMs - ticksToRun * clock.tickDurationMs;
+    : accumulatedMs - wakeupsToRun * clock.tickDurationMs;
   return {
     clock: { ...clock, accumulatorMs },
     ticksToRun,

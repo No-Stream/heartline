@@ -23,3 +23,9 @@ describe("fixed-rate simulation clock", () => {
     expect(second.clock.accumulatorMs).toBe(10);
   });
 });
+
+it("scales simulation ticks with game speed without dropping ordinary wakeups", () => {
+  const clock = createSimulationClock(30, 4);
+  expect(advanceSimulation(clock, 1000 / 30, 8).ticksToRun).toBe(8);
+  expect(advanceSimulation(clock, 1000 / 30 * 10, 8).ticksToRun).toBe(32);
+});

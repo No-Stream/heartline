@@ -2,6 +2,10 @@ import { projectWorld, type Camera, type Rotation, type Viewport } from "../../s
 import { createWorldRenderer, loadAtlas, type Atlas, type WorldView } from "../../src/render";
 import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle } from "../../src/render/track/geometry";
 
+const initializeDemoWorker = (worker: Worker, frozen = false): void => {
+  worker.postMessage({ type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen, manualBlockAnalysis: false });
+};
+
 declare global {
   interface Window {
     renderTrackFixture(rotation: Rotation): Promise<{ picks: string[] }>;
@@ -82,6 +86,7 @@ window.checkCoasterTransfer = () => new Promise((resolve, reject) => {
         resent: message.coasterRails !== undefined || message.coasterTies !== undefined, refreshedSupports: message.coasterSupports instanceof Float32Array });
     }
   };
+  initializeDemoWorker(worker);
 });
 
 window.renderTrackFixture = async (rotation) => {
@@ -159,6 +164,7 @@ window.checkTrainMotion = () => new Promise((resolve, reject) => {
     worker.terminate();
     resolve({ previous: [...previous.slice(0, 11)], current: [...current.slice(0, 11)], interpolated });
   };
+  initializeDemoWorker(worker);
 });
 
 window.demoTrackPoints = () => new Promise((resolve, reject) => {
@@ -173,4 +179,5 @@ window.demoTrackPoints = () => new Promise((resolve, reject) => {
     }
     worker.terminate(); resolve(points);
   };
+  initializeDemoWorker(worker);
 });

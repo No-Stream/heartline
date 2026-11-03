@@ -1,7 +1,12 @@
 #[test]
 fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
-    let simulation = super::WasmSimulation::new(42, 0);
-    let piece = simulation.circuit.pieces()[0].clone();
+    let simulation = super::WasmSimulation::new(42, 0, String::from("demo"));
+    let piece = simulation
+        .demo_coaster()
+        .expect("demo park")
+        .circuit
+        .pieces()[0]
+        .clone();
     let point = piece.sample(piece.length() / 2.0).position;
     let segment = super::SupportSegment {
         start: point + super::Vec3::new(-40.0, 0.0, 0.0),
@@ -10,7 +15,10 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let baseline = theme_park_sim::track::proximity::scan_proximity_with_supports(
         &simulation.world,
         std::slice::from_ref(&piece),
-        &simulation.train_configuration,
+        &simulation
+            .demo_coaster()
+            .expect("demo park")
+            .train_configuration,
         &[],
         &[],
         &[],
@@ -18,7 +26,10 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let diagonal = theme_park_sim::track::proximity::scan_proximity_with_supports(
         &simulation.world,
         &[piece],
-        &simulation.train_configuration,
+        &simulation
+            .demo_coaster()
+            .expect("demo park")
+            .train_configuration,
         &[],
         &[],
         &[segment],
@@ -29,7 +40,7 @@ use super::WasmSimulation;
 
 #[test]
 fn coaster_ticket_price_defaults_to_six_and_can_be_changed_to_zero() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
 
     assert_eq!(simulation.construction_coaster_price(), 6);
     simulation.construction_set_coaster_price(0);
@@ -40,7 +51,7 @@ fn coaster_ticket_price_defaults_to_six_and_can_be_changed_to_zero() {
 
 #[test]
 fn coaster_cannot_open_without_a_complete_circuit() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(!simulation.construction_set_open(true));
     simulation.construction_start(200, 200, 20, 0);
     assert!(!simulation.construction_set_open(true));
@@ -50,7 +61,7 @@ fn coaster_cannot_open_without_a_complete_circuit() {
 
 #[test]
 fn coaster_requires_station_paths_before_opening() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
     for piece in [
         "TurnSmallStandalone",
@@ -70,7 +81,7 @@ fn coaster_requires_station_paths_before_opening() {
 
 #[test]
 fn model_selection_controls_new_construction_and_launch_choices() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_select("model:velocity_viper");
     simulation.construction_start(200, 200, 20, 0);
     assert_eq!(
@@ -107,7 +118,7 @@ fn model_selection_controls_new_construction_and_launch_choices() {
 
 #[test]
 fn rail_distances_follow_placed_rail_intervals_across_pieces() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(simulation.construction_rail_distances().is_empty());
     simulation.construction_start(200, 200, 20, 0);
     simulation.construction_select("Straight");
@@ -131,7 +142,7 @@ fn rail_distances_follow_placed_rail_intervals_across_pieces() {
 
 #[test]
 fn wooden_twister_geometry_distinguishes_track_and_steel_loop_supports() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_select("model:wooden_twister");
     simulation.construction_start(200, 200, 20, 0);
     let rails = simulation.construction_placed_rails();
@@ -185,7 +196,7 @@ fn wooden_twister_geometry_distinguishes_track_and_steel_loop_supports() {
 
 #[test]
 fn geometry_encodes_material_and_preserves_piece_identity() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
     let wooden = simulation.construction_placed_rails();
     assert!(wooden.chunks_exact(19).all(|record| record[0] == 0.0));
@@ -218,7 +229,7 @@ fn geometry_encodes_material_and_preserves_piece_identity() {
 
 #[test]
 fn construction_commands_validate_and_preview_without_mutating_on_failure() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
     assert!(simulation.construction_active());
     simulation.construction_select("Straight");
@@ -249,7 +260,7 @@ fn construction_commands_validate_and_preview_without_mutating_on_failure() {
 
 #[test]
 fn deleting_middle_piece_preserves_and_identifies_retained_track() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
     for _ in 0..2 {
         simulation.construction_select("Straight");
@@ -266,7 +277,7 @@ fn deleting_middle_piece_preserves_and_identifies_retained_track() {
 
 #[test]
 fn terrain_change_does_not_panic_when_rendering_supports() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
     assert!(simulation.construction_active());
     assert!(!simulation.construction_placed_supports().is_empty());
@@ -285,7 +296,7 @@ fn terrain_change_does_not_panic_when_rendering_supports() {
 
 #[test]
 fn placed_support_cache_matches_full_render_after_track_changes() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
     for _ in 0..4 {
         simulation.construction_select("Straight");
@@ -328,7 +339,7 @@ fn placed_support_cache_matches_full_render_after_track_changes() {
 
 #[test]
 fn deleting_distant_track_reuses_cached_supports() {
-    let simulation = WasmSimulation::new(42, 0);
+    let simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let template = super::catalog()
         .into_iter()
         .find(|piece| piece.id == super::PieceId::Straight)
@@ -468,7 +479,7 @@ fn rendered_supports_clear_other_tracks_train_envelope() {
 
 #[test]
 fn lift_drop_circuit_completes_lap() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(100, 100, 40, 0);
     for piece in [
         "LiftLevelToGentleUp",
@@ -538,7 +549,7 @@ fn lift_drop_circuit_completes_lap() {
 
 #[test]
 fn opening_after_a_completed_test_clears_the_report() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(100, 100, 40, 0);
     for piece in [
         "LiftLevelToGentleUp",
@@ -631,7 +642,7 @@ fn opening_after_a_completed_test_clears_the_report() {
 
 #[test]
 fn construction_closes_and_runs_physics_deterministically() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert_eq!(simulation.construction_test_report_json(), "null");
     simulation.construction_start(200, 200, 20, 0);
     for piece in [

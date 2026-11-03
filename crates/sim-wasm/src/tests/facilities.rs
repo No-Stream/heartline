@@ -2,14 +2,14 @@ use super::WasmSimulation;
 
 #[test]
 fn ride_snapshots_expose_idle_cycle_state() {
-    let simulation = WasmSimulation::new(42, 0);
+    let simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let snapshot = simulation.facilities_json();
     assert!(snapshot.contains("\"ride_state\":\"idle\",\"ride_progress\":0"));
 }
 
 #[test]
 fn track_construction_rejects_existing_building_footprints() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(440, 508, 5, 0);
     assert!(!simulation.construction_active());
     assert!(!simulation.construction_message().is_empty());
@@ -17,7 +17,7 @@ fn track_construction_rejects_existing_building_footprints() {
 
 #[test]
 fn placement_reports_errors_and_exports_and_removes_buildings() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(
         simulation
             .facilities_json()

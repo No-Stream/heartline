@@ -71,3 +71,47 @@ describe("simulation render clock", () => {
     expect(position(clock, 516)).toBeGreaterThanOrEqual(afterStall);
   });
 });
+
+it("advances interpolation at the selected game speed", () => {
+  const clock = new RenderClock<Snapshot>(30);
+  clock.push({ tickCount: 0, position: 0 });
+  clock.push({ tickCount: 100, position: 100 });
+  clock.frame(0);
+  clock.setSpeed(4);
+  expect(clock.frame(100)!.tick).toBeGreaterThan(9);
+});
+
+it("interpolates continuously between batched snapshots at four times speed", () => {
+  const clock = new RenderClock<Snapshot>(30);
+  let previous = 0;
+  for (let now = 0; now <= 2000; now += 10) {
+    if (now === 1000) clock.setSpeed(4);
+    if (now % 40 === 0) {
+      const tickCount = now <= 1000 ? now * 0.03 : 30 + (now - 1000) * 0.12;
+      clock.push({ tickCount, position: tickCount });
+    }
+    const next = position(clock, now);
+    if (now > 1400) expect(next - previous).toBeGreaterThan(0.9);
+    previous = next;
+  }
+});
+
+it("builds the larger buffer promptly after increasing speed", () => {
+  const clock = new RenderClock<Snapshot>(30);
+  for (let now = 0; now <= 1000; now += 10) {
+    if (now % 100 === 0) clock.push({ tickCount: now * 0.03, position: now * 0.03 });
+    clock.frame(now);
+  }
+  clock.setSpeed(4);
+  let held = false;
+  let last = clock.frame(1000)!.tick;
+  for (let now = 1010; now <= 1250; now += 10) {
+    if (now % 100 === 0) clock.push({ tickCount: 30 + (now - 1000) * 0.12, position: 0 });
+    const tick = clock.frame(now)!.tick;
+    if (tick === last) held = true;
+    if (now === 1010) expect(tick).toBe(last);
+    if (now >= 1210) expect(tick - last).toBeGreaterThan(0.9);
+    last = tick;
+  }
+  expect(held).toBe(true);
+});

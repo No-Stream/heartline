@@ -19,7 +19,7 @@ use theme_park_sim::facilities::{
     FacilityKind, ParkFacilities, facility_access_direction, station_positions,
 };
 use theme_park_sim::guests::{AgeGroup, GuestId};
-use theme_park_sim::park::Park;
+use theme_park_sim::park::{DemoCoaster, Park};
 use theme_park_sim::park_guests::ParkGuests;
 #[cfg(test)]
 use theme_park_sim::physics::BlockOperation;
@@ -99,6 +99,10 @@ use theme_park_sim::park::tick::{
 };
 
 impl WasmSimulation {
+    pub(crate) fn demo_coaster(&self) -> Option<&DemoCoaster> {
+        self.park.demo_coaster.as_ref()
+    }
+
     fn block_reasons_json(&self) -> String {
         let reasons = [&self.block_message, &self.block_throughput_reason]
             .into_iter()
@@ -601,8 +605,8 @@ fn render_rails(pieces: &[Piece], _world: &World) -> Vec<f32> {
     for (index, piece) in pieces.iter().enumerate() {
         let intervals = (piece.length() / 2.0).ceil() as usize;
         for sample_index in 0..intervals {
-            let start = piece.sample(piece.length() * sample_index as f64 / intervals as f64);
-            let end = piece.sample(piece.length() * (sample_index + 1) as f64 / intervals as f64);
+            let start = piece.sample(piece.length() * (sample_index as f64 / intervals as f64));
+            let end = piece.sample(piece.length() * ((sample_index + 1) as f64 / intervals as f64));
             for offset in [-0.72, 0.72] {
                 result.push(index as f32);
                 for sample in [start, end] {

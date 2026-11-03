@@ -58,13 +58,19 @@ fn facility_clearance_uses_separate_demo_and_construction_trains() {
 
 #[test]
 fn terrain_edits_refuse_buildings_and_track_without_mutating_the_world() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let before_building_edit = simulation.world_state_hash();
     assert!(!simulation.terrain_apply("raise_tiles", vec![218, 246, 1, 0, 1, 0, 0, 0]));
     assert_eq!(simulation.world_state_hash(), before_building_edit);
     assert!(simulation.terrain_message().contains("building or ride"));
 
-    let station = simulation.circuit.pieces()[0].sample(0.0).position;
+    let station = simulation
+        .demo_coaster()
+        .expect("demo park")
+        .circuit
+        .pieces()[0]
+        .sample(0.0)
+        .position;
     let track_x = (station.x / 4.0).floor() as u16;
     let track_y = (station.y / 4.0).floor() as u16;
     let before_track_edit = simulation.world_state_hash();
@@ -78,7 +84,7 @@ fn terrain_edits_refuse_buildings_and_track_without_mutating_the_world() {
 
 #[test]
 fn terrain_wire_rejects_missing_parameters_without_mutating_the_world() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let before = simulation.world_state_hash();
     assert!(!simulation.terrain_apply("flatten", vec![1, 2, 3]));
     assert_eq!(simulation.world_state_hash(), before);
@@ -91,7 +97,7 @@ fn terrain_wire_rejects_missing_parameters_without_mutating_the_world() {
 
 #[test]
 fn tunnel_fill_reports_invalidated_paths_and_guests_recover() {
-    let mut simulation = WasmSimulation::new(42, 12);
+    let mut simulation = WasmSimulation::new(42, 12, String::from("demo"));
     let tunnel_path = Position {
         x: 221,
         y: 250,
@@ -116,7 +122,7 @@ fn tunnel_fill_reports_invalidated_paths_and_guests_recover() {
 
 #[test]
 fn facility_bridge_accepts_a_shop_inside_a_carved_cavern() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let mut world = World::new(
         6,
         6,
@@ -149,7 +155,7 @@ fn facility_bridge_accepts_a_shop_inside_a_carved_cavern() {
 
 #[test]
 fn coaster_station_can_be_constructed_inside_a_carved_cavern() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let mut world = World::new(
         16,
         16,
@@ -177,7 +183,7 @@ fn coaster_station_can_be_constructed_inside_a_carved_cavern() {
 
 #[test]
 fn terrain_edit_reroutes_constructed_track_supports() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
     simulation.construction_select("Straight");
     simulation.construction_append();

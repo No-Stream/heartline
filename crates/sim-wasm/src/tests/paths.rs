@@ -3,7 +3,7 @@ use theme_park_sim::world::{Position, World};
 
 #[test]
 fn tunnel_path_commands_refresh_the_guest_graph() {
-    let mut simulation = WasmSimulation::new(42, 12);
+    let mut simulation = WasmSimulation::new(42, 12, String::from("demo"));
     let entrance = Position {
         x: 218,
         y: 250,
@@ -53,7 +53,7 @@ fn tunnel_path_commands_refresh_the_guest_graph() {
 
 #[test]
 fn path_preview_build_snapshot_and_remove_share_the_path_wire_contract() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.world = World::new(
         4,
         2,
@@ -97,7 +97,7 @@ fn path_preview_build_snapshot_and_remove_share_the_path_wire_contract() {
 
 #[test]
 fn path_preview_reports_explicit_edges_for_adjacent_queue_paths_and_connections() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.world = World::new(
         4,
         2,
@@ -129,7 +129,7 @@ fn path_preview_reports_explicit_edges_for_adjacent_queue_paths_and_connections(
 
 #[test]
 fn facility_openings_follow_ride_placement_and_access_paths() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.world = World::new(
         8,
         8,
@@ -182,7 +182,7 @@ fn facility_openings_follow_ride_placement_and_access_paths() {
 
 #[test]
 fn path_preview_reports_existing_tile_metadata_that_build_preserves() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.world = World::new(
         4,
         2,
@@ -211,7 +211,7 @@ fn path_preview_reports_existing_tile_metadata_that_build_preserves() {
 
 #[test]
 fn queue_preview_keeps_a_reused_normal_path_endpoint_normal() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.world = World::new(
         4,
         2,
@@ -240,7 +240,7 @@ fn queue_preview_keeps_a_reused_normal_path_endpoint_normal() {
 
 #[test]
 fn invalid_path_preview_keeps_the_last_command_message_and_does_not_mutate_the_world() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.world = World::new(
         4,
         2,
@@ -283,7 +283,7 @@ fn invalid_path_preview_keeps_the_last_command_message_and_does_not_mutate_the_w
 
 #[test]
 fn path_preview_accepts_an_immutable_simulation_and_preserves_the_last_message() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(!simulation.path_build(vec![0, 0, 0], "normal", 0));
     let command_message = simulation.path_message();
     let simulation = simulation;
@@ -295,7 +295,7 @@ fn path_preview_accepts_an_immutable_simulation_and_preserves_the_last_message()
 
 #[test]
 fn path_preview_and_build_reject_a_facility_footprint() {
-    let mut simulation = WasmSimulation::new(42, 0);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let building_position = simulation.facilities.buildings()[0].position;
     let coordinates = vec![
         i32::from(building_position.x),

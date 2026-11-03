@@ -3,7 +3,7 @@ CARGO_HOME ?= $(HOME)/.cargo
 WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
 WASM_BINDGEN_VERSION := 0.2.105
 
-.PHONY: install build check test lint serve e2e e2e-slow ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests
+.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests
 
 install:
 	npm ci
@@ -25,6 +25,7 @@ check: build
 	npm run typecheck
 	PLAYWRIGHT_PORT=$${PLAYWRIGHT_PORT:-4271} npm run e2e -- --grep @fast
 
+test: export FLEXIBILITY_WALKS = 256
 test: art
 	$(CARGO) test --workspace
 	$(CARGO) test -p theme-park-sim --features threads
@@ -45,6 +46,9 @@ e2e: build
 
 e2e-slow: build
 	npm run e2e -- --grep @slow
+
+journeys: build
+	npm run e2e -- --project journey --workers=2
 
 bench:
 	$(CARGO) run --release -p theme-park-sim --features threads --example tick_bench

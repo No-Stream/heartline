@@ -232,7 +232,10 @@ function setTimeOfDay(phase: number): void {
 }
 const dayClockContainer = document.querySelector<HTMLElement>("[data-day-clock]");
 if (!dayClockContainer) throw new Error("Day clock is missing");
-const dayClock = createDayClock(dayClockContainer, setTimeOfDay, (speed) => { daySpeed = speed; });
+const dayClock = createDayClock(dayClockContainer, setTimeOfDay, (speed) => { daySpeed = speed; }, (speed) => {
+  renderClock.setSpeed(speed);
+  worker.postMessage({ type: "set-speed", speed });
+});
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
   const bounds = gameCanvas.getBoundingClientRect();
@@ -287,6 +290,7 @@ let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
 const gameTest: GameTest = {
   ready: false,
+  tickCount() { return current?.tickCount ?? 0; },
   guests() { return renderedGuests; },
   riders() {
     return current ? constructionRiderPositions(current.constructionTrainPoses, current.constructionRiders) : [];
@@ -346,7 +350,9 @@ const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group"
 function dispatch(action: InputAction): void {
   // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
   if (activeTool !== "coaster" && (coasterActions.has(action.type) || action.type.startsWith("construction-"))) return;
-  if (action.type === "tool-select") {
+  if (action.type === "game-speed-cycle") {
+    dayClock.cycleGameSpeed();
+  } else if (action.type === "tool-select") {
     openTool(action.tool);
   } else if (action.type === "landscaping-activate") {
     openTool("landscape");
@@ -510,8 +516,15 @@ bindInput(gameCanvas, dispatch, () => pathTool.state().mode === "build" || lands
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), {
   type: "module",
-  name: frozen ? `theme-park-test${manualBlockAnalysis ? "-manual" : ""}${testAgents === null ? "" : `:${testAgents}`}` : "theme-park",
 });
+const params = new URLSearchParams(location.search);
+const seedText = params.get("seed") ?? "2026";
+if (!/^\d+$/.test(seedText) || BigInt(seedText) > 18446744073709551615n) throw new RangeError("Invalid seed");
+const park = params.get("park") ?? "demo";
+if (park !== "new" && park !== "demo") throw new RangeError("Invalid park");
+const guestCount = testAgents === null ? 12 : Number(testAgents);
+if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 500) throw new RangeError("Invalid test guest count");
+worker.postMessage({ type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
 worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facility-access-preview"; requestId: number; rotation: number | undefined } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
   const message = event.data;
   if (message.type === "facility-access-preview") {

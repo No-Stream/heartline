@@ -12,7 +12,7 @@ declare global {
 
 window.renderGuestFixture = async () => {
   await init();
-  const simulation = new WasmSimulation(2026n, 12);
+  const simulation = new WasmSimulation(2026n, 12, "demo");
   for (let tick = 0; tick < 360; tick++) simulation.tick();
   const { atlas, images } = await loadAtlas("/atlas.json");
   const canvas = document.createElement("canvas");

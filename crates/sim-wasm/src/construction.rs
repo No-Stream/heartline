@@ -643,7 +643,7 @@ mod getter_tests {
 
     #[test]
     fn support_render_getters_do_not_mutate_park_state() {
-        let mut simulation = WasmSimulation::new(42, 0);
+        let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
         simulation.construction_start(200, 200, 20, 0);
         simulation.construction_select("Straight");
         let message_before = simulation.park.construction_message.clone();
@@ -671,7 +671,7 @@ mod getter_tests {
 
     #[test]
     fn support_render_errors_are_derived_without_mutating_park_state() {
-        let mut simulation = WasmSimulation::new(42, 0);
+        let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
         simulation.construction_start(200, 200, 20, 0);
         for y in 95..105 {
             for x in 95..110 {
@@ -701,7 +701,7 @@ mod getter_tests {
 
     #[test]
     fn newer_construction_command_error_overrides_cached_support_error() {
-        let mut simulation = WasmSimulation::new(42, 0);
+        let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
         simulation.construction_start(200, 200, 20, 0);
         for y in 95..105 {
             for x in 95..110 {

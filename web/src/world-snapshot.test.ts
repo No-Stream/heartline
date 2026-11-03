@@ -34,6 +34,8 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     construction_train_poses() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
+    construction_coaster_price() { return 0; }
+    construction_coaster_income() { return 0; }
     construction_active() { return false; }
     set_world_surface(x: number, y: number, corners: Int16Array, water: number | undefined) {
       return workerMock.setSurface(x, y, corners, water);
@@ -88,8 +90,10 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   let finishInitialization!: () => void;
   workerMock.initialize.mockReturnValue(new Promise<void>((resolve) => { finishInitialization = resolve; }));
   const postMessage = vi.fn();
-  vi.stubGlobal("self", { postMessage, addEventListener: vi.fn() });
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("./worker");
+  onMessage({ data: { type: "init", seed: 42n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
 
   vi.advanceTimersByTime(1_000);
   finishInitialization();
@@ -123,6 +127,7 @@ it("publishes an updated world only after a successful terrain change", async ()
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("./worker");
+  onMessage({ data: { type: "init", seed: 42n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
   const edit = { type: "set-surface", x: 1, y: 2, corners: new Int16Array([3, 4, 5, 6]), water: 7 };
   onMessage({ data: edit } as MessageEvent);

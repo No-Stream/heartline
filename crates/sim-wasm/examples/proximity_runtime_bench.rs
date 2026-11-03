@@ -8,7 +8,7 @@ mod proximity_benchmark_tests {
     use theme_park_sim::track::proximity::scan_proximity_with_supports;
 
     pub fn completed_coaster_proximity_cost() {
-        let mut simulation = WasmSimulation::new(42, 0);
+        let mut simulation = WasmSimulation::new(42, 0, "demo".to_owned());
         simulation.construction_start(100, 100, 40, 0);
         for piece in [
             "LiftLevelToGentleUp",
@@ -66,12 +66,13 @@ mod proximity_benchmark_tests {
             let supports = simulation.proximity_supports();
             let support_ms = start.elapsed().as_secs_f64() * 1000.0;
             let construction = simulation.construction.as_ref().unwrap();
+            let demo_coaster = simulation.demo_coaster.as_ref().expect("demo park coaster");
             let start = Instant::now();
             let geometry = scan_proximity_with_supports(
                 &simulation.world,
                 construction.pieces(),
                 &construction.model().train,
-                simulation.circuit.pieces(),
+                demo_coaster.circuit.pieces(),
                 &obstacles,
                 &supports,
             );
@@ -94,7 +95,7 @@ mod proximity_benchmark_tests {
                 report_ms,
                 construction.model().train.cars,
                 construction.pieces().len(),
-                simulation.circuit.pieces().len(),
+                demo_coaster.circuit.pieces().len(),
                 obstacles.len(),
                 supports.len(),
                 report.samples.len(),

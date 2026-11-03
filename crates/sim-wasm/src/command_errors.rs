@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn block_command_errors_reach_both_player_messages() {
-        let mut simulation = crate::WasmSimulation::new(42, 0);
+        let mut simulation = crate::WasmSimulation::new(42, 0, String::from("demo"));
         assert!(!simulation.construction_auto_blocks());
         assert_eq!(
             simulation.construction_message(),

@@ -21,13 +21,17 @@ use crate::track::construction::Construction;
 use crate::world::World;
 use std::collections::BTreeMap;
 
+pub struct DemoCoaster {
+    pub circuit: Circuit,
+    pub train: Train,
+    pub train_configuration: TrainConfiguration,
+}
+
 pub struct Park {
     pub world: World,
     pub facilities: ParkFacilities,
     pub simulation: ParkGuests,
-    pub circuit: Circuit,
-    pub train: Train,
-    pub train_configuration: TrainConfiguration,
+    pub demo_coaster: Option<DemoCoaster>,
     pub construction: Option<Construction>,
     pub physics_remainder: u32,
     pub construction_train: Option<(Circuit, Train)>,
@@ -67,13 +71,21 @@ impl Park {
         train: Train,
         train_configuration: TrainConfiguration,
     ) -> Self {
+        let mut park = Self::new_empty(world, facilities, simulation);
+        park.demo_coaster = Some(DemoCoaster {
+            circuit,
+            train,
+            train_configuration,
+        });
+        park
+    }
+
+    pub fn new_empty(world: World, facilities: ParkFacilities, simulation: ParkGuests) -> Self {
         Self {
             world,
             facilities,
             simulation,
-            circuit,
-            train,
-            train_configuration,
+            demo_coaster: None,
             construction: None,
             physics_remainder: 0,
             construction_train: None,
@@ -120,9 +132,11 @@ impl Park {
         hash.write_u64(self.world.state_hash());
         hash.write_u64(self.facilities.state_hash());
         hash.write_u64(self.simulation.state_hash());
-        self.circuit.hash_into(&mut hash);
-        self.train.hash_into(&mut hash);
-        self.train_configuration.hash_into(&mut hash);
+        hash.write_option(self.demo_coaster.as_ref(), |hash, coaster| {
+            coaster.circuit.hash_into(hash);
+            coaster.train.hash_into(hash);
+            coaster.train_configuration.hash_into(hash);
+        });
         hash.write_option(self.construction.as_ref(), |hash, construction| {
             hash.write_u64(construction.state_hash());
         });

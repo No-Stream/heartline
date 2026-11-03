@@ -2,7 +2,7 @@ use super::WasmSimulation;
 
 #[test]
 fn scenery_snapshot_place_and_remove_use_stable_ids() {
-    let mut simulation = WasmSimulation::new(1, 0);
+    let mut simulation = WasmSimulation::new(1, 0, String::from("demo"));
     assert_ne!(simulation.scenery_json(), "[]");
     assert!(simulation.place_scenery("bench", 210, 245, 1, 2));
     simulation.tick();
@@ -20,7 +20,7 @@ fn scenery_snapshot_place_and_remove_use_stable_ids() {
 
 #[test]
 fn scenery_and_facilities_reject_overlap_in_both_directions() {
-    let mut simulation = WasmSimulation::new(1, 0);
+    let mut simulation = WasmSimulation::new(1, 0, String::from("demo"));
     assert!(!simulation.place_scenery("tree_oval", 220, 254, 0, 0));
     assert!(!simulation.place_scenery("tree_oval", 218, 256, 0, 0));
     assert!(!simulation.place_scenery("tree_oval", 210, 245, 0, 4));
@@ -56,10 +56,17 @@ fn scenery_identity_includes_height() {
 
 #[test]
 fn demo_scenery_does_not_intersect_track_or_facilities() {
-    let simulation = WasmSimulation::new(1, 0);
+    let simulation = WasmSimulation::new(1, 0, String::from("demo"));
     let track = super::track_support_obstacles(
-        simulation.circuit.pieces(),
-        &simulation.train_configuration,
+        simulation
+            .demo_coaster()
+            .expect("demo park")
+            .circuit
+            .pieces(),
+        &simulation
+            .demo_coaster()
+            .expect("demo park")
+            .train_configuration,
     );
     for scenery in simulation.world.scenery() {
         let bounds = scenery.clearance_box();

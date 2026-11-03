@@ -43,6 +43,7 @@ async function main() {
         if (wake) { wake(); wake = undefined; }
       };
       worker.onerror = (event) => { failure = new Error(event.message); if (wake) { wake(); wake = undefined; } };
+      worker.postMessage({ type: 'init', seed: 2026n, park: 'demo', guestCount: 12, frozen: false, manualBlockAnalysis: false });
       const receive = async (type) => {
         while (true) {
           if (failure) throw failure;

@@ -24,6 +24,7 @@ export function constructionRiderPositions(poses: Float32Array, riders: Uint32Ar
 
 export interface GameTest {
   ready: boolean;
+  tickCount(): number;
   guests(): readonly WorldSprite[];
   riders(): readonly { id: string; car: number; seat: number; x: number; y: number; z: number }[];
   facilities(): readonly Facility[];

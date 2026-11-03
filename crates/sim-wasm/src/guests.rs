@@ -9,12 +9,15 @@ impl WasmSimulation {
     /// Samples: piece index, position, lateral, up, cumulative distance. Positions and
     /// distance are in tiles (four metres); Z is up and vectors are unit length.
     pub fn coaster_geometry(&self) -> Vec<f32> {
+        let Some(coaster) = self.demo_coaster() else {
+            return Vec::new();
+        };
         let mut result = Vec::new();
         let mut start = 0.0;
-        for (index, piece) in self.circuit.pieces().iter().enumerate() {
+        for (index, piece) in coaster.circuit.pieces().iter().enumerate() {
             let intervals = (piece.length() / 2.0).ceil() as usize;
             for sample_index in 0..=intervals {
-                let distance = piece.length() * sample_index as f64 / intervals as f64;
+                let distance = piece.length() * (sample_index as f64 / intervals as f64);
                 append_pose(&mut result, index, piece.sample(distance));
                 result.push(((start + distance) / 4.0) as f32);
             }
@@ -26,28 +29,37 @@ impl WasmSimulation {
     /// Rail segments: piece index and start/end frames (position, lateral, up).
     /// Positions are in tiles; lateral and up are unit vectors.
     pub fn coaster_rails(&self) -> Vec<f32> {
-        render_rails(self.circuit.pieces(), &self.world)
+        self.demo_coaster().map_or_else(Vec::new, |coaster| {
+            render_rails(coaster.circuit.pieces(), &self.world)
+        })
     }
 
     /// Cross ties: piece index, endpoints, up, tangent. Positions are in tiles.
     /// Ties are spaced two metres apart over the complete circuit, including joins.
     pub fn coaster_ties(&self) -> Vec<f32> {
-        render_ties(self.circuit.pieces(), &self.world)
+        self.demo_coaster().map_or_else(Vec::new, |coaster| {
+            render_ties(coaster.circuit.pieces(), &self.world)
+        })
     }
 
     /// Segments: piece index, start position, end position, in tiles.
     pub fn coaster_supports(&self) -> Vec<f32> {
-        render_supports(self.circuit.pieces(), &self.world)
+        self.demo_coaster().map_or_else(Vec::new, |coaster| {
+            render_supports(coaster.circuit.pieces(), &self.world)
+        })
     }
 
     /// Cars: car index, position, tangent, up, occupied-seat bitmask.
     pub fn coaster_train_poses(&self) -> Vec<f32> {
-        let train = &self.train_configuration;
+        let Some(coaster) = self.demo_coaster() else {
+            return Vec::new();
+        };
+        let train = &coaster.train_configuration;
         let mut result = Vec::new();
         for index in 0..usize::from(train.cars) {
-            let distance =
-                self.train.distance() - index as f64 * train.length_metres / f64::from(train.cars);
-            let sample = self.circuit.sample(distance);
+            let distance = coaster.train.distance()
+                - index as f64 * train.length_metres / f64::from(train.cars);
+            let sample = coaster.circuit.sample(distance);
             result.push(index as f32);
             append_vector(&mut result, sample.position / 4.0);
             append_vector(&mut result, sample.tangent);

@@ -4,87 +4,119 @@ use super::*;
 #[wasm_bindgen]
 impl WasmSimulation {
     #[wasm_bindgen(constructor)]
-    pub fn new(seed: u64, agent_count: usize) -> Self {
-        let world = demo_world();
+    pub fn new(seed: u64, agent_count: usize, park: String) -> Self {
+        let is_demo_park = match park.as_str() {
+            "demo" => true,
+            "new" => false,
+            _ => panic!("unknown park preset: {park}"),
+        };
+        let entrance_position = Position {
+            x: 218,
+            y: 246,
+            height: 8,
+        };
+        let entrance_path = Position {
+            x: 218,
+            y: 250,
+            height: 8,
+        };
+        let mut world = if is_demo_park {
+            demo_world()
+        } else {
+            World::new(
+                512,
+                512,
+                Surface {
+                    corners: [8; 4],
+                    water: None,
+                },
+            )
+        };
+        if !is_demo_park {
+            for y in 250..252 {
+                world.place_path(theme_park_sim::world::Path {
+                    position: Position {
+                        x: 218,
+                        y,
+                        height: 8,
+                    },
+                    slope: None,
+                });
+            }
+        }
         let mut facilities = ParkFacilities::new();
         facilities
             .place(
                 &world,
                 FacilityKind::Entrance,
-                Position {
-                    x: 218,
-                    y: 246,
-                    height: 8,
-                },
+                entrance_position,
                 Direction::South,
             )
-            .expect("demo entrance placement");
-        for (x, kind) in [
-            (220, FacilityKind::Food),
-            (223, FacilityKind::Drink),
-            (226, FacilityKind::Restroom),
-            (229, FacilityKind::Souvenir),
-            (232, FacilityKind::Carousel),
-            (235, FacilityKind::FerrisWheel),
-        ] {
-            facilities
-                .place(
-                    &world,
-                    kind,
-                    Position {
-                        x,
-                        y: 254,
-                        height: 8,
-                    },
-                    Direction::South,
-                )
-                .expect("demo facility placement");
+            .expect("park entrance placement");
+        if is_demo_park {
+            for (x, kind) in [
+                (220, FacilityKind::Food),
+                (223, FacilityKind::Drink),
+                (226, FacilityKind::Restroom),
+                (229, FacilityKind::Souvenir),
+                (232, FacilityKind::Carousel),
+                (235, FacilityKind::FerrisWheel),
+            ] {
+                facilities
+                    .place(
+                        &world,
+                        kind,
+                        Position {
+                            x,
+                            y: 254,
+                            height: 8,
+                        },
+                        Direction::South,
+                    )
+                    .expect("demo facility placement");
+            }
         }
-        let mut simulation = ParkGuests::new(
-            seed,
-            agent_count,
-            &world,
-            Position {
-                x: 218,
-                y: 250,
-                height: 8,
-            },
-            agent_count.max(1),
-        );
+        let mut simulation =
+            ParkGuests::new(seed, agent_count, &world, entrance_path, agent_count.max(1));
         simulation.open_with_guests(&facilities.guest_facilities(&world));
-        let circuit = demo_circuit();
-        let train_configuration = hybrid_model().train;
-        for building in facilities.buildings() {
-            assert!(
-                !facility_intersects_track(
-                    building.kind,
-                    building.position,
-                    building.direction,
-                    circuit.pieces(),
-                    &train_configuration
-                ),
-                "demo facility intersects track"
+        let park = if is_demo_park {
+            let circuit = demo_circuit();
+            let train_configuration = hybrid_model().train;
+            for building in facilities.buildings() {
+                assert!(
+                    !facility_intersects_track(
+                        building.kind,
+                        building.position,
+                        building.direction,
+                        circuit.pieces(),
+                        &train_configuration
+                    ),
+                    "demo facility intersects track"
+                );
+            }
+            let train = Train::new(
+                &circuit,
+                &train_configuration,
+                PhysicsConfig {
+                    lift_speed: 5.0,
+                    ..PhysicsConfig::default()
+                },
+                0.0,
+                2.0,
             );
-        }
-        let train = Train::new(
-            &circuit,
-            &train_configuration,
-            PhysicsConfig {
-                lift_speed: 5.0,
-                ..PhysicsConfig::default()
-            },
-            0.0,
-            2.0,
-        );
-        Self {
-            park: Park::new(
+            Park::new(
                 world,
                 facilities,
                 simulation,
                 circuit,
                 train,
                 train_configuration,
-            ),
+            )
+        } else {
+            Park::new_empty(world, facilities, simulation)
+        };
+        Self {
+            park,
             facility_message: String::new(),
             path_message: String::new(),
             terrain_message: String::new(),

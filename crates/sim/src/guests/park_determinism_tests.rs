@@ -238,7 +238,7 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
         .collect();
     Replay {
         park_state_hash: park.state_hash(),
-        demo_train_state: park.train.state_hash(),
+        demo_train_state: park.demo_coaster.as_ref().unwrap().train.state_hash(),
         park,
         train_states,
         events,

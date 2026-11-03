@@ -21,22 +21,19 @@ type PathAction =
   | { readonly type: "path-preview"; readonly requestId?: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
-type WorkerAction = SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
+type InitAction = { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean };
+type WorkerAction = InitAction | { type: "set-speed"; speed: number } | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
-const workerName = (self as unknown as { name?: string }).name ?? "";
-const manualBlockAnalysis = workerName === "theme-park-test-manual" || workerName.startsWith("theme-park-test-manual:");
-const testPrefix = manualBlockAnalysis ? "theme-park-test-manual" : "theme-park-test";
-const testMode = workerName === testPrefix || workerName.startsWith(`${testPrefix}:`);
-const testGuestCount = workerName.startsWith(`${testPrefix}:`) ? Number(workerName.slice(testPrefix.length + 1)) : 12;
-if (!Number.isInteger(testGuestCount) || testGuestCount < 1 || testGuestCount > 500) throw new RangeError("Invalid test guest count");
+let manualBlockAnalysis = false;
+let simulationPaused = false;
+let gameSpeed = 1;
 const workerScope = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
   addEventListener(type: "message", listener: (event: MessageEvent<WorkerAction>) => void): void;
 };
 let simulation: WasmSimulation;
 let clock = createSimulationClock(tickRate, 4);
-let simulationPaused = testMode;
 let lastWakeup: number;
 let coasterGeometrySent = false;
 let lastConstructionMessage = "";
@@ -71,7 +68,7 @@ function advanceBlockAnalysis(budget: number): boolean {
 
 function wake(forceSnapshot = false): void {
   const now = performance.now();
-  const result = advanceSimulation(clock, now - lastWakeup);
+  const result = advanceSimulation(clock, now - lastWakeup, gameSpeed);
   lastWakeup = now;
   clock = result.clock;
   if (!simulationPaused) {
@@ -190,20 +187,32 @@ function pathRouteCoordinates(start: PathPosition, end: PathPosition): Int32Arra
   return Int32Array.of(start.x, start.y, start.z, end.x, end.y, end.z);
 }
 
-const initialized = init().then(() => {
-  simulation = new WasmSimulation(2026n, testGuestCount);
-  sendWorld();
-  sendFacilities();
-  sendScenery();
-  workerScope.postMessage({ type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
-  workerScope.postMessage({ type: "ready" });
-  lastWakeup = performance.now();
-  wake(true);
-});
-
+let initialized: Promise<void> | undefined;
 workerScope.addEventListener("message", (event) => {
+  const action = event.data;
+  if (action.type === "init") {
+    if (initialized) throw new Error("Worker already initialized");
+    manualBlockAnalysis = action.manualBlockAnalysis;
+    simulationPaused = action.frozen;
+    initialized = init().then(() => {
+      simulation = new WasmSimulation(action.seed, action.guestCount, action.park);
+      sendWorld();
+      sendFacilities();
+      sendScenery();
+      workerScope.postMessage({ type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
+      workerScope.postMessage({ type: "ready" });
+      lastWakeup = performance.now();
+      wake(true);
+    });
+    return;
+  }
+  if (!initialized) throw new Error("Worker must be initialized first");
   void initialized.then(() => {
-    const action = event.data;
+    if (action.type === "set-speed") {
+      if (!Number.isInteger(action.speed) || action.speed < 1 || action.speed > 16) throw new RangeError("Invalid game speed");
+      gameSpeed = action.speed;
+      return;
+    }
     if (action.type === "test-advance-block-analysis") {
       if (!manualBlockAnalysis) throw new Error("Test block analysis advancement is disabled");
       validateBlockAnalysisBudget(action.budget);

@@ -2,7 +2,7 @@ import init, { WasmSimulation } from '../src/wasm/theme_park_sim_wasm.js';
 
 try {
   await init();
-  const simulation = new WasmSimulation(2026n, 12);
+  const simulation = new WasmSimulation(2026n, 12, 'demo');
   simulation.construction_start(50, 50, 160, 0);
   const pieces = [
     ...Array(72).fill('Straight'), 'TurnSmallStandalone', 'TurnSmallStandalone',

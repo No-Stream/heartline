@@ -63,25 +63,30 @@ impl Park {
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
             let mut report_finished = false;
-            self.train.step(&self.circuit);
-            let demo_trains: Vec<_> = self
-                .train
-                .readings()
-                .last()
-                .expect("step produces readings")
-                .iter()
-                .map(|reading| {
-                    let sample = self.circuit.sample(reading.distance);
-                    TrainPosition {
-                        position: sample.position,
-                        tangent: sample.tangent,
-                        piece_index: self.circuit.piece_index(reading.distance),
-                        distance: reading.distance.rem_euclid(self.circuit.length()),
-                        speed: reading.speed,
-                    }
-                })
-                .collect();
-            self.train.take_readings();
+            let demo_trains: Vec<_> = if let Some(coaster) = &mut self.demo_coaster {
+                coaster.train.step(&coaster.circuit);
+                let positions = coaster
+                    .train
+                    .readings()
+                    .last()
+                    .expect("step produces readings")
+                    .iter()
+                    .map(|reading| {
+                        let sample = coaster.circuit.sample(reading.distance);
+                        TrainPosition {
+                            position: sample.position,
+                            tangent: sample.tangent,
+                            piece_index: coaster.circuit.piece_index(reading.distance),
+                            distance: reading.distance.rem_euclid(coaster.circuit.length()),
+                            speed: reading.speed,
+                        }
+                    })
+                    .collect();
+                coaster.train.take_readings();
+                positions
+            } else {
+                Vec::new()
+            };
             if self.coaster_open && !self.block_layout_change_pending() {
                 while let Some(train_id) = {
                     let operation = self
@@ -181,7 +186,9 @@ impl Park {
                         &self.world,
                         construction.pieces(),
                         &construction.model().train,
-                        self.circuit.pieces(),
+                        self.demo_coaster
+                            .as_ref()
+                            .map_or(&[], |coaster| coaster.circuit.pieces()),
                         &obstacles,
                         &supports,
                     );
@@ -191,7 +198,6 @@ impl Park {
             }
             self.physics_remainder -= 30;
         }
-        self.train.take_readings();
     }
 
     pub fn block_layout_change_pending(&self) -> bool {
@@ -289,7 +295,9 @@ impl Park {
             &self.world,
             construction.pieces(),
             &construction.model().train,
-            self.circuit.pieces(),
+            self.demo_coaster
+                .as_ref()
+                .map_or(&[], |coaster| coaster.circuit.pieces()),
             &obstacles,
             &supports,
         );

@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { validateBlockAnalysisBudget } from "../game-test";
 
-const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn(), constructionActive: vi.fn(() => false), constructionTrainPoses: vi.fn(() => new Float32Array()), advanceBlockAnalysis: vi.fn((_budget: number) => false), blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}') }));
+const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), construct: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn(), constructionActive: vi.fn(() => false), constructionTrainPoses: vi.fn(() => new Float32Array()), advanceBlockAnalysis: vi.fn((_budget: number) => false), blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}') }));
 
 it("rejects block analysis budgets outside the supported range", () => {
   expect(() => validateBlockAnalysisBudget(1)).not.toThrow();
@@ -15,6 +15,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   default: wasmMock.initialize,
   piece_shapes_json: wasmMock.pieceShapes,
   WasmSimulation: class {
+    constructor(seed: bigint, guestCount: number, park: string) { wasmMock.construct(seed, guestCount, park); }
     scenery_json() { return "[]"; }
     facilities_json() { return "[]"; }
     facility_revenue() { return 0n; }
@@ -44,6 +45,8 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     coaster_train_poses() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
+    construction_coaster_price() { return 0; }
+    construction_coaster_income() { return 0; }
     construction_block_report_json() { return wasmMock.blockReport(); }
     construction_train_count() { return 1; }
     construction_start() { wasmMock.constructionActive.mockReturnValue(true); }
@@ -76,6 +79,7 @@ afterEach(() => {
   vi.resetModules();
   wasmMock.tick.mockReset();
   wasmMock.initialize.mockReset();
+  wasmMock.construct.mockReset();
   wasmMock.pathPreview.mockReset();
   wasmMock.pathBuild.mockReset();
   wasmMock.pathRemove.mockReset();
@@ -91,6 +95,7 @@ it("sends block analysis progress without rebuilding construction geometry", asy
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
   await Promise.resolve();
   onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
   await Promise.resolve();
@@ -109,6 +114,7 @@ it("advances block analysis only when requested in test mode", async () => {
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
   await Promise.resolve();
   onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
   await Promise.resolve();
@@ -127,6 +133,7 @@ it("continues block analysis on a timer in live mode", async () => {
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
   onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
   await Promise.resolve();
@@ -143,6 +150,7 @@ it("echoes the preview request id and reports invalid tiles", async () => {
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
   onMessage({ data: { type: "path-preview", requestId: 7, start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 0, z: 0 }, kind: "normal", style: 0 } } as MessageEvent);
   await Promise.resolve();
@@ -157,6 +165,7 @@ it("reports an out-of-world path preview without rendering the error record", as
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
 
   onMessage({ data: { type: "path-preview", requestId: 8, start: { x: 0, y: 0, z: 0 }, end: { x: 3, y: 0, z: 0 }, kind: "normal", style: 0 } } as MessageEvent);
@@ -173,6 +182,7 @@ it("echoes path command request ids so the controller can ignore stale results",
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
 
   onMessage({ data: { type: "path-build", requestId: 19, start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 0, z: 0 }, kind: "normal", style: 0 } } as MessageEvent);
@@ -196,6 +206,7 @@ it("refreshes an open guest detail twice per second and stops after close", asyn
     addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; },
   });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
 
   onMessage({ data: { type: "guest-detail-request", guestId: "guest-10" } } as MessageEvent);
@@ -222,6 +233,7 @@ it("refreshes the world after facilities are placed or removed", async () => {
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
   postMessage.mockClear();
   onMessage({ data: { type: "facility-place", kind: "carousel", x: 0, y: 0, rotation: 0 } } as MessageEvent);
@@ -238,9 +250,11 @@ it("does not request construction train poses before a coaster is under construc
   wasmMock.initialize.mockResolvedValue(undefined);
   wasmMock.constructionTrainPoses.mockImplementation(() => { throw new Error("Construction train does not exist"); });
   const postMessage = vi.fn();
-  vi.stubGlobal("self", { postMessage, addEventListener: vi.fn() });
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
 
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
   await Promise.resolve();
 
@@ -255,9 +269,28 @@ it("refreshes the world after coaster construction changes", async () => {
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
   await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
   await Promise.resolve();
   postMessage.mockClear();
   onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
   await Promise.resolve();
   expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
+});
+
+
+it("initializes the requested park and scales live ticks", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 99n, park: "new", guestCount: 25, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(wasmMock.construct).toHaveBeenCalledExactlyOnceWith(99n, 25, "new");
+  onMessage({ data: { type: "set-speed", speed: 4 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(wasmMock.tick.mock.calls.length).toBeGreaterThanOrEqual(8);
 });

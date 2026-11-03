@@ -103,7 +103,8 @@ fn state_hash_is_reproducible_and_covers_live_park_state() {
     assert_ne!(baseline_hash, behavior_changed.state_hash());
 
     let mut train_changed = empty_park();
-    train_changed.train.step(&train_changed.circuit);
+    let coaster = train_changed.demo_coaster.as_mut().unwrap();
+    coaster.train.step(&coaster.circuit);
     assert_ne!(baseline_hash, train_changed.state_hash());
 
     let mut construction_changed = empty_park();
@@ -117,4 +118,15 @@ fn state_hash_is_reproducible_and_covers_live_park_state() {
         hybrid_model(),
     ));
     assert_ne!(baseline_hash, construction_changed.state_hash());
+}
+
+#[test]
+fn park_without_demo_coaster_ticks_and_has_distinct_state() {
+    let demo_park = empty_park();
+    let demo_hash = demo_park.state_hash();
+    let mut park = Park::new_empty(demo_park.world, demo_park.facilities, demo_park.simulation);
+    assert!(park.demo_coaster.is_none());
+    assert_ne!(park.state_hash(), demo_hash);
+    park.tick();
+    assert!(park.demo_coaster.is_none());
 }

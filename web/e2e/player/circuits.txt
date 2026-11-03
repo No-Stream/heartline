@@ -1,0 +1,24 @@
+# Timber Tumbler: existing lift and drop circuit, station at (100, 100, 40), heading east.
+[Timber Tumbler]
+LiftLevelToGentleUp
+Lift
+Lift
+Lift
+Lift
+Lift
+LiftGentleUpToLevel
+LiftFlat
+Straight
+Straight
+TurnLargeEntry
+TurnLargeExit
+LevelToGentleDown
+GentleDown
+GentleDown
+GentleDown
+GentleDown
+GentleDown
+GentleDownToLevel
+Loop
+TurnLargeEntry
+TurnLargeExit
