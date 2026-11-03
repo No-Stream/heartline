@@ -1,10 +1,10 @@
 ---
 id: TASK-51
 title: Check mirrored pieces in construction's reused validation results
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 16:47'
-updated_date: '2026-11-03 18:14'
+updated_date: '2026-11-03 18:33'
 labels:
   - refactor
   - coaster
@@ -26,7 +26,7 @@ Track review finding 5: construction reuses an earlier choice's validation resul
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A regression test with an asymmetric obstacle compares reused and individual validation for mirrored pieces, and the key includes orientation if it fails; facility placement uses the player's model envelope
-- [ ] #2 Behaviour is unchanged unless stated, and the relevant tests pass while editing, with make ci green at the end
+- [x] #2 Behaviour is unchanged unless stated, and the relevant tests pass while editing, with make ci green at the end
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -35,4 +35,6 @@ Track review finding 5: construction reuses an earlier choice's validation resul
 Mirrored hypothesis confirmed and fixed in this commit. Remaining: place_facility_at in crates/sim-wasm/src/lib.rs should check demo pieces with the demo train and construction pieces plus segments with construction.model().train; apply when the bridge is free.
 
 Facility placement now checks demo circuit pieces with the demo train configuration and construction pieces plus disconnected segments with the construction model train configuration. Added a bridge regression test using a deliberately wider model train; current coaster models share an envelope, so a production-model-only test cannot distinguish them without a custom test model. The test exercises the separation helper with distinct configurations and verifies both track sets use their assigned envelope. Targeted theme-park-sim-wasm tests passed; make ci was not run per task scope.
+
+make ci green at 42159ac on 2026-11-03.
 <!-- SECTION:NOTES:END -->
