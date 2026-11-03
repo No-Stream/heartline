@@ -74,7 +74,7 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   await page.evaluate((id) => {
     const rider = window.gameTest.riders().find((entry) => entry.id === id);
     if (!rider) throw new Error("Rider disappeared before selection");
-    window.gameTest.setCamera({ centerX: rider.x, centerY: rider.y, zoom: 2, rotation: 0 });
+    window.gameTest.setCamera({ centerX: rider.x - rider.z, centerY: rider.y - rider.z, zoom: 2, rotation: 0 });
   }, riderId);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   const pick = await page.evaluate((id) => {
@@ -89,12 +89,12 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   }, riderId);
   if (!pick) throw new Error(`Rider ${riderId} was not visible and pickable`);
   await page.locator("canvas").scrollIntoViewIfNeeded();
+  await expect(page.locator("canvas")).toHaveScreenshot("coaster-boarding.png", { animations: "disabled" });
   const bounds = await page.locator("canvas").boundingBox();
   if (!bounds) throw new Error("Canvas is not visible");
   await page.mouse.click(bounds.x + pick.x * bounds.width / 800, bounds.y + pick.y * bounds.height / 500);
   await expect(page.locator("canvas")).toHaveAttribute("data-selection", new RegExp(`"id":"${riderId}"`));
   await expect(page.getByTestId("guest-panel")).toHaveAttribute("data-guest-id", riderId);
-  await expect(page.locator("canvas")).toHaveScreenshot("coaster-boarding.png", { animations: "disabled" });
   let exited = false;
   for (let ticks = 0; ticks < 100_000 && !exited; ticks += 100) {
     await page.evaluate(() => window.gameTest.advanceTicks(100));
@@ -103,8 +103,10 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   }
   expect(exited).toBe(true);
   await page.evaluate((id) => window.gameTest.requestGuestDetail(id), riderId);
-  await expect.poll(() => page.evaluate((id) => window.gameTest.guestDetail()?.id === id, riderId)).toBe(true);
-  expect(await page.evaluate(() => window.gameTest.guestDetail()?.memories.some((memory) => memory.kind === "ride"))).toBe(true);
+  await expect.poll(() => page.evaluate((id) => {
+    const detail = window.gameTest.guestDetail();
+    return detail?.id === id && detail.memories.some((memory) => memory.kind === "ride" && memory.rideId === 0xffff_ffff);
+  }, riderId)).toBe(true);
 });
 
 async function clickWorld(page: Page, x: number, y: number, z: number): Promise<void> {
