@@ -6,7 +6,7 @@
 
 **Architecture:** A deterministic Rust simulation runs in a web worker as WebAssembly, and also builds natively for tests and multi-thread proofs. A TypeScript main thread draws transferred state snapshots with a GPU renderer and hosts the interface. Track geometry is data, and art is vector drawing rendered into cached sprite textures.
 
-**Tech Stack:** Rust, WebAssembly (wasm-bindgen), TypeScript, Vite, WebGPU and WebGL2 (PixiJS v8 or a thin custom renderer, decided by benchmark), Playwright, static hosting.
+**Tech Stack:** Rust, WebAssembly (wasm-bindgen), TypeScript, Vite, a custom instanced WebGL2 renderer (chosen by benchmark), Playwright, static hosting.
 
 **Spec:** `docs/superpowers/specs/2026-11-02-theme-park-sim-design.md`
 
@@ -23,7 +23,7 @@ Step-by-step plans for every subsystem now would be invented detail. The rendere
 - Guests walk, never hop. Thoughts appear only in the click-in panel, with no speech bubbles in the park.
 - Simulation results are identical at any thread count for the same seed and inputs.
 - The browser build stays on stable Rust and one thread until a benchmark justifies a change.
-- The renderer works on both WebGPU and WebGL2.
+- The renderer is the custom instanced WebGL2 renderer, which runs in every target browser.
 - Performance targets: 10,000 guests at 60 frames per second on the owner's desktop GPU and at least 30 on a mid-range laptop, with maps of at least 512 by 512 tiles.
 - Input code must not assume a mouse.
 
