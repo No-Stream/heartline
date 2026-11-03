@@ -4,6 +4,7 @@
   --paper: #f2eadb;
   --paper-deep: #e8dcc6;
   --page: #e9e0cf;
+  --canvas-paper: #fff;
   --ink: #3a2e58;
   --ink-soft: color-mix(in srgb, var(--ink) 62%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink) 22%, var(--paper));
@@ -11,8 +12,16 @@
   --coral: #dc5c3e;
   --mustard: #e9ab38;
   --slate: #3f61a6;
-  --key-line: 1px solid color-mix(in srgb, var(--ink) 55%, transparent);
-  --hairline: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  --wood: #d88440;
+  --train: #9fbbb1;
+  --guest-paper: #fbf5e9;
+  --guest-ink: var(--ink);
+  --guest-wood: var(--wood);
+  --guest-steel: var(--coral);
+  --guest-train: var(--train);
+  --transparent: transparent;
+  --key-line: 1px solid color-mix(in srgb, var(--ink) 55%, var(--transparent));
+  --hairline: 1px solid color-mix(in srgb, var(--ink) 20%, var(--transparent));
   --heading-font: "Futura", "Avenir Next", "Century Gothic", "Trebuchet MS", system-ui, sans-serif;
   --body-font: Georgia, "Times New Roman", serif;
 }
@@ -25,7 +34,7 @@
   font: 0.86rem/1.35 var(--body-font);
 }
 .tool-panel *, .tool-panel *::before, .tool-panel *::after { box-sizing: border-box; }
-.tool-panel[hidden], .tool-panel [hidden] { display: none !important; }
+.tool-panel[hidden], .tool-panel [hidden] { display: none; }
 .tool-panel p, .tool-panel h3 { margin: 0; }
 .tool-panel :focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
 
@@ -113,31 +122,31 @@
   min-height: 2rem;
   padding: 0.25rem 0.5rem 0.25rem 0.65rem;
 }
-.tool-panel__action--primary {
-  color: var(--paper) !important;
-  background: var(--ink) !important;
+.tool-panel button.tool-panel__action--primary {
+  color: var(--paper);
+  background: var(--ink);
   box-shadow: 2px 2px 0 var(--coral);
 }
-.tool-panel__action--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--coral)) !important; }
-.tool-panel__action--primary:disabled { background: var(--ink-faint) !important; box-shadow: none; }
-.tool-panel__action--primary kbd { color: var(--paper); border-color: color-mix(in srgb, var(--paper) 60%, transparent); }
-.tool-panel__action--quiet {
+.tool-panel button.tool-panel__action--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--coral)); }
+.tool-panel button.tool-panel__action--primary:disabled { background: var(--ink-faint); box-shadow: none; }
+.tool-panel__action--primary kbd { color: var(--paper); border-color: color-mix(in srgb, var(--paper) 60%, var(--transparent)); }
+.tool-panel button.tool-panel__action--quiet {
   min-height: auto;
   padding: 0.15rem 0.25rem;
-  border-color: transparent !important;
-  background: transparent !important;
+  border-color: var(--transparent);
+  background: var(--transparent);
   color: var(--ink-soft);
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-decoration-color: color-mix(in srgb, currentColor 45%, var(--transparent));
   text-underline-offset: 0.15em;
 }
-.tool-panel__action--quiet:hover:not(:disabled) { color: var(--ink); }
+.tool-panel button.tool-panel__action--quiet:hover:not(:disabled) { color: var(--ink); background: var(--transparent); border-color: var(--transparent); }
 
 .tool-panel kbd {
   display: inline-block;
   min-width: 1.15rem;
   padding: 0 0.2rem;
-  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 45%, var(--transparent));
   border-bottom-width: 2px;
   border-radius: 3px;
   font: 600 0.62rem/1.2rem var(--heading-font);
@@ -191,7 +200,7 @@
   border-bottom: 2px solid var(--ink);
   border-radius: 0;
   color: var(--ink);
-  background: transparent;
+  background: var(--transparent);
   font: italic 0.95rem/1.2 var(--body-font);
   text-align: center;
   appearance: textfield;
@@ -218,6 +227,7 @@
 
 @keyframes tool-panel-ink-in { from { opacity: 0.2; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
 
+/* Important is required here so component-level motion rules cannot override an explicit user preference. */
 @media (prefers-reduced-motion: reduce) {
   .tool-panel *, .tool-panel *::before, .tool-panel *::after { animation: none !important; transition: none !important; }
 }

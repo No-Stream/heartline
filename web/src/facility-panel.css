@@ -7,17 +7,17 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.3rem;
 }
-.facility-tile {
+.tool-panel button.facility-tile {
   display: grid;
   justify-items: center;
   gap: 0.1rem;
-  padding: 0.3rem 0.15rem 0.25rem !important;
-  border: var(--hairline) !important;
+  padding: 0.3rem 0.15rem 0.25rem;
+  border: var(--hairline);
 }
-.facility-tile:hover { border-color: var(--ink) !important; }
-.facility-tile[aria-checked="true"] {
-  background: color-mix(in srgb, var(--mustard) 22%, var(--paper)) !important;
-  border: 1.5px solid var(--ink) !important;
+.tool-panel button.facility-tile:hover { border-color: var(--ink); }
+.tool-panel button.facility-tile[aria-checked="true"] {
+  background: color-mix(in srgb, var(--mustard) 22%, var(--paper));
+  border: 1.5px solid var(--ink);
   box-shadow: 2px 2px 0 var(--mustard);
 }
 .facility-tile__name { font-size: 0.72rem; line-height: 1.15; text-align: center; }
@@ -38,7 +38,7 @@
   align-items: center;
   gap: 0.45rem;
   padding: 0.15rem 0;
-  border-bottom: 1px dotted color-mix(in srgb, var(--ink) 25%, transparent);
+  border-bottom: 1px dotted color-mix(in srgb, var(--ink) 25%, var(--transparent));
 }
 .facility-price:last-child { border-bottom: 0; }
 .facility-price__number { color: var(--ink-soft); font: italic 0.76rem/1 var(--body-font); }

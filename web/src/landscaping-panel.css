@@ -15,7 +15,7 @@
 .landscaping__underground input { width: 100%; accent-color: var(--coral); }
 .landscaping__underground output { text-align: right; font-variant-numeric: tabular-nums; }
 .landscaping__hint { padding-top: 0.6rem; }
-.landscaping__status { margin-top: 0.55rem !important; }
+.tool-panel p.landscaping__status { margin-top: 0.55rem; }
 
 @media (max-width: 360px) {
   .landscaping__underground label { grid-template-columns: 1fr 2rem; }

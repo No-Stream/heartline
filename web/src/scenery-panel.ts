@@ -1,5 +1,6 @@
 import { SCENERY_SETS, type SceneryKind } from "./scenery-tool";
 import type { FacilityArt } from "./facility-panel";
+import "./print-modern.css";
 import "./scenery-panel.css";
 
 const names = (kind: string): string => kind.split("_").map((word) => word[0].toUpperCase() + word.slice(1)).join(" ");
@@ -8,7 +9,7 @@ const directional = new Set<SceneryKind>(["flower_bed", "bench", "lamp", "fence"
 export function createSceneryPanel(container: HTMLElement, art: FacilityArt, place: (kind: SceneryKind, rotation: number) => void, remove: () => void, cancel: () => void) {
   container.classList.add("tool-panel", "scenery-panel");
   container.innerHTML = `<header class="tool-panel__header"><div><p class="tool-panel__eyebrow">Decorate the park</p><h2>Scenery</h2></div></header>
-    ${Object.entries(SCENERY_SETS).map(([theme, kinds]) => `<section class="tool-panel__section"><h3>${theme}</h3><div class="scenery-panel__items" role="group" aria-label="${theme} scenery">${kinds.map((kind) => `<button type="button" data-scenery-kind="${kind}" aria-pressed="${kind === "tree_oval"}"><span>${names(kind)}</span></button>`).join("")}</div></section>`).join("")}
+    ${Object.entries(SCENERY_SETS).map(([theme, kinds]) => `<section class="tool-panel__section"><h3>${theme}</h3><div class="scenery-panel__items" role="group" aria-label="${theme} scenery">${kinds.map((kind) => `<button type="button" class="tool-panel__action" data-scenery-kind="${kind}" aria-pressed="${kind === "tree_oval"}"><span>${names(kind)}</span></button>`).join("")}</div></section>`).join("")}
     <div class="tool-panel__section"><div class="stepper" role="group" aria-label="Scenery direction"><span class="tool-panel__label">Direction</span><button type="button" data-turn="-1" aria-label="Turn scenery anticlockwise">−</button><span class="stepper__value" data-direction></span><button type="button" data-turn="1" aria-label="Turn scenery clockwise">+</button></div>
     <p class="tool-panel__hint">Choose scenery and a direction, then click a tile to place it.</p>
     <div class="scenery-panel__actions"><button type="button" class="tool-panel__action tool-panel__action--primary" data-place>Place scenery</button><button type="button" class="tool-panel__action" data-remove>Remove scenery</button><button type="button" class="tool-panel__action tool-panel__action--quiet" data-cancel>Cancel</button></div><p class="tool-panel__status" role="status" aria-live="polite"></p></div>`;

@@ -1,4 +1,3 @@
-import type { Atlas } from "../render/scene";
 import { activityLabel, memoryLabel, relationshipLabel, thoughtLabel, traitSummary } from "./presentation";
 import type { GuestDetail } from "./protocol";
 import "./guest-panel.css";
@@ -43,10 +42,8 @@ const NEEDS = [
 /** Creates an accessible DOM panel that stays beside its selected guest. */
 export function createGuestPanel(
   canvas: HTMLCanvasElement,
-  themeStyle: Atlas["themeStyle"],
   callbacks: GuestPanelCallbacks,
 ): GuestPanel {
-  if (!themeStyle) throw new Error("Atlas is missing guest panel theme style");
   const root = document.createElement("aside");
   root.dataset.testid = "guest-panel";
   root.setAttribute("role", "dialog");
@@ -86,10 +83,6 @@ export function createGuestPanel(
       <ul class="guest-panel__memories" data-panel-memories></ul>
     </section>`;
   document.body.append(root);
-  root.style.setProperty("--guest-ink", themeStyle.ink);
-  root.style.setProperty("--guest-steel", themeStyle.steel);
-  root.style.setProperty("--guest-wood", themeStyle.wood);
-  root.style.setProperty("--guest-train", themeStyle.train);
 
   const name = root.querySelector<HTMLElement>("[data-testid='guest-name']")!;
   const eyebrow = root.querySelector<HTMLElement>("[data-panel-eyebrow]")!;

@@ -1,9 +1,4 @@
 [data-testid="guest-panel"] {
-  --guest-paper: #fbf5e9;
-  --guest-ink: #352b4f;
-  --guest-wood: #d88440;
-  --guest-steel: #dc5c3e;
-  --guest-train: #9fbbb1;
   position: fixed;
   z-index: 20;
   box-sizing: border-box;
@@ -13,9 +8,9 @@
   padding: 0.85rem 1rem 1rem;
   color: var(--guest-ink);
   background: var(--guest-paper);
-  border: 1px solid color-mix(in srgb, var(--guest-ink) 36%, transparent);
+  border: 1px solid color-mix(in srgb, var(--guest-ink) 36%, var(--transparent));
   border-radius: 0.2rem;
-  box-shadow: 0 0.45rem 1.4rem color-mix(in srgb, var(--guest-ink) 18%, transparent);
+  box-shadow: 0 0.45rem 1.4rem color-mix(in srgb, var(--guest-ink) 18%, var(--transparent));
   font: 0.88rem/1.35 Georgia, "Times New Roman", serif;
 }
 
@@ -29,7 +24,7 @@
   align-items: start;
   gap: 0.25rem 0.75rem;
   padding-bottom: 0.65rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--guest-ink) 24%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--guest-ink) 24%, var(--transparent));
 }
 
 .guest-panel__eyebrow,
@@ -56,10 +51,10 @@
   grid-row: 1 / span 2;
   width: 2rem;
   height: 2rem;
-  border: 1px solid color-mix(in srgb, var(--guest-ink) 32%, transparent);
+  border: 1px solid color-mix(in srgb, var(--guest-ink) 32%, var(--transparent));
   border-radius: 50%;
   color: var(--guest-ink);
-  background: transparent;
+  background: var(--transparent);
   font: 1.1rem/1 system-ui, sans-serif;
   cursor: pointer;
 }
@@ -103,9 +98,9 @@
   gap: 0.5rem;
   padding: 0.18rem 0.3rem;
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--guest-ink) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--guest-ink) 14%, var(--transparent));
   color: inherit;
-  background: transparent;
+  background: var(--transparent);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -180,7 +175,7 @@
 
 .guest-panel__memories li {
   padding-left: 0.65rem;
-  border-left: 1px solid color-mix(in srgb, var(--guest-ink) 24%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--guest-ink) 24%, var(--transparent));
 }
 
 @media (prefers-reduced-motion: no-preference) {

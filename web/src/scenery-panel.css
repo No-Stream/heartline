@@ -1,5 +1,4 @@
 .scenery-panel__items { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.scenery-panel__items button { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 76px; padding: 4px; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--ink-faint); cursor: pointer; }
-.scenery-panel__items button[aria-pressed="true"] { background: color-mix(in srgb, var(--teal) 22%, var(--paper)); border-color: var(--ink); }
+.scenery-panel__items button { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 76px; padding: 4px; }
 .scenery-panel__items span { font-size: 0.75rem; text-align: center; }
 .scenery-panel__actions { display: flex; flex-wrap: wrap; gap: 6px; }

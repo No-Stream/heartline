@@ -1,3 +1,5 @@
+import "./print-modern.css";
+import "./app.css";
 import { buildFacilityGeometry, facilitySprites, type Facility, type FacilityKind } from "./facilities";
 import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
@@ -127,7 +129,7 @@ let testingReportJson = "";
 const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), (metric) => { testingMetric = metric; gameTest.ready = false; });
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
-const guestPanel = createGuestPanel(gameCanvas, atlas.themeStyle, {
+const guestPanel = createGuestPanel(gameCanvas, {
   onSelectGuestId(id) {
     selectedGuestId = id;
     worker.postMessage({ type: "guest-detail-request", guestId: id });

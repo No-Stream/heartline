@@ -8,4 +8,4 @@
 .path-panel__actions .tool-panel__action--quiet { grid-column: 1 / -1; justify-self: start; }
 .path-panel__hint { padding-top: 0.65rem; }
 /* A fixed height, so a longer refusal scrolls instead of moving the controls during a drag. */
-.path-panel__status { height: 1.2rem; overflow-y: auto; margin-top: 0.55rem !important; }
+.tool-panel p.path-panel__status { height: 1.2rem; overflow-y: auto; margin-top: 0.55rem; }
