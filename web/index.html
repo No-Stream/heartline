@@ -5,83 +5,89 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Theme Park Sim</title>
     <style>
+      html, body { height: 100%; }
       body {
         margin: 0;
+        overflow: hidden;
         color: #3a2e58;
         background: #e9e0cf;
         font: 0.9rem/1.4 Georgia, "Times New Roman", serif;
       }
+      /* Whole-pixel bar height and dock width keep the canvas on the pixel grid, so screenshots of it stay sharp and stable. */
       main {
         display: grid;
-        grid-template-columns: 800px minmax(21rem, 25rem);
-        grid-template-rows: auto auto 1fr;
-        /* Whole-pixel spacing keeps the canvas on the pixel grid, so screenshots of it stay sharp and stable. */
-        gap: 10px 20px;
-        justify-content: start;
-        align-items: start;
-        padding: 12px 16px 24px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-rows: 44px minmax(0, 1fr);
+        height: 100vh;
+        height: 100dvh;
       }
-      main > h1 {
-        grid-column: 1;
-        grid-row: 1;
+      .game-bar {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 0 16px;
+        background: var(--paper);
+        border-bottom: var(--key-line);
+        /* Inset, so the bar never draws over the world canvas. */
+        box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--mustard) 40%, transparent);
+      }
+      .game-bar h1 {
         margin: 0;
-        font: 600 20px/28px Georgia, "Times New Roman", serif;
+        font: 600 18px/1 var(--body-font);
         letter-spacing: 0.02em;
+        white-space: nowrap;
       }
-      main > p {
-        grid-column: 1;
-        grid-row: 1;
-        justify-self: end;
-        align-self: center;
-        margin: 0;
-        font-size: 0.78rem;
-        opacity: 0.7;
+      .game-bar p {
+        margin: 0 0 0 auto;
+        color: var(--ink-soft);
+        font: italic 0.78rem/1 var(--body-font);
+        white-space: nowrap;
       }
-      main > canvas {
-        grid-column: 1;
-        grid-row: 2 / span 2;
-        box-shadow: 0 0 0 1px color-mix(in srgb, #3a2e58 55%, transparent);
+      .game-world { position: relative; min-width: 0; min-height: 0; }
+      .game-world > canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
         /* The renderer leaves some pixels translucent; keep what shows through them as before. */
         background: #fff;
       }
-      main > canvas:focus-visible { outline: 2px solid #3f61a6; outline-offset: 2px; }
-      [data-construction] {
-        grid-column: 2;
-        grid-row: 1 / span 2;
-        max-height: calc(100vh - 1.6rem);
+      .game-world > canvas:focus-visible { outline: 2px solid var(--slate); outline-offset: -2px; }
+      .game-dock {
+        box-sizing: border-box;
+        width: 400px;
         overflow-y: auto;
+        overscroll-behavior: contain;
+        background: var(--paper);
+        border-left: var(--key-line);
+        scrollbar-color: var(--ink-faint) transparent;
       }
-      [data-landscaping] {
-        grid-column: 2;
-        grid-row: 3;
-      }
-      [data-paths], [data-facilities] {
-        grid-column: 2;
-        grid-row: 4;
-        padding: 0.6rem 1rem;
-        background: #f2eadb;
-        border: 1px solid color-mix(in srgb, #3a2e58 30%, transparent);
-        border-radius: 3px;
-      }
-      [data-paths] { grid-row: 5; }
-      [data-facilities] { grid-row: 4; }
-      [data-paths] h2, [data-facilities] h2 { margin: 0 0 0.4rem; font-size: 1rem; }
-      @media (max-width: 1240px) {
-        main { grid-template-columns: minmax(0, 800px); }
-        main > canvas, [data-construction], [data-landscaping], [data-facilities], [data-paths] { grid-column: 1; grid-row: auto; }
-        [data-construction] { position: static; max-height: none; }
+      .game-dock[hidden] { display: none; }
+      @media (max-width: 760px) {
+        main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 44px minmax(0, 1fr) auto; }
+        .game-bar h1, .game-bar p { display: none; }
+        .game-dock { width: auto; max-height: 45vh; border-left: 0; border-top: var(--key-line); }
       }
     </style>
   </head>
   <body>
     <main>
-      <h1>Theme Park Sim</h1>
-      <p>Simulation ticks: <output data-testid="tick-count">0</output></p>
-      <section aria-label="Paths" data-paths></section>
-      <section aria-label="Park facilities" data-facilities></section>
-      <section aria-label="Coaster construction" data-construction></section>
-      <canvas aria-label="Theme park world" tabindex="0" style="touch-action: none" width="800" height="500"></canvas>
-      <section aria-label="Landscaping" data-landscaping></section>
+      <header class="game-bar">
+        <h1>Theme Park Sim</h1>
+        <div data-toolbar></div>
+        <p>Simulation ticks: <output data-testid="tick-count">0</output></p>
+      </header>
+      <div class="game-world">
+        <canvas aria-label="Theme park world" tabindex="0" style="touch-action: none" width="800" height="500"></canvas>
+      </div>
+      <aside class="game-dock" aria-label="Tool panel" data-dock hidden>
+        <section aria-label="Coaster construction" data-construction hidden></section>
+        <section aria-label="Paths" data-paths hidden></section>
+        <section aria-label="Landscaping" data-landscaping hidden></section>
+        <section aria-label="Park facilities" data-facilities hidden></section>
+      </aside>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

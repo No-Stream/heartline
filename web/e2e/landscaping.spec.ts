@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { canvasToPage, clickCanvas, openTool } from "./game-page";
 
 test.use({
-  viewport: { width: 1100, height: 1200 },
   deviceScaleFactor: 1,
   launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
 });
@@ -10,6 +10,7 @@ test("sculpts a hill, carves a tunnel and builds an underground path", async ({ 
   test.setTimeout(180_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Landscape");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 150.5, centerY: 150.5, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
 
@@ -21,7 +22,7 @@ test("sculpts a hill, carves a tunnel and builds an underground path", async ({ 
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
 
   const center = await worldPoint(page, 150, 150, 2);
-  await clickCanvasPoint(page, center);
+  await clickCanvas(page, center);
   await expect(landscaping.locator(".landscaping__status")).toHaveText("Terrain updated", { timeout: 10_000 });
   await landscaping.locator("[data-landscape-cancel]").click();
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
@@ -47,7 +48,7 @@ test("sculpts a hill, carves a tunnel and builds an underground path", async ({ 
     await landscaping.locator('[data-landscape-tool="carve"]').click();
     await landscaping.locator("[data-landscape-apply]").click();
     await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-    await clickCanvasPoint(page, point);
+    await clickCanvas(page, point);
     await expect(landscaping.locator(".landscaping__status")).toHaveText("Terrain updated", { timeout: 10_000 });
   }
   const tunnelSpans = await page.evaluate(() => window.gameTest.carvedSpans()
@@ -70,6 +71,7 @@ test("sculpts a hill, carves a tunnel and builds an underground path", async ({ 
     [149, 150, 151, 152, 153, 154, 155].map((x) => ["carved-floor", x, 150, 4]),
   );
 
+  await openTool(page, "Paths");
   await page.getByLabel("Path type").selectOption("normal");
   await page.getByRole("button", { name: "Build paths" }).click();
   const tunnelPathPoints = await Promise.all([149, 155].map((x) => worldPoint(page, x, 150, 1)));
@@ -78,6 +80,7 @@ test("sculpts a hill, carves a tunnel and builds an underground path", async ({ 
   await expect.poll(() => page.evaluate(() => window.gameTest.paths()
     .filter(({ x, y, z }) => y === 150 && x >= 149 && x <= 155 && z === 4).length)).toBe(7);
   await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
+  await openTool(page, "Landscape");
   await landscaping.locator("[data-landscape-cancel]").click();
   await expect(page.locator("canvas")).toHaveScreenshot("landscaping-underground.png", {
     animations: "disabled",
@@ -99,29 +102,13 @@ async function worldPoint(
   }), { tileX: x, tileY: y, tileHeight: height });
 }
 
-async function clickCanvasPoint(page: import("@playwright/test").Page, point: { x: number; y: number }): Promise<void> {
-  const canvas = page.locator("canvas");
-  await canvas.scrollIntoViewIfNeeded();
-  const bounds = await canvas.boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  await page.mouse.click(bounds.x + point.x * bounds.width / 800, bounds.y + point.y * bounds.height / 500);
-}
-
 async function dragCanvasPoints(page: import("@playwright/test").Page, points: readonly { x: number; y: number }[]): Promise<void> {
   if (points.length < 2) throw new Error("A drag needs at least two points");
-  const canvas = page.locator("canvas");
-  await canvas.scrollIntoViewIfNeeded();
-  const bounds = await canvas.boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  const screen = (point: { x: number; y: number }): { x: number; y: number } => ({
-    x: bounds.x + point.x * bounds.width / 800,
-    y: bounds.y + point.y * bounds.height / 500,
-  });
-  const first = screen(points[0]!);
+  const first = await canvasToPage(page, points[0]!);
   await page.mouse.move(first.x, first.y);
   await page.mouse.down();
   for (const point of points.slice(1)) {
-    const next = screen(point);
+    const next = await canvasToPage(page, point);
     await page.mouse.move(next.x, next.y, { steps: 4 });
   }
   await page.mouse.up();

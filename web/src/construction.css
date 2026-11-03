@@ -1,108 +1,6 @@
-/* Print-modern coaster builder: paper, a plum key line, and four flat inks laid slightly out of register. */
-.builder {
-  --paper: #f2eadb;
-  --paper-deep: #e8dcc6;
-  --ink: #3a2e58;
-  --ink-soft: color-mix(in srgb, var(--ink) 62%, var(--paper));
-  --ink-faint: color-mix(in srgb, var(--ink) 22%, var(--paper));
-  --teal: #227571;
-  --coral: #dc5c3e;
-  --mustard: #e9ab38;
-  --slate: #3f61a6;
-  --key-line: 1px solid color-mix(in srgb, var(--ink) 55%, transparent);
-  --hairline: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
-  --heading-font: "Futura", "Avenir Next", "Century Gothic", "Trebuchet MS", system-ui, sans-serif;
-  box-sizing: border-box;
-  padding: 0.9rem 1rem 1rem;
-  color: var(--ink);
-  background: var(--paper);
-  border: var(--key-line);
-  border-radius: 3px;
-  box-shadow: 2px 3px 0 color-mix(in srgb, var(--mustard) 55%, transparent);
-  font: 0.86rem/1.35 Georgia, "Times New Roman", serif;
-}
-
-.builder *, .builder *::before, .builder *::after { box-sizing: border-box; }
-.builder [hidden] { display: none !important; }
-.builder p { margin: 0; }
-
-.builder h2 {
-  margin: 0;
-  font: 600 1.35rem/1.1 Georgia, "Times New Roman", serif;
-  letter-spacing: 0.01em;
-}
-
-.builder h3,
-.builder__eyebrow,
-.builder__label {
-  margin: 0;
-  font: 600 0.66rem/1.3 var(--heading-font);
-  font-variant-caps: all-small-caps;
-  letter-spacing: 0.14em;
-  text-transform: lowercase;
-  font-size: 0.82rem;
-}
-
-.builder__eyebrow { color: var(--coral); }
-.builder h3 { color: var(--ink-soft); }
-
-.builder__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
-  gap: 0.5rem;
-  padding-bottom: 0.55rem;
-  border-bottom: var(--key-line);
-}
-
-.builder__section {
-  padding: 0.65rem 0;
-  border-bottom: var(--hairline);
-}
-.builder__section:last-child { border-bottom: 0; padding-bottom: 0; }
-
-/* Buttons are printed: paper with a key line, and a flat ink plate when pressed or primary. */
-.builder button {
-  font: inherit;
-  color: var(--ink);
-  background: var(--paper);
-  border: var(--key-line);
-  border-radius: 2px;
-  cursor: pointer;
-}
-.builder button:hover:not(:disabled) { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
-.builder button:disabled { color: var(--ink-faint); border-color: var(--ink-faint); cursor: default; }
-.builder :focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
-
-.builder__action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.45rem;
-  min-height: 2rem;
-  padding: 0.25rem 0.5rem 0.25rem 0.65rem;
-}
-.builder__action--primary {
-  color: var(--paper) !important;
-  background: var(--ink) !important;
-  box-shadow: 2px 2px 0 var(--coral);
-}
-.builder__action--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--coral)) !important; }
-.builder__action--primary:disabled { background: var(--ink-faint) !important; box-shadow: none; }
-.builder__action--primary kbd { color: var(--paper); border-color: color-mix(in srgb, var(--paper) 60%, transparent); }
-
-.builder kbd {
-  display: inline-block;
-  min-width: 1.15rem;
-  padding: 0 0.2rem;
-  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
-  border-bottom-width: 2px;
-  border-radius: 3px;
-  font: 600 0.62rem/1.2rem var(--heading-font);
-  text-align: center;
-  color: currentColor;
-  opacity: 0.85;
-}
+/* The coaster builder's own layout. Tokens, buttons, steppers and the shared panel pieces are in print-modern.css. */
+.builder__model { display: grid; gap: 0.25rem; }
+.builder .tool-panel__status:empty { display: none; }
 
 /* Station */
 .builder__station {
@@ -111,50 +9,7 @@
   align-items: center;
   gap: 0.5rem 0.75rem;
 }
-.builder__station .builder__hint { grid-column: 1 / -1; }
-.builder__hint { color: var(--ink-soft); font-size: 0.8rem; font-style: italic; }
-
-/* Steppers: − value + with the value set in type like a printed label. */
-.stepper {
-  display: grid;
-  grid-template-columns: 4.3rem 1.6rem minmax(5.6rem, 1fr) 1.6rem auto;
-  align-items: center;
-  gap: 0.3rem;
-}
-.stepper--compact { grid-template-columns: 1.6rem 3.4rem 1.6rem; }
-.stepper button {
-  width: 1.6rem;
-  height: 1.6rem;
-  padding: 0;
-  border-radius: 50%;
-  font: 600 1rem/1 var(--heading-font);
-}
-.stepper__value {
-  min-width: 0;
-  padding: 0.15rem 0.3rem;
-  border-bottom: 2px solid var(--ink);
-  font: italic 0.9rem/1.2 Georgia, serif;
-  text-align: center;
-  white-space: nowrap;
-}
-.stepper__value--changed { animation: builder-ink-in 260ms ease-out; }
-.stepper__keys { display: flex; gap: 0.15rem; }
-.stepper input {
-  width: 100%;
-  padding: 0.15rem 0.2rem;
-  border: 0;
-  border-bottom: 2px solid var(--ink);
-  border-radius: 0;
-  color: var(--ink);
-  background: transparent;
-  font: italic 0.95rem/1.2 Georgia, serif;
-  text-align: center;
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-.stepper input::-webkit-inner-spin-button,
-.stepper input::-webkit-outer-spin-button { appearance: none; margin: 0; }
-.stepper__unit { margin-left: -0.15rem; color: var(--ink-soft); font-style: italic; }
+.builder__station .tool-panel__hint { grid-column: 1 / -1; }
 .builder__station-height { display: flex; align-items: center; gap: 0.45rem; }
 
 /* The next piece: a large drawing of the selection and the three attribute steppers. */
@@ -162,32 +17,9 @@
   display: grid;
   gap: 0.55rem;
 }
-.builder__preview {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  min-height: 4.4rem;
-  margin: 0;
-  padding: 0.35rem 0.5rem;
-  background: color-mix(in srgb, var(--plate, var(--slate)) 9%, var(--paper));
-  border: var(--hairline);
-  border-radius: 2px;
-}
-.builder__preview-icons { display: flex; gap: 0.2rem; }
-.builder__preview figcaption { display: grid; gap: 0.1rem; }
-.builder__preview-name { font: 600 1.02rem/1.15 Georgia, serif; }
-.builder__preview-group { color: var(--ink-soft); }
+.tool-panel__preview-icons { display: flex; gap: 0.2rem; }
+.tool-panel__preview-group { color: var(--ink-soft); }
 .builder__steppers { display: grid; gap: 0.3rem; }
-
-.builder__status {
-  min-height: 1.2rem;
-  padding-left: 0.5rem;
-  border-left: 3px solid var(--coral);
-  color: color-mix(in srgb, var(--coral) 65%, var(--ink));
-  font-size: 0.8rem;
-  font-style: italic;
-}
-.builder__status:empty { display: none; }
 
 /* Palette tiles */
 .builder__palette { display: grid; gap: 0.45rem; }
@@ -314,7 +146,7 @@
 /* Testing panel, which lives inside the builder. */
 .builder [data-testing] { display: grid; gap: 0.35rem; }
 .builder [data-testing] h3 { margin-top: 0.1rem; }
-.builder [data-testing] select { font: inherit; color: var(--ink); background: var(--paper); border: var(--key-line); border-radius: 2px; }
+.builder [data-testing] select { flex: 1; width: auto; }
 .builder [data-testing] label { display: flex; align-items: center; gap: 0.5rem; }
 .builder__test-hint { color: var(--ink-soft); font-style: italic; font-size: 0.8rem; }
 
@@ -347,7 +179,6 @@
 }
 .builder__stamp--fresh { animation: builder-stamp 520ms cubic-bezier(0.2, 1.5, 0.35, 1); }
 
-@keyframes builder-ink-in { from { opacity: 0.2; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
 @keyframes builder-chip-in { 0% { transform: translateY(-6px) scale(0.6); opacity: 0; } 60% { opacity: 1; } 100% { transform: none; } }
 @keyframes builder-stamp { 0% { transform: rotate(-12deg) scale(1.8); opacity: 0; } 55% { opacity: 1; } 100% { transform: rotate(-3deg) scale(1); } }
 

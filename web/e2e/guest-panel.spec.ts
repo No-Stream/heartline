@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { clickCanvas } from "./game-page";
 
 interface GuestPick {
   readonly id: string;
@@ -30,12 +31,7 @@ async function openGuestPanel(page: Page): Promise<{ guestId: string; panel: Loc
   });
   if (!target) throw new Error("No guest could be picked from the rendered world");
 
-  const canvasBounds = await page.locator("canvas").boundingBox();
-  if (!canvasBounds) throw new Error("Game canvas is not visible");
-  await page.mouse.click(
-    canvasBounds.x + target.x * canvasBounds.width / 800,
-    canvasBounds.y + target.y * canvasBounds.height / 500,
-  );
+  await clickCanvas(page, target);
 
   const panel = page.getByTestId("guest-panel");
   await expect(panel).toBeVisible();

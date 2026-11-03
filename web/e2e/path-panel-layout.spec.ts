@@ -1,18 +1,16 @@
 import { expect, test } from "@playwright/test";
+import { moveOverCanvas, openTool } from "./game-page";
 
 test("the path status does not move the canvas during a drag", async ({ page }) => {
   test.setTimeout(120_000);
-  await page.setViewportSize({ width: 1100, height: 1200 });
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Paths");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 247, centerY: 253, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await page.getByLabel("Path type").selectOption("queue");
   await page.getByRole("button", { name: "Build paths" }).click();
 
-  const canvas = page.locator("canvas");
-  const bounds = await canvas.boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
   const points = await page.evaluate(() => [
     window.gameTest.project({ x: 244.5, y: 255.5, z: 2 }),
     window.gameTest.project({ x: 244.5, y: 250.5, z: 2 }),
@@ -23,9 +21,9 @@ test("the path status does not move the canvas during a drag", async ({ page }) 
       if (event.buttons === 1) (window as unknown as { pathCanvasTops: number[] }).pathCanvasTops.push(document.querySelector("canvas")!.getBoundingClientRect().top);
     });
   });
-  await page.mouse.move(bounds.x + points[0].x * bounds.width / 800, bounds.y + points[0].y * bounds.height / 500);
+  await moveOverCanvas(page, points[0]);
   await page.mouse.down();
-  await page.mouse.move(bounds.x + points[1].x * bounds.width / 800, bounds.y + points[1].y * bounds.height / 500, { steps: 12 });
+  await moveOverCanvas(page, points[1], { steps: 12 });
   await page.mouse.up();
   const tops = await page.evaluate(() => (window as unknown as { pathCanvasTops: number[] }).pathCanvasTops);
   expect(tops.length).toBeGreaterThan(1);

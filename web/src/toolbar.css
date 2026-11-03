@@ -1,0 +1,53 @@
+/* The tool switcher: a row of printed tabs. The open tool is an ink plate with a coral offset, like a primary button. */
+.toolbar {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.toolbar__tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 30px;
+  padding: 0 0.55rem 0 0.45rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: var(--key-line);
+  border-radius: 2px;
+  font: 600 0.86rem/1 var(--heading-font);
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+  cursor: pointer;
+}
+.toolbar__tool:hover { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
+.toolbar__tool:focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
+.toolbar__tool[aria-pressed="true"] {
+  color: var(--paper);
+  background: var(--ink);
+  box-shadow: 2px 2px 0 var(--coral);
+}
+.toolbar__tool kbd {
+  min-width: 1.05rem;
+  padding: 0 0.2rem;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  font: 600 0.6rem/1.05rem var(--heading-font);
+  font-variant-caps: normal;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: center;
+  opacity: 0.75;
+}
+
+.toolbar__icon { flex: none; overflow: visible; }
+.toolbar__icon path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.toolbar__icon-plate { stroke: color-mix(in srgb, var(--plate) 60%, var(--paper)); stroke-width: 3.6; transform: translate(0.8px, 0.7px); }
+.toolbar__icon-line { stroke: currentColor; stroke-width: 1.4; }
+.toolbar__tool[aria-pressed="true"] .toolbar__icon-plate { stroke: color-mix(in srgb, var(--plate) 70%, var(--ink)); }
+
+@media (max-width: 760px) {
+  .toolbar__tool span, .toolbar__tool kbd { display: none; }
+}

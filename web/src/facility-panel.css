@@ -1,0 +1,45 @@
+/* The facilities panel's own layout. The shared print-modern pieces are in print-modern.css. */
+.facility-panel__revenue { display: grid; justify-items: end; gap: 0.05rem; text-align: right; }
+.facility-panel__revenue [data-revenue] { font: 600 1.2rem/1 var(--body-font); font-variant-numeric: tabular-nums; }
+
+.facility-panel__picker {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+.facility-tile {
+  display: grid;
+  justify-items: center;
+  gap: 0.1rem;
+  padding: 0.3rem 0.15rem 0.25rem !important;
+  border: var(--hairline) !important;
+}
+.facility-tile:hover { border-color: var(--ink) !important; }
+.facility-tile[aria-checked="true"] {
+  background: color-mix(in srgb, var(--mustard) 22%, var(--paper)) !important;
+  border: 1.5px solid var(--ink) !important;
+  box-shadow: 2px 2px 0 var(--mustard);
+}
+.facility-tile__name { font-size: 0.72rem; line-height: 1.15; text-align: center; }
+
+.facility-panel__placement { display: grid; gap: 0.55rem; }
+.facility-panel__placement .tool-panel__preview { --plate: var(--mustard); }
+.facility-panel__preview-art { display: grid; place-items: center; width: 4.2rem; }
+.facility-panel__placement .stepper { grid-template-columns: 4.3rem 1.6rem minmax(5.6rem, 1fr) 1.6rem; }
+.facility-panel__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; }
+.facility-panel__actions .tool-panel__action { justify-content: center; }
+.facility-panel__actions .tool-panel__action--quiet { grid-column: 1 / -1; justify-self: start; }
+
+.facility-panel__prices { display: grid; gap: 0.35rem; }
+.facility-panel__prices ul { display: grid; gap: 0.2rem; margin: 0; padding: 0; list-style: none; }
+.facility-price {
+  display: grid;
+  grid-template-columns: 1.9rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.15rem 0;
+  border-bottom: 1px dotted color-mix(in srgb, var(--ink) 25%, transparent);
+}
+.facility-price:last-child { border-bottom: 0; }
+.facility-price__number { color: var(--ink-soft); font: italic 0.76rem/1 var(--body-font); }
+.facility-thumbnail { display: block; }

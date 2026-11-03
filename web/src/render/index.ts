@@ -124,7 +124,8 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
   return {
     render(world, camera, waterFrame = 0, geometryPasses = []) {
       if (canvas.width < 1 || canvas.height < 1) throw new Error("Canvas dimensions must be positive");
-      const desiredScale = camera.zoom * (canvas.clientWidth ? canvas.width / canvas.clientWidth : 1);
+      // The camera is in backing-store pixels, so its zoom already includes the device pixel ratio.
+      const desiredScale = camera.zoom;
       const scales = Object.keys(atlas.pages).map(Number).sort((a, b) => a - b);
       activeScale = String(scales.find((scale) => scale >= desiredScale) ?? scales[scales.length - 1]);
       const viewport = { width: canvas.width, height: canvas.height };

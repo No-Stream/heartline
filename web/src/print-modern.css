@@ -1,0 +1,226 @@
+/* Print-modern: paper, a plum key line, small caps, and four flat inks laid slightly out of register.
+   The tokens and the pieces every tool panel shares live here; each panel keeps only its own layout. */
+:root {
+  --paper: #f2eadb;
+  --paper-deep: #e8dcc6;
+  --page: #e9e0cf;
+  --ink: #3a2e58;
+  --ink-soft: color-mix(in srgb, var(--ink) 62%, var(--paper));
+  --ink-faint: color-mix(in srgb, var(--ink) 22%, var(--paper));
+  --teal: #227571;
+  --coral: #dc5c3e;
+  --mustard: #e9ab38;
+  --slate: #3f61a6;
+  --key-line: 1px solid color-mix(in srgb, var(--ink) 55%, transparent);
+  --hairline: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  --heading-font: "Futura", "Avenir Next", "Century Gothic", "Trebuchet MS", system-ui, sans-serif;
+  --body-font: Georgia, "Times New Roman", serif;
+}
+
+.tool-panel {
+  box-sizing: border-box;
+  padding: 0.9rem 1rem 1rem;
+  color: var(--ink);
+  background: var(--paper);
+  font: 0.86rem/1.35 var(--body-font);
+}
+.tool-panel *, .tool-panel *::before, .tool-panel *::after { box-sizing: border-box; }
+.tool-panel[hidden], .tool-panel [hidden] { display: none !important; }
+.tool-panel p, .tool-panel h3 { margin: 0; }
+.tool-panel :focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
+
+.tool-panel h2 {
+  margin: 0;
+  font: 600 1.35rem/1.1 var(--body-font);
+  letter-spacing: 0.01em;
+}
+
+/* Small caps for every label, eyebrow and sub-heading. */
+.tool-panel h3,
+.tool-panel__eyebrow,
+.tool-panel__label {
+  margin: 0;
+  font: 600 0.82rem/1.3 var(--heading-font);
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+}
+.tool-panel__eyebrow { margin-bottom: 0.15rem; color: var(--coral); }
+.tool-panel h3, .tool-panel__label { color: var(--ink-soft); }
+
+.tool-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 0.5rem;
+  padding-bottom: 0.55rem;
+  border-bottom: var(--key-line);
+}
+
+.tool-panel__section {
+  padding: 0.65rem 0;
+  border-bottom: var(--hairline);
+}
+.tool-panel__section:last-child { border-bottom: 0; padding-bottom: 0; }
+
+/* Two labelled fields side by side, each a small-caps label over its control. */
+.tool-panel__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+.tool-panel__fields label { display: grid; gap: 0.25rem; min-width: 0; }
+.tool-panel__fields label > span {
+  color: var(--ink-soft);
+  font: 600 0.82rem/1.3 var(--heading-font);
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.1em;
+}
+
+/* Buttons and boxed fields are printed: paper with a key line, and a flat ink plate when pressed or primary. */
+.tool-panel button,
+.tool-panel select,
+.tool-panel input[type="number"]:not(.stepper input) {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: var(--key-line);
+  border-radius: 2px;
+}
+.tool-panel button { cursor: pointer; }
+.tool-panel select,
+.tool-panel input[type="number"]:not(.stepper input) {
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.25rem 0.4rem;
+  color-scheme: light;
+}
+.tool-panel button:hover:not(:disabled),
+.tool-panel select:hover:not(:disabled) { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
+.tool-panel button:disabled,
+.tool-panel select:disabled { color: var(--ink-faint); border-color: var(--ink-faint); cursor: default; }
+.tool-panel button[aria-pressed="true"] {
+  color: var(--paper);
+  background: var(--ink);
+  box-shadow: 2px 2px 0 var(--coral);
+}
+
+.tool-panel__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.65rem;
+}
+.tool-panel__action--primary {
+  color: var(--paper) !important;
+  background: var(--ink) !important;
+  box-shadow: 2px 2px 0 var(--coral);
+}
+.tool-panel__action--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--coral)) !important; }
+.tool-panel__action--primary:disabled { background: var(--ink-faint) !important; box-shadow: none; }
+.tool-panel__action--primary kbd { color: var(--paper); border-color: color-mix(in srgb, var(--paper) 60%, transparent); }
+.tool-panel__action--quiet {
+  min-height: auto;
+  padding: 0.15rem 0.25rem;
+  border-color: transparent !important;
+  background: transparent !important;
+  color: var(--ink-soft);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 0.15em;
+}
+.tool-panel__action--quiet:hover:not(:disabled) { color: var(--ink); }
+
+.tool-panel kbd {
+  display: inline-block;
+  min-width: 1.15rem;
+  padding: 0 0.2rem;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  font: 600 0.62rem/1.2rem var(--heading-font);
+  text-align: center;
+  color: currentColor;
+  opacity: 0.85;
+}
+
+.tool-panel__hint { color: var(--ink-soft); font-size: 0.8rem; font-style: italic; }
+
+/* The latest message from the tool, set off by a coral rule. It keeps its height so the panel does not jump. */
+.tool-panel__status {
+  min-height: 1.2rem;
+  padding-left: 0.5rem;
+  border-left: 3px solid var(--coral);
+  color: color-mix(in srgb, var(--coral) 65%, var(--ink));
+  font-size: 0.8rem;
+  font-style: italic;
+}
+.tool-panel__status:empty { visibility: hidden; }
+
+/* Steppers: − value + with the value set in type like a printed label. */
+.stepper {
+  display: grid;
+  grid-template-columns: 4.3rem 1.6rem minmax(5.6rem, 1fr) 1.6rem auto;
+  align-items: center;
+  gap: 0.3rem;
+}
+.stepper--compact { grid-template-columns: 1.6rem 3.4rem 1.6rem; }
+.stepper button {
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border-radius: 50%;
+  font: 600 1rem/1 var(--heading-font);
+}
+.stepper__value {
+  min-width: 0;
+  padding: 0.15rem 0.3rem;
+  border-bottom: 2px solid var(--ink);
+  font: italic 0.9rem/1.2 var(--body-font);
+  text-align: center;
+  white-space: nowrap;
+}
+.stepper__value--changed { animation: tool-panel-ink-in 260ms ease-out; }
+.stepper__keys { display: flex; gap: 0.15rem; }
+.stepper input {
+  width: 100%;
+  padding: 0.15rem 0.2rem;
+  border: 0;
+  border-bottom: 2px solid var(--ink);
+  border-radius: 0;
+  color: var(--ink);
+  background: transparent;
+  font: italic 0.95rem/1.2 var(--body-font);
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.stepper input::-webkit-inner-spin-button,
+.stepper input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.stepper__unit { margin-left: -0.15rem; color: var(--ink-soft); font-style: italic; }
+
+/* A selection drawn large on a tinted plate, as the builder shows its next piece. */
+.tool-panel__preview {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 4.4rem;
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  background: color-mix(in srgb, var(--plate, var(--slate)) 9%, var(--paper));
+  border: var(--hairline);
+  border-radius: 2px;
+}
+.tool-panel__preview figcaption { display: grid; gap: 0.1rem; }
+.tool-panel__preview-name { font: 600 1.02rem/1.15 var(--body-font); }
+
+@keyframes tool-panel-ink-in { from { opacity: 0.2; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-panel *, .tool-panel *::before, .tool-panel *::after { animation: none !important; transition: none !important; }
+}
+@media (max-width: 360px) {
+  .tool-panel__fields { grid-template-columns: 1fr; }
+}

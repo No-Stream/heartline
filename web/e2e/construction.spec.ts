@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { canvasSize, clickCanvas, moveOverCanvas, openTool } from "./game-page";
 
 test("builds a closed coaster and runs a train around it", async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await page.getByLabel("Station height above ground (metres)").fill("72");
@@ -11,19 +13,16 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   await page.getByRole("button", { name: "Place station" }).click();
   const position = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 }));
   const canvas = page.locator("canvas");
-  await canvas.scrollIntoViewIfNeeded();
-  const bounds = await canvas.boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  await page.mouse.move(bounds.x + position.x * bounds.width / 800, bounds.y + position.y * bounds.height / 500);
+  await moveOverCanvas(page, position);
   await expect(canvas).toHaveAttribute("data-station-preview", /50,50,80,0/);
-  await page.mouse.click(bounds.x + position.x * bounds.width / 800, bounds.y + position.y * bounds.height / 500);
+  await clickCanvas(page, position);
   const north = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 52.5, z: 2 }));
-  await page.mouse.move(bounds.x + north.x * bounds.width / 800, bounds.y + north.y * bounds.height / 500);
+  await moveOverCanvas(page, north);
   await expect(canvas).toHaveAttribute("data-station-preview", /50,50,80,1/);
   const direction = await page.evaluate(() => window.gameTest.project({ x: 52.5, y: 50.5, z: 2 }));
-  await page.mouse.move(bounds.x + direction.x * bounds.width / 800, bounds.y + direction.y * bounds.height / 500);
+  await moveOverCanvas(page, direction);
   await expect(canvas).toHaveAttribute("data-station-preview", /50,50,80,0/);
-  await page.mouse.click(bounds.x + direction.x * bounds.width / 800, bounds.y + direction.y * bounds.height / 500);
+  await clickCanvas(page, direction);
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 30, centerY: 30, zoom: 1, rotation: 0 }));
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
@@ -50,10 +49,11 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
       // The camera started far away at (30, 30); it follows the open track end back to the station.
       await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
       const station = await page.evaluate(() => window.gameTest.project({ x: 52, y: 50.5, z: 20 }));
+      const size = await canvasSize(page);
       expect(station.x).toBeGreaterThan(0);
-      expect(station.x).toBeLessThan(800);
+      expect(station.x).toBeLessThan(size.width);
       expect(station.y).toBeGreaterThan(0);
-      expect(station.y).toBeLessThan(500);
+      expect(station.y).toBeLessThan(size.height);
     }
   }
   await page.getByRole("button", { name: "Close circuit" }).click();
@@ -67,32 +67,30 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   await expect(page.locator("[data-notes]")).toHaveText(notes.join(" "));
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
   await page.getByLabel("Track overlay").selectOption("speed");
-  await page.evaluate(() => {
+  const overlaySize = await canvasSize(page);
+  await page.evaluate((size) => {
     const samples = window.gameTest.testingReport()!.samples;
     const horizontal = samples.map((sample) => sample.x - sample.y);
     const vertical = samples.map((sample) => sample.x + sample.y - 2 * sample.z);
     const middleX = (Math.min(...horizontal) + Math.max(...horizontal)) / 2;
     const middleY = (Math.min(...vertical) + Math.max(...vertical)) / 2;
-    const zoom = Math.min(0.7, 700 / (32 * (Math.max(...horizontal) - Math.min(...horizontal))), 400 / (16 * (Math.max(...vertical) - Math.min(...vertical))));
+    const zoom = Math.min(0.7, (size.width - 100) / (32 * (Math.max(...horizontal) - Math.min(...horizontal))), (size.height - 100) / (16 * (Math.max(...vertical) - Math.min(...vertical))));
     window.gameTest.setCamera({ centerX: (middleX + middleY) / 2, centerY: (middleY - middleX) / 2, zoom, rotation: 0 });
-  });
+  }, overlaySize);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready), { timeout: 30_000 }).toBe(true);
   await expect(page.getByText("30 m/s+")).toBeVisible();
-  const inspectionPoint = await page.evaluate(() => {
+  const inspectionPoint = await page.evaluate((size) => {
     const report = window.gameTest.testingReport();
     if (!report) throw new Error("Missing coaster test report");
     for (const sample of report.samples) {
       const position = window.gameTest.project(sample);
-      if (position.x < 0 || position.x >= 800 || position.y < 0 || position.y >= 500) continue;
+      if (position.x < 0 || position.x >= size.width || position.y < 0 || position.y >= size.height) continue;
       const pick = window.gameTest.pick(position.x, position.y);
       if (pick?.kind === "testing") return position;
     }
     throw new Error("No testing overlay segment was pickable");
-  });
-  await canvas.scrollIntoViewIfNeeded();
-  const overlayBounds = await canvas.boundingBox();
-  if (!overlayBounds) throw new Error("Canvas is not visible");
-  await page.mouse.click(overlayBounds.x + inspectionPoint.x * overlayBounds.width / 800, overlayBounds.y + inspectionPoint.y * overlayBounds.height / 500);
+  }, overlaySize);
+  await clickCanvas(page, inspectionPoint);
   await expect(page.locator("[data-inspection]")).toContainText("Vertical:");
   await expect(page.locator("[data-testing]")).toHaveScreenshot("coaster-testing-panel.png", { animations: "disabled" });
   await expect(canvas).toHaveScreenshot("coaster-testing-overlay.png", { animations: "disabled" });

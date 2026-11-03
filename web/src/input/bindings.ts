@@ -8,7 +8,7 @@ interface Shortcut {
   readonly action: InputAction;
 }
 
-/** Coaster builder keys. The panel reads its key hints from here so they cannot drift from the bindings. */
+/** Game keys. The toolbar and the panels read their key hints from here so they cannot drift from the bindings. */
 export const builderShortcuts = {
   turnLeft: { keys: ["a"], repeat: true, action: { type: "piece-step", attribute: "turn", step: -1 } },
   turnRight: { keys: ["d"], repeat: true, action: { type: "piece-step", attribute: "turn", step: 1 } },
@@ -27,6 +27,9 @@ export const builderShortcuts = {
   pathBuild: { keys: ["p"], repeat: false, action: { type: "path-build-mode" } },
   pathRemove: { keys: ["r"], repeat: false, action: { type: "path-remove-mode" } },
   undergroundView: { keys: ["u"], repeat: false, action: { type: "underground-view-toggle" } },
+  coasterTool: { keys: ["o"], repeat: false, action: { type: "tool-select", tool: "coaster" } },
+  landscapeTool: { keys: ["l"], repeat: false, action: { type: "tool-select", tool: "landscape" } },
+  facilitiesTool: { keys: ["f"], repeat: false, action: { type: "tool-select", tool: "facilities" } },
   ...Object.fromEntries(pieceGroups.map((group, index) => [`group-${group}`, { keys: [String(index + 1)], repeat: false, action: { type: "piece-group", group } }])),
 } as const satisfies Record<string, Shortcut>;
 

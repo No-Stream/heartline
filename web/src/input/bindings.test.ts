@@ -62,6 +62,19 @@ describe("input bindings", () => {
     expect(actions).toEqual([{ type: "path-build-mode" }, { type: "path-remove-mode" }]);
   });
 
+  it("maps tool shortcuts to tool selection, ignoring held keys", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    for (const key of ["o", "L", "f"]) surface.dispatchEvent(event("keydown", { key, repeat: false }));
+    surface.dispatchEvent(event("keydown", { key: "o", repeat: true }));
+    expect(actions).toEqual([
+      { type: "tool-select", tool: "coaster" },
+      { type: "tool-select", tool: "landscape" },
+      { type: "tool-select", tool: "facilities" },
+    ]);
+  });
+
   it("maps the underground view shortcut through the input action layer", () => {
     const surface = new Surface();
     const actions: InputAction[] = [];

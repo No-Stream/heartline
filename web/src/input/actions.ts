@@ -1,6 +1,7 @@
 import type { ConstructionAction } from "../construction-protocol";
 import type { PieceStep } from "../construction-choices";
 import type { LandscapingSelection } from "../landscaping-tool";
+import type { Tool } from "../toolbar";
 
 export interface ScreenPoint {
   readonly x: number;
@@ -27,7 +28,9 @@ export type InputAction =
   | { readonly type: "landscaping-cancel" }
   | { readonly type: "underground-view-toggle" }
   | { readonly type: "underground-view-level"; readonly level: number }
-  /** Leave station placement and delete mode. */
+  /** Open one tool panel, or none to watch the park, ending any other tool's input mode. */
+  | { readonly type: "tool-select"; readonly tool: Tool }
+  /** Leave the active input mode, or close the open tool when none is active. */
   | { readonly type: "builder-cancel" }
   | ConstructionAction;
 

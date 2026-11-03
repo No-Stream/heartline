@@ -1,10 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
+import { canvasToPage, clickCanvas, openTool } from "./game-page";
 
-test.use({ actionTimeout: 10_000, viewport: { width: 1100, height: 1200 } });
+test.use({ actionTimeout: 10_000 });
 test("guests ride a player-built coaster and can be selected", async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 241, centerY: 252, zoom: 1.5, rotation: 0 }));
   await page.getByLabel("Station height above ground (metres)").fill("4");
   await page.getByLabel("Station height above ground (metres)").press("Tab");
@@ -24,6 +26,7 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   await page.getByRole("button", { name: "Close circuit" }).click();
   await expect(page.getByRole("button", { name: "Open coaster" })).toBeEnabled();
 
+  await openTool(page, "Landscape");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 241, centerY: 253, zoom: 2, rotation: 0 }));
   await page.getByRole("button", { name: "Flatten", exact: true }).click();
   await page.getByLabel("Brush size").selectOption("1");
@@ -42,6 +45,7 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
     await expect(page.locator(".landscaping__status"), `flatten station access tile (${x}, 250)`).toHaveText("Terrain updated");
   }
   await page.getByRole("button", { name: "Cancel tool" }).click();
+  await openTool(page, "Paths");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 241, centerY: 253, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await page.getByLabel("Path type").selectOption("queue");
@@ -54,6 +58,7 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   await dragWorld(page, { x: 239.5, y: 250.5, z: 3 }, { x: 238.5, y: 256.5, z: 2 });
   await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
   await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
+  await openTool(page, "Coaster");
   await page.getByRole("button", { name: "Open coaster" }).click();
   await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
   let riderId = "";
@@ -78,7 +83,8 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   }, riderId);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   const pick = await page.evaluate((id) => {
-    for (let y = 0; y < 500; y += 2) for (let x = 0; x < 800; x += 2) {
+    const canvas = document.querySelector("canvas")!;
+    for (let y = 0; y < canvas.height; y += 2) for (let x = 0; x < canvas.width; x += 2) {
       const matches = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]].every(([dx, dy]) => {
         const selected = window.gameTest.pick(x + dx, y + dy);
         return selected && "id" in selected && selected.id === id;
@@ -90,9 +96,7 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   if (!pick) throw new Error(`Rider ${riderId} was not visible and pickable`);
   await page.locator("canvas").scrollIntoViewIfNeeded();
   await expect(page.locator("canvas")).toHaveScreenshot("coaster-boarding.png", { animations: "disabled" });
-  const bounds = await page.locator("canvas").boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  await page.mouse.click(bounds.x + pick.x * bounds.width / 800, bounds.y + pick.y * bounds.height / 500);
+  await clickCanvas(page, pick);
   await expect(page.locator("canvas")).toHaveAttribute("data-selection", new RegExp(`"id":"${riderId}"`));
   await expect(page.getByTestId("guest-panel")).toHaveAttribute("data-guest-id", riderId);
   let exited = false;
@@ -111,10 +115,7 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
 
 async function clickWorld(page: Page, x: number, y: number, z: number): Promise<void> {
   const point = await page.evaluate((position) => window.gameTest.project(position), { x, y, z });
-  await page.locator("canvas").scrollIntoViewIfNeeded();
-  const bounds = await page.locator("canvas").boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  await page.mouse.click(bounds.x + point.x * bounds.width / 800, bounds.y + point.y * bounds.height / 500);
+  await clickCanvas(page, point);
 }
 
 async function clickTerrain(page: Page, x: number, y: number): Promise<void> {
@@ -124,10 +125,11 @@ async function clickTerrain(page: Page, x: number, y: number): Promise<void> {
     await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
     point = await page.evaluate(({ x, y }) => {
     const projected = window.gameTest.project({ x: x + 0.5, y: y + 0.5, z: 2 });
+    const canvas = document.querySelector("canvas")!;
     const candidates: { x: number; y: number; distance: number }[] = [];
     for (let dy = -48; dy <= 8; dy += 2) for (let dx = -32; dx <= 32; dx += 2) {
       const screenX = projected.x + dx, screenY = projected.y + dy;
-      if (screenX < 2 || screenX >= 798 || screenY < 2 || screenY >= 498) continue;
+      if (screenX < 2 || screenX >= canvas.width - 2 || screenY < 2 || screenY >= canvas.height - 2) continue;
       const matches = [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2]].every(([ox, oy]) => {
         const pick = window.gameTest.pickSurface(screenX + ox, screenY + oy);
         return pick?.kind === "terrain" && pick.x === x && pick.y === y;
@@ -140,29 +142,22 @@ async function clickTerrain(page: Page, x: number, y: number): Promise<void> {
     if (point) break;
   }
   if (!point) throw new Error(`Terrain tile ${x},${y} is not visible in any rotation`);
-  await page.locator("canvas").scrollIntoViewIfNeeded();
-  const bounds = await page.locator("canvas").boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  await page.locator("canvas").evaluate((canvas) => {
+  await page.locator("canvas").evaluate((canvas: HTMLCanvasElement) => {
     canvas.addEventListener("pointerup", (event) => {
       const pointer = event as PointerEvent;
       const rect = canvas.getBoundingClientRect();
-      const screenX = (pointer.clientX - rect.left) * 800 / rect.width;
-      const screenY = (pointer.clientY - rect.top) * 500 / rect.height;
+      const screenX = (pointer.clientX - rect.left) * canvas.width / rect.width;
+      const screenY = (pointer.clientY - rect.top) * canvas.height / rect.height;
       canvas.dataset.lastTerrainPick = JSON.stringify(window.gameTest.pickSurface(screenX, screenY));
     }, { capture: true, once: true });
   });
-  await page.mouse.click(bounds.x + point.x * bounds.width / 800, bounds.y + point.y * bounds.height / 500);
+  await clickCanvas(page, point);
   await expect(page.locator("canvas")).toHaveAttribute("data-last-terrain-pick", new RegExp(`"x":${x},"y":${y}(?:,|})`));
 }
 
 async function dragWorld(page: Page, start: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }): Promise<void> {
   const points = await page.evaluate(({ start, end }) => ({ start: window.gameTest.project(start), end: window.gameTest.project(end) }), { start, end });
-  await page.locator("canvas").scrollIntoViewIfNeeded();
-  const bounds = await page.locator("canvas").boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  const screen = (point: { x: number; y: number }) => ({ x: bounds.x + point.x * bounds.width / 800, y: bounds.y + point.y * bounds.height / 500 });
-  const from = screen(points.start), to = screen(points.end);
+  const from = await canvasToPage(page, points.start), to = await canvasToPage(page, points.end);
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
   await page.mouse.move(to.x, to.y, { steps: 12 });

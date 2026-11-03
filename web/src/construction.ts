@@ -4,6 +4,7 @@ import type { ConstructionPiece, ConstructionState, PieceShape } from "./constru
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
+import "./print-modern.css";
 import "./construction.css";
 
 type PieceAction = Extract<InputAction, { type: "piece-step" | "piece-group" }>;
@@ -53,22 +54,22 @@ function sampledLength(shape: PieceShape): number {
 
 /** Native controls keep every construction action available to keyboard and assistive technology users. */
 export function createConstructionPanel(container: HTMLElement, dispatch: (action: InputAction) => void): ConstructionPanel {
-  container.classList.add("builder");
+  container.classList.add("tool-panel", "builder");
   container.innerHTML = `
-    <header class="builder__header"><div><p class="builder__eyebrow">Coaster workshop</p><h2>Build a coaster</h2></div></header>
-    <section class="builder__section" aria-label="Coaster model">
-      <label class="builder__label">Coaster model
+    <header class="tool-panel__header"><div><p class="tool-panel__eyebrow">Coaster workshop</p><h2>Build a coaster</h2></div></header>
+    <section class="tool-panel__section" aria-label="Coaster model">
+      <label class="builder__model"><span class="tool-panel__label">Coaster model</span>
         <select data-model>
           <option value="model:hybrid">${coasterModels["model:hybrid"].name} · ${coasterModels["model:hybrid"].manufacturer}</option>
           <option value="model:velocity_viper">${coasterModels["model:velocity_viper"].name} · ${coasterModels["model:velocity_viper"].manufacturer}</option>
           <option value="model:wooden_twister">${coasterModels["model:wooden_twister"].name} · ${coasterModels["model:wooden_twister"].manufacturer}</option>
         </select>
       </label>
-      <p class="builder__hint" data-model-description>${coasterModels["model:hybrid"].description}</p>
+      <p class="tool-panel__hint" data-model-description>${coasterModels["model:hybrid"].description}</p>
     </section>
-    <div class="builder__section builder__station">
+    <div class="tool-panel__section builder__station">
       <div class="builder__station-height">
-        <span class="builder__label" id="station-height-label">Station height</span>
+        <span class="tool-panel__label" id="station-height-label">Station height</span>
         <div class="stepper stepper--compact" role="group" aria-labelledby="station-height-label">
           <button type="button" data-height-step="-1" aria-label="Lower the station">−</button>
           <input type="number" data-height min="${stationHeight.minimum}" max="${stationHeight.maximum}" step="${stationHeight.step}" value="${stationHeight.initial}" aria-label="Station height above ground (metres)">
@@ -76,18 +77,18 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         </div>
         <span class="stepper__unit">m</span>
       </div>
-      <button type="button" class="builder__action builder__action--primary" data-start>Place station</button>
-      <p class="builder__hint">Choose a tile, then point and click to choose the station direction.</p>
+      <button type="button" class="tool-panel__action tool-panel__action--primary" data-start>Place station</button>
+      <p class="tool-panel__hint">Choose a tile, then point and click to choose the station direction.</p>
     </div>
-    <p role="status" class="builder__status" data-message></p>
+    <p role="status" class="tool-panel__status" data-message></p>
     <div data-editor hidden>
-      <p class="builder__section builder__ready" data-ready hidden>The track meets the station. Close the circuit with ${hint("close")}</p>
-      <section class="builder__section builder__next" aria-label="Chosen piece" data-next>
-        <figure class="builder__preview" data-preview><div class="builder__preview-icons" data-preview-icons></div>
-          <figcaption><span class="builder__label builder__preview-group" data-preview-group></span><span class="builder__preview-name" data-preview-name></span></figcaption></figure>
+      <p class="tool-panel__section builder__ready" data-ready hidden>The track meets the station. Close the circuit with ${hint("close")}</p>
+      <section class="tool-panel__section builder__next" aria-label="Chosen piece" data-next>
+        <figure class="tool-panel__preview" data-preview><div class="tool-panel__preview-icons" data-preview-icons></div>
+          <figcaption><span class="tool-panel__label tool-panel__preview-group" data-preview-group></span><span class="tool-panel__preview-name" data-preview-name></span></figcaption></figure>
         <div class="builder__steppers" data-steppers>${steppers.map(({ attribute, label, previous, next, keys }) => `
           <div class="stepper" role="group" aria-label="Next piece ${attribute}">
-            <span class="builder__label">${label}</span>
+            <span class="tool-panel__label">${label}</span>
             <button type="button" data-stepper="${attribute}--1" aria-label="${previous}">−</button>
             <span class="stepper__value" data-stepper-value="${attribute}"></span>
             <button type="button" data-stepper="${attribute}-1" aria-label="${next}">+</button>
@@ -95,32 +96,32 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
           </div>`).join("")}
         </div>
       </section>
-      <section class="builder__section builder__palette" role="radiogroup" aria-label="Next piece" data-palette></section>
-      <section class="builder__section" aria-label="Track actions">
+      <section class="tool-panel__section builder__palette" role="radiogroup" aria-label="Next piece" data-palette></section>
+      <section class="tool-panel__section" aria-label="Track actions">
         <div class="builder__actions">
-          <button type="button" class="builder__action builder__action--primary" data-append>Place piece ${hint("place")}</button>
-          <button type="button" class="builder__action" data-undo>Undo last piece ${hint("undo")}</button>
-          <button type="button" class="builder__action" data-close>Close circuit ${hint("close")}</button>
-          <button type="button" class="builder__action" data-test>Test coaster ${hint("test")}</button>
-          <button type="button" class="builder__action" data-open>Open coaster</button>
+          <button type="button" class="tool-panel__action tool-panel__action--primary" data-append>Place piece ${hint("place")}</button>
+          <button type="button" class="tool-panel__action" data-undo>Undo last piece ${hint("undo")}</button>
+          <button type="button" class="tool-panel__action" data-close>Close circuit ${hint("close")}</button>
+          <button type="button" class="tool-panel__action" data-test>Test coaster ${hint("test")}</button>
+          <button type="button" class="tool-panel__action" data-open>Open coaster</button>
         </div>
         <label class="builder__toggle"><input type="checkbox" data-delete-mode> Delete track by clicking it ${hint("deleteMode")}</label>
       </section>
-      <section class="builder__section" aria-label="Circuit">
+      <section class="tool-panel__section" aria-label="Circuit">
         <p class="builder__stamp" data-stamp hidden>Circuit complete</p>
         <p class="builder__test-hint" data-test-hint></p>
         <p class="builder__test-hint" data-station-access></p>
         <section aria-label="Coaster testing" data-testing></section>
       </section>
-      <section class="builder__section" aria-label="Launch positions" data-launches hidden>
+      <section class="tool-panel__section" aria-label="Launch positions" data-launches hidden>
         <h3>Launch positions</h3>
         <ol data-launch-list></ol>
       </section>
-      <section class="builder__section" aria-label="Placed track">
+      <section class="tool-panel__section" aria-label="Placed track">
         <div class="builder__track-head"><h3>Track pieces</h3><span class="builder__track-count" data-track-count></span></div>
         <ol class="builder__track" data-track></ol>
       </section>
-      <details class="builder__section builder__keys"><summary>All keys</summary><dl>
+      <details class="tool-panel__section builder__keys"><summary>All keys</summary><dl>
         <dt>${hint("turnLeft")} ${hint("turnRight")}</dt><dd>Turn left or right</dd>
         <dt>${hint("slopeDown")} ${hint("slopeUp")}</dt><dd>Slope down or up</dd>
         <dt>${hint("bankLeft")} ${hint("bankRight")}</dt><dd>Bank left or right</dd>
@@ -331,8 +332,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element("[data-ready]").hidden = !next.canClose;
       element("[data-next]").hidden = closed || next.canClose;
       palette.hidden = closed;
-      close.classList.toggle("builder__action--primary", next.canClose);
-      append.classList.toggle("builder__action--primary", !next.canClose);
+      close.classList.toggle("tool-panel__action--primary", next.canClose);
+      append.classList.toggle("tool-panel__action--primary", !next.canClose);
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");
       const focusInPalette = palette.contains(document.activeElement);
       const nextPaletteKey = next.pieces.map(({ id, refusal }) => `${id}:${refusal}`).join("|");

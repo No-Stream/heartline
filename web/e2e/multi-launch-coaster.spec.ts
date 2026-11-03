@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickCanvas, moveOverCanvas, openTool } from "./game-page";
 
 test.use({ launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] } });
 
@@ -8,6 +9,7 @@ test("builds and runs the Velocity Viper with two short launches", async ({ page
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
 
   const model = page.getByRole("combobox", { name: "Coaster model" });
   await model.selectOption("model:velocity_viper");
@@ -19,16 +21,13 @@ test("builds and runs the Velocity Viper with two short launches", async ({ page
   await page.getByRole("button", { name: "Place station" }).click();
 
   const canvas = page.locator("canvas");
-  await canvas.scrollIntoViewIfNeeded();
-  const bounds = await canvas.boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
   const stationPosition = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 }));
-  await page.mouse.move(bounds.x + stationPosition.x * bounds.width / 800, bounds.y + stationPosition.y * bounds.height / 500);
+  await moveOverCanvas(page, stationPosition);
   await expect(canvas).toHaveAttribute("data-station-preview", /50,50/);
-  await page.mouse.click(bounds.x + stationPosition.x * bounds.width / 800, bounds.y + stationPosition.y * bounds.height / 500);
+  await clickCanvas(page, stationPosition);
   const east = await page.evaluate(() => window.gameTest.project({ x: 52.5, y: 50.5, z: 2 }));
-  await page.mouse.move(bounds.x + east.x * bounds.width / 800, bounds.y + east.y * bounds.height / 500);
-  await page.mouse.click(bounds.x + east.x * bounds.width / 800, bounds.y + east.y * bounds.height / 500);
+  await moveOverCanvas(page, east);
+  await clickCanvas(page, east);
 
   const track = page.locator("[data-track]");
   await expect(track.locator("li")).toHaveCount(1);

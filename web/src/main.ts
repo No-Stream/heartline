@@ -1,8 +1,8 @@
 import { buildFacilityGeometry, facilitySprites, type Facility, type FacilityKind } from "./facilities";
 import { createFacilityPanel } from "./facility-panel";
-import { applyCameraAction, projectWorld, type Camera, type WorldPoint } from "./camera";
+import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
-import type { InputAction } from "./input/actions";
+import type { CameraAction, InputAction } from "./input/actions";
 import type { GameTest } from "./game-test";
 import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from "./render/index";
 import { buildPeople, riderAppearances, type GuestSnapshot } from "./render/people";
@@ -24,14 +24,25 @@ import { buildPathGhostQuads, decodePathPreview, pathPreviewRefusalAt } from "./
 import { buildTestingRibbon, createTestingPanel, type TestingMetric } from "./coaster-testing";
 import { buildLandscapingGhostQuads, createLandscapingTool, type TerrainEditResult } from "./landscaping-tool";
 import { createLandscapingPanel } from "./landscaping-panel";
+import { createToolbar, type Tool } from "./toolbar";
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas");
 const tickOutput = document.querySelector<HTMLOutputElement>("[data-testid='tick-count']");
 if (!canvas || !tickOutput) throw new Error("Game page elements are missing");
 const gameCanvas = canvas;
 const output = tickOutput;
-const viewport = { width: gameCanvas.width, height: gameCanvas.height };
+/** The canvas in backing-store pixels, where pointer positions, picking and drawing happen. */
+let viewport: Viewport = { width: gameCanvas.width, height: gameCanvas.height };
+let pixelRatio = 1;
+/** The camera's zoom is in CSS pixels, so the park keeps its size on screens of any pixel density. */
 let camera: Camera = { centerX: 250, centerY: 256, zoom: 1, rotation: 0 };
+const cssViewport = (): Viewport => ({ width: viewport.width / pixelRatio, height: viewport.height / pixelRatio });
+const screenCamera = (): Camera => ({ ...camera, zoom: camera.zoom * pixelRatio });
+function moveCamera(action: CameraAction): void {
+  const cssAction = action.type === "pan" ? { ...action, dx: action.dx / pixelRatio, dy: action.dy / pixelRatio }
+    : action.type === "zoom" ? { ...action, anchor: { x: action.anchor.x / pixelRatio, y: action.anchor.y / pixelRatio } } : action;
+  camera = applyCameraAction(camera, cssViewport(), cssAction);
+}
 type CoasterWorld = WorldView & { pathMetadata: Int32Array; coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array };
 type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array };
 type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array; constructionRiders: Uint32Array };
@@ -54,12 +65,12 @@ let station: { x: number; y: number; z: number; heading: number; locked: boolean
 const stationDirections = [[1, 0], [0, 1], [-1, 0], [0, -1]] as const;
 function updateStationPreview(position: { x: number; y: number }): void {
   if (station?.locked) {
-    const origin = projectWorld(camera, viewport, { x: station.x + 0.5, y: station.y + 0.5, z: (station.z - stationHeight) / 4 });
+    const origin = projectWorld(screenCamera(), viewport, { x: station.x + 0.5, y: station.y + 0.5, z: (station.z - stationHeight) / 4 });
     const delta = { x: position.x - origin.x, y: position.y - origin.y };
     if (Math.hypot(delta.x, delta.y) > 4) {
       let best = -Infinity;
       stationDirections.forEach(([dx, dy], index) => {
-        const end = projectWorld(camera, viewport, { x: station!.x + 0.5 + dx, y: station!.y + 0.5 + dy, z: (station!.z - stationHeight) / 4 });
+        const end = projectWorld(screenCamera(), viewport, { x: station!.x + 0.5 + dx, y: station!.y + 0.5 + dy, z: (station!.z - stationHeight) / 4 });
         const vx = end.x - origin.x, vy = end.y - origin.y;
         const score = (delta.x * vx + delta.y * vy) / Math.hypot(vx, vy);
         if (score > best) { best = score; station!.heading = index; }
@@ -115,14 +126,11 @@ let facilityRemoval = false;
 let advanceTicksComplete: (() => void) | undefined;
 const facilityContainer = document.querySelector<HTMLElement>("[data-facilities]");
 if (!facilityContainer) throw new Error("Facility panel is missing");
-const facilityPanel = createFacilityPanel(facilityContainer, (kind, rotation) => {
-  landscapingTool.cancel();
+const facilityPanel = createFacilityPanel(facilityContainer, { atlas, images }, (kind, rotation) => {
+  openTool("facilities");
   facilityPlacement = { kind, rotation };
   facilityRemoval = false;
-  stationPlacement = false;
-  pathTool.cancel();
-  deleteMode = false; panel.setDeleteMode(false);
-}, () => { landscapingTool.cancel(); facilityRemoval = true; facilityPlacement = undefined; stationPlacement = false; pathTool.cancel(); deleteMode = false; panel.setDeleteMode(false); },
+}, () => { openTool("facilities"); facilityRemoval = true; facilityPlacement = undefined; },
 () => { facilityPlacement = undefined; facilityRemoval = false; },
 (id, price) => worker.postMessage({ type: "facility-price", id, price }));
 const pathContainer = document.querySelector<HTMLElement>("[data-paths]");
@@ -136,15 +144,11 @@ const pathTool = createPathTool((command) => worker.postMessage(command), () => 
   gameTest.ready = false;
 });
 const pathPanel = createPathPanel(pathContainer, (selection) => {
-  landscapingTool.cancel();
-  facilityPlacement = undefined; facilityRemoval = false; stationPlacement = false;
-  deleteMode = false; panel.setDeleteMode(false);
+  openTool("paths");
   followPoints = undefined;
   pathTool.build(selection);
 }, () => {
-  landscapingTool.cancel();
-  facilityPlacement = undefined; facilityRemoval = false; stationPlacement = false;
-  deleteMode = false; panel.setDeleteMode(false);
+  openTool("paths");
   followPoints = undefined;
   pathTool.remove();
 }, () => pathTool.cancel());
@@ -162,6 +166,56 @@ const landscapingTool = createLandscapingTool((command) => {
   }
   worker.postMessage(command);
 }, () => { gameTest.ready = false; });
+
+const dock = document.querySelector<HTMLElement>("[data-dock]");
+const toolbarContainer = document.querySelector<HTMLElement>("[data-toolbar]");
+if (!dock || !toolbarContainer) throw new Error("Tool dock or toolbar is missing");
+const toolDock = dock;
+const toolPanels: Record<Exclude<Tool, "none">, HTMLElement> = { coaster: panelContainer, paths: pathContainer, landscape: landscapingContainer, facilities: facilityContainer };
+const toolbar = createToolbar(toolbarContainer, (tool) => dispatch({ type: "tool-select", tool }));
+let activeTool: Tool = "none";
+/** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
+function fitCanvas(keepCorner = true): void {
+  const bounds = gameCanvas.getBoundingClientRect();
+  const width = Math.round(bounds.width * devicePixelRatio);
+  const height = Math.round(bounds.height * devicePixelRatio);
+  if (width === gameCanvas.width && height === gameCanvas.height) return;
+  const previous = cssViewport();
+  gameCanvas.width = width;
+  gameCanvas.height = height;
+  viewport = { width, height };
+  pixelRatio = width / bounds.width;
+  // Keep the top-left corner of the park still, so opening a tool covers the right of the view instead of sliding it.
+  if (keepCorner) camera = applyCameraAction(camera, cssViewport(), { type: "pan", dx: (previous.width - bounds.width) / 2, dy: (previous.height - bounds.height) / 2 });
+  gameTest.ready = false;
+}
+function watchPixelRatio(): void {
+  matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener("change", () => { fitCanvas(); watchPixelRatio(); }, { once: true });
+}
+new ResizeObserver(() => fitCanvas()).observe(gameCanvas);
+watchPixelRatio();
+function inputModeActive(): boolean {
+  return stationPlacement || deleteMode || facilityPlacement !== undefined || facilityRemoval || pathTool.state().mode !== "inactive" || landscapingTool.state().active;
+}
+function endInputModes(): void {
+  if (landscapingTool.state().active) landscapingTool.cancel();
+  if (pathTool.state().mode !== "inactive") pathTool.cancel();
+  facilityPlacement = undefined; facilityRemoval = false;
+  deleteMode = false; panel.setDeleteMode(false);
+  if (stationPlacement) dispatch({ type: "station-placement", enabled: false });
+}
+/** Every input mode belongs to one tool, so opening another tool ends it and only the open tool's mode can be active. */
+function openTool(tool: Tool): void {
+  if (tool === activeTool) return;
+  endInputModes();
+  activeTool = tool;
+  toolbar.setActive(tool);
+  toolDock.hidden = tool === "none";
+  for (const [owner, element] of Object.entries(toolPanels)) element.hidden = owner !== tool;
+  toolDock.scrollTop = 0;
+  // Resize now rather than on the next observer callback, so the world is projected onto the new canvas size at once.
+  fitCanvas();
+}
 let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
 const gameTest: GameTest = {
@@ -208,16 +262,24 @@ const gameTest: GameTest = {
   },
   setCamera(value) { camera = value; followPoints = undefined; gameTest.ready = false; },
   setSurface(x, y, corners) { worker.postMessage({ type: "set-surface", x, y, corners: new Int16Array(corners) }); },
-  project(point) { return projectWorld(camera, viewport, point); },
+  project(point) { return projectWorld(screenCamera(), viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
   pickSurface(x, y) { return renderer.pickSurface(x, y); },
 };
 window.gameTest = gameTest;
+toolbar.setActive(activeTool);
+fitCanvas(false);
+
+const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group", "delete-mode-toggle"]);
 
 function dispatch(action: InputAction): void {
-  if (action.type === "landscaping-activate") {
-    pathTool.cancel(); facilityPlacement = undefined; facilityRemoval = false; stationPlacement = false;
-    deleteMode = false; panel.setDeleteMode(false); followPoints = undefined;
+  // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
+  if (activeTool !== "coaster" && (coasterActions.has(action.type) || action.type.startsWith("construction-"))) return;
+  if (action.type === "tool-select") {
+    openTool(action.tool);
+  } else if (action.type === "landscaping-activate") {
+    openTool("landscape");
+    followPoints = undefined;
     landscapingTool.activate(action.selection);
   } else if (action.type === "landscaping-cancel") {
     landscapingTool.cancel();
@@ -238,7 +300,7 @@ function dispatch(action: InputAction): void {
         const surfaceOffset = (pick.y * world.dimensions[0] + pick.x) * 6;
         const distances = offsets.map(([dx, dy], index) => {
           const height = pick.kind === "terrain" && undergroundLevel === undefined ? world!.surfaces[surfaceOffset + index] : pick.height;
-          const point = projectWorld(camera, viewport, { x: pick.x + dx, y: pick.y + dy, z: height / 4 });
+          const point = projectWorld(screenCamera(), viewport, { x: pick.x + dx, y: pick.y + dy, z: height / 4 });
           return Math.hypot(point.x - action.position!.x, point.y - action.position!.y);
         });
         const corner = distances.indexOf(Math.min(...distances));
@@ -247,6 +309,7 @@ function dispatch(action: InputAction): void {
       landscapingTool.handle({ type: action.type, tile });
     }
   } else if (action.type === "path-build-mode" || action.type === "path-remove-mode") {
+    openTool("paths");
     pathsElement.querySelector<HTMLButtonElement>(action.type === "path-build-mode" ? "[data-build]" : "[data-remove]")!.click();
   } else if (pathTool.state().mode !== "inactive" && (action.type === "hover" || action.type === "select" || action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end" || action.type === "drag-cancel")) {
     if (action.type === "drag-cancel") pathTool.handle(action);
@@ -257,9 +320,7 @@ function dispatch(action: InputAction): void {
       pathTool.handle({ type: action.type, tile });
     }
   } else if (action.type === "station-placement") {
-    if (action.enabled) { landscapingTool.cancel(); pathTool.cancel(); deleteMode = false; panel.setDeleteMode(false); }
-    facilityPlacement = undefined;
-    facilityRemoval = false;
+    if (action.enabled) { openTool("coaster"); deleteMode = false; panel.setDeleteMode(false); }
     stationPlacement = action.enabled;
     station = undefined;
     gameCanvas.dataset.stationPreview = "";
@@ -302,21 +363,20 @@ function dispatch(action: InputAction): void {
       worker.postMessage({ type: "guest-detail-request", guestId: selection.id });
       gameTest.ready = false;
     }
-  } else if (action.type === "construction-delete-mode") {
-    deleteMode = action.enabled;
-    if (deleteMode) { landscapingTool.cancel(); pathTool.cancel(); facilityPlacement = undefined; facilityRemoval = false; stationPlacement = false; }
-  } else if (action.type === "delete-mode-toggle" || action.type === "builder-cancel") {
-    deleteMode = action.type === "delete-mode-toggle" && !deleteMode;
-    if (deleteMode) { landscapingTool.cancel(); pathTool.cancel(); facilityPlacement = undefined; facilityRemoval = false; stationPlacement = false; }
-    if (action.type === "builder-cancel") { landscapingTool.cancel(); pathTool.cancel(); facilityPlacement = undefined; facilityRemoval = false; }
+  } else if (action.type === "construction-delete-mode" || action.type === "delete-mode-toggle") {
+    deleteMode = action.type === "delete-mode-toggle" ? !deleteMode : action.enabled;
     panel.setDeleteMode(deleteMode);
-    if (action.type === "builder-cancel" && stationPlacement) dispatch({ type: "station-placement", enabled: false });
+    if (deleteMode && stationPlacement) dispatch({ type: "station-placement", enabled: false });
+  } else if (action.type === "builder-cancel") {
+    // Escape first leaves the active input mode, then closes the open tool. An open guest panel takes Escape for itself.
+    if (inputModeActive()) endInputModes();
+    else if (!selectedGuestId) openTool("none");
   } else if (action.type === "piece-step" || action.type === "piece-group") {
     panel.choose(action);
   } else if (action.type.startsWith("construction-")) {
     worker.postMessage(action);
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
-    camera = applyCameraAction(camera, viewport, action);
+    moveCamera(action);
     if (action.type !== "rotate") followPoints = undefined;
   }
 }
@@ -385,7 +445,7 @@ function frame(now: number): void {
   if (frozen && gameTest.ready) return;
   const interpolation = frozen ? 1 : Math.max(0, Math.min(1, (now - receivedAt) / (1000 / 30)));
   if (followPoints) {
-    const followed = followTrackEnd(camera, viewport, followPoints, frozen ? 1 : 1 - Math.exp(-(now - lastFrameAt) / 140));
+    const followed = followTrackEnd(camera, cssViewport(), followPoints, frozen ? 1 : 1 - Math.exp(-(now - lastFrameAt) / 140));
     camera = followed.camera;
     if (followed.settled) followPoints = undefined;
   }
@@ -396,13 +456,13 @@ function frame(now: number): void {
   const people = current ? buildPeople(previous, current, interpolation, camera.rotation, atlas).filter((person) => !ridingIds.has(person.id)) : [];
   renderedGuests = people;
   const selectedGuest = people.find((guest) => guest.id === selectedGuestId);
-  if (selectedGuest) guestPanel.setAnchor(projectWorld(camera, viewport, { x: selectedGuest.x, y: selectedGuest.y, z: selectedGuest.height / 4 }));
+  if (selectedGuest) guestPanel.setAnchor(projectWorld(screenCamera(), viewport, { x: selectedGuest.x, y: selectedGuest.y, z: selectedGuest.height / 4 }));
   const trainPoses = current ? interpolateTrainPoses(previous?.trainPoses ?? current.trainPoses, current.trainPoses, interpolation) : new Float32Array();
   const constructionTrainPoses = current ? interpolateTrainPoses(previous?.constructionTrainPoses ?? current.constructionTrainPoses, current.constructionTrainPoses, interpolation) : noGeometry;
   const sprites = [...facilitySprites(facilities, camera.rotation), ...people];
   const view = { ...world, sprites, trainPoses, undergroundLevel };
   const currentWorld = world;
-  renderer.render(view, camera, frozen ? 0 : Math.floor(now / 250) % 4, [
+  renderer.render(view, screenCamera(), frozen ? 0 : Math.floor(now / 250) % 4, [
     (renderCamera, renderViewport) => buildLandscapingGhostQuads(landscapingTool.state().preview, view, renderCamera, renderViewport),
     (renderCamera, renderViewport) => pathTool.state().preview ? buildPathGhostQuads(decodePathPreview(pathTool.state().preview!.paths), renderCamera, renderViewport) : [],
     (renderCamera, renderViewport, renderAtlas) => buildFacilityGeometry(facilities, renderCamera, renderViewport, trackStyle(renderAtlas)),

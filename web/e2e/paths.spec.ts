@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { canvasToPage, clickCanvas, openTool } from "./game-page";
 
 test.use({
-  viewport: { width: 1100, height: 1200 },
   deviceScaleFactor: 1,
   launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
 });
@@ -23,6 +23,7 @@ test("rebuilds the entrance path through the UI and guests walk to the food stal
       .map((memory) => memory.tick)));
   }
 
+  await openTool(page, "Paths");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 218, centerY: 253, zoom: 2, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await page.getByRole("button", { name: "Remove paths" }).click();
@@ -80,6 +81,7 @@ test("builds sloped paths and a queue through the UI", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Paths");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 247, centerY: 253, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
 
@@ -140,10 +142,7 @@ async function clickTile(page: Page, x: number, y: number, z: number): Promise<v
     tileY: y,
     height: z,
   });
-  const canvas = page.locator("canvas");
-  const bounds = await canvas.boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  await page.mouse.click(bounds.x + point.x * bounds.width / 800, bounds.y + point.y * bounds.height / 500);
+  await clickCanvas(page, point);
 }
 
 async function dragTiles(page: Page, start: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }): Promise<void> {
@@ -151,15 +150,8 @@ async function dragTiles(page: Page, start: { x: number; y: number; z: number },
     start: window.gameTest.project({ x: startTile.x + 0.5, y: startTile.y + 0.5, z: startTile.z }),
     end: window.gameTest.project({ x: endTile.x + 0.5, y: endTile.y + 0.5, z: endTile.z }),
   }), { startTile: start, endTile: end });
-  const canvas = page.locator("canvas");
-  const bounds = await canvas.boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  const screenPoint = (point: { x: number; y: number }): { x: number; y: number } => ({
-    x: bounds.x + point.x * bounds.width / 800,
-    y: bounds.y + point.y * bounds.height / 500,
-  });
-  const startPoint = screenPoint(points.start);
-  const endPoint = screenPoint(points.end);
+  const startPoint = await canvasToPage(page, points.start);
+  const endPoint = await canvasToPage(page, points.end);
   await page.mouse.move(startPoint.x, startPoint.y);
   await page.mouse.down();
   await page.mouse.move(endPoint.x, endPoint.y, { steps: 12 });

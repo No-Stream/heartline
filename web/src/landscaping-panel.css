@@ -1,146 +1,23 @@
-.landscaping {
-  --paper: #f2eadb;
-  --ink: #3a2e58;
-  --ink-soft: color-mix(in srgb, var(--ink) 62%, var(--paper));
-  --coral: #dc5c3e;
-  --mustard: #e9ab38;
-  --slate: #3f61a6;
-  --key-line: 1px solid color-mix(in srgb, var(--ink) 55%, transparent);
-  --hairline: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
-  --heading-font: "Futura", "Avenir Next", "Century Gothic", "Trebuchet MS", system-ui, sans-serif;
-  box-sizing: border-box;
-  padding: 0.9rem 1rem 1rem;
-  color: var(--ink);
-  background: var(--paper);
-  border: var(--key-line);
-  border-radius: 3px;
-  box-shadow: 2px 3px 0 color-mix(in srgb, var(--mustard) 55%, transparent);
-  font: 0.86rem/1.35 Georgia, "Times New Roman", serif;
-}
-
-.landscaping *,
-.landscaping *::before,
-.landscaping *::after { box-sizing: border-box; }
-.landscaping p,
-.landscaping h3 { margin: 0; }
-.landscaping :focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
-
-.landscaping__header {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding-bottom: 0.55rem;
-  border-bottom: var(--key-line);
-}
-.landscaping__header h2 {
-  margin: 0;
-  font: 600 1.35rem/1.1 Georgia, "Times New Roman", serif;
-  letter-spacing: 0.01em;
-}
-.landscaping__eyebrow {
-  margin-bottom: 0.15rem !important;
-  color: var(--coral);
-  font: 600 0.82rem/1.3 var(--heading-font);
-  font-variant-caps: all-small-caps;
-  letter-spacing: 0.14em;
-  text-transform: lowercase;
-}
-
+/* The landscaping panel's own layout. The shared print-modern pieces are in print-modern.css. */
 .landscaping__tools {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.3rem;
-  padding: 0.65rem 0;
-  border-bottom: var(--hairline);
 }
-.landscaping button,
-.landscaping select,
-.landscaping input[type="number"] {
-  min-height: 2rem;
-  padding: 0.25rem 0.45rem;
-  color: var(--ink);
-  background: var(--paper);
-  border: var(--key-line);
-  border-radius: 2px;
-  font: inherit;
-}
-.landscaping button { cursor: pointer; }
-.landscaping button:hover:not(:disabled) { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
-.landscaping button[aria-pressed="true"] {
-  color: var(--paper);
-  background: var(--ink);
-  box-shadow: 2px 2px 0 var(--coral);
-}
-.landscaping select { width: 100%; color-scheme: light; }
-.landscaping input[type="number"] { width: 100%; }
+.landscaping__tools button { min-height: 2rem; padding: 0.25rem 0.45rem; }
 
-.landscaping__fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.55rem;
-  padding: 0.65rem 0;
-  border-bottom: var(--hairline);
-}
-.landscaping__fields label,
-.landscaping__underground label { display: grid; gap: 0.25rem; min-width: 0; }
-.landscaping__fields label span,
-.landscaping__underground label span,
-.landscaping__underground h3 {
-  color: var(--ink-soft);
-  font: 600 0.82rem/1.3 var(--heading-font);
-  font-variant-caps: all-small-caps;
-  letter-spacing: 0.1em;
-}
+.landscaping__actions { display: flex; align-items: center; gap: 0.5rem; }
 
-.landscaping__actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.65rem 0;
-  border-bottom: var(--hairline);
-}
-.landscaping__action--primary {
-  color: var(--paper) !important;
-  background: var(--ink) !important;
-  box-shadow: 2px 2px 0 var(--coral);
-}
-.landscaping__action--primary:hover { background: color-mix(in srgb, var(--ink) 88%, var(--coral)) !important; }
-.landscaping__action--quiet {
-  padding: 0.15rem 0.25rem !important;
-  border-color: transparent !important;
-  background: transparent !important;
-  color: var(--ink-soft) !important;
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
-}
-
-.landscaping__underground {
-  display: grid;
-  gap: 0.45rem;
-  padding: 0.65rem 0;
-  border-bottom: var(--hairline);
-}
+.landscaping__underground { display: grid; gap: 0.45rem; }
 .landscaping__underground-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .landscaping__underground-heading button { min-height: 1.7rem; padding: 0.15rem 0.45rem; }
-.landscaping__underground label { grid-template-columns: 5.2rem minmax(0, 1fr) 2rem; align-items: center; }
+.landscaping__underground label { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr) 2rem; align-items: center; gap: 0.25rem; }
 .landscaping__underground input { width: 100%; accent-color: var(--coral); }
 .landscaping__underground output { text-align: right; font-variant-numeric: tabular-nums; }
-.landscaping__hint { color: var(--ink-soft); font-size: 0.8rem; font-style: italic; }
-.landscaping__hint:last-of-type { padding-top: 0.6rem; }
-.landscaping__status {
-  min-height: 1.2rem;
-  margin-top: 0.55rem !important;
-  padding-left: 0.5rem;
-  border-left: 3px solid var(--coral);
-  color: color-mix(in srgb, var(--coral) 65%, var(--ink));
-  font-size: 0.8rem;
-  font-style: italic;
-}
-.landscaping__status:empty { visibility: hidden; }
+.landscaping__hint { padding-top: 0.6rem; }
+.landscaping__status { margin-top: 0.55rem !important; }
 
 @media (max-width: 360px) {
-  .landscaping__fields { grid-template-columns: 1fr; }
   .landscaping__underground label { grid-template-columns: 1fr 2rem; }
   .landscaping__underground label span { grid-column: 1 / -1; }
 }

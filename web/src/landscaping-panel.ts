@@ -1,3 +1,4 @@
+import "./print-modern.css";
 import "./landscaping-panel.css";
 import type { InputAction } from "./input/actions";
 import { LANDSCAPING_TOOLS, type LandscapingSelection, type LandscapingTool } from "./landscaping-tool";
@@ -28,33 +29,33 @@ export function createLandscapingPanel(
   message(text: string): void;
   setUndergroundView(enabled: boolean, level?: number): void;
 } {
-  container.classList.add("landscaping");
+  container.classList.add("tool-panel", "landscaping");
   const toolButtons = LANDSCAPING_TOOLS.map((tool) => `<button type="button" data-landscape-tool="${tool}" aria-pressed="${tool === "raise_tiles"}">${TOOL_LABELS[tool]}</button>`).join("");
   const brushOptions = Array.from({ length: 9 }, (_, index) => {
     const size = index + 1;
     return `<option value="${size}"${size === 3 ? " selected" : ""}>${size} × ${size}</option>`;
   }).join("");
-  container.innerHTML = `<header class="landscaping__header">
-      <div><p class="landscaping__eyebrow">Shape the park</p><h2>Landscaping</h2></div>
+  container.innerHTML = `<header class="tool-panel__header">
+      <div><p class="tool-panel__eyebrow">Shape the park</p><h2>Landscaping</h2></div>
     </header>
-    <div class="landscaping__tools" role="group" aria-label="Landscaping tools">${toolButtons}</div>
-    <div class="landscaping__fields">
+    <div class="tool-panel__section landscaping__tools" role="group" aria-label="Landscaping tools">${toolButtons}</div>
+    <div class="tool-panel__section tool-panel__fields">
       <label><span>Brush size</span><select data-landscape-brush aria-label="Brush size">${brushOptions}</select></label>
       <label><span>Flatten height</span><input data-landscape-height aria-label="Flatten height" type="number" min="-32768" max="32767" step="1" value="8"></label>
       <label><span>Carve bottom</span><input data-landscape-bottom aria-label="Carve bottom" type="number" min="-32768" max="32767" step="1" value="2"></label>
       <label><span>Carve ceiling</span><input data-landscape-top aria-label="Carve ceiling" type="number" min="-32768" max="32767" step="1" value="6"></label>
     </div>
-    <div class="landscaping__actions">
-      <button type="button" class="landscaping__action landscaping__action--primary" data-landscape-apply>Apply tool</button>
-      <button type="button" class="landscaping__action landscaping__action--quiet" data-landscape-cancel>Cancel tool</button>
+    <div class="tool-panel__section landscaping__actions">
+      <button type="button" class="tool-panel__action tool-panel__action--primary" data-landscape-apply>Apply tool</button>
+      <button type="button" class="tool-panel__action tool-panel__action--quiet" data-landscape-cancel>Cancel tool</button>
     </div>
-    <div class="landscaping__underground">
+    <div class="tool-panel__section landscaping__underground">
       <div class="landscaping__underground-heading"><h3>Underground view</h3><button type="button" data-underground-toggle aria-pressed="false">Show underground</button></div>
-      <label><span>Cut level</span><input data-underground-level aria-label="Underground cut level" type="range" min="-32" max="128" step="1" value="8"><output data-underground-output>8</output></label>
-      <p class="landscaping__hint">Cut away ground above this quarter-tile height.</p>
+      <label><span class="tool-panel__label">Cut level</span><input data-underground-level aria-label="Underground cut level" type="range" min="-32" max="128" step="1" value="8"><output data-underground-output>8</output></label>
+      <p class="tool-panel__hint">Cut away ground above this quarter-tile height.</p>
     </div>
-    <p class="landscaping__hint">Choose a tool, then drag over the park. Corner tools use the picked corner.</p>
-    <p class="landscaping__status" role="status" aria-live="polite"></p>`;
+    <p class="tool-panel__hint landscaping__hint">Choose a tool, then drag over the park. Corner tools use the picked corner.</p>
+    <p class="tool-panel__status landscaping__status" role="status" aria-live="polite"></p>`;
 
   const status = container.querySelector<HTMLElement>("[role='status']")!;
   const brush = container.querySelector<HTMLSelectElement>("[data-landscape-brush]")!;

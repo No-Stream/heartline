@@ -2,14 +2,16 @@ import { projectWorld, type Camera, type Viewport } from "./camera";
 import type { GeometryQuad, Triangle, Vertex, WorldSprite } from "./render/scene";
 import type { TrackStyle } from "./render/track/geometry";
 
-export type FacilityKind = "entrance" | "food_stall" | "drink_stall" | "restroom" | "carousel" | "ferris_wheel" | "souvenir_shop";
+export type FacilityKind = "entrance" | "food_stall" | "drink_stall" | "restroom" | "carousel" | "ferris_wheel" | "souvenir";
 export interface Facility { id: number; kind: FacilityKind; x: number; y: number; z: number; rotation: number; price: number; ride_state: "idle" | "running" | "unloading"; ride_progress: number }
 export type FacilityAction = { type: "facility-place"; kind: FacilityKind; x: number; y: number; rotation: number; height?: number };
 
+/** Building artwork in the atlas. Carousels and ferris wheels are drawn as geometry instead. */
+export const facilityBuildings: Partial<Record<FacilityKind, string>> = { entrance: "park_gate", food_stall: "burger_stall", drink_stall: "burger_stall", restroom: "restroom", souvenir: "souvenir_shop" };
+
 export function facilitySprites(facilities: readonly Facility[], cameraRotation: number): WorldSprite[] {
-  const buildings: Partial<Record<FacilityKind, string>> = { entrance: "park_gate", food_stall: "burger_stall", drink_stall: "burger_stall", restroom: "restroom", souvenir_shop: "souvenir_shop" };
   return facilities.flatMap((facility) => {
-    const building = buildings[facility.kind];
+    const building = facilityBuildings[facility.kind];
     const width = facility.kind === "entrance" ? (facility.rotation % 2 ? 4 : 1) : 2;
     const height = facility.kind === "entrance" ? (facility.rotation % 2 ? 1 : 4) : 2;
     if (!building) return [];

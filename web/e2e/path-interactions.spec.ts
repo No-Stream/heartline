@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { canvasToPage, openTool } from "./game-page";
 
 test.use({
-  viewport: { width: 1100, height: 1200 },
   deviceScaleFactor: 1,
   launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
 });
@@ -9,6 +9,7 @@ test.use({
 test("single-click placement works and a refused queue preview explains the obstruction", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Paths");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 218, centerY: 254, zoom: 2, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
 
@@ -49,11 +50,5 @@ async function screenPoint(page: Page, x: number, y: number, z: number): Promise
     y: tileY + 0.5,
     z: height,
   }), { tileX: x, tileY: y, height: z });
-  const canvas = page.locator("canvas");
-  const bounds = await canvas.boundingBox();
-  if (!bounds) throw new Error("Canvas is not visible");
-  return {
-    x: bounds.x + projected.x * bounds.width / 800,
-    y: bounds.y + projected.y * bounds.height / 500,
-  };
+  return canvasToPage(page, projected);
 }
