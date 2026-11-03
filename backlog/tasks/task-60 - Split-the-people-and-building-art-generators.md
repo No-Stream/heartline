@@ -4,7 +4,7 @@ title: Split the people and building art generators
 status: To Do
 assignee: []
 created_date: '2026-11-03 16:47'
-updated_date: '2026-11-03 19:01'
+updated_date: '2026-11-03 19:03'
 labels:
   - refactor
   - art
@@ -32,4 +32,6 @@ Rendering review: people.ts combines several jobs in one large function, buildin
 
 <!-- SECTION:NOTES:BEGIN -->
 People generator split into design, appearance and drawing modules; one module per building with shared gableRoofGeometry in building-primitives.ts; all 821 generated SVGs byte-identical. Atlas protection not done yet: web/art/pipeline/build-atlas.ts removes the output directory before rasterising; it should write into a sibling staging directory and swap in only on success.
+
+Atlas regeneration now writes pages and atlas.json to a sibling staging directory and publishes them with a rename-based swap after generation succeeds. A failure test verifies that a partially generated replacement leaves the prior atlas files intact. `npm run test:art` passed (9 tests); `make art` packed 821 drawings. All five output file SHA-256 hashes matched the pre-change values.
 <!-- SECTION:NOTES:END -->

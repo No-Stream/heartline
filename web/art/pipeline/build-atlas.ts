@@ -4,9 +4,9 @@
 // Its root <svg> needs pixel width and height at scale 1, plus data-anchor-x and data-anchor-y, the
 // point that stands on the ground. Any other data-* attributes are copied to the frame's properties.
 // So replacing or adding a drawing needs no code changes: drop in the file and run `make art`.
-import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { CAST, personAppearance, type PersonAppearance } from "../generators/people.ts";
@@ -36,6 +36,37 @@ interface Drawing {
 }
 interface Placement { page: number; x: number; y: number; width: number; height: number }
 interface Page { file: string; width: number; height: number }
+
+export async function replaceDirectoryWithStagedOutput(
+  outputDirectory: string,
+  generate: (stagingDirectory: string) => Promise<void>,
+): Promise<void> {
+  const parentDirectory = dirname(outputDirectory);
+  const stagingDirectory = join(parentDirectory, `.${randomUUID()}.staging`);
+  const backupDirectory = join(parentDirectory, `.${randomUUID()}.backup`);
+  mkdirSync(parentDirectory, { recursive: true });
+  mkdirSync(stagingDirectory);
+  try {
+    await generate(stagingDirectory);
+  } catch (error) {
+    rmSync(stagingDirectory, { recursive: true, force: true });
+    throw error;
+  }
+
+  let previousOutputMoved = false;
+  try {
+    if (existsSync(outputDirectory)) {
+      renameSync(outputDirectory, backupDirectory);
+      previousOutputMoved = true;
+    }
+    renameSync(stagingDirectory, outputDirectory);
+  } catch (error) {
+    if (previousOutputMoved) renameSync(backupDirectory, outputDirectory);
+    rmSync(stagingDirectory, { recursive: true, force: true });
+    throw error;
+  }
+  if (previousOutputMoved) rmSync(backupDirectory, { recursive: true, force: true });
+}
 
 function listSvgFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -137,78 +168,78 @@ async function main(): Promise<void> {
   if (drawings.length === 0) throw new Error(`No drawings found under ${drawingsDirectory}`);
   const sprites = buildSpriteIndex(drawings);
 
-  rmSync(outputDirectory, { recursive: true, force: true });
-  mkdirSync(outputDirectory, { recursive: true });
-  const browser = await chromium.launch({ channel: "chrome" });
-  const browserPage = await browser.newPage();
+  await replaceDirectoryWithStagedOutput(outputDirectory, async (stagingDirectory) => {
+    const browser = await chromium.launch({ channel: "chrome" });
+    const browserPage = await browser.newPage();
 
-  const pagesByScale: Record<string, Page[]> = {};
-  const placementsByKey: Record<string, Record<string, Placement>> = {};
-  for (const scale of SCALES) {
-    const { placements, sizes } = packShelves(drawings, scale);
-    pagesByScale[scale] = [];
-    for (const [pageIndex, size] of sizes.entries()) {
-      const onPage = drawings
-        .filter((drawing) => placements.get(drawing.key)?.page === pageIndex)
-        .map((drawing) => ({ source: drawing.source, svg: drawing.svg, placement: placements.get(drawing.key) }));
-      // Chrome rasterizes an SVG image at its drawn size, so each scale is sharp rather than resampled.
-      const { dataUrl, clipped } = await browserPage.evaluate(
-        async ({ items, width, height }) => {
-          const atlas = document.createElement("canvas");
-          atlas.width = width;
-          atlas.height = height;
-          const context = atlas.getContext("2d", { willReadFrequently: true })!;
-          const clippedSources: string[] = [];
-          for (const { source, svg, placement } of items) {
-            const image = new Image();
-            image.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
-            await image.decode();
-            context.drawImage(image, placement!.x, placement!.y, placement!.width, placement!.height);
-            const { x, y, width: w, height: h } = placement!;
-            const rows = [context.getImageData(x, y, w, 1), context.getImageData(x, y + h - 1, w, 1), context.getImageData(x, y, 1, h), context.getImageData(x + w - 1, y, 1, h)];
-            if (rows.some(({ data }) => data.some((value, index) => index % 4 === 3 && value > 8))) clippedSources.push(source);
-          }
-          return { dataUrl: atlas.toDataURL("image/png"), clipped: clippedSources };
-        },
-        { items: onPage, width: size.width, height: size.height },
-      );
-      if (clipped.length > 0) throw new Error(`Drawing reaches the edge of its canvas, so it is cut off:\n${clipped.join("\n")}`);
-      const file = `atlas@${scale}x_${pageIndex}.png`;
-      writeFileSync(join(outputDirectory, file), Buffer.from(dataUrl.split(",")[1], "base64"));
-      pagesByScale[scale].push({ file, width: size.width, height: size.height });
+    const pagesByScale: Record<string, Page[]> = {};
+    const placementsByKey: Record<string, Record<string, Placement>> = {};
+    for (const scale of SCALES) {
+      const { placements, sizes } = packShelves(drawings, scale);
+      pagesByScale[scale] = [];
+      for (const [pageIndex, size] of sizes.entries()) {
+        const onPage = drawings
+          .filter((drawing) => placements.get(drawing.key)?.page === pageIndex)
+          .map((drawing) => ({ source: drawing.source, svg: drawing.svg, placement: placements.get(drawing.key) }));
+        // Chrome rasterizes an SVG image at its drawn size, so each scale is sharp rather than resampled.
+        const { dataUrl, clipped } = await browserPage.evaluate(
+          async ({ items, width, height }) => {
+            const atlas = document.createElement("canvas");
+            atlas.width = width;
+            atlas.height = height;
+            const context = atlas.getContext("2d", { willReadFrequently: true })!;
+            const clippedSources: string[] = [];
+            for (const { source, svg, placement } of items) {
+              const image = new Image();
+              image.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+              await image.decode();
+              context.drawImage(image, placement!.x, placement!.y, placement!.width, placement!.height);
+              const { x, y, width: w, height: h } = placement!;
+              const rows = [context.getImageData(x, y, w, 1), context.getImageData(x, y + h - 1, w, 1), context.getImageData(x, y, 1, h), context.getImageData(x + w - 1, y, 1, h)];
+              if (rows.some(({ data }) => data.some((value, index) => index % 4 === 3 && value > 8))) clippedSources.push(source);
+            }
+            return { dataUrl: atlas.toDataURL("image/png"), clipped: clippedSources };
+          },
+          { items: onPage, width: size.width, height: size.height },
+        );
+        if (clipped.length > 0) throw new Error(`Drawing reaches the edge of its canvas, so it is cut off:\n${clipped.join("\n")}`);
+        const file = `atlas@${scale}x_${pageIndex}.png`;
+        writeFileSync(join(stagingDirectory, file), Buffer.from(dataUrl.split(",")[1], "base64"));
+        pagesByScale[scale].push({ file, width: size.width, height: size.height });
+      }
+      for (const drawing of drawings) (placementsByKey[drawing.key] ??= {})[scale] = placements.get(drawing.key)!;
     }
-    for (const drawing of drawings) (placementsByKey[drawing.key] ??= {})[scale] = placements.get(drawing.key)!;
-  }
-  await browser.close();
+    await browser.close();
 
-  const sortedDrawings = [...drawings].sort((first, second) => first.key.localeCompare(second.key));
-  const frames = Object.fromEntries(
-    sortedDrawings.map((drawing) => [
-      drawing.key,
-      {
-        source: drawing.source,
-        sourceHash: createHash("sha256").update(drawing.svg).digest("hex"),
-        width: drawing.width,
-        height: drawing.height,
-        anchor: drawing.anchor,
-        properties: drawing.properties,
-        placements: placementsByKey[drawing.key],
-      },
-    ]),
-  );
-  const themeStyle = {
-    steel: theme.color(COLORS.red),
-    wood: theme.color(COLORS.wood),
-    train: theme.color(COLORS.mint),
-    ink: theme.line.color,
-    lineWeight: theme.line.weight,
-  };
-  writeFileSync(
-    join(outputDirectory, "atlas.json"),
-    JSON.stringify({ scales: SCALES, padding: PADDING_PIXELS, tile: { width: 64, height: 32 }, themeStyle, pages: pagesByScale, sprites, frames }, null, 1) + "\n",
-  );
-  const pageSummary = SCALES.map((scale) => `${scale}x: ${pagesByScale[scale].map(({ width, height }) => `${width}x${height}`).join(", ")}`).join("; ");
-  console.info(`Packed ${drawings.length} drawings. ${pageSummary}`);
+    const sortedDrawings = [...drawings].sort((first, second) => first.key.localeCompare(second.key));
+    const frames = Object.fromEntries(
+      sortedDrawings.map((drawing) => [
+        drawing.key,
+        {
+          source: drawing.source,
+          sourceHash: createHash("sha256").update(drawing.svg).digest("hex"),
+          width: drawing.width,
+          height: drawing.height,
+          anchor: drawing.anchor,
+          properties: drawing.properties,
+          placements: placementsByKey[drawing.key],
+        },
+      ]),
+    );
+    const themeStyle = {
+      steel: theme.color(COLORS.red),
+      wood: theme.color(COLORS.wood),
+      train: theme.color(COLORS.mint),
+      ink: theme.line.color,
+      lineWeight: theme.line.weight,
+    };
+    writeFileSync(
+      join(stagingDirectory, "atlas.json"),
+      JSON.stringify({ scales: SCALES, padding: PADDING_PIXELS, tile: { width: 64, height: 32 }, themeStyle, pages: pagesByScale, sprites, frames }, null, 1) + "\n",
+    );
+    const pageSummary = SCALES.map((scale) => `${scale}x: ${pagesByScale[scale].map(({ width, height }) => `${width}x${height}`).join(", ")}`).join("; ");
+    console.info(`Packed ${drawings.length} drawings. ${pageSummary}`);
+  });
 }
 
-await main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
