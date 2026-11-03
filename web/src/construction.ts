@@ -297,12 +297,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         const tile = document.createElement("button");
         tile.type = "button";
         tile.className = `piece-tile${piece.refusal ? " piece-tile--refused" : ""}`;
+        const levelOut = shape.exitSlope === "Level" && shape.entrySlope !== "Level";
+        if (levelOut) tile.classList.add("piece-tile--level-out");
         tile.dataset.piece = piece.id;
         tile.setAttribute("role", "radio");
         tile.setAttribute("aria-label", shape.name);
         const tipId = `piece-tip-${piece.id}`;
         tile.setAttribute("aria-describedby", tipId);
-        tile.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}<span class="piece-tile__tip" role="tooltip" id="${tipId}"><strong></strong><span></span></span>`;
+        tile.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}${levelOut ? '<span class="piece-tile__level-out">Level out</span>' : ""}<span class="piece-tile__tip" role="tooltip" id="${tipId}"><strong></strong><span></span></span>`;
         tile.querySelector("strong")!.textContent = shape.name;
         tile.querySelector(".piece-tile__tip span")!.textContent = piece.refusal;
         return tile;

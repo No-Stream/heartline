@@ -121,3 +121,50 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   await expect(page.getByText("Complete the circuit and make it longer than the train to test your coaster.")).toBeVisible();
   await expect(page.getByLabel("Track overlay")).toBeDisabled();
 });
+
+test("shows and places visible slope-to-level choices on Velocity Viper", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.locator(".builder select[data-model]").selectOption("model:velocity_viper");
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  const station = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 }));
+  await moveOverCanvas(page, station);
+  await clickCanvas(page, station);
+  const direction = await page.evaluate(() => window.gameTest.project({ x: 52.5, y: 50.5, z: 2 }));
+  await moveOverCanvas(page, direction);
+  await clickCanvas(page, direction);
+
+  const palette = page.getByRole("radiogroup", { name: "Next piece" });
+  const place = async (pieceId: string): Promise<void> => {
+    await palette.locator(`[data-piece="${pieceId}"]`).click();
+    await page.getByRole("button", { name: "Place piece" }).click();
+  };
+
+  await place("LevelToGentleUp");
+  await place("GentleUp");
+  const upLevelOut = palette.locator('[data-piece="GentleUpToLevel"]');
+  await expect(upLevelOut).toBeVisible();
+  await expect(upLevelOut).toContainText(/level/i);
+  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Gentle up");
+  await page.getByRole("button", { name: "Slope down" }).click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", "GentleUpToLevel");
+  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");
+  await page.getByRole("button", { name: "Place piece" }).click();
+  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");
+
+  await place("LevelToGentleDown");
+  await place("GentleDown");
+  const downLevelOut = palette.locator('[data-piece="GentleDownToLevel"]');
+  await expect(downLevelOut).toBeVisible();
+  await expect(downLevelOut).toContainText(/level/i);
+  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Gentle down");
+  await page.getByRole("button", { name: "Slope up" }).click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", "GentleDownToLevel");
+  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");
+  await page.getByRole("button", { name: "Place piece" }).click();
+  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");
+});

@@ -38,6 +38,8 @@
   background: var(--paper) !important;
   border: var(--hairline) !important;
 }
+.piece-tile--level-out { width: 4.7rem; height: auto; min-height: 2.6rem; gap: 0.05rem; padding: 0.1rem 0 !important; }
+.piece-tile__level-out { color: var(--ink); font: 0.58rem/1.1 Georgia, serif; }
 .piece-tile:hover { border-color: var(--ink) !important; }
 .piece-tile[aria-checked="true"] {
   background: color-mix(in srgb, var(--plate) 22%, var(--paper)) !important;
