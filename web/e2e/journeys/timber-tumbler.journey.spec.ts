@@ -9,13 +9,15 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await placeFacility(page, "Drink stall", { x: 216, y: 254, z: 2 });
   await placeFacility(page, "Restroom", { x: 216, y: 256, z: 2 });
   await placeStation(page, { model: "hybrid", height: 12, tile: { x: 241, y: 249, z: 2 }, direction: { x: 241, y: 251, z: 2 } });
-  await page.getByRole("radio", { name: "Begin chain lift climb", exact: true }).click();
+  await page.keyboard.press("h");
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-chain", "true");
+  await page.getByRole("radio", { name: "Begin gentle climb", exact: true }).click();
   await placePiece(page);
   await expect(page.locator("[data-track] li")).toHaveCount(2);
-  await page.getByRole("radio", { name: "Chain lift", exact: true }).click();
+  await page.getByRole("radio", { name: "Gentle climb", exact: true }).click();
   await placePiece(page);
   await expect(page.locator("[data-track] li")).toHaveCount(3);
-  // TASK-67, TASK-68 and TASK-69 add the chain toggle, climbing turns and 60-degree slopes.
+  // TASK-68 and TASK-69 add climbing turns and 60-degree slopes; TASK-70 adds a visible chain toggle.
   test.fail();
   await expect(page.getByRole("button", { name: "Turn left", exact: true }), "no climbing turn offered while the chain lift climbs").toBeEnabled();
   await page.getByRole("button", { name: "Turn left", exact: true }).click();

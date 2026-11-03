@@ -2,12 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { canvasToPage, clickCanvas, moveOverCanvas, openTool } from "./game-page";
 
 const blockCircuitPieces = [
-  "Straight", "Straight", "LiftFlat", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
-  "Straight", "Straight", "LiftFlat", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
+  "Straight", "Straight", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
+  "Straight", "Straight", "Straight", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
 ];
 
 const boardingCircuitPieces = [
-  "LiftLevelToGentleUp", "Lift", "Lift", "Lift", "Lift", "Lift", "LiftGentleUpToLevel", "LiftFlat",
+  "LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight",
   "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown",
   "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "TurnLargeEntry", "TurnLargeExit",
 ];
@@ -191,7 +191,13 @@ async function buildBlockCircuit(
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
   await expect(track.locator("li")).toHaveCount(1);
+  let chainEnabled = false;
   for (const [index, piece] of pieces.entries()) {
+    const needsChain = pieces === blockCircuitPieces ? index === 2 || index === 9 : index < 8;
+    if (needsChain !== chainEnabled) {
+      await page.keyboard.press("h");
+      chainEnabled = needsChain;
+    }
     const choice = choices.locator(`[data-piece="${piece}"]`);
     await choice.click();
     await expect(choice).toHaveAttribute("aria-checked", "true");

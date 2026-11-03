@@ -49,24 +49,28 @@ pub(super) fn block_test_park() -> Park {
         },
         hybrid_model(),
     );
-    for piece_id in [
+    for (index, piece_id) in [
         PieceId::Station,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::TurnLargeEntry,
-        PieceId::TurnLargeExit,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::LiftFlat,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
-    ] {
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        construction.set_chain(matches!(index, 3 | 10));
         construction
             .append(piece_id, &world, &[])
             .unwrap_or_else(|error| panic!("{piece_id:?}: {error:?}"));

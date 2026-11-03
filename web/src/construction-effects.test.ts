@@ -4,7 +4,7 @@ import { constructionEvent, createConstructionEffects } from "./construction-eff
 
 const rails = new Float32Array([0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 2, 1, 1, 0, 1, 0, 0, 0, 1]);
 const state = (update: Partial<ConstructionState>): ConstructionState => ({
-  type: "construction-state", active: true, pieces: [], selected: "Straight", track: [{ id: 0, label: "Station" }],
+  type: "construction-state", active: true, chain: false, pieces: [], selected: "Straight", track: [{ id: 0, label: "Station" }],
   canAppend: true, canClose: false, canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [], message: "",
   blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
   trainCount: 1, placedRails: rails, railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),

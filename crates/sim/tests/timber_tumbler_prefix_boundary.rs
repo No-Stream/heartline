@@ -19,7 +19,7 @@ fn construction_with_prefix(
     x: i32,
     y: i32,
     z: i32,
-    prefix: &[PieceId],
+    prefix: &[(PieceId, bool)],
 ) -> Construction {
     let start = TrackState {
         x,
@@ -29,9 +29,11 @@ fn construction_with_prefix(
     };
     let mut construction = Construction::new(start, hybrid_model());
     construction.append(PieceId::Station, world, &[]).unwrap();
-    for piece_id in prefix {
-        construction.append(*piece_id, world, &[]).unwrap();
+    for &(piece_id, chain) in prefix {
+        construction.set_chain(chain);
+        construction.append(piece_id, world, &[]).unwrap();
     }
+    construction.set_chain(false);
     construction
 }
 
@@ -39,29 +41,29 @@ fn construction_with_prefix(
 fn station_backed_prefix_refusals_are_world_bounds_at_four_and_twelve_metres() {
     let world = flat_world();
     let prefix = [
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
-        PieceId::LiftLevelToGentleUp,
-        PieceId::LiftGentleUpToLevel,
-        PieceId::LiftFlat,
-        PieceId::Corkscrew,
-        PieceId::LiftLevelToGentleUp,
-        PieceId::GentleUpToLevel,
-        PieceId::LiftLevelToGentleUp,
-        PieceId::GentleUpToLevel,
-        PieceId::Corkscrew,
-        PieceId::LiftLevelToGentleUp,
-        PieceId::GentleUp,
-        PieceId::LiftGentleUpToLevel,
-        PieceId::LiftLevelToGentleUp,
-        PieceId::LiftGentleUpToLevel,
-        PieceId::TurnLargeRightStandalone,
-        PieceId::AirtimeHill,
-        PieceId::HeartlineRollRight,
+        (PieceId::Straight, true),
+        (PieceId::Straight, true),
+        (PieceId::Straight, true),
+        (PieceId::Straight, true),
+        (PieceId::Straight, true),
+        (PieceId::Straight, true),
+        (PieceId::LevelToGentleUp, true),
+        (PieceId::GentleUpToLevel, true),
+        (PieceId::Straight, true),
+        (PieceId::Corkscrew, false),
+        (PieceId::LevelToGentleUp, true),
+        (PieceId::GentleUpToLevel, false),
+        (PieceId::LevelToGentleUp, true),
+        (PieceId::GentleUpToLevel, false),
+        (PieceId::Corkscrew, false),
+        (PieceId::LevelToGentleUp, true),
+        (PieceId::GentleUp, false),
+        (PieceId::GentleUpToLevel, true),
+        (PieceId::LevelToGentleUp, true),
+        (PieceId::GentleUpToLevel, true),
+        (PieceId::TurnLargeRightStandalone, false),
+        (PieceId::AirtimeHill, false),
+        (PieceId::HeartlineRollRight, false),
     ];
 
     for z in [2, 6] {
@@ -97,14 +99,14 @@ fn station_backed_prefix_refusals_are_world_bounds_at_four_and_twelve_metres() {
 fn a_random_walk_can_trap_its_endpoint_against_existing_track() {
     let world = flat_world();
     let prefix = [
-        PieceId::HeartlineRoll,
-        PieceId::Straight,
-        PieceId::TurnSmallStandalone,
-        PieceId::HeartlineRoll,
-        PieceId::TurnLargeRightEntry,
-        PieceId::TurnLargeRight,
-        PieceId::TurnLargeRightExit,
-        PieceId::OffsetLeft,
+        (PieceId::HeartlineRoll, false),
+        (PieceId::Straight, false),
+        (PieceId::TurnSmallStandalone, false),
+        (PieceId::HeartlineRoll, false),
+        (PieceId::TurnLargeRightEntry, false),
+        (PieceId::TurnLargeRight, false),
+        (PieceId::TurnLargeRightExit, false),
+        (PieceId::OffsetLeft, false),
     ];
     let construction = construction_with_prefix(&world, 50, 50, 2, &prefix);
     let choices = construction.available_choices(&world, &[]);

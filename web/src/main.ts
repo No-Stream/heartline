@@ -342,10 +342,12 @@ const gameTest: GameTest = {
   crestBursts() { return crestHistory; },
 };
 window.gameTest = gameTest;
+gameCanvas.addEventListener("webglcontextlost", () => { gameTest.ready = false; });
+gameCanvas.addEventListener("webglcontextrestored", () => { gameTest.ready = false; });
 toolbar.setActive(activeTool);
 fitCanvas(false);
 
-const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group", "delete-mode-toggle"]);
+const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group", "delete-mode-toggle", "chain-toggle"]);
 
 function dispatch(action: InputAction): void {
   // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
@@ -492,6 +494,8 @@ function dispatch(action: InputAction): void {
       worker.postMessage({ type: "guest-detail-request", guestId: selection.id });
       gameTest.ready = false;
     }
+  } else if (action.type === "chain-toggle") {
+    if (construction?.active) worker.postMessage({ type: "construction-set-chain", enabled: !construction.chain });
   } else if (action.type === "construction-delete-mode" || action.type === "delete-mode-toggle") {
     deleteMode = action.type === "delete-mode-toggle" ? !deleteMode : action.enabled;
     panel.setDeleteMode(deleteMode);
@@ -686,7 +690,7 @@ function frame(now: number): void {
     ],
   ], atmosphere);
   gameCanvas.dataset.drawnAgents = String(people.length);
-  gameTest.ready = (current?.guestIds.length ?? 0) > 0;
+  gameTest.ready = renderer.isContextAvailable() && (current?.guestIds.length ?? 0) > 0;
 }
 
 

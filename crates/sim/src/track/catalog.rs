@@ -336,19 +336,6 @@ pub fn catalog() -> Vec<Piece> {
             Shape::Heartline,
         ),
         (
-            Lift,
-            "Chain lift",
-            8,
-            0,
-            4,
-            East,
-            UpGentle,
-            UpGentle,
-            FlatBank,
-            FlatBank,
-            Shape::Plain,
-        ),
-        (
             Brakes,
             "Brakes",
             8,
@@ -413,7 +400,6 @@ pub fn catalog() -> Vec<Piece> {
                     distance
                 };
                 let (kind, inversion) = match id {
-                    Lift => (PieceKind::Lift, None),
                     Brakes => (PieceKind::Brakes, None),
                     Station => (PieceKind::Station, None),
                     Loop => (PieceKind::Track, Some(Inversion::VerticalLoop)),
@@ -592,25 +578,6 @@ pub fn catalog() -> Vec<Piece> {
         }
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
         piece.rebuild_arc();
-        pieces.push(piece);
-    }
-    for (base, id, name) in [
-        (Straight, LiftFlat, "Flat chain lift"),
-        (
-            LevelToGentleUp,
-            LiftLevelToGentleUp,
-            "Begin chain lift climb",
-        ),
-        (GentleUpToLevel, LiftGentleUpToLevel, "End chain lift climb"),
-    ] {
-        let mut piece = pieces
-            .iter()
-            .find(|piece| piece.id == base)
-            .unwrap()
-            .clone();
-        piece.id = id;
-        piece.name = name;
-        piece.kind = PieceKind::Lift;
         pieces.push(piece);
     }
     for (id, name, half_tiles, height, kind) in [

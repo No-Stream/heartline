@@ -8,14 +8,14 @@ fn automatic_search_finds_two_trains_on_browser_circuit() {
         PieceId::Station,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
@@ -25,12 +25,15 @@ fn automatic_search_finds_two_trains_on_browser_circuit() {
     let mut state = TrackState::origin();
     let mut pieces = Vec::new();
     for id in ids {
-        let piece = catalog()
+        let mut piece = catalog()
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if matches!(pieces.len(), 3 | 10) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -57,28 +60,31 @@ fn manual_search_selects_best_real_powered_hold_combination() {
         PieceId::Station,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
+        PieceId::Straight,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
+        PieceId::Straight,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
     ] {
-        let piece = catalog
+        let mut piece = catalog
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if matches!(pieces.len(), 3 | 4 | 11 | 12) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -173,26 +179,29 @@ fn capacity_verification_observes_two_real_train_cohorts() {
         PieceId::Station,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
     ] {
-        let piece = catalog
+        let mut piece = catalog
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if matches!(pieces.len(), 3 | 10) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -255,26 +264,29 @@ fn level_unbanked_turn_can_hold_and_restart_a_train() {
         PieceId::Station,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
     ] {
-        let piece = catalog
+        let mut piece = catalog
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if matches!(pieces.len(), 3 | 10) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -356,7 +368,7 @@ fn gentle_uphill_brake_requires_drive_force_and_validates_restart() {
     let mut pieces = demo_circuit().pieces().to_vec();
     for piece in pieces
         .iter_mut()
-        .filter(|piece| piece.id == crate::track::PieceId::Lift)
+        .filter(|piece| piece.id == crate::track::PieceId::GentleUp)
         .skip(1)
     {
         piece.kind = crate::track::PieceKind::Track;
@@ -368,7 +380,7 @@ fn gentle_uphill_brake_requires_drive_force_and_validates_restart() {
         .iter()
         .filter(|run| {
             run.piece_indices.iter().all(|&index| {
-                circuit.pieces()[index].id == crate::track::PieceId::Lift
+                circuit.pieces()[index].id == crate::track::PieceId::GentleUp
                     && circuit.pieces()[index].kind == crate::track::PieceKind::Track
             })
         })
@@ -527,26 +539,29 @@ fn overcrowded_trial_keeps_a_safe_lower_train_capacity() {
         PieceId::Station,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
     ] {
-        let piece = catalog
+        let mut piece = catalog
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if matches!(pieces.len(), 3 | 10) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -639,7 +654,7 @@ fn automatic_search_finds_two_train_layouts_on_distinct_circuits() {
             PieceId::Station,
             PieceId::Straight,
             PieceId::Straight,
-            PieceId::LiftFlat,
+            PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
         ];
@@ -649,7 +664,7 @@ fn automatic_search_finds_two_train_layouts_on_distinct_circuits() {
             PieceId::TurnLargeExit,
             PieceId::Straight,
             PieceId::Straight,
-            PieceId::LiftFlat,
+            PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
@@ -665,12 +680,15 @@ fn automatic_search_finds_two_train_layouts_on_distinct_circuits() {
         let mut state = TrackState::origin();
         let mut pieces = Vec::new();
         for id in ids {
-            let piece = catalog
+            let mut piece = catalog
                 .iter()
                 .find(|piece| piece.id == id)
                 .unwrap()
                 .at(state)
                 .unwrap();
+            if pieces.len() == 3 || pieces.len() == 10 + extra_straights {
+                piece.kind = crate::track::PieceKind::Lift;
+            }
             state = piece.exit;
             pieces.push(piece);
         }
@@ -721,19 +739,22 @@ fn automatic_placement_completes_on_a_small_valid_circuit() {
         PieceId::LargeLeftBankedTurnExit,
         PieceId::UnbankLeft,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::BankLeft,
         PieceId::LargeLeftBankedTurnEntry,
         PieceId::LargeLeftBankedTurnExit,
         PieceId::UnbankLeft,
     ] {
-        let piece = catalog
+        let mut piece = catalog
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if matches!(pieces.len(), 8) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -1124,7 +1145,7 @@ fn powered_sections_get_a_candidate_at_their_end() {
     use crate::track::{PieceId, TrackState, catalog};
     let catalog = catalog();
     let mut saw_incomplete_placement_search = false;
-    for powered in [PieceId::LiftFlat, PieceId::Launch] {
+    for powered in [PieceId::Straight, PieceId::Launch] {
         let mut state = TrackState::origin();
         let mut pieces = Vec::new();
         for id in [
@@ -1145,12 +1166,15 @@ fn powered_sections_get_a_candidate_at_their_end() {
             PieceId::TurnLargeEntry,
             PieceId::TurnLargeExit,
         ] {
-            let piece = catalog
+            let mut piece = catalog
                 .iter()
                 .find(|piece| piece.id == id)
                 .unwrap()
                 .at(state)
                 .unwrap();
+            if powered == PieceId::Straight && matches!(pieces.len(), 3 | 10) {
+                piece.kind = crate::track::PieceKind::Lift;
+            }
             state = piece.exit;
             pieces.push(piece);
         }
@@ -1173,7 +1197,9 @@ fn powered_sections_get_a_candidate_at_their_end() {
         let mut distance = 0.0;
         for piece in circuit.pieces() {
             distance += piece.length();
-            if piece.id == powered {
+            if (powered == PieceId::Straight && piece.kind == crate::track::PieceKind::Lift)
+                || (powered == PieceId::Launch && piece.id == powered)
+            {
                 let end = distance.rem_euclid(circuit.length());
                 assert!(
                     runs.iter()

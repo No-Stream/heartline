@@ -36,6 +36,14 @@ fn timber_tumbler_player_circuit_closes() {
         .take_while(|line| !line.starts_with('['))
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
     {
+        if name == "chain on" {
+            construction.set_chain(true);
+            continue;
+        }
+        if name == "chain off" {
+            construction.set_chain(false);
+            continue;
+        }
         let piece = pieces
             .iter()
             .find(|piece| format!("{:?}", piece.id) == name)

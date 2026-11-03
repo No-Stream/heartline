@@ -14,6 +14,14 @@ function event(type: string, properties: Record<string, number | string | boolea
 }
 
 describe("input bindings", () => {
+  it("toggles the chain with H once per key press", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    surface.dispatchEvent(event("keydown", { key: "h", repeat: false }));
+    surface.dispatchEvent(event("keydown", { key: "h", repeat: true }));
+    expect(actions).toEqual([{ type: "chain-toggle" }]);
+  });
   it("turns pointer gestures into pan and select actions in canvas coordinates", () => {
     const surface = new Surface();
     const actions: InputAction[] = [];

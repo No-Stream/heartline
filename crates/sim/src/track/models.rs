@@ -1,9 +1,10 @@
-use super::{Inversion, Piece, PieceId, TrackState, catalog};
+use super::{Inversion, Piece, PieceId, PieceKind, Shape, Slope, TrackState, catalog};
 use crate::state_hash::StateHasher;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LiftType {
-    Chain,
+pub struct LiftRules {
+    pub max_slope: Slope,
+    pub curved: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchType {
@@ -68,7 +69,7 @@ pub struct CoasterModel {
     pub minimum_radius_metres: f64,
     pub minimum_height_cm: u16,
     pub allowed_inversions: Vec<Inversion>,
-    pub lift_types: Vec<LiftType>,
+    pub lift_rules: Option<LiftRules>,
     pub launch_types: Vec<LaunchType>,
     pub support_style: SupportStyle,
     pub train: TrainConfiguration,
@@ -90,10 +91,10 @@ impl CoasterModel {
         for inversion in &self.allowed_inversions {
             hash.write_u8(*inversion as u8);
         }
-        hash.write_len(self.lift_types.len());
-        for lift in &self.lift_types {
-            hash.write_u8(*lift as u8);
-        }
+        hash.write_option(self.lift_rules, |hash, rules| {
+            hash.write_u8(rules.max_slope as u8);
+            hash.write_bool(rules.curved);
+        });
         hash.write_len(self.launch_types.len());
         for launch in &self.launch_types {
             hash.write_u8(*launch as u8);
@@ -112,6 +113,18 @@ impl CoasterModel {
                         || piece.structure_material.unwrap_or(self.structure_material)
                             == Material::Steel)
             })
+    }
+    pub fn allows_chain(&self, piece: &Piece) -> bool {
+        let Some(rules) = self.lift_rules else {
+            return false;
+        };
+        piece.kind == PieceKind::Track
+            && piece.inversion.is_none()
+            && matches!(piece.shape, Shape::Plain)
+            && [piece.entry.slope, piece.exit.slope].iter().all(|slope| {
+                slope.gradient() >= 0.0 && slope.gradient() <= rules.max_slope.gradient()
+            })
+            && (rules.curved || piece.entry.heading == piece.exit.heading)
     }
     pub fn support_style_for_piece(&self, piece: &Piece) -> SupportStyle {
         self.support_style.for_piece(piece)
@@ -191,10 +204,6 @@ pub fn wooden_twister_model() -> CoasterModel {
                 LargeRightBankedTurnStandalone,
                 OffsetLeft,
                 OffsetRight,
-                Lift,
-                LiftFlat,
-                LiftLevelToGentleUp,
-                LiftGentleUpToLevel,
                 Brakes,
                 Station,
                 TerrainRise,
@@ -212,7 +221,10 @@ pub fn wooden_twister_model() -> CoasterModel {
         minimum_radius_metres: 8.0,
         minimum_height_cm: 122,
         allowed_inversions: vec![Inversion::VerticalLoop],
-        lift_types: vec![LiftType::Chain],
+        lift_rules: Some(LiftRules {
+            max_slope: Slope::UpSteep,
+            curved: true,
+        }),
         launch_types: vec![],
         support_style: SupportStyle::DenseWoodenLattice,
         train: TrainConfiguration {
@@ -299,10 +311,6 @@ pub fn hybrid_model() -> CoasterModel {
                 CorkscrewRight,
                 HeartlineRoll,
                 HeartlineRollRight,
-                Lift,
-                LiftFlat,
-                LiftLevelToGentleUp,
-                LiftGentleUpToLevel,
                 Brakes,
                 Station,
                 AirtimeHill,
@@ -317,7 +325,10 @@ pub fn hybrid_model() -> CoasterModel {
             Inversion::Corkscrew,
             Inversion::HeartlineRoll,
         ],
-        lift_types: vec![LiftType::Chain],
+        lift_rules: Some(LiftRules {
+            max_slope: Slope::UpSixty,
+            curved: true,
+        }),
         launch_types: vec![],
         support_style: SupportStyle::WoodenLattice,
         train: TrainConfiguration {
@@ -422,7 +433,10 @@ pub fn multi_launch_model() -> CoasterModel {
             Inversion::Corkscrew,
             Inversion::HeartlineRoll,
         ],
-        lift_types: vec![],
+        lift_rules: Some(LiftRules {
+            max_slope: Slope::UpSixty,
+            curved: true,
+        }),
         launch_types: vec![LaunchType::LinearMotor],
         support_style: SupportStyle::SteelColumns,
         train: TrainConfiguration {

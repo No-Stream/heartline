@@ -21,6 +21,7 @@ export const builderShortcuts = {
   nextPiece: { keys: ["]"], repeat: true, action: { type: "piece-step", attribute: "piece", step: 1 } },
   place: { keys: ["enter", "b"], repeat: false, action: { type: "construction-append" } },
   undo: { keys: ["backspace"], repeat: false, action: { type: "construction-undo" } },
+  chain: { keys: ["h"], repeat: false, action: { type: "chain-toggle" } },
   deleteMode: { keys: ["delete"], repeat: false, action: { type: "delete-mode-toggle" }, markerAction: { type: "block-marker-remove" } },
   panLeft: { keys: ["arrowleft"], repeat: true, action: { type: "pan", dx: 32, dy: 0 }, markerAction: { type: "block-marker-nudge", step: -1 } },
   panRight: { keys: ["arrowright"], repeat: true, action: { type: "pan", dx: -32, dy: 0 }, markerAction: { type: "block-marker-nudge", step: 1 } },

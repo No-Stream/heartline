@@ -45,24 +45,28 @@ fn construction_for(world: &World) -> Construction {
         ..TrackState::origin()
     };
     let mut construction = Construction::new(start, hybrid_model());
-    for id in [
+    for (index, id) in [
         PieceId::Station,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::TurnLargeEntry,
-        PieceId::TurnLargeExit,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::LiftFlat,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
-    ] {
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        construction.set_chain(matches!(index, 3 | 10));
         construction
             .append(id, world, &[])
             .unwrap_or_else(|error| panic!("could not append {id:?}: {error:?}"));

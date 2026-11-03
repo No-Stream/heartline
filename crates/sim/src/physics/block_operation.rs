@@ -409,26 +409,29 @@ mod tests {
             PieceId::Station,
             PieceId::Straight,
             PieceId::Straight,
-            PieceId::LiftFlat,
+            PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
             PieceId::TurnLargeEntry,
             PieceId::TurnLargeExit,
             PieceId::Straight,
             PieceId::Straight,
-            PieceId::LiftFlat,
+            PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
             PieceId::TurnLargeEntry,
             PieceId::TurnLargeExit,
         ] {
-            let piece = catalog
+            let mut piece = catalog
                 .iter()
                 .find(|piece| piece.id == id)
                 .unwrap()
                 .at(state)
                 .unwrap();
+            if pieces.len() == 3 || pieces.len() == 10 {
+                piece.kind = PieceKind::Lift;
+            }
             state = piece.exit;
             pieces.push(piece);
         }
@@ -469,7 +472,7 @@ mod tests {
             PieceId::Station,
             PieceId::Straight,
             PieceId::Straight,
-            PieceId::LiftFlat,
+            PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
         ];
@@ -479,7 +482,7 @@ mod tests {
             PieceId::TurnLargeExit,
             PieceId::Straight,
             PieceId::Straight,
-            PieceId::LiftFlat,
+            PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
             PieceId::Straight,
@@ -487,12 +490,15 @@ mod tests {
         ids.extend(std::iter::repeat_n(PieceId::Straight, extra_straights));
         ids.extend([PieceId::TurnLargeEntry, PieceId::TurnLargeExit]);
         for id in ids {
-            let piece = catalog
+            let mut piece = catalog
                 .iter()
                 .find(|piece| piece.id == id)
                 .unwrap()
                 .at(state)
                 .unwrap();
+            if pieces.len() == 3 || pieces.len() == 10 + extra_straights {
+                piece.kind = PieceKind::Lift;
+            }
             state = piece.exit;
             pieces.push(piece);
         }

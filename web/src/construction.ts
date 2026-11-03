@@ -548,6 +548,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       blockPanel.hidden = !next.active || (!next.canTest && next.blockReport.sections.length === 0);
       modelSelect.disabled = next.active;
       container.dataset.selected = next.selected ?? "";
+      container.dataset.chain = String(next.chain);
       const event = constructionEvent(previous, next);
       if (event === "closed") closed = true;
       else if (previous && previous.track.length !== next.track.length) closed = false;

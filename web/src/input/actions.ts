@@ -27,6 +27,7 @@ export type InputAction =
   | { readonly type: "piece-step"; readonly attribute: PieceStep; readonly step: -1 | 1 }
   | { readonly type: "piece-group"; readonly group: string }
   | { readonly type: "delete-mode-toggle" }
+  | { readonly type: "chain-toggle" }
   | { readonly type: "game-speed-cycle" }
   | { readonly type: "landscaping-activate"; readonly selection: LandscapingSelection }
   | { readonly type: "landscaping-cancel" }

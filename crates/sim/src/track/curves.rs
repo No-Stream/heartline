@@ -93,9 +93,10 @@ pub enum Slope {
     UpGentle,
     UpModerate,
     UpSteep,
+    UpSixty,
 }
 impl Slope {
-    fn gradient(self) -> f64 {
+    pub(crate) fn gradient(self) -> f64 {
         match self {
             Self::DownSteep => -1.0,
             Self::DownModerate => -0.75,
@@ -104,6 +105,7 @@ impl Slope {
             Self::UpGentle => 0.5,
             Self::UpModerate => 0.75,
             Self::UpSteep => 1.0,
+            Self::UpSixty => 1.732_050_807_568_877_2,
         }
     }
 }
@@ -237,10 +239,6 @@ pub enum PieceId {
     Loop,
     Corkscrew,
     HeartlineRoll,
-    Lift,
-    LiftFlat,
-    LiftLevelToGentleUp,
-    LiftGentleUpToLevel,
     Brakes,
     Station,
     TurnSmallRightEntry,

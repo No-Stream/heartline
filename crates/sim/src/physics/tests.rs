@@ -58,9 +58,9 @@ fn wooden_twister_completes_a_lap_through_its_structure() {
         ..TrackState::origin()
     };
     let mut construction = Construction::new(start, model.clone());
-    let mut ids = vec![Station, LiftLevelToGentleUp];
-    ids.extend([Lift; 5]);
-    ids.extend([LiftGentleUpToLevel, LiftFlat, TurnSmallStandalone]);
+    let mut ids = vec![Station, LevelToGentleUp];
+    ids.extend([GentleUp; 5]);
+    ids.extend([GentleUpToLevel, Straight, TurnSmallStandalone]);
     ids.extend([LevelToGentleDown, GentleDown, GentleDownToLevel, Straight]);
     ids.push(TurnSmallStandalone);
     ids.extend([
@@ -85,7 +85,8 @@ fn wooden_twister_completes_a_lap_through_its_structure() {
     ids.extend([Straight; 8]);
     ids.push(TurnSmallRightStandalone);
     ids.extend([Straight; 3]);
-    for id in ids {
+    for (index, id) in ids.into_iter().enumerate() {
+        construction.set_chain((1..=8).contains(&index));
         construction
             .append(id, &world, &[])
             .unwrap_or_else(|error| panic!("{id:?}: {error:?}"));
@@ -630,7 +631,7 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
         circuit
             .pieces()
             .iter()
-            .any(|piece| piece.id == PieceId::Lift)
+            .any(|piece| piece.id == PieceId::GentleUp)
     );
     assert!(
         circuit
@@ -801,20 +802,25 @@ fn block_operation_keeps_trains_separate_and_completes_runs() {
         PieceId::Station,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
         PieceId::Straight,
         PieceId::Straight,
-        PieceId::LiftFlat,
+        PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::Straight,
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
     ]);
+    let mut pieces = circuit.pieces().to_vec();
+    for index in [3, 10] {
+        pieces[index].kind = PieceKind::Lift;
+    }
+    let circuit = Circuit::new(pieces).unwrap();
     let configuration = crate::track::hybrid_model().train;
     let boundary = |end: usize| {
         circuit.pieces()[..end]
@@ -1051,7 +1057,7 @@ fn uphill_brake_drive_restarts_without_initial_rollback() {
         .pieces()
         .iter()
         .enumerate()
-        .filter(|(_, piece)| piece.id == crate::track::PieceId::Lift)
+        .filter(|(_, piece)| piece.id == crate::track::PieceId::GentleUp)
         .nth(2)
         .unwrap()
         .0;

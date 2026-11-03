@@ -1,6 +1,6 @@
 use crate::track::{
-    Bank, CoasterModel, HorizontalCurvature, PieceId, PieceKind, Slope, TrackState,
-    VerticalCurvature, hybrid_model, multi_launch_model, wooden_twister_model,
+    Bank, CoasterModel, HorizontalCurvature, PieceId, Slope, TrackState, VerticalCurvature,
+    hybrid_model, multi_launch_model, wooden_twister_model,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,7 +45,7 @@ fn reachable_connectors(
         let connector = reachable[next_index];
         next_index += 1;
         for piece in model.available_pieces(connector.track_state()) {
-            if chain_only && piece.kind != PieceKind::Lift {
+            if chain_only && !model.allows_chain(&piece) {
                 continue;
             }
             let next = ConnectorState::from(piece.exit);
@@ -217,7 +217,6 @@ fn gentle_slopes_offer_heading_changes_from_every_reachable_connector() {
 }
 
 #[test]
-#[ignore = "TASK-67: every model needs a chain lift"]
 fn every_model_offers_a_reachable_chain_lift() {
     let level = ConnectorState::from(TrackState::origin());
     let mut failures = Vec::new();
@@ -238,7 +237,7 @@ fn every_model_offers_a_reachable_chain_lift() {
 }
 
 #[test]
-#[ignore = "TASK-67: curved chain lifts and chain placement are not implemented"]
+#[ignore = "TASK-68: climbing turns are not implemented"]
 fn chain_lifts_can_turn_on_a_reachable_climb() {
     let level = ConnectorState::from(TrackState::origin());
     let mut failures = Vec::new();
@@ -251,9 +250,10 @@ fn chain_lifts_can_turn_on_a_reachable_climb() {
         if !chain.iter().any(|connector| {
             let state = connector.track_state();
             slope_degrees(state) > 0.0
-                && model.available_pieces(state).iter().any(|piece| {
-                    piece.kind == PieceKind::Lift && piece.exit.heading != state.heading
-                })
+                && model
+                    .available_pieces(state)
+                    .iter()
+                    .any(|piece| model.allows_chain(piece) && piece.exit.heading != state.heading)
         }) {
             failures.push(format!(
                 "{} cannot reach a curved chain lift from level",
@@ -265,7 +265,7 @@ fn chain_lifts_can_turn_on_a_reachable_climb() {
 }
 
 #[test]
-#[ignore = "TASK-67 and TASK-69: chain placement and 60 degree slopes are not implemented"]
+#[ignore = "TASK-69: 60 degree slope geometry is not implemented"]
 fn chain_lifts_reach_each_models_maximum_lift_slope() {
     let level = ConnectorState::from(TrackState::origin());
     let mut failures = Vec::new();

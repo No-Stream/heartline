@@ -25,12 +25,15 @@ fn powered_oval_with(piece_id: PieceId) -> Circuit {
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
     ] {
-        let piece = catalog
+        let mut piece = catalog
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if piece_id == PieceId::Straight && matches!(pieces.len(), 3 | 4 | 11 | 12) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -38,7 +41,7 @@ fn powered_oval_with(piece_id: PieceId) -> Circuit {
 }
 
 fn powered_oval() -> Circuit {
-    powered_oval_with(PieceId::LiftFlat)
+    powered_oval_with(PieceId::Straight)
 }
 
 #[test]

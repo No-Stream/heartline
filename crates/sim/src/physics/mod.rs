@@ -104,11 +104,11 @@ pub fn demo_circuit() -> Circuit {
     for id in [
         Station,
         LevelToGentleUp,
-        Lift,
-        Lift,
-        Lift,
-        Lift,
-        Lift,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
         GentleUpToLevel,
         Straight,
         Straight,
@@ -132,7 +132,7 @@ pub fn demo_circuit() -> Circuit {
             .expect("demo piece in catalog")
             .at(state)
             .expect("demo piece joins");
-        if matches!(id, LevelToGentleUp | GentleUpToLevel) || pieces.len() == 8 {
+        if (1..=8).contains(&pieces.len()) {
             piece.kind = PieceKind::Lift;
         }
         state = piece.exit;

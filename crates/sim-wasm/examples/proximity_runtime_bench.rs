@@ -10,30 +10,31 @@ mod proximity_benchmark_tests {
     pub fn completed_coaster_proximity_cost() {
         let mut simulation = WasmSimulation::new(42, 0, "demo".to_owned());
         simulation.construction_start(100, 100, 40, 0);
-        for piece in [
-            "LiftLevelToGentleUp",
-            "Lift",
-            "Lift",
-            "Lift",
-            "Lift",
-            "Lift",
-            "LiftGentleUpToLevel",
-            "LiftFlat",
-            "Straight",
-            "Straight",
-            "TurnLargeEntry",
-            "TurnLargeExit",
-            "LevelToGentleDown",
-            "GentleDown",
-            "GentleDown",
-            "GentleDown",
-            "GentleDown",
-            "GentleDown",
-            "GentleDownToLevel",
-            "Loop",
-            "TurnLargeEntry",
-            "TurnLargeExit",
+        for (piece, chain) in [
+            ("LevelToGentleUp", true),
+            ("GentleUp", true),
+            ("GentleUp", true),
+            ("GentleUp", true),
+            ("GentleUp", true),
+            ("GentleUp", true),
+            ("GentleUpToLevel", true),
+            ("Straight", true),
+            ("Straight", false),
+            ("Straight", false),
+            ("TurnLargeEntry", false),
+            ("TurnLargeExit", false),
+            ("LevelToGentleDown", false),
+            ("GentleDown", false),
+            ("GentleDown", false),
+            ("GentleDown", false),
+            ("GentleDown", false),
+            ("GentleDown", false),
+            ("GentleDownToLevel", false),
+            ("Loop", false),
+            ("TurnLargeEntry", false),
+            ("TurnLargeExit", false),
         ] {
+            simulation.construction_set_chain(chain);
             simulation.construction_select(piece);
             simulation.construction_append();
             assert!(

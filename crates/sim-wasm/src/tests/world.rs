@@ -64,30 +64,33 @@ fn block_test_circuit() -> Circuit {
     let pieces_catalog = catalog();
     let mut state = TrackState::origin();
     let mut pieces = Vec::new();
-    for id in [
-        PieceId::Station,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::LiftFlat,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::TurnLargeEntry,
-        PieceId::TurnLargeExit,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::LiftFlat,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::TurnLargeEntry,
-        PieceId::TurnLargeExit,
+    for (id, chain) in [
+        (PieceId::Station, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, true),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::TurnLargeEntry, false),
+        (PieceId::TurnLargeExit, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, true),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::TurnLargeEntry, false),
+        (PieceId::TurnLargeExit, false),
     ] {
-        let piece = pieces_catalog
+        let mut piece = pieces_catalog
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if chain {
+            piece.kind = super::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -127,32 +130,35 @@ fn block_powered_test_circuit() -> Circuit {
     let pieces_catalog = catalog();
     let mut state = TrackState::origin();
     let mut pieces = Vec::new();
-    for id in [
-        PieceId::Station,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::TurnLargeEntry,
-        PieceId::TurnLargeExit,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::LiftFlat,
-        PieceId::LiftFlat,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::TurnLargeEntry,
-        PieceId::TurnLargeExit,
+    for (id, chain) in [
+        (PieceId::Station, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, true),
+        (PieceId::Straight, true),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::TurnLargeEntry, false),
+        (PieceId::TurnLargeExit, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, true),
+        (PieceId::Straight, true),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::Straight, false),
+        (PieceId::TurnLargeEntry, false),
+        (PieceId::TurnLargeExit, false),
     ] {
-        let piece = pieces_catalog
+        let mut piece = pieces_catalog
             .iter()
             .find(|piece| piece.id == id)
             .unwrap()
             .at(state)
             .unwrap();
+        if chain {
+            piece.kind = super::PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
@@ -174,23 +180,24 @@ fn report_number(report: &str, key: &str) -> f64 {
 
 fn build_block_test_construction(simulation: &mut WasmSimulation) {
     simulation.construction_start(100, 100, 40, 0);
-    for piece in [
-        "Straight",
-        "Straight",
-        "LiftFlat",
-        "Straight",
-        "Straight",
-        "TurnLargeEntry",
-        "TurnLargeExit",
-        "Straight",
-        "Straight",
-        "LiftFlat",
-        "Straight",
-        "Straight",
-        "Straight",
-        "TurnLargeEntry",
-        "TurnLargeExit",
+    for (piece, chain) in [
+        ("Straight", false),
+        ("Straight", false),
+        ("Straight", true),
+        ("Straight", false),
+        ("Straight", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
+        ("Straight", false),
+        ("Straight", false),
+        ("Straight", true),
+        ("Straight", false),
+        ("Straight", false),
+        ("Straight", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
     ] {
+        simulation.construction_set_chain(chain);
         simulation.construction_select(piece);
         simulation.construction_append();
         assert!(simulation.construction_message().is_empty());
@@ -1409,23 +1416,24 @@ fn simulation_with_two_occupied_coaster_trains() -> WasmSimulation {
     );
     simulation.facilities = ParkFacilities::new();
     simulation.construction_start(60, 60, 8, 0);
-    for piece in [
-        "Straight",
-        "Straight",
-        "LiftFlat",
-        "Straight",
-        "Straight",
-        "TurnLargeEntry",
-        "TurnLargeExit",
-        "Straight",
-        "Straight",
-        "LiftFlat",
-        "Straight",
-        "Straight",
-        "Straight",
-        "TurnLargeEntry",
-        "TurnLargeExit",
+    for (piece, chain) in [
+        ("Straight", false),
+        ("Straight", false),
+        ("Straight", true),
+        ("Straight", false),
+        ("Straight", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
+        ("Straight", false),
+        ("Straight", false),
+        ("Straight", true),
+        ("Straight", false),
+        ("Straight", false),
+        ("Straight", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
     ] {
+        simulation.construction_set_chain(chain);
         simulation.construction_select(piece);
         simulation.construction_append();
         assert!(

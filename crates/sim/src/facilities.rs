@@ -1706,14 +1706,14 @@ mod coaster_access_tests {
         let mut pieces = Vec::new();
         for id in [
             Station,
-            LiftLevelToGentleUp,
-            Lift,
-            Lift,
-            Lift,
-            Lift,
-            Lift,
-            LiftGentleUpToLevel,
-            LiftFlat,
+            LevelToGentleUp,
+            GentleUp,
+            GentleUp,
+            GentleUp,
+            GentleUp,
+            GentleUp,
+            GentleUpToLevel,
+            Straight,
             Straight,
             Straight,
             TurnLargeEntry,
@@ -1729,12 +1729,15 @@ mod coaster_access_tests {
             TurnLargeEntry,
             TurnLargeExit,
         ] {
-            let piece = catalog
+            let mut piece = catalog
                 .iter()
                 .find(|piece| piece.id == id)
                 .unwrap()
                 .at(state)
                 .unwrap();
+            if (1..=8).contains(&pieces.len()) {
+                piece.kind = crate::track::PieceKind::Lift;
+            }
             state = piece.exit;
             pieces.push(piece);
         }

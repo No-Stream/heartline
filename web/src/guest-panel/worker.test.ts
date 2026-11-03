@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { validateBlockAnalysisBudget } from "../game-test";
 
-const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), construct: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn(), constructionActive: vi.fn(() => false), constructionTrainPoses: vi.fn(() => new Float32Array()), advanceBlockAnalysis: vi.fn((_budget: number) => false), blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}') }));
+const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), construct: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn(), constructionActive: vi.fn(() => false), setChain: vi.fn(), constructionTrainPoses: vi.fn(() => new Float32Array()), advanceBlockAnalysis: vi.fn((_budget: number) => false), blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}') }));
 
 it("rejects block analysis budgets outside the supported range", () => {
   expect(() => validateBlockAnalysisBudget(1)).not.toThrow();
@@ -15,6 +15,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   default: wasmMock.initialize,
   piece_shapes_json: wasmMock.pieceShapes,
   WasmSimulation: class {
+    chain = false;
     constructor(seed: bigint, guestCount: number, park: string) { wasmMock.construct(seed, guestCount, park); }
     scenery_json() { return "[]"; }
     facilities_json() { return "[]"; }
@@ -58,6 +59,8 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_ties() { return new Float32Array(); }
     construction_supports() { return new Float32Array(); }
     construction_active() { return wasmMock.constructionActive(); }
+    construction_chain() { return this.chain; }
+    construction_set_chain(enabled: boolean) { wasmMock.setChain(enabled); this.chain = enabled; }
     construction_train_poses() { return wasmMock.constructionTrainPoses(); }
     construction_placed_rails() { return new Float32Array(); }
     construction_rail_distances() { return new Float32Array(); }
@@ -86,6 +89,7 @@ afterEach(() => {
   wasmMock.advanceBlockAnalysis.mockReset().mockReturnValue(false);
   wasmMock.blockReport.mockReset().mockReturnValue('{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}');
   wasmMock.constructionActive.mockReset().mockReturnValue(false);
+  wasmMock.setChain.mockReset();
 });
 
 it("sends block analysis progress without rebuilding construction geometry", async () => {
@@ -275,6 +279,27 @@ it("refreshes the world after coaster construction changes", async () => {
   onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
   await Promise.resolve();
   expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
+});
+
+it("sends chain changes to the simulation and publishes the resulting state", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0].chain).toBe(false);
+  onMessage({ data: { type: "construction-set-chain", enabled: true } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0].chain).toBe(true);
+  onMessage({ data: { type: "construction-set-chain", enabled: false } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0].chain).toBe(false);
+  expect(wasmMock.setChain.mock.calls).toEqual([[true], [false]]);
 });
 
 

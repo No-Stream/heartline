@@ -17,8 +17,9 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
   await expect(track.locator("li")).toHaveCount(1);
-  const pieces = ["LiftLevelToGentleUp", "Lift", "Lift", "Lift", "Lift", "Lift", "LiftGentleUpToLevel", "LiftFlat", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "TurnLargeEntry", "TurnLargeExit"];
+  const pieces = ["LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "TurnLargeEntry", "TurnLargeExit"];
   for (const [index, piece] of pieces.entries()) {
+    if (index === 0 || index === 8) await page.keyboard.press("h");
     await choices.locator(`[data-piece="${piece}"]`).click();
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
     await page.getByRole("button", { name: "Place piece" }).click();

@@ -56,6 +56,18 @@ impl WasmSimulation {
         self.construction.is_some()
     }
 
+    pub fn construction_chain(&self) -> bool {
+        self.construction.as_ref().is_some_and(Construction::chain)
+    }
+
+    pub fn construction_set_chain(&mut self, enabled: bool) {
+        if let Some(construction) = self.construction.as_mut() {
+            construction.set_chain(enabled);
+            self.construction_message.clear();
+            self.refresh_construction_support_rendering();
+        }
+    }
+
     pub fn construction_select(&mut self, id: &str) {
         match id {
             "model:hybrid" => {

@@ -6,6 +6,7 @@ type ConstructionModel = "hybrid" | "velocity_viper" | "wooden_twister";
 export type ConstructionAction =
   | { readonly type: "construction-start"; readonly x: number; readonly y: number; readonly z: number; readonly heading: number }
   | { readonly type: "construction-select"; readonly piece: string }
+  | { readonly type: "construction-set-chain"; readonly enabled: boolean }
   | { readonly type: "construction-append" }
   | { readonly type: "construction-undo" }
   | { readonly type: "construction-delete"; readonly id: number }
@@ -82,6 +83,7 @@ export interface PieceShapesMessage {
 export interface ConstructionState {
   readonly type: "construction-state";
   readonly active: boolean;
+  readonly chain: boolean;
   readonly pieces: readonly ConstructionPiece[];
   readonly selected: string | null;
   readonly track: readonly { readonly id: number; readonly label: string }[];

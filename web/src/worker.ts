@@ -123,7 +123,7 @@ function sendConstruction(): void {
   const coasterPrice = simulation.construction_coaster_price();
   const coasterIncome = simulation.construction_coaster_income();
   lastConstructionEconomy = `${coasterPrice}:${coasterIncome}`;
-  workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), pieces,
+  workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), pieces,
     selected: selected || null, track: track ? track.split("\n").map((row) => {
       const [id, label] = row.split("\t");
       return { id: Number(id), label };
@@ -339,6 +339,7 @@ workerScope.addEventListener("message", (event) => {
       switch (action.type) {
         case "construction-start": simulation.construction_start(action.x * 2, action.y * 2, action.z / 2, action.heading * 2); break;
         case "construction-select": simulation.construction_select(action.piece); break;
+        case "construction-set-chain": simulation.construction_set_chain(action.enabled); break;
         case "construction-append": simulation.construction_append(); break;
         case "construction-undo": simulation.construction_undo(); break;
         case "construction-delete": simulation.construction_delete(action.id); break;

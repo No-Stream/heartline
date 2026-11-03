@@ -20,14 +20,17 @@ test("builds and runs a wooden twister @slow", async ({ page }) => {
   }
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
+  await expect(track.locator("li")).toHaveCount(1);
   const pieces = [
-    "LiftLevelToGentleUp", "Lift", "Lift", "Lift", "Lift", "Lift", "LiftGentleUpToLevel",
-    "LiftFlat", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
+    "LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel",
+    "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
     "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown",
     "GentleDownToLevel", "SteelLoop", "TurnLargeEntry", "TurnLargeExit",
   ];
   for (const [index, piece] of pieces.entries()) {
+    if (index === 0 || index === 8) await page.keyboard.press("h");
     await choices.locator(`[data-piece="${piece}"]`).click();
+    await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
     await page.getByRole("button", { name: "Place piece" }).click();
     await expect(track.locator("li")).toHaveCount(index + 2);

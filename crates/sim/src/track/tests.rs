@@ -54,7 +54,7 @@ fn tangent_only_matches_full_sample_for_every_piece() {
 #[test]
 fn wooden_twister_offers_only_steel_structure_inversions() {
     let model = wooden_twister_model();
-    assert_eq!(model.lift_types, vec![LiftType::Chain]);
+    assert!(model.lift_rules.is_some());
     assert!(model.launch_types.is_empty());
     assert_eq!(model.track_material, Material::Wood);
     assert_eq!(model.support_style, SupportStyle::DenseWoodenLattice);
@@ -171,7 +171,7 @@ fn wooden_twister_banked_helixes_have_mirrored_geometry() {
 fn multi_launch_model_offers_powered_straights_and_terrain_transitions() {
     let model = multi_launch_model();
     assert_eq!(model.launch_types, vec![LaunchType::LinearMotor]);
-    assert!(model.lift_types.is_empty());
+    assert!(model.lift_rules.is_some());
     assert_eq!(
         model.train.cars * model.train.rows_per_car * model.train.seats_per_row,
         24
@@ -190,7 +190,6 @@ fn multi_launch_model_offers_powered_straights_and_terrain_transitions() {
     for id in [PieceId::TerrainRise, PieceId::TerrainFall] {
         assert!(choices.iter().any(|piece| piece.id == id));
     }
-    assert!(!model.allowed_pieces.contains(&PieceId::Lift));
 }
 
 #[test]
@@ -220,15 +219,6 @@ fn signature_pieces_are_exclusive_to_their_coaster_models() {
     assert!(wooden_twister.allowed_pieces.contains(&PieceId::SteelLoop));
     assert!(!hybrid.allowed_pieces.contains(&PieceId::SteelLoop));
     assert!(!multi_launch.allowed_pieces.contains(&PieceId::SteelLoop));
-
-    for piece in [
-        PieceId::Lift,
-        PieceId::LiftFlat,
-        PieceId::LiftLevelToGentleUp,
-        PieceId::LiftGentleUpToLevel,
-    ] {
-        assert!(!multi_launch.allowed_pieces.contains(&piece));
-    }
 }
 
 fn near(a: f64, b: f64) {
@@ -964,22 +954,36 @@ fn standalone_turns_connect_straight_curvature_at_both_ends() {
 
 #[test]
 fn powered_lift_pieces_match_unpowered_geometry_and_are_available() {
-    let model = hybrid_model();
-    let templates = catalog();
-    for (powered_id, unpowered_id) in [
-        (PieceId::LiftFlat, PieceId::Straight),
-        (PieceId::LiftLevelToGentleUp, PieceId::LevelToGentleUp),
-        (PieceId::LiftGentleUpToLevel, PieceId::GentleUpToLevel),
-        (PieceId::Lift, PieceId::GentleUp),
+    use crate::track::construction::Construction;
+    use crate::world::{Surface, World};
+
+    let world = World::new(
+        128,
+        128,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let start = TrackState {
+        x: 50,
+        y: 50,
+        z: 5,
+        ..TrackState::origin()
+    };
+    let mut powered_construction = Construction::new(start, hybrid_model());
+    let mut unpowered_construction = Construction::new(start, hybrid_model());
+    powered_construction.set_chain(true);
+    for id in [
+        PieceId::Straight,
+        PieceId::LevelToGentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUpToLevel,
     ] {
-        let powered = templates
-            .iter()
-            .find(|piece| piece.id == powered_id)
-            .unwrap();
-        let unpowered = templates
-            .iter()
-            .find(|piece| piece.id == unpowered_id)
-            .unwrap();
+        powered_construction.append(id, &world, &[]).unwrap();
+        unpowered_construction.append(id, &world, &[]).unwrap();
+        let powered = powered_construction.pieces().last().unwrap();
+        let unpowered = unpowered_construction.pieces().last().unwrap();
         assert_eq!(powered.kind, PieceKind::Lift);
         assert_eq!(powered.entry, unpowered.entry);
         assert_eq!(powered.exit, unpowered.exit);
@@ -990,12 +994,6 @@ fn powered_lift_pieces_match_unpowered_geometry_and_are_available() {
             near_vec(powered_sample.position, unpowered_sample.position);
             near_vec(powered_sample.tangent, unpowered_sample.tangent);
         }
-        assert!(
-            model
-                .available_pieces(powered.entry)
-                .iter()
-                .any(|piece| piece.id == powered_id)
-        );
     }
 }
 

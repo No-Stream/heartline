@@ -9,8 +9,8 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterModel, Piece, PieceId, Shape, SupportStyle, TrackState, TrainConfiguration, Vec3,
-    catalog,
+    CoasterModel, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState, TrainConfiguration,
+    Vec3, catalog,
 };
 use crate::world::World;
 use std::cell::RefCell;
@@ -28,6 +28,7 @@ pub enum ConstructionError {
     Clearance(ClearanceCollision),
     Unavailable,
     ModelForbidden,
+    ChainNotAllowed,
     AmbiguousConnection,
     NoSupportRoute,
     InvalidIndex,
@@ -72,6 +73,7 @@ pub struct Construction {
     disconnected: Vec<TrackSegment>,
     next_id: usize,
     closed: bool,
+    chain: bool,
     validation_cache: RefCell<Option<ValidationCache>>,
     choices_cache: RefCell<Option<ChoicesCache>>,
 }
@@ -86,6 +88,7 @@ impl Construction {
             disconnected: Vec::new(),
             next_id: 0,
             closed: false,
+            chain: false,
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
         }
@@ -108,6 +111,15 @@ impl Construction {
     }
     pub fn is_closed(&self) -> bool {
         self.closed
+    }
+    pub fn chain(&self) -> bool {
+        self.chain
+    }
+    pub fn set_chain(&mut self, enabled: bool) {
+        if self.chain != enabled {
+            self.chain = enabled;
+            *self.choices_cache.get_mut() = None;
+        }
     }
     pub fn model(&self) -> &CoasterModel {
         &self.model
@@ -140,6 +152,7 @@ impl Construction {
         }
         hash.write_len(self.next_id);
         hash.write_bool(self.closed);
+        hash.write_bool(self.chain);
         hash.finish()
     }
 
@@ -155,11 +168,17 @@ impl Construction {
         let mut choices = Vec::new();
         let mut available_choices: Vec<(Piece, PieceChoice)> = Vec::new();
         for template in templates() {
-            let placed = self.model_placeable(template);
+            let placed = self.model_placeable_geometry(template);
             let result = if self.closed {
                 Err(ConstructionError::Closed)
             } else {
                 placed.as_ref().map_err(|error| *error).and_then(|piece| {
+                    if self.chain
+                        && piece.kind == PieceKind::Track
+                        && !self.model.allows_chain(piece)
+                    {
+                        return Err(ConstructionError::ChainNotAllowed);
+                    }
                     if let Some((_, previous_choice)) = available_choices
                         .iter()
                         .find(|(previous_piece, _)| same_geometry(previous_piece, piece))
@@ -174,7 +193,10 @@ impl Construction {
                 id: template.id,
                 result,
             };
-            if let Ok(piece) = placed {
+            if let Ok(mut piece) = placed {
+                if self.chain && self.model.allows_chain(&piece) {
+                    piece.kind = PieceKind::Lift;
+                }
                 available_choices.push((piece, choice));
             }
             choices.push(choice);
@@ -226,6 +248,17 @@ impl Construction {
     }
 
     fn model_placeable(&self, template: &Piece) -> Result<Piece, ConstructionError> {
+        let mut piece = self.model_placeable_geometry(template)?;
+        if self.chain && piece.kind == PieceKind::Track {
+            if !self.model.allows_chain(&piece) {
+                return Err(ConstructionError::ChainNotAllowed);
+            }
+            piece.kind = PieceKind::Lift;
+        }
+        Ok(piece)
+    }
+
+    fn model_placeable_geometry(&self, template: &Piece) -> Result<Piece, ConstructionError> {
         if !self.model.allows_piece(template) {
             return Err(ConstructionError::ModelForbidden);
         }

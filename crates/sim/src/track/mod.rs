@@ -15,7 +15,7 @@ pub use curves::{
     TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
-    CoasterModel, LaunchParameters, LaunchType, LiftType, Material, SupportStyle,
+    CoasterModel, LaunchParameters, LaunchType, LiftRules, Material, SupportStyle,
     TrainConfiguration, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 

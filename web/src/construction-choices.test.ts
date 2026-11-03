@@ -12,14 +12,14 @@ function piece(id: string, group: string, slope = "Level", bank = "Level", refus
 const shapes = new Map([
   ["Straight", shape("Straight", 0)], ["Loop", shape("Loop", 0)], ["TurnSmallStandalone", shape("TurnSmallStandalone", 2)],
   ["TurnLargeStandalone", shape("TurnLargeStandalone", 2)], ["LevelToGentleUp", shape("LevelToGentleUp", 0)],
-  ["LiftLevelToGentleUp", shape("LiftLevelToGentleUp", 0, "Lift")], ["LiftFlat", shape("LiftFlat", 0, "Lift")],
+  ["SteepToGentleUp", shape("SteepToGentleUp", 0)],
   ["LevelToGentleDown", shape("LevelToGentleDown", 0)], ["BankLeft", shape("BankLeft", 0)], ["BankRight", shape("BankRight", 0)],
 ]);
 const pieces = [
   piece("Straight", "straight"), piece("LevelToGentleUp", "slope", "UpGentle", "Level", "The train would collide with terrain."),
   piece("LevelToGentleDown", "slope", "DownGentle"), piece("TurnSmallStandalone", "turn"), piece("TurnLargeStandalone", "turn"),
   piece("BankLeft", "bank", "Level", "Left"), piece("BankRight", "bank", "Level", "Right"), piece("Loop", "inversion"),
-  piece("LiftFlat", "special"), piece("LiftLevelToGentleUp", "slope", "UpGentle"),
+  piece("SteepToGentleUp", "slope", "UpGentle"),
 ];
 
 describe("construction steppers", () => {
@@ -74,18 +74,18 @@ describe("construction steppers", () => {
     expect(steppedPiece(pieces, shapes, "Straight", "slope", -1)).toBe("LevelToGentleDown");
   });
 
-  it("prefers placeable pieces of the same kind when several share the stepped value", () => {
-    expect(steppedPiece(pieces, shapes, "Straight", "slope", 1)).toBe("LiftLevelToGentleUp");
-    expect(steppedPiece(pieces, shapes, "LiftLevelToGentleUp", "slope", -1)).toBe("LiftFlat");
+  it("prefers placeable pieces when several share the stepped value", () => {
+    expect(steppedPiece(pieces, shapes, "Straight", "slope", 1)).toBe("SteepToGentleUp");
+    expect(steppedPiece(pieces, shapes, "SteepToGentleUp", "slope", -1)).toBe("Straight");
     expect(steppedPiece(pieces, shapes, "LevelToGentleUp", "slope", -1)).toBe("Straight");
   });
 
   it("cycles through the palette in group order and jumps to a group's first placeable piece", () => {
     const groups = groupedPieces(pieces);
-    expect(groups.map(({ group }) => group)).toEqual(["straight", "turn", "slope", "bank", "inversion", "special"]);
-    expect(groups.find(({ group }) => group === "slope")!.pieces.map(({ id }) => id)).toEqual(["LevelToGentleUp", "LevelToGentleDown", "LiftLevelToGentleUp"]);
+    expect(groups.map(({ group }) => group)).toEqual(["straight", "turn", "slope", "bank", "inversion"]);
+    expect(groups.find(({ group }) => group === "slope")!.pieces.map(({ id }) => id)).toEqual(["LevelToGentleUp", "LevelToGentleDown", "SteepToGentleUp"]);
     expect(steppedPiece(pieces, shapes, "Straight", "piece", 1)).toBe("TurnSmallStandalone");
-    expect(steppedPiece(pieces, shapes, "Straight", "piece", -1)).toBe("LiftFlat");
+    expect(steppedPiece(pieces, shapes, "Straight", "piece", -1)).toBe("Loop");
     expect(pieceInGroup(pieces, "slope")).toBe("LevelToGentleDown");
     expect(pieceInGroup(pieces, "inversion")).toBe("Loop");
     expect(pieceInGroup(pieces, "unknown")).toBeUndefined();

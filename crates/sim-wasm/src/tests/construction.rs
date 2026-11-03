@@ -478,33 +478,65 @@ fn rendered_supports_clear_other_tracks_train_envelope() {
 }
 
 #[test]
+fn chain_mode_controls_placed_piece_and_refusals() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(100, 100, 40, 0);
+    assert!(!simulation.construction_chain());
+    simulation.construction_set_chain(true);
+    assert!(simulation.construction_chain());
+    simulation.construction_select("Loop");
+    assert!(!simulation.construction_can_append());
+    assert_eq!(
+        simulation.construction_preview_reason(),
+        "No chain lift on this piece"
+    );
+    simulation.construction_select("LevelToGentleUp");
+    simulation.construction_append();
+    assert!(simulation.construction_message().is_empty());
+    assert_eq!(
+        simulation
+            .construction
+            .as_ref()
+            .unwrap()
+            .pieces()
+            .last()
+            .unwrap()
+            .kind,
+        super::PieceKind::Lift
+    );
+    simulation.construction_set_chain(false);
+    assert!(!simulation.construction_chain());
+}
+
+#[test]
 fn lift_drop_circuit_completes_lap() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(100, 100, 40, 0);
-    for piece in [
-        "LiftLevelToGentleUp",
-        "Lift",
-        "Lift",
-        "Lift",
-        "Lift",
-        "Lift",
-        "LiftGentleUpToLevel",
-        "LiftFlat",
-        "Straight",
-        "Straight",
-        "TurnLargeEntry",
-        "TurnLargeExit",
-        "LevelToGentleDown",
-        "GentleDown",
-        "GentleDown",
-        "GentleDown",
-        "GentleDown",
-        "GentleDown",
-        "GentleDownToLevel",
-        "Loop",
-        "TurnLargeEntry",
-        "TurnLargeExit",
+    for (piece, chain) in [
+        ("LevelToGentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUpToLevel", true),
+        ("Straight", true),
+        ("Straight", false),
+        ("Straight", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
+        ("LevelToGentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDownToLevel", false),
+        ("Loop", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
     ] {
+        simulation.construction_set_chain(chain);
         simulation.construction_select(piece);
         simulation.construction_append();
         assert!(
@@ -551,30 +583,31 @@ fn lift_drop_circuit_completes_lap() {
 fn opening_after_a_completed_test_clears_the_report() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(100, 100, 40, 0);
-    for piece in [
-        "LiftLevelToGentleUp",
-        "Lift",
-        "Lift",
-        "Lift",
-        "Lift",
-        "Lift",
-        "LiftGentleUpToLevel",
-        "LiftFlat",
-        "Straight",
-        "Straight",
-        "TurnLargeEntry",
-        "TurnLargeExit",
-        "LevelToGentleDown",
-        "GentleDown",
-        "GentleDown",
-        "GentleDown",
-        "GentleDown",
-        "GentleDown",
-        "GentleDownToLevel",
-        "Loop",
-        "TurnLargeEntry",
-        "TurnLargeExit",
+    for (piece, chain) in [
+        ("LevelToGentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUpToLevel", true),
+        ("Straight", true),
+        ("Straight", false),
+        ("Straight", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
+        ("LevelToGentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDownToLevel", false),
+        ("Loop", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
     ] {
+        simulation.construction_set_chain(chain);
         simulation.construction_select(piece);
         simulation.construction_append();
         assert!(

@@ -52,15 +52,21 @@ fn briar_blitz_choices_after_vertical_exit() {
         PieceId::OffsetLeft,
         PieceId::BankRight,
         PieceId::UnbankRight,
-        PieceId::LiftLevelToGentleUp,
-        PieceId::LiftGentleUpToLevel,
+        PieceId::LevelToGentleUp,
+        PieceId::GentleUpToLevel,
         PieceId::VerticalUpEntry,
         PieceId::VerticalUpContinue,
         PieceId::VerticalUpExit,
     ] {
+        if piece == PieceId::LevelToGentleUp {
+            construction.set_chain(true);
+        }
         construction
             .append(piece, &world, &[])
             .unwrap_or_else(|error| panic!("{piece:?}: {error:?}"));
+        if piece == PieceId::GentleUpToLevel {
+            construction.set_chain(false);
+        }
     }
     assert!(!construction.choices(&world, &[]).is_empty());
 }
@@ -134,7 +140,7 @@ fn choices_report_model_and_connector_rejections() {
 }
 
 #[test]
-fn launch_model_builds_midcourse_launch_and_rejects_chain_lifts() {
+fn launch_model_builds_midcourse_launch_and_chain_lifts() {
     let mut construction = Construction::new(start(), crate::track::multi_launch_model());
     construction
         .append(PieceId::Straight, &world(), &[])
@@ -146,15 +152,125 @@ fn launch_model_builds_midcourse_launch_and_rejects_chain_lifts() {
         construction.pieces()[1].kind,
         crate::track::PieceKind::Launch
     );
-    assert_eq!(
-        construction.append(PieceId::LiftFlat, &world(), &[]),
-        Err(ConstructionError::ModelForbidden)
-    );
+    construction.set_chain(true);
+    construction
+        .append(PieceId::Straight, &world(), &[])
+        .unwrap();
+    assert_eq!(construction.pieces()[2].kind, crate::track::PieceKind::Lift);
     let mut hybrid = Construction::new(start(), hybrid_model());
     assert_eq!(
         hybrid.append(PieceId::Launch, &world(), &[]),
         Err(ConstructionError::ModelForbidden)
     );
+}
+
+#[test]
+fn chain_mode_filters_choices_and_preserves_placed_piece_kinds() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    let initial_hash = construction.state_hash();
+    assert_eq!(
+        construction.validate(PieceId::Straight, &world, &[]),
+        Ok(())
+    );
+    construction.set_chain(true);
+    assert!(construction.chain());
+    assert_ne!(construction.state_hash(), initial_hash);
+    assert_eq!(
+        construction.validate(PieceId::Loop, &world, &[]),
+        Err(ConstructionError::ChainNotAllowed)
+    );
+    assert_eq!(
+        construction
+            .choices(&world, &[])
+            .iter()
+            .find(|choice| choice.id == PieceId::Loop)
+            .unwrap()
+            .result,
+        Err(ConstructionError::ChainNotAllowed)
+    );
+    assert_eq!(
+        construction
+            .available_choices(&world, &[])
+            .iter()
+            .find(|(_, choice)| choice.id == PieceId::Loop)
+            .unwrap()
+            .1
+            .result,
+        Err(ConstructionError::ChainNotAllowed)
+    );
+    construction
+        .append(PieceId::LevelToGentleUp, &world, &[])
+        .unwrap();
+    construction.append(PieceId::GentleUp, &world, &[]).unwrap();
+    assert!(
+        construction
+            .pieces()
+            .iter()
+            .all(|piece| piece.kind == crate::track::PieceKind::Lift)
+    );
+    construction.set_chain(false);
+    assert!(!construction.chain());
+    construction.append(PieceId::GentleUp, &world, &[]).unwrap();
+    assert_eq!(
+        construction.pieces()[2].kind,
+        crate::track::PieceKind::Track
+    );
+}
+
+#[test]
+fn chain_rules_cover_slope_curvature_and_special_pieces() {
+    let mut model = hybrid_model();
+    let pieces = catalog();
+    let piece = |id| pieces.iter().find(|piece| piece.id == id).unwrap();
+    assert!(!model.allows_chain(piece(PieceId::Station)));
+    assert!(!model.allows_chain(piece(PieceId::Brakes)));
+    assert!(model.allows_chain(piece(PieceId::TurnSmallStandalone)));
+    assert!(!model.allows_chain(piece(PieceId::GentleDown)));
+    assert!(!model.allows_chain(piece(PieceId::Loop)));
+    assert!(!model.allows_chain(piece(PieceId::AirtimeHill)));
+    model.lift_rules.as_mut().unwrap().curved = false;
+    assert!(!model.allows_chain(piece(PieceId::TurnSmallStandalone)));
+    model.lift_rules.as_mut().unwrap().max_slope = Slope::UpGentle;
+    assert!(!model.allows_chain(piece(PieceId::SteepUp)));
+    model.lift_rules = None;
+    assert!(!model.allows_chain(piece(PieceId::Straight)));
+}
+
+#[test]
+fn chain_mode_keeps_special_pieces_placeable_and_preserves_their_kind() {
+    let world = world();
+    for (id, expected_kind) in [
+        (PieceId::Station, PieceKind::Station),
+        (PieceId::Brakes, PieceKind::Brakes),
+        (PieceId::Launch, PieceKind::Launch),
+    ] {
+        let mut construction = Construction::new(start(), crate::track::multi_launch_model());
+        construction.set_chain(true);
+        assert_eq!(construction.validate(id, &world, &[]), Ok(()));
+        let available = construction.available_choices(&world, &[]);
+        let (piece, choice) = available
+            .iter()
+            .find(|(_, choice)| choice.id == id)
+            .unwrap();
+        assert_eq!(choice.result, Ok(()));
+        assert_eq!(piece.kind, expected_kind);
+        construction.append(id, &world, &[]).unwrap();
+        assert_eq!(construction.pieces()[0].kind, expected_kind);
+    }
+}
+
+#[test]
+fn construction_places_a_curved_chain_lift() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    construction.set_chain(true);
+    construction
+        .append(PieceId::TurnSmallStandalone, &world, &[])
+        .unwrap();
+    let placed = &construction.pieces()[0];
+    assert_eq!(placed.kind, PieceKind::Lift);
+    assert_ne!(placed.entry.heading, placed.exit.heading);
 }
 
 #[test]

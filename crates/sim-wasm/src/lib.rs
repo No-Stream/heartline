@@ -369,6 +369,7 @@ fn construction_error(error: theme_park_sim::track::construction::ConstructionEr
         ConstructionError::Unavailable => "This piece cannot connect here.",
         ConstructionError::AmbiguousConnection => "More than one track segment connects here.",
         ConstructionError::ModelForbidden => "This coaster model cannot use this piece.",
+        ConstructionError::ChainNotAllowed => "No chain lift on this piece",
         ConstructionError::NoSupportRoute => "Supports cannot be placed here.",
         ConstructionError::InvalidIndex => "That track piece does not exist.",
         ConstructionError::NotClosed => "Close the circuit first.",
