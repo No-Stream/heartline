@@ -1130,7 +1130,7 @@ fn route_turns_and_descends_into_an_excavated_tunnel() {
 #[test]
 fn guests_recover_after_removing_a_built_path_and_use_a_rebuilt_network() {
     use super::PathKind;
-    use crate::walking::WalkingSimulation;
+    use crate::guests::walking::WalkingSimulation;
     let mut world = World::new(
         4,
         1,
@@ -1280,7 +1280,7 @@ fn queue_end_does_not_connect_to_adjacent_exit_path() {
         .unwrap();
     assert_eq!(world.path_edges(queue_end), Some(8));
     assert_eq!(world.path_edges(exit), Some(0));
-    let graph = crate::pathfinding::Graph::with_entrance(&world, Some(entrance));
+    let graph = crate::guests::pathfinding::Graph::with_entrance(&world, Some(entrance));
     let queue_node = graph.indices[&queue_end];
     let exit_node = graph.indices[&exit];
     assert!(!graph.neighbours[queue_node].contains(&exit_node));

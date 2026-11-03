@@ -5,6 +5,7 @@ import { advanceSimulation, createSimulationClock } from "./simulation-loop";
 import type { ConstructionAction, ConstructionPiece, PieceShape } from "./construction-protocol";
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
+import { validateBlockAnalysisBudget } from "./game-test";
 
 type GuestDetailAction =
   | { readonly type: "guest-detail-request"; readonly guestId: string }
@@ -19,12 +20,14 @@ type PathAction =
   | { readonly type: "path-preview"; readonly requestId?: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
-type WorkerAction = SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
+type WorkerAction = SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
 const workerName = (self as unknown as { name?: string }).name ?? "";
-const testMode = workerName === "theme-park-test" || workerName.startsWith("theme-park-test:");
-const testGuestCount = workerName.startsWith("theme-park-test:") ? Number(workerName.slice("theme-park-test:".length)) : 12;
+const manualBlockAnalysis = workerName === "theme-park-test-manual" || workerName.startsWith("theme-park-test-manual:");
+const testPrefix = manualBlockAnalysis ? "theme-park-test-manual" : "theme-park-test";
+const testMode = workerName === testPrefix || workerName.startsWith(`${testPrefix}:`);
+const testGuestCount = workerName.startsWith(`${testPrefix}:`) ? Number(workerName.slice(testPrefix.length + 1)) : 12;
 if (!Number.isInteger(testGuestCount) || testGuestCount < 1 || testGuestCount > 500) throw new RangeError("Invalid test guest count");
 const workerScope = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
@@ -41,6 +44,28 @@ let selectedGuestId: number | undefined;
 let lastGuestDetailSentAt = 0;
 let lastFacilityRevenue = "";
 let lastFacilitiesJson = "";
+let blockAnalysisScheduled = false;
+
+function scheduleBlockAnalysis(): void {
+  if (manualBlockAnalysis || blockAnalysisScheduled) return;
+  blockAnalysisScheduled = true;
+  setTimeout(() => {
+    blockAnalysisScheduled = false;
+    const complete = advanceBlockAnalysis(1000);
+    if (!complete) scheduleBlockAnalysis();
+  }, 1000 / tickRate);
+}
+
+function advanceBlockAnalysis(budget: number): boolean {
+  const complete = simulation.construction_advance_block_analysis(budget);
+  const report = simulation.construction_block_report_json();
+  if (simulation.construction_active() && report !== lastBlockReport) {
+    lastBlockReport = report;
+    lastConstructionMessage = simulation.construction_message();
+    workerScope.postMessage({ type: "block-analysis-progress", blockReport: JSON.parse(report) as unknown, trainCount: simulation.construction_train_count(), message: lastConstructionMessage });
+  }
+  return complete;
+}
 
 function wake(): void {
   const now = performance.now();
@@ -166,6 +191,13 @@ const initialized = init().then(() => {
 workerScope.addEventListener("message", (event) => {
   void initialized.then(() => {
     const action = event.data;
+    if (action.type === "test-advance-block-analysis") {
+      if (!manualBlockAnalysis) throw new Error("Test block analysis advancement is disabled");
+      validateBlockAnalysisBudget(action.budget);
+      advanceBlockAnalysis(action.budget);
+      workerScope.postMessage({ type: "test-block-analysis-advanced" });
+      return;
+    }
     if (action.type === "test-advance") {
       if (!Number.isInteger(action.count) || action.count < 1 || action.count > 100000) throw new RangeError("Invalid test tick count");
       for (let tick = 0; tick < action.count; tick++) simulation.tick();
@@ -291,6 +323,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-delete-mode": return;
       }
       sendConstruction();
+      scheduleBlockAnalysis();
       if (["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-set-open"].includes(action.type)) sendWorld();
       return;
     }

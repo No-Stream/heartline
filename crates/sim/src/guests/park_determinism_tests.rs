@@ -1,10 +1,10 @@
 use super::*;
-use crate::guest_behavior::{KnownPlace, PlaceKind};
+use crate::executor::{Executor, SequentialExecutor, ThreadedExecutor};
+use crate::guests::behavior::{KnownPlace, PlaceKind};
 use crate::physics::{BlockOperation, Circuit, PhysicsConfig};
 use crate::track::blocks::BlockLayout;
 use crate::track::{PieceId, TrackState, catalog, hybrid_model};
 use crate::world::{PathKind, Surface};
-use crate::{SequentialExecutor, ThreadedExecutor};
 
 fn test_circuit() -> Circuit {
     let catalog = catalog();

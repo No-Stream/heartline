@@ -1,12 +1,12 @@
 //! Coordinates guest arrivals, decisions, activities and walking.
 
-use crate::guest_behavior::{BehaviorSimulation, Facility, Movement};
+use crate::executor::{Executor, SequentialExecutor};
 use crate::guests::GuestId;
+use crate::guests::behavior::{BehaviorSimulation, Facility, Movement};
+use crate::guests::pathfinding::Graph;
+use crate::guests::visits::VisitManager;
 use crate::guests::walking::{WalkControl, WalkingGuest, WalkingSimulation};
-use crate::pathfinding::Graph;
-use crate::visits::VisitManager;
 use crate::world::{Position, World};
-use crate::{Executor, SequentialExecutor};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -396,7 +396,7 @@ fn accessible_facilities(graph: &Graph, facilities: &[Facility]) -> Vec<Facility
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::guest_behavior::{KnownPlace, PlaceKind};
+    use crate::guests::behavior::{KnownPlace, PlaceKind};
     use crate::world::{Path, Surface};
 
     #[test]
@@ -1057,7 +1057,7 @@ mod tests {
     #[cfg(feature = "threads")]
     #[test]
     fn complete_simulation_is_deterministic_across_executors() {
-        use crate::ThreadedExecutor;
+        use crate::executor::ThreadedExecutor;
         let entrance = Position {
             x: 0,
             y: 0,

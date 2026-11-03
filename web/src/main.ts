@@ -3,7 +3,8 @@ import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
 import type { CameraAction, InputAction } from "./input/actions";
-import { constructionRiderPositions, type GameTest } from "./game-test";
+import { constructionRiderPositions, validateBlockAnalysisBudget, type GameTest } from "./game-test";
+import { blockLayoutChanged } from "./block-analysis-progress";
 import { createWorldRenderer, loadAtlas, type AtmospherePass, type WorldView, type WorldSprite } from "./render/index";
 import { advanceDayPhase, DAY_LENGTH_TICKS, lightingAt, NOON, START_PHASE, sunAt } from "./render/daylight";
 import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst } from "./render/effects";
@@ -13,7 +14,7 @@ import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle } f
 import { createStaticTrackCache } from "./render/track/cache";
 import type { WorldSnapshot } from "./world-snapshot";
 import { createConstructionPanel } from "./construction";
-import type { ConstructionState, PieceShapesMessage } from "./construction-protocol";
+import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
 import { followTrackEnd, railPoints } from "./construction-camera";
 import { createConstructionEffects } from "./construction-effects";
 import { buildGhostQuads } from "./render/track/ghost";
@@ -58,10 +59,11 @@ let current: CoasterSnapshot | undefined;
 let receivedAt = performance.now();
 const noGeometry = new Float32Array();
 const frozen = new URLSearchParams(location.search).has("test");
+const manualBlockAnalysis = frozen && new URLSearchParams(location.search).has("manualBlockAnalysis");
 const testAgents = frozen ? new URLSearchParams(location.search).get("agents") : null;
 const timing = new URLSearchParams(location.search).get("timing") === "work";
 const { atlas, images } = await loadAtlas(new URL("./atlas.json", document.baseURI).href);
-const renderer = createWorldRenderer(gameCanvas, atlas, images);
+const renderer = createWorldRenderer(gameCanvas, atlas, images, frozen);
 const staticTrack = createStaticTrackCache(atlas);
 const builtTrack = createStaticTrackCache(atlas);
 let construction: ConstructionState | undefined;
@@ -143,6 +145,7 @@ let facilityPanelSnapshot = "";
 let facilityPlacement: { kind: FacilityKind; rotation: number } | undefined;
 let facilityRemoval = false;
 let advanceTicksComplete: (() => void) | undefined;
+let advanceBlockAnalysisComplete: (() => void) | undefined;
 const facilityContainer = document.querySelector<HTMLElement>("[data-facilities]");
 if (!facilityContainer) throw new Error("Facility panel is missing");
 const facilityPanel = createFacilityPanel(facilityContainer, { atlas, images }, (kind, rotation) => {
@@ -299,6 +302,11 @@ const gameTest: GameTest = {
   advanceTicks(count) {
     if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
     return new Promise<void>((resolve) => { advanceTicksComplete = resolve; worker.postMessage({ type: "test-advance", count }); });
+  },
+  advanceBlockAnalysis(budget) {
+    if (!manualBlockAnalysis || advanceBlockAnalysisComplete) throw new Error("Invalid test block analysis advance");
+    validateBlockAnalysisBudget(budget);
+    return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; worker.postMessage({ type: "test-advance-block-analysis", budget }); });
   },
   setCamera(value) { camera = value; followPoints = undefined; gameTest.ready = false; },
   setSurface(x, y, corners) { worker.postMessage({ type: "set-surface", x, y, corners: new Int16Array(corners) }); },
@@ -460,6 +468,8 @@ function dispatch(action: InputAction): void {
     else if (!selectedGuestId) openTool("none");
   } else if (action.type === "piece-step" || action.type === "piece-group") {
     panel.choose(action);
+  } else if (action.type === "construction-set-model") {
+    worker.postMessage({ type: "construction-select", piece: `model:${action.model}` });
   } else if (action.type.startsWith("construction-")) {
     worker.postMessage(action);
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
@@ -471,9 +481,9 @@ bindInput(gameCanvas, dispatch, () => pathTool.state().mode === "build" || lands
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), {
   type: "module",
-  name: frozen ? `theme-park-test${testAgents === null ? "" : `:${testAgents}`}` : "theme-park",
+  name: frozen ? `theme-park-test${manualBlockAnalysis ? "-manual" : ""}${testAgents === null ? "" : `:${testAgents}`}` : "theme-park",
 });
-worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
+worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
   const message = event.data;
   if (message.type === "scenery") {
     scenery = message.scenery;
@@ -495,6 +505,9 @@ worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | Co
   } else if (message.type === "test-advanced") {
     advanceTicksComplete?.();
     advanceTicksComplete = undefined;
+  } else if (message.type === "test-block-analysis-advanced") {
+    advanceBlockAnalysisComplete?.();
+    advanceBlockAnalysisComplete = undefined;
   } else if (message.type === "facilities") {
     if (frozen && facilities.length && !message.message && !message.forced) return;
     facilities = message.facilities;
@@ -508,19 +521,22 @@ worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | Co
     gameTest.ready = false;
   } else if (message.type === "piece-shapes") {
     panel.setShapes(message.shapes);
-  } else if (message.type === "construction-state") {
-    if (!frozen) constructionEffects.observe(construction, message, performance.now());
-    const preview = railPoints(message.previewRails);
+  } else if (message.type === "construction-state" || message.type === "block-analysis-progress") {
+    if (message.type === "block-analysis-progress" && !construction) throw new Error("Block analysis progress arrived before construction state");
+    const next: ConstructionState = message.type === "construction-state" ? message : { ...construction!, ...message, type: "construction-state" };
+    const redraw = message.type === "construction-state" || blockLayoutChanged(construction!.blockReport.sections, next.blockReport.sections);
+    if (!frozen) constructionEffects.observe(construction, next, performance.now());
+    const preview = railPoints(next.previewRails);
     const previewKey = JSON.stringify([preview[0], preview.at(-1)]);
     if (pathTool.state().mode === "inactive" && preview.length && previewKey !== followedPreview) followPoints = preview;
     followedPreview = previewKey;
-    construction = message;
-    panel.update(message);
-    if (selectedBlock !== null && !message.blockReport.sections.some((section) => section.editableIndex === selectedBlock)) selectBlock(null);
-    gameCanvas.dataset.blockBoundaries = String(message.blockReport.sections.length);
-    const reportJson = JSON.stringify(message.testingReport ?? null);
-    if (reportJson !== testingReportJson) { testingReportJson = reportJson; testingPanel.update(message.testingReport ?? null); }
-    gameTest.ready = false;
+    construction = next;
+    panel.update(next);
+    if (selectedBlock !== null && !next.blockReport.sections.some((section) => section.editableIndex === selectedBlock)) selectBlock(null);
+    gameCanvas.dataset.blockBoundaries = String(next.blockReport.sections.length);
+    const reportJson = JSON.stringify(next.testingReport ?? null);
+    if (reportJson !== testingReportJson) { testingReportJson = reportJson; testingPanel.update(next.testingReport ?? null); }
+    if (redraw) gameTest.ready = false;
   } else if (message.type === "guest-detail") {
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);

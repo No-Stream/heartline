@@ -1,6 +1,6 @@
 //! Arrival targets and activity-based visit departures for a bounded guest roster.
 
-use crate::guest_behavior::GuestBehavior;
+use crate::guests::behavior::GuestBehavior;
 use crate::guests::{GuestId, GuestStore};
 
 /// Manages visits over the fixed roster in a `GuestStore`.

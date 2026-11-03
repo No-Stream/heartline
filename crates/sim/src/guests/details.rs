@@ -612,7 +612,7 @@ fn mix_name_seed(mut value: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::guest_behavior::{Facility, GuestBehavior, KnownPlace, PlaceKind, Thought};
+    use crate::guests::behavior::{Facility, GuestBehavior, KnownPlace, PlaceKind, Thought};
     use crate::guests::{GuestId, generate_guests};
     use crate::world::{Path, Position, Surface, World};
 

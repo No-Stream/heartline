@@ -1,8 +1,8 @@
 use theme_park_sim::demo_world::demo_world;
+use theme_park_sim::guests::walking::WalkingSimulation;
 use theme_park_sim::guests::{AgeGroup, GuestId};
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train, demo_circuit};
 use theme_park_sim::track::hybrid_model;
-use theme_park_sim::walking::WalkingSimulation;
 use theme_park_sim::world::{Position, World};
 use wasm_bindgen::prelude::*;
 

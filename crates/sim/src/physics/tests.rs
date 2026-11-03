@@ -554,7 +554,7 @@ fn stationary_train_on_flat_track_remains_at_rest_without_power() {
 #[cfg(feature = "threads")]
 #[test]
 fn independent_train_results_match_across_thread_counts() {
-    use crate::{Executor, SequentialExecutor, ThreadedExecutor};
+    use crate::executor::{Executor, SequentialExecutor, ThreadedExecutor};
     let circuit = oval();
     let run = |index: usize| {
         let mut train = Train::new(

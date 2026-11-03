@@ -93,8 +93,8 @@ function encode(quads: readonly QuadSource[]): Batch[] {
 
 const fromGeometry = (quad: GeometryQuad): QuadSource => ({ vertices: quad.vertices, page: quad.page ?? SHAPE_PAGES.flat, color: quad.color, light: quad.light ?? 0, pickId: 0 });
 
-export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, images: Record<string, HTMLImageElement[]>): WorldRenderer {
-  const gl = canvas.getContext("webgl2", { alpha: false });
+export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, images: Record<string, HTMLImageElement[]>, preserveDrawingBuffer = false): WorldRenderer {
+  const gl = canvas.getContext("webgl2", { alpha: false, preserveDrawingBuffer });
   if (!gl) throw new Error("WebGL2 is unavailable");
   for (const [scale, pages] of Object.entries(atlas.pages)) if (images[scale]?.length !== pages.length) throw new Error("Atlas page count does not match images");
   function shader(type: number, source: string): WebGLShader {

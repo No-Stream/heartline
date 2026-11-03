@@ -69,6 +69,7 @@ pub struct WasmSimulation {
     block_layout: Option<BlockLayout>,
     desired_train_count: Option<usize>,
     block_placement_search: Option<BlockPlacementSearch>,
+    block_placement_cache: Option<BlockPlacementSearch>,
     block_apply_best_requested: bool,
     block_manual_search: Option<BlockManualSearch>,
     block_baseline_validation: bool,
@@ -196,6 +197,7 @@ impl WasmSimulation {
             block_layout: None,
             desired_train_count: None,
             block_placement_search: None,
+            block_placement_cache: None,
             block_apply_best_requested: false,
             block_manual_search: None,
             block_baseline_validation: false,
@@ -930,7 +932,6 @@ impl WasmSimulation {
     }
 
     pub fn tick(&mut self) {
-        self.construction_advance_block_analysis(200);
         let population = self.simulation.walking().guests().len();
         self.simulation
             .set_entrance(&self.world, self.facilities.entrance(&self.world));
@@ -1460,6 +1461,9 @@ impl WasmSimulation {
                 }
                 if complete {
                     self.block_apply_best_requested = false;
+                    if search.is_complete() {
+                        self.block_placement_cache = Some(search);
+                    }
                 } else {
                     self.block_placement_search = Some(search);
                 }
@@ -1486,12 +1490,21 @@ impl WasmSimulation {
     }
 
     pub fn construction_auto_blocks(&mut self) -> bool {
+        if self.block_placement_search.is_some() {
+            self.block_message.clear();
+            self.construction_message.clear();
+            return true;
+        }
         let Some((circuit, train)) = self.construction_circuit_and_train() else {
             self.set_block_error("A closed circuit is required to place block sections.");
             return false;
         };
         let config = block_physics_config();
-        match BlockPlacementSearch::new(circuit, train, config) {
+        let search = match self.block_placement_cache.take() {
+            Some(search) => Ok(search),
+            None => BlockPlacementSearch::new(circuit, train, config),
+        };
+        match search {
             Ok(search) => {
                 self.block_manual_search = None;
                 self.block_baseline_validation = false;
@@ -1524,6 +1537,9 @@ impl WasmSimulation {
             return true;
         }
         self.install_block_layout(search.best().clone(), true);
+        if search.is_complete() {
+            self.block_placement_cache = Some(search);
+        }
         true
     }
 
@@ -1652,7 +1668,7 @@ impl WasmSimulation {
                     )
                 };
                 format!(
-                    "{{\"boundaryMetres\":{boundary},\"brakeStartMetres\":{},\"brakePieceIndices\":{brake_piece_indices},\"poweredHoldStartMetres\":{},\"poweredHoldPieceIndices\":[{powered_hold_piece_indices}],\"editable\":{editable},\"editableIndex\":{},\"reason\":{},\"trackKind\":{}}}",
+                    "{{\"boundaryMetres\":{boundary},\"brakeStartMetres\":{},\"brakePieceIndices\":[{brake_piece_indices}],\"poweredHoldStartMetres\":{},\"poweredHoldPieceIndices\":[{powered_hold_piece_indices}],\"editable\":{editable},\"editableIndex\":{},\"reason\":{},\"trackKind\":{}}}",
                     if editable {
                         layout.brake_start(index).to_string()
                     } else {
@@ -2384,6 +2400,7 @@ impl WasmSimulation {
         self.block_layout = None;
         self.desired_train_count = None;
         self.block_placement_search = None;
+        self.block_placement_cache = None;
         self.block_apply_best_requested = false;
         self.block_manual_search = None;
         self.block_baseline_validation = false;
@@ -3575,6 +3592,80 @@ mod world_tests {
     }
 
     #[test]
+    fn automatic_block_search_reuses_completed_results_until_track_changes() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        build_block_test_construction(&mut simulation);
+        let (circuit, train) = simulation.construction_circuit_and_train().unwrap();
+        let config = super::PhysicsConfig {
+            powered_sections: false,
+            ..block_physics_config()
+        };
+        let mut search = super::BlockPlacementSearch::new(circuit, train, config).unwrap();
+        search.advance(2_000);
+        assert!(search.is_complete());
+        let work = search.work_completed();
+        simulation.install_block_layout(search.best().clone(), false);
+        simulation.block_placement_search = Some(search);
+        simulation.construction_advance_block_analysis(1);
+        assert_eq!(
+            simulation
+                .block_placement_cache
+                .as_ref()
+                .unwrap()
+                .work_completed(),
+            work
+        );
+        assert!(simulation.construction_auto_blocks());
+        assert!(simulation.block_placement_search.is_none());
+        assert_eq!(
+            simulation
+                .block_placement_cache
+                .as_ref()
+                .unwrap()
+                .work_completed(),
+            work
+        );
+        simulation.construction_undo();
+        assert!(simulation.block_placement_cache.is_none());
+    }
+
+    #[test]
+    fn repeated_automatic_block_requests_preserve_in_progress_search() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        build_block_test_construction(&mut simulation);
+        assert!(simulation.construction_auto_blocks());
+        simulation.construction_advance_block_analysis(10);
+        let work = simulation
+            .block_placement_search
+            .as_ref()
+            .unwrap()
+            .work_completed();
+        assert!(work > 0);
+        assert!(simulation.construction_auto_blocks());
+        assert_eq!(
+            simulation
+                .block_placement_search
+                .as_ref()
+                .unwrap()
+                .work_completed(),
+            work
+        );
+        assert!(simulation.block_placement_cache.is_none());
+        assert!(simulation.construction_apply_best_block_sections());
+        assert!(simulation.block_placement_search.is_none());
+        assert!(simulation.block_placement_cache.is_none());
+        assert!(simulation.construction_auto_blocks());
+        assert_eq!(
+            simulation
+                .block_placement_search
+                .as_ref()
+                .unwrap()
+                .work_completed(),
+            0
+        );
+    }
+
+    #[test]
     fn completed_automatic_search_installs_its_result() {
         let mut simulation = WasmSimulation::new(42, 0);
         let circuit = block_test_circuit();
@@ -3826,7 +3917,16 @@ mod world_tests {
             .as_ref()
             .unwrap()
             .work_completed();
-        assert!(after_tick > before_tick && after_tick - before_tick <= 200);
+        assert_eq!(after_tick, before_tick);
+        simulation.construction_advance_block_analysis(200);
+        assert!(
+            simulation
+                .block_placement_search
+                .as_ref()
+                .unwrap()
+                .work_completed()
+                > after_tick
+        );
         simulation.construction_delete(3);
         assert!(simulation.block_placement_search.is_none());
     }
@@ -3991,6 +4091,7 @@ mod world_tests {
         simulation.install_block_layout(layout.clone(), false);
         let report = simulation.construction_block_report_json();
         let held_piece = layout.powered_hold_pieces(powered_index)[0];
+        assert!(report.contains("\"brakePieceIndices\":[]"), "{report}");
         assert!(
             report.contains(&format!("\"poweredHoldPieceIndices\":[{held_piece}]")),
             "{report}"
@@ -4662,6 +4763,7 @@ mod world_tests {
         );
         let mut saw_empty_dispatch_pause = false;
         for tick in 1..=10_000 {
+            simulation.construction_advance_block_analysis(0);
             simulation.tick();
             let active_train_ids: Vec<_> = simulation
                 .coaster_operation

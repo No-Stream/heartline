@@ -60,8 +60,9 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
   await page.getByRole("button", { name: "Test coaster" }).click();
   await page.evaluate(() => window.gameTest.advanceTicks(10000));
-  await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status")).toHaveText("Train completed a lap.", { timeout: 150_000 });
-  await expect.poll(() => page.evaluate(() => window.gameTest.testingReport()?.samples.length ?? 0)).toBeGreaterThan(1);
+  expect(await page.getByRole("region", { name: "Coaster construction" }).getByRole("status").textContent()).toBe("Train completed a lap.");
+  const testingReport = await page.evaluate(() => window.gameTest.testingReport());
+  expect(testingReport?.samples.length ?? 0).toBeGreaterThan(1);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.length).toBeGreaterThan(0);
   await expect(page.locator("[data-notes]")).toHaveText(notes.join(" "));

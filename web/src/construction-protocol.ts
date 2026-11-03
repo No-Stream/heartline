@@ -1,5 +1,7 @@
 import type { TestingReport } from "./coaster-testing";
 
+type ConstructionModel = "hybrid" | "velocity_viper" | "wooden_twister";
+
 /** Commands are processed in order by the simulation worker. */
 export type ConstructionAction =
   | { readonly type: "construction-start"; readonly x: number; readonly y: number; readonly z: number; readonly heading: number }
@@ -17,6 +19,9 @@ export type ConstructionAction =
   | { readonly type: "construction-move-block"; readonly index: number; readonly boundaryMetres: number }
   | { readonly type: "construction-remove-block"; readonly index: number }
   | { readonly type: "construction-add-block"; readonly boundaryMetres: number };
+
+/** A coaster panel choice before the main thread translates it to the bridge's model selection. */
+export type ConstructionPanelAction = { readonly type: "construction-set-model"; readonly model: ConstructionModel };
 
 export interface BlockSection {
   readonly boundaryMetres: number;
@@ -96,4 +101,11 @@ export interface ConstructionState {
   readonly previewRails: Float32Array;
   readonly previewTies: Float32Array;
   readonly previewSupports: Float32Array;
+}
+
+export interface BlockAnalysisProgress {
+  readonly type: "block-analysis-progress";
+  readonly blockReport: BlockReport;
+  readonly trainCount: number;
+  readonly message: string;
 }

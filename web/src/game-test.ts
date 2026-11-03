@@ -5,6 +5,10 @@ import type { Camera, WorldPoint } from "./camera";
 import type { Pick, WorldSprite } from "./render/index";
 import type { CrestBurst } from "./render/effects";
 
+export function validateBlockAnalysisBudget(budget: number): void {
+  if (!Number.isInteger(budget) || budget < 1 || budget > 1000) throw new RangeError("Invalid test block analysis budget");
+}
+
 export function constructionRiderPositions(poses: Float32Array, riders: Uint32Array): { id: string; car: number; seat: number; x: number; y: number; z: number }[] {
   const poseOffsets = new Map<number, number>();
   for (let offset = 0; offset < poses.length; offset += 11) poseOffsets.set(poses[offset], offset);
@@ -30,6 +34,7 @@ export interface GameTest {
   testingReport(): TestingReport | null;
   constructionTrainPoses(): readonly number[];
   advanceTicks(count: number): Promise<void>;
+  advanceBlockAnalysis(budget: number): Promise<void>;
   setCamera(camera: Camera): void;
   setSurface(x: number, y: number, corners: [number, number, number, number]): void;
   project(point: WorldPoint): { x: number; y: number };

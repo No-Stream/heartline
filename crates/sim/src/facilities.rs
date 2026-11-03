@@ -1,7 +1,7 @@
 //! Placeable buildings and their guest-facing services.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::guest_behavior::{Facility, KnownPlace, PlaceKind};
+use crate::guests::behavior::{Facility, KnownPlace, PlaceKind};
 use crate::world::{Direction, Ground, Position, World};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1189,7 +1189,7 @@ mod tests {
 
     #[test]
     fn rides_enforce_their_actual_height_limits() {
-        use crate::guest_behavior::GuestBehavior;
+        use crate::guests::behavior::GuestBehavior;
         use crate::guests::generate_guests;
         let mut park = ParkFacilities::new();
         let world = world();
@@ -1375,7 +1375,7 @@ mod tests {
     }
     #[test]
     fn each_placed_service_completes_the_expected_activity() {
-        use crate::guest_behavior::BehaviorSimulation;
+        use crate::guests::behavior::BehaviorSimulation;
         use crate::guests::{GuestId, generate_guests};
         let world = world();
         for kind in [
@@ -1446,7 +1446,7 @@ mod tests {
 
     #[test]
     fn placed_buildings_drive_visits_and_revenue() {
-        use crate::park_guests::ParkGuests;
+        use crate::guests::park::ParkGuests;
         let mut world = World::new(
             12,
             5,

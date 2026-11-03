@@ -382,8 +382,12 @@ pub struct BlockManualSearch {
     indices: Option<Vec<usize>>,
     active: Option<PlacementFuture>,
     result: Option<Result<BlockLayout, &'static str>>,
+    best: Option<BlockLayout>,
     first_error: Option<&'static str>,
-    capacity_unverified: bool,
+    first_unverified_error: Option<&'static str>,
+    unverified_upper_bound: usize,
+    active_upper_bound: usize,
+    maximum_capacity: usize,
     work_completed: usize,
 }
 
@@ -435,6 +439,12 @@ impl BlockManualSearch {
             };
             choices.push(vec![powered, pass_through]);
         }
+        let candidates: Vec<_> = choices
+            .iter()
+            .flatten()
+            .filter(|run| !run.piece_indices.is_empty())
+            .collect();
+        let maximum_capacity = maximum_nonoverlapping_runs(&candidates).max(1);
         let active: Option<PlacementFuture> = if choices.is_empty() {
             let layout = BlockLayout::assemble_runs(&circuit, &train, config, Vec::new())?;
             Some(Box::pin(BlockLayout::verify_single_train(layout)))
@@ -450,8 +460,12 @@ impl BlockManualSearch {
             indices,
             active,
             result: None,
+            best: None,
             first_error: None,
-            capacity_unverified: false,
+            first_unverified_error: None,
+            unverified_upper_bound: 0,
+            active_upper_bound: 1,
+            maximum_capacity,
             work_completed: 0,
         })
     }
@@ -461,6 +475,21 @@ impl BlockManualSearch {
     }
     pub fn work_completed(&self) -> usize {
         self.work_completed
+    }
+
+    fn finish_with_work_limit(mut self, maximum_steps: usize) -> Result<BlockLayout, &'static str> {
+        loop {
+            if let Some(result) = self.result.take() {
+                return result;
+            }
+            if self.work_completed >= maximum_steps {
+                if let Some(mut best) = self.best.take() {
+                    best.placement_search_complete = false;
+                    return Ok(best);
+                }
+            }
+            self.advance(1_000);
+        }
     }
 
     pub fn advance(&mut self, work_steps: usize) {
@@ -477,11 +506,35 @@ impl BlockManualSearch {
                         self.active = None;
                         match result {
                             Ok(layout) => {
-                                self.result = Some(Ok(layout));
-                                break;
+                                if !layout.capacity_search_complete() {
+                                    self.unverified_upper_bound =
+                                        self.unverified_upper_bound.max(self.active_upper_bound);
+                                }
+                                let improves = self.best.as_ref().is_none_or(|best| {
+                                    layout.capacity() > best.capacity()
+                                        || (layout.capacity() == best.capacity()
+                                            && layout.capacity_search_complete()
+                                            && !best.capacity_search_complete())
+                                });
+                                if improves {
+                                    self.best = Some(layout);
+                                }
+                                if self
+                                    .best
+                                    .as_ref()
+                                    .is_some_and(|best| best.capacity() >= self.maximum_capacity)
+                                {
+                                    self.result = self.best.take().map(Ok);
+                                    break;
+                                }
                             }
-                            Err("train capacity could not be verified within 600 seconds") => {
-                                self.capacity_unverified = true
+                            Err(
+                                error @ ("train capacity could not be verified within 600 seconds"
+                                | "train did not reach the next block brake"),
+                            ) => {
+                                self.unverified_upper_bound =
+                                    self.unverified_upper_bound.max(self.active_upper_bound);
+                                self.first_unverified_error.get_or_insert(error);
                             }
                             Err(error) => {
                                 self.first_error.get_or_insert(error);
@@ -492,12 +545,17 @@ impl BlockManualSearch {
                 }
             }
             let Some(indices) = self.indices.take() else {
-                self.result = Some(Err(if self.capacity_unverified {
-                    "train capacity could not be verified within 600 seconds"
+                self.result = Some(if let Some(mut best) = self.best.take() {
+                    if self.unverified_upper_bound > best.capacity() {
+                        best.placement_search_complete = false;
+                    }
+                    Ok(best)
                 } else {
-                    self.first_error
-                        .unwrap_or("block brake runs cannot overlap")
-                }));
+                    Err(self
+                        .first_unverified_error
+                        .or(self.first_error)
+                        .unwrap_or("block brake runs cannot overlap"))
+                });
                 break;
             };
             let mut next = indices.clone();
@@ -523,6 +581,16 @@ impl BlockManualSearch {
             }) {
                 self.first_error
                     .get_or_insert("block brake runs cannot overlap");
+                continue;
+            }
+            self.active_upper_bound = runs
+                .iter()
+                .filter(|run| !run.piece_indices.is_empty())
+                .count()
+                .max(1);
+            if self.best.as_ref().is_some_and(|best| {
+                best.capacity_search_complete() && best.capacity() >= self.active_upper_bound
+            }) {
                 continue;
             }
             self.active = Some(Box::pin(BlockLayout::from_runs_async(
@@ -822,12 +890,9 @@ impl BlockLayout {
         config: PhysicsConfig,
         boundaries: Vec<f64>,
     ) -> Result<Self, &'static str> {
-        let mut search =
-            BlockManualSearch::new(circuit.clone(), train.clone(), config, boundaries)?;
-        while search.result().is_none() {
-            search.advance(10_000);
-        }
-        search.result().expect("completed manual search").clone()
+        const MAXIMUM_SEARCH_STEPS: usize = 100_000;
+        BlockManualSearch::new(circuit.clone(), train.clone(), config, boundaries)?
+            .finish_with_work_limit(MAXIMUM_SEARCH_STEPS)
     }
 
     #[cfg(test)]

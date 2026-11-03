@@ -2,10 +2,10 @@
 
 use std::collections::BTreeMap;
 
+use crate::executor::{Executor, SequentialExecutor};
+use crate::guests::pathfinding::Graph;
 use crate::guests::{GuestId, GuestStore, generate_guests};
-use crate::pathfinding::Graph;
 use crate::world::{Direction, Path, Position, World};
-use crate::{Executor, SequentialExecutor};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WalkingGuest {
@@ -826,7 +826,7 @@ mod destination_tests {
         for _ in 0..1000 {
             simulation.tick_with_controls(
                 &world,
-                &crate::SequentialExecutor::new(16),
+                &crate::executor::SequentialExecutor::new(16),
                 &[WalkControl::Destination(destination)],
             );
         }
@@ -834,7 +834,7 @@ mod destination_tests {
         let before = simulation.guests()[0];
         simulation.tick_with_controls(
             &world,
-            &crate::SequentialExecutor::new(16),
+            &crate::executor::SequentialExecutor::new(16),
             &[WalkControl::Stop],
         );
         assert_eq!(simulation.guests()[0].x, before.x);

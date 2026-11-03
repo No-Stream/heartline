@@ -155,7 +155,7 @@ async function buildBlockCircuit(
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("response", (response) => { if (response.status() >= 400) failedResources.push(`${response.status()} ${response.url()}`); });
   page.on("requestfailed", (request) => failedResources.push(`${request.failure()?.errorText ?? "request failed"} ${request.url()}`));
-  await page.goto(agentCount === 12 ? "/?test=1" : `/?test=1&agents=${agentCount}`);
+  await page.goto(agentCount === 12 ? "/?test=1&manualBlockAnalysis=1" : `/?test=1&manualBlockAnalysis=1&agents=${agentCount}`);
   await page.waitForTimeout(1_000);
   if (pageErrors.length > 0) throw new Error(`Browser startup errors: ${pageErrors.join(" | ")}`);
   if (failedResources.length > 0) throw new Error(`Game assets failed to load: ${failedResources.join(" | ")}`);
@@ -230,9 +230,9 @@ async function installVerifiedPlacement(page: Page): Promise<void> {
       expect(selectedCapacity, "using the current layout must retain its verified capacity").toBeGreaterThanOrEqual(installedCapacity);
       return;
     }
-    await page.evaluate(() => window.gameTest.advanceTicks(100));
+    await advanceBlockAnalysis(page);
   }
-  throw new Error("Automatic placement did not verify two trains within 20,000 simulation ticks");
+  throw new Error("Automatic placement did not verify two trains within 4,000,000 analysis steps");
 }
 
 async function findBlockMarker(page: Page, index: number): Promise<{ x: number; y: number }> {
@@ -256,9 +256,15 @@ async function finishManualValidation(page: Page): Promise<void> {
   await expect(report).toHaveAttribute("data-placement-status", "validating");
   for (let attempt = 0; attempt < 200; attempt += 1) {
     if (await report.getAttribute("data-placement-status") === "manual") return;
-    await page.evaluate(() => window.gameTest.advanceTicks(100));
+    await advanceBlockAnalysis(page);
   }
   await expect(report).toHaveAttribute("data-placement-status", "manual");
+}
+
+async function advanceBlockAnalysis(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    for (let slice = 0; slice < 20; slice += 1) await window.gameTest.advanceBlockAnalysis(1000);
+  });
 }
 
 async function setStationAccessSurfaces(page: Page): Promise<void> {

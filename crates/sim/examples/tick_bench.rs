@@ -1,82 +1,62 @@
 use std::env;
 use std::hint::black_box;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use theme_park_sim::{Agent, Executor, Simulation, ThreadedExecutor};
+use theme_park_sim::demo_world::demo_world;
+use theme_park_sim::executor::{Executor, ThreadedExecutor};
+use theme_park_sim::guests::behavior::{Facility, KnownPlace, PlaceKind};
+use theme_park_sim::guests::park::ParkGuests;
+use theme_park_sim::guests::walking::WalkingGuest;
+use theme_park_sim::world::Position;
 
-const DEFAULT_AGENT_COUNT: usize = 10_000;
+const DEFAULT_GUEST_COUNT: usize = 10_000;
 const WARMUP_TICKS: usize = 20;
 const DEFAULT_MEASURED_TICKS: usize = 200;
 const PARTITION_SIZE: usize = 256;
-const THREAD_COUNTS: [usize; 4] = [1, 2, 4, 8];
 const TARGET_WORK_NANOS: f64 = 1_000.0;
-const CALIBRATION_AGENT_COUNT: usize = 25_000;
+const CALIBRATION_GUEST_COUNT: usize = 25_000;
 const PILOT_ITERATIONS: usize = 64;
-
-const USAGE: &str = "Usage: tick_bench [--work placeholder|1us|both] [--agents N] [--ticks N]";
+const USAGE: &str = "Usage: tick_bench [--work none|placeholder|1us|both] [--agents N] [--ticks N]";
 
 #[derive(Clone, Copy)]
 enum WorkSelection {
-    Placeholder,
+    None,
     OneMicrosecond,
     Both,
 }
 
 struct Options {
-    agent_count: usize,
+    guest_count: usize,
     measured_ticks: usize,
     work_selection: WorkSelection,
 }
 
-#[derive(Clone, Copy)]
-enum Workload {
-    Placeholder,
-    OneMicrosecond {
-        iterations_per_agent: usize,
-        measured_nanos_per_agent: f64,
-    },
-}
-
-struct BenchmarkResult {
-    thread_count: usize,
-    ticks_per_second: f64,
-}
-
 struct WorkExecutor<E> {
     inner: E,
-    iterations_per_agent: Option<usize>,
-    execution_count: AtomicUsize,
+    iterations_per_guest: usize,
 }
 
 impl<E> WorkExecutor<E> {
-    fn new(inner: E, iterations_per_agent: Option<usize>) -> Self {
+    fn new(inner: E, iterations_per_guest: usize) -> Self {
         Self {
             inner,
-            iterations_per_agent,
-            execution_count: AtomicUsize::new(0),
+            iterations_per_guest,
         }
     }
 }
 
-impl<E: Executor<Agent>> Executor<Agent> for WorkExecutor<E> {
-    fn execute<F>(&self, agent_count: usize, process: F) -> Vec<Agent>
+impl<E: Executor<WalkingGuest> + Sync> Executor<WalkingGuest> for WorkExecutor<E> {
+    fn execute<F>(&self, guest_count: usize, process: F) -> Vec<WalkingGuest>
     where
-        F: Fn(usize) -> Agent + Sync,
+        F: Fn(usize) -> WalkingGuest + Sync,
     {
-        let Some(iterations_per_agent) = self.iterations_per_agent else {
-            return self.inner.execute(agent_count, process);
-        };
-
-        // Simulation currently calls the executor twice per tick, so charge one phase only.
-        let apply_work = self.execution_count.fetch_add(1, Ordering::Relaxed) % 2 == 0;
-        self.inner.execute(agent_count, |index| {
-            let agent = process(index);
-            if apply_work {
-                black_box(run_agent_work(index, iterations_per_agent));
+        self.inner.execute(guest_count, |index| {
+            let guest = process(index);
+            if self.iterations_per_guest > 0 {
+                black_box(run_guest_work(index, self.iterations_per_guest));
             }
-            agent
+            guest
         })
     }
 }
@@ -94,48 +74,33 @@ fn main() -> ExitCode {
         }
     };
 
-    let microsecond_workload = match options.work_selection {
-        WorkSelection::Placeholder => None,
-        WorkSelection::OneMicrosecond | WorkSelection::Both => {
-            let workload = calibrate_one_microsecond_workload();
-            if let Workload::OneMicrosecond {
-                iterations_per_agent,
-                measured_nanos_per_agent,
-            } = workload
-            {
-                println!(
-                    "1us work calibration: {iterations_per_agent} integer-mix iterations per agent"
-                );
-                println!("Observed {measured_nanos_per_agent:.1} ns per agent.");
-            }
-            Some(workload)
-        }
-    };
-
     println!(
-        "Agents: {}; measured ticks: {}; warmup ticks: {}",
-        options.agent_count, options.measured_ticks, WARMUP_TICKS
+        "Guests: {}; measured ticks: {}; warmup ticks: {}",
+        options.guest_count, options.measured_ticks, WARMUP_TICKS
     );
-    println!("Work is added once per agent per tick in the first simulation phase.");
     println!(
         "{:<14} {:>8} {:>16} {:>20}",
         "Work", "Threads", "Ticks/second", "Speedup vs 1 thread"
     );
 
+    let one_microsecond_iterations = match options.work_selection {
+        WorkSelection::OneMicrosecond | WorkSelection::Both => {
+            Some(calibrate_one_microsecond_work())
+        }
+        WorkSelection::None => None,
+    };
     match options.work_selection {
-        WorkSelection::Placeholder => {
-            benchmark_workload(Workload::Placeholder, &options);
-        }
-        WorkSelection::OneMicrosecond => {
-            benchmark_workload(
-                microsecond_workload.expect("workload was calibrated"),
-                &options,
-            );
-        }
+        WorkSelection::None => benchmark_workload(0, "guests", &options),
+        WorkSelection::OneMicrosecond => benchmark_workload(
+            one_microsecond_iterations.expect("workload was calibrated"),
+            "guests + 1us",
+            &options,
+        ),
         WorkSelection::Both => {
-            benchmark_workload(Workload::Placeholder, &options);
+            benchmark_workload(0, "guests", &options);
             benchmark_workload(
-                microsecond_workload.expect("workload was calibrated"),
+                one_microsecond_iterations.expect("workload was calibrated"),
+                "guests + 1us",
                 &options,
             );
         }
@@ -146,7 +111,7 @@ fn main() -> ExitCode {
 
 fn parse_options() -> Result<Option<Options>, String> {
     let mut options = Options {
-        agent_count: DEFAULT_AGENT_COUNT,
+        guest_count: DEFAULT_GUEST_COUNT,
         measured_ticks: DEFAULT_MEASURED_TICKS,
         work_selection: WorkSelection::Both,
     };
@@ -157,18 +122,16 @@ fn parse_options() -> Result<Option<Options>, String> {
             "--help" | "-h" => return Ok(None),
             "--work" => {
                 options.work_selection = match arguments.next().as_deref() {
-                    Some("placeholder") => WorkSelection::Placeholder,
+                    Some("none" | "placeholder") => WorkSelection::None,
                     Some("1us") => WorkSelection::OneMicrosecond,
                     Some("both") => WorkSelection::Both,
                     Some(value) => return Err(format!("unsupported work level: {value}")),
                     None => return Err("--work requires a value".to_owned()),
                 };
             }
-            "--agents" => {
-                options.agent_count = parse_positive_usize("--agents", arguments.next())?;
-            }
+            "--agents" => options.guest_count = parse_positive_usize("--agents", arguments.next())?,
             "--ticks" => {
-                options.measured_ticks = parse_positive_usize("--ticks", arguments.next())?;
+                options.measured_ticks = parse_positive_usize("--ticks", arguments.next())?
             }
             _ => return Err(format!("unknown argument: {argument}")),
         }
@@ -188,34 +151,9 @@ fn parse_positive_usize(option: &str, value: Option<String>) -> Result<usize, St
     Ok(parsed)
 }
 
-fn calibrate_one_microsecond_workload() -> Workload {
-    let pilot_nanos_per_agent = measure_agent_work(PILOT_ITERATIONS);
-    let estimated_iterations =
-        ((TARGET_WORK_NANOS * PILOT_ITERATIONS as f64 / pilot_nanos_per_agent).round() as usize)
-            .max(1);
-    let first_measurement = measure_agent_work(estimated_iterations);
-    let iterations_per_agent =
-        ((estimated_iterations as f64 * TARGET_WORK_NANOS / first_measurement).round() as usize)
-            .max(1);
-    let measured_nanos_per_agent = measure_agent_work(iterations_per_agent);
-
-    Workload::OneMicrosecond {
-        iterations_per_agent,
-        measured_nanos_per_agent,
-    }
-}
-
-fn measure_agent_work(iterations_per_agent: usize) -> f64 {
-    let start = Instant::now();
-    for index in 0..CALIBRATION_AGENT_COUNT {
-        black_box(run_agent_work(index, iterations_per_agent));
-    }
-    start.elapsed().as_nanos() as f64 / CALIBRATION_AGENT_COUNT as f64
-}
-
 #[inline(never)]
-fn run_agent_work(agent_index: usize, iterations: usize) -> u64 {
-    let mut value = (agent_index as u64) ^ 0x9e3779b97f4a7c15;
+fn run_guest_work(guest_index: usize, iterations: usize) -> u64 {
+    let mut value = (guest_index as u64) ^ 0x9e3779b97f4a7c15;
     for _ in 0..iterations {
         value = value
             .wrapping_add(0x9e3779b97f4a7c15)
@@ -225,63 +163,98 @@ fn run_agent_work(agent_index: usize, iterations: usize) -> u64 {
     value
 }
 
-fn benchmark_workload(workload: Workload, options: &Options) {
-    let iterations_per_agent = match workload {
-        Workload::Placeholder => None,
-        Workload::OneMicrosecond {
-            iterations_per_agent,
-            ..
-        } => Some(iterations_per_agent),
-    };
-    let results = THREAD_COUNTS
-        .map(|thread_count| measure_ticks_per_second(thread_count, iterations_per_agent, options));
-    let baseline_ticks_per_second = results[0].ticks_per_second;
+fn calibrate_one_microsecond_work() -> usize {
+    let pilot_nanos_per_guest = measure_guest_work(PILOT_ITERATIONS);
+    let estimated_iterations =
+        ((TARGET_WORK_NANOS * PILOT_ITERATIONS as f64 / pilot_nanos_per_guest).round() as usize)
+            .max(1);
+    let first_measurement = measure_guest_work(estimated_iterations);
+    ((estimated_iterations as f64 * TARGET_WORK_NANOS / first_measurement).round() as usize).max(1)
+}
 
-    for result in results {
-        let speedup = result.ticks_per_second / baseline_ticks_per_second;
+fn measure_guest_work(iterations_per_guest: usize) -> f64 {
+    let start = Instant::now();
+    for guest_index in 0..CALIBRATION_GUEST_COUNT {
+        black_box(run_guest_work(guest_index, iterations_per_guest));
+    }
+    start.elapsed().as_nanos() as f64 / CALIBRATION_GUEST_COUNT as f64
+}
+
+fn benchmark_workload(iterations_per_guest: usize, work_name: &str, options: &Options) {
+    let results = [1, 2, 4, 8]
+        .map(|thread_count| measure_ticks_per_second(thread_count, iterations_per_guest, options));
+    let baseline_ticks_per_second = results[0].1;
+    for (thread_count, ticks_per_second) in results {
         println!(
-            "{:<14} {:>8} {:>16.2} {:>19.2}x",
-            workload.name(),
-            result.thread_count,
-            result.ticks_per_second,
-            speedup
+            "{work_name:<14} {thread_count:>8} {ticks_per_second:>16.2} {:>19.2}x",
+            ticks_per_second / baseline_ticks_per_second
         );
     }
 }
 
 fn measure_ticks_per_second(
     thread_count: usize,
-    iterations_per_agent: Option<usize>,
+    iterations_per_guest: usize,
     options: &Options,
-) -> BenchmarkResult {
+) -> (usize, f64) {
+    let world = demo_world();
+    let entrance = Position {
+        x: 218,
+        y: 256,
+        height: 8,
+    };
+    let facilities: Vec<_> = [
+        PlaceKind::Ride,
+        PlaceKind::Food,
+        PlaceKind::Drink,
+        PlaceKind::Restroom,
+        PlaceKind::Bench,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(id, kind)| Facility {
+        exit_position: None,
+        place: KnownPlace {
+            id: id as u32,
+            position: Position {
+                x: 219 + id as u16,
+                ..entrance
+            },
+            kind,
+            minimum_height_cm: 0,
+            intensity: 20,
+            ride_type: 0,
+            theme: 0,
+            price: 0,
+        },
+        capacity: 24,
+        duration_ticks: 900,
+    })
+    .collect();
     let executor = WorkExecutor::new(
         ThreadedExecutor::new(thread_count, PARTITION_SIZE),
-        iterations_per_agent,
+        iterations_per_guest,
     );
-    let mut simulation = Simulation::new(42, options.agent_count);
+    let mut simulation = ParkGuests::new(
+        42,
+        options.guest_count,
+        &world,
+        entrance,
+        options.guest_count,
+    );
 
     for _ in 0..WARMUP_TICKS {
-        simulation.tick_with(&executor);
+        simulation.tick_with(&world, &facilities, 100, None, &executor);
     }
 
     let start = Instant::now();
     for _ in 0..options.measured_ticks {
-        simulation.tick_with(&executor);
+        simulation.tick_with(&world, &facilities, 100, None, &executor);
     }
     let elapsed = start.elapsed();
-    black_box(simulation.state_hash());
-
-    BenchmarkResult {
+    black_box(simulation.walking().state_hash());
+    (
         thread_count,
-        ticks_per_second: options.measured_ticks as f64 / elapsed.as_secs_f64(),
-    }
-}
-
-impl Workload {
-    fn name(self) -> &'static str {
-        match self {
-            Workload::Placeholder => "placeholder",
-            Workload::OneMicrosecond { .. } => "1us",
-        }
-    }
+        options.measured_ticks as f64 / elapsed.as_secs_f64(),
+    )
 }

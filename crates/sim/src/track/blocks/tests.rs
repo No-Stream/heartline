@@ -2,6 +2,143 @@ use crate::physics::demo_circuit;
 use crate::track::blocks::brake_runs;
 
 #[test]
+fn automatic_search_finds_two_trains_on_browser_circuit() {
+    use crate::track::{PieceId, TrackState, catalog, hybrid_model};
+    let ids = [
+        PieceId::Station,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::LiftFlat,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::LiftFlat,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+    ];
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::new();
+    for id in ids {
+        let piece = catalog()
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let circuit = crate::physics::Circuit::new(pieces).unwrap();
+    let config = crate::physics::PhysicsConfig {
+        lift_speed: 5.0,
+        ..Default::default()
+    };
+    let mut search =
+        super::BlockPlacementSearch::new(circuit, hybrid_model().train, config).unwrap();
+    search.advance(300_000);
+    assert!(search.best().capacity() >= 2);
+}
+
+#[test]
+fn manual_search_selects_best_real_powered_hold_combination() {
+    use crate::physics::{Circuit, PhysicsConfig};
+    use crate::track::{PieceId, TrackState, catalog, hybrid_model};
+
+    let catalog = catalog();
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::new();
+    for id in [
+        PieceId::Station,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::LiftFlat,
+        PieceId::LiftFlat,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::LiftFlat,
+        PieceId::LiftFlat,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+    ] {
+        let piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let circuit = Circuit::new(pieces).unwrap();
+    let train = hybrid_model().train;
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..Default::default()
+    };
+    let mut search =
+        super::BlockManualSearch::new(circuit.clone(), train.clone(), config, Vec::new()).unwrap();
+    assert_eq!(search.choices.len(), 2);
+    for alternatives in &mut search.choices {
+        alternatives.reverse();
+    }
+    let first_runs = search
+        .choices
+        .iter()
+        .map(|alternatives| alternatives[0].clone())
+        .collect();
+    let mut budget = 1_000_000;
+    let first = super::BlockLayout::from_runs_with_budget(
+        &circuit,
+        &train,
+        config,
+        first_runs,
+        &mut budget,
+    )
+    .unwrap();
+    assert_eq!(
+        first.capacity(),
+        1,
+        "first real combination must be a lower-capacity valid layout"
+    );
+
+    let mut bounded =
+        super::BlockManualSearch::new(circuit.clone(), train.clone(), config, Vec::new()).unwrap();
+    for alternatives in &mut bounded.choices {
+        alternatives.reverse();
+    }
+    let fallback = bounded.finish_with_work_limit(0).unwrap();
+    assert_eq!(fallback.capacity(), 1);
+    assert!(fallback.capacity_search_complete());
+    assert!(!fallback.placement_search_complete());
+
+    while search.result().is_none() && search.work_completed() < 1_000_000 {
+        let previous = search.work_completed();
+        search.advance(1_000);
+        assert!(search.work_completed() - previous <= 1_000);
+    }
+    let best = search
+        .result()
+        .expect("manual search must finish")
+        .as_ref()
+        .unwrap();
+    assert_eq!(best.capacity(), 2);
+    assert!(best.capacity_search_complete());
+}
+
+#[test]
 fn capacity_verification_waits_for_two_distinct_peak_cohorts_to_finish() {
     let mut cohorts = super::SustainedCohorts::new(2);
     cohorts.observe_active(&[0, 1]);
@@ -986,6 +1123,7 @@ fn candidates_include_alternative_piece_ends_and_reject_overlap() {
 fn powered_sections_get_a_candidate_at_their_end() {
     use crate::track::{PieceId, TrackState, catalog};
     let catalog = catalog();
+    let mut saw_incomplete_placement_search = false;
     for powered in [PieceId::LiftFlat, PieceId::Launch] {
         let mut state = TrackState::origin();
         let mut pieces = Vec::new();
@@ -1031,6 +1169,7 @@ fn powered_sections_get_a_candidate_at_their_end() {
             .expect("train finishes or is recovered");
         assert_eq!(layout.capacity(), usize::from(!outcome.recovered));
         assert!(layout.capacity_search_complete());
+        saw_incomplete_placement_search |= !layout.placement_search_complete();
         let mut distance = 0.0;
         for piece in circuit.pieces() {
             distance += piece.length();
@@ -1054,6 +1193,7 @@ fn powered_sections_get_a_candidate_at_their_end() {
             }
         }
     }
+    assert!(saw_incomplete_placement_search);
 }
 
 #[test]

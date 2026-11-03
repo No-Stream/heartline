@@ -263,7 +263,7 @@ impl GuestStore {
 #[cfg(test)]
 mod tests {
     use super::{AgeGroup, GroupKind, GuestMemory, GuestStore, MemoryEntry, generate_guests};
-    use crate::{Executor, SequentialExecutor};
+    use crate::executor::{Executor, SequentialExecutor};
 
     #[test]
     fn guest_generation_is_reproducible() {
@@ -485,7 +485,7 @@ mod tests {
     #[cfg(feature = "threads")]
     #[test]
     fn guest_phase_output_is_independent_of_thread_count() {
-        use crate::ThreadedExecutor;
+        use crate::executor::ThreadedExecutor;
 
         let guests = generate_guests(31, 10_000);
         let sequential = SequentialExecutor::new(173).execute(guests.ids.len(), |index| {

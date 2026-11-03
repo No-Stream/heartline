@@ -23,6 +23,46 @@ const pieces = [
 ];
 
 describe("construction steppers", () => {
+  it("keeps each model's available slope transitions in the Slopes group", () => {
+    const modelTransitions = [
+      {
+        model: "Timber Tumbler",
+        ids: [
+          ["GentleUpToLevel", "Level"], ["SteepToGentleUp", "UpGentle"],
+          ["GentleDownToLevel", "Level"], ["SteepToGentleDown", "DownGentle"],
+          ["VerticalUpEntry", "UpSteep"], ["VerticalUpContinue", "UpSteep"], ["VerticalUpExit", "Level"],
+          ["VerticalDownEntry", "DownSteep"], ["VerticalDownContinue", "DownSteep"], ["VerticalDownExit", "Level"],
+        ],
+      },
+      {
+        model: "Velocity Viper",
+        ids: [
+          ["GentleUpToLevel", "Level"], ["SteepToGentleUp", "UpGentle"],
+          ["GentleDownToLevel", "Level"], ["SteepToGentleDown", "DownGentle"],
+          ["VerticalUpEntry", "UpSteep"], ["VerticalUpContinue", "UpSteep"], ["VerticalUpExit", "Level"],
+          ["VerticalDownEntry", "DownSteep"], ["VerticalDownContinue", "DownSteep"], ["VerticalDownExit", "Level"],
+        ],
+      },
+      {
+        model: "Briar Blitz",
+        ids: [
+          ["GentleUpToLevel", "Level"], ["SteepToGentleUp", "UpGentle"],
+          ["GentleDownToLevel", "Level"], ["SteepToGentleDown", "DownGentle"],
+          ["VerticalUpEntry", "UpSteep"], ["VerticalUpContinue", "UpSteep"], ["VerticalUpExit", "Level"],
+          ["VerticalDownEntry", "DownSteep"], ["VerticalDownContinue", "DownSteep"], ["VerticalDownExit", "Level"],
+        ],
+      },
+    ] as const;
+
+    for (const { model, ids } of modelTransitions) {
+      const transitions = ids.map(([id, slope]) => piece(id, "slope", slope));
+      const groups = groupedPieces([piece("Straight", "straight"), ...transitions]);
+      const slopeGroup = groups.find(({ group }) => group === "slope");
+
+      expect(slopeGroup?.pieces.map(({ id }) => id), model).toEqual(ids.map(([id]) => id));
+    }
+  });
+
   it("orders turns from left to right and slopes from down to up, and clamps at the ends", () => {
     expect(stepperOptions(pieces, shapes, "Straight", "turn")).toEqual({ values: ["Left 90°", "Ahead"], index: 1 });
     expect(stepperOptions(pieces, shapes, "Straight", "slope")).toEqual({ values: ["Gentle down", "Level", "Gentle up"], index: 1 });

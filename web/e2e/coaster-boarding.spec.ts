@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { Camera } from "../src/camera";
 import { canvasToPage, clickCanvas, openTool } from "./game-page";
 
 test.use({ actionTimeout: 10_000 });
@@ -63,9 +64,9 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
   let riderId = "";
   const queuedIds = new Set<string>();
+  const queueCamera: Camera = { centerX: 241, centerY: 253, zoom: 1, rotation: 0 };
   for (let ticks = 0; ticks < 30_000 && !riderId; ticks += 100) {
-    await page.evaluate(() => window.gameTest.advanceTicks(100));
-    await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+    await advanceTicksAndRender(page, 100, queueCamera);
     const queued = await page.evaluate(() => {
       const queue = new Set(window.gameTest.paths().filter((path) => path.kind === 1).map((path) => `${path.x},${path.y}`));
       return window.gameTest.guests().filter((guest) => queue.has(`${Math.floor(guest.x)},${Math.floor(guest.y)}`)).map((guest) => guest.id);
@@ -76,11 +77,12 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   }
   expect(queuedIds.size, "a guest should enter the queue").toBeGreaterThan(0);
   expect(riderId, "a queued guest should board the coaster").not.toBe("");
-  await page.evaluate((id) => {
+  const riderCamera = await page.evaluate((id): Camera => {
     const rider = window.gameTest.riders().find((entry) => entry.id === id);
     if (!rider) throw new Error("Rider disappeared before selection");
-    window.gameTest.setCamera({ centerX: rider.x - rider.z, centerY: rider.y - rider.z, zoom: 2, rotation: 0 });
+    return { centerX: rider.x - rider.z, centerY: rider.y - rider.z, zoom: 2, rotation: 0 };
   }, riderId);
+  await page.evaluate((camera) => window.gameTest.setCamera(camera), riderCamera);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   const pick = await page.evaluate((id) => {
     const canvas = document.querySelector("canvas")!;
@@ -101,8 +103,7 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
   await expect(page.getByTestId("guest-panel")).toHaveAttribute("data-guest-id", riderId);
   let exited = false;
   for (let ticks = 0; ticks < 100_000 && !exited; ticks += 100) {
-    await page.evaluate(() => window.gameTest.advanceTicks(100));
-    await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+    await advanceTicksAndRender(page, 100, riderCamera);
     exited = await page.evaluate((id) => !window.gameTest.riders().some((rider) => rider.id === id) && window.gameTest.guests().some((guest) => guest.id === id), riderId);
   }
   expect(exited).toBe(true);
@@ -112,6 +113,14 @@ test("guests ride a player-built coaster and can be selected", async ({ page }) 
     return detail?.id === id && detail.memories.some((memory) => memory.kind === "ride" && memory.rideId === 0xffff_ffff);
   }, riderId)).toBe(true);
 });
+
+async function advanceTicksAndRender(page: Page, count: number, camera: Camera): Promise<void> {
+  await page.evaluate(async ({ count, camera }) => {
+    await window.gameTest.advanceTicks(count);
+    window.gameTest.setCamera(camera);
+  }, { count, camera });
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+}
 
 async function clickWorld(page: Page, x: number, y: number, z: number): Promise<void> {
   const point = await page.evaluate((position) => window.gameTest.project(position), { x, y, z });

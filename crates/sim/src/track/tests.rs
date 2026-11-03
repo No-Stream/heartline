@@ -1,5 +1,132 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ConnectorState {
+    slope: Slope,
+    bank: Bank,
+    horizontal_curvature: HorizontalCurvature,
+    vertical_curvature: VerticalCurvature,
+}
+
+impl From<TrackState> for ConnectorState {
+    fn from(state: TrackState) -> Self {
+        Self {
+            slope: state.slope,
+            bank: state.bank,
+            horizontal_curvature: state.horizontal_curvature,
+            vertical_curvature: state.vertical_curvature,
+        }
+    }
+}
+
+impl ConnectorState {
+    fn track_state(self) -> TrackState {
+        TrackState {
+            slope: self.slope,
+            bank: self.bank,
+            horizontal_curvature: self.horizontal_curvature,
+            vertical_curvature: self.vertical_curvature,
+            ..TrackState::origin()
+        }
+    }
+}
+
+fn reachable_connector_states(model: &CoasterModel) -> Vec<ConnectorState> {
+    let station_end = model
+        .available_pieces(TrackState::origin())
+        .into_iter()
+        .find(|piece| piece.id == PieceId::Station)
+        .unwrap_or_else(|| panic!("{} does not offer a level station", model.name))
+        .exit;
+    let station_connector = ConnectorState::from(station_end);
+    assert_eq!(
+        station_connector,
+        ConnectorState::from(TrackState::origin())
+    );
+    let mut reachable = vec![station_connector];
+    let mut next_index = 0;
+    while next_index < reachable.len() {
+        let state = reachable[next_index].track_state();
+        next_index += 1;
+        for piece in model.available_pieces(state) {
+            let next = ConnectorState::from(piece.exit);
+            if !reachable.contains(&next) {
+                reachable.push(next);
+            }
+        }
+    }
+    reachable
+}
+
+fn can_return_to_level(model: &CoasterModel, start: ConnectorState) -> bool {
+    let level = ConnectorState::from(TrackState::origin());
+    let mut reachable = vec![start];
+    let mut next_index = 0;
+    while next_index < reachable.len() {
+        let connector = reachable[next_index];
+        if connector == level {
+            return true;
+        }
+        next_index += 1;
+        for piece in model.available_pieces(connector.track_state()) {
+            let next = ConnectorState::from(piece.exit);
+            if !reachable.contains(&next) {
+                reachable.push(next);
+            }
+        }
+    }
+    false
+}
+
+fn end_state_after_allowed_pieces(model: &CoasterModel, ids: &[PieceId]) -> TrackState {
+    let mut state = TrackState::origin();
+    for id in ids {
+        state = model
+            .available_pieces(state)
+            .into_iter()
+            .find(|piece| piece.id == *id)
+            .unwrap_or_else(|| panic!("{} does not offer {id:?} from {state:?}", model.name))
+            .exit;
+    }
+    state
+}
+
+#[test]
+fn wooden_twister_offers_vertical_curve_continuations() {
+    let model = wooden_twister_model();
+    let upward_end = end_state_after_allowed_pieces(
+        &model,
+        &[
+            PieceId::VerticalUpEntry,
+            PieceId::VerticalUpContinue,
+            PieceId::VerticalUpExit,
+        ],
+    );
+    let downward_end = end_state_after_allowed_pieces(
+        &model,
+        &[
+            PieceId::VerticalDownEntry,
+            PieceId::VerticalDownContinue,
+            PieceId::VerticalDownExit,
+        ],
+    );
+    assert_eq!(upward_end.vertical_curvature, VerticalCurvature::Straight);
+    assert_eq!(downward_end.vertical_curvature, VerticalCurvature::Straight);
+}
+
+#[test]
+fn every_model_can_return_to_level_from_every_reachable_connector() {
+    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
+        for connector in reachable_connector_states(&model) {
+            assert!(
+                can_return_to_level(&model, connector),
+                "{} cannot return to straight, level, unbanked track from {connector:?}",
+                model.name
+            );
+        }
+    }
+}
+
 #[test]
 fn tangent_only_matches_full_sample_for_every_piece() {
     for piece in catalog() {

@@ -18,8 +18,6 @@ export interface GuestPanel {
   update(detail: GuestDetail): void;
   setAnchor(anchor: GuestPanelAnchor | null): void;
   close(): void;
-  isOpen(): boolean;
-  selectedGuestId(): string | null;
 }
 
 type Side = "right" | "left" | "above" | "below";
@@ -224,12 +222,6 @@ export function createGuestPanel(
     },
     close() {
       closeWithoutNotification();
-    },
-    isOpen() {
-      return !root.hidden;
-    },
-    selectedGuestId() {
-      return detail?.id ?? null;
     },
   };
 }

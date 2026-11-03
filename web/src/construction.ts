@@ -23,16 +23,19 @@ const groupPlates: Record<string, string> = { straight: "var(--slate)", turn: "v
 const blockTrackKindNames: Record<string, string> = { blockBrake: "Brake run", station: "Station", lift: "Lift", launch: "Launch", brake: "Brake", track: "Track" };
 const coasterModels = {
   "model:hybrid": {
+    id: "hybrid",
     name: "Timber Tumbler",
     manufacturer: "Rocky Road Construction",
     description: "Steel box track on a wooden structure.",
   },
   "model:velocity_viper": {
+    id: "velocity_viper",
     name: "Velocity Viper",
     manufacturer: "Impulse Engineering",
     description: "Multi-launch steel track and columns with short, standard, and long launch sections.",
   },
   "model:wooden_twister": {
+    id: "wooden_twister",
     name: "Briar Blitz",
     manufacturer: "Great Coaster Workshop",
     description: "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains.",
@@ -246,7 +249,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (!model) throw new Error(`Unknown coaster model ${modelSelect.value}`);
     container.dataset.model = modelSelect.value;
     modelDescription.textContent = model.description;
-    dispatch({ type: "construction-select", piece: modelSelect.value });
+    dispatch({ type: "construction-set-model", model: model.id });
   });
   let dispatchedHeight = stationHeight.initial;
   const setHeight = (value: number): void => {

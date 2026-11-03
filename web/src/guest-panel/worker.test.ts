@@ -1,6 +1,15 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { validateBlockAnalysisBudget } from "../game-test";
 
-const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn(), constructionActive: vi.fn(() => false), constructionTrainPoses: vi.fn(() => new Float32Array()) }));
+const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn(), constructionActive: vi.fn(() => false), constructionTrainPoses: vi.fn(() => new Float32Array()), advanceBlockAnalysis: vi.fn((_budget: number) => false), blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}') }));
+
+it("rejects block analysis budgets outside the supported range", () => {
+  expect(() => validateBlockAnalysisBudget(1)).not.toThrow();
+  expect(() => validateBlockAnalysisBudget(1000)).not.toThrow();
+  for (const budget of [0, 1001, 1.5, NaN]) {
+    expect(() => validateBlockAnalysisBudget(budget)).toThrow(RangeError);
+  }
+});
 
 vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   default: wasmMock.initialize,
@@ -35,9 +44,10 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     coaster_train_poses() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
-    construction_block_report_json() { return '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}'; }
+    construction_block_report_json() { return wasmMock.blockReport(); }
     construction_train_count() { return 1; }
     construction_start() { wasmMock.constructionActive.mockReturnValue(true); }
+    construction_advance_block_analysis(budget: number) { return wasmMock.advanceBlockAnalysis(budget); }
     construction_choices() { return ""; }
     construction_selected() { return ""; }
     construction_track() { return ""; }
@@ -69,6 +79,60 @@ afterEach(() => {
   wasmMock.pathPreview.mockReset();
   wasmMock.pathBuild.mockReset();
   wasmMock.pathRemove.mockReset();
+  wasmMock.advanceBlockAnalysis.mockReset().mockReturnValue(false);
+  wasmMock.blockReport.mockReset().mockReturnValue('{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}');
+  wasmMock.constructionActive.mockReset().mockReturnValue(false);
+});
+
+it("sends block analysis progress without rebuilding construction geometry", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  wasmMock.blockReport.mockReturnValue('{"sections":[],"trainCapacity":2}');
+  postMessage.mockClear();
+  onMessage({ data: { type: "test-advance-block-analysis", budget: 1000 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.map(([message]) => message.type)).toEqual(["block-analysis-progress", "test-block-analysis-advanced"]);
+  expect(postMessage.mock.calls[0][0]).toEqual({ type: "block-analysis-progress", blockReport: { sections: [], trainCapacity: 2 }, trainCount: 1, message: "" });
+});
+
+it("advances block analysis only when requested in test mode", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(wasmMock.advanceBlockAnalysis).not.toHaveBeenCalled();
+  onMessage({ data: { type: "test-advance-block-analysis", budget: 42 } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.advanceBlockAnalysis).toHaveBeenCalledExactlyOnceWith(42);
+  expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({ type: "test-block-analysis-advanced" });
+});
+
+it("continues block analysis on a timer in live mode", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(70);
+  expect(wasmMock.advanceBlockAnalysis).toHaveBeenCalledTimes(2);
+  expect(wasmMock.advanceBlockAnalysis).toHaveBeenCalledWith(1000);
 });
 
 it("echoes the preview request id and reports invalid tiles", async () => {

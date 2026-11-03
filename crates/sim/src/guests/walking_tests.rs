@@ -1,5 +1,5 @@
-use crate::SequentialExecutor;
-use crate::walking::WalkingSimulation;
+use crate::executor::SequentialExecutor;
+use crate::guests::walking::WalkingSimulation;
 use crate::world::{Direction, Path, Position, Surface, World};
 
 fn world() -> World {
@@ -165,7 +165,7 @@ fn removing_a_path_recovers_at_the_nearest_remaining_tile() {
 #[test]
 fn demo_flow_field_connects_surface_to_underground_loop() {
     let world = crate::demo_world::demo_world();
-    let mut graph = crate::pathfinding::Graph::with_entrance(&world, None);
+    let mut graph = crate::guests::pathfinding::Graph::with_entrance(&world, None);
     let start = graph.indices[&Position {
         x: 218,
         y: 256,
@@ -214,7 +214,7 @@ fn walking_matches_across_thread_counts() {
     let world = world();
     let mut sequential = WalkingSimulation::new(42, 1000, &world);
     let mut parallel = [1, 2, 4].map(|_| WalkingSimulation::new(42, 1000, &world));
-    let executors = [1, 2, 4].map(|threads| crate::ThreadedExecutor::new(threads, 64));
+    let executors = [1, 2, 4].map(|threads| crate::executor::ThreadedExecutor::new(threads, 64));
     for _ in 0..200 {
         sequential.tick(&world);
         for (simulation, executor) in parallel.iter_mut().zip(&executors) {

@@ -1,11 +1,11 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use theme_park_sim::ThreadedExecutor;
 use theme_park_sim::demo_world::demo_world;
-use theme_park_sim::guest_behavior::{Facility, KnownPlace, PlaceKind};
-use theme_park_sim::park_guests::ParkGuests;
-use theme_park_sim::walking::WalkingSimulation;
+use theme_park_sim::executor::ThreadedExecutor;
+use theme_park_sim::guests::behavior::{Facility, KnownPlace, PlaceKind};
+use theme_park_sim::guests::park::ParkGuests;
+use theme_park_sim::guests::walking::WalkingSimulation;
 use theme_park_sim::world::Position;
 
 const GUEST_COUNT: usize = 10_000;

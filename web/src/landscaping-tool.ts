@@ -38,8 +38,6 @@ export interface TerrainEditResult {
   readonly invalidatedPaths: Int32Array;
 }
 
-export type LandscapingResult = TerrainEditResult;
-
 export interface LandscapingTile {
   readonly x: number;
   readonly y: number;
