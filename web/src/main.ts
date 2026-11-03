@@ -4,7 +4,10 @@ import { applyCameraAction, projectWorld, type Camera, type Viewport, type World
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
 import type { CameraAction, InputAction } from "./input/actions";
 import type { GameTest } from "./game-test";
-import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from "./render/index";
+import { createWorldRenderer, loadAtlas, type AtmospherePass, type WorldView, type WorldSprite } from "./render/index";
+import { advanceDayPhase, DAY_LENGTH_TICKS, lightingAt, NOON, START_PHASE, sunAt } from "./render/daylight";
+import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst } from "./render/effects";
+import { createDayClock, type DaySpeed } from "./day-clock";
 import { buildPeople, riderAppearances, type GuestSnapshot } from "./render/people";
 import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle } from "./render/track/geometry";
 import { createStaticTrackCache } from "./render/track/cache";
@@ -174,6 +177,22 @@ const toolDock = dock;
 const toolPanels: Record<Exclude<Tool, "none">, HTMLElement> = { coaster: panelContainer, paths: pathContainer, landscape: landscapingContainer, facilities: facilityContainer };
 const toolbar = createToolbar(toolbarContainer, (tool) => dispatch({ type: "tool-select", tool }));
 let activeTool: Tool = "none";
+/** The time of day follows simulation ticks, so it pauses with the game. Test mode holds it at noon unless a test sets it. */
+let dayPhase = frozen ? NOON : START_PHASE;
+let daySpeed: DaySpeed = 1;
+let dayTick: number | undefined;
+let demoCrests = createCrestTracker();
+let constructionCrests = createCrestTracker();
+let crestBursts: CrestBurst[] = [];
+/** Every crest burst since the page loaded, for tests. */
+const crestHistory: CrestBurst[] = [];
+function setTimeOfDay(phase: number): void {
+  dayPhase = advanceDayPhase(phase, 0, 1);
+  gameTest.ready = false;
+}
+const dayClockContainer = document.querySelector<HTMLElement>("[data-day-clock]");
+if (!dayClockContainer) throw new Error("Day clock is missing");
+const dayClock = createDayClock(dayClockContainer, setTimeOfDay, (speed) => { daySpeed = speed; });
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
   const bounds = gameCanvas.getBoundingClientRect();
@@ -210,6 +229,7 @@ function openTool(tool: Tool): void {
   endInputModes();
   activeTool = tool;
   toolbar.setActive(tool);
+  dayClock.setControlsVisible(tool === "none");
   toolDock.hidden = tool === "none";
   for (const [owner, element] of Object.entries(toolPanels)) element.hidden = owner !== tool;
   toolDock.scrollTop = 0;
@@ -265,6 +285,9 @@ const gameTest: GameTest = {
   project(point) { return projectWorld(screenCamera(), viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
   pickSurface(x, y) { return renderer.pickSurface(x, y); },
+  setTimeOfDay,
+  timeOfDay() { return dayPhase; },
+  crestBursts() { return crestHistory; },
 };
 window.gameTest = gameTest;
 toolbar.setActive(activeTool);
@@ -435,10 +458,22 @@ worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | Co
     previous = current;
     if (!frozen || !current || current.guestIds.length === 0 || advanceTicksComplete) current = message;
     receivedAt = performance.now();
+    if (!frozen) observeTick(message);
     output.value = String(message.tickCount);
     gameCanvas.dataset.agentCount = String(current?.guestIds.length ?? 0);
   }
 });
+
+function observeTick(snapshot: CoasterSnapshot): void {
+  if (dayTick !== undefined) dayPhase = advanceDayPhase(dayPhase, Math.max(0, snapshot.tickCount - dayTick), daySpeed);
+  dayTick = snapshot.tickCount;
+  const demo = detectCrest(demoCrests, snapshot.trainPoses, snapshot.tickCount);
+  const built = detectCrest(constructionCrests, snapshot.constructionTrainPoses, snapshot.tickCount);
+  demoCrests = demo.tracker; constructionCrests = built.tracker;
+  const newBursts = [demo.burst, built.burst].filter((burst) => burst !== undefined);
+  crestHistory.push(...newBursts);
+  crestBursts = [...crestBursts, ...newBursts].filter((burst) => snapshot.tickCount - burst.tick < CONFETTI_LIFE_TICKS);
+}
 
 function frame(now: number): void {
   if (!world) return;
@@ -462,6 +497,27 @@ function frame(now: number): void {
   const sprites = [...facilitySprites(facilities, camera.rotation), ...people];
   const view = { ...world, sprites, trainPoses, undergroundLevel };
   const currentWorld = world;
+  dayClock.update(dayPhase);
+  // Test mode holds the simulation still, so effects there are timed from the time of day alone.
+  const effectTick = frozen ? Math.round(dayPhase * DAY_LENGTH_TICKS) : (current?.tickCount ?? 0) + interpolation;
+  const lighting = lightingAt(dayPhase);
+  const sun = sunAt(dayPhase);
+  const phase = dayPhase;
+  const atmosphere: AtmospherePass = (renderCamera, renderViewport, renderAtlas, scale) => {
+    const rails = construction ? [currentWorld.coasterRails, construction.placedRails] : [currentWorld.coasterRails];
+    const lights = buildLights({ facilities, rails, sprites, atlas: renderAtlas, scale }, lighting, effectTick, renderCamera, renderViewport);
+    const fireworks = buildFireworks(parkBounds(facilities, rails), lighting, effectTick, renderCamera, renderViewport);
+    const horizonY = projectWorld(renderCamera, renderViewport, { x: currentWorld.dimensions[0] / 2, y: currentWorld.dimensions[1] / 2, z: 0 }).y;
+    return {
+      lighting, horizonY,
+      sky: buildSky(lighting, phase, horizonY, renderCamera, renderViewport, renderAtlas, scale),
+      decals: buildShadows(facilities, lighting, sun, renderCamera, renderViewport),
+      lights: lights.bulbs,
+      overlay: buildConfetti(crestBursts, effectTick, renderCamera, renderViewport),
+      sparks: fireworks.sparks,
+      glows: [...lights.glows, ...fireworks.glows],
+    };
+  };
   renderer.render(view, screenCamera(), frozen ? 0 : Math.floor(now / 250) % 4, [
     (renderCamera, renderViewport) => buildLandscapingGhostQuads(landscapingTool.state().preview, view, renderCamera, renderViewport),
     (renderCamera, renderViewport) => pathTool.state().preview ? buildPathGhostQuads(decodePathPreview(pathTool.state().preview!.paths), renderCamera, renderViewport) : [],
@@ -484,7 +540,7 @@ function frame(now: number): void {
       ...(testingMetric && construction?.testingReport ? buildTestingRibbon(construction.testingReport.samples, testingMetric, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
       ...constructionEffects.quads(now, renderCamera, renderViewport),
     ],
-  ]);
+  ], atmosphere);
   gameCanvas.dataset.drawnAgents = String(people.length);
   gameTest.ready = (current?.guestIds.length ?? 0) > 0;
 }

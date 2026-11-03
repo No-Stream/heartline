@@ -15,9 +15,14 @@ export interface WorldSprite { id: string; sprite: string; x: number; y: number;
 export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; paths: Int32Array; pathMetadata?: Int32Array; facilityOpenings?: Int32Array; carved?: Int32Array; sprites?: readonly WorldSprite[]; undergroundLevel?: number }
 export type Pick = { kind: "terrain" | "water" | "path" | "cliff" | "carved-floor" | "cavern-wall"; x: number; y: number; height: number } | { kind: string; id: string; x: number; y: number; height: number };
 export interface Vertex { x: number; y: number; depth: number; height: number; u: number; v: number }
-export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: string; tileX: number; tileY: number; height: number; id?: string }
+/** `page` is an atlas page, or one of `SHAPE_PAGES` for an untextured fill. `light` is how much the surface keeps its own colour at night (see `gradeColor`). */
+export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: string; tileX: number; tileY: number; height: number; id?: string; light?: number }
 export interface Scene { triangles: Triangle[] }
-export interface GeometryQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; page?: number; color: Triangle["color"]; kind: string; id: string; tileX: number; tileY: number }
+export interface GeometryQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; page?: number; color: Triangle["color"]; kind: string; id: string; tileX: number; tileY: number; light?: number }
+/** Untextured fills. Round shapes are drawn inside the unit square given by the vertices' u and v. */
+export const SHAPE_PAGES = { flat: -1, glow: -2, disc: -3, softDisc: -4 } as const;
+/** Drawn but never picked: lights and the dashed path preview. */
+export const UNPICKABLE_KINDS: ReadonlySet<string> = new Set(["path-preview", "light"]);
 interface HeightPoint { x: number; y: number; height: number }
 const WHITE = [1, 1, 1, 1] as const;
 const QUAD_TRIANGLES = [[0, 1, 2], [0, 2, 3]] as const;
@@ -115,7 +120,7 @@ export function appendGeometry(scene: Scene, quads: readonly GeometryQuad[], vie
     if (viewport && (quad.vertices.every((vertex) => vertex.x < 0) || quad.vertices.every((vertex) => vertex.x > viewport.width) || quad.vertices.every((vertex) => vertex.y < 0) || quad.vertices.every((vertex) => vertex.y > viewport.height))) continue;
     for (const indices of QUAD_TRIANGLES) scene.triangles.push({
       vertices: indices.map((index) => quad.vertices[index]) as Triangle["vertices"],
-      page: quad.page ?? -1, color: quad.color, kind: quad.kind, id: quad.id,
+      page: quad.page ?? SHAPE_PAGES.flat, color: quad.color, kind: quad.kind, id: quad.id, light: quad.light,
       tileX: quad.tileX, tileY: quad.tileY, height: Math.max(...quad.vertices.map((vertex) => vertex.height)),
     });
   }
@@ -453,7 +458,7 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
 export function pickScene(scene: Scene, x: number, y: number, rasterTolerance = 0): Pick | null {
   let selected: Triangle | undefined; let selectedDepth = -Infinity; let selectedHeight = 0;
   for (const triangle of scene.triangles) {
-    if (triangle.kind === "path-preview") continue;
+    if (UNPICKABLE_KINDS.has(triangle.kind)) continue;
     const [a,b,c] = triangle.vertices;
     const denominator = (b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);
     if (denominator === 0) continue;

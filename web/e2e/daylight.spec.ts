@@ -1,0 +1,95 @@
+import { expect, test, type Page } from "@playwright/test";
+import { openTool } from "./game-page";
+
+test.use({
+  viewport: { width: 1280, height: 750 },
+  deviceScaleFactor: 1,
+  launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
+});
+
+/** 21:42, when a firework from the fixed test-mode schedule is in full bloom over the demo park. */
+const FIREWORK_NIGHT = 0.904167;
+
+async function startPaused(page: Page): Promise<void> {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+}
+
+async function showDemoParkAt(page: Page, phase: number): Promise<void> {
+  await page.evaluate((timeOfDay) => {
+    window.gameTest.setCamera({ centerX: 236, centerY: 250, zoom: 0.75, rotation: 0 });
+    window.gameTest.setTimeOfDay(timeOfDay);
+  }, phase);
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+}
+
+test.describe("day and night", () => {
+  for (const [name, phase] of [["noon", 0.5], ["dusk", 0.76], ["night", FIREWORK_NIGHT]] as const) {
+    test(`demo park at ${name}`, async ({ page }) => {
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await startPaused(page);
+      await showDemoParkAt(page, phase);
+      await expect(page.locator("canvas")).toHaveScreenshot(`demo-park-${name}.png`, { animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001 });
+      expect(errors).toEqual([]);
+    });
+  }
+
+  test("sky beyond the park edge at night", async ({ page }) => {
+    await startPaused(page);
+    await page.evaluate(() => {
+      window.gameTest.setCamera({ centerX: 4, centerY: 4, zoom: 0.5, rotation: 0 });
+      window.gameTest.setTimeOfDay(0.95);
+    });
+    await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+    await expect(page.locator("canvas")).toHaveScreenshot("park-edge-night.png", { animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001 });
+  });
+
+  test("test mode holds noon until a test sets the time", async ({ page }) => {
+    await startPaused(page);
+    expect(await page.evaluate(() => window.gameTest.timeOfDay())).toBe(0.5);
+    await page.evaluate(() => window.gameTest.advanceTicks(900));
+    expect(await page.evaluate(() => window.gameTest.timeOfDay())).toBe(0.5);
+    await expect(page.getByLabel("Time of day", { exact: true })).toHaveText("12:00");
+  });
+
+  test("the clock follows simulation ticks while the game runs", async ({ page }) => {
+    await page.goto("/");
+    await expect.poll(() => page.evaluate(() => Number(document.querySelector("[data-testid='tick-count']")?.textContent)), { timeout: 30_000 }).toBeGreaterThan(30);
+    const read = () => page.evaluate(() => ({ phase: window.gameTest.timeOfDay(), tick: Number(document.querySelector("[data-testid='tick-count']")!.textContent) }));
+    const before = await read();
+    await expect.poll(async () => (await read()).tick, { timeout: 30_000 }).toBeGreaterThan(before.tick + 60);
+    const after = await read();
+    // One day is 43,200 ticks; the readout and the clock can be one snapshot apart.
+    expect((after.phase - before.phase) * 43_200).toBeCloseTo(after.tick - before.tick, -1);
+  });
+
+  test("the Watch tool can scrub the day and change its speed", async ({ page }) => {
+    await startPaused(page);
+    const scrub = page.getByRole("slider", { name: "Set the time of day" });
+    await scrub.fill("1290");
+    await expect(page.getByLabel("Time of day", { exact: true })).toHaveText("21:30");
+    expect(await page.evaluate(() => window.gameTest.timeOfDay())).toBeCloseTo(1290 / 1440, 6);
+    const speed = page.getByRole("button", { name: "Day speed" });
+    await speed.click();
+    await expect(speed).toHaveText("×10");
+    await speed.click();
+    await expect(speed).toHaveText("×60");
+    await openTool(page, "Paths");
+    await expect(scrub).toBeHidden();
+    await openTool(page, "Watch");
+    await expect(scrub).toBeVisible();
+  });
+
+  test("the demo coaster throws confetti once per lap, at the top of its lift hill", async ({ page }) => {
+    test.setTimeout(240_000);
+    await page.goto("/");
+    await page.waitForFunction(() => window.gameTest, null, { timeout: 30_000 });
+    // A lap takes about 80 seconds and the first crest comes about 30 seconds in.
+    await expect.poll(() => page.evaluate(() => window.gameTest.crestBursts().length), { timeout: 200_000, intervals: [1000] }).toBeGreaterThan(0);
+    const [burst] = await page.evaluate(() => window.gameTest.crestBursts());
+    expect(burst.z).toBeGreaterThan(12);
+    expect(await page.evaluate(() => window.gameTest.crestBursts().length)).toBe(1);
+  });
+});

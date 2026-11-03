@@ -1,0 +1,44 @@
+/* The time of day in the game bar: a printed clock face, and while watching, a slider and a speed tab. */
+.day-clock {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.day-clock__icon { flex: none; overflow: visible; }
+.day-clock__icon path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.day-clock__icon-plate { stroke: color-mix(in srgb, var(--mustard) 65%, var(--paper)); stroke-width: 3.6; transform: translate(0.8px, 0.7px); }
+.day-clock[data-daytime="false"] .day-clock__icon-plate { stroke: color-mix(in srgb, var(--slate) 55%, var(--paper)); }
+.day-clock__icon-line { stroke: currentColor; stroke-width: 1.4; }
+.day-clock__time {
+  min-width: 2.9rem;
+  font: 600 0.95rem/1 var(--heading-font);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+.day-clock__controls { display: inline-flex; align-items: center; gap: 0.4rem; }
+.day-clock__controls[hidden] { display: none; }
+.day-clock__scrub { width: 110px; accent-color: var(--coral); }
+.day-clock__scrub:focus-visible, .day-clock__speed:focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
+.day-clock__speed {
+  min-width: 2.4rem;
+  height: 26px;
+  padding: 0 0.4rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: var(--key-line);
+  border-radius: 2px;
+  font: 600 0.8rem/1 var(--heading-font);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.day-clock__speed:hover { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
+
+@media (max-width: 1180px) {
+  .day-clock__scrub { display: none; }
+}
+@media (max-width: 760px) {
+  .day-clock__controls { display: none; }
+}

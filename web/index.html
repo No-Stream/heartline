@@ -39,7 +39,7 @@
         white-space: nowrap;
       }
       .game-bar p {
-        margin: 0 0 0 auto;
+        margin: 0;
         color: var(--ink-soft);
         font: italic 0.78rem/1 var(--body-font);
         white-space: nowrap;
@@ -65,6 +65,9 @@
         scrollbar-color: var(--ink-faint) transparent;
       }
       .game-dock[hidden] { display: none; }
+      /* Room for the day clock: the tick readout keeps its number but drops its label on narrower windows. */
+      @media (max-width: 1300px) { .game-bar__tick-label { display: none; } }
+      @media (max-width: 1060px) { .game-bar h1, .game-bar p { display: none; } }
       @media (max-width: 760px) {
         main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 44px minmax(0, 1fr) auto; }
         .game-bar h1, .game-bar p { display: none; }
@@ -77,7 +80,8 @@
       <header class="game-bar">
         <h1>Theme Park Sim</h1>
         <div data-toolbar></div>
-        <p>Simulation ticks: <output data-testid="tick-count">0</output></p>
+        <div data-day-clock></div>
+        <p><span class="game-bar__tick-label">Simulation ticks: </span><output data-testid="tick-count" aria-label="Simulation ticks">0</output></p>
       </header>
       <div class="game-world">
         <canvas aria-label="Theme park world" tabindex="0" style="touch-action: none" width="800" height="500"></canvas>
