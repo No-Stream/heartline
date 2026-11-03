@@ -1,10 +1,10 @@
 ---
 id: TASK-15
 title: 'Add entrance, stalls, restrooms and flat ride framework'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 05:15'
 labels:
   - world
   - guests

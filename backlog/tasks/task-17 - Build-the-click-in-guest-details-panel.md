@@ -1,10 +1,10 @@
 ---
 id: TASK-17
 title: Build the click-in guest details panel
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 04:46'
+updated_date: '2026-11-03 05:15'
 labels:
   - guests
   - interface
@@ -26,6 +26,12 @@ Clicking a guest highlights them and shows their name, relationships, thoughts, 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Clicking any guest, including one on a ride, opens the panel
-- [ ] #2 Thoughts reflect what actually happened to that guest, confirmed by tests
-- [ ] #3 Interface styling matches the art direction
+- [x] #2 Thoughts reflect what actually happened to that guest, confirmed by tests
+- [x] #3 Interface styling matches the art direction
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Panel works for walking guests with names, relationships, needs, traits, memories and thoughts, a selection ring and group links. Clicking riders on a coaster waits for real boarding (queues and boarding ticket); ride and food memories appear in play once facilities exist.
+<!-- SECTION:FINAL_SUMMARY:END -->

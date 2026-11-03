@@ -1,9 +1,10 @@
 ---
 id: TASK-32
 title: Match guest sprites to their simulated appearance
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 03:38'
+updated_date: '2026-11-03 05:15'
 labels:
   - art
   - guests
