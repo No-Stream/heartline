@@ -6,6 +6,32 @@ const rail = [1, 1, 2, 1, 0, 1, 0, 0, 0, 1, 3, 2, 2, 0, 1, 0, 0, 0, 1];
 const tie = [1, 1, 1.8, 1, 1, 2.2, 1, 0, 0, 1, 1, 0, 0];
 
 describe("coaster geometry", () => {
+  test("renders signed steel geometry as tubes and restores the original picking IDs", () => {
+    const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
+    const style = { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 };
+    const steelRail = new Float32Array([-2, ...rail.slice(1)]);
+    const steelTie = new Float32Array([-3, ...tie.slice(1)]);
+    const supports = new Float32Array([
+      -4, 2, 2, 0, 2, 2, 3,
+      5, 3, 2, 0, 3, 2, 3,
+    ]);
+
+    const quads = buildTrackQuads(steelRail, steelTie, supports, new Float32Array(), camera, { width: 400, height: 300 }, style);
+    const railQuads = quads.filter((quad) => quad.id === "track-1");
+    const tieQuads = quads.filter((quad) => quad.id === "track-2");
+    const steelSupportQuads = quads.filter((quad) => quad.id === "support-3");
+    const woodSupportQuads = quads.filter((quad) => quad.id === "support-5");
+
+    expect(railQuads).toHaveLength(8);
+    expect(railQuads.every((quad) => quad.color[0] > 0 && quad.color[0] <= 1 && quad.color[1] === 0 && quad.color[2] === 0)).toBe(true);
+    expect(tieQuads).toHaveLength(8);
+    expect(tieQuads.every((quad) => quad.color[0] > 0 && quad.color[0] <= 1 && quad.color[1] === 0 && quad.color[2] === 0)).toBe(true);
+    expect(steelSupportQuads).toHaveLength(8);
+    expect(steelSupportQuads.every((quad) => quad.color[0] > 0 && quad.color[0] <= 1 && quad.color[1] === 0 && quad.color[2] === 0)).toBe(true);
+    expect(woodSupportQuads[0].color).toEqual([170 / 255, 102 / 255, 0, 1]);
+    expect(quads.some((quad) => quad.id.includes("--"))).toBe(false);
+  });
+
   test("adds a footer to each vertical support column, not its horizontal brace", () => {
     const style = { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 };
     const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };

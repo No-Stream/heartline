@@ -234,9 +234,7 @@ impl World {
                             if *other == path
                                 && self.path_metadata(path.position).is_some_and(|metadata| {
                                     metadata.kind == kind
-                                        || (kind == PathKind::Queue
-                                            && metadata.kind == PathKind::Normal
-                                            && coordinates.len() > 1
+                                        || (coordinates.len() > 1
                                             && (step == 0 || step == coordinates.len() - 1))
                                 })
                             {
@@ -314,10 +312,16 @@ impl World {
             }
         }
         let mut visited = BTreeSet::new();
-        let existing_queues = self.path_metadata.iter().filter_map(|(position, metadata)| {
-            (metadata.kind == PathKind::Queue).then(|| self.path(*position).unwrap())
-        });
-        let new_queues = additions.values().flatten().copied().filter(|_| route_kind == PathKind::Queue);
+        let existing_queues = self
+            .path_metadata
+            .iter()
+            .filter(|(_, metadata)| metadata.kind == PathKind::Queue)
+            .map(|(position, _)| self.path(*position).unwrap());
+        let new_queues = additions
+            .values()
+            .flatten()
+            .copied()
+            .filter(|_| route_kind == PathKind::Queue);
         for start in existing_queues.chain(new_queues) {
             if !visited.insert(start.position) {
                 continue;
@@ -325,6 +329,8 @@ impl World {
             let mut pending = VecDeque::from([start]);
             let mut entrances = BTreeSet::new();
             while let Some(path) = pending.pop_front() {
+                let mut queue_neighbours = 0;
+                let mut normal_neighbours = 0;
                 for (direction, dx, dy, opposite) in [
                     (Direction::North, 0, -1, Direction::South),
                     (Direction::East, 1, 0, Direction::West),
@@ -337,20 +343,36 @@ impl World {
                         continue;
                     }
                     let (x, y) = (x as u16, y as u16);
-                    let existing = self.columns[self.index(x, y)].iter().flat_map(|column| column.paths.iter().map(|&other| (other, self.path_metadata(other.position).unwrap().kind)));
-                    let added = additions.get(&(x, y)).into_iter().flatten().map(|&other| (other, route_kind));
+                    let existing = self.columns[self.index(x, y)].iter().flat_map(|column| {
+                        column
+                            .paths
+                            .iter()
+                            .map(|&other| (other, self.path_metadata(other.position).unwrap().kind))
+                    });
+                    let added = additions
+                        .get(&(x, y))
+                        .into_iter()
+                        .flatten()
+                        .map(|&other| (other, route_kind));
                     for (other, other_kind) in existing.chain(added) {
                         if path.edge(direction) != other.edge(opposite) {
                             continue;
                         }
                         if other_kind == PathKind::Normal {
+                            normal_neighbours += 1;
                             entrances.insert((path.position, other.position));
-                        } else if visited.insert(other.position) {
-                            pending.push_back(other);
+                        } else {
+                            queue_neighbours += 1;
+                            if visited.insert(other.position) {
+                                pending.push_back(other);
+                            }
                         }
                     }
                 }
-                if entrances.len() > 1 {
+                if entrances.len() > 1
+                    || queue_neighbours > 2
+                    || (normal_neighbours > 0 && queue_neighbours > 1)
+                {
                     return Err(PathBuildError::QueueConnections);
                 }
             }

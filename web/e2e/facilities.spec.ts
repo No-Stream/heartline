@@ -26,7 +26,7 @@ test("places a food stall through the UI and guests visit it", async ({ page }) 
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 240, centerY: 255, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await page.getByLabel("Facility").selectOption("food_stall");
-  await page.getByLabel("Direction").selectOption("2");
+  await page.getByRole("region", { name: "Park facilities" }).getByLabel("Direction").selectOption("2");
   await page.getByRole("button", { name: "Place facility" }).click();
   const targetTile = await page.evaluate(() => {
     const point = window.gameTest.project({ x: 240.5, y: 254.5, z: 2 });

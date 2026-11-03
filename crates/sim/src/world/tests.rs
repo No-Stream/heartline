@@ -501,6 +501,68 @@ fn queue_route_can_start_or_end_on_its_normal_path_entrance() {
 }
 
 #[test]
+fn normal_route_can_start_or_end_on_its_queue_entrance() {
+    use super::{PathBuildError, PathKind, PathMetadata};
+    for (start, end) in [
+        (position(0, 0, 0), position(2, 0, 0)),
+        (position(2, 0, 0), position(0, 0, 0)),
+    ] {
+        let mut world = World::new(
+            3,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        world
+            .build_path_route(position(0, 0, 0), position(0, 0, 0), PathKind::Queue, 3)
+            .unwrap();
+        world
+            .build_path_route(start, end, PathKind::Normal, 1)
+            .unwrap();
+        assert_eq!(
+            world.path_metadata(position(0, 0, 0)),
+            Some(PathMetadata {
+                kind: PathKind::Queue,
+                style: 3
+            })
+        );
+        for x in [1, 2] {
+            assert_eq!(
+                world.path_metadata(position(x, 0, 0)),
+                Some(PathMetadata {
+                    kind: PathKind::Normal,
+                    style: 1
+                })
+            );
+        }
+    }
+    let mut world = World::new(
+        5,
+        1,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    world
+        .build_path_route(position(2, 0, 0), position(2, 0, 0), PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(
+        world.build_path_route(position(1, 0, 0), position(3, 0, 0), PathKind::Normal, 0),
+        Err(PathBuildError::Occupied)
+    );
+    world
+        .build_path_route(position(0, 0, 0), position(1, 0, 0), PathKind::Normal, 0)
+        .unwrap();
+    assert_eq!(
+        world.build_path_route(position(2, 0, 0), position(4, 0, 0), PathKind::Normal, 0),
+        Err(PathBuildError::QueueConnections)
+    );
+}
+
+#[test]
 fn queue_route_cannot_cross_a_normal_path_or_connect_two_normal_paths() {
     use super::{PathBuildError, PathKind};
     let mut world = World::new(
@@ -530,28 +592,56 @@ fn queue_route_cannot_cross_a_normal_path_or_connect_two_normal_paths() {
 #[test]
 fn path_preview_checks_existing_queue_components_away_from_the_route() {
     use super::{PathBuildError, PathKind};
-    let mut world = World::new(7, 3, Surface { corners: [0; 4], water: None });
-    world.build_path_route(position(1, 1, 0), position(1, 1, 0), PathKind::Queue, 0).unwrap();
+    let mut world = World::new(
+        7,
+        3,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    world
+        .build_path_route(position(1, 1, 0), position(1, 1, 0), PathKind::Queue, 0)
+        .unwrap();
     for x in [0, 2] {
-        world.place_path(Path { position: position(x, 1, 0), slope: None });
+        world.place_path(Path {
+            position: position(x, 1, 0),
+            slope: None,
+        });
     }
     assert_eq!(
         world.preview_path_route(position(5, 1, 0), position(6, 1, 0), PathKind::Normal, 0),
         Err(PathBuildError::QueueConnections)
     );
     world.remove_path(position(0, 1, 0));
-    assert!(world.preview_path_route(position(5, 1, 0), position(6, 1, 0), PathKind::Normal, 0).is_ok());
+    assert!(
+        world
+            .preview_path_route(position(5, 1, 0), position(6, 1, 0), PathKind::Normal, 0)
+            .is_ok()
+    );
 }
 
 #[test]
 fn queue_preview_checks_merged_components_and_adjacent_normal_runs() {
     use super::{PathBuildError, PathKind};
-    let mut world = World::new(7, 2, Surface { corners: [0; 4], water: None });
+    let mut world = World::new(
+        7,
+        2,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
     for x in [0, 6] {
-        world.place_path(Path { position: position(x, 0, 0), slope: None });
+        world.place_path(Path {
+            position: position(x, 0, 0),
+            slope: None,
+        });
     }
     for x in [1, 5] {
-        world.build_path_route(position(x, 0, 0), position(x, 0, 0), PathKind::Queue, 0).unwrap();
+        world
+            .build_path_route(position(x, 0, 0), position(x, 0, 0), PathKind::Queue, 0)
+            .unwrap();
     }
     assert_eq!(
         world.preview_path_route(position(1, 0, 0), position(5, 0, 0), PathKind::Queue, 0),
@@ -728,5 +818,30 @@ fn guests_recover_after_removing_a_built_path_and_use_a_rebuilt_network() {
             .map(|guest| guest.distance)
             .sum::<f32>()
             > distance
+    );
+}
+
+#[test]
+fn queue_rejects_a_branch_and_a_normal_connection_in_the_middle() {
+    use crate::world::{PathBuildError, PathKind};
+    let mut world = World::new(
+        5,
+        5,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let position = |x, y| Position { x, y, height: 0 };
+    world
+        .build_path_route(position(1, 2), position(3, 2), PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(
+        world.build_path_route(position(2, 1), position(2, 1), PathKind::Queue, 0),
+        Err(PathBuildError::QueueConnections)
+    );
+    assert_eq!(
+        world.build_path_route(position(2, 1), position(2, 1), PathKind::Normal, 0),
+        Err(PathBuildError::QueueConnections)
     );
 }

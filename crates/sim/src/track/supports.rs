@@ -66,6 +66,30 @@ pub fn generate_supports(
     generate_supports_on_structures(piece, world, obstacles, &[])
 }
 
+/// Generate routed steel columns and their horizontal connections to the track.
+pub fn generate_steel_columns(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+) -> Result<Vec<SupportSegment>, SupportError> {
+    let supports = generate_supports(piece, world, obstacles)?;
+    let mut segments = Vec::with_capacity(supports.len() * 2);
+    for support in supports {
+        let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
+        segments.push(SupportSegment {
+            start: support.footing,
+            end: top,
+        });
+        if top != support.anchor {
+            segments.push(SupportSegment {
+                start: top,
+                end: support.anchor,
+            });
+        }
+    }
+    Ok(segments)
+}
+
 /// Like `generate_supports`, but allows columns to land on explicitly load-bearing structures.
 /// Structure bounds are in metres; ordinary obstacles are never assumed to carry a load.
 pub fn generate_supports_on_structures(
@@ -650,6 +674,23 @@ mod tests {
                 water: None,
             },
         )
+    }
+
+    #[test]
+    fn steel_columns_follow_the_checked_support_route() {
+        let piece = piece();
+        let world = world();
+        let supports = generate_supports(&piece, &world, &[]).unwrap();
+        let segments = generate_steel_columns(&piece, &world, &[]).unwrap();
+        assert!(!segments.is_empty());
+        for support in supports {
+            assert!(
+                segments
+                    .iter()
+                    .any(|segment| segment.start == support.footing)
+            );
+            assert!(segments.iter().any(|segment| segment.end == support.anchor));
+        }
     }
 
     #[test]

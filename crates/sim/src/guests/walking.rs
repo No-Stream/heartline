@@ -173,6 +173,12 @@ impl WalkingSimulation {
     fn build(seed: u64, guest_count: usize, world: &World, entrance: Option<Position>) -> Self {
         let traits = generate_guests(seed, guest_count);
         let graph = Graph::with_entrance(world, entrance);
+        let spawn_nodes: Vec<_> = graph
+            .normal
+            .iter()
+            .enumerate()
+            .filter_map(|(node, &normal)| normal.then_some(node))
+            .collect();
         let mut group_for_guest = vec![0; guest_count];
         let mut group_speeds = Vec::with_capacity(traits.groups.len());
         let mut guests = vec![
@@ -205,8 +211,8 @@ impl WalkingSimulation {
             for (member_index, &GuestId(id)) in group.members.iter().enumerate() {
                 let index = id as usize;
                 group_for_guest[index] = group_index;
-                if !graph.paths.is_empty() {
-                    let node = group_index % graph.paths.len();
+                if !spawn_nodes.is_empty() {
+                    let node = spawn_nodes[group_index % spawn_nodes.len()];
                     guests[index].node = node;
                     guests[index].next = node;
                     guests[index].path = Some(graph.paths[node].position);
@@ -278,7 +284,11 @@ impl WalkingSimulation {
         set_position(guest, &self.graph, 0.0);
     }
     pub fn path_positions(&self) -> impl Iterator<Item = Position> + '_ {
-        self.graph.paths.iter().map(|path| path.position)
+        self.graph
+            .paths
+            .iter()
+            .zip(&self.graph.normal)
+            .filter_map(|(path, &normal)| normal.then_some(path.position))
     }
     pub fn guests(&self) -> &[WalkingGuest] {
         &self.guests

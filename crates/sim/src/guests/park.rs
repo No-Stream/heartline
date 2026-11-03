@@ -7,6 +7,7 @@ use crate::pathfinding::Graph;
 use crate::visits::VisitManager;
 use crate::world::{Position, World};
 use crate::{Executor, SequentialExecutor};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct VisitChanges {
@@ -84,7 +85,12 @@ impl ParkGuests {
         let facility_positions: Vec<_> = facilities
             .iter()
             .map(|facility| facility.place.position)
-            .filter(|position| self.walking.path_component(*position).is_some())
+            .filter(|position| {
+                self.reachable
+                    .indices
+                    .get(position)
+                    .is_some_and(|&node| self.reachable.normal[node])
+            })
             .collect();
         let all_positions: Vec<_> = facility_positions
             .iter()
@@ -137,6 +143,7 @@ impl ParkGuests {
             self.world_revision = world.revision();
         }
         self.walking.refresh_graph(world);
+        let facilities = accessible_facilities(&self.reachable, facilities);
         let component = |position: Position| {
             self.reachable
                 .indices
@@ -162,7 +169,7 @@ impl ParkGuests {
         let movements = self.behaviors.tick_with_exiting(
             self.walking.traits_mut(),
             &positions,
-            facilities,
+            &facilities,
             &guest_components,
             &facility_components,
             &self.leaving,
@@ -229,11 +236,256 @@ impl ParkGuests {
     }
 }
 
+fn accessible_facilities(graph: &Graph, facilities: &[Facility]) -> Vec<Facility> {
+    let mut owners = BTreeMap::<usize, usize>::new();
+    for facility in facilities {
+        if let Some(&node) = graph.indices.get(&facility.place.position) {
+            if let Some(component) = graph.queue_components[node] {
+                *owners.entry(component).or_default() += 1;
+            }
+        }
+    }
+    facilities
+        .iter()
+        .copied()
+        .filter(|facility| {
+            let Some(&node) = graph.indices.get(&facility.place.position) else {
+                return false;
+            };
+            match graph.queue_components[node] {
+                None => true,
+                Some(component) => {
+                    graph.queue_has_entrance[component]
+                        && owners[&component] == 1
+                        && graph.queue_ends[component].contains(&node)
+                }
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::guest_behavior::{KnownPlace, PlaceKind};
     use crate::world::{Path, Surface};
+
+    #[test]
+    fn queue_access_requires_one_owner_at_the_far_end() {
+        use crate::world::PathKind;
+        let mut world = World::new(
+            5,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let position = |x| Position { x, y: 0, height: 0 };
+        world.place_path(Path {
+            position: position(0),
+            slope: None,
+        });
+        world
+            .build_path_route(position(1), position(4), PathKind::Queue, 0)
+            .unwrap();
+        let graph = Graph::with_entrance(&world, Some(position(0)));
+        let facility = |id, x, kind| Facility {
+            place: KnownPlace {
+                id,
+                position: position(x),
+                kind,
+                minimum_height_cm: 0,
+                intensity: 0,
+                ride_type: 0,
+                theme: 0,
+                price: 0,
+            },
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: None,
+        };
+        let ride = facility(1, 4, PlaceKind::Ride);
+        let food = facility(2, 3, PlaceKind::Food);
+        assert_eq!(accessible_facilities(&graph, &[ride]), vec![ride]);
+        assert!(accessible_facilities(&graph, &[food]).is_empty());
+        assert!(accessible_facilities(&graph, &[ride, food]).is_empty());
+    }
+
+    #[test]
+    fn guest_walks_from_normal_path_to_the_chosen_ride_queue_end() {
+        use crate::world::PathKind;
+        let mut world = World::new(
+            5,
+            4,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let position = |x, y| Position { x, y, height: 0 };
+        for x in 0..5 {
+            world.place_path(Path {
+                position: position(x, 0),
+                slope: None,
+            });
+        }
+        for x in [0, 4] {
+            world
+                .build_path_route(position(x, 1), position(x, 3), PathKind::Queue, 0)
+                .unwrap();
+        }
+        let facility = |id, x, kind| Facility {
+            place: KnownPlace {
+                id,
+                position: position(x, 3),
+                kind,
+                minimum_height_cm: 0,
+                intensity: 0,
+                ride_type: 0,
+                theme: 0,
+                price: 0,
+            },
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: None,
+        };
+        let ride = facility(1, 4, PlaceKind::Ride);
+        let food = facility(2, 0, PlaceKind::Food);
+        let graph = Graph::with_entrance(&world, Some(position(2, 0)));
+        assert_eq!(
+            accessible_facilities(&graph, &[ride, food]),
+            vec![ride, food]
+        );
+        let mut walking = WalkingSimulation::with_entrance(3, 1, &world, position(2, 0));
+        walking.place_on_path(GuestId(0), position(2, 0));
+        let mut visited = Vec::new();
+        for _ in 0..1000 {
+            walking.tick_with_controls(
+                &world,
+                &SequentialExecutor::new(256),
+                &[WalkControl::Destination(ride.place.position)],
+            );
+            if let Some(path) = walking.guests()[0].settled_path() {
+                if visited.last() != Some(&path) {
+                    visited.push(path);
+                }
+            }
+            if walking.guests()[0].settled_path() == Some(ride.place.position) {
+                break;
+            }
+        }
+        assert_eq!(visited.last(), Some(&ride.place.position));
+        let queue_paths: Vec<_> = visited
+            .into_iter()
+            .filter(|position| position.y > 0)
+            .collect();
+        assert_eq!(
+            queue_paths,
+            vec![position(4, 1), position(4, 2), position(4, 3)]
+        );
+        let mut park = ParkGuests::new(3, 1, &world, position(2, 0), 1);
+        park.open_with_guests(&[ride, food]);
+        park.walking.place_on_path(GuestId(0), position(2, 0));
+        park.behaviors.guests[0].needs.hunger = 100;
+        let mut queue_paths = Vec::new();
+        for _ in 0..1500 {
+            park.tick(&world, &[ride, food], 100, None);
+            if let Some(path) = park.walking.guests()[0].settled_path() {
+                if path.y > 0 && queue_paths.last() != Some(&path) {
+                    queue_paths.push(path);
+                }
+            }
+            if queue_paths.last() == Some(&food.place.position) {
+                break;
+            }
+        }
+        assert_eq!(
+            queue_paths,
+            vec![position(0, 1), position(0, 2), position(0, 3)]
+        );
+    }
+
+    #[test]
+    fn placed_ride_and_food_use_their_own_queues() {
+        use crate::facilities::{FacilityKind, ParkFacilities};
+        use crate::world::{Direction, PathKind};
+        let mut world = World::new(
+            10,
+            6,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let position = |x, y| Position { x, y, height: 0 };
+        world
+            .build_path_route(position(0, 0), position(9, 0), PathKind::Normal, 0)
+            .unwrap();
+        world
+            .build_path_route(position(8, 0), position(8, 3), PathKind::Normal, 0)
+            .unwrap();
+        world
+            .build_path_route(position(8, 3), position(7, 3), PathKind::Normal, 0)
+            .unwrap();
+        for x in [1, 6] {
+            world
+                .build_path_route(position(x, 1), position(x, 3), PathKind::Queue, 0)
+                .unwrap();
+        }
+        let mut buildings = ParkFacilities::new();
+        let food_id = buildings
+            .place(&world, FacilityKind::Food, position(1, 4), Direction::North)
+            .unwrap();
+        let ride_id = buildings
+            .place(
+                &world,
+                FacilityKind::Carousel,
+                position(6, 4),
+                Direction::North,
+            )
+            .unwrap();
+        let facilities = buildings.guest_facilities(&world);
+        assert_eq!(
+            facilities
+                .iter()
+                .map(|facility| facility.place.id)
+                .collect::<Vec<_>>(),
+            vec![food_id, ride_id]
+        );
+        for (target_id, queue_x, hungry) in [(food_id, 1, true), (ride_id, 6, false)] {
+            let mut park = ParkGuests::new(3, 1, &world, position(4, 0), 1);
+            park.open_with_guests(&facilities);
+            park.walking.place_on_path(GuestId(0), position(4, 0));
+            park.behaviors.guests[0].needs.hunger = if hungry { 100 } else { 0 };
+            let mut visited = Vec::new();
+            for _ in 0..2000 {
+                park.tick(&world, &facilities, 100, None);
+                if let Some(path) = park.walking.guests()[0].settled_path() {
+                    if world.path_metadata(path).unwrap().kind == PathKind::Queue
+                        && visited.last() != Some(&path)
+                    {
+                        visited.push(path);
+                    }
+                }
+                if visited.last() == Some(&position(queue_x, 3)) {
+                    break;
+                }
+            }
+            assert_eq!(
+                park.behaviors.activity_detail(GuestId(0)).place_id,
+                Some(target_id)
+            );
+            assert_eq!(
+                visited,
+                vec![
+                    position(queue_x, 1),
+                    position(queue_x, 2),
+                    position(queue_x, 3)
+                ]
+            );
+        }
+    }
 
     #[test]
     fn open_park_starts_all_guests_on_seeded_paths_and_facilities() {

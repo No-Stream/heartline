@@ -1,5 +1,31 @@
 use super::*;
 
+#[test]
+fn multi_launch_model_offers_powered_straights_and_terrain_transitions() {
+    let model = multi_launch_model();
+    assert_eq!(model.launch_types, vec![LaunchType::LinearMotor]);
+    assert!(model.lift_types.is_empty());
+    assert_eq!(
+        model.train.cars * model.train.rows_per_car * model.train.seats_per_row,
+        24
+    );
+    let choices = model.available_pieces(TrackState::origin());
+    for (id, length) in [
+        (PieceId::LaunchShort, 8.0),
+        (PieceId::Launch, 16.0),
+        (PieceId::LaunchLong, 32.0),
+    ] {
+        let piece = choices.iter().find(|piece| piece.id == id).unwrap();
+        assert_eq!(piece.kind, PieceKind::Launch);
+        assert!((piece.length() - length).abs() < 1e-6);
+        assert!(!hybrid_model().allowed_pieces.contains(&id));
+    }
+    for id in [PieceId::TerrainRise, PieceId::TerrainFall] {
+        assert!(choices.iter().any(|piece| piece.id == id));
+    }
+    assert!(!model.allowed_pieces.contains(&PieceId::Lift));
+}
+
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-8, "{a} != {b}");
 }

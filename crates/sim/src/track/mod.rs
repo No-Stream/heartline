@@ -250,11 +250,17 @@ pub enum PieceId {
     TurnLargeRightStandalone,
     CorkscrewRight,
     HeartlineRollRight,
+    LaunchShort,
+    Launch,
+    LaunchLong,
+    TerrainRise,
+    TerrainFall,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
     Track,
     Lift,
+    Launch,
     Brakes,
     Station,
 }
@@ -1164,6 +1170,27 @@ pub fn catalog() -> Vec<Piece> {
         piece.kind = PieceKind::Lift;
         pieces.push(piece);
     }
+    for (id, name, half_tiles, height, kind) in [
+        (LaunchShort, "Short launch", 4, 0, PieceKind::Launch),
+        (Launch, "Launch", 8, 0, PieceKind::Launch),
+        (LaunchLong, "Long launch", 16, 0, PieceKind::Launch),
+        (TerrainRise, "Shallow rise", 8, 1, PieceKind::Track),
+        (TerrainFall, "Shallow descent", 8, -1, PieceKind::Track),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == Straight)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        piece.kind = kind;
+        piece.exit.x = half_tiles;
+        piece.exit.z = height;
+        piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+        piece.rebuild_arc();
+        pieces.push(piece);
+    }
     for (source, id, name) in [
         (
             TurnSmallEntry,
@@ -1274,6 +1301,7 @@ pub enum LaunchType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupportStyle {
     WoodenLattice,
+    SteelColumns,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Material {
@@ -1288,6 +1316,12 @@ pub struct TrainConfiguration {
     pub length_metres: f64,
     pub width_metres: f64,
     pub height_metres: f64,
+    pub launch: Option<LaunchParameters>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct LaunchParameters {
+    pub target_speed: f64,
+    pub acceleration: f64,
 }
 #[derive(Clone, Debug)]
 pub struct CoasterModel {
@@ -1324,7 +1358,14 @@ pub fn hybrid_model() -> CoasterModel {
         manufacturer: "Rocky Road Construction",
         name: "Timber Tumbler",
         description: "Steel box track on a wooden structure. Some elements are plausible extensions beyond the rides that inspired this model.",
-        allowed_pieces: catalog().into_iter().map(|piece| piece.id).collect(),
+        allowed_pieces: catalog()
+            .into_iter()
+            .filter(|piece| {
+                piece.kind != PieceKind::Launch
+                    && !matches!(piece.id, PieceId::TerrainRise | PieceId::TerrainFall)
+            })
+            .map(|piece| piece.id)
+            .collect(),
         minimum_radius_metres: 5.0,
         allowed_inversions: vec![
             Inversion::VerticalLoop,
@@ -1341,9 +1382,46 @@ pub fn hybrid_model() -> CoasterModel {
             length_metres: 18.0,
             width_metres: 2.0,
             height_metres: 2.5,
+            launch: None,
         },
         track_material: Material::Steel,
         structure_material: Material::Wood,
+    }
+}
+
+pub fn multi_launch_model() -> CoasterModel {
+    CoasterModel {
+        manufacturer: "Impulse Engineering",
+        name: "Velocity Viper",
+        description: "A steel coaster with linear motor launches. Some elements are plausible extensions beyond the rides that inspired this model.",
+        allowed_pieces: catalog()
+            .into_iter()
+            .filter(|piece| piece.kind != PieceKind::Lift)
+            .map(|piece| piece.id)
+            .collect(),
+        minimum_radius_metres: 5.0,
+        allowed_inversions: vec![
+            Inversion::VerticalLoop,
+            Inversion::Corkscrew,
+            Inversion::HeartlineRoll,
+        ],
+        lift_types: vec![],
+        launch_types: vec![LaunchType::LinearMotor],
+        support_style: SupportStyle::SteelColumns,
+        train: TrainConfiguration {
+            cars: 6,
+            rows_per_car: 2,
+            seats_per_row: 2,
+            length_metres: 18.0,
+            width_metres: 2.0,
+            height_metres: 2.5,
+            launch: Some(LaunchParameters {
+                target_speed: 31.3,
+                acceleration: 5.6,
+            }),
+        },
+        track_material: Material::Steel,
+        structure_material: Material::Steel,
     }
 }
 

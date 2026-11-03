@@ -1,8 +1,12 @@
-use crate::world::{Path, Position, World};
+use crate::world::{Path, PathKind, Position, World};
 use std::collections::{BTreeMap, VecDeque};
 
 pub(crate) struct Graph {
     pub(crate) paths: Vec<Path>,
+    pub(crate) normal: Vec<bool>,
+    pub(crate) queue_components: Vec<Option<usize>>,
+    pub(crate) queue_ends: Vec<Vec<usize>>,
+    pub(crate) queue_has_entrance: Vec<bool>,
     pub(crate) neighbours: Vec<Vec<usize>>,
     pub(crate) indices: BTreeMap<Position, usize>,
     pub(crate) components: Vec<usize>,
@@ -13,6 +17,10 @@ pub(crate) struct Graph {
 impl Graph {
     pub(crate) fn with_entrance(world: &World, entrance: Option<Position>) -> Self {
         let paths: Vec<_> = world.paths().collect();
+        let normal: Vec<_> = paths
+            .iter()
+            .map(|path| world.path_metadata(path.position).unwrap().kind == PathKind::Normal)
+            .collect();
         let indices: BTreeMap<_, _> = paths
             .iter()
             .enumerate()
@@ -28,6 +36,40 @@ impl Graph {
                     .collect()
             })
             .collect();
+        let mut queue_components = vec![None; paths.len()];
+        let mut queue_ends = Vec::new();
+        let mut queue_has_entrance = Vec::new();
+        for start in 0..paths.len() {
+            if normal[start] || queue_components[start].is_some() {
+                continue;
+            }
+            let component = queue_ends.len();
+            let mut pending = VecDeque::from([start]);
+            queue_components[start] = Some(component);
+            let mut ends = Vec::new();
+            let mut entrance = false;
+            while let Some(node) = pending.pop_front() {
+                let mut queue_degree = 0;
+                let mut touches_normal = false;
+                for &next in &neighbours[node] {
+                    if normal[next] {
+                        entrance = true;
+                        touches_normal = true;
+                    } else {
+                        queue_degree += 1;
+                        if queue_components[next].is_none() {
+                            queue_components[next] = Some(component);
+                            pending.push_back(next);
+                        }
+                    }
+                }
+                if queue_degree <= 1 && (!touches_normal || queue_degree == 0) {
+                    ends.push(node);
+                }
+            }
+            queue_ends.push(ends);
+            queue_has_entrance.push(entrance);
+        }
         let mut components = vec![usize::MAX; paths.len()];
         let mut members: Vec<Vec<usize>> = Vec::new();
         for start in 0..paths.len() {
@@ -53,13 +95,21 @@ impl Graph {
         let mut goals: Vec<Vec<usize>> = members
             .iter()
             .map(|nodes| {
+                let nodes: Vec<_> = nodes.iter().copied().filter(|&node| normal[node]).collect();
                 let count = nodes.len().min(8);
                 (0..count)
                     .map(|index| nodes[index * nodes.len() / count])
                     .collect()
             })
             .collect();
-        if let Some(node) = entrance.and_then(|position| indices.get(&position).copied()) {
+        if let Some(node) = entrance
+            .filter(|&position| {
+                world
+                    .path_metadata(position)
+                    .is_some_and(|metadata| metadata.kind == PathKind::Normal)
+            })
+            .and_then(|position| indices.get(&position).copied())
+        {
             let component_goals = &mut goals[components[node]];
             if !component_goals.contains(&node) {
                 component_goals.push(node);
@@ -67,6 +117,10 @@ impl Graph {
         }
         Self {
             paths,
+            normal,
+            queue_components,
+            queue_ends,
+            queue_has_entrance,
             neighbours,
             indices,
             components,

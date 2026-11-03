@@ -13,11 +13,11 @@ use theme_park_sim::physics::{
 use theme_park_sim::track::construction::{Construction, track_support_obstacles};
 use theme_park_sim::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, SupportError, SupportObstacle, SupportSegment,
-    generate_wooden_lattice,
+    generate_steel_columns, generate_wooden_lattice,
 };
 use theme_park_sim::track::{
     Heading, Piece, PieceId, PieceKind, SupportStyle, TrackSample, TrackState, TrainConfiguration,
-    Vec3, catalog, hybrid_model,
+    Vec3, catalog, hybrid_model, multi_launch_model,
 };
 use theme_park_sim::world::{
     Direction, PathBuildError, PathKind, PathPreviewTile, Position, Surface, World,
@@ -43,6 +43,7 @@ pub struct WasmSimulation {
     train_configuration: TrainConfiguration,
     physics_remainder: u32,
     construction: Option<Construction>,
+    construction_model: ConstructionModel,
     selected: Option<PieceId>,
     construction_message: String,
     construction_train: Option<(Circuit, Train)>,
@@ -52,6 +53,12 @@ pub struct WasmSimulation {
     construction_outcome: Option<String>,
     construction_recorder: Option<TestRunRecorder>,
     construction_report: Option<TestRun>,
+}
+
+#[derive(Clone, Copy)]
+enum ConstructionModel {
+    Hybrid,
+    MultiLaunch,
 }
 
 #[wasm_bindgen]
@@ -140,6 +147,7 @@ impl WasmSimulation {
             train_configuration,
             physics_remainder: 0,
             construction: None,
+            construction_model: ConstructionModel::Hybrid,
             selected: None,
             construction_message: String::new(),
             construction_train: None,
@@ -659,7 +667,10 @@ impl WasmSimulation {
                 heading,
                 ..TrackState::origin()
             },
-            hybrid_model(),
+            match self.construction_model {
+                ConstructionModel::Hybrid => hybrid_model(),
+                ConstructionModel::MultiLaunch => multi_launch_model(),
+            },
         );
         if let Err(error) =
             construction.append(PieceId::Station, &self.world, &self.facility_obstacles())
@@ -682,6 +693,19 @@ impl WasmSimulation {
         self.construction.is_some()
     }
     pub fn construction_select(&mut self, id: &str) {
+        match id {
+            "model:hybrid" => {
+                self.construction_model = ConstructionModel::Hybrid;
+                self.construction_message.clear();
+                return;
+            }
+            "model:velocity_viper" => {
+                self.construction_model = ConstructionModel::MultiLaunch;
+                self.construction_message.clear();
+                return;
+            }
+            _ => {}
+        }
         self.selected = catalog()
             .into_iter()
             .find(|piece| format!("{:?}", piece.id) == id)
@@ -924,10 +948,16 @@ impl WasmSimulation {
         )
     }
     pub fn construction_rails(&self) -> Vec<f32> {
-        render_rails(&self.construction_preview(), &self.world)
+        self.encode_construction_geometry(
+            render_rails(&self.construction_preview(), &self.world),
+            19,
+        )
     }
     pub fn construction_ties(&self) -> Vec<f32> {
-        render_ties(&self.construction_preview(), &self.world)
+        self.encode_construction_geometry(
+            render_ties(&self.construction_preview(), &self.world),
+            13,
+        )
     }
     pub fn construction_supports(&mut self) -> Vec<f32> {
         if !self.construction_preview_valid() {
@@ -962,8 +992,13 @@ impl WasmSimulation {
             .flat_map(|(id, _)| self.support_render_cache[id].obstacles.iter().copied())
             .collect();
         obstacles.extend(self.facility_obstacles());
-        match render_preview_supports(piece, &obstacles, &self.world) {
-            Ok(supports) => supports,
+        match render_preview_supports(
+            piece,
+            &obstacles,
+            &self.world,
+            construction.model().support_style,
+        ) {
+            Ok(supports) => self.encode_construction_geometry(supports, 7),
             Err(_) => {
                 self.construction_message = "Could not route preview supports.".into();
                 Vec::new()
@@ -996,10 +1031,11 @@ impl WasmSimulation {
             &entries,
             &self.world,
             &construction.model().train,
+            construction.model().support_style,
             &facility_obstacles,
             &mut self.support_render_cache,
         ) {
-            Ok(supports) => supports,
+            Ok(supports) => self.encode_construction_geometry(supports, 7),
             Err(_) => {
                 self.construction_message = "Could not route supports for the placed track.".into();
                 Vec::new()
@@ -1117,6 +1153,17 @@ impl WasmSimulation {
         let mut geometry = render(&pieces, &self.world);
         for record in geometry.chunks_exact_mut(stride) {
             record[0] = *entries[record[0] as usize].0 as f32;
+        }
+        self.encode_construction_geometry(geometry, stride)
+    }
+    fn encode_construction_geometry(&self, mut geometry: Vec<f32>, stride: usize) -> Vec<f32> {
+        if self.construction.as_ref().is_some_and(|construction| {
+            construction.model().support_style == SupportStyle::SteelColumns
+        }) {
+            // Steel records use -(piece ID + 1); consumers decode before picking.
+            for record in geometry.chunks_exact_mut(stride) {
+                record[0] = -record[0] - 1.0;
+            }
         }
         geometry
     }
@@ -1741,6 +1788,76 @@ mod construction_bridge_tests {
     use super::WasmSimulation;
 
     #[test]
+    fn model_selection_controls_new_construction_and_launch_choices() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_select("model:velocity_viper");
+        simulation.construction_start(200, 200, 20, 0);
+        assert_eq!(
+            simulation.construction.as_ref().unwrap().model().name,
+            "Velocity Viper"
+        );
+        assert!(simulation.construction_choices().contains("LaunchShort\t"));
+        simulation.construction_select("LaunchShort");
+        assert!(simulation.construction_can_append());
+        let construction = simulation.construction.as_ref().unwrap();
+        let obstacles =
+            super::track_support_obstacles(construction.pieces(), &construction.model().train);
+        let preview = simulation.construction_preview();
+        let expected = super::render_preview_supports(
+            &preview[0],
+            &obstacles,
+            &simulation.world,
+            super::SupportStyle::SteelColumns,
+        )
+        .unwrap();
+        assert_eq!(
+            simulation.construction_supports(),
+            simulation.encode_construction_geometry(expected, 7)
+        );
+        simulation.construction_append();
+        assert!(simulation.construction_track().contains("Launch"));
+        simulation.construction_select("model:hybrid");
+        simulation.construction_start(200, 200, 20, 0);
+        assert_eq!(
+            simulation.construction.as_ref().unwrap().model().name,
+            super::hybrid_model().name
+        );
+    }
+
+    #[test]
+    fn geometry_encodes_material_and_preserves_piece_identity() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        let wooden = simulation.construction_placed_rails();
+        assert!(wooden.chunks_exact(19).all(|record| record[0] == 0.0));
+        simulation.construction_select("model:velocity_viper");
+        simulation.construction_start(200, 200, 20, 0);
+        simulation.construction_select("LaunchShort");
+        simulation.construction_append();
+        for (geometry, stride) in [
+            (simulation.construction_placed_rails(), 19),
+            (simulation.construction_placed_ties(), 13),
+            (simulation.construction_placed_supports(), 7),
+            (simulation.construction_rails(), 19),
+            (simulation.construction_ties(), 13),
+            (simulation.construction_supports(), 7),
+        ] {
+            assert!(!geometry.is_empty());
+            assert!(
+                geometry
+                    .chunks_exact(stride)
+                    .all(|record| record[0] < 0.0 && -record[0] - 1.0 >= 0.0)
+            );
+        }
+        let ids: std::collections::HashSet<_> = simulation
+            .construction_placed_rails()
+            .chunks_exact(19)
+            .map(|record| (-record[0] - 1.0) as usize)
+            .collect();
+        assert_eq!(ids, [0, 1].into_iter().collect());
+    }
+
+    #[test]
     fn construction_commands_validate_and_preview_without_mutating_on_failure() {
         let mut simulation = WasmSimulation::new(42, 0);
         simulation.construction_start(200, 200, 20, 0);
@@ -1752,8 +1869,13 @@ mod construction_bridge_tests {
         let obstacles =
             super::track_support_obstacles(construction.pieces(), &construction.model().train);
         let preview = simulation.construction_preview();
-        let expected_supports =
-            super::render_preview_supports(&preview[0], &obstacles, &simulation.world).unwrap();
+        let expected_supports = super::render_preview_supports(
+            &preview[0],
+            &obstacles,
+            &simulation.world,
+            super::SupportStyle::WoodenLattice,
+        )
+        .unwrap();
         assert_eq!(simulation.construction_supports(), expected_supports);
         simulation.construction_append();
         assert_eq!(simulation.construction_track(), "0\tStation\n1\tStraight");
@@ -1870,6 +1992,7 @@ mod construction_bridge_tests {
             &[(&first_id, &first), (&second_id, &second)],
             &simulation.world,
             &train,
+            super::SupportStyle::WoodenLattice,
             &[],
             &mut cache,
         )
@@ -1887,6 +2010,7 @@ mod construction_bridge_tests {
             &[(&first_id, &first)],
             &simulation.world,
             &train,
+            super::SupportStyle::WoodenLattice,
             &[],
             &mut cache,
         )
@@ -1951,6 +2075,7 @@ mod construction_bridge_tests {
             &[(&0, &lower), (&1, &upper)],
             &world,
             &super::hybrid_model().train,
+            super::SupportStyle::WoodenLattice,
             &[],
             &mut cache,
         )
@@ -1962,7 +2087,13 @@ mod construction_bridge_tests {
             .copied()
             .collect();
         assert_eq!(upper_records, expected_records);
-        let preview = super::render_preview_supports(&upper, &obstacles, &world).unwrap();
+        let preview = super::render_preview_supports(
+            &upper,
+            &obstacles,
+            &world,
+            super::SupportStyle::WoodenLattice,
+        )
+        .unwrap();
         let mut expected_preview = expected_records;
         for record in expected_preview.chunks_exact_mut(7) {
             record[0] = 0.0;
@@ -2169,8 +2300,9 @@ fn render_preview_supports(
     piece: &Piece,
     obstacles: &[SupportObstacle],
     world: &World,
+    style: SupportStyle,
 ) -> Result<Vec<f32>, SupportError> {
-    let supports = generate_wooden_lattice(piece, world, obstacles)?;
+    let supports = generate_supports(piece, world, obstacles, style)?;
     let mut result = Vec::new();
     for support in supports {
         if support.start != support.end {
@@ -2202,6 +2334,7 @@ fn render_cached_supports(
     entries: &[(&usize, &Piece)],
     world: &World,
     train: &TrainConfiguration,
+    style: SupportStyle,
     facility_obstacles: &[SupportObstacle],
     cache: &mut HashMap<usize, SupportRenderCache>,
 ) -> Result<Vec<f32>, SupportError> {
@@ -2245,7 +2378,7 @@ fn render_cached_supports(
                 .flat_map(|(other_id, _)| cache[other_id].obstacles.iter().copied())
                 .collect();
             obstacles.extend_from_slice(facility_obstacles);
-            let segments = generate_wooden_lattice(piece, world, &obstacles);
+            let segments = generate_supports(piece, world, &obstacles, style);
             let cached = cache.get_mut(id).expect("support cache entry");
             cached.world_revision = world.revision();
             cached.dependencies = dependencies;
@@ -2260,6 +2393,18 @@ fn render_cached_supports(
         }
     }
     Ok(result)
+}
+
+fn generate_supports(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+    style: SupportStyle,
+) -> Result<Vec<SupportSegment>, SupportError> {
+    match style {
+        SupportStyle::WoodenLattice => generate_wooden_lattice(piece, world, obstacles),
+        SupportStyle::SteelColumns => generate_steel_columns(piece, world, obstacles),
+    }
 }
 
 fn try_render_supports(
@@ -2279,6 +2424,7 @@ fn try_render_supports(
             .collect();
         let supports = match model.support_style {
             SupportStyle::WoodenLattice => generate_wooden_lattice(piece, world, &obstacles),
+            SupportStyle::SteelColumns => generate_steel_columns(piece, world, &obstacles),
         }?;
         for support in supports {
             if support.start != support.end {
@@ -2293,6 +2439,27 @@ fn try_render_supports(
 
 #[cfg(test)]
 mod piece_shape_tests {
+    #[test]
+    fn catalog_names_uniquely_identify_shapes_in_construction_track() {
+        let names: std::collections::HashSet<_> = super::catalog()
+            .into_iter()
+            .map(|piece| piece.name)
+            .collect();
+        assert_eq!(names.len(), super::catalog().len());
+    }
+
+    #[test]
+    fn launch_shapes_expose_their_kind() {
+        let json = super::piece_shapes_json();
+        for id in ["LaunchShort", "Launch", "LaunchLong"] {
+            let shape = json
+                .split("{\"id\":")
+                .find(|shape| shape.starts_with(&format!("\"{id}\"")))
+                .unwrap();
+            assert!(shape.contains("\"kind\":\"Launch\""));
+        }
+    }
+
     #[test]
     fn piece_shapes_describe_every_catalog_piece_from_a_shared_entry_frame() {
         let json = super::piece_shapes_json();
@@ -2316,7 +2483,57 @@ mod piece_shape_tests {
 #[cfg(test)]
 mod path_bridge_tests {
     use super::{Surface, WasmSimulation};
-    use theme_park_sim::world::World;
+    use theme_park_sim::world::{Position, World};
+
+    #[test]
+    fn tunnel_path_commands_refresh_the_guest_graph() {
+        let mut simulation = WasmSimulation::new(42, 12);
+        let entrance = Position {
+            x: 218,
+            y: 250,
+            height: 8,
+        };
+        let tunnel = Position {
+            x: 224,
+            y: 250,
+            height: 3,
+        };
+        assert_eq!(
+            simulation.simulation.walking().path_component(entrance),
+            simulation.simulation.walking().path_component(tunnel)
+        );
+
+        assert!(simulation.path_remove(221, 250, 5));
+        simulation.tick();
+        assert_ne!(
+            simulation.simulation.walking().path_component(entrance),
+            simulation.simulation.walking().path_component(tunnel)
+        );
+        let before_preview = simulation.world_state_hash();
+        let coordinates = vec![218, 250, 8, 224, 250, 3];
+        let preview = simulation.path_preview(coordinates.clone(), "normal", 0);
+        assert_eq!(preview.len(), 7 * 7);
+        assert!(preview.chunks_exact(7).all(|tile| tile[6] == 0));
+        assert!(
+            preview
+                .chunks_exact(7)
+                .any(|tile| tile[..4] == [221, 250, 5, 4])
+        );
+        assert_eq!(simulation.world_state_hash(), before_preview);
+
+        assert!(simulation.path_build(coordinates, "normal", 0));
+        assert!(
+            simulation
+                .world_paths()
+                .chunks_exact(4)
+                .any(|path| path == [221, 250, 5, 4])
+        );
+        simulation.tick();
+        assert_eq!(
+            simulation.simulation.walking().path_component(entrance),
+            simulation.simulation.walking().path_component(tunnel)
+        );
+    }
 
     #[test]
     fn path_preview_build_snapshot_and_remove_share_the_path_wire_contract() {

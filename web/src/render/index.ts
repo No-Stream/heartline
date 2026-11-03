@@ -20,6 +20,7 @@ export async function loadAtlas(url: string): Promise<{ atlas: Atlas; images: Re
 export interface WorldRenderer {
   render(world: WorldView, camera: Camera, waterFrame?: number, geometryPasses?: readonly GeometryPass[]): void;
   pick(x: number, y: number): Pick | null;
+  pickSurface(x: number, y: number): Pick | null;
   waitForGpu(): void;
 }
 
@@ -55,7 +56,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
   const fragment = shader(gl.FRAGMENT_SHADER, `#version 300 es
     precision highp float; uniform sampler2D atlas; uniform bool picking; uniform bool textured;
     in vec2 uv; flat in vec3 id; flat in vec4 fill; out vec4 color;
-    void main() { vec4 texel = textured ? texture(atlas,uv) * fill : fill; if (texel.a < 0.05) discard;
+    void main() { vec4 texel = textured ? texture(atlas,uv) * fill : fill; if (texel.a < 0.05 || (picking && all(equal(id, vec3(0.0))))) discard;
       color = picking ? vec4(id,1.0) : texel; }`);
   const program = gl.createProgram();
   if (!program) throw new Error("Could not create program");
@@ -81,6 +82,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
   let activeScale = "1";
   gl.useProgram(program); gl.uniform1i(gl.getUniformLocation(program, "atlas"), 0); gl.enable(gl.DEPTH_TEST); gl.disable(gl.DITHER); gl.depthFunc(gl.LEQUAL);
   let scene: Scene = { triangles: [] };
+  let surfaceScene: Scene = { triangles: [] };
   let batches: { page: number; data: Float32Array; count: number }[] = [];
   let depthMinimum = 0; let depthSpan = 2;
   let pickWidth = 0; let pickHeight = 0;
@@ -98,7 +100,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
         const first = scene.triangles[i * 2]; const second = scene.triangles[i * 2 + 1];
         const vertices = [...first.vertices, second.vertices[2]]; const offset = (i - start) * 27;
         vertices.forEach((vertex, j) => { data.set([vertex.x, vertex.y, vertex.depth, vertex.u], offset + j * 4); data[offset + 16 + j] = vertex.v; });
-        const id = i + 1; data.set([(id & 255) / 255, ((id >> 8) & 255) / 255, ((id >> 16) & 255) / 255], offset + 20);
+        const id = first.kind === "path-preview" ? 0 : i + 1; data.set([(id & 255) / 255, ((id >> 8) & 255) / 255, ((id >> 16) & 255) / 255], offset + 20);
         data.set(first.color, offset + 23);
       }
       batches.push({ page, data, count: end - start }); start = end;
@@ -128,6 +130,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
       scene = buildScene(world, camera, viewport, atlas, activeScale, waterFrame);
       for (const geometryPass of geometryPasses) appendGeometry(scene, geometryPass(camera, viewport, atlas, activeScale), viewport);
       if (scene.triangles.length / 2 >= 0xffffff) throw new Error("Too many visible objects for picking");
+      surfaceScene = { triangles: scene.triangles.filter(({ kind }) => kind === "terrain" || kind === "path") };
       prepare();
       if (pickWidth !== canvas.width || pickHeight !== canvas.height) {
         pickWidth = canvas.width; pickHeight = canvas.height;
@@ -147,6 +150,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
       const id = pixel[0] + pixel[1] * 256 + pixel[2] * 65536; if (!id) return null;
       return pickScene({ triangles: scene.triangles.slice((id - 1) * 2, id * 2) }, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125);
     },
+    pickSurface(x, y) { return pickScene(surfaceScene, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125); },
     waitForGpu() { gl!.readPixels(0, 0, 1, 1, gl!.RGBA, gl!.UNSIGNED_BYTE, new Uint8Array(4)); },
   };
 }

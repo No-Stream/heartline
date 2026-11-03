@@ -14,6 +14,9 @@ export type InputAction =
   | { readonly type: "hover"; readonly position: ScreenPoint | null }
   | { readonly type: "station-placement"; readonly enabled: boolean }
   | { readonly type: "station-height"; readonly height: number }
+  | { readonly type: "drag-start" | "drag-move" | "drag-end"; readonly position: ScreenPoint }
+  | { readonly type: "drag-cancel" }
+  | { readonly type: "path-build-mode" | "path-remove-mode" }
   | { readonly type: "select"; readonly position: ScreenPoint }
   /** Choose the next piece one step along an attribute, or through the whole palette. */
   | { readonly type: "piece-step"; readonly attribute: PieceStep; readonly step: -1 | 1 }

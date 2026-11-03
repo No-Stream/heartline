@@ -32,7 +32,7 @@ test("rebuilds the entrance path through the UI and guests walk to the food stal
   await page.getByLabel("Path type").selectOption("normal");
   await page.getByRole("button", { name: "Build paths" }).click();
   await dragTiles(page, { x: 218, y: 250, z: 2 }, { x: 218, y: 256, z: 2 });
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
   await expect.poll(() => pathAt(page, 218, 252, 2)).toBe(true);
 
   const corridorTilesByGuest = new Map<string, Set<number>>();
@@ -77,28 +77,51 @@ async function guestDetail(page: Page, guestId: string) {
 }
 
 test("builds sloped paths and a queue through the UI", async ({ page }) => {
+  test.setTimeout(180_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
-  await page.evaluate(() => window.gameTest.setCamera({ centerX: 251, centerY: 255.5, zoom: 0.5, rotation: 0 }));
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 247, centerY: 253, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
 
   await page.getByLabel("Path type").selectOption("normal");
   await page.getByRole("button", { name: "Build paths" }).click();
-  await dragTiles(page, { x: 242, y: 256, z: 2 }, { x: 260, y: 256, z: 5.75 });
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await dragTiles(page, { x: 242, y: 256, z: 2 }, { x: 252, y: 256, z: 3.875 });
+  await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
 
   await page.getByLabel("Path type").selectOption("queue");
   await page.getByRole("button", { name: "Build paths" }).click();
-  await dragTiles(page, { x: 242, y: 255, z: 2 }, { x: 260, y: 255, z: 5.75 });
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await dragTiles(page, { x: 244, y: 255, z: 2 }, { x: 244, y: 250, z: 2 });
+  await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
+  await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
 
   await expect.poll(() => page.evaluate(() => {
-    const point = window.gameTest.project({ x: 250.5, y: 255.5, z: 3.375 });
+    const point = window.gameTest.project({ x: 250.5, y: 256.5, z: 3.375 });
     const selected = window.gameTest.pick(point.x, point.y);
-    return selected?.kind === "path" && selected.x === 250 && selected.y === 255 && Math.abs(selected.height - 13.5) < 1;
+    return selected?.kind === "path" && selected.x === 250 && selected.y === 256 && Math.abs(selected.height - 13.5) < 1;
+  })).toBe(true);
+  await expect.poll(() => page.evaluate(() => {
+    const queue = window.gameTest.paths().filter(({ kind }) => kind === 1);
+    if (queue.length !== 6 || !queue.every(({ x, y }) => x === 244 && y >= 250 && y <= 255)) return false;
+    const tiles = new Set(queue.map(({ x, y }) => `${x},${y}`));
+    const reached = new Set<string>();
+    const pending = [queue[0]];
+    while (pending.length) {
+      const tile = pending.pop()!;
+      const key = `${tile.x},${tile.y}`;
+      if (reached.has(key)) continue;
+      reached.add(key);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const x = tile.x + dx, y = tile.y + dy;
+        if (tiles.has(`${x},${y}`)) pending.push({ ...tile, x, y });
+      }
+    }
+    const normal = window.gameTest.paths().filter(({ kind }) => kind === 0);
+    const connections = queue.flatMap((tile) => normal.filter((path) =>
+      Math.abs(path.x - tile.x) + Math.abs(path.y - tile.y) === 1));
+    return reached.size === queue.length && connections.length === 1;
   })).toBe(true);
   await expect(page.getByLabel("Path type")).toHaveValue("queue");
-  await expect(page.locator("main")).toHaveScreenshot("path-network-slopes-queue.png", {
+  await expect(page.locator("canvas")).toHaveScreenshot("path-network-slopes-queue.png", {
     animations: "disabled",
     threshold: 0.1,
     maxDiffPixelRatio: 0.001,
@@ -106,10 +129,9 @@ test("builds sloped paths and a queue through the UI", async ({ page }) => {
 });
 
 async function pathAt(page: Page, x: number, y: number, z: number): Promise<boolean> {
-  return page.evaluate(({ tileX, tileY, height }) => {
-    const point = window.gameTest.project({ x: tileX + 0.5, y: tileY + 0.5, z: height });
-    return window.gameTest.pick(point.x, point.y)?.kind === "path";
-  }, { tileX: x, tileY: y, height: z });
+  return page.evaluate(({ tileX, tileY, height }) => window.gameTest.paths()
+    .some((path) => path.x === tileX && path.y === tileY && path.z === height * 4),
+  { tileX: x, tileY: y, height: z });
 }
 
 async function clickTile(page: Page, x: number, y: number, z: number): Promise<void> {

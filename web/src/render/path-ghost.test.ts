@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { projectWorld } from "../camera";
-import { buildPathGhostQuads, decodePathPreview } from "./path-ghost";
+import { buildPathGhostQuads, decodePathPreview, pathPreviewRefusalAt } from "./path-ghost";
 
 const camera = { centerX: 0, centerY: 0, zoom: 1, rotation: 0 } as const;
 const viewport = { width: 800, height: 500 };
@@ -16,9 +16,16 @@ describe("path preview", () => {
       projectWorld(camera, viewport, { x: 1, y: 3, z: 1 }),
     ]);
     expect(valid.vertices).toEqual(invalid.vertices);
-    expect(valid.color[1]).toBeGreaterThan(valid.color[0]);
-    expect(invalid.color[0]).toBeGreaterThan(invalid.color[1]);
+    expect(valid.color).toEqual([0.45, 0.86, 0.8, 0.62]);
+    expect(invalid.color).toEqual([0.9, 0.3, 0.2, 0.62]);
     expect(valid.color[3]).toBeLessThan(1);
+  });
+
+  test("looks up the refusal for the hovered tile", () => {
+    const preview = decodePathPreview(new Int32Array([1, 2, 4, 1, 0, 0, 0, 2, 2, 4, 0, 0, 0, 4]));
+    expect(pathPreviewRefusalAt(preview, 1, 2)).toBeNull();
+    expect(pathPreviewRefusalAt(preview, 2, 2)).toMatch(/connect/);
+    expect(pathPreviewRefusalAt(preview, 3, 2)).toBeNull();
   });
 
   test("decodes each tile's refusal and rejects malformed preview data", () => {

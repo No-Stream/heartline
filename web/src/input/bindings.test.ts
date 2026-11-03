@@ -32,6 +32,36 @@ describe("input bindings", () => {
     expect(actions).toHaveLength(2);
   });
 
+  it("routes a path drag and cancellation through canvas coordinates", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action), () => true);
+    surface.dispatchEvent(event("pointerdown", { pointerId: 1, button: 0, clientX: 60, clientY: 70 }));
+    surface.dispatchEvent(event("pointermove", { pointerId: 1, clientX: 70, clientY: 75 }));
+    surface.dispatchEvent(event("pointerup", { pointerId: 1, clientX: 75, clientY: 80 }));
+    surface.dispatchEvent(event("pointerdown", { pointerId: 2, button: 0, clientX: 60, clientY: 70 }));
+    surface.dispatchEvent(event("pointermove", { pointerId: 2, clientX: 70, clientY: 75 }));
+    surface.dispatchEvent(event("pointercancel", { pointerId: 2 }));
+    expect(actions).toEqual([
+      { type: "drag-start", position: { x: 100, y: 100 } },
+      { type: "drag-move", position: { x: 120, y: 110 } },
+      { type: "drag-end", position: { x: 130, y: 120 } },
+      { type: "drag-start", position: { x: 100, y: 100 } },
+      { type: "drag-move", position: { x: 120, y: 110 } },
+      { type: "drag-cancel" },
+    ]);
+  });
+
+  it("uses distinct path shortcuts alongside construction shortcuts", () => {
+    const keys = Object.values(builderShortcuts).flatMap((shortcut) => shortcut.keys);
+    expect(new Set(keys).size).toBe(keys.length);
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    for (const key of ["p", "r"]) surface.dispatchEvent(event("keydown", { key, repeat: false }));
+    expect(actions).toEqual([{ type: "path-build-mode" }, { type: "path-remove-mode" }]);
+  });
+
   it("reports pointer movement and exit through the action layer", () => {
     const surface = new Surface();
     const actions: InputAction[] = [];

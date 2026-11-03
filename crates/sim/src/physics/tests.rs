@@ -35,6 +35,86 @@ fn oval() -> Circuit {
 }
 
 #[test]
+fn constructed_launches_accelerate_twice_during_a_complete_lap() {
+    use PieceId::*;
+    let circuit = circuit(&[
+        Station,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        Launch,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ]);
+    let model = crate::track::multi_launch_model();
+    let mut train = Train::new(&circuit, &model.train, PhysicsConfig::default(), 0.0, 2.0);
+    let target = model.train.launch.unwrap().target_speed;
+    for (launch_index, end_index) in [(1, 5), (7, 11)] {
+        for _ in 0..100_000 {
+            if train.distance() >= circuit.starts[launch_index] {
+                break;
+            }
+            train.step(&circuit);
+        }
+        assert!(train.distance() >= circuit.starts[launch_index]);
+        let before = train.speed();
+        for _ in 0..100_000 {
+            if train.distance() >= circuit.starts[end_index] - 1.0 {
+                break;
+            }
+            train.step(&circuit);
+        }
+        assert!(train.distance() >= circuit.starts[end_index] - 1.0);
+        assert!(train.speed() > before);
+        assert!(
+            (train.speed() - target).abs() < 0.05,
+            "speed {} target {target}",
+            train.speed()
+        );
+    }
+    for _ in 0..100_000 {
+        if train.distance() >= circuit.length() {
+            break;
+        }
+        train.step(&circuit);
+    }
+    assert!(train.distance() >= circuit.length());
+    assert!(train.notes().is_empty());
+}
+
+#[test]
+fn launch_acceleration_comes_from_the_model() {
+    use PieceId::*;
+    let circuit = circuit(&[
+        Station,
+        Launch,
+        TurnLargeEntry,
+        TurnLargeExit,
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ]);
+    let mut model = crate::track::multi_launch_model();
+    model.train.launch.as_mut().unwrap().acceleration = 1.0;
+    let mut train = Train::new(
+        &circuit,
+        &model.train,
+        PhysicsConfig::default(),
+        circuit.starts[1] + 1.0,
+        2.0,
+    );
+    train.step(&circuit);
+    assert!((train.speed() - (2.0 + TIME_STEP)).abs() < 1e-9);
+}
+
+#[test]
 fn circuit_sampling_handles_wrapped_zero_and_exact_piece_joins() {
     let circuit = oval();
     let origin = circuit.sample(0.0);

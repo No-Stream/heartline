@@ -18,6 +18,10 @@ export function decodePathPreview(paths: Int32Array): PathPreview[] {
   return preview;
 }
 
+export function pathPreviewRefusalAt(paths: readonly PathPreview[], x: number, y: number): string | null {
+  return paths.find((path) => path.x === x && path.y === y)?.refusal ?? null;
+}
+
 export function pathCornerHeights(z: number, slope: number): number[] {
   const offsets = [[0, 0, 0, 0], [1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 1], [1, 0, 0, 1]][slope];
   if (!offsets) throw new Error("Invalid path slope");
@@ -26,7 +30,7 @@ export function pathCornerHeights(z: number, slope: number): number[] {
 
 export function buildPathGhostQuads(paths: readonly PathPreview[], camera: Camera, viewport: Viewport): GeometryQuad[] {
   return paths.map(({ x, y, z, slope, refusal }, index) => {
-    const color: GeometryQuad["color"] = refusal === null ? [0.15, 0.8, 0.35, 0.55] : [0.9, 0.2, 0.2, 0.55];
+    const color: GeometryQuad["color"] = refusal === null ? [0.45, 0.86, 0.8, 0.62] : [0.9, 0.3, 0.2, 0.62];
     const heights = pathCornerHeights(z, slope);
     const vertices = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]].map(([px, py], corner): Vertex => {
       const height = heights[corner];

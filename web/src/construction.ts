@@ -17,6 +17,18 @@ export interface ConstructionPanel {
 
 const groupNames: Record<string, string> = { straight: "Straight", turn: "Turns", slope: "Slopes", bank: "Banks", inversion: "Inversions", special: "Special" };
 const groupPlates: Record<string, string> = { straight: "var(--slate)", turn: "var(--teal)", slope: "var(--mustard)", bank: "var(--coral)", inversion: "var(--coral)", special: "var(--slate)" };
+const coasterModels = {
+  "model:hybrid": {
+    name: "Timber Tumbler",
+    manufacturer: "Rocky Road Construction",
+    description: "Steel box track on a wooden structure.",
+  },
+  "model:velocity_viper": {
+    name: "Velocity Viper",
+    manufacturer: "Impulse Engineering",
+    description: "Multi-launch steel track and columns with short, standard, and long launch sections.",
+  },
+} as const;
 const stationHeight = { minimum: 4, maximum: 100, step: 2, initial: 12 };
 const steppers: readonly { attribute: StepAttribute; label: string; previous: string; next: string; keys: readonly [keyof typeof builderShortcuts, keyof typeof builderShortcuts] }[] = [
   { attribute: "turn", label: "Direction", previous: "Turn left", next: "Turn right", keys: ["turnLeft", "turnRight"] },
@@ -24,12 +36,30 @@ const steppers: readonly { attribute: StepAttribute; label: string; previous: st
   { attribute: "bank", label: "Bank", previous: "Bank left", next: "Bank right", keys: ["bankLeft", "bankRight"] },
 ];
 const hint = (name: keyof typeof builderShortcuts): string => `<kbd>${keyHint(builderShortcuts[name])}</kbd>`;
+function sampledLength(shape: PieceShape): number {
+  let length = 0;
+  for (let index = 1; index < shape.points.length; index++) {
+    const previous = shape.points[index - 1];
+    const current = shape.points[index];
+    length += Math.hypot(current[0] - previous[0], current[1] - previous[1], current[2] - previous[2]);
+  }
+  return length;
+}
 
 /** Native controls keep every construction action available to keyboard and assistive technology users. */
 export function createConstructionPanel(container: HTMLElement, dispatch: (action: InputAction) => void): ConstructionPanel {
   container.classList.add("builder");
   container.innerHTML = `
     <header class="builder__header"><div><p class="builder__eyebrow">Coaster workshop</p><h2>Build a coaster</h2></div></header>
+    <section class="builder__section" aria-label="Coaster model">
+      <label class="builder__label">Coaster model
+        <select data-model>
+          <option value="model:hybrid">${coasterModels["model:hybrid"].name} · ${coasterModels["model:hybrid"].manufacturer}</option>
+          <option value="model:velocity_viper">${coasterModels["model:velocity_viper"].name} · ${coasterModels["model:velocity_viper"].manufacturer}</option>
+        </select>
+      </label>
+      <p class="builder__hint" data-model-description>${coasterModels["model:hybrid"].description}</p>
+    </section>
     <div class="builder__section builder__station">
       <div class="builder__station-height">
         <span class="builder__label" id="station-height-label">Station height</span>
@@ -74,6 +104,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <p class="builder__test-hint" data-test-hint></p>
         <section aria-label="Coaster testing" data-testing></section>
       </section>
+      <section class="builder__section" aria-label="Launch positions" data-launches hidden>
+        <h3>Launch positions</h3>
+        <ol data-launch-list></ol>
+      </section>
       <section class="builder__section" aria-label="Placed track">
         <div class="builder__track-head"><h3>Track pieces</h3><span class="builder__track-count" data-track-count></span></div>
         <ol class="builder__track" data-track></ol>
@@ -108,6 +142,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const message = element("[data-message]");
   const track = element<HTMLOListElement>("[data-track]");
   const stamp = element("[data-stamp]");
+  const modelSelect = element<HTMLSelectElement>("[data-model]");
+  const modelDescription = element("[data-model-description]");
+  const launches = element("[data-launches]");
+  const launchList = element<HTMLOListElement>("[data-launch-list]");
   let shapes = new Map<string, PieceShape>();
   let state: ConstructionState | undefined;
   let paletteKey = "";
@@ -120,6 +158,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     return shape;
   };
   const select = (piece: string | undefined): void => { if (piece && piece !== state?.selected) dispatch({ type: "construction-select", piece }); };
+  container.dataset.model = modelSelect.value;
+  modelSelect.addEventListener("change", () => {
+    const model = coasterModels[modelSelect.value as keyof typeof coasterModels];
+    if (!model) throw new Error(`Unknown coaster model ${modelSelect.value}`);
+    container.dataset.model = modelSelect.value;
+    modelDescription.textContent = model.description;
+    dispatch({ type: "construction-select", piece: modelSelect.value });
+  });
   let dispatchedHeight = stationHeight.initial;
   const setHeight = (value: number): void => {
     const snapped = Math.min(stationHeight.maximum, Math.max(stationHeight.minimum, Math.round(value / stationHeight.step) * stationHeight.step));
@@ -211,6 +257,23 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }
   }
 
+  function renderLaunchPositions(current: ConstructionState): void {
+    let distance = 0;
+    const positions: { piece: number; distance: number }[] = [];
+    current.track.forEach(({ label }, index) => {
+      const shape = shapeOf(label);
+      const length = sampledLength(shape);
+      if (shape.kind === "Launch") positions.push({ piece: index + 1, distance: distance + length / 2 });
+      distance += length;
+    });
+    launches.hidden = positions.length === 0;
+    launchList.replaceChildren(...positions.map(({ piece, distance: launchDistance }) => {
+      const item = document.createElement("li");
+      item.textContent = `Piece ${piece} · ${launchDistance.toFixed(1)} m from station`;
+      return item;
+    }));
+  }
+
   function renderTrack(current: ConstructionState, grew: boolean): void {
     track.replaceChildren(...current.track.map(({ id, label }, index) => {
       const shape = shapeOf(label);
@@ -228,10 +291,18 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       return item;
     }));
     element("[data-track-count]").textContent = current.track.length === 1 ? "1 piece" : `${current.track.length} pieces`;
+    renderLaunchPositions(current);
   }
 
   return {
-    setShapes(value) { shapes = new Map(value.map((shape) => [shape.id, shape])); },
+    setShapes(value) {
+      const nextShapes = new Map<string, PieceShape>();
+      for (const shape of value) {
+        if (nextShapes.has(shape.id)) throw new Error(`Duplicate piece shape ID ${shape.id}`);
+        nextShapes.set(shape.id, shape);
+      }
+      shapes = nextShapes;
+    },
     choose(action) {
       if (!state?.active) return;
       select(action.type === "piece-group" ? pieceInGroup(state.pieces, action.group) : steppedPiece(state.pieces, shapes, state.selected, action.attribute, action.step));
@@ -241,6 +312,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       const previous = state;
       state = next;
       editor.hidden = !next.active;
+      modelSelect.disabled = next.active;
       container.dataset.selected = next.selected ?? "";
       const event = constructionEvent(previous, next);
       if (event === "closed") closed = true;

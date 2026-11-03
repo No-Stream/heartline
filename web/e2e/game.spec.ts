@@ -32,7 +32,7 @@ test("built game draws agents and advances simulation ticks", async ({ page }) =
 
 test("walking guests change their rendered positions as simulation ticks advance", async ({ page }) => {
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.gameTest?.guests().length ?? 0)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => window.gameTest?.guests().length ?? 0), { timeout: 30_000 }).toBeGreaterThan(0);
   const initial = await page.evaluate(() => window.gameTest.guests().map(({ id, x, y }) => ({ id, x, y })));
   await expect.poll(() => page.evaluate((before) => {
     const positions = new Map(before.map((guest) => [guest.id, guest]));

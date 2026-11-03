@@ -24,6 +24,8 @@ export const builderShortcuts = {
   close: { keys: ["c"], repeat: false, action: { type: "construction-close" } },
   test: { keys: ["t"], repeat: false, action: { type: "construction-test" } },
   cancel: { keys: ["escape"], repeat: false, action: { type: "builder-cancel" } },
+  pathBuild: { keys: ["p"], repeat: false, action: { type: "path-build-mode" } },
+  pathRemove: { keys: ["r"], repeat: false, action: { type: "path-remove-mode" } },
   ...Object.fromEntries(pieceGroups.map((group, index) => [`group-${group}`, { keys: [String(index + 1)], repeat: false, action: { type: "piece-group", group } }])),
 } as const satisfies Record<string, Shortcut>;
 
@@ -79,8 +81,8 @@ export function bindKeyboard(target: HTMLElement, dispatch: (action: InputAction
 }
 
 /** Bind a canvas to actions. Pointer coordinates are scaled to its backing-store pixels. */
-export function bindInput(canvas: HTMLCanvasElement, dispatch: (action: InputAction) => void): () => void {
-  let pointer: { id: number; start: ScreenPoint; last: ScreenPoint; dragging: boolean } | undefined;
+export function bindInput(canvas: HTMLCanvasElement, dispatch: (action: InputAction) => void, pathDragging: () => boolean = () => false): () => void {
+  let pointer: { id: number; start: ScreenPoint; last: ScreenPoint; dragging: boolean; path: boolean } | undefined;
   const point = (event: MouseEvent): ScreenPoint => {
     const bounds = canvas.getBoundingClientRect();
     return { x: (event.clientX - bounds.left) * canvas.width / bounds.width, y: (event.clientY - bounds.top) * canvas.height / bounds.height };
@@ -88,7 +90,7 @@ export function bindInput(canvas: HTMLCanvasElement, dispatch: (action: InputAct
   const down = (event: PointerEvent): void => {
     if (pointer || event.button !== 0) return;
     const position = point(event);
-    pointer = { id: event.pointerId, start: position, last: position, dragging: false };
+    pointer = { id: event.pointerId, start: position, last: position, dragging: false, path: pathDragging() };
     canvas.setPointerCapture(event.pointerId);
   };
   const move = (event: PointerEvent): void => {
@@ -96,18 +98,24 @@ export function bindInput(canvas: HTMLCanvasElement, dispatch: (action: InputAct
     if (pointer.id !== event.pointerId) return;
     const position = point(event);
     if (!pointer.dragging && Math.hypot(position.x - pointer.start.x, position.y - pointer.start.y) < 4) return;
+    if (!pointer.dragging && pointer.path) dispatch({ type: "drag-start", position: pointer.start });
     pointer.dragging = true;
-    dispatch({ type: "pan", dx: position.x - pointer.last.x, dy: position.y - pointer.last.y });
+    if (pointer.path) dispatch({ type: "drag-move", position });
+    else dispatch({ type: "pan", dx: position.x - pointer.last.x, dy: position.y - pointer.last.y });
     pointer.last = position;
   };
   const up = (event: PointerEvent): void => {
     if (!pointer || pointer.id !== event.pointerId) return;
     if (!pointer.dragging) dispatch({ type: "select", position: point(event) });
+    else if (pointer.path) dispatch({ type: "drag-end", position: point(event) });
     canvas.releasePointerCapture(event.pointerId);
     pointer = undefined;
   };
   const cancel = (event: PointerEvent): void => {
-    if (pointer?.id === event.pointerId) pointer = undefined;
+    if (pointer?.id === event.pointerId) {
+      if (pointer.dragging && pointer.path) dispatch({ type: "drag-cancel" });
+      pointer = undefined;
+    }
   };
   const wheel = (event: WheelEvent): void => {
     event.preventDefault();

@@ -10,6 +10,11 @@ const cross = (a: Vec, b: Vec): Vec => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2]
 const normalize = (a: Vec): Vec => { const length = Math.hypot(...a); if (length < 1e-8) throw new Error("Degenerate coaster geometry"); return scale(a, 1 / length); };
 const vector = (data: Float32Array, offset: number): Vec => [data[offset], data[offset+1], data[offset+2]];
 const color = (hex: string): Triangle["color"] => [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255, 1];
+const shade = (base: Triangle["color"], amount: number): Triangle["color"] => [base[0] * amount, base[1] * amount, base[2] * amount, base[3]];
+function geometryId(encoded: number): { id: number; steel: boolean } {
+  if (!Number.isInteger(encoded)) throw new Error("Invalid track geometry ID");
+  return encoded < 0 ? { id: -encoded - 1, steel: true } : { id: encoded, steel: false };
+}
 export function trackStyle(atlas: Atlas): TrackStyle {
   const { themeStyle } = atlas;
   if (!themeStyle || !themeStyle.steel || !themeStyle.wood || !themeStyle.train || !themeStyle.ink) throw new Error("Atlas is missing coaster theme style");
@@ -61,22 +66,56 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
     const ring = (center: Vec, side: Vec, up: Vec): Vec[] => [[-1,-1], [1,-1], [1,1], [-1,1]].map(([s,u]) => add(add(center, scale(side, s*width)), scale(up, u*width)));
     box([...ring(start, sideStart, upStart), ...ring(end, sideEnd, upEnd)], kind, id, color, openEnds);
   };
+  const tube = (start: Vec, end: Vec, sideStart: Vec, sideEnd: Vec, upStart: Vec, upEnd: Vec, radius: number, kind: TrackQuad["kind"], id: string, baseColor: TrackQuad["color"]) => {
+    const sides = 8;
+    const ring = (center: Vec, side: Vec, up: Vec): Vec[] => Array.from({ length: sides }, (_, index) => {
+      const angle = index * Math.PI * 2 / sides;
+      return add(add(center, scale(side, Math.cos(angle) * radius)), scale(up, Math.sin(angle) * radius));
+    });
+    const startRing = ring(start, sideStart, upStart);
+    const endRing = ring(end, sideEnd, upEnd);
+    for (let index = 0; index < sides; index++) {
+      const next = (index + 1) % sides;
+      const face = [startRing[index], startRing[next], endRing[next], endRing[index]];
+      const angle = (index + 0.5) * Math.PI * 2 / sides;
+      const brightness = 0.76 + 0.24 * (Math.cos(angle) + 1) / 2;
+      quads.push({
+        vertices: face.map(project) as TrackQuad["vertices"],
+        color: shade(baseColor, brightness),
+        kind,
+        id,
+        tileX: Math.floor(start[0]),
+        tileY: Math.floor(start[1]),
+      });
+    }
+  };
   const steel = color(style.steel); const wood = color(style.wood);
   for (let i = 0; i < rails.length; i += 19) {
-    beam(vector(rails, i+1), vector(rails, i+10), normalize(vector(rails, i+4)), normalize(vector(rails, i+13)), normalize(vector(rails, i+7)), normalize(vector(rails, i+16)), 0.035, "track", `track-${rails[i]}`, steel, true);
+    const id = geometryId(rails[i]);
+    const start = vector(rails, i+1), end = vector(rails, i+10);
+    const sideStart = normalize(vector(rails, i+4)), sideEnd = normalize(vector(rails, i+13));
+    const upStart = normalize(vector(rails, i+7)), upEnd = normalize(vector(rails, i+16));
+    if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, steel);
+    else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, steel, true);
   }
   for (let i = 0; i < ties.length; i += 13) {
+    const id = geometryId(ties[i]);
     const up = normalize(vector(ties, i+7)), tangent = normalize(vector(ties, i+10));
-    beam(vector(ties, i+1), vector(ties, i+4), up, up, tangent, tangent, 0.025, "track", `track-${ties[i]}`, wood);
+    const start = vector(ties, i+1), end = vector(ties, i+4);
+    if (id.steel) tube(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, steel);
+    else beam(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, wood);
   }
   for (let i = 0; i < supports.length; i += 7) {
+    const id = geometryId(supports[i]);
     const start = vector(supports, i+1), end = vector(supports, i+4);
     const direction = normalize(add(end, scale(start, -1)));
     const side = normalize(cross(direction, Math.abs(direction[2]) > 0.9 ? [1,0,0] : [0,0,1]));
     const up = normalize(cross(direction, side));
-    beam(start, end, side, side, up, up, 0.045, "support", `support-${supports[i]}`, wood);
+    const structureColor = id.steel ? steel : wood;
+    if (id.steel) tube(start, end, side, side, up, up, 0.045, "support", `support-${id.id}`, steel);
+    else beam(start, end, side, side, up, up, 0.045, "support", `support-${id.id}`, wood);
     if (start[0] === end[0] && start[1] === end[1] && end[2] > start[2]) {
-      beam(start, add(start, [0, 0, 0.05]), [1, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0], 0.1, "support", `footer-${supports[i]}`, wood);
+      beam(start, add(start, [0, 0, 0.05]), [1, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0], 0.1, "support", `footer-${id.id}`, structureColor);
     }
   }
   for (let i = 0; i < poses.length; i += 11) {

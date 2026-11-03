@@ -257,3 +257,53 @@ fn unrelated_world_edits_preserve_movement_progress() {
         assert!(delta < 0.08, "unrelated edit moved guest {delta}");
     }
 }
+
+#[test]
+fn wandering_guests_start_and_remain_on_normal_paths() {
+    use crate::world::PathKind;
+
+    let mut world = World::new(
+        6,
+        1,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    for x in 0..3 {
+        world.place_path(Path {
+            position: Position { x, y: 0, height: 0 },
+            slope: None,
+        });
+    }
+    world
+        .build_path_route(
+            Position {
+                x: 3,
+                y: 0,
+                height: 0,
+            },
+            Position {
+                x: 5,
+                y: 0,
+                height: 0,
+            },
+            PathKind::Queue,
+            0,
+        )
+        .unwrap();
+    let mut simulation = WalkingSimulation::new(42, 60, &world);
+    for _ in 0..600 {
+        assert!(
+            simulation
+                .guests()
+                .iter()
+                .all(|guest| guest.path.is_some_and(|position| world
+                    .path_metadata(position)
+                    .unwrap()
+                    .kind
+                    == PathKind::Normal))
+        );
+        simulation.tick(&world);
+    }
+}

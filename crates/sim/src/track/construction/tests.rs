@@ -57,6 +57,30 @@ fn choices_report_model_and_connector_rejections() {
 }
 
 #[test]
+fn launch_model_builds_midcourse_launch_and_rejects_chain_lifts() {
+    let mut construction = Construction::new(start(), crate::track::multi_launch_model());
+    construction
+        .append(PieceId::Straight, &world(), &[])
+        .unwrap();
+    construction
+        .append(PieceId::LaunchLong, &world(), &[])
+        .unwrap();
+    assert_eq!(
+        construction.pieces()[1].kind,
+        crate::track::PieceKind::Launch
+    );
+    assert_eq!(
+        construction.append(PieceId::LiftFlat, &world(), &[]),
+        Err(ConstructionError::ModelForbidden)
+    );
+    let mut hybrid = Construction::new(start(), hybrid_model());
+    assert_eq!(
+        hybrid.append(PieceId::Launch, &world(), &[]),
+        Err(ConstructionError::ModelForbidden)
+    );
+}
+
+#[test]
 fn append_and_delete_keep_connector_state_and_are_atomic_on_failure() {
     let mut construction = Construction::new(start(), hybrid_model());
     assert_eq!(

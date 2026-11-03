@@ -8,6 +8,7 @@ export interface GameTest {
   ready: boolean;
   guests(): readonly WorldSprite[];
   facilities(): readonly Facility[];
+  paths(): { x: number; y: number; z: number; slope: number; kind: number; style: number }[];
   requestGuestDetail(id: string): void;
   guestDetail(): GuestDetail | null;
   testingReport(): TestingReport | null;
