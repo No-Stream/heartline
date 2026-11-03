@@ -1,10 +1,10 @@
 ---
 id: TASK-24
 title: Add coaster proximity events
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 11:58'
+updated_date: '2026-11-03 13:06'
 labels:
   - coaster
   - guests
