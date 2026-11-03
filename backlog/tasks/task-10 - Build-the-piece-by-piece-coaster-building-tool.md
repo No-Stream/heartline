@@ -1,9 +1,10 @@
 ---
 id: TASK-10
 title: Build the piece-by-piece coaster building tool
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 04:08'
 labels:
   - coaster
   - interface

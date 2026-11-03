@@ -1,9 +1,10 @@
 ---
 id: TASK-33
 title: Tidy guest modules and export theme styles properly
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 04:07'
+updated_date: '2026-11-03 04:08'
 labels:
   - simulation
   - art
