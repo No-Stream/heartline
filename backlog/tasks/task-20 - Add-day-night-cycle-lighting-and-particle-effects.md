@@ -1,9 +1,10 @@
 ---
 id: TASK-20
 title: 'Add day-night cycle, lighting and particle effects'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 11:30'
 labels:
   - rendering
   - art
