@@ -384,3 +384,93 @@ fn friction_stops_train_on_slope_and_recovers_it() {
     assert_eq!(train.speed(), 0.0);
     assert_eq!(train.notes(), &[Note::RecoveredAfterRollback]);
 }
+
+#[test]
+fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
+    let circuit = demo_circuit();
+    assert!(
+        circuit
+            .pieces()
+            .iter()
+            .any(|piece| piece.id == PieceId::Lift)
+    );
+    assert!(
+        circuit
+            .pieces()
+            .iter()
+            .any(|piece| piece.id == PieceId::Loop)
+    );
+    assert_eq!(circuit.pieces()[1].kind, PieceKind::Lift);
+    assert_eq!(circuit.pieces()[7].kind, PieceKind::Lift);
+    assert_eq!(circuit.pieces()[8].kind, PieceKind::Lift);
+    assert_eq!(
+        circuit.pieces().last().unwrap().exit,
+        circuit.pieces()[0].entry
+    );
+    let mut train = Train::new(
+        &circuit,
+        &hybrid_model().train,
+        PhysicsConfig::default(),
+        0.0,
+        3.0,
+    );
+    train.step(&circuit);
+    assert!(!train.readings().is_empty());
+    assert!(!train.take_readings().is_empty());
+    assert!(train.readings().is_empty());
+}
+
+#[test]
+fn demo_circuit_crosses_the_demo_path() {
+    let circuit = demo_circuit();
+    let crossing = (0..=2000)
+        .map(|index| {
+            circuit
+                .sample(circuit.length() * f64::from(index) / 2000.0)
+                .position
+        })
+        .find(|position| {
+            (1024.0..1028.0).contains(&position.y) && (872.0..1120.0).contains(&position.x)
+        });
+    assert!(
+        crossing.is_some(),
+        "demo track must cross the path at y=256 tiles"
+    );
+    let crossing = crossing.unwrap();
+    let world = crate::demo_world::demo_world();
+    let path = world
+        .paths()
+        .find(|path| {
+            path.position.x == (crossing.x / 4.0).floor() as u16
+                && path.position.y == (crossing.y / 4.0).floor() as u16
+        })
+        .expect("crossing must be above a path");
+    assert!(crossing.z >= f64::from(path.position.height) + 3.0);
+}
+
+#[test]
+fn demo_has_track_crossing_with_vertical_clearance() {
+    let circuit = demo_circuit();
+    let points: Vec<_> = (0..2000)
+        .map(|index| {
+            circuit
+                .sample(circuit.length() * f64::from(index) / 2000.0)
+                .position
+        })
+        .collect();
+    let crossing = points.iter().enumerate().find_map(|(index, point)| {
+        points
+            .iter()
+            .enumerate()
+            .skip(index + 20)
+            .find(|(_, other)| {
+                (point.x - other.x).hypot(point.y - other.y) < 1.0
+                    && (point.z - other.z).abs() >= 4.0
+            })
+            .map(|(other_index, other)| (index, other_index, *point, *other))
+    });
+    assert!(
+        crossing.is_some(),
+        "demo has no track crossing with vertical clearance"
+    );
+}

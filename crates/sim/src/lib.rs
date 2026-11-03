@@ -1,7 +1,13 @@
+pub mod demo_world;
+pub mod guest_behavior;
+pub mod park_guests;
+pub mod pathfinding;
 pub mod physics;
+pub mod walking;
 
 pub mod track;
 
+pub mod visits;
 pub mod world;
 
 #[cfg(feature = "threads")]
@@ -323,3 +329,6 @@ mod threaded_tests {
         assert_ne!(one.state_hash(), different_seed.state_hash());
     }
 }
+
+#[cfg(test)]
+mod walking_tests;

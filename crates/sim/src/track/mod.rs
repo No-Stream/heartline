@@ -1,8 +1,11 @@
 //! Track geometry uses metres; grid coordinates are half tiles (two metres).
 //! X and Y are horizontal, Z is up, and headings turn counterclockwise from X.
 //! Positive bank rotates the up vector towards the left of travel.
+
 //! Seventh-degree Hermite curves constrain endpoint curvature and its rate as well as position
 //! and tangent, preserving exact grid endpoints and smooth forces at compatible connectors.
+pub mod supports;
+
 use std::f64::consts::{FRAC_PI_4, TAU};
 use std::ops::{Add, Div, Mul, Sub};
 

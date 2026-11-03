@@ -20,6 +20,8 @@
 //! Each eight-entry memory ring occupies 136 bytes. The 2 MB budget for 10,000
 //! guests allows 200 bytes per guest, leaving 64 bytes per ring for growth or padding.
 
+pub mod walking;
+
 use std::mem::size_of;
 
 pub const RIDE_TYPE_COUNT: u8 = 6;
@@ -295,6 +297,12 @@ impl GuestStore {
     pub fn mark_left(&mut self, id: GuestId) {
         let index = self.index(id);
         self.active[index] = false;
+    }
+
+    pub fn mark_returned(&mut self, id: GuestId) {
+        let index = self.index(id);
+        assert!(!self.active[index], "guest is already active");
+        self.active[index] = true;
     }
 
     pub fn parents(&self, child: GuestId) -> Vec<GuestId> {
@@ -686,6 +694,8 @@ mod tests {
         let mut guests: GuestStore = generate_guests(3, 4);
         guests.mark_left(super::GuestId(1));
         assert!(!guests.is_active(super::GuestId(1)));
+        guests.mark_returned(super::GuestId(1));
+        assert!(guests.is_active(super::GuestId(1)));
         assert!(matches!(
             guests.age(super::GuestId(2)),
             AgeGroup::Adult | AgeGroup::Child | AgeGroup::Senior

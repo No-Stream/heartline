@@ -43,6 +43,9 @@ impl Circuit {
     pub fn length(&self) -> f64 {
         self.length
     }
+    pub fn pieces(&self) -> &[Piece] {
+        &self.pieces
+    }
     fn locate(&self, distance: f64) -> (usize, f64) {
         let distance = distance.rem_euclid(self.length);
         let distance = if distance == self.length {
@@ -60,6 +63,58 @@ impl Circuit {
         let (index, local) = self.locate(distance);
         self.pieces[index].sample(local)
     }
+}
+
+/// A small closed circuit for the playable demonstration world.
+pub fn demo_circuit() -> Circuit {
+    use crate::track::{PieceId, TrackState, catalog};
+    use PieceId::*;
+    let catalog = catalog();
+    let mut state = TrackState {
+        x: 450,
+        y: 500,
+        z: 10,
+        ..TrackState::origin()
+    };
+    let mut pieces = Vec::new();
+    for id in [
+        Station,
+        LevelToGentleUp,
+        Lift,
+        Lift,
+        Lift,
+        Lift,
+        Lift,
+        GentleUpToLevel,
+        Straight,
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LevelToGentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Loop,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ] {
+        let mut piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .expect("demo piece in catalog")
+            .at(state)
+            .expect("demo piece joins");
+        if matches!(id, LevelToGentleUp | GentleUpToLevel) || pieces.len() == 8 {
+            piece.kind = PieceKind::Lift;
+        }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    Circuit::new(pieces).expect("demo circuit closes")
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -191,6 +246,9 @@ impl Train {
     }
     pub fn readings(&self) -> &[Vec<CarReading>] {
         &self.readings
+    }
+    pub fn take_readings(&mut self) -> Vec<Vec<CarReading>> {
+        std::mem::take(&mut self.readings)
     }
     pub fn notes(&self) -> &[Note] {
         &self.notes

@@ -3,6 +3,9 @@
 //! extra storage; sorted half-open spans keep ordinary surface-only maps compact.
 
 use std::mem::size_of;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_WORLD_ID: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Surface {
@@ -86,6 +89,8 @@ struct Column {
 pub struct World {
     width: u16,
     height: u16,
+    revision: u64,
+    instance_id: usize,
     surfaces: Vec<Surface>,
     columns: Vec<Option<Box<Column>>>,
 }
@@ -97,9 +102,19 @@ impl World {
         Self {
             width,
             height,
+            revision: 0,
+            instance_id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
             surfaces: vec![surface; count],
             columns: (0..count).map(|_| None).collect(),
         }
+    }
+
+    pub(crate) fn instance_id(&self) -> usize {
+        self.instance_id
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn dimensions(&self) -> (u16, u16) {
@@ -138,6 +153,7 @@ impl World {
 
     /// Replaces the surface, clipping underground excavations and removing unsupported paths.
     pub fn set_surface(&mut self, x: u16, y: u16, surface: Surface) -> Vec<Position> {
+        self.revision = self.revision.wrapping_add(1);
         let index = self.index(x, y);
         self.surfaces[index] = surface;
         if let Some(column) = &mut self.columns[index] {
@@ -152,6 +168,7 @@ impl World {
 
     /// Removes solid ground within [bottom, top), strictly below all surface corners.
     pub fn carve(&mut self, x: u16, y: u16, bottom: i16, top: i16) -> Vec<Position> {
+        self.revision = self.revision.wrapping_add(1);
         let index = self.index(x, y);
         assert!(bottom < top, "empty or reversed interval");
         assert!(
@@ -177,6 +194,7 @@ impl World {
 
     /// Restores solid ground within [bottom, top), removing obstructed paths.
     pub fn fill(&mut self, x: u16, y: u16, bottom: i16, top: i16) -> Vec<Position> {
+        self.revision = self.revision.wrapping_add(1);
         let index = self.index(x, y);
         assert!(bottom < top, "empty or reversed interval");
         assert!(
@@ -259,6 +277,7 @@ impl World {
     }
 
     pub fn place_path(&mut self, path: Path) {
+        self.revision = self.revision.wrapping_add(1);
         let index = self.index(path.position.x, path.position.y);
         assert!(
             self.path_supported(index, path),
@@ -322,6 +341,7 @@ impl World {
     }
 
     pub fn remove_path(&mut self, position: Position) -> Vec<Position> {
+        self.revision = self.revision.wrapping_add(1);
         let index = self.index(position.x, position.y);
         let Some(column) = &mut self.columns[index] else {
             return Vec::new();
