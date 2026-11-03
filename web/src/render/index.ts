@@ -24,6 +24,7 @@ export async function loadAtlas(url: string): Promise<{ atlas: Atlas; images: Re
 export interface WorldRenderer {
   /** Without an atmosphere, as in the isolated rendering fixtures, the world is drawn at noon over a plain background with no effects. */
   render(world: WorldView, camera: Camera, waterFrame?: number, geometryPasses?: readonly GeometryPass[], atmospherePass?: AtmospherePass): void;
+  isContextAvailable(): boolean;
   pick(x: number, y: number): Pick | null;
   pickSurface(x: number, y: number): Pick | null;
   waitForGpu(): void;
@@ -94,7 +95,7 @@ function encode(quads: readonly QuadSource[]): Batch[] {
 
 const fromGeometry = (quad: GeometryQuad): QuadSource => ({ vertices: quad.vertices, page: quad.page ?? SHAPE_PAGES.flat, color: quad.color, light: quad.light ?? 0, pickId: 0 });
 
-export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, images: Record<string, HTMLImageElement[]>, preserveDrawingBuffer = false): WorldRenderer {
+function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, images: Record<string, HTMLImageElement[]>, preserveDrawingBuffer: boolean): WorldRenderer {
   const gl = canvas.getContext("webgl2", { alpha: false, preserveDrawingBuffer });
   if (!gl) throw new Error("WebGL2 is unavailable");
   for (const [scale, pages] of Object.entries(atlas.pages)) if (images[scale]?.length !== pages.length) throw new Error("Atlas page count does not match images");
@@ -296,6 +297,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
   }
   return {
     render(world, camera, waterFrame = 0, geometryPasses = [], atmospherePass) {
+      if (gl!.isContextLost()) return;
       if (canvas.width < 1 || canvas.height < 1) throw new Error("Canvas dimensions must be positive");
       // The camera is in backing-store pixels, so its zoom already includes the device pixel ratio.
       const desiredScale = camera.zoom;
@@ -330,6 +332,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
       }
       draw(); drawPicking(); gl!.bindFramebuffer(gl!.FRAMEBUFFER, null);
     },
+    isContextAvailable() { return !gl!.isContextLost(); },
     pick(x, y) {
       if (x < 0 || y < 0 || x >= pickWidth || y >= pickHeight) return null;
       const pixel = new Uint8Array(4); gl!.bindFramebuffer(gl!.FRAMEBUFFER, framebuffer);
@@ -339,5 +342,28 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
     },
     pickSurface(x, y) { return pickScene(surfaceScene, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125); },
     waitForGpu() { gl!.readPixels(0, 0, 1, 1, gl!.RGBA, gl!.UNSIGNED_BYTE, new Uint8Array(4)); },
+  };
+}
+
+export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, images: Record<string, HTMLImageElement[]>, preserveDrawingBuffer = false): WorldRenderer {
+  let contextLost = false;
+  let renderer = createWorldRendererInstance(canvas, atlas, images, preserveDrawingBuffer);
+  canvas.addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    contextLost = true;
+  });
+  canvas.addEventListener("webglcontextrestored", () => {
+    renderer = createWorldRendererInstance(canvas, atlas, images, preserveDrawingBuffer);
+    contextLost = false;
+  });
+  return {
+    render(world, camera, waterFrame, geometryPasses, atmospherePass) {
+      if (contextLost) return;
+      renderer.render(world, camera, waterFrame, geometryPasses, atmospherePass);
+    },
+    isContextAvailable() { return !contextLost && renderer.isContextAvailable(); },
+    pick(x, y) { return contextLost ? null : renderer.pick(x, y); },
+    pickSurface(x, y) { return renderer.pickSurface(x, y); },
+    waitForGpu() { if (!contextLost) renderer.waitForGpu(); },
   };
 }
