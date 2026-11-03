@@ -1,0 +1,73 @@
+import { describe, expect, it } from "vitest";
+import { RenderClock } from "./render-clock";
+
+type Snapshot = { tickCount: number; position: number };
+
+function position(clock: RenderClock<Snapshot>, now: number): number {
+  const frame = clock.frame(now);
+  if (!frame) throw new Error("Expected a snapshot");
+  return frame.previous.position + (frame.current.position - frame.previous.position) * frame.interpolation;
+}
+
+describe("simulation render clock", () => {
+  it.each([16, 25, 37])("tracks a steady train with irregular arrivals at %i ms frame intervals", (frameInterval) => {
+    const clock = new RenderClock<Snapshot>(30);
+    const arrivals = Array.from({ length: 400 }, (_, tickCount) => ({
+      tickCount,
+      time: tickCount * 1000 / 30 + [0, 9, -4, 11, -7, 3, 6, -5][tickCount % 8],
+    })).sort((left, right) => left.time - right.time);
+    let arrivalIndex = 0;
+    let lastPosition = 0;
+    let lastTime = 0;
+    for (let now = 0; now <= 10000; now += frameInterval) {
+      while (arrivalIndex < arrivals.length && arrivals[arrivalIndex].time <= now) {
+        const { tickCount } = arrivals[arrivalIndex++];
+        clock.push({ tickCount, position: tickCount });
+      }
+      const nextPosition = position(clock, now);
+      if (now > 1000) {
+        const expectedProgress = (now - lastTime) * 30 / 1000;
+        expect(nextPosition - lastPosition).toBeGreaterThanOrEqual(expectedProgress * 0.9);
+        expect(nextPosition - lastPosition).toBeLessThanOrEqual(expectedProgress * 1.1);
+      }
+      lastPosition = nextPosition;
+      lastTime = now;
+    }
+  });
+
+  it("recovers after rendering pauses without retaining an unbounded history", () => {
+    const clock = new RenderClock<Snapshot>(30);
+    clock.push({ tickCount: 0, position: 0 });
+    expect(position(clock, 0)).toBe(0);
+    for (let tickCount = 1; tickCount <= 300; tickCount++) {
+      clock.push({ tickCount, position: tickCount });
+    }
+    expect(clock.frame(16)!.tick).toBeGreaterThan(0);
+    const frame = clock.frame(10000)!;
+    expect(frame.tick).toBeGreaterThan(290);
+    expect(frame.tick).toBeLessThanOrEqual(300);
+    expect(frame.previous.tickCount).toBeLessThanOrEqual(frame.tick);
+    expect(frame.current.tickCount).toBeGreaterThanOrEqual(frame.tick);
+  });
+
+  it("ignores duplicate and older ticks, brackets the clock, and never moves backwards", () => {
+    const clock = new RenderClock<Snapshot>(30);
+    expect(clock.frame(0)).toBeUndefined();
+    clock.push({ tickCount: 10, position: 10 });
+    expect(position(clock, 0)).toBe(10);
+    clock.push({ tickCount: 11, position: 11 });
+    clock.push({ tickCount: 11, position: 999 });
+    clock.push({ tickCount: 9, position: 999 });
+    clock.push({ tickCount: 12, position: 12 });
+    const frame = clock.frame(20)!;
+    expect(frame.previous.tickCount).toBeLessThanOrEqual(frame.tick);
+    expect(frame.current.tickCount).toBeGreaterThanOrEqual(frame.tick);
+    expect(frame.interpolation).toBeGreaterThanOrEqual(0);
+    expect(frame.interpolation).toBeLessThanOrEqual(1);
+    const beforeStall = position(clock, 20);
+    expect(position(clock, 500)).toBeGreaterThanOrEqual(beforeStall);
+    const afterStall = position(clock, 500);
+    clock.push({ tickCount: 13, position: 13 });
+    expect(position(clock, 516)).toBeGreaterThanOrEqual(afterStall);
+  });
+});

@@ -15,6 +15,7 @@ import { buildPeople, riderAppearances, type GuestSnapshot } from "./render/peop
 import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle } from "./render/track/geometry";
 import { createStaticTrackCache } from "./render/track/cache";
 import type { WorldSnapshot } from "./world-snapshot";
+import { RenderClock } from "./render-clock";
 import { createConstructionPanel } from "./construction";
 import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
 import { followTrackEnd, railPoints } from "./construction-camera";
@@ -63,7 +64,7 @@ type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32A
 let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
-let receivedAt = performance.now();
+const renderClock = new RenderClock<CoasterSnapshot>(30);
 const noGeometry = new Float32Array();
 const frozen = new URLSearchParams(location.search).has("test");
 const manualBlockAnalysis = frozen && new URLSearchParams(location.search).has("manualBlockAnalysis");
@@ -571,9 +572,9 @@ worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | Co
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
   } else if (message.type === "snapshot") {
+    if (!frozen && !renderClock.push(message)) return;
     previous = current;
     if (!frozen || !current || current.guestIds.length === 0 || advanceTicksComplete) current = message;
-    receivedAt = performance.now();
     if (!frozen) observeTick(message);
     else if (advanceTicksComplete) observeCrests(message);
     output.value = String(message.tickCount);
@@ -599,7 +600,10 @@ function observeCrests(snapshot: CoasterSnapshot): void {
 function frame(now: number): void {
   if (!world) return;
   if (frozen && gameTest.ready) return;
-  const interpolation = frozen ? 1 : Math.max(0, Math.min(1, (now - receivedAt) / (1000 / 30)));
+  const renderFrame = frozen ? undefined : renderClock.frame(now);
+  const renderPrevious = frozen ? previous : renderFrame?.previous;
+  const renderCurrent = frozen ? current : renderFrame?.current;
+  const interpolation = renderFrame?.interpolation ?? 1;
   if (followPoints) {
     const followed = followTrackEnd(camera, cssViewport(), followPoints, frozen ? 1 : 1 - Math.exp(-(now - lastFrameAt) / 140));
     camera = followed.camera;
@@ -607,20 +611,20 @@ function frame(now: number): void {
   }
   lastFrameAt = now;
   constructionEffects.active(now);
-  const occupants = current ? riderAppearances(current, current.constructionRiders, atlas) : new Map();
+  const occupants = renderCurrent ? riderAppearances(renderCurrent, renderCurrent.constructionRiders, atlas) : new Map();
   const ridingIds = new Set([...occupants.values()].map((occupant) => occupant.id));
-  const people = current ? buildPeople(previous, current, interpolation, camera.rotation, atlas).filter((person) => !ridingIds.has(person.id)) : [];
+  const people = renderCurrent ? buildPeople(renderPrevious, renderCurrent, interpolation, camera.rotation, atlas).filter((person) => !ridingIds.has(person.id)) : [];
   renderedGuests = people;
   const selectedGuest = people.find((guest) => guest.id === selectedGuestId);
   if (selectedGuest) guestPanel.setAnchor(projectWorld(screenCamera(), viewport, { x: selectedGuest.x, y: selectedGuest.y, z: selectedGuest.height / 4 }));
-  const trainPoses = current ? interpolateTrainPoses(previous?.trainPoses ?? current.trainPoses, current.trainPoses, interpolation) : new Float32Array();
-  const constructionTrainPoses = current ? interpolateTrainPoses(previous?.constructionTrainPoses ?? current.constructionTrainPoses, current.constructionTrainPoses, interpolation) : noGeometry;
+  const trainPoses = renderCurrent ? interpolateTrainPoses(renderPrevious?.trainPoses ?? renderCurrent.trainPoses, renderCurrent.trainPoses, interpolation) : new Float32Array();
+  const constructionTrainPoses = renderCurrent ? interpolateTrainPoses(renderPrevious?.constructionTrainPoses ?? renderCurrent.constructionTrainPoses, renderCurrent.constructionTrainPoses, interpolation) : noGeometry;
   const sprites = [...facilitySprites(facilities, camera.rotation), ...scenerySprites(scenery, camera.rotation), ...people];
   const view = { ...world, sprites, trainPoses, undergroundLevel };
   const currentWorld = world;
   dayClock.update(dayPhase);
   // Test mode holds the simulation still, so effects there are timed from the time of day alone.
-  const effectTick = frozen ? Math.round(dayPhase * DAY_LENGTH_TICKS) : (current?.tickCount ?? 0) + interpolation;
+  const effectTick = frozen ? Math.round(dayPhase * DAY_LENGTH_TICKS) : renderFrame?.tick ?? 0;
   const backdrop = BACKDROPS[themeToggle.theme()];
   const { lighting, paper } = printOnBackdrop(lightingAt(dayPhase), backdrop);
   const sun = sunAt(dayPhase);
