@@ -13,8 +13,8 @@ const style = { steel: "#123456", wood: "#654321", train: "#abcdef", ink: "#0000
 describe("facilities", () => {
   test("selects rotated building sprites relative to the camera", () => {
     expect(facilitySprites(facilities, 1)).toEqual([
-      { id: "facility-1", sprite: "buildings/park_gate", x: 5, y: 4.5, height: 2, view: "rot0" },
-      { id: "facility-1", sprite: "buildings/ticket_booth", x: 3.5, y: 4.5, height: 2, view: "rot0", scale: 0.5 },
+      { id: "facility-1", sprite: "buildings/park_gate", x: 5, y: 4.5, height: 2, view: "rot0", heightDepth: true },
+      { id: "facility-1", sprite: "buildings/ticket_booth", x: 3.5, y: 4.5, height: 2, view: "rot0", heightDepth: true, scale: 0.5 },
     ]);
   });
   test("uses actual cycle progress, keeping idle and unloading rides stationary", () => {
