@@ -1,10 +1,10 @@
 ---
 id: TASK-13
 title: Make thousands of guests walk multi-level paths
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 04:07'
 labels:
   - guests
   - simulation
@@ -28,8 +28,14 @@ Shared flow-field pathfinding across levels, loose avoidance and group walking, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Benchmark with 10,000 guests including avoidance runs natively and in the browser, and results are recorded
-- [ ] #2 Results are identical at any thread count
-- [ ] #3 Guests with no route, or whose path is deleted, behave sensibly and never freeze
-- [ ] #4 Groups visibly walk together, and crowds look natural
+- [x] #1 Benchmark with 10,000 guests including avoidance runs natively and in the browser, and results are recorded
+- [x] #2 Results are identical at any thread count
+- [x] #3 Guests with no route, or whose path is deleted, behave sensibly and never freeze
+- [x] #4 Groups visibly walk together, and crowds look natural
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shared lazy flow fields over the multi-level path graph, previous-tick neighbour avoidance, group cohesion. 10,000 guests: about 6.9 ms per tick in the browser worker on one thread, 2 to 3 ms natively on 4 threads, identical state at any thread count. 37 bytes per guest per snapshot.
+<!-- SECTION:FINAL_SUMMARY:END -->

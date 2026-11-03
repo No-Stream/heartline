@@ -1,9 +1,10 @@
 ---
 id: TASK-14
 title: 'Add guest needs, decisions, memories and visits'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 04:07'
 labels:
   - guests
   - simulation
@@ -24,9 +25,15 @@ Guests choose using what they have seen, experienced and heard from their group.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Guests have hunger, thirst, restroom and nausea needs that drive behavior
-- [ ] #2 A test shows choices depending on personal knowledge rather than a global ride list
-- [ ] #3 A typical visit contains a realistic number of rides and stops, and spans cycles if needed
-- [ ] #4 Arrivals follow appeal, and the slider overrides them
-- [ ] #5 Returning guests keep compact, bounded memories
+- [x] #1 Guests have hunger, thirst, restroom and nausea needs that drive behavior
+- [x] #2 A test shows choices depending on personal knowledge rather than a global ride list
+- [x] #3 A typical visit contains a realistic number of rides and stops, and spans cycles if needed
+- [x] #4 Arrivals follow appeal, and the slider overrides them
+- [x] #5 Returning guests keep compact, bounded memories
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Needs, bounded personal knowledge, utility-based group decisions with height-limit splits, memories and thoughts, continuous appeal-based arrivals with a sandbox override, returning visits. Tuned for about 12 rides and 3 stops per visit; provisional until a real park exists. Groups split by a path edit wait until paths reconnect.
+<!-- SECTION:FINAL_SUMMARY:END -->
