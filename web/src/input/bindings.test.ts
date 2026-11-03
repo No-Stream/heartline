@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { bindInput } from "./bindings";
+import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./bindings";
 import type { InputAction } from "./actions";
 
 class Surface extends EventTarget {
@@ -62,6 +62,50 @@ describe("input bindings", () => {
     expect(actions).toEqual([
       { type: "construction-append" }, { type: "construction-undo" },
       { type: "construction-close" }, { type: "construction-test" },
+    ]);
+  });
+
+  it("covers the whole build loop from the keyboard, repeating only the piece steps", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    for (const key of ["a", "d", "W", "s", "z", "x", "[", "]", "3", "Enter", "Backspace", "Delete", "c", "t", "Escape"]) surface.dispatchEvent(event("keydown", { key, repeat: false }));
+    expect(actions).toEqual([
+      { type: "piece-step", attribute: "turn", step: -1 }, { type: "piece-step", attribute: "turn", step: 1 },
+      { type: "piece-step", attribute: "slope", step: 1 }, { type: "piece-step", attribute: "slope", step: -1 },
+      { type: "piece-step", attribute: "bank", step: -1 }, { type: "piece-step", attribute: "bank", step: 1 },
+      { type: "piece-step", attribute: "piece", step: -1 }, { type: "piece-step", attribute: "piece", step: 1 },
+      { type: "piece-group", group: "slope" }, { type: "construction-append" }, { type: "construction-undo" },
+      { type: "delete-mode-toggle" }, { type: "construction-close" }, { type: "construction-test" }, { type: "builder-cancel" },
+    ]);
+    actions.length = 0;
+    surface.dispatchEvent(event("keydown", { key: "a", repeat: true }));
+    surface.dispatchEvent(event("keydown", { key: "Enter", repeat: true }));
+    surface.dispatchEvent(event("keydown", { key: "c", ctrlKey: true, repeat: false }));
+    expect(actions).toEqual([{ type: "piece-step", attribute: "turn", step: -1 }]);
+    expect([builderShortcuts.place, builderShortcuts.undo, builderShortcuts.turnLeft].map(keyHint)).toEqual(["↵", "⌫", "A"]);
+  });
+
+  it("leaves Enter on buttons and typing in fields to those controls when bound on a panel", () => {
+    const panel = new EventTarget();
+    const actions: InputAction[] = [];
+    bindKeyboard(panel as unknown as HTMLElement, (action) => actions.push(action), () => ({ x: 400, y: 250 }));
+    const from = (target: object, key: string, prevented = false) => {
+      const keydown = event("keydown", { key, repeat: false });
+      Object.defineProperty(keydown, "target", { value: target });
+      if (prevented) keydown.preventDefault();
+      panel.dispatchEvent(keydown);
+    };
+    const button = { tagName: "BUTTON", getAttribute: () => null };
+    from(button, "Enter");
+    from(button, "d");
+    from({ tagName: "INPUT", type: "number" }, "Backspace");
+    from({ tagName: "INPUT", type: "checkbox" }, "t");
+    from(button, "]", true);
+    from(button, "+");
+    expect(actions).toEqual([
+      { type: "piece-step", attribute: "turn", step: 1 }, { type: "construction-test" },
+      { type: "zoom", factor: 1.1, anchor: { x: 400, y: 250 } },
     ]);
   });
 });

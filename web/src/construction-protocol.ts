@@ -18,6 +18,28 @@ export interface ConstructionPiece {
   readonly heading: string;
   readonly slope: string;
   readonly bank: string;
+  /** Why the worker refuses this piece at the open end, or empty when it can be placed. */
+  readonly refusal: string;
+}
+
+/** A catalog piece's centreline in metres, entering at the origin along +x, with the track's up vector at each point. */
+export interface PieceShape {
+  readonly id: string;
+  readonly name: string;
+  /** Track, Lift, Brakes or Station. */
+  readonly kind: string;
+  /** Heading change in eighth turns; positive turns left. */
+  readonly turn: number;
+  readonly entrySlope: string;
+  readonly exitSlope: string;
+  readonly entryBank: string;
+  readonly exitBank: string;
+  readonly points: readonly (readonly [number, number, number, number, number, number])[];
+}
+
+export interface PieceShapesMessage {
+  readonly type: "piece-shapes";
+  readonly shapes: readonly PieceShape[];
 }
 
 /** The worker is authoritative for offered pieces, preview, and placement validity. */

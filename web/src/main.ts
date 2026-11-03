@@ -1,7 +1,7 @@
 import { buildFacilityGeometry, facilitySprites, type Facility, type FacilityKind } from "./facilities";
 import { createFacilityPanel } from "./facility-panel";
-import { applyCameraAction, projectWorld, type Camera } from "./camera";
-import { bindInput } from "./input/bindings";
+import { applyCameraAction, projectWorld, type Camera, type WorldPoint } from "./camera";
+import { bindInput, bindKeyboard } from "./input/bindings";
 import type { InputAction } from "./input/actions";
 import type { GameTest } from "./game-test";
 import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from "./render/index";
@@ -10,7 +10,9 @@ import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle } f
 import { createStaticTrackCache } from "./render/track/cache";
 import type { WorldSnapshot } from "./world-snapshot";
 import { createConstructionPanel } from "./construction";
-import type { ConstructionState } from "./construction-protocol";
+import type { ConstructionState, PieceShapesMessage } from "./construction-protocol";
+import { followTrackEnd, railPoints } from "./construction-camera";
+import { createConstructionEffects } from "./construction-effects";
 import { buildGhostQuads } from "./render/track/ghost";
 import { createGuestPanel } from "./guest-panel/guest-panel";
 import type { GuestDetail } from "./guest-panel/protocol";
@@ -76,6 +78,12 @@ function stationGhost(): Float32Array {
 const panelContainer = document.querySelector<HTMLElement>("[data-construction]");
 if (!panelContainer) throw new Error("Construction panel is missing");
 const panel = createConstructionPanel(panelContainer, dispatch);
+// The whole page, so builder keys keep working after a click in the panel or when a re-rendered control drops focus.
+bindKeyboard(document.body, dispatch, () => ({ x: gameCanvas.width / 2, y: gameCanvas.height / 2 }));
+const constructionEffects = createConstructionEffects(trackStyle(atlas));
+let followPoints: WorldPoint[] | undefined;
+let followedPreview = "";
+let lastFrameAt = performance.now();
 let testingMetric: TestingMetric | null = null;
 let testingReportJson = "";
 const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), (metric) => { testingMetric = metric; gameTest.ready = false; });
@@ -121,7 +129,7 @@ const gameTest: GameTest = {
     if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
     return new Promise<void>((resolve) => { advanceTicksComplete = resolve; worker.postMessage({ type: "test-advance", count }); });
   },
-  setCamera(value) { camera = value; gameTest.ready = false; },
+  setCamera(value) { camera = value; followPoints = undefined; gameTest.ready = false; },
   setSurface(x, y, corners) { worker.postMessage({ type: "set-surface", x, y, corners: new Int16Array(corners) }); },
   project(point) { return projectWorld(camera, viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
@@ -176,16 +184,26 @@ function dispatch(action: InputAction): void {
     }
   } else if (action.type === "construction-delete-mode") {
     deleteMode = action.enabled;
+  } else if (action.type === "delete-mode-toggle" || action.type === "builder-cancel") {
+    deleteMode = action.type === "delete-mode-toggle" && !deleteMode;
+    panel.setDeleteMode(deleteMode);
+    if (action.type === "builder-cancel" && stationPlacement) dispatch({ type: "station-placement", enabled: false });
+  } else if (action.type === "piece-step" || action.type === "piece-group") {
+    panel.choose(action);
   } else if (action.type.startsWith("construction-")) {
     worker.postMessage(action);
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
     camera = applyCameraAction(camera, viewport, action);
+    if (action.type !== "rotate") followPoints = undefined;
   }
 }
 bindInput(gameCanvas, dispatch);
 
-const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null }>) => {
+const worker = new Worker(new URL("./worker.ts", import.meta.url), {
+  type: "module",
+  name: frozen ? "theme-park-test" : "theme-park",
+});
+worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage>) => {
   const message = event.data;
   if (message.type === "world") {
     const coasterGeometry = message.coasterGeometry ?? world?.coasterGeometry;
@@ -208,7 +226,14 @@ worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | Co
     if (message.placed) facilityPlacement = undefined;
     if (message.message) facilityPanel.message(message.message);
     gameTest.ready = false;
+  } else if (message.type === "piece-shapes") {
+    panel.setShapes(message.shapes);
   } else if (message.type === "construction-state") {
+    if (!frozen) constructionEffects.observe(construction, message, performance.now());
+    const preview = railPoints(message.previewRails);
+    const previewKey = JSON.stringify([preview[0], preview.at(-1)]);
+    if (preview.length && previewKey !== followedPreview) followPoints = preview;
+    followedPreview = previewKey;
     construction = message;
     panel.update(message);
     const reportJson = JSON.stringify(message.testingReport ?? null);
@@ -230,6 +255,13 @@ function frame(now: number): void {
   if (!world) return;
   if (frozen && gameTest.ready) return;
   const interpolation = frozen ? 1 : Math.max(0, Math.min(1, (now - receivedAt) / (1000 / 30)));
+  if (followPoints) {
+    const followed = followTrackEnd(camera, viewport, followPoints, frozen ? 1 : 1 - Math.exp(-(now - lastFrameAt) / 140));
+    camera = followed.camera;
+    if (followed.settled) followPoints = undefined;
+  }
+  lastFrameAt = now;
+  constructionEffects.active(now);
   const people = current ? buildPeople(previous, current, interpolation, camera.rotation, atlas) : [];
   renderedGuests = people;
   const selectedGuest = people.find((guest) => guest.id === selectedGuestId);
@@ -251,6 +283,7 @@ function frame(now: number): void {
       ...buildTrackQuads(noGeometry, noGeometry, noGeometry, constructionTrainPoses, renderCamera, renderViewport, trackStyle(renderAtlas)),
       ...buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale),
       ...(testingMetric && construction?.testingReport ? buildTestingRibbon(construction.testingReport.samples, testingMetric, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
+      ...constructionEffects.quads(now, renderCamera, renderViewport),
     ],
   ]);
   gameCanvas.dataset.drawnAgents = String(people.length);

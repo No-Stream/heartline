@@ -1,4 +1,5 @@
 import type { ConstructionAction } from "../construction-protocol";
+import type { PieceStep } from "../construction-choices";
 
 export interface ScreenPoint {
   readonly x: number;
@@ -14,6 +15,12 @@ export type InputAction =
   | { readonly type: "station-placement"; readonly enabled: boolean }
   | { readonly type: "station-height"; readonly height: number }
   | { readonly type: "select"; readonly position: ScreenPoint }
+  /** Choose the next piece one step along an attribute, or through the whole palette. */
+  | { readonly type: "piece-step"; readonly attribute: PieceStep; readonly step: -1 | 1 }
+  | { readonly type: "piece-group"; readonly group: string }
+  | { readonly type: "delete-mode-toggle" }
+  /** Leave station placement and delete mode. */
+  | { readonly type: "builder-cancel" }
   | ConstructionAction;
 
-export type CameraAction = Exclude<InputAction, { readonly type: "select" | "hover" | "station-placement" | "station-height" } | ConstructionAction>;
+export type CameraAction = Extract<InputAction, { readonly type: "pan" | "zoom" | "rotate" }>;

@@ -4,6 +4,70 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Theme Park Sim</title>
+    <style>
+      body {
+        margin: 0;
+        color: #3a2e58;
+        background: #e9e0cf;
+        font: 0.9rem/1.4 Georgia, "Times New Roman", serif;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 800px minmax(21rem, 25rem);
+        grid-template-rows: auto auto 1fr;
+        /* Whole-pixel spacing keeps the canvas on the pixel grid, so screenshots of it stay sharp and stable. */
+        gap: 10px 20px;
+        justify-content: start;
+        align-items: start;
+        padding: 12px 16px 24px;
+      }
+      main > h1 {
+        grid-column: 1;
+        grid-row: 1;
+        margin: 0;
+        font: 600 20px/28px Georgia, "Times New Roman", serif;
+        letter-spacing: 0.02em;
+      }
+      main > p {
+        grid-column: 1;
+        grid-row: 1;
+        justify-self: end;
+        align-self: center;
+        margin: 0;
+        font-size: 0.78rem;
+        opacity: 0.7;
+      }
+      main > canvas {
+        grid-column: 1;
+        grid-row: 2 / span 2;
+        box-shadow: 0 0 0 1px color-mix(in srgb, #3a2e58 55%, transparent);
+        /* The renderer leaves some pixels translucent; keep what shows through them as before. */
+        background: #fff;
+      }
+      main > canvas:focus-visible { outline: 2px solid #3f61a6; outline-offset: 2px; }
+      [data-construction] {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+        max-height: calc(100vh - 1.6rem);
+        overflow-y: auto;
+        position: sticky;
+        top: 0.8rem;
+      }
+      [data-facilities] {
+        grid-column: 2;
+        grid-row: 3;
+        padding: 0.6rem 1rem;
+        background: #f2eadb;
+        border: 1px solid color-mix(in srgb, #3a2e58 30%, transparent);
+        border-radius: 3px;
+      }
+      [data-facilities] h2 { margin: 0 0 0.4rem; font-size: 1rem; }
+      @media (max-width: 1240px) {
+        main { grid-template-columns: minmax(0, 800px); }
+        main > canvas, [data-construction], [data-facilities] { grid-column: 1; grid-row: auto; }
+        [data-construction] { position: static; max-height: none; }
+      }
+    </style>
   </head>
   <body>
     <main>

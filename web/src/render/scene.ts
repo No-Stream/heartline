@@ -1,4 +1,5 @@
 import { projectWorld, unprojectGround, type Camera, type Viewport } from "../camera";
+import { pathCornerHeights } from "./path-ghost";
 
 export interface AtlasFrame {
   width: number; height: number; anchor: { x: number; y: number };
@@ -11,7 +12,7 @@ export interface Atlas {
   frames: Record<string, AtlasFrame>;
 }
 export interface WorldSprite { id: string; sprite: string; x: number; y: number; height: number; view?: string; animation?: string; frame?: number; scale?: number }
-export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; paths: Int32Array; carved?: Int32Array; sprites?: readonly WorldSprite[] }
+export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; paths: Int32Array; pathMetadata?: Int32Array; carved?: Int32Array; sprites?: readonly WorldSprite[] }
 export type Pick = { kind: "terrain" | "water" | "path" | "cliff"; x: number; y: number; height: number } | { kind: string; id: string; x: number; y: number; height: number };
 export interface Vertex { x: number; y: number; depth: number; height: number; u: number; v: number }
 export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: string; tileX: number; tileY: number; height: number; id?: string }
@@ -64,7 +65,8 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
   if (!width || !height || world.dimensions.length !== 2 || world.surfaces.length !== width * height * 6 || world.paths.length % 4 !== 0) throw new Error("Invalid world snapshot");
   const triangles: Triangle[] = [];
   const grass = frameFor(atlas, "ground/grass_light_0", "any", "static", 0, scale);
-  const paths = new Map<number, [number, number][]>();
+  if (world.pathMetadata && world.pathMetadata.length !== world.paths.length / 2) throw new Error("Invalid path metadata");
+  const paths = new Map<number, [number, number, number, number][]>();
   const carved = new Map<number, [number, number][]>();
   if (world.carved && world.carved.length % 4 !== 0) throw new Error("Invalid carved spans");
   for (let i = 0; i < (world.carved?.length ?? 0); i += 4) {
@@ -76,11 +78,12 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
   for (let index = 0; index < world.paths.length; index += 4) {
     const [x, y, z, slope] = world.paths.subarray(index, index + 4);
     if (x < 0 || y < 0 || x >= width || y >= height || slope < 0 || slope > 4) throw new Error("Invalid path");
+    const [kind, style] = world.pathMetadata?.subarray(index / 2, index / 2 + 2) ?? [0, 0];
+    if (kind < 0 || kind > 1 || style < 0 || style > 255) throw new Error("Invalid path metadata");
     const key = y * width + x;
-    paths.set(key, [...(paths.get(key) ?? []), [z, slope]]);
+    paths.set(key, [...(paths.get(key) ?? []), [z, slope, kind, style]]);
   }
-  const pathCorners = (z: number, slope: number): number[] =>
-    [[0,0,0,0], [1,1,0,0], [0,1,1,0], [0,0,1,1], [1,0,0,1]][slope].map((offset) => z + offset);
+  const pathCorners = pathCornerHeights;
   const point = (x: number, y: number, heightSteps: number): Vertex => {
     const projected = projectWorld(camera, viewport, { x, y, z: heightSteps / 4 });
     const rotated = [x + y, x - y, -x - y, -x + y][camera.rotation];
@@ -189,7 +192,7 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
       if (corners.some((corner) => corner < level)) addQuad(quad([level,level,level,level]), "water", x, y, WHITE, frameFor(atlas, "ground/water", "any", "loop", waterFrame, scale));
     }
     for (const path of paths.get(y * width + x) ?? []) {
-      const [z, slope] = path;
+      const [z, slope, kind, style] = path;
       const heights = pathCorners(z, slope);
       if (heights.some((height, corner) => height < corners[corner]) &&
           (!opening || heights.some((height) => height < opening[0] || height >= opening[1]))) continue;
@@ -210,7 +213,33 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
           return heights[edge[0]] === neighbor[neighborEdge[0]] && heights[edge[1]] === neighbor[neighborEdge[1]];
         }) ? "1" : "0";
       }).join("");
-      addQuad(pathQuad, "path", x, y, WHITE, frameFor(atlas, `ground/path_${connections}`, "any", "static", 0, scale));
+      const pathColors: Triangle["color"][] = [WHITE, [0.82, 0.9, 1, 1], [1, 0.85, 0.7, 1], [0.8, 1, 0.8, 1]];
+      addQuad(pathQuad, "path", x, y, pathColors[style % pathColors.length], frameFor(atlas, `ground/path_${connections}`, "any", "static", 0, scale));
+      if (kind === 1) {
+        const ink = atlas.themeStyle?.ink ?? "#333333";
+        const color: Triangle["color"] = [parseInt(ink.slice(1, 3), 16) / 255, parseInt(ink.slice(3, 5), 16) / 255, parseInt(ink.slice(5, 7), 16) / 255, 1];
+        for (let direction = 0; direction < 4; direction++) {
+          const { dx, dy, edge, neighborEdge } = directions[direction];
+          const nx = x + dx, ny = y + dy;
+          const connected = nx >= 0 && ny >= 0 && nx < width && ny < height && (paths.get(ny * width + nx) ?? []).some(([neighborHeight, neighborSlope]) => {
+            const neighbor = pathCorners(neighborHeight, neighborSlope);
+            return heights[edge[0]] === neighbor[neighborEdge[0]] && heights[edge[1]] === neighbor[neighborEdge[1]];
+          });
+          if (connected) continue;
+          const [first, second] = edge;
+          const railing = [
+            point(...positions[first], heights[first] + 0.55),
+            point(...positions[second], heights[second] + 0.55),
+            point(...positions[second], heights[second] + 0.7),
+            point(...positions[first], heights[first] + 0.7),
+          ] as [Vertex, Vertex, Vertex, Vertex];
+          railing[0].height = heights[first];
+          railing[1].height = heights[second];
+          railing[2].height = heights[second];
+          railing[3].height = heights[first];
+          addQuad(railing, "path-railing", x, y, color);
+        }
+      }
     }
   }
   for (const sprite of world.sprites ?? []) {
@@ -231,6 +260,7 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
 export function pickScene(scene: Scene, x: number, y: number, rasterTolerance = 0): Pick | null {
   let selected: Triangle | undefined; let selectedDepth = -Infinity; let selectedHeight = 0;
   for (const triangle of scene.triangles) {
+    if (triangle.kind === "path-preview") continue;
     const [a,b,c] = triangle.vertices;
     const denominator = (b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);
     if (denominator === 0) continue;
@@ -260,5 +290,6 @@ export function pickScene(scene: Scene, x: number, y: number, rasterTolerance = 
   }
   if (!selected) return null;
   if (selected.id !== undefined) return { kind: selected.kind, id: selected.id, x: selected.tileX, y: selected.tileY, height: selectedHeight };
-  return { kind: selected.kind as "terrain" | "water" | "path" | "cliff", x: selected.tileX, y: selected.tileY, height: selectedHeight };
+  const kind = selected.kind === "path-railing" ? "path" : selected.kind as "terrain" | "water" | "path" | "cliff";
+  return { kind, x: selected.tileX, y: selected.tileY, height: selectedHeight };
 }

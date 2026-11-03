@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { appendGeometry, buildScene, pickScene, type Atlas, type GeometryQuad, type WorldView } from "./scene";
 import type { Camera } from "../camera";
+import { buildPathGhostQuads } from "./path-ghost";
 
 const frame = { width: 72, height: 40, anchor: { x: 36, y: 20 }, placements: { "1": { page: 0, x: 0, y: 0, width: 72, height: 40 } } };
 const atlas: Atlas = {
@@ -213,6 +214,64 @@ describe("world scene", () => {
       const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0, 1, 0, 0, 0]) }, { ...camera, rotation }, viewport, connectedAtlas);
       expect(scene.triangles.find((item) => item.kind === "path" && item.tileX === 0 && item.tileY === 0)?.page).toBe(rotation + 1);
     }
+  });
+  test("draws queue railings only on unconnected edges and distinguishes path styles", () => {
+    const connectedAtlas: Atlas = { ...atlas, frames: { ...atlas.frames, ...Object.fromEntries(["1000", "0010"].map((bits) => [`ground/path_${bits}/any/static/0`, frame])) } };
+    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0, 1, 0, 0, 0]), pathMetadata: new Int32Array([1, 1, 0, 0]) }, camera, viewport, connectedAtlas);
+    expect(scene.triangles.filter((triangle) => triangle.kind === "path-railing")).toHaveLength(6);
+    const queue = scene.triangles.find((triangle) => triangle.kind === "path" && triangle.tileX === 0)!;
+    const normal = scene.triangles.find((triangle) => triangle.kind === "path" && triangle.tileX === 1)!;
+    expect(queue.color).not.toEqual(normal.color);
+    expect(() => buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]), pathMetadata: new Int32Array([1]) }, camera, viewport, atlas)).toThrow();
+  });
+  test("queue railing geometry picks as its underlying path", () => {
+    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]), pathMetadata: new Int32Array([1, 0]) }, camera, viewport, atlas);
+    const railing = scene.triangles.find((triangle) => triangle.kind === "path-railing");
+    expect(railing).toBeDefined();
+    const x = railing!.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 3;
+    const y = railing!.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 3;
+
+    expect(pickScene(scene, x, y)).toMatchObject({ kind: "path", x: 0, y: 0 });
+  });
+  test("picks the owning path at the outer top edge of a queue railing", () => {
+    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]), pathMetadata: new Int32Array([1, 0]) }, camera, viewport, atlas);
+    const railingTriangles = scene.triangles.filter((triangle) => triangle.kind === "path-railing");
+    const pathTriangles = scene.triangles.filter((triangle) => triangle.kind === "path" && triangle.tileX === 0 && triangle.tileY === 0);
+    const contains = (triangle: typeof scene.triangles[number], x: number, y: number): boolean => {
+      const [a, b, c] = triangle.vertices;
+      const denominator = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+      const first = ((b.y - c.y) * (x - c.x) + (c.x - b.x) * (y - c.y)) / denominator;
+      const second = ((c.y - a.y) * (x - c.x) + (a.x - c.x) * (y - c.y)) / denominator;
+      const third = 1 - first - second;
+      return first >= 0 && second >= 0 && third >= 0;
+    };
+    let exposedRailPoint: { x: number; y: number } | undefined;
+    for (const triangle of railingTriangles) {
+      const [a, b, c] = triangle.vertices;
+      for (let first = 0.1; first < 0.9; first += 0.1) {
+        for (let second = 0.1; first + second < 0.9; second += 0.1) {
+          const third = 1 - first - second;
+          const point = {
+            x: first * a.x + second * b.x + third * c.x,
+            y: first * a.y + second * b.y + third * c.y,
+          };
+          if (!pathTriangles.some((path) => contains(path, point.x, point.y))) exposedRailPoint = point;
+        }
+      }
+    }
+
+    expect(exposedRailPoint).toBeDefined();
+    expect(pickScene(scene, exposedRailPoint!.x, exposedRailPoint!.y)).toMatchObject({ kind: "path", x: 0, y: 0, height: 0 });
+  });
+  test("path placement ghosts do not intercept world picking", () => {
+    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]) }, camera, viewport, atlas);
+    const ghost = buildPathGhostQuads([{ x: 0, y: 0, z: 0, slope: 0, refusal: null }], camera, viewport);
+    appendGeometry(scene, ghost);
+    const triangle = scene.triangles.find((item) => item.kind === "path-preview")!;
+    const x = triangle.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 3;
+    const y = triangle.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 3;
+
+    expect(pickScene(scene, x, y)).toMatchObject({ kind: "path", x: 0, y: 0 });
   });
   test("hides paths beneath terrain", () => {
     const surfaces = new Int32Array(world.surfaces);

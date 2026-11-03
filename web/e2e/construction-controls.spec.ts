@@ -72,7 +72,7 @@ test("station height stepper stays within its range in two-metre steps", async (
 
 test("piece steppers and palette show the choice, and refused pieces explain why", async ({ page }) => {
   await page.goto(fixtureUrl);
-  const direction = page.getByRole("group", { name: "Direction of the next piece" });
+  const direction = page.getByRole("group", { name: "Next piece turn" });
   await expect(direction).toContainText("Ahead");
   await expect(page.getByRole("button", { name: "Turn right" })).toBeDisabled();
   await page.getByRole("button", { name: "Turn left" }).click();
