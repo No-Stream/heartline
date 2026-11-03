@@ -1,7 +1,9 @@
 // Hand-inked line and shape primitives. Everything returns SVG markup in sprite pixels.
+import type { Theme } from "./theme.ts";
 
 export type Point = readonly [number, number];
 
+/** The design colour of ink; each theme maps it to its own line colour. */
 export const INK = "#2a1b42";
 
 export function seededRandom(seedText: string): () => number {
@@ -97,6 +99,10 @@ export interface LineOptions {
   opacity?: number;
   overshoot?: number;
   taper?: boolean;
+  /** Multiplies the sideways unsteadiness of the line. */
+  wobble?: number;
+  /** Chance that the pen lifts part way along the line, leaving a gap. */
+  breaks?: number;
 }
 
 /**
@@ -112,6 +118,8 @@ export function inkLine(
     opacity = 1,
     overshoot = 0,
     taper = true,
+    wobble: wobbleScale = 1,
+    breaks = 0,
   }: LineOptions = {},
 ): string {
   const extended: Point[] = [...points];
@@ -124,7 +132,18 @@ export function inkLine(
     extended[0] = extend(points[1], points[0]);
     extended[extended.length - 1] = extend(points[points.length - 2], points[points.length - 1]);
   }
-  const center = wobble(subdivide(extended, false, 5), width * 0.28, random, 18);
+  const center = wobble(subdivide(extended, false, 5), width * 0.28 * wobbleScale, random, 18);
+  if (breaks > 0 && center.length >= 6 && random() < breaks) {
+    // The pen lifts somewhere in the middle third and lands again a little further on.
+    const gapStart = Math.floor(center.length * (0.3 + random() * 0.3));
+    const gapLength = Math.max(1, Math.round(center.length * (0.08 + random() * 0.1)));
+    const pieces = [center.slice(0, gapStart), center.slice(gapStart + gapLength)].filter((piece) => piece.length >= 2);
+    return pieces.map((piece) => nibShape(piece, random, width, color, opacity, taper)).join("");
+  }
+  return nibShape(center, random, width, color, opacity, taper);
+}
+
+function nibShape(center: readonly Point[], random: () => number, width: number, color: string, opacity: number, taper: boolean): string {
   const widthNoise = smoothNoise(random, 16);
   const left: Point[] = [];
   const right: Point[] = [];
@@ -145,22 +164,6 @@ export function inkLine(
   const outline = [...left, ...right.reverse()];
   const opacityAttribute = opacity < 1 ? ` fill-opacity="${opacity}"` : "";
   return `<path d="${smoothPath(outline, true, 0.6)}" fill="${color}"${opacityAttribute}/>`;
-}
-
-/** A polygon with a wobbly fill and separately inked edges that slightly overshoot the corners. */
-export function inkPolygon(
-  corners: readonly Point[],
-  fill: string,
-  random: () => number,
-  { width = 1.3, wobbleAmount = 0.5, inkEdges = true }: { width?: number; wobbleAmount?: number; inkEdges?: boolean } = {},
-): string {
-  const fillOutline = wobble(subdivide(corners, true, 7), wobbleAmount, random);
-  const fillPath = `<path d="${smoothPath(fillOutline, true, 0.45)}" fill="${fill}"/>`;
-  if (!inkEdges) return fillPath;
-  const edges = corners.map((corner, index) =>
-    inkLine([corner, corners[(index + 1) % corners.length]], random, { width, overshoot: width * 0.9 }),
-  );
-  return fillPath + edges.join("");
 }
 
 /** Shrink-wrapped convex outline around a set of circles. */
@@ -192,7 +195,7 @@ export function hatchQuad(
   corners: readonly [Point, Point, Point, Point],
   lineCount: number,
   random: () => number,
-  { opacity = 0.28, width = 0.7 }: { opacity?: number; width?: number } = {},
+  { opacity = 0.28, width = 0.7, color = INK }: { opacity?: number; width?: number; color?: string } = {},
 ): string {
   const lines: string[] = [];
   const interpolate = (first: Point, second: Point, fraction: number): Point => [
@@ -203,7 +206,7 @@ export function hatchQuad(
     const fraction = (index - 0.5 + (random() - 0.5) * 0.3) / lineCount;
     const start = interpolate(corners[0], corners[1], fraction);
     const end = interpolate(corners[3], corners[2], Math.min(1, fraction + 0.12));
-    lines.push(inkLine([start, end], random, { width, opacity }));
+    lines.push(inkLine([start, end], random, { width, opacity, color }));
   }
   return lines.join("");
 }
@@ -236,12 +239,42 @@ export function svgDocument(
   anchorY: number,
   body: string,
   extraAttributes: Record<string, string | number> = {},
+  theme?: Theme,
 ): string {
   const extras = Object.entries(extraAttributes)
     .map(([name, value]) => ` ${name}="${value}"`)
     .join("");
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"` +
-    ` data-anchor-x="${formatNumber(anchorX)}" data-anchor-y="${formatNumber(anchorY)}"${extras}>\n${body}\n</svg>\n`
+    ` data-anchor-x="${formatNumber(anchorX)}" data-anchor-y="${formatNumber(anchorY)}"${extras}>\n${themed(body, theme)}\n</svg>\n`
   );
+}
+
+function themed(body: string, theme: Theme | undefined): string {
+  if (!theme) return body;
+  const defs = theme.defs ? `<defs>${theme.defs}</defs>\n` : "";
+  return theme.spriteFilter ? `${defs}<g filter="${theme.spriteFilter}">\n${body}\n</g>` : `${defs}${body}`;
+}
+
+/**
+ * A filled shape in the theme's fill style, with an optional ink outline.
+ * Colours are theme colours. With a solid fill and no misregistration this is one plain path.
+ */
+export function fillPath(
+  theme: Theme,
+  path: string,
+  color: string,
+  { strokeWidth = 0, lineJoin = false, strokeColor = theme.line.color, wash = true }: { strokeWidth?: number; lineJoin?: boolean; strokeColor?: string; wash?: boolean } = {},
+): string {
+  const strokeAttributes = strokeWidth > 0 ? ` stroke="${strokeColor}" stroke-width="${strokeWidth}"${lineJoin ? ` stroke-linejoin="round"` : ""}` : "";
+  const [shiftX, shiftY] = theme.misregistration;
+  const isPlain = theme.fill === "solid" && shiftX === 0 && shiftY === 0;
+  if (isPlain) return `<path d="${path}" fill="${color}"${strokeAttributes}/>`;
+  const shift = shiftX !== 0 || shiftY !== 0 ? ` transform="translate(${shiftX} ${shiftY})"` : "";
+  const colorFill =
+    theme.fill === "wash" && wash
+      ? `<path d="${path}" fill="${theme.paper}"/><path d="${path}" fill="${color}" filter="url(#wash)"${shift}/>`
+      : `<path d="${path}" fill="${color}"${shift}/>`;
+  const outline = strokeWidth > 0 ? `<path d="${path}" fill="none"${strokeAttributes}/>` : "";
+  return colorFill + outline;
 }

@@ -1,6 +1,8 @@
-export {};
-
 // The art proof demo: an isometric park drawn with WebGL 2 from the sprite atlas, and a gallery.
+// `?theme=<name>` shows one of the alternative themes built by `make art-themes`.
+import { COLORS } from "./generators/palette.ts";
+import { themeNamed } from "./generators/themes.ts";
+
 interface Placement { page: number; x: number; y: number; width: number; height: number }
 interface Frame {
   source: string;
@@ -34,14 +36,20 @@ function required<T>(value: T | null | undefined, what: string): T {
 }
 const element = <T extends HTMLElement>(id: string): T => required(document.getElementById(id) as T | null, `element #${id}`);
 
-const atlas = (await (await fetch("./atlas/atlas.json")).json()) as Atlas;
+const theme = themeNamed(new URLSearchParams(location.search).get("theme") ?? "candy");
+const ATLAS_DIRECTORY = theme.name === "candy" ? "./atlas" : `./themes/${theme.name}/atlas`;
+document.documentElement.style.setProperty("--paper", theme.scene.background);
+document.documentElement.style.setProperty("--stage", theme.color(COLORS.grass));
+document.documentElement.style.setProperty("--stage-sides", theme.color(COLORS.grassAlternate));
+document.title = `Park Art Proof: ${theme.name}`;
+const atlas = (await (await fetch(`${ATLAS_DIRECTORY}/atlas.json`)).json()) as Atlas;
 const pageImages: Record<string, HTMLImageElement[]> = {};
 await Promise.all(
   atlas.scales.map(async (scale) => {
     pageImages[scale] = await Promise.all(
       atlas.pages[scale].map(async (page) => {
         const image = new Image();
-        image.src = `./atlas/${page.file}`;
+        image.src = `${ATLAS_DIRECTORY}/${page.file}`;
         await image.decode();
         return image;
       }),
@@ -112,14 +120,19 @@ scatter("scenery/bin", 0, [[9, 6], [18, 12], [9, 15], [16, 15], [12, 13]]);
 scatter("scenery/flower_bed", 0, [[10, 13], [15, 7], [9, 8], [16, 9], [20, 8], [4, 11]]);
 scatter("scenery/signpost", 0, [[9, 11]]);
 scatter("scenery/balloon_cart", 1, [[14, 13]]);
-scatter("scenery/mushroom_stool", 0, [[20, 16], [21, 15], [6, 17], [2, 14]]);
-scatter("scenery/tree_lollipop_pink", 0, [[3, 7], [20, 4], [10, 9], [7, 14], [18, 17], [22, 12]]);
-scatter("scenery/tree_lollipop_yellow", 0, [[1, 8], [20, 6], [15, 9], [3, 15], [16, 18], [22, 7]]);
-scatter("scenery/tree_lollipop_green", 0, [[19, 3], [9, 13], [15, 14], [4, 13], [20, 15], [7, 3]]);
-scatter("scenery/tree_lollipop_teal", 0, [[18, 3], [21, 9], [5, 15], [9, 17], [3, 4]]);
-scatter("scenery/tree_cloud", 0, [[6, 2], [22, 9], [20, 11], [7, 17]]);
-scatter("scenery/tree_cloud_blossom", 0, [[10, 1], [19, 18], [1, 15], [10, 12]]);
-scatter("scenery/tree_pine", 0, [[17, 2], [15, 1], [21, 5], [4, 3], [1, 13], [8, 18], [20, 17]]);
+scatter(theme.props.mushrooms ? "scenery/mushroom_stool" : "scenery/planter", 0, [[20, 16], [21, 15], [6, 17], [2, 14]]);
+// Every theme has seven trees; each takes the same spots in the park.
+const TREE_SPOTS: readonly (readonly [number, number])[][] = [
+  [[3, 7], [20, 4], [10, 9], [7, 14], [18, 17], [22, 12]],
+  [[1, 8], [20, 6], [15, 9], [3, 15], [16, 18], [22, 7]],
+  [[19, 3], [9, 13], [15, 14], [4, 13], [20, 15], [7, 3]],
+  [[18, 3], [21, 9], [5, 15], [9, 17], [3, 4]],
+  [[6, 2], [22, 9], [20, 11], [7, 17]],
+  [[10, 1], [19, 18], [1, 15], [10, 12]],
+  [[17, 2], [15, 1], [21, 5], [4, 3], [1, 13], [8, 18], [20, 17]],
+];
+if (theme.trees.length !== TREE_SPOTS.length) throw new Error(`Theme ${theme.name} needs ${TREE_SPOTS.length} trees`);
+theme.trees.forEach((tree, index) => scatter(`scenery/${tree.id}`, 0, TREE_SPOTS[index]));
 scatter("scenery/bush_round", 0, [[5, 9], [19, 8], [11, 15], [14, 15], [10, 7], [5, 4], [18, 14]]);
 scatter("scenery/bush_flowering", 0, [[7, 11], [19, 11], [13, 15], [13, 7], [18, 7], [3, 9]]);
 for (let x = 18; x <= 22; x++) placedObjects.push({ sprite: "scenery/fence", x: x + 0.5, y: 8.5, orientation: 1 });
@@ -274,16 +287,18 @@ const skyProgram = compileProgram(
   void main() { vPosition = aPosition; gl_Position = vec4(aPosition, 0.0, 1.0); }`,
   `#version 300 es
   precision highp float;
-  in vec2 vPosition; uniform float uGrain; uniform float uDensity; out vec4 color;
+  in vec2 vPosition; uniform float uGrain; uniform float uDensity; uniform vec3 uSkyTop; uniform vec3 uSkyMiddle; uniform vec3 uSkyBottom; out vec4 color;
   ${grainGlsl}
   void main() {
     float height = vPosition.y * 0.5 + 0.5;
-    vec3 top = vec3(0.349, 0.784, 0.902), middle = vec3(0.655, 0.902, 0.867), bottom = vec3(1.0, 0.902, 0.659);
+    vec3 top = uSkyTop, middle = uSkyMiddle, bottom = uSkyBottom;
     vec3 sky = height > 0.45 ? mix(middle, top, (height - 0.45) / 0.55) : mix(bottom, middle, height / 0.45);
     color = vec4(sky * paperGrain(gl_FragCoord.xy), 1.0);
   }`,
 );
 const skyGrain = gl.getUniformLocation(skyProgram, "uGrain");
+const skyColors = (["uSkyTop", "uSkyMiddle", "uSkyBottom"] as const).map((name) => gl.getUniformLocation(skyProgram, name));
+const rgbOf = (hexColor: string): [number, number, number] => [1, 3, 5].map((start) => parseInt(hexColor.slice(start, start + 2), 16) / 255) as [number, number, number];
 const skyDensity = gl.getUniformLocation(skyProgram, "uDensity");
 const fullScreenTriangle = required(gl.createBuffer(), "buffer");
 gl.bindBuffer(gl.ARRAY_BUFFER, fullScreenTriangle);
@@ -453,7 +468,8 @@ function drawScene(seconds: number): void {
 
   gl.disable(gl.BLEND);
   gl.useProgram(skyProgram);
-  gl.uniform1f(skyGrain, camera.grain ? 1 : 0);
+  gl.uniform1f(skyGrain, camera.grain ? theme.scene.grain : 0);
+  theme.scene.sky.forEach((skyColor, index) => gl.uniform3f(skyColors[index], ...rgbOf(skyColor)));
   gl.uniform1f(skyDensity, density);
   gl.bindBuffer(gl.ARRAY_BUFFER, fullScreenTriangle);
   gl.enableVertexAttribArray(0);
@@ -469,7 +485,7 @@ function drawScene(seconds: number): void {
   gl.vertexAttribPointer(spriteLocations.position, 2, gl.FLOAT, false, FLOATS_PER_VERTEX * 4, 0);
   gl.vertexAttribPointer(spriteLocations.texture, 2, gl.FLOAT, false, FLOATS_PER_VERTEX * 4, 8);
   gl.uniform2f(spriteLocations.resolution, width, height);
-  gl.uniform1f(spriteLocations.grain, camera.grain ? 1 : 0);
+  gl.uniform1f(spriteLocations.grain, camera.grain ? theme.scene.grain : 0);
   gl.uniform1f(spriteLocations.density, density);
 
   const pixelZoom = camera.zoom * density;

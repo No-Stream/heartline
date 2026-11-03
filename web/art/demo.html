@@ -6,7 +6,7 @@
 <title>Park Art Proof</title>
 <link rel="icon" href="data:,">
 <style>
-  :root { --ink: #2a1b42; --paper: #fff8e8; --line: #e7d7b8; --accent: #ff5d5d; --card: #fffdf6; }
+  :root { --ink: #2a1b42; --paper: #fff8e8; --line: #e7d7b8; --accent: #ff5d5d; --card: #fffdf6; --stage: #a6dc6c; --stage-sides: #9dd664; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.45 "Trebuchet MS", "Segoe UI", sans-serif; }
   header, section { max-width: 1440px; margin: 0 auto; padding: 16px; }
@@ -23,9 +23,9 @@
   .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
   .card h3 { margin: 0; font-size: 15px; }
   .card small { color: #5d4d7a; min-height: 2.8em; }
-  .stage { background: #a6dc6c; border-radius: 6px; display: flex; align-items: flex-end; gap: 12px; padding: 8px; overflow-x: auto; }
+  .stage { background: var(--stage); border-radius: 6px; display: flex; align-items: flex-end; gap: 12px; padding: 8px; overflow-x: auto; }
   .stage figure { margin: 0; flex: none; text-align: center; font-size: 11px; }
-  .sides { background: #9dd664; border-radius: 6px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding: 6px; }
+  .sides { background: var(--stage-sides); border-radius: 6px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding: 6px; }
   canvas.sprite { display: block; }
 </style>
 </head>

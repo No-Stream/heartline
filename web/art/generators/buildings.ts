@@ -4,6 +4,7 @@ import { TILE_EDGE, type Vector3 } from "./iso.ts";
 import { INK, shadePlum } from "./ink.ts";
 import { COLORS } from "./palette.ts";
 import { Model, storybookWarp, type Surface } from "./solid.ts";
+import type { Theme } from "./theme.ts";
 
 export interface BuildingDesign {
   id: string;
@@ -15,7 +16,7 @@ export interface BuildingDesign {
   canvasHeight: number;
   /** Height of the footprint centre from the top of the canvas. */
   anchorY: number;
-  draw: (view: number) => string;
+  draw: (theme: Theme, view: number) => string;
 }
 
 function striped(model: Model, surface: Surface, stripeCount: number, firstColor: string, secondColor: string, ink = 0.8): void {
@@ -47,18 +48,19 @@ function awningOnFront(
     const color = index % 2 ? secondColor : firstColor;
     model.face([[outerX, start, outerZ], [outerX, end, outerZ], [frontX, end, wallHeight], [frontX, start, wallHeight]], color, { ink: 0.9 });
     const hem: Vector3[] = [];
+    const scallopDepth = model.theme.props.scallops ? 3 : 0;
     for (let step = 0; step <= 6; step++) {
       const fraction = step / 6;
-      hem.push([outerX, start + (end - start) * (1 - fraction), outerZ - 2.2 - Math.sin(fraction * Math.PI) * 3]);
+      hem.push([outerX, start + (end - start) * (1 - fraction), outerZ - 2.2 - Math.sin(fraction * Math.PI) * scallopDepth]);
     }
     model.face([[outerX, start, outerZ], ...hem, [outerX, end, outerZ]].reverse() as Vector3[], shadePlum(color, 0.08), { ink: 0.9, lit: false, wobbleAmount: 0.05 });
   }
 }
 
-function drawBurgerStall(view: number): string {
+function drawBurgerStall(theme: Theme, view: number): string {
   const height = 58;
-  const warp = storybookWarp([1.8, -2.4], 0.05, 1.4, height + 26);
-  const model = new Model("burger_stall", view, warp);
+  const warp = storybookWarp([1.8, -2.4], 0.05, 1.4, height + 26, theme.crookedness);
+  const model = new Model("burger_stall", view, theme, warp);
   const half = 33;
   model.shadow([[-half - 2, -half - 2, 0], [half + 14, -half - 2, 0], [half + 14, half + 3, 0], [-half - 2, half + 3, 0]]);
 
@@ -167,15 +169,15 @@ function drawBurgerStall(view: number): string {
   const seeds: Vector3[] = [[3, -8, lettuceBase + 19], [11, 2, lettuceBase + 17.5], [-4, 7, lettuceBase + 19.5], [8, 10, lettuceBase + 15.5], [-11, -5, lettuceBase + 16.5], [13, -7, lettuceBase + 14.5], [0, 15, lettuceBase + 14], [-14, 8, lettuceBase + 13]];
   for (const seed of seeds) {
     const [screenX, screenY] = model.toScreen(seed);
-    model.raw(`<ellipse cx="${screenX}" cy="${screenY}" rx="1.5" ry="0.95" fill="${COLORS.paper}" stroke="${INK}" stroke-width="0.4" transform="rotate(${(seed[0] * 13) % 40} ${screenX} ${screenY})"/>`);
+    model.raw(`<ellipse cx="${screenX}" cy="${screenY}" rx="1.5" ry="0.95" fill="${model.color(COLORS.paper)}" stroke="${model.ink}" stroke-width="${model.lineWidth(0.4)}" transform="rotate(${(seed[0] * 13) % 40} ${screenX} ${screenY})"/>`);
   }
   return model.render();
 }
 
-function drawRestroom(view: number): string {
+function drawRestroom(theme: Theme, view: number): string {
   const wallHeight = 40;
-  const warp = storybookWarp([-1.6, 2], 0.04, -1.2, 80);
-  const model = new Model("restroom", view, warp);
+  const warp = storybookWarp([-1.6, 2], 0.04, -1.2, 80, theme.crookedness);
+  const model = new Model("restroom", view, theme, warp);
   const half = 33;
   model.shadow([[-half - 1, -half - 1, 0], [half + 7, -half - 1, 0], [half + 7, half + 2, 0], [-half - 1, half + 2, 0]]);
 
@@ -257,10 +259,10 @@ function drawRestroom(view: number): string {
   return model.render();
 }
 
-function drawTicketBooth(view: number): string {
+function drawTicketBooth(theme: Theme, view: number): string {
   const wallHeight = 40;
-  const warp = storybookWarp([2.2, 1.6], 0.03, 1, 100);
-  const model = new Model("ticket_booth", view, warp);
+  const warp = storybookWarp([2.2, 1.6], 0.03, 1, 100, theme.crookedness);
+  const model = new Model("ticket_booth", view, theme, warp);
   const radius = 29;
   model.groundEllipse(radius + 4, radius + 4, 0.24, 2, 2);
 
@@ -318,7 +320,8 @@ function drawTicketBooth(view: number): string {
 
   // Candy-striped cone with a pennant on the tip.
   const roofBottom = wallHeight - 2;
-  const apex = wallHeight + 37;
+  // Without circus stripes, a lower roof reads as a kiosk rather than a tent.
+  const apex = wallHeight + (theme.props.coneStripes ? 37 : 26);
   model.group([0, 0, wallHeight + 15], 10);
   model.stripedCone(0, 0, radius + 9, roofBottom, apex, [COLORS.red, COLORS.paper], 14);
   // Roof banner on the front of the cone, facing +x only, carries the word.
@@ -343,11 +346,11 @@ function drawTicketBooth(view: number): string {
   return model.render();
 }
 
-function drawSouvenirShop(view: number): string {
+function drawSouvenirShop(theme: Theme, view: number): string {
   const groundHeight = 40;
   const upperHeight = 30;
-  const warp = storybookWarp([3.5, -3], 0.02, 2.4, 130);
-  const model = new Model("souvenir_shop", view, warp);
+  const warp = storybookWarp([3.5, -3], 0.02, 2.4, 130, theme.crookedness);
+  const model = new Model("souvenir_shop", view, theme, warp);
   const half = 50;
   model.shadow([[-half - 2, -half - 2, 0], [half + 9, -half - 2, 0], [half + 9, half + 3, 0], [-half - 2, half + 3, 0]]);
 
@@ -474,16 +477,16 @@ function drawSouvenirShop(view: number): string {
   ];
   for (const [position] of balloons) {
     const [anchorScreen, balloonScreen] = [model.toScreen([38, 0, anchorZ]), model.toScreen(position)];
-    model.raw(`<path d="M${anchorScreen[0]} ${anchorScreen[1]}L${balloonScreen[0]} ${balloonScreen[1]}" stroke="${INK}" stroke-width="0.7"/>`);
+    model.raw(`<path d="M${anchorScreen[0]} ${anchorScreen[1]}L${balloonScreen[0]} ${balloonScreen[1]}" stroke="${model.ink}" stroke-width="${model.lineWidth(0.7)}"/>`);
   }
   for (const [position, color] of balloons) model.ball(position, 7.2, color, { ink: 1.2, highlight: 0.7 });
   return model.render();
 }
 
-function drawParkGate(view: number): string {
+function drawParkGate(theme: Theme, view: number): string {
   const towerHeight = 72;
-  const warp = storybookWarp([0, 0], 0.03, 1, 120);
-  const model = new Model("park_gate", view, warp);
+  const warp = storybookWarp([0, 0], 0.03, 1, 120, theme.crookedness);
+  const model = new Model("park_gate", view, theme, warp);
   const towerY = TILE_EDGE * 1.65;
   const radius = 16;
   for (const side of [-1, 1]) {

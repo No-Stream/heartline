@@ -1,7 +1,9 @@
 // Guests are posed as small 3D puppets and projected, so that all four walking directions
 // and every walk frame come from one body. Outlines are drawn as a union: all the shapes
 // of a group in ink first, then all the shapes again in colour.
+// Colours in the cast are design colours; the theme maps them, and sets the body proportions.
 import {
+  fillPath,
   formatNumber,
   hullOfCircles,
   INK,
@@ -14,6 +16,7 @@ import {
   wobble,
 } from "./ink.ts";
 import { depthOf, project, type Vector3 } from "./iso.ts";
+import type { PeopleStyle, Theme } from "./theme.ts";
 
 export type Facing = "se" | "sw" | "ne" | "nw";
 
@@ -48,6 +51,7 @@ type Accessory = "none" | "balloon" | "backpack" | "handbag" | "camera" | "iceCr
 export interface PersonDesign {
   id: string;
   description: string;
+  isChild: boolean;
   height: number;
   headRadius: number;
   shoulderHalfWidth: number;
@@ -76,6 +80,7 @@ export interface PersonDesign {
 }
 
 const adult = {
+  isChild: false,
   height: 43,
   headRadius: 5.9,
   shoulderHalfWidth: 4.8,
@@ -86,6 +91,7 @@ const adult = {
   stride: 6,
 };
 const child = {
+  isChild: true,
   height: 29,
   headRadius: 5.9,
   shoulderHalfWidth: 3.3,
@@ -184,7 +190,20 @@ export interface Pose {
   frame: number;
 }
 
-export function drawPerson(person: PersonDesign, { facing, animation, frame }: Pose): string {
+/** The cast member's body in the theme's proportions. Hips stay where the theme puts them. */
+function proportioned(person: PersonDesign, style: PeopleStyle): PersonDesign {
+  const height = person.height * (person.isChild ? style.childHeightScale : style.heightScale);
+  return {
+    ...person,
+    height,
+    headRadius: person.headRadius * (person.isChild ? style.childHeadScale : style.headScale),
+    limbRadius: person.limbRadius * style.limbScale,
+    stride: person.stride * ((height * style.hipFraction) / (person.height * 0.44)),
+  };
+}
+
+export function drawPerson(design: PersonDesign, { facing, animation, frame }: Pose, theme: Theme): string {
+  const person = proportioned(design, theme.people);
   const [headingX, headingY] = HEADINGS[facing];
   const leftX = headingY;
   const leftY = -headingX;
@@ -201,7 +220,7 @@ export function drawPerson(person: PersonDesign, { facing, animation, frame }: P
   const facingViewer = depthOf(toView(1, 0, 0)) > 0;
 
   const sizeRatio = person.height / 43;
-  const hipHeight = person.height * 0.44;
+  const hipHeight = person.height * theme.people.hipFraction;
   const legLength = hipHeight - 1.4;
   const headCenterHeight = person.height - person.headRadius;
   const shoulderHeight = headCenterHeight - person.headRadius - 0.6;
@@ -310,7 +329,7 @@ export function drawPerson(person: PersonDesign, { facing, animation, frame }: P
     for (const stripeHeight of stripeHeights) {
       const start = project([...toFlat(toView(0, shoulderWidth, 0)), stripeHeight + bounce]);
       const end = project([...toFlat(toView(0, -shoulderWidth, 0)), stripeHeight + bounce]);
-      stripeLines.push(`<path d="M${formatPoint(start)}L${formatPoint(end)}" stroke="${person.topStripe}" stroke-width="2"/>`);
+      stripeLines.push(`<path d="M${formatPoint(start)}L${formatPoint(end)}" stroke="${theme.color(person.topStripe)}" stroke-width="2"/>`);
     }
     stripeMarkup =
       `<clipPath id="${clipId}"><path d="${smoothPath(torsoOutline, true)}"/></clipPath>` +
@@ -428,7 +447,7 @@ export function drawPerson(person: PersonDesign, { facing, animation, frame }: P
     const chestForward = person.chest + person.shoulderHalfWidth * 0.8 + 0.2 + (person.belly > 0 ? 0.4 : 0);
     if (facingViewer) {
       const lens = project(toView(chestForward + 1, 0, shoulderZ - 3.8));
-      const lensMarkup = `<circle cx="${formatNumber(lens[0])}" cy="${formatNumber(lens[1])}" r="0.9" fill="#a9dcf2"/>`;
+      const lensMarkup = `<circle cx="${formatNumber(lens[0])}" cy="${formatNumber(lens[1])}" r="0.9" fill="${theme.color("#a9dcf2")}"/>`;
       addLayer(5.5, [[ball(chestForward, 1.1, shoulderZ - 3.6, 1.05), ball(chestForward, -1.1, shoulderZ - 3.6, 1.05)]], "#5a4a78", lensMarkup, 0.8);
     }
   }
@@ -436,22 +455,23 @@ export function drawPerson(person: PersonDesign, { facing, animation, frame }: P
   // Composite in layer order.
   layers.sort((first, second) => first.order - second.order);
   const random = seededRandom(`${person.id}/${facing}`);
+  const ink = theme.line.color;
   const body = layers
     .map((layer) => {
-      const outlines = layer.hulls.map((hull) => wobblyHull(hull, random));
-      const width = layer.outline ?? OUTLINE_WIDTH;
+      const outlines = layer.hulls.map((hull) => wobblyHull(hull, random, theme.shapeWobble));
+      const width = (layer.outline ?? OUTLINE_WIDTH) * theme.people.outline;
       const inkPass =
         width > 0
           ? outlines
-              .map((outline) => `<path d="${outline}" fill="${INK}" stroke="${INK}" stroke-width="${width}" stroke-linejoin="round"/>`)
+              .map((outline) => `<path d="${outline}" fill="${ink}" stroke="${ink}" stroke-width="${width}" stroke-linejoin="round"/>`)
               .join("")
           : "";
-      const colorPass = outlines.map((outline) => `<path d="${outline}" fill="${layer.color}"/>`).join("");
+      const colorPass = outlines.map((outline) => fillPath(theme, outline, theme.color(layer.color))).join("");
       return inkPass + colorPass + (layer.extra ?? "");
     })
     .join("\n");
 
-  const face = facingViewer ? drawFace(person, headBall, leftIsNear ? 1 : -1, animation === "idle" && frame === 1) : "";
+  const face = facingViewer ? drawFace(person, theme, headBall, leftIsNear ? 1 : -1, animation === "idle" && frame === 1) : "";
 
   // Things drawn above everything else, for a held balloon or ice cream.
   let held = "";
@@ -460,33 +480,37 @@ export function drawPerson(person: PersonDesign, { facing, animation, frame }: P
     const bob = isWalking ? Math.sin(phase) * 0.6 : Math.sin(phase) * 0.4;
     const balloonX = handX + 6 * (facing === "sw" || facing === "nw" ? -0.3 : 0.3);
     const balloonY = handY - 29 + bob;
-    const color = person.accessoryColor;
+    const color = theme.color(person.accessoryColor);
+    const highlightOpacity = 0.75 * theme.highlight.opacity;
     held =
-      `<path d="M${formatNumber(handX)} ${formatNumber(handY)}C${formatNumber(handX + 2)} ${formatNumber(handY - 10)} ${formatNumber(balloonX - 2)} ${formatNumber(balloonY + 15)} ${formatNumber(balloonX)} ${formatNumber(balloonY + 8)}" fill="none" stroke="${INK}" stroke-width="0.7"/>` +
-      `<path d="M${formatNumber(balloonX - 1.4)} ${formatNumber(balloonY + 8.6)}L${formatNumber(balloonX)} ${formatNumber(balloonY + 6.5)}L${formatNumber(balloonX + 1.4)} ${formatNumber(balloonY + 8.6)}Z" fill="${INK}"/>` +
-      `<ellipse cx="${formatNumber(balloonX)}" cy="${formatNumber(balloonY)}" rx="6.2" ry="7.6" fill="${color}" stroke="${INK}" stroke-width="1.3"/>` +
-      `<ellipse cx="${formatNumber(balloonX - 2)}" cy="${formatNumber(balloonY - 2.6)}" rx="1.4" ry="2.1" fill="#ffffff" fill-opacity="0.75"/>`;
+      `<path d="M${formatNumber(handX)} ${formatNumber(handY)}C${formatNumber(handX + 2)} ${formatNumber(handY - 10)} ${formatNumber(balloonX - 2)} ${formatNumber(balloonY + 15)} ${formatNumber(balloonX)} ${formatNumber(balloonY + 8)}" fill="none" stroke="${ink}" stroke-width="${0.7 * theme.line.weight}"/>` +
+      `<path d="M${formatNumber(balloonX - 1.4)} ${formatNumber(balloonY + 8.6)}L${formatNumber(balloonX)} ${formatNumber(balloonY + 6.5)}L${formatNumber(balloonX + 1.4)} ${formatNumber(balloonY + 8.6)}Z" fill="${ink}"/>` +
+      `<ellipse cx="${formatNumber(balloonX)}" cy="${formatNumber(balloonY)}" rx="6.2" ry="7.6" fill="${color}" stroke="${ink}" stroke-width="${1.3 * theme.people.outline}"/>` +
+      (highlightOpacity > 0 ? `<ellipse cx="${formatNumber(balloonX - 2)}" cy="${formatNumber(balloonY - 2.6)}" rx="1.4" ry="2.1" fill="${theme.highlight.color}" fill-opacity="${highlightOpacity}"/>` : "");
   }
   if (carryingHand && person.accessory === "iceCream") {
     const [handX, handY] = project(carryingHand.center);
     const coneTop = handY - 2.6;
     held =
-      `<path d="M${formatNumber(handX - 2.1)} ${formatNumber(coneTop)}L${formatNumber(handX + 2.1)} ${formatNumber(coneTop)}L${formatNumber(handX)} ${formatNumber(handY + 2)}Z" fill="#e8a06f" stroke="${INK}" stroke-width="0.9" stroke-linejoin="round"/>` +
-      `<circle cx="${formatNumber(handX)}" cy="${formatNumber(coneTop - 1.6)}" r="2.5" fill="${person.accessoryColor}" stroke="${INK}" stroke-width="0.9"/>`;
+      `<path d="M${formatNumber(handX - 2.1)} ${formatNumber(coneTop)}L${formatNumber(handX + 2.1)} ${formatNumber(coneTop)}L${formatNumber(handX)} ${formatNumber(handY + 2)}Z" fill="${theme.color("#e8a06f")}" stroke="${ink}" stroke-width="${0.9 * theme.people.outline}" stroke-linejoin="round"/>` +
+      `<circle cx="${formatNumber(handX)}" cy="${formatNumber(coneTop - 1.6)}" r="2.5" fill="${theme.color(person.accessoryColor)}" stroke="${ink}" stroke-width="${0.9 * theme.people.outline}"/>`;
   }
 
   // Contact shadow, drawn with the sprite so that it always stays beneath the feet.
   const shadowRadius = 5.8 + person.belly * 0.8 + (person.height - 25) * 0.05;
-  const shadow = `<ellipse cx="0.6" cy="0.3" rx="${formatNumber(shadowRadius)}" ry="${formatNumber(shadowRadius * 0.46)}" fill="#4b2a7a" fill-opacity="0.26"/>`;
+  const shadow = `<ellipse cx="0.6" cy="0.3" rx="${formatNumber(shadowRadius)}" ry="${formatNumber(shadowRadius * 0.46)}" fill="${theme.shadow.color}" fill-opacity="${0.26 * theme.shadow.opacity}"/>`;
   return `${shadow}\n${body}\n${face}\n${held}`;
 }
 
 function drawFace(
   person: PersonDesign,
+  theme: Theme,
   headBall: (forward: number, left: number, up: number, radiusFactor: number) => Ball,
   nearSide: number,
   blinking: boolean,
 ): string {
+  if (theme.people.face === "none") return "";
+  const ink = theme.line.color;
   const parts: string[] = [];
   // Features are cheated towards the camera, as a character artist would: at a true three-quarter
   // angle seen from above, the far eye falls off the head and the face sits too low to read.
@@ -503,27 +527,32 @@ function drawFace(
   const eyeUp = person.hat === "sunhat" ? 0.02 : 0.1;
   const leftEye = onHead(0.86, 0.46, eyeUp);
   const rightEye = onHead(0.86, -0.46, eyeUp);
-  const eyeRadius = person.headRadius * 0.15;
   const eyes = [leftEye, rightEye];
+  if (theme.people.face === "dots") {
+    // Two small dots and nothing else, as in a quick sketch of a person seen from a little way off.
+    const dotRadius = Math.max(0.42, person.headRadius * 0.12);
+    return eyes.map(([eyeX, eyeY]) => `<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(dotRadius)}" fill="${ink}"/>`).join("");
+  }
+  const eyeRadius = person.headRadius * 0.15;
   for (const [eyeX, eyeY] of eyes) {
     parts.push(
       blinking
-        ? `<path d="M${formatNumber(eyeX - eyeRadius)} ${formatNumber(eyeY)}h${formatNumber(eyeRadius * 2)}" stroke="${INK}" stroke-width="0.7"/>`
-        : `<ellipse cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" rx="${formatNumber(eyeRadius)}" ry="${formatNumber(eyeRadius * 1.3)}" fill="${INK}"/>`,
+        ? `<path d="M${formatNumber(eyeX - eyeRadius)} ${formatNumber(eyeY)}h${formatNumber(eyeRadius * 2)}" stroke="${ink}" stroke-width="0.7"/>`
+        : `<ellipse cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" rx="${formatNumber(eyeRadius)}" ry="${formatNumber(eyeRadius * 1.3)}" fill="${ink}"/>`,
     );
   }
   // Rosy cheeks are visible on every skin tone because they use an orange-pink, not a fixed tint of the skin.
   const cheekOpacity = 0.45;
   for (const cheek of [onHead(0.8, 0.68, -0.28), onHead(0.8, -0.68, -0.28)]) {
     parts.push(
-      `<ellipse cx="${formatNumber(cheek[0])}" cy="${formatNumber(cheek[1])}" rx="${formatNumber(person.headRadius * 0.2)}" ry="${formatNumber(person.headRadius * 0.14)}" fill="#ff5d6d" fill-opacity="${cheekOpacity}"/>`,
+      `<ellipse cx="${formatNumber(cheek[0])}" cy="${formatNumber(cheek[1])}" rx="${formatNumber(person.headRadius * 0.2)}" ry="${formatNumber(person.headRadius * 0.14)}" fill="${theme.color("#ff5d6d")}" fill-opacity="${cheekOpacity}"/>`,
     );
   }
   // Smile: a short arc on the lower face.
   const smileStart = onHead(0.82, 0.3, -0.38);
   const smileMiddle = onHead(0.86, 0, -0.56);
   const smileEnd = onHead(0.82, -0.3, -0.38);
-  const smileColor = person.beard ? "#6b2a3a" : INK;
+  const smileColor = person.beard ? theme.color("#6b2a3a") : ink;
   parts.push(
     `<path d="M${formatPoint(smileStart)}Q${formatPoint(smileMiddle)} ${formatPoint(smileEnd)}" fill="none" stroke="${smileColor}" stroke-width="0.75" stroke-linecap="round"/>`,
   );
@@ -532,17 +561,18 @@ function drawFace(
     const moustacheMiddle = onHead(0.9, 0, -0.14);
     const moustacheRight = onHead(0.82, -0.42, -0.34);
     parts.push(
-      `<path d="M${formatPoint(moustacheLeft)}Q${formatPoint(moustacheMiddle)} ${formatPoint(moustacheRight)}" fill="none" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/>` +
-        `<path d="M${formatPoint(moustacheLeft)}Q${formatPoint(moustacheMiddle)} ${formatPoint(moustacheRight)}" fill="none" stroke="${person.moustache}" stroke-width="1.6" stroke-linecap="round"/>`,
+      `<path d="M${formatPoint(moustacheLeft)}Q${formatPoint(moustacheMiddle)} ${formatPoint(moustacheRight)}" fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/>` +
+        `<path d="M${formatPoint(moustacheLeft)}Q${formatPoint(moustacheMiddle)} ${formatPoint(moustacheRight)}" fill="none" stroke="${theme.color(person.moustache)}" stroke-width="1.6" stroke-linecap="round"/>`,
     );
   }
   if (person.glasses) {
+    const frame = theme.color(person.glasses);
     for (const [eyeX, eyeY] of eyes) {
-      parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(person.headRadius * 0.3)}" fill="#ffffff" fill-opacity="0.35" stroke="${person.glasses}" stroke-width="0.6"/>`);
+      parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(person.headRadius * 0.3)}" fill="${theme.color("#ffffff")}" fill-opacity="0.35" stroke="${frame}" stroke-width="0.6"/>`);
     }
-    parts.push(`<path d="M${formatPoint(leftEye)}L${formatPoint(rightEye)}" stroke="${person.glasses}" stroke-width="0.5" fill="none"/>`);
+    parts.push(`<path d="M${formatPoint(leftEye)}L${formatPoint(rightEye)}" stroke="${frame}" stroke-width="0.5" fill="none"/>`);
     for (const [eyeX, eyeY] of eyes) {
-      parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(person.headRadius * 0.12)}" fill="${INK}"/>`);
+      parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(person.headRadius * 0.12)}" fill="${ink}"/>`);
     }
   }
   return parts.join("");
@@ -622,10 +652,10 @@ function hairBallsFor(style: HairStyle): HairLayer[] {
   }
 }
 
-function wobblyHull(balls: readonly Ball[], random: () => number): string {
+function wobblyHull(balls: readonly Ball[], random: () => number, wobbleScale: number): string {
   const outline = hullOfCircles(balls.map(screenCircle));
   const resampled = subdivide(outline.filter((_, index) => index % 2 === 0), true, 3);
-  return smoothPath(wobble(resampled, 0.14, random, 9), true);
+  return smoothPath(wobble(resampled, 0.14 * wobbleScale, random, 9), true);
 }
 
 function screenCircle({ center, radius }: Ball): { center: Point; radius: number } {
@@ -649,13 +679,14 @@ function formatPoint([x, y]: Point): string {
 }
 
 /** The canvas of a person sprite is the same for all frames, so that the anchor stays fixed. */
-export function personDocument(person: PersonDesign, pose: Pose): string {
+export function personDocument(design: PersonDesign, pose: Pose, theme: Theme): string {
+  const person = proportioned(design, theme.people);
   const extraHeadroom = person.accessory === "balloon" ? 30 : 0;
   const height = Math.ceil(person.height * Math.sqrt(3) * 0.5 + 20 + extraHeadroom);
   const width = 46;
   const anchorX = width / 2;
   const anchorY = height - 9;
-  const body = drawPerson(person, pose);
+  const body = drawPerson(design, pose, theme);
   return svgDocument(
     width,
     height,
@@ -663,5 +694,6 @@ export function personDocument(person: PersonDesign, pose: Pose): string {
     anchorY,
     `<g transform="translate(${anchorX} ${anchorY})">\n${body}\n</g>`,
     { "data-walk-cycle-length": formatNumber(person.stride * 4), "data-description": person.description },
+    theme,
   );
 }

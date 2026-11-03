@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="72" height="40" viewBox="0 0 72 40" data-anchor-x="36" data-anchor-y="20" data-description="Water tile with drifting ripples">
+<g transform="translate(36 20)">
+<path d="M0 -16.4L32.8 0L0 16.4L-32.8 0Z" fill="#57cfe6"/>
+<path d="M-0.91 8.65q3.35 -1.4 6.7 0t6.7 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M4.08 4.48q3.14 -1.4 6.28 0t6.28 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M0.42 -4.5q1.89 -1.4 3.78 0t3.78 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M-8.2 5.72q3.03 -1.4 6.05 0t6.05 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M8.29 1.32q2.2 -1.4 4.39 0t4.39 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M-32 0L0 -16L32 0L28.8 1.2L0 -13.6L-28.8 1.2Z" fill="#55b1d3" fill-opacity="0.5"/>
+</g>
+</svg>

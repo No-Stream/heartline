@@ -7,4 +7,5 @@ web/src/wasm/
 playwright-report/
 test-results/
 web/art/atlas/
+web/art/themes/
 web/art/screenshots/

@@ -2,20 +2,20 @@
 // four sides, so all rotations show the same object: walls, signs and doors stay where they were
 // built, and each side only appears when it faces the camera.
 import {
+  fillPath,
   formatNumber,
   hatchQuad,
   hullOfCircles,
   INK,
   inkLine,
-  inkPolygon,
   type Point,
   seededRandom,
-  shadePlum,
   smoothPath,
   subdivide,
   wobble,
 } from "./ink.ts";
 import { depthOf, project, rotateQuarter, type Vector3 } from "./iso.ts";
+import type { Theme } from "./theme.ts";
 
 const LIGHT_DIRECTION: Vector3 = [0.62, 0.05, 0.78];
 const CAMERA_DIRECTION: Vector3 = [0.612, 0.612, 0.5];
@@ -47,13 +47,16 @@ function lerp3(first: Vector3, second: Vector3, fraction: number): Vector3 {
 
 export type Warp = (point: Vector3) => Vector3;
 
-/** Lean, taper and a gentle bend, applied in model space so that every view shows the same crooked shape. */
-export function storybookWarp(lean: readonly [number, number], taper: number, bend: number, height: number): Warp {
+/**
+ * Lean, taper and a gentle bend, applied in model space so that every view shows the same crooked shape.
+ * `strength` scales all three, so a theme can straighten its buildings.
+ */
+export function storybookWarp(lean: readonly [number, number], taper: number, bend: number, height: number, strength: number): Warp {
   return ([x, y, z]) => {
     const heightFraction = Math.max(0, z) / height;
-    const narrowing = 1 - taper * heightFraction;
-    const curve = Math.sin(heightFraction * Math.PI) * bend;
-    return [x * narrowing + lean[0] * heightFraction + curve, y * narrowing + lean[1] * heightFraction - curve * 0.6, z];
+    const narrowing = 1 - taper * strength * heightFraction;
+    const curve = Math.sin(heightFraction * Math.PI) * bend * strength;
+    return [x * narrowing + lean[0] * strength * heightFraction + curve, y * narrowing + lean[1] * strength * heightFraction - curve * 0.6, z];
   };
 }
 
@@ -71,21 +74,27 @@ export interface Surface {
   width: number;
   height: number;
   visible: boolean;
-  /** Amount of plum shade to mix into anything painted on this surface. */
+  /** Amount of shade to mix into anything painted on this surface. */
   tone: number;
   at(u: number, v: number): Vector3;
 }
 
+/**
+ * Every method takes design colours and draws them in the model's theme. Line widths are given
+ * as in the candy theme and scaled by the theme's line weight.
+ */
 export class Model {
   readonly view: number;
+  readonly theme: Theme;
   private readonly warp: Warp;
   private readonly random: () => number;
   private readonly groups: { depth: number; order: number; markup: string[] }[] = [];
   private current: { depth: number; order: number; markup: string[] };
   private readonly underlay: string[] = [];
 
-  constructor(id: string, view: number, warp: Warp = (point) => point) {
+  constructor(id: string, view: number, theme: Theme, warp: Warp = (point) => point) {
     this.view = view;
+    this.theme = theme;
     this.warp = warp;
     this.random = seededRandom(`${id}/${view}`);
     this.current = { depth: 0, order: 0, markup: [] };
@@ -111,6 +120,48 @@ export class Model {
     this.current.markup.push(markup);
   }
 
+  /** A design colour in this model's theme. */
+  color(designColor: string): string {
+    return this.theme.color(designColor);
+  }
+
+  get ink(): string {
+    return this.theme.line.color;
+  }
+
+  /** A line width scaled by the theme's line weight. */
+  lineWidth(width: number): number {
+    return width * this.theme.line.weight;
+  }
+
+  private shaded(designColor: string, tone: number): string {
+    return this.theme.shade(this.color(designColor), tone);
+  }
+
+  private line(points: readonly Point[], width: number, color: string, extra: { opacity?: number; overshoot?: number; taper?: boolean } = {}): string {
+    const { line } = this.theme;
+    return inkLine(points, this.random, {
+      width: width * line.weight,
+      color,
+      opacity: extra.opacity,
+      overshoot: (extra.overshoot ?? 0) * line.weight * line.overshoot,
+      taper: extra.taper,
+      wobble: line.wobble,
+      breaks: line.breaks,
+    });
+  }
+
+  /** A polygon with a wobbly fill and separately inked edges that slightly overshoot the corners. */
+  private polygon(corners: readonly Point[], color: string, width: number, wobbleAmount: number): string {
+    const fillOutline = wobble(subdivide(corners, true, 7), wobbleAmount * this.theme.shapeWobble, this.random);
+    const fill = fillPath(this.theme, smoothPath(fillOutline, true, 0.45), color);
+    if (width <= 0) return fill;
+    const edges = corners.map((corner, index) =>
+      this.line([corner, corners[(index + 1) % corners.length]], width, this.ink, { overshoot: width * 0.9 }),
+    );
+    return fill + edges.join("");
+  }
+
   render(): string {
     const sorted = [...this.groups].sort((first, second) => first.depth - second.depth || first.order - second.order);
     return [...this.underlay, ...sorted.flatMap((group) => group.markup)].join("\n");
@@ -119,7 +170,8 @@ export class Model {
   shadow(corners: readonly Vector3[], opacity = 0.24): void {
     const screen = corners.map((corner) => this.toScreen(corner));
     const outline = wobble(subdivide(screen, true, 8), 0.7, this.random);
-    this.underlay.push(`<path d="${smoothPath(outline, true, 0.6)}" fill="#4b2a7a" fill-opacity="${opacity}"/>`);
+    const { shadow } = this.theme;
+    this.underlay.push(`<path d="${smoothPath(outline, true, 0.6)}" fill="${shadow.color}" fill-opacity="${opacity * shadow.opacity}"/>`);
   }
 
   groundEllipse(radiusX: number, radiusY: number, opacity = 0.24, shiftX = 0, shiftY = 0): void {
@@ -134,7 +186,7 @@ export class Model {
     return dot(normal, LIGHT_DIRECTION);
   }
 
-  /** Shade towards plum for faces turned from the light. Top and right faces stay clean candy colours. */
+  /** How much to shade a face turned from the light. Top and right faces stay clean colours. */
   private toneFor(normal: Vector3): number {
     return Math.max(0, Math.min(0.34, (0.62 - dot(normal, LIGHT_DIRECTION)) * 0.46));
   }
@@ -143,11 +195,12 @@ export class Model {
     const viewPoints = points.map((point) => this.toView(point));
     const normal = normalOf(viewPoints);
     if (dot(normal, CAMERA_DIRECTION) <= 0.015) return false;
-    const color = lit ? shadePlum(fill, this.toneFor(normal)) : fill;
+    const color = lit ? this.shaded(fill, this.toneFor(normal)) : this.color(fill);
     const screen = viewPoints.map(project);
-    this.raw(inkPolygon(screen, color, this.random, { width: ink, wobbleAmount, inkEdges: ink > 0 }));
-    if (hatch > 0 && screen.length === 4) {
-      this.raw(hatchQuad(screen as unknown as [Point, Point, Point, Point], hatch, this.random));
+    this.raw(this.polygon(screen, color, ink, wobbleAmount));
+    const hatchLines = Math.round(hatch * this.theme.hatching);
+    if (hatchLines > 0 && screen.length === 4) {
+      this.raw(hatchQuad(screen as unknown as [Point, Point, Point, Point], hatchLines, this.random, { width: this.lineWidth(0.7), color: this.ink }));
     }
     return true;
   }
@@ -174,7 +227,7 @@ export class Model {
   paint(surface: Surface, points: readonly (readonly [number, number])[], fill: string, ink = 0.9): void {
     if (!surface.visible) return;
     const screen = points.map(([u, v]) => this.toScreen(surface.at(u, v)));
-    this.raw(inkPolygon(screen, shadePlum(fill, surface.tone), this.random, { width: ink, wobbleAmount: 0.25, inkEdges: ink > 0 }));
+    this.raw(this.polygon(screen, this.shaded(fill, surface.tone), ink, 0.25));
   }
 
   rect(surface: Surface, left: number, bottom: number, width: number, height: number, fill: string, ink = 0.9): void {
@@ -191,10 +244,10 @@ export class Model {
       points.push([left + radius + Math.cos(angle) * radius, bottom + height - radius + Math.sin(angle) * radius]);
     }
     const screen = points.map(([u, v]) => this.toScreen(surface.at(u, v)));
-    const outline = wobble(subdivide(screen, true, 4), 0.2, this.random);
+    const outline = wobble(subdivide(screen, true, 4), 0.2 * this.theme.shapeWobble, this.random);
     const path = smoothPath(outline, true, 0.6);
-    this.raw(`<path d="${path}" fill="${shadePlum(fill, surface.tone)}"/>`);
-    if (ink > 0) this.raw(`<path d="${path}" fill="none" stroke="${INK}" stroke-width="${ink}" stroke-linejoin="round"/>`);
+    this.raw(fillPath(this.theme, path, this.shaded(fill, surface.tone)));
+    if (ink > 0) this.raw(`<path d="${path}" fill="none" stroke="${this.ink}" stroke-width="${this.lineWidth(ink)}" stroke-linejoin="round"/>`);
   }
 
   ellipseOn(surface: Surface, centerU: number, centerV: number, radiusU: number, radiusV: number, fill: string, ink = 0.9): void {
@@ -203,21 +256,21 @@ export class Model {
       const angle = (index / 16) * Math.PI * 2;
       return this.toScreen(surface.at(centerU + Math.cos(angle) * radiusU, centerV + Math.sin(angle) * radiusV));
     });
-    const path = smoothPath(wobble(points, 0.12, this.random), true);
-    this.raw(`<path d="${path}" fill="${shadePlum(fill, surface.tone)}"${ink > 0 ? ` stroke="${INK}" stroke-width="${ink}"` : ""}/>`);
+    const path = smoothPath(wobble(points, 0.12 * this.theme.shapeWobble, this.random), true);
+    this.raw(fillPath(this.theme, path, this.shaded(fill, surface.tone), { strokeWidth: ink > 0 ? this.lineWidth(ink) : 0 }));
   }
 
   lineOn(surface: Surface, points: readonly (readonly [number, number])[], width = 0.8, color = INK, opacity = 1): void {
     if (!surface.visible) return;
     const screen = points.map(([u, v]) => this.toScreen(surface.at(u, v)));
-    this.raw(inkLine(screen, this.random, { width, color, opacity }));
+    this.raw(this.line(screen, width, this.color(color), { opacity }));
   }
 
   /** A smooth stroke through surface points, with round ends, for curls and hand-lettered shapes. */
   strokeOn(surface: Surface, points: readonly (readonly [number, number])[], width: number, color = INK): void {
     if (!surface.visible) return;
     const screen = points.map(([u, v]) => this.toScreen(surface.at(u, v)));
-    this.raw(`<path d="${smoothPath(screen, false)}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`);
+    this.raw(`<path d="${smoothPath(screen, false)}" fill="none" stroke="${this.color(color)}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`);
   }
 
   /** Hand-lettered capitals, drawn in the plane of the surface so that signs sit on their walls. */
@@ -235,7 +288,7 @@ export class Model {
         const screen = stroke.map(([x, y]) =>
           this.toScreen(surface.at(startU + index * spacing + x * letterWidth, bottom + jitter + y * letterHeight)),
         );
-        this.raw(`<path d="${smoothPath(screen, false, 0.5)}" fill="none" stroke="${color}" stroke-width="${weight}" stroke-linecap="round" stroke-linejoin="round"/>`);
+        this.raw(`<path d="${smoothPath(screen, false, 0.5)}" fill="none" stroke="${this.color(color)}" stroke-width="${weight}" stroke-linecap="round" stroke-linejoin="round"/>`);
       }
     });
   }
@@ -286,9 +339,9 @@ export class Model {
       }),
     );
     const hull = hullOfCircles(rings.flat().map((point) => ({ center: point, radius: 0.01 })));
-    const outline = wobble(thinOut(hull, 2.2), 0.22, this.random);
+    const outline = wobble(thinOut(hull, 2.2), 0.22 * this.theme.shapeWobble, this.random);
     const path = smoothPath(outline, true);
-    this.raw(`<path d="${path}" fill="${color}"/>`);
+    this.raw(fillPath(this.theme, path, this.color(color)));
     if (shadeSide) {
       const clipId = `lathe${this.groups.length}x${Math.round(this.random() * 1e6)}`;
       const xs = hull.map(([x]) => x);
@@ -298,14 +351,14 @@ export class Model {
       const shadeEdge = minX + (maxX - minX) * 0.36;
       this.raw(
         `<clipPath id="${clipId}"><path d="${path}"/></clipPath>` +
-          `<path clip-path="url(#${clipId})" d="M${formatNumber(minX - 2)} ${formatNumber(minY - 2)}H${formatNumber(shadeEdge + 3)}C${formatNumber(shadeEdge - 3)} ${formatNumber(minY + (maxY - minY) * 0.3)} ${formatNumber(shadeEdge - 3)} ${formatNumber(minY + (maxY - minY) * 0.7)} ${formatNumber(shadeEdge + 4)} ${formatNumber(maxY + 2)}H${formatNumber(minX - 2)}Z" fill="#4b2a7a" fill-opacity="0.16"/>`,
+          `<path clip-path="url(#${clipId})" d="M${formatNumber(minX - 2)} ${formatNumber(minY - 2)}H${formatNumber(shadeEdge + 3)}C${formatNumber(shadeEdge - 3)} ${formatNumber(minY + (maxY - minY) * 0.3)} ${formatNumber(shadeEdge - 3)} ${formatNumber(minY + (maxY - minY) * 0.7)} ${formatNumber(shadeEdge + 4)} ${formatNumber(maxY + 2)}H${formatNumber(minX - 2)}Z" fill="${this.theme.shadow.color}" fill-opacity="${this.theme.shadow.roundShadeOpacity}"/>`,
       );
     }
     if (topColor) {
       const top = rings[rings.length - 1];
-      this.raw(`<path d="${smoothPath(top, true)}" fill="${topColor}" stroke="${INK}" stroke-width="${ink * 0.75}"/>`);
+      this.raw(fillPath(this.theme, smoothPath(top, true), this.color(topColor), { strokeWidth: this.lineWidth(ink * 0.75) }));
     }
-    if (ink > 0) this.raw(`<path d="${path}" fill="none" stroke="${INK}" stroke-width="${ink}" stroke-linejoin="round"/>`);
+    if (ink > 0) this.raw(`<path d="${path}" fill="none" stroke="${this.ink}" stroke-width="${this.lineWidth(ink)}" stroke-linejoin="round"/>`);
   }
 
   /** A cylinder's side as a surface: u is an arc length around it starting at the +x side, v is height. */
@@ -328,7 +381,7 @@ export class Model {
     this.lathe(centerX, centerY, [[radius + 1.8, top], [radius + 1.8, top + 2], [0.1, top + 4.5]], color, { ink: 1, shadeSide: false });
   }
 
-  /** A cone roof whose sectors alternate colours, like a circus tent. */
+  /** A cone roof whose sectors alternate colours, like a circus tent, unless the theme turns stripes and scallops off. */
   stripedCone(
     centerX: number,
     centerY: number,
@@ -348,13 +401,14 @@ export class Model {
       const start = edge(index);
       const end = edge(index + 1);
       const screen = [start, end, apexPoint].map((point) => this.toScreen(point));
-      const color = colors[index % colors.length];
+      const color = this.theme.props.coneStripes ? colors[index % colors.length] : colors[0];
       const normal = normalOf([start, end, apexPoint].map((point) => this.toView(point)));
       const visible = dot(normal, CAMERA_DIRECTION) > -0.05;
       if (visible) {
-        const scallop = this.scallopBetween(screen[0], screen[1]);
+        const scallop = this.theme.props.scallops ? this.scallopBetween(screen[0], screen[1]) : [screen[0], screen[1]];
         const outline = [...scallop, screen[2]];
-        this.raw(`<path d="${smoothPath(outline, true, 0.25)}" fill="${shadePlum(color, this.toneFor(normal))}" stroke="${INK}" stroke-width="0.9" stroke-linejoin="round"/>`);
+        const seamWidth = this.theme.props.coneStripes ? this.lineWidth(0.9) : 0;
+        this.raw(fillPath(this.theme, smoothPath(outline, true, 0.25), this.shaded(color, this.toneFor(normal)), { strokeWidth: seamWidth, lineJoin: true, strokeColor: this.ink }));
         baseOutline.push(...scallop);
       }
     }
@@ -390,22 +444,23 @@ export class Model {
   stick(start: Vector3, end: Vector3, width: number, color: string, inkWidth = 1): void {
     const [startScreen, endScreen] = [this.toScreen(start), this.toScreen(end)];
     const segment = `M${formatNumber(startScreen[0])} ${formatNumber(startScreen[1])}L${formatNumber(endScreen[0])} ${formatNumber(endScreen[1])}`;
-    if (inkWidth > 0) this.raw(`<path d="${segment}" stroke="${INK}" stroke-width="${width + inkWidth * 2}" stroke-linecap="round"/>`);
-    this.raw(`<path d="${segment}" stroke="${color}" stroke-width="${width}" stroke-linecap="round"/>`);
+    if (inkWidth > 0) this.raw(`<path d="${segment}" stroke="${this.ink}" stroke-width="${width + this.lineWidth(inkWidth) * 2}" stroke-linecap="round"/>`);
+    this.raw(`<path d="${segment}" stroke="${this.color(color)}" stroke-width="${width}" stroke-linecap="round"/>`);
   }
 
   /** A smooth tube through model-space points. */
   tube(points: readonly Vector3[], width: number, color: string, inkWidth = 1): void {
     const path = smoothPath(points.map((point) => this.toScreen(point)), false);
-    if (inkWidth > 0) this.raw(`<path d="${path}" fill="none" stroke="${INK}" stroke-width="${width + inkWidth * 2}" stroke-linecap="round" stroke-linejoin="round"/>`);
-    this.raw(`<path d="${path}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`);
+    if (inkWidth > 0) this.raw(`<path d="${path}" fill="none" stroke="${this.ink}" stroke-width="${width + this.lineWidth(inkWidth) * 2}" stroke-linecap="round" stroke-linejoin="round"/>`);
+    this.raw(`<path d="${path}" fill="none" stroke="${this.color(color)}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`);
   }
 
   ball(center: Vector3, radius: number, color: string, { ink = 1.2, highlight = 0.5 }: { ink?: number; highlight?: number } = {}): void {
     const [screenX, screenY] = this.toScreen(center);
     this.raw(this.blob(screenX, screenY, radius, color, ink));
-    if (highlight > 0) {
-      this.raw(`<ellipse cx="${formatNumber(screenX - radius * 0.34)}" cy="${formatNumber(screenY - radius * 0.38)}" rx="${formatNumber(radius * 0.2)}" ry="${formatNumber(radius * 0.28)}" fill="#ffffff" fill-opacity="${highlight}"/>`);
+    const highlightOpacity = highlight * this.theme.highlight.opacity;
+    if (highlightOpacity > 0) {
+      this.raw(`<ellipse cx="${formatNumber(screenX - radius * 0.34)}" cy="${formatNumber(screenY - radius * 0.38)}" rx="${formatNumber(radius * 0.2)}" ry="${formatNumber(radius * 0.28)}" fill="${this.theme.highlight.color}" fill-opacity="${highlightOpacity}"/>`);
     }
   }
 
@@ -414,11 +469,11 @@ export class Model {
       const angle = (index / 14) * Math.PI * 2;
       return [screenX + Math.cos(angle) * radius, screenY + Math.sin(angle) * radius];
     });
-    const path = smoothPath(wobble(points, wobbleAmount ?? radius * 0.035, this.random, radius * 2), true);
-    return `<path d="${path}" fill="${color}"${ink > 0 ? ` stroke="${INK}" stroke-width="${ink}"` : ""}/>`;
+    const path = smoothPath(wobble(points, (wobbleAmount ?? radius * 0.035) * this.theme.shapeWobble, this.random, radius * 2), true);
+    return fillPath(this.theme, path, this.color(color), { strokeWidth: ink > 0 ? this.lineWidth(ink) : 0 });
   }
 
-  /** The curl inside a lollipop tree, in screen space. */
+  /** The curl inside a lollipop tree, in screen space. The colour is a design colour. */
   spiral(screenX: number, screenY: number, radius: number, color: string, turns = 2.6, width = 1.3, direction = 1): void {
     const points: Point[] = [];
     const steps = Math.round(turns * 12);
@@ -427,7 +482,7 @@ export class Model {
       const angle = direction * fraction * turns * Math.PI * 2;
       points.push([screenX + Math.cos(angle) * radius * fraction, screenY + Math.sin(angle) * radius * fraction * 0.96]);
     }
-    this.raw(inkLine(points, this.random, { width, color, taper: true }));
+    this.raw(inkLine(points, this.random, { width, color: this.color(color), taper: true }));
   }
 
   get randomSource(): () => number {

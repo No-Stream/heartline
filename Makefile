@@ -3,7 +3,7 @@ CARGO_HOME ?= $(HOME)/.cargo
 WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
 WASM_BINDGEN_VERSION := 0.2.105
 
-.PHONY: install build test lint serve e2e ci wasm-bindgen art art-drawings art-demo art-screenshots bench-render bench
+.PHONY: install build test lint serve e2e ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench
 
 install:
 	npm ci
@@ -57,6 +57,11 @@ art-demo:
 
 art-screenshots:
 	$(NODE_TS) web/art/pipeline/screenshots.ts
+
+# Builds the alternative art themes under web/art/themes/ and screenshots them next to candy
+# in web/art/screenshots/themes/. Open one in the demo with demo.html?theme=<name>.
+art-themes: art
+	$(NODE_TS) web/art/pipeline/themes.ts
 
 # The same checks as .github/workflows/ci.yaml, except the secret scan and dependency audit.
 ci: install build lint test e2e
