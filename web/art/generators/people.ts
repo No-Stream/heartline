@@ -50,10 +50,10 @@ type HairStyle =
   | "wavyBob"
   | "swoop"
   | "balding"
-  | "closeCrop";
-type HatStyle = "none" | "cap" | "sunhat" | "beanie" | "flatCap";
+  | "highBun";
+type HatStyle = "none" | "cap" | "sunhat" | "beanie";
 type LowerBody = "trousers" | "shorts" | "cargoShorts" | "skirt" | "dress" | "leggings";
-type Accessory = "none" | "balloon" | "backpack" | "handbag" | "camera" | "iceCream" | "satchel" | "tote" | "walkingStick";
+type Accessory = "none" | "balloon" | "backpack" | "handbag" | "camera" | "iceCream" | "satchel" | "tote" | "walkingStick" | "drink" | "beltBag";
 
 /** How a person walks and stands, as scales on the usual gait. */
 interface Gait {
@@ -93,6 +93,7 @@ export interface PersonDesign {
   accessoryColor: string;
   beard?: string;
   moustache?: string;
+  /** Fine round glasses in this frame colour, drawn into the candy face; other face styles draw them with the framed lenses. */
   glasses?: string;
   /** Glasses held on by a strap round the back of the head, drawn in every face style; the strap's colour. */
   glassesStrap?: string;
@@ -107,7 +108,7 @@ export interface PersonDesign {
   openFront?: string;
   /** A knee-length tunic worn over the trousers, in this colour. */
   tunic?: string;
-  /** Glasses with an ink frame drawn in every face style, as the strapped glasses are; `glasses` shows only with the candy face. */
+  /** Glasses with an ink frame drawn in every face style, the candy face included, as the strapped glasses are. */
   framedGlasses?: boolean;
   gait?: Gait;
 }
@@ -202,6 +203,18 @@ export const CAST: PersonDesign[] = [
     top: "#3f8cff", sleeves: "short", lower: "trousers", lowerColor: "#d9b58a", shoes: "#6d4632",
   },
   {
+    ...adult, ...noExtras, id: "ada", description: "Tall slim young woman with a high bun of locs, a red top, a long mustard skirt and a big fizzy drink",
+    height: 46, shoulderHalfWidth: 4.3, hipHalfWidth: 3, limbRadius: 1.6, headRadius: 5.8, stride: 6.6,
+    skin: "#6e4330", hair: "#2a1a22", hairStyle: "highBun", top: "#e8483c", sleeves: "short",
+    lower: "skirt", lowerColor: "#e9b44c", shoes: "#2a1b42", accessory: "drink", accessoryColor: "#39b6a0",
+  },
+  {
+    ...adult, ...noExtras, id: "kofi", description: "Bald dad in his forties with a pink shirt, dark jeans, white trainers and an orange belt bag",
+    height: 44, shoulderHalfWidth: 5.2, hipHalfWidth: 3.5, belly: 1.2, chest: 0.6, limbRadius: 1.9, headRadius: 6,
+    skin: "#4f3122", hair: "#1f1618", hairStyle: "bald", top: "#ff7fa8", sleeves: "short",
+    lower: "trousers", lowerColor: "#39445c", shoes: "#fffaf0", accessory: "beltBag", accessoryColor: "#ff8a3c",
+  },
+  {
     ...child, ...noExtras, id: "theo", description: "Boy with a backwards green cap, striped tee, shorts and a big backpack",
     skin: "#7c5238", hair: "#231433", hairStyle: "shortCrop", hat: "cap", hatColor: "#2ec98a", top: "#ffc531", topStripe: "#3f8cff", sleeves: "short",
     lower: "shorts", lowerColor: "#ff5d5d", shoes: "#fffaf0", accessory: "backpack", accessoryColor: "#ff8a3c",
@@ -228,9 +241,9 @@ export const CAST: PersonDesign[] = [
     lower: "cargoShorts", lowerColor: "#c9a26b", pocketColor: "#b08550", socks: "#fffaf0", shoes: "#6d4632", glassesStrap: "#ff5d5d",
   },
   {
-    ...senior, ...noExtras, id: "earl", description: "Broad older man with silver cropped hair, a tweed flat cap and an open green cardigan",
+    ...senior, ...noExtras, id: "earl", description: "Broad older man with cropped silver hair and an open green cardigan",
     height: 42, shoulderHalfWidth: 6, hipHalfWidth: 4.4, belly: 2.4, chest: 1, limbRadius: 2.1, headRadius: 6,
-    skin: "#5a3826", hair: "#e2dfda", hairStyle: "closeCrop", hat: "flatCap", hatColor: "#8a6a4a",
+    skin: "#5a3826", hair: "#e2dfda", hairStyle: "shortCrop",
     top: "#3f8a5c", openFront: "#fffaf0", sleeves: "long", lower: "trousers", lowerColor: "#5c5866", shoes: "#2a1b42",
     gait: { ...senior.gait, stoop: 0.5 },
   },
@@ -252,7 +265,7 @@ export const CAST: PersonDesign[] = [
 
 const HAIR_GROUPS: Record<HairStyle, PersonAppearance["hairGroup"]> = {
   afro: "curly", shortCrop: "short", bun: "tied", bald: "bald", braid: "tied", bowl: "short",
-  pigtails: "tied", puffs: "curly", hijab: "covered", wavyBob: "bob", swoop: "short", balding: "bald", closeCrop: "short",
+  pigtails: "tied", puffs: "curly", hijab: "covered", wavyBob: "bob", swoop: "short", balding: "bald", highBun: "tied",
 };
 
 function rgb(hex: string): [number, number, number] {
@@ -504,7 +517,7 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     const shoulderLeft = side * (person.shoulderHalfWidth * 0.86 + person.belly * 0.12);
     const shoulder = ball(shoulderForward, shoulderLeft, shoulderZ + breath - 0.3, person.limbRadius * 0.95);
     const armLength = (shoulderHeight - hipHeight) * 1.0;
-    const carriesAccessory = side === -1 && (person.accessory === "iceCream" || person.accessory === "balloon");
+    const carriesAccessory = side === -1 && (person.accessory === "iceCream" || person.accessory === "balloon" || person.accessory === "drink");
     const holdsCane = side === -1 && person.accessory === "walkingStick";
     const handForward = holdsCane
       ? caneTipForward * 0.45 + 0.8 + stoopAt(shoulderHeight) * 0.5
@@ -579,11 +592,6 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     addLayer(10, [[headBall(-0.28, 0, 0.5, 0.84)]], person.hatColor);
     addLayer(10.1, [[headBall(-0.28, 0, 1.38, 0.25)]], "#fffaf0");
   }
-  if (person.hat === "flatCap") {
-    // Low and flat, sloping forward from the crown onto a short peak.
-    addLayer(10, [[headBall(-0.3, 0, 0.66, 0.74), headBall(0.22, 0, 0.74, 0.62)]], person.hatColor);
-    addLayer(10.1, [[headBall(0.98, 0.42, 0.56, 0.12), headBall(0.98, -0.42, 0.56, 0.12), headBall(0.7, 0, 0.66, 0.3)]], shadePlum(person.hatColor, 0.22), undefined, 0.8);
-  }
   if (person.hat === "sunhat") {
     const brim = Array.from({ length: 12 }, (_, index) => {
       const angle = (index / 12) * Math.PI * 2;
@@ -642,6 +650,21 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
       addLayer(5.5, [[ball(chestForward, 1.1, shoulderZ - 3.6, 1.05), ball(chestForward, -1.1, shoulderZ - 3.6, 1.05)]], "#5a4a78", lensMarkup, 0.8);
     }
   }
+  if (person.accessory === "beltBag") {
+    // Worn across the body, from the right shoulder to the left hip, with the pouch on the chest.
+    // The strap shows on whichever side of the torso is seen; the pouch only from the front.
+    const seenSide = facingViewer ? 1 : -1;
+    const chestFront = person.chest + person.shoulderHalfWidth * 0.8;
+    const bellyFront = person.belly + person.hipHalfWidth + person.belly * 0.55;
+    const strapTop = ball(shoulderForward + seenSide * chestFront * 0.55, -person.shoulderHalfWidth * 0.62, shoulderZ + 0.4, 0.42);
+    const strapBottom = ball(seenSide * bellyFront * 0.75, person.hipHalfWidth * 0.95, hipCore + 1.2, 0.42);
+    addLayer(4.4, [capsule(strapTop, strapBottom)], shadePlum(person.accessoryColor, 0.3), undefined, 0.6);
+    if (facingViewer) {
+      const pouchUp = shoulderZ - (shoulderZ - hipCore) * 0.42;
+      const pouchForward = person.chest * 0.5 + person.belly * 0.5 + person.shoulderHalfWidth * 0.78 + stoopAt(pouchUp);
+      addLayer(4.5, [[ball(pouchForward, 1.5, pouchUp, 1.05), ball(pouchForward, -1.3, pouchUp + 0.6, 1.05)]], person.accessoryColor, undefined, 0.8);
+    }
+  }
 
   // Composite in layer order.
   layers.sort((first, second) => first.order - second.order);
@@ -665,9 +688,9 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
   const face =
     (facingViewer ? drawFace(person, theme, headBall, leftIsNear ? 1 : -1, animation === "idle" && frame === 1) : "") +
     (person.glassesStrap ? drawStrappedGlasses(person, theme, headBall, leftIsNear ? 1 : -1, facingViewer) : "") +
-    (person.framedGlasses && facingViewer ? drawFramedLenses(person, theme, headBall, leftIsNear ? 1 : -1) : "");
+    (facingViewer && (person.framedGlasses || (person.glasses && theme.people.face !== "candy")) ? drawFramedLenses(person, theme, headBall, leftIsNear ? 1 : -1) : "");
 
-  // Things drawn above everything else, for a held balloon or ice cream.
+  // Things drawn above everything else, for a held balloon, ice cream or drink.
   let held = "";
   if (carryingHand && person.accessory === "balloon") {
     const [handX, handY] = project(carryingHand.center);
@@ -688,6 +711,18 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     held =
       `<path d="M${formatNumber(handX - 2.1)} ${formatNumber(coneTop)}L${formatNumber(handX + 2.1)} ${formatNumber(coneTop)}L${formatNumber(handX)} ${formatNumber(handY + 2)}Z" fill="${theme.color("#e8a06f")}" stroke="${ink}" stroke-width="${0.9 * theme.people.outline}" stroke-linejoin="round"/>` +
       `<circle cx="${formatNumber(handX)}" cy="${formatNumber(coneTop - 1.6)}" r="2.5" fill="${theme.color(person.accessoryColor)}" stroke="${ink}" stroke-width="${0.9 * theme.people.outline}"/>`;
+  }
+  if (carryingHand && person.accessory === "drink") {
+    // A tall paper cup held round the middle, with a domed lid and a striped straw.
+    const [handX, handY] = project(carryingHand.center);
+    const [cupTop, cupBottom] = [handY - 3.6, handY + 2.2];
+    const strokeWidth = formatNumber(0.9 * theme.people.outline);
+    const strawLean = facing === "sw" || facing === "nw" ? -1 : 1;
+    held =
+      `<path d="M${formatNumber(handX + 0.4 * strawLean)} ${formatNumber(cupTop - 0.6)}L${formatNumber(handX + 1.5 * strawLean)} ${formatNumber(cupTop - 4)}" stroke="${ink}" stroke-width="${formatNumber(1.1 + 2 * 0.6 * theme.people.outline)}" stroke-linecap="round"/>` +
+      `<path d="M${formatNumber(handX + 0.4 * strawLean)} ${formatNumber(cupTop - 0.6)}L${formatNumber(handX + 1.5 * strawLean)} ${formatNumber(cupTop - 4)}" stroke="${theme.color("#ff5d5d")}" stroke-width="1.1" stroke-linecap="round"/>` +
+      `<path d="M${formatNumber(handX - 2.2)} ${formatNumber(cupTop)}L${formatNumber(handX + 2.2)} ${formatNumber(cupTop)}L${formatNumber(handX + 1.6)} ${formatNumber(cupBottom)}L${formatNumber(handX - 1.6)} ${formatNumber(cupBottom)}Z" fill="${theme.color(person.accessoryColor)}" stroke="${ink}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>` +
+      `<path d="M${formatNumber(handX - 2.5)} ${formatNumber(cupTop + 0.2)}Q${formatNumber(handX)} ${formatNumber(cupTop - 2)} ${formatNumber(handX + 2.5)} ${formatNumber(cupTop + 0.2)}Z" fill="${theme.color("#fffaf0")}" stroke="${ink}" stroke-width="${strokeWidth}" stroke-linejoin="round"/>`;
   }
 
   // Contact shadow, drawn with the sprite so that it always stays beneath the feet.
@@ -1036,12 +1071,11 @@ function hairBallsFor(style: HairStyle): HairLayer[] {
         { balls: [[-0.24, 0, -0.12, 1.12], [-0.12, 0, 0.42, 0.98]], bias: 0 },
         { balls: [[0.34, 0, 0.56, 0.72], [0.36, 0.56, 0.42, 0.36], [0.36, -0.56, 0.42, 0.36]], bias: 0.2 },
       ];
-    case "closeCrop":
-      // Cropped close under a hat: only the back and the hair above the ears show.
+    case "highBun":
       return [
         { balls: [backOfHead], bias: 0 },
-        { balls: [[-0.12, 0.84, 0.28, 0.3], [-0.42, 0.72, 0.32, 0.34]], bias: 0.2, alwaysOnTop: true },
-        { balls: [[-0.12, -0.84, 0.28, 0.3], [-0.42, -0.72, 0.32, 0.34]], bias: 0.2, alwaysOnTop: true },
+        { balls: [[-0.3, 0, 0.5, 0.8]], bias: 0.1, alwaysOnTop: true },
+        { balls: [[-0.2, 0, 1.36, 0.62]], bias: 0.3, alwaysOnTop: true },
       ];
     case "balding":
       // Bare on top, with a fringe round the back and over the ears.
