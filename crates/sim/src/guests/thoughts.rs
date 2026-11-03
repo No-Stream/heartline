@@ -1,5 +1,7 @@
 //! The current thought shown for a guest.
 
+use crate::track::proximity::ProximityKind;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Thought {
     Exploring,
@@ -11,4 +13,5 @@ pub enum Thought {
     Unhappy,
     EnjoyedRide(u32),
     DislikedRide(u32),
+    Proximity(u32, ProximityKind),
 }

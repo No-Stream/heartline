@@ -6,6 +6,8 @@ use super::needs::Needs;
 use super::park::ParkGuests;
 use super::storage::GuestStore;
 use super::traits::{AgeGroup, GroupKind, GuestId, SpendingLevel};
+use crate::track::Vec3;
+use crate::track::proximity::ProximityKind;
 use crate::world::Position;
 
 const GIVEN_NAMES: [&str; 32] = [
@@ -91,12 +93,19 @@ pub struct GuestTraitsDetail {
     pub walking_speed: u8,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GuestMemoryDetail {
     Ride {
         ride_id: u32,
         enjoyment: i8,
         nausea: u8,
+        tick: u64,
+    },
+    Proximity {
+        ride_id: u32,
+        kind: ProximityKind,
+        position: Vec3,
+        strength: f64,
         tick: u64,
     },
     Food {
@@ -113,12 +122,15 @@ pub enum GuestMemoryDetail {
 impl GuestMemoryDetail {
     pub const fn tick(self) -> u64 {
         match self {
-            Self::Ride { tick, .. } | Self::Food { tick, .. } | Self::Wait { tick, .. } => tick,
+            Self::Ride { tick, .. }
+            | Self::Proximity { tick, .. }
+            | Self::Food { tick, .. }
+            | Self::Wait { tick, .. } => tick,
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GuestDetail {
     pub id: GuestId,
     pub name: String,
@@ -384,6 +396,7 @@ pub fn thought_text(guest: GuestId, thought: Thought) -> String {
             ][..],
             7 ^ ride_id,
         ),
+        Thought::Proximity(ride_id, kind) => (&[proximity_text(kind)][..], 9 ^ ride_id),
         Thought::DislikedRide(ride_id) => (
             &[
                 "That ride was a bit much for me.",
@@ -436,6 +449,19 @@ fn memory_json(memory: &GuestMemoryDetail) -> String {
         } => format!(
             "{{\"kind\":\"ride\",\"rideId\":{ride_id},\"enjoyment\":{enjoyment},\"nausea\":{nausea},\"tick\":{tick}}}"
         ),
+        GuestMemoryDetail::Proximity {
+            ride_id,
+            kind,
+            position,
+            strength,
+            tick,
+        } => format!(
+            "{{\"kind\":\"proximity\",\"rideId\":{ride_id},\"eventKind\":\"{}\",\"position\":{{\"x\":{},\"y\":{},\"z\":{}}},\"strength\":{strength},\"tick\":{tick}}}",
+            proximity_name(kind),
+            position.x,
+            position.y,
+            position.z
+        ),
         GuestMemoryDetail::Food { place_id, tick } => {
             format!("{{\"kind\":\"food\",\"placeId\":{place_id},\"tick\":{tick}}}")
         }
@@ -460,6 +486,33 @@ fn thought_json(thought: Thought) -> (&'static str, String) {
         Thought::Unhappy => ("unhappy", "null".into()),
         Thought::EnjoyedRide(ride_id) => ("enjoyedRide", ride_id.to_string()),
         Thought::DislikedRide(ride_id) => ("dislikedRide", ride_id.to_string()),
+        Thought::Proximity(ride_id, kind) => (
+            "proximity",
+            format!(
+                "{{\"rideId\":{ride_id},\"eventKind\":\"{}\"}}",
+                proximity_name(kind)
+            ),
+        ),
+    }
+}
+
+fn proximity_name(kind: ProximityKind) -> &'static str {
+    match kind {
+        ProximityKind::NearMiss => "nearMiss",
+        ProximityKind::Headchopper => "headchopper",
+        ProximityKind::Dueling => "dueling",
+        ProximityKind::Tunnel => "tunnel",
+        ProximityKind::TerrainHugging => "terrainHugging",
+    }
+}
+
+fn proximity_text(kind: ProximityKind) -> &'static str {
+    match kind {
+        ProximityKind::NearMiss => "That was a close pass!",
+        ProximityKind::Headchopper => "That went right over my head!",
+        ProximityKind::Dueling => "The other train came so close!",
+        ProximityKind::Tunnel => "The tunnel was exciting!",
+        ProximityKind::TerrainHugging => "We came so close to the ground!",
     }
 }
 
@@ -546,7 +599,7 @@ mod tests {
     use crate::guests::{GuestId, generate_guests};
     use crate::world::{Path, Position, Surface, World};
 
-    use super::{GuestMemoryDetail, ParkGuests};
+    use super::{GuestMemoryDetail, ParkGuests, Vec3};
 
     fn park(seed: u64, guest_count: usize) -> (ParkGuests, World) {
         let entrance = Position {
@@ -631,6 +684,34 @@ mod tests {
             } if *enjoyment >= 0
         )));
         assert!(matches!(detail.thought, Thought::EnjoyedRide(42)));
+    }
+
+    #[test]
+    fn proximity_memories_and_thoughts_serialize_with_event_type() {
+        use crate::track::proximity::ProximityKind;
+
+        let memory = GuestMemoryDetail::Proximity {
+            ride_id: 42,
+            kind: ProximityKind::NearMiss,
+            position: Vec3::new(1.0, 2.0, 3.0),
+            strength: 0.5,
+            tick: 10,
+        };
+        assert_eq!(
+            super::memory_json(&memory),
+            r#"{"kind":"proximity","rideId":42,"eventKind":"nearMiss","position":{"x":1,"y":2,"z":3},"strength":0.5,"tick":10}"#
+        );
+        assert_eq!(
+            super::thought_json(Thought::Proximity(42, ProximityKind::NearMiss)),
+            (
+                "proximity",
+                r#"{"rideId":42,"eventKind":"nearMiss"}"#.to_owned()
+            )
+        );
+        assert!(
+            !super::thought_text(GuestId(0), Thought::Proximity(42, ProximityKind::NearMiss))
+                .is_empty()
+        );
     }
 
     #[test]

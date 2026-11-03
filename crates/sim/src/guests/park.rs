@@ -87,11 +87,16 @@ impl ParkGuests {
         world: &World,
         facility: &Facility,
         ratings: &[(f64, f64, f64)],
+        proximity_events: &[Vec<crate::track::proximity::ProximityEvent>],
         recovered: bool,
     ) {
-        let riders =
-            self.behaviors
-                .finish_coaster(facility, self.walking.traits_mut(), ratings, recovered);
+        let riders = self.behaviors.finish_coaster(
+            facility,
+            self.walking.traits_mut(),
+            ratings,
+            proximity_events,
+            recovered,
+        );
         self.walking.refresh_graph(world);
         let reference = facility.exit_position.unwrap_or(facility.place.position);
         let exit = world
@@ -562,7 +567,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let outcome = if recovered {
+        let mut outcome = if recovered {
             world.remove_path(position(3));
             run.recover()
         } else {
@@ -570,15 +575,33 @@ mod tests {
                 .find_map(|_| run.step(&circuit))
                 .expect("train finishes")
         };
+        if !recovered {
+            use crate::track::proximity::{ProximityEvent, ProximityKind};
+            let distance = outcome.reports[0].samples[0].distance;
+            outcome.reports[0].add_proximity_events(&[ProximityEvent {
+                piece_index: 0,
+                kind: ProximityKind::Tunnel,
+                position: crate::track::Vec3::new(1.0, 2.0, 3.0),
+                distance,
+                strength: 0.5,
+            }]);
+            assert_eq!(outcome.reports[0].proximity_events.len(), 1);
+        }
         let report = &outcome.reports[0];
         park.finish_coaster(
             &world,
             &facility,
             &[(report.excitement, report.intensity, report.nausea)],
+            std::slice::from_ref(&report.proximity_events),
             outcome.recovered,
         );
         if recovered {
             park.close_coaster(&world, &facility);
+        } else {
+            assert!(park.guest_detail(GuestId(0)).unwrap().memories.iter().any(|memory| matches!(
+                memory,
+                crate::guests::GuestMemoryDetail::Proximity { ride_id: 700, kind: crate::track::proximity::ProximityKind::Tunnel, strength, .. } if *strength == 0.5
+            )));
         }
         assert_eq!(park.walking.guests()[0].settled_path(), Some(position(0)));
         assert_eq!(

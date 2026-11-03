@@ -7,6 +7,7 @@ pub use super::knowledge::{KnownPlace, PlaceKind};
 pub use super::needs::Needs;
 pub use super::thoughts::Thought;
 use crate::guests::{AgeGroup, GuestId, GuestStore};
+use crate::track::proximity::ProximityEvent;
 use crate::world::Position;
 
 const QUEUE_ENTRANCE_VISIBILITY_TILES: u16 = 12;
@@ -164,13 +165,16 @@ impl BehaviorSimulation {
         facility: &Facility,
         guests: &mut GuestStore,
         ratings: &[(f64, f64, f64)],
+        proximity_events: &[Vec<ProximityEvent>],
         recovered: bool,
     ) -> Vec<GuestId> {
         let riders = self
             .coaster_riders
             .remove(&facility.place.id)
             .unwrap_or_default();
-        assert!(recovered || ratings.len() == riders.len());
+        assert!(
+            recovered || (ratings.len() == riders.len() && proximity_events.len() == riders.len())
+        );
         for (seat, guest) in riders.iter().copied().enumerate() {
             let index = guest.0 as usize;
             if !recovered {
@@ -183,6 +187,28 @@ impl BehaviorSimulation {
                 let mut place = facility.place;
                 place.intensity = nausea.clamp(0.0, 100.0) as u8;
                 self.guests[index].complete_paid(place, self.tick, enjoyment, guests, guest);
+                let mut kinds = Vec::new();
+                for event in &proximity_events[seat] {
+                    assert!(
+                        event.position.x.is_finite()
+                            && event.position.y.is_finite()
+                            && event.position.z.is_finite()
+                            && event.strength.is_finite()
+                    );
+                    if !kinds.contains(&event.kind) {
+                        kinds.push(event.kind);
+                        self.guests[index].record_memory(GuestMemoryDetail::Proximity {
+                            ride_id: place.id,
+                            kind: event.kind,
+                            position: event.position,
+                            strength: event.strength,
+                            tick: self.tick,
+                        });
+                    }
+                }
+                if let Some(&kind) = kinds.last() {
+                    self.guests[index].thought = Thought::Proximity(place.id, kind);
+                }
             }
             self.activities[index] = facility
                 .exit_position
@@ -763,11 +789,50 @@ mod tests {
             simulation.activity_detail(GuestId(0)).kind,
             ActivityKind::Riding
         );
+        use crate::track::Vec3;
+        use crate::track::proximity::ProximityKind;
+        let event = ProximityEvent {
+            piece_index: 0,
+            kind: ProximityKind::Tunnel,
+            position: Vec3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            distance: 0.0,
+            strength: 1.0,
+        };
         simulation.finish_coaster(
             &facility,
             &mut guests,
             &[(100.0, 10.0, 0.0), (10.0, 100.0, 100.0)],
+            &[vec![event, event], vec![]],
             false,
+        );
+        assert_eq!(
+            simulation.guests[0]
+                .recent_memories()
+                .iter()
+                .filter(|memory| matches!(
+                    memory,
+                    GuestMemoryDetail::Proximity {
+                        ride_id: 1,
+                        kind: ProximityKind::Tunnel,
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(
+            simulation.guests[1]
+                .recent_memories()
+                .iter()
+                .all(|memory| !matches!(memory, GuestMemoryDetail::Proximity { .. }))
+        );
+        assert_eq!(
+            simulation.guests[0].thought,
+            Thought::Proximity(1, ProximityKind::Tunnel)
         );
         let first = *guests.memory(GuestId(0)).iter().last().unwrap();
         let second = *guests.memory(GuestId(1)).iter().last().unwrap();
@@ -777,6 +842,25 @@ mod tests {
             simulation.activity_detail(GuestId(0)).kind,
             ActivityKind::Walking
         );
+    }
+
+    #[test]
+    fn proximity_memories_remain_bounded() {
+        use crate::track::Vec3;
+        use crate::track::proximity::ProximityKind;
+
+        let mut behavior = GuestBehavior::default();
+        for tick in 0..12 {
+            behavior.record_memory(GuestMemoryDetail::Proximity {
+                ride_id: 1,
+                kind: ProximityKind::Tunnel,
+                position: Vec3::new(1.0, 2.0, 3.0),
+                strength: 0.5,
+                tick,
+            });
+        }
+        assert_eq!(behavior.recent_memories().len(), 8);
+        assert_eq!(behavior.recent_memories().front().unwrap().tick(), 4);
     }
 
     #[test]

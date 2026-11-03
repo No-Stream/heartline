@@ -11,7 +11,7 @@ const RIDE_MEMORY_BONUS_LIMIT: i32 = 20;
 const UNRIDDEN_RIDE_BONUS: i32 = 30;
 const LAST_RIDE_PENALTY: i32 = 30;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GuestBehavior {
     pub needs: Needs,
     pub rides_completed: u16,

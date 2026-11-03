@@ -1771,3 +1771,5 @@ pub fn multi_launch_model() -> CoasterModel {
 pub mod construction;
 
 pub mod clearance;
+
+pub mod proximity;

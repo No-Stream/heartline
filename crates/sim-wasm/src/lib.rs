@@ -13,8 +13,11 @@ use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{
     Circuit, CoasterRun, PhysicsConfig, TestRun, TestRunRecorder, Train, demo_circuit,
 };
-use theme_park_sim::track::clearance::{ClearanceCollision, check_clearance};
+use theme_park_sim::track::clearance::{ClearanceBox, ClearanceCollision, check_clearance};
 use theme_park_sim::track::construction::{Construction, track_support_obstacles};
+use theme_park_sim::track::proximity::{
+    ProximityKind, TrainPosition, scan_proximity_with_supports,
+};
 use theme_park_sim::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, SupportError, SupportObstacle, SupportSegment,
     generate_dense_wooden_lattice, generate_steel_columns, generate_wooden_lattice,
@@ -806,16 +809,50 @@ impl WasmSimulation {
         }
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
+            let mut report_finished = false;
             self.train.step(&self.circuit);
+            let demo_trains: Vec<_> = self
+                .train
+                .readings()
+                .last()
+                .expect("step produces readings")
+                .iter()
+                .map(|reading| {
+                    let sample = self.circuit.sample(reading.distance);
+                    TrainPosition {
+                        position: sample.position,
+                        tangent: sample.tangent,
+                        piece_index: self.circuit.piece_index(reading.distance),
+                        distance: reading.distance.rem_euclid(self.circuit.length()),
+                        speed: reading.speed,
+                    }
+                })
+                .collect();
+            self.train.take_readings();
             let outcome = if self.coaster_riders.is_empty() {
                 None
             } else {
                 self.coaster_run
                     .as_mut()
-                    .and_then(|(circuit, run)| run.step(circuit))
+                    .and_then(|(circuit, run)| run.step_with_other_trains(circuit, &demo_trains))
             };
-            if let Some(outcome) = outcome {
+            if let Some(mut outcome) = outcome {
+                self.construction_placed_supports();
+                let obstacles = self.proximity_obstacles();
+                let supports = self.proximity_supports();
                 let construction = self.construction.as_ref().expect("open coaster has track");
+                let geometry = scan_proximity_with_supports(
+                    &self.world,
+                    construction.pieces(),
+                    &construction.model().train,
+                    self.circuit.pieces(),
+                    &obstacles,
+                    &supports,
+                );
+                for report in &mut outcome.reports {
+                    let events = geometry.events_for_run(&report.samples);
+                    report.add_proximity_events(&events);
+                }
                 let seats_per_car = usize::from(construction.model().train.rows_per_car)
                     * usize::from(construction.model().train.seats_per_row);
                 let ratings: Vec<_> = (0..self.coaster_riders.len())
@@ -824,12 +861,20 @@ impl WasmSimulation {
                         (report.excitement, report.intensity, report.nausea)
                     })
                     .collect();
+                let proximity_events: Vec<_> = (0..self.coaster_riders.len())
+                    .map(|seat| {
+                        outcome.reports[seat / seats_per_car]
+                            .proximity_events
+                            .clone()
+                    })
+                    .collect();
                 self.simulation.finish_coaster(
                     &self.world,
                     self.coaster_facility
                         .as_ref()
                         .expect("open coaster has access"),
                     &ratings,
+                    &proximity_events,
                     outcome.recovered,
                 );
                 self.coaster_riders.clear();
@@ -874,6 +919,11 @@ impl WasmSimulation {
                     let readings = train.take_readings();
                     if let Some(recorder) = &mut self.construction_recorder {
                         recorder.record(&readings);
+                        for frame in &readings {
+                            if let Some(reading) = frame.first() {
+                                recorder.record_dueling(circuit, *reading, &demo_trains);
+                            }
+                        }
                     }
                     if self.construction_outcome.is_some() {
                         let recorder = self.construction_recorder.take().expect("test recorder");
@@ -881,7 +931,29 @@ impl WasmSimulation {
                             self.construction_message == "Train completed a lap.",
                             !train.notes().is_empty(),
                         ));
+                        report_finished = true;
                     }
+                }
+            }
+            if report_finished {
+                self.construction_placed_supports();
+                let obstacles = self.proximity_obstacles();
+                let supports = self.proximity_supports();
+                if let Some(report) = &mut self.construction_report {
+                    let construction = self
+                        .construction
+                        .as_ref()
+                        .expect("report requires construction");
+                    let geometry = scan_proximity_with_supports(
+                        &self.world,
+                        construction.pieces(),
+                        &construction.model().train,
+                        self.circuit.pieces(),
+                        &obstacles,
+                        &supports,
+                    );
+                    let events = geometry.events_for_run(&report.samples);
+                    report.add_proximity_events(&events);
                 }
             }
             self.physics_remainder -= 30;
@@ -1405,8 +1477,18 @@ impl WasmSimulation {
             .map(|note| json_string(note))
             .collect::<Vec<_>>()
             .join(",");
+        let events = report.proximity_events.iter().map(|event| {
+            let kind = match event.kind {
+                ProximityKind::NearMiss => "nearMiss",
+                ProximityKind::Headchopper => "headchopper",
+                ProximityKind::Dueling => "dueling",
+                ProximityKind::Tunnel => "tunnel",
+                ProximityKind::TerrainHugging => "terrainHugging",
+            };
+            format!("{{\"kind\":\"{kind}\",\"pieceIndex\":{},\"distance\":{},\"x\":{},\"y\":{},\"z\":{},\"strength\":{}}}", event.piece_index, event.distance, event.position.x / 4.0, event.position.y / 4.0, event.position.z / 4.0, event.strength)
+        }).collect::<Vec<_>>().join(",");
         format!(
-            "{{\"samples\":[{samples}],\"notes\":[{notes}],\"rating\":{{\"excitement\":{},\"intensity\":{},\"nausea\":{}}}}}",
+            "{{\"samples\":[{samples}],\"notes\":[{notes}],\"proximityEvents\":[{events}],\"rating\":{{\"excitement\":{},\"intensity\":{},\"nausea\":{}}}}}",
             report.excitement, report.intensity, report.nausea
         )
     }
@@ -1551,6 +1633,30 @@ impl WasmSimulation {
 }
 
 impl WasmSimulation {
+    fn proximity_obstacles(&self) -> Vec<ClearanceBox> {
+        self.facility_obstacles()
+            .into_iter()
+            .map(|obstacle| ClearanceBox {
+                min: obstacle.min,
+                max: obstacle.max,
+            })
+            .collect()
+    }
+
+    fn proximity_supports(&self) -> Vec<SupportSegment> {
+        self.support_render_cache
+            .values()
+            .flat_map(|cached| {
+                cached
+                    .segments
+                    .as_ref()
+                    .expect("placed support must be routable")
+                    .iter()
+                    .copied()
+            })
+            .collect()
+    }
+
     fn close_live_coaster(&mut self) {
         if !self.coaster_riders.is_empty() {
             let (_, run) = self.coaster_run.as_mut().expect("riders have a train");
@@ -1560,6 +1666,7 @@ impl WasmSimulation {
                 self.coaster_facility
                     .as_ref()
                     .expect("riders have a station"),
+                &[],
                 &[],
                 outcome.recovered,
             );
@@ -2373,6 +2480,51 @@ mod facility_bridge_tests {
 
 #[cfg(test)]
 mod construction_bridge_tests {
+    #[test]
+    fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
+        let simulation = super::WasmSimulation::new(42, 0);
+        let piece = simulation.circuit.pieces()[0].clone();
+        let point = piece.sample(piece.length() / 2.0).position;
+        let segment = super::SupportSegment {
+            start: point + super::Vec3::new(-40.0, 0.0, 0.0),
+            end: point + super::Vec3::new(0.0, 40.0, 0.0),
+        };
+        let baseline = super::scan_proximity_with_supports(
+            &simulation.world,
+            std::slice::from_ref(&piece),
+            &simulation.train_configuration,
+            &[],
+            &[],
+            &[],
+        );
+        let diagonal = super::scan_proximity_with_supports(
+            &simulation.world,
+            &[piece],
+            &simulation.train_configuration,
+            &[],
+            &[],
+            &[segment],
+        );
+        assert_eq!(baseline.events_for_run(&[]), diagonal.events_for_run(&[]));
+    }
+    #[test]
+    fn proximity_inputs_keep_routed_supports_as_segments() {
+        let mut simulation = super::WasmSimulation::new(42, 0);
+        let segment = super::SupportSegment {
+            start: super::Vec3::new(0.0, 0.0, 0.0),
+            end: super::Vec3::new(10.0, 10.0, 0.0),
+        };
+        simulation.support_render_cache.insert(
+            1,
+            super::SupportRenderCache {
+                obstacles: Vec::new(),
+                dependencies: Vec::new(),
+                world_revision: 0,
+                segments: Ok(vec![segment]),
+            },
+        );
+        assert_eq!(simulation.proximity_supports(), vec![segment]);
+    }
     use super::WasmSimulation;
 
     #[test]
@@ -2811,10 +2963,19 @@ mod construction_bridge_tests {
         }
         assert!(simulation.construction_can_close());
         simulation.construction_close();
+        assert!(simulation.support_render_cache.is_empty());
         simulation.construction_test();
         for _ in 0..9000 {
             simulation.tick();
             if simulation.construction_message() == "Train completed a lap." {
+                assert!(!simulation.support_render_cache.is_empty());
+                assert!(
+                    simulation.support_render_cache.values().any(|entry| !entry
+                        .segments
+                        .as_ref()
+                        .unwrap()
+                        .is_empty())
+                );
                 return;
             }
             if simulation.construction_outcome.is_some() {
@@ -2975,6 +3136,7 @@ mod construction_bridge_tests {
         assert!(report.contains("\"samples\":[{"), "{report}");
         assert!(report.contains("\"longitudinalG\":"), "{report}");
         assert!(report.contains("\"rating\":{"), "{report}");
+        assert!(report.contains("\"proximityEvents\":["), "{report}");
         assert!(report.contains("\"notes\":[\""), "{report}");
         let stopped_poses = simulation.construction_train_poses();
         for _ in 0..60 {

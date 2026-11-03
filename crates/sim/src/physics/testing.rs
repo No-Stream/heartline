@@ -1,4 +1,5 @@
-use super::CarReading;
+use super::{CarReading, Circuit};
+use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
 
 const HIGH_FORCE_SECTION_METRES: f64 = 8.0;
 const LONG_SLOW_SECTION_METRES: f64 = 100.0;
@@ -25,18 +26,23 @@ pub struct TestSample {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TestRun {
     pub samples: Vec<TestSample>,
+    pub proximity_events: Vec<ProximityEvent>,
     pub excitement: f64,
     pub intensity: f64,
     pub nausea: f64,
     pub notes: Vec<String>,
     pub completed: bool,
     pub furthest_distance: f64,
+    visited_ranges: Vec<(f64, f64)>,
+    base_excitement: f64,
+    base_intensity: f64,
 }
 
 impl TestRun {
     pub fn unfinished_circuit() -> Self {
         Self {
             samples: Vec::new(),
+            proximity_events: Vec::new(),
             excitement: 0.0,
             intensity: 0.0,
             nausea: 0.0,
@@ -46,7 +52,49 @@ impl TestRun {
             ],
             completed: false,
             furthest_distance: 0.0,
+            visited_ranges: Vec::new(),
+            base_excitement: 0.0,
+            base_intensity: 0.0,
         }
+    }
+
+    /// Add events at positions actually sampled by this car.
+    pub fn add_proximity_events(&mut self, events: &[ProximityEvent]) {
+        for event in events {
+            if self
+                .visited_ranges
+                .iter()
+                .any(|(start, end)| event.distance >= *start && event.distance <= *end)
+            {
+                self.insert_proximity_event(*event);
+            }
+        }
+        self.update_proximity_ratings();
+    }
+
+    fn insert_proximity_event(&mut self, event: ProximityEvent) {
+        if let Some(existing) = self.proximity_events.iter_mut().find(|existing| {
+            existing.kind == event.kind && existing.piece_index == event.piece_index
+        }) {
+            if event.strength > existing.strength {
+                *existing = event;
+            }
+        } else {
+            self.proximity_events.push(event);
+        }
+    }
+
+    fn update_proximity_ratings(&mut self) {
+        let mut strengths: Vec<_> = self
+            .proximity_events
+            .iter()
+            .map(|event| event.strength.clamp(0.0, 1.0))
+            .collect();
+        strengths.sort_by(f64::total_cmp);
+        let total: f64 = strengths.iter().sum();
+        let contribution = total / (total + 4.0);
+        self.excitement = (self.base_excitement + 8.0 * contribution).min(100.0);
+        self.intensity = (self.base_intensity + 2.0 * contribution).min(100.0);
     }
 }
 
@@ -61,6 +109,8 @@ pub struct TestRunRecorder {
     last_reading: Option<CarReading>,
     next_sample_distance: f64,
     furthest_distance: f64,
+    dueling_events: Vec<ProximityEvent>,
+    visited_ranges: Vec<(f64, f64)>,
 }
 
 impl TestRunRecorder {
@@ -76,6 +126,8 @@ impl TestRunRecorder {
             last_reading: None,
             next_sample_distance: 0.0,
             furthest_distance: 0.0,
+            dueling_events: Vec::new(),
+            visited_ranges: Vec::new(),
         }
     }
 
@@ -90,6 +142,8 @@ impl TestRunRecorder {
             };
             let wrapped_distance = reading.distance.rem_euclid(self.circuit_length);
             if !self.started {
+                self.visited_ranges
+                    .push((wrapped_distance, wrapped_distance));
                 self.started = true;
                 self.start_unwrapped_distance = wrapped_distance;
                 self.last_wrapped_distance = wrapped_distance;
@@ -110,6 +164,19 @@ impl TestRunRecorder {
                 delta += self.circuit_length;
             } else if delta > self.circuit_length / 2.0 {
                 delta -= self.circuit_length;
+            }
+            let endpoint = self.last_wrapped_distance + delta;
+            if endpoint < 0.0 {
+                self.add_visited_range(0.0, self.last_wrapped_distance);
+                self.add_visited_range(endpoint + self.circuit_length, self.circuit_length);
+            } else if endpoint >= self.circuit_length {
+                self.add_visited_range(self.last_wrapped_distance, self.circuit_length);
+                self.add_visited_range(0.0, endpoint - self.circuit_length);
+            } else {
+                self.add_visited_range(
+                    self.last_wrapped_distance.min(endpoint),
+                    self.last_wrapped_distance.max(endpoint),
+                );
             }
             let unwrapped_distance = self.last_unwrapped_distance + delta;
             self.furthest_distance = self
@@ -135,6 +202,35 @@ impl TestRunRecorder {
         }
     }
 
+    pub fn record_dueling(
+        &mut self,
+        circuit: &Circuit,
+        reading: CarReading,
+        others: &[TrainPosition],
+    ) {
+        let sample = circuit.sample(reading.distance);
+        let primary = TrainPosition {
+            position: sample.position,
+            tangent: sample.tangent,
+            piece_index: circuit.piece_index(reading.distance),
+            distance: reading.distance.rem_euclid(circuit.length()),
+            speed: reading.speed,
+        };
+        if let Some(event) = detect_dueling(primary, others) {
+            if let Some(existing) = self
+                .dueling_events
+                .iter_mut()
+                .find(|existing| existing.piece_index == event.piece_index)
+            {
+                if event.strength > existing.strength {
+                    *existing = event;
+                }
+            } else {
+                self.dueling_events.push(event);
+            }
+        }
+    }
+
     /// Finalizes the report. An incomplete run includes a distance note; a
     /// caller-reported rollback adds a separate recovery note.
     pub fn finish(self, completed: bool, rolled_back: bool) -> TestRun {
@@ -150,15 +246,24 @@ impl TestRunRecorder {
         if rolled_back {
             notes.push("The train rolled back and was recovered safely.".to_owned());
         }
-        TestRun {
+        let mut report = TestRun {
             samples,
+            proximity_events: Vec::new(),
             excitement,
             intensity,
             nausea,
             notes,
             completed,
             furthest_distance: self.furthest_distance,
+            visited_ranges: self.visited_ranges,
+            base_excitement: excitement,
+            base_intensity: intensity,
+        };
+        for event in self.dueling_events {
+            report.insert_proximity_event(event);
         }
+        report.update_proximity_ratings();
+        report
     }
 
     fn store_sample(&mut self, distance: f64, reading: CarReading) {
@@ -176,6 +281,17 @@ impl TestRunRecorder {
                 inverted: reading.inverted,
             });
         }
+    }
+
+    fn add_visited_range(&mut self, start: f64, end: f64) {
+        if let Some(last) = self.visited_ranges.last_mut() {
+            if start <= last.1 && end >= last.0 {
+                last.0 = last.0.min(start);
+                last.1 = last.1.max(end);
+                return;
+            }
+        }
+        self.visited_ranges.push((start, end));
     }
 }
 
@@ -233,6 +349,8 @@ fn interpolate_reading(first: CarReading, second: CarReading, fraction: f64) -> 
 /// where `moderate_force = min(mean(|vertical_g-1| + |lateral_g| +
 /// |longitudinal_g|)/7,1)`. These are feedback scores, not safety limits.
 /// Notes require a contiguous 8m high-force section or 100m below 8m/s.
+// Proximity adds 8 * strength / (strength + 4) excitement and 2 * strength /
+// (strength + 4) intensity, where strength is the sum of event strengths.
 fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<String>) {
     if samples.is_empty() {
         return (0.0, 0.0, 0.0, Vec::new());
@@ -385,6 +503,95 @@ mod tests {
     use super::*;
     use crate::physics::{CarReading, GForces, PhysicsConfig, Train, demo_circuit};
     use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
+
+    #[test]
+    fn proximity_events_only_reward_sections_the_car_reached() {
+        use crate::track::Vec3;
+        use crate::track::proximity::{ProximityEvent, ProximityKind};
+        let mut recorder = TestRunRecorder::new(100.0);
+        record(&mut recorder, reading(0.0, 10.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(10.0, 10.0, 1.0, 0.0, 0.0));
+        let mut report = recorder.finish(false, false);
+        let baseline = report.excitement;
+        let event = |distance| ProximityEvent {
+            piece_index: 0,
+            kind: ProximityKind::NearMiss,
+            position: Vec3::new(distance, 0.0, 0.0),
+            strength: 1.0,
+            distance,
+        };
+        report.add_proximity_events(&[event(5.0), event(10.5), event(50.0)]);
+        assert_eq!(report.proximity_events.len(), 1);
+        assert!(report.excitement > baseline);
+    }
+
+    #[test]
+    fn proximity_ratings_have_diminishing_returns_and_ignore_event_order() {
+        use crate::track::proximity::{ProximityEvent, ProximityKind};
+        let mut recorder = TestRunRecorder::new(100.0);
+        record(&mut recorder, reading(0.0, 10.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(20.0, 10.0, 1.0, 0.0, 0.0));
+        let baseline = recorder.finish(false, false);
+        let events: Vec<_> = (1..=10)
+            .map(|index| ProximityEvent {
+                piece_index: index,
+                kind: ProximityKind::NearMiss,
+                position: crate::track::Vec3::new(index as f64, 0.0, 0.0),
+                distance: index as f64,
+                strength: 1.0,
+            })
+            .collect();
+        let mut one = baseline.clone();
+        one.add_proximity_events(&events[..1]);
+        let mut two = one.clone();
+        two.add_proximity_events(&events[1..2]);
+        let mut all = baseline.clone();
+        all.add_proximity_events(&events);
+        let mut reversed = baseline.clone();
+        reversed.add_proximity_events(&events.iter().rev().copied().collect::<Vec<_>>());
+        assert!(one.intensity > baseline.intensity);
+        assert!(one.excitement - baseline.excitement > two.excitement - one.excitement);
+        assert!(all.excitement - baseline.excitement < 8.0);
+        assert!(all.intensity - baseline.intensity < 2.0);
+        assert!((all.excitement - reversed.excitement).abs() < 1e-10);
+        assert!((all.intensity - reversed.intensity).abs() < 1e-10);
+    }
+
+    #[test]
+    fn simultaneous_other_train_is_recorded_for_each_car_separately() {
+        use crate::track::proximity::ProximityKind;
+        let circuit = demo_circuit();
+        let first = reading(0.0, 12.0, 1.0, 0.0, 0.0);
+        let second = reading(circuit.length() / 2.0, 12.0, 1.0, 0.0, 0.0);
+        let sample = circuit.sample(first.distance);
+        let other = TrainPosition {
+            position: sample.position + crate::track::Vec3::new(0.0, 0.0, 3.0),
+            tangent: sample.tangent,
+            piece_index: 0,
+            distance: 0.0,
+            speed: 12.0,
+        };
+        let mut first_car = TestRunRecorder::new(circuit.length());
+        let mut second_car = TestRunRecorder::new(circuit.length());
+        first_car.record_dueling(&circuit, first, &[other]);
+        second_car.record_dueling(&circuit, second, &[other]);
+        assert!(
+            first_car
+                .finish(false, false)
+                .proximity_events
+                .iter()
+                .any(|event| event.kind == ProximityKind::Dueling)
+        );
+        assert!(second_car.finish(false, false).proximity_events.is_empty());
+        let mut no_other_train = TestRunRecorder::new(circuit.length());
+        no_other_train.record_dueling(&circuit, first, &[]);
+        assert!(
+            no_other_train
+                .finish(false, false)
+                .proximity_events
+                .is_empty()
+        );
+    }
 
     fn reading(
         distance: f64,

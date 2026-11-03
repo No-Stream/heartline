@@ -1,4 +1,5 @@
 use super::{Circuit, PhysicsConfig, TestRun, TestRunRecorder, Train};
+use crate::track::proximity::TrainPosition;
 use crate::track::{PieceKind, TrainConfiguration};
 
 /// A single dispatched train, from the station through one circuit or recovery.
@@ -55,10 +56,19 @@ impl CoasterRun {
 
     /// Advances one physics step; returns the outcome exactly once.
     pub fn step(&mut self, circuit: &Circuit) -> Option<CoasterOutcome> {
+        self.step_with_other_trains(circuit, &[])
+    }
+
+    pub fn step_with_other_trains(
+        &mut self,
+        circuit: &Circuit,
+        others: &[TrainPosition],
+    ) -> Option<CoasterOutcome> {
         let recorders = self.recorders.as_mut()?;
         self.train.step(circuit);
         for frame in self.train.take_readings() {
             for (recorder, reading) in recorders.iter_mut().zip(frame) {
+                recorder.record_dueling(circuit, reading, others);
                 recorder.record(&[vec![reading]]);
             }
         }

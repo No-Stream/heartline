@@ -51,6 +51,9 @@ impl Circuit {
     pub fn pieces(&self) -> &[Piece] {
         &self.pieces
     }
+    pub fn piece_index(&self, distance: f64) -> usize {
+        self.locate(distance).0
+    }
     fn locate(&self, distance: f64) -> (usize, f64) {
         let distance = distance.rem_euclid(self.length);
         let distance = if distance == self.length {

@@ -35,7 +35,8 @@ fn intersects(a: ClearanceBox, b: ClearanceBox) -> bool {
         && a.max.z >= b.min.z
 }
 
-struct OrientedEnvelope {
+#[derive(Clone, Copy)]
+pub(crate) struct OrientedEnvelope {
     centre: Vec3,
     axes: [Vec3; 3],
     half: [f64; 3],
@@ -110,7 +111,7 @@ fn envelope(
     }
 }
 
-fn connector_allowance(train: &TrainConfiguration) -> f64 {
+pub(crate) fn connector_allowance(train: &TrainConfiguration) -> f64 {
     let half_length = train.length_metres / f64::from(train.cars) / 2.0 + SAMPLE_SPACING;
     let half_width = train.width_metres / 2.0 + SAMPLE_SPACING;
     let height = train.height_metres + SAMPLE_SPACING;
@@ -172,6 +173,26 @@ impl ClearanceIndex {
         }
         self.pieces.push(piece.clone());
         self.samples.push(piece_samples);
+    }
+
+    /// Returns indexed rail samples within the requested horizontal bounds.
+    pub(crate) fn nearby_samples(
+        &self,
+        position: Vec3,
+        margin: f64,
+    ) -> Vec<(usize, f64, ClearanceBox)> {
+        let mut nearby = Vec::new();
+        for x in index_cell(position.x - margin)..=index_cell(position.x + margin) {
+            for y in index_cell(position.y - margin)..=index_cell(position.y + margin) {
+                if let Some(entries) = self.cells.get(&(x, y)) {
+                    for &(piece_index, sample_index) in entries {
+                        let (distance, bounds) = self.samples[piece_index][sample_index];
+                        nearby.push((piece_index, distance, bounds));
+                    }
+                }
+            }
+        }
+        nearby
     }
 
     /// Retains and orders entries according to their current indices.
@@ -839,5 +860,76 @@ mod tight_clearance_tests {
             check_clearance(&map, &piece, &train, &[], &[obstacle(-0.1)]),
             Err(ClearanceCollision::Scenery)
         );
+    }
+}
+
+impl OrientedEnvelope {
+    pub(crate) fn for_track(piece: &Piece, distance: f64, train: &TrainConfiguration) -> Self {
+        envelope(piece, distance, train, SAMPLE_SPACING)
+    }
+
+    pub(crate) fn intersects_expanded(&self, expansion: f64, obstacle: ClearanceBox) -> bool {
+        let mut expanded = *self;
+        for half in &mut expanded.half {
+            *half += expansion;
+        }
+        let extent = Vec3::new(
+            expanded
+                .axes
+                .iter()
+                .zip(expanded.half)
+                .map(|(axis, half)| axis.x.abs() * half)
+                .sum(),
+            expanded
+                .axes
+                .iter()
+                .zip(expanded.half)
+                .map(|(axis, half)| axis.y.abs() * half)
+                .sum(),
+            expanded
+                .axes
+                .iter()
+                .zip(expanded.half)
+                .map(|(axis, half)| axis.z.abs() * half)
+                .sum(),
+        );
+        expanded.bounds = ClearanceBox {
+            min: expanded.centre - extent,
+            max: expanded.centre + extent,
+        };
+        intersects_envelope(&expanded, obstacle)
+    }
+
+    /// Intersect a support centreline with the envelope, inflated by the support radius.
+    pub(crate) fn intersects_segment(
+        &self,
+        start: Vec3,
+        end: Vec3,
+        expansion: f64,
+        radius: f64,
+    ) -> bool {
+        let delta = end - start;
+        let offset = start - self.centre;
+        let mut lower: f64 = 0.0;
+        let mut upper: f64 = 1.0;
+        for (axis, half) in self.axes.iter().zip(self.half) {
+            let extent = half + expansion + radius * (axis.x.abs() + axis.y.abs() + axis.z.abs());
+            let origin = offset.dot(*axis);
+            let direction = delta.dot(*axis);
+            if direction.abs() < 1e-12 {
+                if origin.abs() > extent {
+                    return false;
+                }
+            } else {
+                let first = (-extent - origin) / direction;
+                let second = (extent - origin) / direction;
+                lower = lower.max(first.min(second));
+                upper = upper.min(first.max(second));
+                if lower > upper {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }
