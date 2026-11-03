@@ -8,3 +8,13 @@ rust-version.workspace = true
 [lib]
 name = "theme_park_sim"
 path = "src/lib.rs"
+
+[features]
+threads = ["dep:rayon"]
+
+[dependencies]
+rayon = { version = "=1.11.0", optional = true }
+
+[[example]]
+name = "tick_bench"
+required-features = ["threads"]

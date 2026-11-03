@@ -3,7 +3,7 @@ CARGO_HOME ?= $(HOME)/.cargo
 WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
 WASM_BINDGEN_VERSION := 0.2.105
 
-.PHONY: install build test lint serve e2e ci wasm-bindgen
+.PHONY: install build test lint serve e2e ci wasm-bindgen bench
 
 install:
 	npm ci
@@ -19,11 +19,13 @@ wasm-bindgen:
 
 test:
 	$(CARGO) test --workspace
+	$(CARGO) test -p theme-park-sim --features threads
 	npm test
 
 lint:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy -p theme-park-sim --all-targets --features threads -- -D warnings
 	npm run typecheck
 
 serve:
@@ -31,6 +33,9 @@ serve:
 
 e2e: build
 	npm run e2e
+
+bench:
+	$(CARGO) run --release -p theme-park-sim --features threads --example tick_bench
 
 # The same checks as .github/workflows/ci.yaml, except the secret scan and dependency audit.
 ci: install build lint test e2e
