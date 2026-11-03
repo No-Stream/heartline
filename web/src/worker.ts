@@ -166,6 +166,7 @@ workerScope.addEventListener("message", (event) => {
     }
     if (action.type === "facility-remove") {
       const removed = simulation.remove_facility(action.id);
+      if (removed) sendWorld();
       sendFacilities(removed ? "Facility removed." : simulation.facility_message());
       return;
     }
@@ -173,6 +174,7 @@ workerScope.addEventListener("message", (event) => {
       const placed = action.height === undefined
         ? simulation.place_facility(action.kind, action.x, action.y, action.rotation)
         : simulation.place_facility_at(action.kind, action.x, action.y, action.rotation, action.height);
+      if (placed) sendWorld();
       sendFacilities(placed ? "Facility placed." : simulation.facility_message(), placed);
       return;
     }
@@ -212,7 +214,7 @@ workerScope.addEventListener("message", (event) => {
         action.style,
       );
       workerScope.postMessage(
-        { type: "path-preview", requestId: action.requestId, valid: paths.length > 0 && paths.every((value, index) => index % 7 !== 6 || value === 0), paths, message: simulation.path_message() },
+        { type: "path-preview", requestId: action.requestId, valid: paths.length > 0 && paths.every((value, index) => index % 9 !== 6 || value === 0), paths, message: simulation.path_message() },
         [paths.buffer],
       );
       return;
@@ -260,6 +262,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-delete-mode": return;
       }
       sendConstruction();
+      if (["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-set-open"].includes(action.type)) sendWorld();
       return;
     }
     validateSurfaceEdit(action, simulation.world_dimensions());

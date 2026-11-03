@@ -12,7 +12,7 @@ export interface Atlas {
   frames: Record<string, AtlasFrame>;
 }
 export interface WorldSprite { id: string; sprite: string; x: number; y: number; height: number; view?: string; animation?: string; frame?: number; scale?: number }
-export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; paths: Int32Array; pathMetadata?: Int32Array; carved?: Int32Array; sprites?: readonly WorldSprite[]; undergroundLevel?: number }
+export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; paths: Int32Array; pathMetadata?: Int32Array; facilityOpenings?: Int32Array; carved?: Int32Array; sprites?: readonly WorldSprite[]; undergroundLevel?: number }
 export type Pick = { kind: "terrain" | "water" | "path" | "cliff" | "carved-floor" | "cavern-wall"; x: number; y: number; height: number } | { kind: string; id: string; x: number; y: number; height: number };
 export interface Vertex { x: number; y: number; depth: number; height: number; u: number; v: number }
 export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: string; tileX: number; tileY: number; height: number; id?: string }
@@ -156,8 +156,16 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
   if (undergroundLevel !== undefined && !Number.isInteger(undergroundLevel)) throw new RangeError("Underground level must be an integer height step");
   const triangles: Triangle[] = [];
   const grass = frameFor(atlas, "ground/grass_light_0", "any", "static", 0, scale);
-  if (world.pathMetadata && world.pathMetadata.length !== world.paths.length / 2) throw new Error("Invalid path metadata");
-  const paths = new Map<number, [number, number, number, number][]>();
+  if (world.pathMetadata && world.pathMetadata.length !== world.paths.length / 4 * 3) throw new Error("Invalid path metadata");
+  const paths = new Map<number, [number, number, number, number, number][]>();
+  const facilityOpenings = new Map<string, number>();
+  if (world.facilityOpenings && world.facilityOpenings.length % 4 !== 0) throw new Error("Invalid facility openings");
+  for (let index = 0; index < (world.facilityOpenings?.length ?? 0); index += 4) {
+    const [x, y, z, edges] = world.facilityOpenings!.subarray(index, index + 4);
+    if (x < 0 || y < 0 || x >= width || y >= height || edges < 1 || edges > 15) throw new Error("Invalid facility opening");
+    const key = `${x},${y},${z}`;
+    facilityOpenings.set(key, (facilityOpenings.get(key) ?? 0) | edges);
+  }
   const carved = new Map<number, [number, number][]>();
   if (world.carved && world.carved.length % 4 !== 0) throw new Error("Invalid carved spans");
   for (let i = 0; i < (world.carved?.length ?? 0); i += 4) {
@@ -169,10 +177,10 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
   for (let index = 0; index < world.paths.length; index += 4) {
     const [x, y, z, slope] = world.paths.subarray(index, index + 4);
     if (x < 0 || y < 0 || x >= width || y >= height || slope < 0 || slope > 4) throw new Error("Invalid path");
-    const [kind, style] = world.pathMetadata?.subarray(index / 2, index / 2 + 2) ?? [0, 0];
-    if (kind < 0 || kind > 1 || style < 0 || style > 255) throw new Error("Invalid path metadata");
+    const [kind, style, edges] = world.pathMetadata?.subarray(index / 4 * 3, index / 4 * 3 + 3) ?? [0, 0, 0];
+    if (kind < 0 || kind > 1 || style < 0 || style > 255 || edges < 0 || edges > 15) throw new Error("Invalid path metadata");
     const key = y * width + x;
-    paths.set(key, [...(paths.get(key) ?? []), [z, slope, kind, style]]);
+    paths.set(key, [...(paths.get(key) ?? []), [z, slope, kind, style, edges]]);
   }
   const pathCorners = pathCornerHeights;
   const point = (x: number, y: number, heightSteps: number): Vertex => {
@@ -372,7 +380,7 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
       }
     }
     for (const path of paths.get(y * width + x) ?? []) {
-      const [z, slope, kind, style] = path;
+      const [z, slope, kind, style, edges] = path;
       const heights = pathCorners(z, slope);
       const undergroundPathFits = tileCarvings.some(([bottom, top]) => bottom <= Math.min(...heights) && top >= Math.max(...heights));
       if (undergroundLevel === undefined) {
@@ -388,27 +396,18 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
         { dx: -1, dy: 0, edge: [0, 3], neighborEdge: [1, 2] },
         { dx: 0, dy: -1, edge: [0, 1], neighborEdge: [3, 2] },
       ];
-      const connections = [0, 1, 2, 3].map((direction) => {
-        const { dx, dy, edge, neighborEdge } = directions[(direction - camera.rotation + 4) % 4];
-        const nx = x + dx; const ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height) return "0";
-        return (paths.get(ny * width + nx) ?? []).some(([neighborHeight, neighborSlope]) => {
-          const neighbor = pathCorners(neighborHeight, neighborSlope);
-          return heights[edge[0]] === neighbor[neighborEdge[0]] && heights[edge[1]] === neighbor[neighborEdge[1]];
-        }) ? "1" : "0";
-      }).join("");
+      const directionBits = [2, 4, 8, 1];
+      const connections = [0, 1, 2, 3].map((direction) =>
+        edges & directionBits[(direction - camera.rotation + 4) % 4] ? "1" : "0",
+      ).join("");
       const pathColors: Triangle["color"][] = [WHITE, [0.82, 0.9, 1, 1], [1, 0.85, 0.7, 1], [0.8, 1, 0.8, 1]];
       addQuad(pathQuad, "path", x, y, pathColors[style % pathColors.length], frameFor(atlas, `ground/path_${connections}`, "any", "static", 0, scale), undefined, undefined, undergroundLevel, undergroundLevel === undefined ? 0 : UNDERGROUND_CONTENT_DEPTH_BIAS);
       if (kind === 1) {
         const ink = atlas.themeStyle?.ink ?? "#333333";
         const color: Triangle["color"] = [parseInt(ink.slice(1, 3), 16) / 255, parseInt(ink.slice(3, 5), 16) / 255, parseInt(ink.slice(5, 7), 16) / 255, 1];
         for (let direction = 0; direction < 4; direction++) {
-          const { dx, dy, edge, neighborEdge } = directions[direction];
-          const nx = x + dx, ny = y + dy;
-          const connected = nx >= 0 && ny >= 0 && nx < width && ny < height && (paths.get(ny * width + nx) ?? []).some(([neighborHeight, neighborSlope]) => {
-            const neighbor = pathCorners(neighborHeight, neighborSlope);
-            return heights[edge[0]] === neighbor[neighborEdge[0]] && heights[edge[1]] === neighbor[neighborEdge[1]];
-          });
+          const { edge } = directions[direction];
+          const connected = ((edges | (facilityOpenings.get(`${x},${y},${z}`) ?? 0)) & directionBits[direction]) !== 0;
           if (connected) continue;
           const [first, second] = edge;
           const railing = [

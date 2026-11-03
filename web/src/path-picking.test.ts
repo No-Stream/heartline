@@ -63,7 +63,7 @@ describe("path placement picks", () => {
   });
 
   it("resolves a renderer pick on queue railing geometry", () => {
-    const queue = { ...world([0, 0, 8, 2]), surfaces: new Int32Array(12), pathMetadata: new Int32Array([1, 0]) };
+    const queue = { ...world([0, 0, 8, 2]), surfaces: new Int32Array(12), pathMetadata: new Int32Array([1, 0, 0]) };
     const scene = buildScene(queue, camera, viewport, atlas);
     const railing = scene.triangles.find((triangle) => triangle.kind === "path-railing");
     expect(railing).toBeDefined();

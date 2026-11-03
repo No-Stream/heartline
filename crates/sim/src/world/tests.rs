@@ -802,7 +802,7 @@ fn queue_route_rejects_multiple_connections_to_regular_paths() {
         });
     }
     assert_eq!(
-        world.build_path_route(position(1, 1, 0), position(1, 1, 0), PathKind::Queue, 0),
+        world.build_path_route(position(0, 1, 0), position(2, 1, 0), PathKind::Queue, 0),
         Err(PathBuildError::QueueConnections)
     );
     assert!(world.path(position(1, 1, 0)).is_none());
@@ -903,7 +903,7 @@ fn normal_route_can_start_or_end_on_its_queue_entrance() {
         Err(PathBuildError::Occupied)
     );
     world
-        .build_path_route(position(0, 0, 0), position(1, 0, 0), PathKind::Normal, 0)
+        .build_path_route(position(0, 0, 0), position(2, 0, 0), PathKind::Normal, 0)
         .unwrap();
     assert_eq!(
         world.build_path_route(position(2, 0, 0), position(4, 0, 0), PathKind::Normal, 0),
@@ -958,6 +958,8 @@ fn path_preview_checks_existing_queue_components_away_from_the_route() {
             slope: None,
         });
     }
+    world.connect_paths(position(1, 1, 0), position(0, 1, 0));
+    world.connect_paths(position(1, 1, 0), position(2, 1, 0));
     assert_eq!(
         world.preview_path_route(position(5, 1, 0), position(6, 1, 0), PathKind::Normal, 0),
         Err(PathBuildError::QueueConnections)
@@ -987,9 +989,14 @@ fn queue_preview_checks_merged_components_and_adjacent_normal_runs() {
             slope: None,
         });
     }
-    for x in [1, 5] {
+    for (normal, queue) in [(0, 1), (6, 5)] {
         world
-            .build_path_route(position(x, 0, 0), position(x, 0, 0), PathKind::Queue, 0)
+            .build_path_route(
+                position(normal, 0, 0),
+                position(queue, 0, 0),
+                PathKind::Queue,
+                0,
+            )
             .unwrap();
     }
     assert_eq!(
@@ -997,7 +1004,7 @@ fn queue_preview_checks_merged_components_and_adjacent_normal_runs() {
         Err(PathBuildError::QueueConnections)
     );
     assert_eq!(
-        world.preview_path_route(position(1, 1, 0), position(5, 1, 0), PathKind::Normal, 0),
+        world.preview_path_route(position(1, 1, 0), position(1, 0, 0), PathKind::Normal, 0),
         Err(PathBuildError::QueueConnections)
     );
 }
@@ -1066,10 +1073,14 @@ fn path_preview_marks_queue_connection_refusal_on_the_route() {
         });
     }
     let preview = world
-        .preview_path_tiles(position(1, 0, 0), position(1, 0, 0), PathKind::Queue, 0)
+        .preview_path_tiles(position(0, 0, 0), position(2, 0, 0), PathKind::Queue, 0)
         .unwrap();
-    assert_eq!(preview.len(), 1);
-    assert_eq!(preview[0].refusal, Some(PathBuildError::QueueConnections));
+    assert_eq!(preview.len(), 3);
+    assert!(
+        preview
+            .iter()
+            .all(|tile| tile.refusal == Some(PathBuildError::QueueConnections))
+    );
 }
 
 #[test]
@@ -1186,11 +1197,152 @@ fn queue_rejects_a_branch_and_a_normal_connection_in_the_middle() {
         .build_path_route(position(1, 2), position(3, 2), PathKind::Queue, 0)
         .unwrap();
     assert_eq!(
-        world.build_path_route(position(2, 1), position(2, 1), PathKind::Queue, 0),
+        world.build_path_route(position(2, 2), position(2, 1), PathKind::Queue, 0),
         Err(PathBuildError::QueueConnections)
     );
     assert_eq!(
-        world.build_path_route(position(2, 1), position(2, 1), PathKind::Normal, 0),
+        world.build_path_route(position(2, 2), position(2, 1), PathKind::Normal, 0),
         Err(PathBuildError::QueueConnections)
     );
+}
+
+#[test]
+fn queue_switchback_only_connects_drawn_edges() {
+    use super::PathKind;
+    let mut world = World::new(
+        4,
+        3,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    world
+        .build_path_route(position(0, 0, 0), position(3, 0, 0), PathKind::Queue, 0)
+        .unwrap();
+    world
+        .build_path_route(position(3, 0, 0), position(3, 1, 0), PathKind::Queue, 0)
+        .unwrap();
+    world
+        .build_path_route(position(3, 1, 0), position(0, 1, 0), PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(
+        world.neighbours(position(1, 0, 0)),
+        vec![position(2, 0, 0), position(0, 0, 0)]
+    );
+    assert_eq!(
+        world.neighbours(position(1, 1, 0)),
+        vec![position(2, 1, 0), position(0, 1, 0)]
+    );
+}
+
+#[test]
+fn removing_and_rebuilding_a_queue_tile_updates_edges_and_preview() {
+    use super::PathKind;
+    let mut world = World::new(3, 1, flat_surface(0));
+    let left = position(0, 0, 0);
+    let middle = position(1, 0, 0);
+    let right = position(2, 0, 0);
+    world
+        .build_path_route(left, right, PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(world.path_edges(middle), Some(10));
+    world.remove_path(middle);
+    assert_eq!(world.path_edges(left), Some(0));
+    assert_eq!(world.path_edges(right), Some(0));
+    let preview = world
+        .preview_path_tiles(left, right, PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(
+        preview.iter().map(|tile| tile.edges).collect::<Vec<_>>(),
+        vec![2, 10, 8]
+    );
+    world
+        .build_path_route(left, right, PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(world.path_edges(middle), Some(10));
+}
+
+#[test]
+fn queue_end_does_not_connect_to_adjacent_exit_path() {
+    use super::PathKind;
+    let mut world = World::new(4, 2, flat_surface(0));
+    let entrance = position(0, 0, 0);
+    let exit = position(3, 1, 0);
+    let queue_end = position(3, 0, 0);
+    for path in [entrance, exit] {
+        world
+            .build_path_route(path, path, PathKind::Normal, 0)
+            .unwrap();
+    }
+    world
+        .build_path_route(entrance, queue_end, PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(world.path_edges(queue_end), Some(8));
+    assert_eq!(world.path_edges(exit), Some(0));
+    let graph = crate::pathfinding::Graph::with_entrance(&world, Some(entrance));
+    let queue_node = graph.indices[&queue_end];
+    let exit_node = graph.indices[&exit];
+    assert!(!graph.neighbours[queue_node].contains(&exit_node));
+    assert_ne!(graph.components[queue_node], graph.components[exit_node]);
+}
+
+#[test]
+fn queue_placed_next_to_normal_path_stays_disconnected_until_drawn() {
+    use super::PathKind;
+    let mut world = World::new(2, 1, flat_surface(0));
+    let normal = position(0, 0, 0);
+    let queue = position(1, 0, 0);
+    world
+        .build_path_route(normal, normal, PathKind::Normal, 0)
+        .unwrap();
+    world
+        .build_path_route(queue, queue, PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(world.path_edges(queue), Some(0));
+    assert_eq!(world.path_edges(normal), Some(0));
+    world
+        .build_path_route(normal, queue, PathKind::Queue, 0)
+        .unwrap();
+    assert_eq!(world.path_edges(queue), Some(8));
+    assert_eq!(world.path_edges(normal), Some(2));
+}
+
+#[test]
+fn state_hash_includes_queue_edges_independent_of_route_direction() {
+    use super::PathKind;
+    let mut connected = World::new(3, 2, flat_surface(0));
+    for (start, end) in [((0, 0), (2, 0)), ((2, 0), (2, 1)), ((2, 1), (0, 1))] {
+        connected
+            .build_path_route(
+                position(start.0, start.1, 0),
+                position(end.0, end.1, 0),
+                PathKind::Queue,
+                0,
+            )
+            .unwrap();
+    }
+    let mut reversed = World::new(3, 2, flat_surface(0));
+    for (start, end) in [((0, 1), (2, 1)), ((2, 1), (2, 0)), ((2, 0), (0, 0))] {
+        reversed
+            .build_path_route(
+                position(start.0, start.1, 0),
+                position(end.0, end.1, 0),
+                PathKind::Queue,
+                0,
+            )
+            .unwrap();
+    }
+    let mut separated = World::new(3, 2, flat_surface(0));
+    for y in 0..=1 {
+        separated
+            .build_path_route(position(0, y, 0), position(2, y, 0), PathKind::Queue, 0)
+            .unwrap();
+    }
+    assert_eq!(
+        connected.paths().collect::<Vec<_>>(),
+        separated.paths().collect::<Vec<_>>()
+    );
+    assert_eq!(connected.state_hash(), reversed.state_hash());
+    assert_ne!(connected.state_hash(), separated.state_hash());
 }

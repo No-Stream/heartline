@@ -92,6 +92,7 @@ struct Span {
 struct Column {
     carved: Vec<Span>,
     paths: Vec<Path>,
+    path_edges: Vec<u8>,
 }
 
 pub struct World {
@@ -293,15 +294,13 @@ impl World {
             })
             .unwrap_or_default();
         for position in &invalid {
-            self.path_metadata.remove(position);
+            self.remove_path(*position);
         }
-        if let Some(column) = &mut self.columns[index] {
-            column
-                .paths
-                .retain(|path| !invalid.contains(&path.position));
-            if column.paths.is_empty() && column.carved.is_empty() {
-                self.columns[index] = None;
-            }
+        if self.columns[index]
+            .as_ref()
+            .is_some_and(|column| column.paths.is_empty() && column.carved.is_empty())
+        {
+            self.columns[index] = None;
         }
         self.update_occupied_column(index);
         invalid
@@ -321,6 +320,16 @@ impl World {
     }
 
     pub fn place_path(&mut self, path: Path) {
+        self.insert_path(path);
+        let adjacent = self.geometric_neighbours(path.position);
+        for other in adjacent {
+            if self.path_metadata(other).unwrap().kind == PathKind::Normal {
+                self.connect_paths(path.position, other);
+            }
+        }
+    }
+
+    fn insert_path(&mut self, path: Path) {
         self.revision = self.revision.wrapping_add(1);
         let index = self.index(path.position.x, path.position.y);
         assert!(
@@ -338,10 +347,11 @@ impl World {
             );
         }
         let column = self.columns[index].get_or_insert_with(|| Box::new(Column::default()));
-        column.paths.push(path);
-        column
+        let insertion = column
             .paths
-            .sort_unstable_by_key(|path| path.position.height);
+            .partition_point(|other| other.position.height < path.position.height);
+        column.paths.insert(insertion, path);
+        column.path_edges.insert(insertion, 0);
         self.update_occupied_column(index);
     }
 
@@ -389,12 +399,22 @@ impl World {
     pub fn remove_path(&mut self, position: Position) -> Vec<Position> {
         self.revision = self.revision.wrapping_add(1);
         let index = self.index(position.x, position.y);
+        let adjacent = self.neighbours(position);
+        for other in adjacent {
+            self.disconnect_paths(position, other);
+        }
         let Some(column) = &mut self.columns[index] else {
             return Vec::new();
         };
-        let original_len = column.paths.len();
-        column.paths.retain(|path| path.position != position);
-        let removed = column.paths.len() != original_len;
+        let found = column
+            .paths
+            .iter()
+            .position(|path| path.position == position);
+        let removed = found.is_some();
+        if let Some(index) = found {
+            column.paths.remove(index);
+            column.path_edges.remove(index);
+        }
         self.path_metadata.remove(&position);
         if column.paths.is_empty() && column.carved.is_empty() {
             self.columns[index] = None;
@@ -403,8 +423,70 @@ impl World {
         if removed { vec![position] } else { Vec::new() }
     }
 
-    /// Returns cardinally adjacent paths with matching heights along the whole shared edge.
+    /// Cardinal edge mask: north, east, south, west are bits 0 through 3.
+    pub fn path_edges(&self, position: Position) -> Option<u8> {
+        let column = self.columns[self.index(position.x, position.y)].as_ref()?;
+        let index = column
+            .paths
+            .iter()
+            .position(|path| path.position == position)?;
+        Some(column.path_edges[index])
+    }
+
+    fn set_path_edges(&mut self, position: Position, mask: u8) {
+        let index = self.index(position.x, position.y);
+        let column = self.columns[index].as_mut().unwrap();
+        let index = column
+            .paths
+            .iter()
+            .position(|path| path.position == position)
+            .unwrap();
+        column.path_edges[index] = mask;
+    }
+
+    fn edge_bits(first: Position, second: Position) -> (u8, u8) {
+        match (
+            i32::from(second.x) - i32::from(first.x),
+            i32::from(second.y) - i32::from(first.y),
+        ) {
+            (0, -1) => (1, 4),
+            (1, 0) => (2, 8),
+            (0, 1) => (4, 1),
+            (-1, 0) => (8, 2),
+            _ => panic!("paths are not adjacent"),
+        }
+    }
+
+    fn connect_paths(&mut self, first: Position, second: Position) {
+        let (first_bit, second_bit) = Self::edge_bits(first, second);
+        if self.path_edges(first).unwrap() & first_bit == 0 {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        self.set_path_edges(first, self.path_edges(first).unwrap() | first_bit);
+        self.set_path_edges(second, self.path_edges(second).unwrap() | second_bit);
+    }
+
+    fn disconnect_paths(&mut self, first: Position, second: Position) {
+        let (first_bit, second_bit) = Self::edge_bits(first, second);
+        self.set_path_edges(first, self.path_edges(first).unwrap() & !first_bit);
+        self.set_path_edges(second, self.path_edges(second).unwrap() & !second_bit);
+    }
+
+    /// Returns paths joined by recorded cardinal edges.
     pub fn neighbours(&self, position: Position) -> Vec<Position> {
+        let Some(mask) = self.path_edges(position) else {
+            return Vec::new();
+        };
+        self.geometric_neighbours(position)
+            .into_iter()
+            .filter(|other| {
+                let (bit, opposite) = Self::edge_bits(position, *other);
+                mask & bit != 0 && self.path_edges(*other).unwrap() & opposite != 0
+            })
+            .collect()
+    }
+
+    fn geometric_neighbours(&self, position: Position) -> Vec<Position> {
         let Some(path) = self.path(position) else {
             return Vec::new();
         };
@@ -448,6 +530,7 @@ impl World {
                     size_of::<Column>()
                         + column.carved.capacity() * size_of::<Span>()
                         + column.paths.capacity() * size_of::<Path>()
+                        + column.path_edges.capacity() * size_of::<u8>()
                 })
                 .sum::<usize>()
     }
@@ -483,7 +566,11 @@ impl World {
             write(&(paths.len() as u64).to_le_bytes());
             for path in paths {
                 let metadata = self.path_metadata(path.position).unwrap();
-                write(&[metadata.kind as u8, metadata.style]);
+                write(&[
+                    metadata.kind as u8,
+                    metadata.style,
+                    self.path_edges(path.position).unwrap(),
+                ]);
                 write(&path.position.height.to_le_bytes());
                 write(&[match path.slope {
                     None => 0,

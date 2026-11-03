@@ -42,8 +42,8 @@ describe("path tool", () => {
     tool.build({ kind: "normal", style: 0 });
     tool.handle({ type: "hover", tile: first });
     tool.handle({ type: "hover", tile: last });
-    const old = Int32Array.of(1, 2, 8, 0, 0, 0, 0);
-    const current = Int32Array.of(4, 3, 9, 0, 0, 0, 1);
+    const old = Int32Array.of(1, 2, 8, 0, 0, 0, 0, 0, 0);
+    const current = Int32Array.of(4, 3, 9, 0, 0, 0, 1, 0, 0);
     tool.receive({ type: "path-preview", requestId: 1, valid: true, paths: old, message: "" });
     expect(tool.state().preview).toBeNull();
     tool.receive({ type: "path-preview", requestId: 2, valid: false, paths: current, message: "Too steep" });

@@ -1,6 +1,15 @@
 //! Placeable buildings and their guest-facing services.
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
 use crate::guest_behavior::{Facility, KnownPlace, PlaceKind};
 use crate::world::{Direction, Ground, Position, World};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PathOpening {
+    pub position: Position,
+    /// Cardinal path-edge mask: north, east, south, west are bits 0 through 3.
+    pub mask: u8,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FacilityKind {
@@ -41,6 +50,18 @@ pub enum PlacementError {
     UnknownBuilding,
     InvalidPrice,
     MissingAccess,
+    QueueMustEndAtFacility,
+    ExitMustBeNormal,
+    QueueConnectedToExit,
+    QueueAlreadyOwned,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FacilityAccessError {
+    QueueMustEndAtFacility,
+    ExitMustBeNormal,
+    QueueConnectedToExit,
+    QueueAlreadyOwned,
 }
 
 #[derive(Default)]
@@ -55,6 +76,31 @@ impl ParkFacilities {
     }
     pub fn buildings(&self) -> &[Building] {
         &self.buildings
+    }
+
+    /// Returns the path tiles and edges that face each placed building.
+    /// The openings describe the building footprint even when a path is missing.
+    pub fn access_openings(&self, world: &World) -> Vec<PathOpening> {
+        self.buildings
+            .iter()
+            .flat_map(|building| {
+                let direction = direction_toward_building(building.direction);
+                let offsets = if matches!(
+                    building.kind,
+                    FacilityKind::Carousel | FacilityKind::FerrisWheel
+                ) {
+                    0..2
+                } else {
+                    0..1
+                };
+                offsets.filter_map(move |offset| {
+                    access_position(world, building, offset).map(|position| PathOpening {
+                        position,
+                        mask: direction_mask(direction),
+                    })
+                })
+            })
+            .collect()
     }
 
     /// Returns whether a path at this height would overlap a placed building footprint.
@@ -146,6 +192,12 @@ impl ParkFacilities {
         {
             return Err(PlacementError::MissingAccess);
         }
+        let mut proposed = Self {
+            buildings: self.buildings.clone(),
+            next_id: self.next_id,
+        };
+        proposed.buildings.push(candidate);
+        validate_facility_path_access(world, &proposed, None).map_err(PlacementError::from)?;
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).expect("facility ID exhausted");
         let price = match kind {
@@ -186,18 +238,6 @@ impl ParkFacilities {
     }
     fn access_at(world: &World, building: &Building, offset: u16) -> Option<Position> {
         let (width, height) = building.kind.footprint(building.direction);
-        let (dx, dy) = match building.direction {
-            Direction::North => (i32::from(offset), -1),
-            Direction::East => (i32::from(width), i32::from(offset)),
-            Direction::South => (i32::from(offset), i32::from(height)),
-            Direction::West => (-1, i32::from(offset)),
-        };
-        let x = i32::from(building.position.x) + dx;
-        let y = i32::from(building.position.y) + dy;
-        let (world_width, world_height) = world.dimensions();
-        if x < 0 || y < 0 || x >= i32::from(world_width) || y >= i32::from(world_height) {
-            return None;
-        }
         for tile_y in building.position.y..building.position.y + height {
             for tile_x in building.position.x..building.position.x + width {
                 if !Self::terrain_supports_facility(world, tile_x, tile_y, building.position.height)
@@ -213,11 +253,7 @@ impl ParkFacilities {
                 }
             }
         }
-        let position = Position {
-            x: x as u16,
-            y: y as u16,
-            height: building.position.height,
-        };
+        let position = access_position(world, building, offset)?;
         world
             .path(position)
             .filter(|path| path.slope.is_none())
@@ -230,10 +266,18 @@ impl ParkFacilities {
             .and_then(|building| Self::access(world, building))
     }
     pub fn guest_facilities(&self, world: &World) -> Vec<Facility> {
+        let mut topology = QueueTopology::default();
+        let queue_owners = queue_owner_counts(world, self.buildings.iter(), &mut topology);
         self.buildings
             .iter()
             .filter_map(|building| {
-                let position = Self::access(world, building)?;
+                let access = checked_building_access(world, building, &mut topology).ok()??;
+                if access
+                    .queue_component
+                    .is_some_and(|component| queue_owners[&component] != 1)
+                {
+                    return None;
+                }
                 let (kind, capacity, duration_ticks, intensity, ride_type) = match building.kind {
                     FacilityKind::Entrance => return None,
                     FacilityKind::Food => (PlaceKind::Food, 4, 600, 0, 0),
@@ -243,17 +287,11 @@ impl ParkFacilities {
                     FacilityKind::Carousel => (PlaceKind::Ride, 12, 1800, 15, 0),
                     FacilityKind::FerrisWheel => (PlaceKind::Ride, 16, 2400, 25, 1),
                 };
-                let exit_position = match building.kind {
-                    FacilityKind::Carousel | FacilityKind::FerrisWheel => {
-                        Some(Self::access_at(world, building, 1)?)
-                    }
-                    _ => None,
-                };
                 Some(Facility {
-                    exit_position,
+                    exit_position: access.exit_position,
                     place: KnownPlace {
                         id: building.id,
-                        position,
+                        position: access.position,
                         kind,
                         minimum_height_cm: match building.kind {
                             FacilityKind::Carousel => 95,
@@ -272,6 +310,299 @@ impl ParkFacilities {
             .collect()
     }
 }
+
+impl From<FacilityAccessError> for PlacementError {
+    fn from(error: FacilityAccessError) -> Self {
+        match error {
+            FacilityAccessError::QueueMustEndAtFacility => Self::QueueMustEndAtFacility,
+            FacilityAccessError::ExitMustBeNormal => Self::ExitMustBeNormal,
+            FacilityAccessError::QueueConnectedToExit => Self::QueueConnectedToExit,
+            FacilityAccessError::QueueAlreadyOwned => Self::QueueAlreadyOwned,
+        }
+    }
+}
+
+pub fn validate_facility_path_access(
+    world: &World,
+    facilities: &ParkFacilities,
+    coaster: Option<&crate::track::construction::Construction>,
+) -> Result<(), FacilityAccessError> {
+    let mut topology = QueueTopology::default();
+    let mut owners = BTreeMap::<Position, usize>::new();
+    for building in facilities
+        .buildings()
+        .iter()
+        .filter(|building| building.kind != FacilityKind::Entrance)
+    {
+        if let Some(CheckedBuildingAccess {
+            queue_component: Some(component),
+            ..
+        }) = checked_building_access(world, building, &mut topology)?
+        {
+            *owners.entry(component).or_default() += 1;
+        }
+    }
+    if let Some(station) = coaster.and_then(|construction| {
+        construction
+            .pieces()
+            .iter()
+            .find(|piece| piece.id == crate::track::PieceId::Station)
+    }) {
+        let (queue, exit) =
+            station_positions(station).ok_or(FacilityAccessError::QueueMustEndAtFacility)?;
+        validate_normal_exit(world, exit)?;
+        if let Some(path) = world.path(queue) {
+            if world.path_metadata(path.position).unwrap().kind == crate::world::PathKind::Queue {
+                let component = queue_endpoint_component(world, &mut topology, queue)?;
+                *owners.entry(component).or_default() += 1;
+            }
+        }
+    }
+    if owners.values().any(|&count| count > 1) {
+        return Err(FacilityAccessError::QueueAlreadyOwned);
+    }
+    Ok(())
+}
+
+fn checked_building_access(
+    world: &World,
+    building: &Building,
+    topology: &mut QueueTopology,
+) -> Result<Option<CheckedBuildingAccess>, FacilityAccessError> {
+    let exit_position = if matches!(
+        building.kind,
+        FacilityKind::Carousel | FacilityKind::FerrisWheel
+    ) {
+        let position = access_position(world, building, 1);
+        if let Some(position) = position {
+            if world.path(position).is_some() {
+                validate_normal_exit(world, position)?;
+                if world
+                    .path(position)
+                    .is_some_and(|path| path.slope.is_none())
+                {
+                    Some(position)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let Some(entrance) = ParkFacilities::access(world, building) else {
+        return Ok(None);
+    };
+    if matches!(
+        building.kind,
+        FacilityKind::Carousel | FacilityKind::FerrisWheel
+    ) && exit_position.is_none()
+    {
+        return Ok(None);
+    }
+    let component = match world.path_metadata(entrance).unwrap().kind {
+        crate::world::PathKind::Normal => None,
+        crate::world::PathKind::Queue => Some(queue_endpoint_component(world, topology, entrance)?),
+    };
+    Ok(Some(CheckedBuildingAccess {
+        position: entrance,
+        exit_position,
+        queue_component: component,
+    }))
+}
+
+fn validate_normal_exit(world: &World, exit: Position) -> Result<(), FacilityAccessError> {
+    if world
+        .path_metadata(exit)
+        .is_some_and(|metadata| metadata.kind != crate::world::PathKind::Normal)
+    {
+        return Err(FacilityAccessError::ExitMustBeNormal);
+    }
+    if world.neighbours(exit).into_iter().any(|position| {
+        world
+            .path_metadata(position)
+            .is_some_and(|metadata| metadata.kind == crate::world::PathKind::Queue)
+    }) {
+        return Err(FacilityAccessError::QueueConnectedToExit);
+    }
+    Ok(())
+}
+
+fn queue_endpoint_component(
+    world: &World,
+    topology: &mut QueueTopology,
+    position: Position,
+) -> Result<Position, FacilityAccessError> {
+    let Some(component) = topology.component(world, position) else {
+        return Err(FacilityAccessError::QueueMustEndAtFacility);
+    };
+    topology
+        .ends
+        .contains(&position)
+        .then_some(component)
+        .ok_or(FacilityAccessError::QueueMustEndAtFacility)
+}
+
+fn queue_owner_counts<'a>(
+    world: &World,
+    buildings: impl Iterator<Item = &'a Building>,
+    topology: &mut QueueTopology,
+) -> BTreeMap<Position, usize> {
+    let mut owners = BTreeMap::new();
+    for building in buildings.filter(|building| building.kind != FacilityKind::Entrance) {
+        if let Ok(Some(CheckedBuildingAccess {
+            queue_component: Some(component),
+            ..
+        })) = checked_building_access(world, building, topology)
+        {
+            *owners.entry(component).or_default() += 1;
+        }
+    }
+    owners
+}
+
+struct CheckedBuildingAccess {
+    position: Position,
+    exit_position: Option<Position>,
+    queue_component: Option<Position>,
+}
+
+#[derive(Default)]
+struct QueueTopology {
+    component_for: BTreeMap<Position, Position>,
+    ends: BTreeSet<Position>,
+}
+
+impl QueueTopology {
+    fn component(&mut self, world: &World, start: Position) -> Option<Position> {
+        if let Some(&component) = self.component_for.get(&start) {
+            return Some(component);
+        }
+        if world.path_metadata(start)?.kind != crate::world::PathKind::Queue {
+            return None;
+        }
+        let mut pending = VecDeque::from([start]);
+        let mut visited = BTreeSet::from([start]);
+        let mut members = Vec::new();
+        let mut ends = Vec::new();
+        while let Some(position) = pending.pop_front() {
+            members.push(position);
+            let mut queue_degree = 0;
+            let mut touches_normal = false;
+            for neighbour in world.neighbours(position) {
+                match world.path_metadata(neighbour).unwrap().kind {
+                    crate::world::PathKind::Normal => touches_normal = true,
+                    crate::world::PathKind::Queue => {
+                        queue_degree += 1;
+                        if visited.insert(neighbour) {
+                            pending.push_back(neighbour);
+                        }
+                    }
+                }
+            }
+            if queue_degree <= 1 && (!touches_normal || queue_degree == 0) {
+                ends.push(position);
+            }
+        }
+        let component = *members.iter().min().unwrap();
+        for position in members {
+            self.component_for.insert(position, component);
+        }
+        self.ends.extend(ends);
+        Some(component)
+    }
+}
+
+fn access_position(world: &World, building: &Building, offset: u16) -> Option<Position> {
+    let (width, height) = building.kind.footprint(building.direction);
+    let (dx, dy) = match building.direction {
+        Direction::North => (i32::from(offset), -1),
+        Direction::East => (i32::from(width), i32::from(offset)),
+        Direction::South => (i32::from(offset), i32::from(height)),
+        Direction::West => (-1, i32::from(offset)),
+    };
+    let x = i32::from(building.position.x) + dx;
+    let y = i32::from(building.position.y) + dy;
+    let (world_width, world_height) = world.dimensions();
+    if x < 0 || y < 0 || x >= i32::from(world_width) || y >= i32::from(world_height) {
+        return None;
+    }
+    Some(Position {
+        x: x as u16,
+        y: y as u16,
+        height: building.position.height,
+    })
+}
+
+fn direction_toward_building(facing: Direction) -> Direction {
+    match facing {
+        Direction::North => Direction::South,
+        Direction::East => Direction::West,
+        Direction::South => Direction::North,
+        Direction::West => Direction::East,
+    }
+}
+
+fn direction_mask(direction: Direction) -> u8 {
+    match direction {
+        Direction::North => 1,
+        Direction::East => 2,
+        Direction::South => 4,
+        Direction::West => 8,
+    }
+}
+
+pub fn station_access_openings(station: &crate::track::Piece) -> Option<[PathOpening; 2]> {
+    let (queue, exit) = station_positions(station)?;
+    let start = station.entry.position();
+    let end = station.exit.position();
+    let access_x = (start.x + (end.x - start.x) / 4.0) / 4.0;
+    let access_y = (start.y + (end.y - start.y) / 4.0) / 4.0;
+    let toward_station = |position: Position| {
+        let dx = access_x - (f64::from(position.x) + 0.5);
+        let dy = access_y - (f64::from(position.y) + 0.5);
+        if dx.abs() >= dy.abs() {
+            if dx > 0.0 {
+                Some(Direction::East)
+            } else if dx < 0.0 {
+                Some(Direction::West)
+            } else {
+                None
+            }
+        } else if dy > 0.0 {
+            Some(Direction::South)
+        } else if dy < 0.0 {
+            Some(Direction::North)
+        } else {
+            None
+        }
+    };
+    Some([
+        PathOpening {
+            position: queue,
+            mask: direction_mask(toward_station(queue)?),
+        },
+        PathOpening {
+            position: exit,
+            mask: direction_mask(toward_station(exit)?),
+        },
+    ])
+}
+
+pub fn coaster_access_openings(
+    construction: &crate::track::construction::Construction,
+) -> Option<[PathOpening; 2]> {
+    let station = construction
+        .pieces()
+        .iter()
+        .find(|piece| piece.id == crate::track::PieceId::Station)?;
+    station_access_openings(station)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +749,397 @@ mod tests {
         assert_eq!(
             park.place(&world, FacilityKind::Food, position, Direction::North),
             Err(PlacementError::Occupied)
+        );
+    }
+
+    #[test]
+    fn building_openings_follow_the_access_side_even_when_paths_are_removed() {
+        let cases = [
+            (
+                Direction::North,
+                Position {
+                    x: 3,
+                    y: 2,
+                    height: 0,
+                },
+                4,
+            ),
+            (
+                Direction::East,
+                Position {
+                    x: 5,
+                    y: 3,
+                    height: 0,
+                },
+                8,
+            ),
+            (
+                Direction::South,
+                Position {
+                    x: 3,
+                    y: 5,
+                    height: 0,
+                },
+                1,
+            ),
+            (
+                Direction::West,
+                Position {
+                    x: 2,
+                    y: 3,
+                    height: 0,
+                },
+                2,
+            ),
+        ];
+        for (direction, access, mask) in cases {
+            let mut world = World::new(
+                8,
+                8,
+                Surface {
+                    corners: [0; 4],
+                    water: None,
+                },
+            );
+            world.place_path(Path {
+                position: access,
+                slope: None,
+            });
+            let mut park = ParkFacilities::new();
+            park.place(
+                &world,
+                FacilityKind::Food,
+                Position {
+                    x: 3,
+                    y: 3,
+                    height: 0,
+                },
+                direction,
+            )
+            .unwrap();
+
+            let expected = PathOpening {
+                position: access,
+                mask,
+            };
+            assert_eq!(park.access_openings(&world), vec![expected]);
+            world.remove_path(access);
+            assert_eq!(park.access_openings(&world), vec![expected]);
+        }
+    }
+
+    #[test]
+    fn flat_ride_reports_separate_entrance_and_exit_openings() {
+        let mut world = World::new(
+            8,
+            8,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        for position in [
+            Position {
+                x: 3,
+                y: 2,
+                height: 0,
+            },
+            Position {
+                x: 4,
+                y: 2,
+                height: 0,
+            },
+        ] {
+            world.place_path(Path {
+                position,
+                slope: None,
+            });
+        }
+        let mut park = ParkFacilities::new();
+        park.place(
+            &world,
+            FacilityKind::Carousel,
+            Position {
+                x: 3,
+                y: 3,
+                height: 0,
+            },
+            Direction::North,
+        )
+        .unwrap();
+
+        assert_eq!(
+            park.access_openings(&world),
+            vec![
+                PathOpening {
+                    position: Position {
+                        x: 3,
+                        y: 2,
+                        height: 0
+                    },
+                    mask: 4,
+                },
+                PathOpening {
+                    position: Position {
+                        x: 4,
+                        y: 2,
+                        height: 0
+                    },
+                    mask: 4,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn queue_access_requires_a_terminal_tile_but_may_be_unconnected_yet() {
+        use crate::world::PathKind;
+        let mut world = World::new(
+            8,
+            7,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        world
+            .build_path_route(
+                Position {
+                    x: 1,
+                    y: 1,
+                    height: 0,
+                },
+                Position {
+                    x: 5,
+                    y: 1,
+                    height: 0,
+                },
+                PathKind::Queue,
+                0,
+            )
+            .unwrap();
+        let mut park = ParkFacilities::new();
+        assert_eq!(
+            park.place(
+                &world,
+                FacilityKind::Food,
+                Position {
+                    x: 3,
+                    y: 2,
+                    height: 0
+                },
+                Direction::North,
+            ),
+            Err(PlacementError::QueueMustEndAtFacility)
+        );
+
+        world.remove_path(Position {
+            x: 3,
+            y: 1,
+            height: 0,
+        });
+        world
+            .build_path_route(
+                Position {
+                    x: 3,
+                    y: 2,
+                    height: 0,
+                },
+                Position {
+                    x: 3,
+                    y: 2,
+                    height: 0,
+                },
+                PathKind::Queue,
+                0,
+            )
+            .unwrap();
+        assert!(
+            park.place(
+                &world,
+                FacilityKind::Food,
+                Position {
+                    x: 3,
+                    y: 3,
+                    height: 0
+                },
+                Direction::North,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn queue_access_is_exclusive_and_flat_ride_exit_must_be_normal() {
+        use crate::world::PathKind;
+        let mut world = World::new(
+            8,
+            8,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let queue = Position {
+            x: 2,
+            y: 2,
+            height: 0,
+        };
+        world
+            .build_path_route(queue, queue, PathKind::Queue, 0)
+            .unwrap();
+        let mut park = ParkFacilities::new();
+        park.place(
+            &world,
+            FacilityKind::Food,
+            Position {
+                x: 0,
+                y: 2,
+                height: 0,
+            },
+            Direction::East,
+        )
+        .unwrap();
+        assert_eq!(
+            park.place(
+                &world,
+                FacilityKind::Food,
+                Position {
+                    x: 3,
+                    y: 2,
+                    height: 0
+                },
+                Direction::West,
+            ),
+            Err(PlacementError::QueueAlreadyOwned)
+        );
+
+        let mut ride_world = World::new(
+            8,
+            8,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        ride_world
+            .build_path_route(
+                Position {
+                    x: 2,
+                    y: 0,
+                    height: 0,
+                },
+                Position {
+                    x: 2,
+                    y: 1,
+                    height: 0,
+                },
+                PathKind::Queue,
+                0,
+            )
+            .unwrap();
+        ride_world
+            .build_path_route(
+                Position {
+                    x: 3,
+                    y: 1,
+                    height: 0,
+                },
+                Position {
+                    x: 3,
+                    y: 1,
+                    height: 0,
+                },
+                PathKind::Queue,
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            ParkFacilities::new().place(
+                &ride_world,
+                FacilityKind::Carousel,
+                Position {
+                    x: 2,
+                    y: 2,
+                    height: 0
+                },
+                Direction::North,
+            ),
+            Err(PlacementError::ExitMustBeNormal)
+        );
+    }
+
+    #[test]
+    fn a_ride_exit_cannot_be_the_queues_explicit_normal_entrance() {
+        use crate::world::PathKind;
+        let mut world = World::new(
+            8,
+            8,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let queue_entrance = Position {
+            x: 2,
+            y: 1,
+            height: 0,
+        };
+        let queue_start = Position {
+            x: 2,
+            y: 0,
+            height: 0,
+        };
+        let exit = Position {
+            x: 3,
+            y: 1,
+            height: 0,
+        };
+        world
+            .build_path_route(queue_start, queue_entrance, PathKind::Queue, 0)
+            .unwrap();
+        world
+            .build_path_route(exit, exit, PathKind::Normal, 0)
+            .unwrap();
+        let mut park = ParkFacilities::new();
+        park.place(
+            &world,
+            FacilityKind::Carousel,
+            Position {
+                x: 2,
+                y: 2,
+                height: 0,
+            },
+            Direction::North,
+        )
+        .unwrap();
+
+        let proposed = world
+            .preview_path_world(exit, queue_entrance, PathKind::Normal)
+            .unwrap();
+        assert_eq!(
+            validate_facility_path_access(&proposed, &park, None),
+            Err(FacilityAccessError::QueueConnectedToExit)
+        );
+        world
+            .build_path_route(exit, queue_entrance, PathKind::Normal, 0)
+            .unwrap();
+        assert_eq!(
+            validate_facility_path_access(&world, &park, None),
+            Err(FacilityAccessError::QueueConnectedToExit)
+        );
+        assert_eq!(
+            ParkFacilities::new().place(
+                &world,
+                FacilityKind::Carousel,
+                Position {
+                    x: 2,
+                    y: 2,
+                    height: 0,
+                },
+                Direction::North,
+            ),
+            Err(PlacementError::QueueConnectedToExit)
         );
     }
 
@@ -981,6 +1703,108 @@ mod coaster_access_tests {
             .unwrap();
         assert_eq!(station_access(&world, &station), Some((queue, exit)));
     }
+
+    #[test]
+    fn station_access_rejects_queue_interiors_and_queue_exits() {
+        use crate::world::PathKind;
+        let station = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::Station)
+            .unwrap()
+            .at(TrackState {
+                x: 4,
+                y: 4,
+                ..TrackState::origin()
+            })
+            .unwrap();
+        let (queue, exit) = station_positions(&station).unwrap();
+        let surface = Surface {
+            corners: [0; 4],
+            water: None,
+        };
+
+        let mut interior_world = World::new(10, 5, surface);
+        interior_world
+            .build_path_route(
+                Position {
+                    x: 1,
+                    y: queue.y,
+                    height: queue.height,
+                },
+                Position {
+                    x: 5,
+                    y: queue.y,
+                    height: queue.height,
+                },
+                PathKind::Queue,
+                0,
+            )
+            .unwrap();
+        interior_world
+            .build_path_route(exit, exit, PathKind::Normal, 0)
+            .unwrap();
+        assert_eq!(station_access(&interior_world, &station), None);
+
+        let mut queue_exit_world = World::new(10, 5, surface);
+        queue_exit_world
+            .build_path_route(queue, queue, PathKind::Queue, 0)
+            .unwrap();
+        queue_exit_world
+            .build_path_route(exit, exit, PathKind::Queue, 0)
+            .unwrap();
+        assert_eq!(station_access(&queue_exit_world, &station), None);
+    }
+
+    #[test]
+    fn station_openings_point_from_each_side_toward_the_track() {
+        use crate::track::{Heading, TrackState};
+        for heading in [
+            Heading::East,
+            Heading::NorthEast,
+            Heading::North,
+            Heading::NorthWest,
+            Heading::West,
+            Heading::SouthWest,
+            Heading::South,
+            Heading::SouthEast,
+        ] {
+            let station = catalog()
+                .into_iter()
+                .find(|piece| piece.id == PieceId::Station)
+                .unwrap()
+                .at(TrackState {
+                    x: 30,
+                    y: 30,
+                    heading,
+                    ..TrackState::origin()
+                })
+                .unwrap();
+            let openings = station_access_openings(&station).unwrap();
+            assert_eq!(openings[0].mask.count_ones(), 1, "{heading:?}");
+            assert_eq!(openings[1].mask.count_ones(), 1, "{heading:?}");
+            assert_eq!(openings[0].mask & openings[1].mask, 0, "{heading:?}");
+
+            let start = station.entry.position();
+            let end = station.exit.position();
+            let center_x = (start.x + (end.x - start.x) / 4.0) / 4.0;
+            let center_y = (start.y + (end.y - start.y) / 4.0) / 4.0;
+            for opening in openings {
+                let (direction_x, direction_y) = match opening.mask {
+                    1 => (0.0, -1.0),
+                    2 => (1.0, 0.0),
+                    4 => (0.0, 1.0),
+                    8 => (-1.0, 0.0),
+                    _ => panic!("invalid station opening mask {}", opening.mask),
+                };
+                let toward_track_x = center_x - (f64::from(opening.position.x) + 0.5);
+                let toward_track_y = center_y - (f64::from(opening.position.y) + 0.5);
+                assert!(
+                    toward_track_x * direction_x + toward_track_y * direction_y > 0.0,
+                    "{heading:?}, {opening:?}"
+                );
+            }
+        }
+    }
 }
 
 /// Returns the guest-facing station when both queue and exit paths are present.
@@ -1063,5 +1887,8 @@ fn station_access(world: &World, station: &crate::track::Piece) -> Option<(Posit
             return None;
         }
     }
+    let mut topology = QueueTopology::default();
+    queue_endpoint_component(world, &mut topology, queue).ok()?;
+    validate_normal_exit(world, exit).ok()?;
     Some((queue, exit))
 }

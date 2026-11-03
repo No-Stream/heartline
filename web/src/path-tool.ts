@@ -14,7 +14,7 @@ export type PathToolCommand =
 
 export interface PathToolPreview {
   readonly valid: boolean;
-  /** Seven integers per tile: x, y, height, slope, kind, style, refusal code. */
+  /** Nine integers per tile: x, y, height, slope, kind, style, refusal code, path edge mask, facility opening mask. */
   readonly paths: Int32Array;
   readonly message: string;
 }

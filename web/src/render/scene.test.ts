@@ -204,28 +204,40 @@ describe("world scene", () => {
     const y = triangle.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 3;
     expect(pickScene({ triangles: [triangle] }, x, y)?.height).toBeCloseTo(2 / 3);
   });
-  test("rotates path connections and matches slopes at shared edges", () => {
+  test("rotates explicit path connections", () => {
     const masks = ["1000", "0100", "0010", "0001"];
     const pages = Array.from({ length: 5 }, () => ({ file: "page.png", width: 72, height: 40 }));
     const frames = { ...atlas.frames };
     masks.forEach((mask, index) => { frames[`ground/path_${mask}/any/static/0`] = { ...frame, placements: { "1": { ...frame.placements["1"], page: index + 1 } } }; });
     const connectedAtlas = { ...atlas, pages: { "1": pages }, frames };
     for (const rotation of [0, 1, 2, 3] as const) {
-      const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0, 1, 0, 0, 0]) }, { ...camera, rotation }, viewport, connectedAtlas);
+      const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0, 1, 0, 0, 0]), pathMetadata: new Int32Array([0, 0, 2, 0, 0, 8]) }, { ...camera, rotation }, viewport, connectedAtlas);
       expect(scene.triangles.find((item) => item.kind === "path" && item.tileX === 0 && item.tileY === 0)?.page).toBe(rotation + 1);
     }
   });
   test("draws queue railings only on unconnected edges and distinguishes path styles", () => {
     const connectedAtlas: Atlas = { ...atlas, frames: { ...atlas.frames, ...Object.fromEntries(["1000", "0010"].map((bits) => [`ground/path_${bits}/any/static/0`, frame])) } };
-    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0, 1, 0, 0, 0]), pathMetadata: new Int32Array([1, 1, 0, 0]) }, camera, viewport, connectedAtlas);
+    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0, 1, 0, 0, 0]), pathMetadata: new Int32Array([1, 1, 2, 0, 0, 8]) }, camera, viewport, connectedAtlas);
     expect(scene.triangles.filter((triangle) => triangle.kind === "path-railing")).toHaveLength(6);
     const queue = scene.triangles.find((triangle) => triangle.kind === "path" && triangle.tileX === 0)!;
     const normal = scene.triangles.find((triangle) => triangle.kind === "path" && triangle.tileX === 1)!;
     expect(queue.color).not.toEqual(normal.color);
     expect(() => buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]), pathMetadata: new Int32Array([1]) }, camera, viewport, atlas)).toThrow();
   });
+  test("keeps railings between adjacent paths without an explicit connection", () => {
+    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0, 1, 0, 0, 0]), pathMetadata: new Int32Array([1, 0, 0, 1, 0, 0]) }, camera, viewport, atlas);
+    expect(scene.triangles.filter((triangle) => triangle.kind === "path-railing")).toHaveLength(16);
+  });
+  test("opens the queue railing toward its connected attraction", () => {
+    const paths = new Int32Array([0, 0, 0, 0]);
+    const pathMetadata = new Int32Array([1, 0, 0]);
+    const scene = buildScene({ ...world, paths, pathMetadata, facilityOpenings: new Int32Array([0, 0, 0, 2]) }, camera, viewport, atlas);
+    expect(scene.triangles.filter((triangle) => triangle.kind === "path-railing")).toHaveLength(6);
+    const otherHeight = buildScene({ ...world, paths, pathMetadata, facilityOpenings: new Int32Array([0, 0, 1, 2]) }, camera, viewport, atlas);
+    expect(otherHeight.triangles.filter((triangle) => triangle.kind === "path-railing")).toHaveLength(8);
+  });
   test("queue railing geometry picks as its underlying path", () => {
-    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]), pathMetadata: new Int32Array([1, 0]) }, camera, viewport, atlas);
+    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]), pathMetadata: new Int32Array([1, 0, 0]) }, camera, viewport, atlas);
     const railing = scene.triangles.find((triangle) => triangle.kind === "path-railing");
     expect(railing).toBeDefined();
     const x = railing!.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 3;
@@ -234,7 +246,7 @@ describe("world scene", () => {
     expect(pickScene(scene, x, y)).toMatchObject({ kind: "path", x: 0, y: 0 });
   });
   test("picks the owning path at the outer top edge of a queue railing", () => {
-    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]), pathMetadata: new Int32Array([1, 0]) }, camera, viewport, atlas);
+    const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]), pathMetadata: new Int32Array([1, 0, 0]) }, camera, viewport, atlas);
     const railingTriangles = scene.triangles.filter((triangle) => triangle.kind === "path-railing");
     const pathTriangles = scene.triangles.filter((triangle) => triangle.kind === "path" && triangle.tileX === 0 && triangle.tileY === 0);
     const contains = (triangle: typeof scene.triangles[number], x: number, y: number): boolean => {
@@ -265,7 +277,7 @@ describe("world scene", () => {
   });
   test("path placement ghosts do not intercept world picking", () => {
     const scene = buildScene({ ...world, paths: new Int32Array([0, 0, 0, 0]) }, camera, viewport, atlas);
-    const ghost = buildPathGhostQuads([{ x: 0, y: 0, z: 0, slope: 0, refusal: null }], camera, viewport);
+    const ghost = buildPathGhostQuads([{ x: 0, y: 0, z: 0, slope: 0, edges: 0, facilityOpenings: 0, refusal: null }], camera, viewport);
     appendGeometry(scene, ghost);
     const triangle = scene.triangles.find((item) => item.kind === "path-preview")!;
     const x = triangle.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 3;

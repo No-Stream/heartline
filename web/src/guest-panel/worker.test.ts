@@ -8,10 +8,14 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   WasmSimulation: class {
     facilities_json() { return "[]"; }
     facility_revenue() { return 0n; }
+    place_facility() { return true; }
+    remove_facility() { return true; }
+    facility_message() { return ""; }
     world_dimensions() { return new Uint16Array([3, 3]); }
     world_surfaces() { return new Int32Array(54); }
     world_paths() { return new Int32Array(); }
     world_path_metadata() { return new Int32Array(); }
+    world_facility_openings() { return new Int32Array(); }
     world_carved() { return new Int32Array(); }
     path_preview(coordinates: Int32Array, kind: string, style: number) { return wasmMock.pathPreview(coordinates, kind, style); }
     path_build(coordinates: Int32Array, kind: string, style: number) { return wasmMock.pathBuild(coordinates, kind, style); }
@@ -31,6 +35,22 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_train_poses() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
+    construction_start() {}
+    construction_choices() { return ""; }
+    construction_selected() { return ""; }
+    construction_track() { return ""; }
+    construction_rails() { return new Float32Array(); }
+    construction_ties() { return new Float32Array(); }
+    construction_supports() { return new Float32Array(); }
+    construction_placed_rails() { return new Float32Array(); }
+    construction_placed_ties() { return new Float32Array(); }
+    construction_placed_supports() { return new Float32Array(); }
+    construction_active() { return true; }
+    construction_can_close() { return false; }
+    construction_test_report_json() { return "null"; }
+    construction_can_test() { return false; }
+    construction_is_open() { return false; }
+    construction_station_positions() { return new Int32Array(); }
   },
 }));
 
@@ -49,7 +69,7 @@ afterEach(() => {
 it("echoes the preview request id and reports invalid tiles", async () => {
   vi.useFakeTimers();
   wasmMock.initialize.mockResolvedValue(undefined);
-  wasmMock.pathPreview.mockReturnValue(new Int32Array([0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 4]));
+  wasmMock.pathPreview.mockReturnValue(new Int32Array([0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0, 0, 4, 8, 0]));
   const postMessage = vi.fn();
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
@@ -108,4 +128,36 @@ it("refreshes an open guest detail twice per second and stops after close", asyn
   const detailCountAfterClose = postMessage.mock.calls.filter(([message]) => message.type === "guest-detail").length;
   await vi.advanceTimersByTimeAsync(600);
   expect(postMessage.mock.calls.filter(([message]) => message.type === "guest-detail")).toHaveLength(detailCountAfterClose);
+});
+
+it("refreshes the world after facilities are placed or removed", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  await Promise.resolve();
+  postMessage.mockClear();
+  onMessage({ data: { type: "facility-place", kind: "carousel", x: 0, y: 0, rotation: 0 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
+  postMessage.mockClear();
+  onMessage({ data: { type: "facility-remove", id: 1 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
+});
+
+it("refreshes the world after coaster construction changes", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  await Promise.resolve();
+  postMessage.mockClear();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
 });

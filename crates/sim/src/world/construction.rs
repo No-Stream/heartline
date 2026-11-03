@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 use super::{Direction, Path, Position, World};
 
@@ -25,12 +25,14 @@ pub enum PathBuildError {
     Unsupported,
     QueueConnections,
     FacilityOccupied,
+    FacilityAccess,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PathPreviewTile {
     pub path: Path,
     pub refusal: Option<PathBuildError>,
+    pub edges: u8,
 }
 
 struct RouteFailure {
@@ -87,6 +89,19 @@ impl World {
         _style: u8,
     ) -> Result<Vec<Path>, PathBuildError> {
         self.solve_path_route(start, end, kind)
+            .map(|(route, _)| route)
+            .map_err(|failure| failure.error)
+    }
+
+    /// Preview the resulting path graph for validation against external facilities.
+    pub fn preview_path_world(
+        &self,
+        start: Position,
+        end: Position,
+        kind: PathKind,
+    ) -> Result<World, PathBuildError> {
+        self.solve_path_route(start, end, kind)
+            .map(|(_, world)| world)
             .map_err(|failure| failure.error)
     }
 
@@ -106,11 +121,12 @@ impl World {
             return Err(PathBuildError::OutsideWorld);
         }
         match self.solve_path_route(start, end, kind) {
-            Ok(route) => Ok(route
+            Ok((route, proposed)) => Ok(route
                 .into_iter()
                 .map(|path| PathPreviewTile {
                     path,
                     refusal: None,
+                    edges: proposed.path_edges(path.position).unwrap(),
                 })
                 .collect()),
             Err(failure) => {
@@ -121,6 +137,7 @@ impl World {
                         .map(|path| PathPreviewTile {
                             path,
                             refusal: Some(failure.error),
+                            edges: self.path_edges(path.position).unwrap_or(0),
                         })
                         .collect());
                 }
@@ -131,6 +148,7 @@ impl World {
                     .map(|path| PathPreviewTile {
                         path,
                         refusal: None,
+                        edges: self.path_edges(path.position).unwrap_or(0),
                     })
                     .collect();
                 for (step, (x, y)) in route_coordinates(start, end)
@@ -161,6 +179,7 @@ impl World {
                             position: Position { x, y, height },
                             slope,
                         },
+                        edges: self.path_edges(Position { x, y, height }).unwrap_or(0),
                         refusal: Some(if step == prefix_len {
                             failure.error
                         } else {
@@ -178,7 +197,7 @@ impl World {
         start: Position,
         end: Position,
         kind: PathKind,
-    ) -> Result<Vec<Path>, RouteFailure> {
+    ) -> Result<(Vec<Path>, World), RouteFailure> {
         if start.x >= self.width
             || end.x >= self.width
             || start.y >= self.height
@@ -287,97 +306,80 @@ impl World {
             layers.push(layer);
         }
         let route = recover_route(&layers);
-        if let Err(error) = self.validate_queue_connections(&route, kind) {
-            return Err(RouteFailure {
+        let proposed = self
+            .validate_queue_connections(&route, kind)
+            .map_err(|error| RouteFailure {
                 error,
-                prefix: route,
+                prefix: route.clone(),
                 refusal_all: true,
-            });
-        }
-        Ok(route)
+            })?;
+        Ok((route, proposed))
     }
 
     fn validate_queue_connections(
         &self,
         route: &[Path],
-        route_kind: PathKind,
-    ) -> Result<(), PathBuildError> {
-        let mut additions: BTreeMap<(u16, u16), Vec<Path>> = BTreeMap::new();
-        for &path in route {
-            if self.path(path.position).is_none() {
-                additions
-                    .entry((path.position.x, path.position.y))
-                    .or_default()
-                    .push(path);
-            }
-        }
+        kind: PathKind,
+    ) -> Result<World, PathBuildError> {
+        let mut proposed = self.clone();
+        proposed.apply_path_route(route, kind, 0);
         let mut visited = BTreeSet::new();
-        let existing_queues = self
-            .path_metadata
-            .iter()
-            .filter(|(_, metadata)| metadata.kind == PathKind::Queue)
-            .map(|(position, _)| self.path(*position).unwrap());
-        let new_queues = additions
-            .values()
-            .flatten()
-            .copied()
-            .filter(|_| route_kind == PathKind::Queue);
-        for start in existing_queues.chain(new_queues) {
-            if !visited.insert(start.position) {
+        for path in proposed.paths() {
+            if proposed.path_metadata(path.position).unwrap().kind != PathKind::Queue
+                || !visited.insert(path.position)
+            {
                 continue;
             }
-            let mut pending = VecDeque::from([start]);
-            let mut entrances = BTreeSet::new();
-            while let Some(path) = pending.pop_front() {
-                let mut queue_neighbours = 0;
-                let mut normal_neighbours = 0;
-                for (direction, dx, dy, opposite) in [
-                    (Direction::North, 0, -1, Direction::South),
-                    (Direction::East, 1, 0, Direction::West),
-                    (Direction::South, 0, 1, Direction::North),
-                    (Direction::West, -1, 0, Direction::East),
-                ] {
-                    let x = i32::from(path.position.x) + dx;
-                    let y = i32::from(path.position.y) + dy;
-                    if x < 0 || y < 0 || x >= i32::from(self.width) || y >= i32::from(self.height) {
-                        continue;
-                    }
-                    let (x, y) = (x as u16, y as u16);
-                    let existing = self.columns[self.index(x, y)].iter().flat_map(|column| {
-                        column
-                            .paths
-                            .iter()
-                            .map(|&other| (other, self.path_metadata(other.position).unwrap().kind))
-                    });
-                    let added = additions
-                        .get(&(x, y))
-                        .into_iter()
-                        .flatten()
-                        .map(|&other| (other, route_kind));
-                    for (other, other_kind) in existing.chain(added) {
-                        if path.edge(direction) != other.edge(opposite) {
-                            continue;
-                        }
-                        if other_kind == PathKind::Normal {
-                            normal_neighbours += 1;
-                            entrances.insert((path.position, other.position));
-                        } else {
-                            queue_neighbours += 1;
-                            if visited.insert(other.position) {
-                                pending.push_back(other);
-                            }
+            let mut pending = VecDeque::from([path.position]);
+            let mut entrances = 0;
+            let mut nodes = 0;
+            let mut queue_edges = 0;
+            while let Some(position) = pending.pop_front() {
+                nodes += 1;
+                let mut queue_degree = 0;
+                let mut normal_degree = 0;
+                for other in proposed.neighbours(position) {
+                    if proposed.path_metadata(other).unwrap().kind == PathKind::Normal {
+                        normal_degree += 1;
+                    } else {
+                        queue_degree += 1;
+                        if visited.insert(other) {
+                            pending.push_back(other);
                         }
                     }
                 }
-                if entrances.len() > 1
-                    || queue_neighbours > 2
-                    || (normal_neighbours > 0 && queue_neighbours > 1)
+                entrances += normal_degree;
+                queue_edges += queue_degree;
+                if queue_degree > 2 || normal_degree > 1 || (normal_degree > 0 && queue_degree > 1)
                 {
                     return Err(PathBuildError::QueueConnections);
                 }
             }
+            if entrances > 1 || queue_edges / 2 >= nodes {
+                return Err(PathBuildError::QueueConnections);
+            }
         }
-        Ok(())
+        Ok(proposed)
+    }
+
+    fn apply_path_route(&mut self, route: &[Path], kind: PathKind, style: u8) {
+        for path in route {
+            if self.path(path.position).is_none() {
+                self.insert_path(*path);
+                self.path_metadata
+                    .insert(path.position, PathMetadata { kind, style });
+                if kind == PathKind::Normal {
+                    for other in self.geometric_neighbours(path.position) {
+                        if self.path_metadata(other).unwrap().kind == PathKind::Normal {
+                            self.connect_paths(path.position, other);
+                        }
+                    }
+                }
+            }
+        }
+        for pair in route.windows(2) {
+            self.connect_paths(pair[0].position, pair[1].position);
+        }
     }
 
     pub fn build_path_route(
@@ -388,13 +390,7 @@ impl World {
         style: u8,
     ) -> Result<Vec<Path>, PathBuildError> {
         let route = self.preview_path_route(start, end, kind, style)?;
-        for path in &route {
-            if self.path(path.position).is_none() {
-                self.place_path(*path);
-                self.path_metadata
-                    .insert(path.position, PathMetadata { kind, style });
-            }
-        }
+        self.apply_path_route(&route, kind, style);
         Ok(route)
     }
 }

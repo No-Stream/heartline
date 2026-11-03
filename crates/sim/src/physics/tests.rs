@@ -1,5 +1,9 @@
 use super::*;
+use crate::track::construction::{Construction, track_support_obstacles};
+use crate::track::supports::generate_dense_wooden_lattice;
+use crate::track::wooden_twister_model;
 use crate::track::{PieceId, TrackState, catalog, hybrid_model};
+use crate::world::{Surface, World};
 
 fn circuit(ids: &[PieceId]) -> Circuit {
     let catalog = catalog();
@@ -32,6 +36,110 @@ fn oval() -> Circuit {
         TurnLargeEntry,
         TurnLargeExit,
     ])
+}
+
+#[test]
+fn wooden_twister_completes_a_lap_through_its_structure() {
+    use PieceId::*;
+
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let model = wooden_twister_model();
+    let start = TrackState {
+        x: 256,
+        y: 256,
+        z: 5,
+        ..TrackState::origin()
+    };
+    let mut construction = Construction::new(start, model.clone());
+    let mut ids = vec![Station, LiftLevelToGentleUp];
+    ids.extend([Lift; 5]);
+    ids.extend([LiftGentleUpToLevel, LiftFlat, TurnSmallStandalone]);
+    ids.extend([LevelToGentleDown, GentleDown, GentleDownToLevel, Straight]);
+    ids.push(TurnSmallStandalone);
+    ids.extend([
+        LevelToGentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Straight,
+        Straight,
+        Straight,
+    ]);
+    ids.push(TurnSmallStandalone);
+    ids.extend([Straight; 7]);
+    ids.extend([Straight; 4]);
+    ids.extend([
+        LevelToGentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        TurnSmallRightStandalone,
+    ]);
+    ids.extend([Straight; 4]);
+    ids.push(TurnSmallRightStandalone);
+    ids.extend([Straight; 8]);
+    ids.push(TurnSmallRightStandalone);
+    ids.extend([Straight; 3]);
+    for id in ids {
+        construction
+            .append(id, &world, &[])
+            .unwrap_or_else(|error| panic!("{id:?}: {error:?}"));
+    }
+    construction.close().unwrap();
+    let circuit = construction.circuit().unwrap();
+    let crossing_low = circuit.pieces()[1]
+        .sample(circuit.pieces()[1].length())
+        .position;
+    let crossing_high = circuit.pieces()[26]
+        .sample(circuit.pieces()[26].length())
+        .position;
+    assert!((crossing_low.x - crossing_high.x).hypot(crossing_low.y - crossing_high.y) < 0.01);
+    assert!(crossing_high.z - crossing_low.z > model.train.height_metres);
+    let obstacles = track_support_obstacles(&circuit.pieces()[1..3], &model.train);
+    let supports: Vec<_> = circuit.pieces()[26..28]
+        .iter()
+        .flat_map(|piece| generate_dense_wooden_lattice(piece, &world, &obstacles).unwrap())
+        .collect();
+    for direction in [-1.0, 1.0] {
+        assert!(supports.iter().any(|segment| {
+            segment.start.x == segment.end.x
+                && segment.start.y == segment.end.y
+                && (segment.start.x - crossing_low.x).abs() < 4.0
+                && (0.0..4.1).contains(&((segment.start.y - crossing_low.y) * direction))
+                && segment.start.z < crossing_low.z
+                && segment.end.z > crossing_low.z + model.train.height_metres
+        }));
+    }
+    for segment in &supports {
+        for step in 0..=100 {
+            let point = segment.start + (segment.end - segment.start) * (f64::from(step) / 100.0);
+            assert!(obstacles.iter().all(|obstacle| {
+                point.x < obstacle.min.x
+                    || point.x > obstacle.max.x
+                    || point.y < obstacle.min.y
+                    || point.y > obstacle.max.y
+                    || point.z < obstacle.min.z
+                    || point.z > obstacle.max.z
+            }));
+        }
+    }
+
+    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit))
+        .expect("train completed a lap");
+    assert!(
+        outcome.reports[0].completed,
+        "distance {} of {}",
+        run.train().distance(),
+        circuit.length()
+    );
+    assert!(!outcome.recovered);
 }
 
 #[test]

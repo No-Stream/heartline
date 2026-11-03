@@ -391,7 +391,7 @@ mod tests {
             .build_path_route(position(0), position(1), PathKind::Normal, 0)
             .unwrap();
         world
-            .build_path_route(position(2), position(12), PathKind::Queue, 0)
+            .build_path_route(position(1), position(12), PathKind::Queue, 0)
             .unwrap();
         let ride = Facility {
             place: KnownPlace {
@@ -438,7 +438,7 @@ mod tests {
             .build_path_route(position(0), position(1), PathKind::Normal, 0)
             .unwrap();
         world
-            .build_path_route(position(2), position(12), PathKind::Queue, 0)
+            .build_path_route(position(1), position(12), PathKind::Queue, 0)
             .unwrap();
         let facility = Facility {
             place: KnownPlace {
@@ -512,7 +512,7 @@ mod tests {
             .build_path_route(position(0), position(1), PathKind::Normal, 0)
             .unwrap();
         world
-            .build_path_route(position(2), position(3), PathKind::Queue, 0)
+            .build_path_route(position(1), position(3), PathKind::Queue, 0)
             .unwrap();
         let facility = Facility {
             place: KnownPlace {
@@ -606,7 +606,7 @@ mod tests {
             slope: None,
         });
         world
-            .build_path_route(position(1), position(4), PathKind::Queue, 0)
+            .build_path_route(position(0), position(4), PathKind::Queue, 0)
             .unwrap();
         let graph = Graph::with_entrance(&world, Some(position(0)));
         let facility = |id, x, kind| Facility {
@@ -651,7 +651,7 @@ mod tests {
         }
         for x in [0, 4] {
             world
-                .build_path_route(position(x, 1), position(x, 3), PathKind::Queue, 0)
+                .build_path_route(position(x, 0), position(x, 3), PathKind::Queue, 0)
                 .unwrap();
         }
         let facility = |id, x, kind| Facility {
@@ -749,7 +749,7 @@ mod tests {
             .unwrap();
         for x in [1, 6] {
             world
-                .build_path_route(position(x, 1), position(x, 3), PathKind::Queue, 0)
+                .build_path_route(position(x, 0), position(x, 3), PathKind::Queue, 0)
                 .unwrap();
         }
         let mut buildings = ParkFacilities::new();

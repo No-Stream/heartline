@@ -24,6 +24,16 @@ test.afterAll(async () => {
 type Window = { constructionActions: unknown[]; setConstructionState(state: object): void };
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
 
+test("offers the wooden twister in the model chooser", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ active: false }));
+  const model = page.getByRole("combobox", { name: "Coaster model" });
+  await model.selectOption("model:wooden_twister");
+  await expect(model.locator("option:checked")).toHaveText("Briar Blitz · Great Coaster Workshop");
+  await expect(page.locator("[data-model-description]")).toContainText("wooden");
+  expect(await recorded(page)).toContainEqual({ type: "construction-select", piece: "model:wooden_twister" });
+});
+
 test("opens and closes a completed coaster", async ({ page }) => {
   await page.goto(fixtureUrl);
   await expect(page.locator("[data-station-access]")).toContainText("queue at (227, 251)");

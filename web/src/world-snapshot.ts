@@ -3,6 +3,7 @@ export interface WorldSnapshotSource {
   world_surfaces(): Int32Array;
   world_paths(): Int32Array;
   world_path_metadata(): Int32Array;
+  world_facility_openings(): Int32Array;
   world_carved(): Int32Array;
 }
 
@@ -12,6 +13,7 @@ export interface WorldSnapshot {
   readonly surfaces: Int32Array;
   readonly paths: Int32Array;
   readonly pathMetadata: Int32Array;
+  readonly facilityOpenings: Int32Array;
   readonly carved: Int32Array;
 }
 
@@ -40,9 +42,10 @@ export function captureWorldSnapshot(source: WorldSnapshotSource): {
   const surfaces = source.world_surfaces();
   const paths = source.world_paths();
   const pathMetadata = source.world_path_metadata();
+  const facilityOpenings = source.world_facility_openings();
   const carved = source.world_carved();
   return {
-    message: { type: "world", dimensions, surfaces, paths, pathMetadata, carved },
-    transfer: [dimensions.buffer, surfaces.buffer, paths.buffer, pathMetadata.buffer, carved.buffer] as ArrayBuffer[],
+    message: { type: "world", dimensions, surfaces, paths, pathMetadata, facilityOpenings, carved },
+    transfer: [dimensions.buffer, surfaces.buffer, paths.buffer, pathMetadata.buffer, facilityOpenings.buffer, carved.buffer] as ArrayBuffer[],
   };
 }

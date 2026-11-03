@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::facilities::{
-    FacilityKind, ParkFacilities, coaster_facility, station_positions,
+    FacilityKind, ParkFacilities, PathOpening, coaster_access_openings, coaster_facility,
+    station_positions, validate_facility_path_access,
 };
 use theme_park_sim::guest_behavior::{Facility, RidePhase};
 use theme_park_sim::guests::{AgeGroup, GuestId};
@@ -16,11 +17,11 @@ use theme_park_sim::track::clearance::{ClearanceCollision, check_clearance};
 use theme_park_sim::track::construction::{Construction, track_support_obstacles};
 use theme_park_sim::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, SupportError, SupportObstacle, SupportSegment,
-    generate_steel_columns, generate_wooden_lattice,
+    generate_dense_wooden_lattice, generate_steel_columns, generate_wooden_lattice,
 };
 use theme_park_sim::track::{
-    Heading, Piece, PieceId, PieceKind, SupportStyle, TrackSample, TrackState, TrainConfiguration,
-    Vec3, catalog, hybrid_model, multi_launch_model,
+    Heading, Material, Piece, PieceId, PieceKind, SupportStyle, TrackSample, TrackState,
+    TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{
     Brush, Corner, Direction, PathBuildError, PathKind, PathPreviewTile, Position, Surface,
@@ -69,6 +70,7 @@ pub struct WasmSimulation {
 enum ConstructionModel {
     Hybrid,
     MultiLaunch,
+    WoodenTwister,
 }
 
 const COASTER_PLACE_ID: u32 = u32::MAX;
@@ -220,7 +222,7 @@ impl WasmSimulation {
             .collect()
     }
 
-    /// Path kind and style pairs aligned with `world_paths()`.
+    /// Path kind, style, and edge mask triples aligned with `world_paths()`.
     pub fn world_path_metadata(&self) -> Vec<i32> {
         self.world
             .paths()
@@ -229,12 +231,35 @@ impl WasmSimulation {
                     .world
                     .path_metadata(path.position)
                     .expect("world path metadata");
-                [metadata.kind as i32, i32::from(metadata.style)]
+                [
+                    metadata.kind as i32,
+                    i32::from(metadata.style),
+                    i32::from(
+                        self.world
+                            .path_edges(path.position)
+                            .expect("world path edges"),
+                    ),
+                ]
             })
             .collect()
     }
 
-    /// Preview route entries: x, y, height, slope, kind, style, refusal code.
+    /// Attraction access openings: x, y, height, direction mask.
+    pub fn world_facility_openings(&self) -> Vec<i32> {
+        self.facility_openings()
+            .into_iter()
+            .flat_map(|opening| {
+                [
+                    i32::from(opening.position.x),
+                    i32::from(opening.position.y),
+                    i32::from(opening.position.height),
+                    i32::from(opening.mask),
+                ]
+            })
+            .collect()
+    }
+
+    /// Preview entries: x, y, height, slope, kind, style, refusal, path edges, facility openings.
     pub fn path_preview(&mut self, coordinates: Vec<i32>, kind: &str, style: u8) -> Vec<i32> {
         let Some(kind) = parse_path_kind(kind) else {
             self.path_message = "Unknown path kind".into();
@@ -249,6 +274,7 @@ impl WasmSimulation {
         };
         match self.checked_path_preview(start, end, kind, style) {
             Ok(route) => {
+                let openings = self.facility_openings();
                 self.path_message = route
                     .iter()
                     .find_map(|tile| tile.refusal)
@@ -268,6 +294,17 @@ impl WasmSimulation {
                             metadata.kind as i32,
                             i32::from(metadata.style),
                             tile.refusal.map_or(0, path_error_code),
+                            i32::from(tile.edges),
+                            if tile.refusal.is_none() && metadata.kind == PathKind::Queue {
+                                i32::from(
+                                    openings
+                                        .iter()
+                                        .filter(|opening| opening.position == tile.path.position)
+                                        .fold(0, |mask, opening| mask | opening.mask),
+                                )
+                            } else {
+                                0
+                            },
                         ]
                     })
                     .collect()
@@ -997,6 +1034,7 @@ impl WasmSimulation {
             match self.construction_model {
                 ConstructionModel::Hybrid => hybrid_model(),
                 ConstructionModel::MultiLaunch => multi_launch_model(),
+                ConstructionModel::WoodenTwister => wooden_twister_model(),
             },
         );
         if let Err(error) =
@@ -1029,6 +1067,11 @@ impl WasmSimulation {
             }
             "model:velocity_viper" => {
                 self.construction_model = ConstructionModel::MultiLaunch;
+                self.construction_message.clear();
+                return;
+            }
+            "model:wooden_twister" => {
+                self.construction_model = ConstructionModel::WoodenTwister;
                 self.construction_message.clear();
                 return;
             }
@@ -1547,7 +1590,30 @@ impl WasmSimulation {
                 tile.refusal = Some(PathBuildError::Disconnected);
             }
         }
+        if preview.iter().all(|tile| tile.refusal.is_none()) {
+            let proposed = self.world.preview_path_world(start, end, kind)?;
+            if validate_facility_path_access(
+                &proposed,
+                &self.facilities,
+                self.construction.as_ref(),
+            )
+            .is_err()
+            {
+                for tile in &mut preview {
+                    tile.refusal = Some(PathBuildError::FacilityAccess);
+                }
+            }
+        }
         Ok(preview)
+    }
+
+    fn facility_openings(&self) -> Vec<PathOpening> {
+        let mut openings = self.facilities.access_openings(&self.world);
+        if let Some(coaster_openings) = self.construction.as_ref().and_then(coaster_access_openings)
+        {
+            openings.extend(coaster_openings);
+        }
+        openings
     }
 
     fn facility_obstacles(&self) -> Vec<SupportObstacle> {
@@ -1620,6 +1686,15 @@ impl WasmSimulation {
             // Steel records use -(piece ID + 1); consumers decode before picking.
             for record in geometry.chunks_exact_mut(stride) {
                 record[0] = -record[0] - 1.0;
+            }
+        } else if stride != 7
+            && self
+                .construction
+                .as_ref()
+                .is_some_and(|construction| construction.model().track_material == Material::Wood)
+        {
+            for record in geometry.chunks_exact_mut(stride) {
+                record[0] += 1_000_000.0;
             }
         }
         geometry
@@ -1824,6 +1899,7 @@ fn path_build_error(error: PathBuildError) -> &'static str {
             "A queue path must have at most one normal path entrance"
         }
         PathBuildError::FacilityOccupied => "Path overlaps a facility",
+        PathBuildError::FacilityAccess => "Path conflicts with attraction access",
     }
 }
 
@@ -1837,6 +1913,7 @@ fn path_error_code(error: PathBuildError) -> i32 {
         PathBuildError::Unsupported => 6,
         PathBuildError::QueueConnections => 7,
         PathBuildError::FacilityOccupied => 8,
+        PathBuildError::FacilityAccess => 9,
     }
 }
 
@@ -2363,6 +2440,60 @@ mod construction_bridge_tests {
             simulation.construction.as_ref().unwrap().model().name,
             super::hybrid_model().name
         );
+    }
+
+    #[test]
+    fn wooden_twister_geometry_distinguishes_track_and_steel_loop_supports() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_select("model:wooden_twister");
+        simulation.construction_start(200, 200, 20, 0);
+        let rails = simulation.construction_placed_rails();
+        assert!(!rails.is_empty());
+        assert!(
+            rails
+                .chunks_exact(19)
+                .all(|record| record[0] == 1_000_000.0)
+        );
+        let ties = simulation.construction_placed_ties();
+        assert!(!ties.is_empty());
+        assert!(ties.chunks_exact(13).all(|record| record[0] == 1_000_000.0));
+        let supports = simulation.construction_placed_supports();
+        assert!(!supports.is_empty());
+        assert!(supports.chunks_exact(7).all(|record| record[0] == 0.0));
+
+        let loop_piece = super::catalog()
+            .into_iter()
+            .find(|piece| piece.id == super::PieceId::SteelLoop)
+            .unwrap()
+            .at(super::TrackState {
+                x: 200,
+                y: 200,
+                z: 20,
+                ..super::TrackState::origin()
+            })
+            .unwrap();
+        let supports = super::render_preview_supports(
+            &loop_piece,
+            &[],
+            &simulation.world,
+            super::SupportStyle::DenseWoodenLattice,
+        )
+        .unwrap();
+        assert!(!supports.is_empty());
+        assert!(supports.chunks_exact(7).all(|record| record[0] == -1.0));
+        let id = 42;
+        let model = super::wooden_twister_model();
+        let supports = super::render_cached_supports(
+            &[(&id, &loop_piece)],
+            &simulation.world,
+            &model.train,
+            model.support_style,
+            &[],
+            &mut std::collections::HashMap::new(),
+        )
+        .unwrap();
+        assert!(!supports.is_empty());
+        assert!(supports.chunks_exact(7).all(|record| record[0] == -43.0));
     }
 
     #[test]
@@ -2936,11 +3067,18 @@ fn render_preview_supports(
     world: &World,
     style: SupportStyle,
 ) -> Result<Vec<f32>, SupportError> {
-    let supports = generate_supports(piece, world, obstacles, style)?;
+    let piece_style = style.for_piece(piece);
+    let supports = generate_supports(piece, world, obstacles, piece_style)?;
     let mut result = Vec::new();
     for support in supports {
         if support.start != support.end {
-            result.push(0.0);
+            result.push(
+                if piece_style == SupportStyle::SteelColumns && style != piece_style {
+                    -1.0
+                } else {
+                    0.0
+                },
+            );
             append_vector(&mut result, support.start / 4.0);
             append_vector(&mut result, support.end / 4.0);
         }
@@ -2975,7 +3113,13 @@ fn render_cached_supports(
     sync_support_obstacles(entries, train, cache);
     let mut result = Vec::new();
     for (id, piece) in entries {
-        let count = (piece.length() / 8.0).ceil() as usize;
+        let piece_style = style.for_piece(piece);
+        let spacing = if piece_style == SupportStyle::DenseWoodenLattice {
+            4.0
+        } else {
+            8.0
+        };
+        let count = (piece.length() / spacing).ceil() as usize;
         let anchors: Vec<_> = (0..count)
             .map(|index| {
                 piece
@@ -3012,7 +3156,7 @@ fn render_cached_supports(
                 .flat_map(|(other_id, _)| cache[other_id].obstacles.iter().copied())
                 .collect();
             obstacles.extend_from_slice(facility_obstacles);
-            let segments = generate_supports(piece, world, &obstacles, style);
+            let segments = generate_supports(piece, world, &obstacles, piece_style);
             let cached = cache.get_mut(id).expect("support cache entry");
             cached.world_revision = world.revision();
             cached.dependencies = dependencies;
@@ -3020,7 +3164,14 @@ fn render_cached_supports(
         }
         for segment in cache[id].segments.as_ref().map_err(|error| *error)? {
             if segment.start != segment.end {
-                result.push(**id as f32);
+                let id = **id as f32;
+                result.push(
+                    if piece_style == SupportStyle::SteelColumns && style != piece_style {
+                        -id - 1.0
+                    } else {
+                        id
+                    },
+                );
                 append_vector(&mut result, segment.start / 4.0);
                 append_vector(&mut result, segment.end / 4.0);
             }
@@ -3037,6 +3188,7 @@ fn generate_supports(
 ) -> Result<Vec<SupportSegment>, SupportError> {
     match style {
         SupportStyle::WoodenLattice => generate_wooden_lattice(piece, world, obstacles),
+        SupportStyle::DenseWoodenLattice => generate_dense_wooden_lattice(piece, world, obstacles),
         SupportStyle::SteelColumns => generate_steel_columns(piece, world, obstacles),
     }
 }
@@ -3056,10 +3208,12 @@ fn try_render_supports(
                 track_support_obstacles(std::slice::from_ref(other), &model.train)
             })
             .collect();
-        let supports = match model.support_style {
-            SupportStyle::WoodenLattice => generate_wooden_lattice(piece, world, &obstacles),
-            SupportStyle::SteelColumns => generate_steel_columns(piece, world, &obstacles),
-        }?;
+        let supports = generate_supports(
+            piece,
+            world,
+            &obstacles,
+            model.support_style_for_piece(piece),
+        )?;
         for support in supports {
             if support.start != support.end {
                 result.push(index as f32);
@@ -3146,11 +3300,11 @@ mod path_bridge_tests {
         let before_preview = simulation.world_state_hash();
         let coordinates = vec![218, 250, 8, 224, 250, 3];
         let preview = simulation.path_preview(coordinates.clone(), "normal", 0);
-        assert_eq!(preview.len(), 7 * 7);
-        assert!(preview.chunks_exact(7).all(|tile| tile[6] == 0));
+        assert_eq!(preview.len(), 7 * 9);
+        assert!(preview.chunks_exact(9).all(|tile| tile[6] == 0));
         assert!(
             preview
-                .chunks_exact(7)
+                .chunks_exact(9)
                 .any(|tile| tile[..4] == [221, 250, 5, 4])
         );
         assert_eq!(simulation.world_state_hash(), before_preview);
@@ -3180,14 +3334,16 @@ mod path_bridge_tests {
                 water: None,
             },
         );
+        simulation.facilities = super::ParkFacilities::new();
 
         let before_preview = simulation.world_state_hash();
         let preview = simulation.path_preview(vec![0, 0, 0, 2, 0, 0], "queue", 2);
         assert_eq!(
             preview,
             vec![
-                0, 0, 0, 0, 1, 2, 0, // x, y, height, slope, kind, style, refusal
-                1, 0, 0, 0, 1, 2, 0, 2, 0, 0, 0, 1, 2, 0,
+                0, 0, 0, 0, 1, 2, 0, 2,
+                0, // x, y, height, slope, kind, style, refusal, edges, openings
+                1, 0, 0, 0, 1, 2, 0, 10, 0, 2, 0, 0, 0, 1, 2, 0, 8, 0,
             ]
         );
         assert_eq!(simulation.world_state_hash(), before_preview);
@@ -3198,14 +3354,101 @@ mod path_bridge_tests {
             simulation.world_paths(),
             vec![0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0]
         );
-        assert_eq!(simulation.world_path_metadata(), vec![1, 2, 1, 2, 1, 2]);
+        assert_eq!(
+            simulation.world_path_metadata(),
+            vec![1, 2, 2, 1, 2, 10, 1, 2, 8]
+        );
 
         assert!(simulation.path_remove(1, 0, 0));
         assert_eq!(simulation.world_paths(), vec![0, 0, 0, 0, 2, 0, 0, 0]);
-        assert_eq!(simulation.world_path_metadata(), vec![1, 2, 1, 2]);
+        assert_eq!(simulation.world_path_metadata(), vec![1, 2, 0, 1, 2, 0]);
         let revision = simulation.world.revision();
         assert!(!simulation.path_remove(1, 0, 0));
         assert_eq!(simulation.world.revision(), revision);
+    }
+
+    #[test]
+    fn path_preview_reports_explicit_edges_for_adjacent_queue_paths_and_connections() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.world = World::new(
+            4,
+            2,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        simulation.facilities = super::ParkFacilities::new();
+        assert!(simulation.path_build(vec![0, 0, 0, 2, 0, 0], "queue", 0));
+        assert!(simulation.path_build(vec![2, 1, 0, 2, 1, 0], "queue", 0));
+        assert_eq!(
+            simulation.world_path_metadata(),
+            vec![1, 0, 2, 1, 0, 10, 1, 0, 8, 1, 0, 0]
+        );
+
+        let preview = simulation.path_preview(vec![2, 1, 0, 2, 0, 0], "queue", 0);
+        assert_eq!(
+            preview,
+            vec![2, 1, 0, 0, 1, 0, 0, 1, 0, 2, 0, 0, 0, 1, 0, 0, 12, 0]
+        );
+        simulation.facilities = super::ParkFacilities::new();
+        assert!(simulation.path_build(vec![2, 1, 0, 2, 0, 0], "queue", 0));
+        assert_eq!(
+            simulation.world_path_metadata(),
+            vec![1, 0, 2, 1, 0, 10, 1, 0, 12, 1, 0, 1]
+        );
+    }
+
+    #[test]
+    fn facility_openings_follow_ride_placement_and_access_paths() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.world = World::new(
+            8,
+            8,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        simulation.facilities = super::ParkFacilities::new();
+        assert!(simulation.path_build(vec![4, 3, 0, 4, 3, 0], "queue", 0));
+        assert!(simulation.path_build(vec![5, 3, 0, 5, 3, 0], "normal", 0));
+        let id = simulation
+            .facilities
+            .place(
+                &simulation.world,
+                super::FacilityKind::Carousel,
+                Position {
+                    x: 4,
+                    y: 4,
+                    height: 0,
+                },
+                super::Direction::North,
+            )
+            .unwrap();
+        assert_eq!(
+            simulation.world_facility_openings(),
+            vec![4, 3, 0, 4, 5, 3, 0, 4]
+        );
+        assert!(simulation.path_remove(4, 3, 0));
+        assert_eq!(
+            simulation.world_facility_openings(),
+            vec![4, 3, 0, 4, 5, 3, 0, 4]
+        );
+        let preview = simulation.path_preview(vec![4, 3, 0, 4, 3, 0], "queue", 0);
+        assert_eq!(preview[8], 4);
+        assert!(simulation.path_build(vec![3, 3, 0, 4, 3, 0], "queue", 0));
+        let before = simulation.world_state_hash();
+        let invalid = simulation.path_preview(vec![4, 2, 0, 4, 3, 0], "queue", 0);
+        assert!(
+            invalid
+                .chunks_exact(9)
+                .all(|tile| tile[6] == 9 && tile[8] == 0)
+        );
+        assert!(!simulation.path_build(vec![4, 2, 0, 4, 3, 0], "queue", 0));
+        assert_eq!(simulation.world_state_hash(), before);
+        assert!(simulation.remove_facility(id));
+        assert!(simulation.world_facility_openings().is_empty());
     }
 
     #[test]
@@ -3219,17 +3462,22 @@ mod path_bridge_tests {
                 water: None,
             },
         );
+        simulation.facilities = super::ParkFacilities::new();
         assert!(simulation.path_build(vec![0, 0, 0, 0, 0, 0], "normal", 1));
 
         let preview = simulation.path_preview(vec![0, 0, 0, 2, 0, 0], "normal", 3);
         assert_eq!(
             preview,
             vec![
-                0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 3, 0, 2, 0, 0, 0, 0, 3, 0
+                0, 0, 0, 0, 0, 1, 0, 2, 0, 1, 0, 0, 0, 0, 3, 0, 10, 0, 2, 0, 0, 0, 0, 3, 0, 8, 0
             ]
         );
+        simulation.facilities = super::ParkFacilities::new();
         assert!(simulation.path_build(vec![0, 0, 0, 2, 0, 0], "normal", 3));
-        assert_eq!(simulation.world_path_metadata(), vec![0, 1, 0, 3, 0, 3]);
+        assert_eq!(
+            simulation.world_path_metadata(),
+            vec![0, 1, 2, 0, 3, 10, 0, 3, 8]
+        );
     }
 
     #[test]
@@ -3243,17 +3491,22 @@ mod path_bridge_tests {
                 water: None,
             },
         );
+        simulation.facilities = super::ParkFacilities::new();
         assert!(simulation.path_build(vec![0, 0, 0, 0, 0, 0], "normal", 1));
 
         let preview = simulation.path_preview(vec![0, 0, 0, 2, 0, 0], "queue", 2);
         assert_eq!(
             preview,
             vec![
-                0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 2, 0, 2, 0, 0, 0, 1, 2, 0
+                0, 0, 0, 0, 0, 1, 0, 2, 0, 1, 0, 0, 0, 1, 2, 0, 10, 0, 2, 0, 0, 0, 1, 2, 0, 8, 0
             ]
         );
+        simulation.facilities = super::ParkFacilities::new();
         assert!(simulation.path_build(vec![0, 0, 0, 2, 0, 0], "queue", 2));
-        assert_eq!(simulation.world_path_metadata(), vec![0, 1, 1, 2, 1, 2]);
+        assert_eq!(
+            simulation.world_path_metadata(),
+            vec![0, 1, 2, 1, 2, 10, 1, 2, 8]
+        );
     }
 
     #[test]
@@ -3267,11 +3520,12 @@ mod path_bridge_tests {
                 water: None,
             },
         );
+        simulation.facilities = super::ParkFacilities::new();
 
         let before_preview = simulation.world_state_hash();
         let preview = simulation.path_preview(vec![0, 0, 0, 3, 0, 1], "normal", 0);
-        assert_eq!(preview.len(), 4 * 7);
-        assert!(preview.chunks_exact(7).any(|tile| tile[6] != 0));
+        assert_eq!(preview.len(), 4 * 9);
+        assert!(preview.chunks_exact(9).any(|tile| tile[6] != 0));
         assert!(!simulation.path_message().is_empty());
         assert_eq!(simulation.world_state_hash(), before_preview);
         assert!(!simulation.path_build(vec![0, 0, 0, 3, 0, 1], "unknown", 0));
@@ -3299,7 +3553,7 @@ mod path_bridge_tests {
         ];
         let revision = simulation.world.revision();
         let preview = simulation.path_preview(coordinates.clone(), "normal", 0);
-        assert_eq!(preview.len(), 7);
+        assert_eq!(preview.len(), 9);
         assert_eq!(preview[6], 8);
         assert!(simulation.path_message().contains("facility"));
         assert!(!simulation.path_build(coordinates, "normal", 0));

@@ -18,6 +18,7 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     world_surfaces() { return new Int32Array(54); }
     world_paths() { return new Int32Array(); }
     world_path_metadata() { return new Int32Array(); }
+    world_facility_openings() { return new Int32Array(); }
     world_carved() { return new Int32Array(); }
     tick() { workerMock.tick(); }
     tick_count() { return BigInt(workerMock.tick.mock.calls.length); }
@@ -55,16 +56,18 @@ describe("world snapshot transfer", () => {
     const surfaces = new Int32Array(12);
     const paths = new Int32Array([1, 0, 4, 0]);
     const carved = new Int32Array([1, 0, 0, 4]);
-    const pathMetadata = new Int32Array([1, 2]);
+    const pathMetadata = new Int32Array([1, 2, 0]);
+    const facilityOpenings = new Int32Array([0, 0, 0, 2]);
     const result = captureWorldSnapshot({
       world_dimensions: () => dimensions,
       world_surfaces: () => surfaces,
       world_paths: () => paths,
       world_path_metadata: () => pathMetadata,
+      world_facility_openings: () => facilityOpenings,
       world_carved: () => carved,
     });
-    expect(result.message).toEqual({ type: "world", dimensions, surfaces, paths, pathMetadata, carved });
-    expect(result.transfer).toEqual([dimensions.buffer, surfaces.buffer, paths.buffer, pathMetadata.buffer, carved.buffer]);
+    expect(result.message).toEqual({ type: "world", dimensions, surfaces, paths, pathMetadata, facilityOpenings, carved });
+    expect(result.transfer).toEqual([dimensions.buffer, surfaces.buffer, paths.buffer, pathMetadata.buffer, facilityOpenings.buffer, carved.buffer]);
   });
 });
 

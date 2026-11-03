@@ -185,7 +185,7 @@ const gameTest: GameTest = {
     const paths = [];
     for (let offset = 0; offset < world.paths.length; offset += 4) {
       const [x, y, z, slope] = world.paths.subarray(offset, offset + 4);
-      const [kind, style] = world.pathMetadata.subarray(offset / 2, offset / 2 + 2);
+      const [kind, style] = world.pathMetadata.subarray(offset / 4 * 3, offset / 4 * 3 + 2);
       paths.push({ x, y, z, slope, kind, style });
     }
     return paths;
