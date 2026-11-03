@@ -18,6 +18,90 @@ fn near_angle(a: f64, b: f64) {
     near((a - b).cos(), 1.0);
 }
 
+#[test]
+fn banked_turns_lean_into_their_curves() {
+    for piece in catalog().into_iter().filter(|piece| {
+        piece.entry.heading != piece.exit.heading && piece.entry.bank != Bank::Level
+    }) {
+        let distance = piece.length() / 2.0;
+        let sample = piece.sample(distance);
+        let before = piece.sample(distance - 0.01).tangent;
+        let after = piece.sample(distance + 0.01).tangent;
+        let signed_curvature =
+            sample.tangent.x * (after.y - before.y) - sample.tangent.y * (after.x - before.x);
+        let left = Vec3::new(-sample.tangent.y, sample.tangent.x, 0.0).unit();
+        assert!(
+            sample.up.dot(left) * signed_curvature > 0.0,
+            "{}",
+            piece.name
+        );
+        assert!(sample.roll * signed_curvature > 0.0, "{}", piece.name);
+    }
+}
+
+#[test]
+fn every_turn_and_offset_has_a_mirrored_catalog_piece() {
+    let pieces = catalog();
+    for piece in pieces
+        .iter()
+        .filter(|piece| piece.entry.heading != piece.exit.heading || piece.exit.y != 0)
+    {
+        let mirrored = pieces
+            .iter()
+            .find(|candidate| {
+                candidate.entry.bank.radians() == -piece.entry.bank.radians()
+                    && candidate.exit.bank.radians() == -piece.exit.bank.radians()
+                    && candidate.entry.x == piece.entry.x
+                    && candidate.entry.y == -piece.entry.y
+                    && candidate.exit.x == piece.exit.x
+                    && candidate.exit.y == -piece.exit.y
+                    && candidate.exit.heading.index() == (-piece.exit.heading.index()).rem_euclid(8)
+                    && (candidate.entry.curvature_vector().y + piece.entry.curvature_vector().y)
+                        .abs()
+                        < 1e-10
+                    && (candidate.exit.curvature_vector().x - piece.exit.curvature_vector().x).abs()
+                        < 1e-10
+                    && (candidate.exit.curvature_vector().y + piece.exit.curvature_vector().y).abs()
+                        < 1e-10
+            })
+            .unwrap_or_else(|| panic!("missing mirror for {}", piece.name));
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let a = piece.sample(piece.length() * fraction);
+            let b = mirrored.sample(mirrored.length() * fraction);
+            near_vec(
+                b.position,
+                Vec3::new(a.position.x, -a.position.y, a.position.z),
+            );
+            near_vec(b.up, Vec3::new(a.up.x, -a.up.y, a.up.z));
+            near(b.roll, -a.roll);
+        }
+    }
+}
+
+#[test]
+fn handed_inversions_are_mirrored() {
+    let pieces = catalog();
+    for (left_id, right_id) in [
+        (PieceId::Corkscrew, PieceId::CorkscrewRight),
+        (PieceId::HeartlineRoll, PieceId::HeartlineRollRight),
+    ] {
+        let left = pieces.iter().find(|piece| piece.id == left_id).unwrap();
+        let right = pieces.iter().find(|piece| piece.id == right_id).unwrap();
+        assert_eq!(left.entry, right.entry);
+        assert_eq!(left.exit, right.exit);
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let a = left.sample(left.length() * fraction);
+            let b = right.sample(right.length() * fraction);
+            near_vec(
+                b.position,
+                Vec3::new(a.position.x, -a.position.y, a.position.z),
+            );
+            near_vec(b.up, Vec3::new(a.up.x, -a.up.y, a.up.z));
+            near(b.roll, -a.roll);
+        }
+    }
+}
+
 fn assert_curvature_continuous_at_join(first: &Piece, second: &Piece) {
     let join_distance = 0.05;
     let incoming = first.sample(first.length());
@@ -561,7 +645,14 @@ fn standalone_turns_connect_straight_curvature_at_both_ends() {
             .into_iter()
             .find(|piece| piece.id == id)
             .unwrap_or_else(|| panic!("model did not offer {id:?}"));
-        assert_eq!(piece.exit.heading, Heading::North);
+        assert_eq!(
+            piece.exit.heading,
+            if bank == Bank::Right {
+                Heading::South
+            } else {
+                Heading::North
+            }
+        );
         assert_eq!(piece.exit.bank, bank);
         assert_eq!(
             piece.exit.horizontal_curvature,

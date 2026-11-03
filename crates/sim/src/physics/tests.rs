@@ -210,6 +210,56 @@ fn vertical_loop_g_matches_local_radius() {
 }
 
 #[test]
+fn banking_reduces_lateral_g_for_left_and_right_turns_at_the_same_speed() {
+    use PieceId::*;
+    let config = PhysicsConfig {
+        rolling_resistance: 0.0,
+        drag_coefficient: 0.0,
+        powered_sections: false,
+        ..PhysicsConfig::default()
+    };
+    let mut train_config = hybrid_model().train;
+    train_config.cars = 1;
+    for (direction, turn, banked_turn, bank, unbank) in [
+        (
+            "left",
+            TurnSmallStandalone,
+            BankedTurnStandalone,
+            BankLeft,
+            UnbankLeft,
+        ),
+        (
+            "right",
+            TurnSmallRightStandalone,
+            SmallRightBankedTurnStandalone,
+            BankRight,
+            UnbankRight,
+        ),
+    ] {
+        let measure = |turn_id, bank_id, unbank_id| {
+            let circuit = circuit(&[
+                Station, bank_id, turn_id, turn_id, unbank_id, Straight, bank_id, turn_id, turn_id,
+                unbank_id,
+            ]);
+            let midpoint = circuit.starts[2] + circuit.pieces[2].length() / 2.0;
+            let mut train = Train::new(&circuit, &train_config, config, midpoint - 1.0, 20.0);
+            while train.distance() < midpoint {
+                train.step(&circuit);
+            }
+            let reading = train.readings().last().unwrap()[0];
+            assert!((reading.speed - 20.0).abs() < 1e-8);
+            reading.g.lateral.abs()
+        };
+        let unbanked_g = measure(turn, Straight, Straight);
+        let banked_g = measure(banked_turn, bank, unbank);
+        assert!(
+            banked_g < unbanked_g,
+            "{direction}: banked {banked_g}, unbanked {unbanked_g}"
+        );
+    }
+}
+
+#[test]
 fn descent_converts_height_to_speed() {
     let circuit = oval();
     let config = PhysicsConfig {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::physics::{PhysicsConfig, Train};
 use crate::track::{Heading, Slope, Vec3, hybrid_model};
 use crate::world::Surface;
 use std::time::{Duration, Instant};
@@ -119,6 +120,52 @@ fn closed_circuit_requires_explicit_close_and_reopens_on_deletion() {
     );
     construction.delete_from(5).unwrap();
     assert!(construction.circuit().is_err());
+}
+
+#[test]
+fn right_turn_circuit_builds_and_completes_a_lap() {
+    use PieceId::*;
+
+    let track_world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [
+        Station,
+        TurnSmallRightStandalone,
+        TurnSmallRightStandalone,
+        Straight,
+        TurnSmallRightStandalone,
+        TurnSmallRightStandalone,
+    ] {
+        construction.append(id, &track_world, &[]).unwrap();
+    }
+    assert_eq!(construction.end(), start());
+    construction.close().unwrap();
+    let circuit = construction.circuit().unwrap();
+
+    let config = PhysicsConfig {
+        rolling_resistance: 0.0,
+        drag_coefficient: 0.0,
+        powered_sections: false,
+        ..PhysicsConfig::default()
+    };
+    let start_distance = circuit.pieces()[0].length() / 2.0;
+    let mut train = Train::new(
+        &circuit,
+        &construction.model().train,
+        config,
+        start_distance,
+        12.0,
+    );
+    let mut completed_lap = false;
+    for _ in 0..60_000 {
+        train.step(&circuit);
+        if train.distance() - start_distance >= circuit.length() {
+            completed_lap = true;
+            break;
+        }
+    }
+
+    assert!(completed_lap, "the train did not complete one circuit lap");
 }
 
 #[test]

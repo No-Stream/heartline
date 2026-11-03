@@ -135,6 +135,8 @@ pub enum HorizontalCurvature {
     Straight,
     LeftSmall,
     LeftLarge,
+    RightSmall,
+    RightLarge,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VerticalCurvature {
@@ -238,6 +240,16 @@ pub enum PieceId {
     LiftGentleUpToLevel,
     Brakes,
     Station,
+    TurnSmallRightEntry,
+    TurnSmallRight,
+    TurnSmallRightExit,
+    TurnSmallRightStandalone,
+    TurnLargeRightEntry,
+    TurnLargeRight,
+    TurnLargeRightExit,
+    TurnLargeRightStandalone,
+    CorkscrewRight,
+    HeartlineRollRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -269,6 +281,7 @@ pub struct Piece {
     pub exit: TrackState,
     shape: Shape,
     tangent_scale: f64,
+    mirrored: bool,
     arc_lengths: Vec<f64>,
 }
 #[derive(Clone, Copy, Debug)]
@@ -296,6 +309,8 @@ impl TrackState {
             HorizontalCurvature::Straight => 0.0,
             HorizontalCurvature::LeftSmall => 1.0 / 16.0,
             HorizontalCurvature::LeftLarge => 1.0 / 32.0,
+            HorizontalCurvature::RightSmall => -1.0 / 16.0,
+            HorizontalCurvature::RightLarge => -1.0 / 32.0,
         };
         let vertical = match self.vertical_curvature {
             VerticalCurvature::Straight => 0.0,
@@ -400,6 +415,11 @@ impl Piece {
             } else {
                 (left * -1.0, vertical, 1.0)
             };
+            let a = if self.mirrored && !matches!(self.shape, Shape::Loop) {
+                a * -1.0
+            } else {
+                a
+            };
             let radius = if self.entry.heading.index() % 2 == 0 {
                 radius
             } else {
@@ -469,7 +489,7 @@ impl Piece {
         };
         let (s, _, _) = smooth(t);
         let turns = if matches!(self.shape, Shape::Corkscrew | Shape::Heartline) {
-            TAU * s
+            TAU * s * if self.mirrored { -1.0 } else { 1.0 }
         } else {
             0.0
         };
@@ -791,7 +811,7 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (
             LargeLeftBankedTurn,
-            "Large left-banked turn",
+            "Large left-banked left turn",
             16,
             16,
             0,
@@ -800,37 +820,11 @@ pub fn catalog() -> Vec<Piece> {
             Level,
             Left,
             Left,
-            Shape::Plain,
-        ),
-        (
-            SmallRightBankedTurn,
-            "Small right-banked turn",
-            8,
-            8,
-            0,
-            North,
-            Level,
-            Level,
-            Right,
-            Right,
-            Shape::Plain,
-        ),
-        (
-            LargeRightBankedTurn,
-            "Large right-banked turn",
-            16,
-            16,
-            0,
-            North,
-            Level,
-            Level,
-            Right,
-            Right,
             Shape::Plain,
         ),
         (
             BankedTurn,
-            "Banked left turn",
+            "Small left-banked left turn",
             8,
             8,
             0,
@@ -855,19 +849,6 @@ pub fn catalog() -> Vec<Piece> {
             Shape::Plain,
         ),
         (
-            OffsetRight,
-            "Right half-tile offset",
-            12,
-            -1,
-            0,
-            East,
-            Level,
-            Level,
-            FlatBank,
-            FlatBank,
-            Shape::Plain,
-        ),
-        (
             Loop,
             "Vertical loop",
             32,
@@ -882,7 +863,7 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (
             Corkscrew,
-            "Corkscrew",
+            "Left corkscrew",
             16,
             0,
             0,
@@ -895,7 +876,7 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (
             HeartlineRoll,
-            "Heartline roll",
+            "Left heartline roll",
             16,
             0,
             0,
@@ -1001,6 +982,7 @@ pub fn catalog() -> Vec<Piece> {
                     exit,
                     shape,
                     tangent_scale: scale,
+                    mirrored: false,
                     arc_lengths: Vec::new(),
                 };
                 piece.rebuild_arc();
@@ -1044,9 +1026,9 @@ pub fn catalog() -> Vec<Piece> {
             BankedTurnExit,
             BankedTurnStandalone,
             HorizontalCurvature::LeftSmall,
-            "Begin banked left turn",
-            "End banked left turn",
-            "Standalone small left-banked turn",
+            "Begin small left-banked left turn",
+            "End small left-banked left turn",
+            "Standalone small left-banked left turn",
         ),
         (
             LargeLeftBankedTurn,
@@ -1054,29 +1036,9 @@ pub fn catalog() -> Vec<Piece> {
             LargeLeftBankedTurnExit,
             LargeLeftBankedTurnStandalone,
             HorizontalCurvature::LeftLarge,
-            "Begin large left-banked turn",
-            "End large left-banked turn",
-            "Standalone large left-banked turn",
-        ),
-        (
-            SmallRightBankedTurn,
-            SmallRightBankedTurnEntry,
-            SmallRightBankedTurnExit,
-            SmallRightBankedTurnStandalone,
-            HorizontalCurvature::LeftSmall,
-            "Begin small right-banked turn",
-            "End small right-banked turn",
-            "Standalone small right-banked turn",
-        ),
-        (
-            LargeRightBankedTurn,
-            LargeRightBankedTurnEntry,
-            LargeRightBankedTurnExit,
-            LargeRightBankedTurnStandalone,
-            HorizontalCurvature::LeftLarge,
-            "Begin large right-banked turn",
-            "End large right-banked turn",
-            "Standalone large right-banked turn",
+            "Begin large left-banked left turn",
+            "End large left-banked left turn",
+            "Standalone large left-banked left turn",
         ),
     ] {
         let index = pieces.iter().position(|piece| piece.id == base).unwrap();
@@ -1099,7 +1061,9 @@ pub fn catalog() -> Vec<Piece> {
         pieces[index].tangent_scale = match curvature {
             HorizontalCurvature::LeftSmall => 16.0 * std::f64::consts::FRAC_PI_2,
             HorizontalCurvature::LeftLarge => 32.0 * std::f64::consts::FRAC_PI_2,
-            HorizontalCurvature::Straight => unreachable!(),
+            HorizontalCurvature::Straight
+            | HorizontalCurvature::RightSmall
+            | HorizontalCurvature::RightLarge => unreachable!(),
         };
         pieces[index].rebuild_arc();
         pieces.push(entry);
@@ -1198,6 +1162,102 @@ pub fn catalog() -> Vec<Piece> {
         piece.id = id;
         piece.name = name;
         piece.kind = PieceKind::Lift;
+        pieces.push(piece);
+    }
+    for (source, id, name) in [
+        (
+            TurnSmallEntry,
+            TurnSmallRightEntry,
+            "Begin small right turn",
+        ),
+        (TurnSmall, TurnSmallRight, "Small right turn"),
+        (TurnSmallExit, TurnSmallRightExit, "End small right turn"),
+        (
+            TurnSmallStandalone,
+            TurnSmallRightStandalone,
+            "Standalone small right turn",
+        ),
+        (
+            TurnLargeEntry,
+            TurnLargeRightEntry,
+            "Begin large right turn",
+        ),
+        (TurnLarge, TurnLargeRight, "Large right turn"),
+        (TurnLargeExit, TurnLargeRightExit, "End large right turn"),
+        (
+            TurnLargeStandalone,
+            TurnLargeRightStandalone,
+            "Standalone large right turn",
+        ),
+        (
+            BankedTurnEntry,
+            SmallRightBankedTurnEntry,
+            "Begin small right-banked right turn",
+        ),
+        (
+            BankedTurn,
+            SmallRightBankedTurn,
+            "Small right-banked right turn",
+        ),
+        (
+            BankedTurnExit,
+            SmallRightBankedTurnExit,
+            "End small right-banked right turn",
+        ),
+        (
+            BankedTurnStandalone,
+            SmallRightBankedTurnStandalone,
+            "Standalone small right-banked right turn",
+        ),
+        (
+            LargeLeftBankedTurnEntry,
+            LargeRightBankedTurnEntry,
+            "Begin large right-banked right turn",
+        ),
+        (
+            LargeLeftBankedTurn,
+            LargeRightBankedTurn,
+            "Large right-banked right turn",
+        ),
+        (
+            LargeLeftBankedTurnExit,
+            LargeRightBankedTurnExit,
+            "End large right-banked right turn",
+        ),
+        (
+            LargeLeftBankedTurnStandalone,
+            LargeRightBankedTurnStandalone,
+            "Standalone large right-banked right turn",
+        ),
+        (OffsetLeft, OffsetRight, "Right half-tile offset"),
+        (Corkscrew, CorkscrewRight, "Right corkscrew"),
+        (HeartlineRoll, HeartlineRollRight, "Right heartline roll"),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == source)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        for state in [&mut piece.entry, &mut piece.exit] {
+            state.y = -state.y;
+            state.heading = Heading::from_index(-state.heading.index());
+            state.bank = match state.bank {
+                Bank::Left => Bank::Right,
+                Bank::Right => Bank::Left,
+                Bank::Level => Bank::Level,
+            };
+            state.horizontal_curvature = match state.horizontal_curvature {
+                HorizontalCurvature::Straight => HorizontalCurvature::Straight,
+                HorizontalCurvature::LeftSmall => HorizontalCurvature::RightSmall,
+                HorizontalCurvature::LeftLarge => HorizontalCurvature::RightLarge,
+                HorizontalCurvature::RightSmall => HorizontalCurvature::LeftSmall,
+                HorizontalCurvature::RightLarge => HorizontalCurvature::LeftLarge,
+            };
+        }
+        piece.mirrored = true;
+        piece.rebuild_arc();
         pieces.push(piece);
     }
     pieces
