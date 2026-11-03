@@ -8,6 +8,9 @@ pub const GRAVITY: f64 = 9.81;
 /// 200 Hz keeps integration error small while remaining inexpensive for game simulation.
 pub const TIME_STEP: f64 = 0.005;
 
+mod testing;
+pub use testing::{TestRun, TestRunRecorder, TestSample};
+
 #[derive(Clone, Debug)]
 pub struct Circuit {
     pieces: Vec<Piece>,
@@ -165,6 +168,8 @@ pub struct CarReading {
     pub speed: f64,
     pub g: GForces,
     pub airtime: bool,
+    pub height_m: f64,
+    pub inverted: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Note {
@@ -349,6 +354,7 @@ impl Train {
                 .map(|car| {
                     let distance = self.distance - car as f64 * self.spacing;
                     let (index, local) = circuit.locate(distance);
+                    let track_sample = circuit.pieces[index].sample(local);
                     let g = rider_g(
                         &circuit.pieces[index],
                         local,
@@ -360,6 +366,8 @@ impl Train {
                         speed: self.speed.abs(),
                         g,
                         airtime: g.vertical < 0.0,
+                        height_m: track_sample.position.z,
+                        inverted: track_sample.up.z < 0.0,
                     }
                 })
                 .collect(),

@@ -10,6 +10,8 @@ const workerMock = vi.hoisted(() => ({
 vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
   default: workerMock.initialize,
   WasmSimulation: class {
+    facilities_json() { return "[]"; }
+    facility_revenue() { return 0n; }
     world_dimensions() { return new Uint16Array([3, 3]); }
     world_surfaces() { return new Int32Array(54); }
     world_paths() { return new Int32Array(); }
@@ -83,15 +85,15 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   finishInitialization();
   await Promise.resolve();
 
-  expect(postMessage).toHaveBeenCalledTimes(3);
+  expect(postMessage).toHaveBeenCalledTimes(4);
   const [world, worldTransfer] = postMessage.mock.calls[0];
   expect(world.coasterRails).toEqual(new Float32Array([1, 2]));
   expect(world.coasterTies).toEqual(new Float32Array([3]));
   expect(worldTransfer).toContain(world.coasterRails.buffer);
   expect(worldTransfer).toContain(world.coasterTies.buffer);
   expect(workerMock.tick).not.toHaveBeenCalled();
-  expect(postMessage.mock.calls[2][0]).toMatchObject({ type: "snapshot", tickCount: 0 });
-  const [snapshot, transfer] = postMessage.mock.calls[2];
+  expect(postMessage.mock.calls[3][0]).toMatchObject({ type: "snapshot", tickCount: 0 });
+  const [snapshot, transfer] = postMessage.mock.calls[3];
   expect(snapshot.guestIds).toEqual(new Uint32Array([7]));
   expect(snapshot.guests).toEqual(new Float32Array([1, 2, 3, 1, 0, 4, 1]));
   expect(snapshot.appearances).toEqual(new Uint8Array([1, 2, 3, 4, 0]));

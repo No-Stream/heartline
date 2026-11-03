@@ -1,4 +1,5 @@
 pub mod demo_world;
+pub mod facilities;
 pub mod physics;
 
 pub mod track;

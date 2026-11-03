@@ -1,3 +1,4 @@
+import { createTestingPanel, type TestingReport } from "../../src/coaster-testing";
 import { createConstructionPanel } from "../../src/construction";
 import type { ConstructionState } from "../../src/construction-protocol";
 import type { InputAction } from "../../src/input/actions";
@@ -13,3 +14,7 @@ const state: ConstructionState = {
 };
 panel.update(state);
 Object.assign(window, { constructionActions: actions, setConstructionState: (update: Partial<ConstructionState>) => panel.update({ ...state, ...update }) });
+
+const testingPanel = createTestingPanel(document.querySelector<HTMLElement>("[data-testing]")!,
+  { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 }, () => {});
+Object.assign(window, { setTestingReport: (report: TestingReport | null) => testingPanel.update(report) });

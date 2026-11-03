@@ -17,6 +17,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       <button type="button" data-undo>Undo last piece</button>
       <button type="button" data-close>Close circuit</button>
       <button type="button" data-test>Test coaster</button>
+      <p data-test-hint></p><section aria-label="Coaster testing" data-testing></section>
       <label><input type="checkbox" data-delete-mode> Delete track by clicking it</label>
       <h3>Track pieces</h3><ol data-track></ol>
     </div>`;
@@ -93,6 +94,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       undo.disabled = state.track.length === 0;
       close.disabled = !state.canClose;
       test.disabled = !state.canTest;
+      container.querySelector<HTMLElement>("[data-test-hint]")!.textContent = !state.canTest && !state.testingReport ? "Complete the circuit and make it longer than the train to test your coaster." : "";
       message.textContent = state.message;
       track.replaceChildren(...state.track.map(({ id, label }, index) => {
         const item = document.createElement("li");

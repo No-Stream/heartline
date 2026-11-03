@@ -1,7 +1,7 @@
 //! Conservative sampled clearance envelopes in metres.
 use crate::track::{Piece, TrainConfiguration, Vec3};
 use crate::world::{Ground, World};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const SAMPLE_SPACING: f64 = 0.5;
 const TRACK_RADIUS: f64 = 0.15;
@@ -110,6 +110,14 @@ fn envelope(
     }
 }
 
+fn connector_allowance(train: &TrainConfiguration) -> f64 {
+    let half_length = train.length_metres / f64::from(train.cars) / 2.0 + SAMPLE_SPACING;
+    let half_width = train.width_metres / 2.0 + SAMPLE_SPACING;
+    let height = train.height_metres + SAMPLE_SPACING;
+    (half_length * half_length + half_width * half_width + height * height).sqrt()
+        + (TRACK_RADIUS + SAMPLE_SPACING / 2.0) * 3.0_f64.sqrt()
+}
+
 fn train_sample_spacing(train: &TrainConfiguration) -> f64 {
     SAMPLE_SPACING.min(train.length_metres / f64::from(train.cars) / 2.0)
 }
@@ -194,6 +202,62 @@ impl ClearanceIndex {
     }
 }
 
+/// Checks retained train envelopes against a candidate rail without checking the world.
+/// Rail samples select nearby retained pieces; the margin covers every oriented
+/// car corner and the maximum distance to the nearest retained rail sample.
+pub fn check_reverse_track_clearance(
+    index: &ClearanceIndex,
+    candidate: &Piece,
+    train: &TrainConfiguration,
+) -> Result<(), ClearanceCollision> {
+    assert!(
+        train.cars > 0
+            && train.length_metres.is_finite()
+            && train.length_metres > 0.0
+            && train.width_metres.is_finite()
+            && train.width_metres > 0.0
+            && train.height_metres.is_finite()
+            && train.height_metres > 0.0,
+        "invalid train dimensions"
+    );
+    let spacing = train_sample_spacing(train);
+    let half_length = train.length_metres / f64::from(train.cars) / 2.0 + spacing / 2.0;
+    let half_width = train.width_metres / 2.0;
+    let half_height = train.height_metres / 2.0;
+    let margin = (half_length * half_length + half_width * half_width + half_height * half_height)
+        .sqrt()
+        + half_height
+        + SAMPLE_SPACING / 2.0;
+    let candidate_index = ClearanceIndex::new(std::slice::from_ref(candidate));
+    let mut nearby = HashSet::new();
+    for (_, bounds) in &candidate_index.samples[0] {
+        for x in index_cell(bounds.min.x - margin)..=index_cell(bounds.max.x + margin) {
+            for y in index_cell(bounds.min.y - margin)..=index_cell(bounds.max.y + margin) {
+                if let Some(entries) = index.cells.get(&(x, y)) {
+                    nearby.extend(entries.iter().map(|(piece_index, _)| *piece_index));
+                }
+            }
+        }
+    }
+    let connector_allowance = connector_allowance(train);
+    for piece_index in nearby {
+        let piece = &index.pieces[piece_index];
+        for distance in samples(piece, spacing) {
+            let oriented = envelope(piece, distance, train, spacing);
+            for (other_distance, bounds) in &candidate_index.samples[0] {
+                let near_entry = piece.entry == candidate.exit
+                    && distance + (candidate.length() - other_distance) <= connector_allowance;
+                let near_exit = piece.exit == candidate.entry
+                    && (piece.length() - distance) + other_distance <= connector_allowance;
+                if !near_entry && !near_exit && intersects_envelope(&oriented, *bounds) {
+                    return Err(ClearanceCollision::Track);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Checks a piece against the world and supplied track and scenery.
 /// Connected track is ignored only in the immediate vicinity of a common connector.
 /// The envelope uses sampled oriented train cars and conservative rail bounds.
@@ -243,15 +307,7 @@ pub fn check_clearance_indexed(
         );
     }
     let (width, height) = world.dimensions();
-    let half_length = train.length_metres / f64::from(train.cars) / 2.0 + SAMPLE_SPACING;
-    let half_width = train.width_metres / 2.0 + SAMPLE_SPACING;
-    let envelope_height = train.height_metres + SAMPLE_SPACING;
-    // The train envelope extends forward and sideways from the rail, and upward
-    // by its full height. Include the sampled track box at the other end.
-    let connector_allowance =
-        (half_length * half_length + half_width * half_width + envelope_height * envelope_height)
-            .sqrt()
-            + (TRACK_RADIUS + SAMPLE_SPACING / 2.0) * 3.0_f64.sqrt();
+    let connector_allowance = connector_allowance(train);
     // Adjacent samples are at most half a car length apart, including for
     // non-default trains. The longitudinal padding covers translation between
     // samples; orientation between samples remains an approximation.
@@ -568,6 +624,67 @@ mod tests {
         assert_eq!(
             check_clearance_indexed(&map, &piece, &train, &index, None, &[]),
             check_clearance(&map, &piece, &train, &track, &[])
+        );
+    }
+
+    #[test]
+    fn reverse_track_check_matches_full_check_for_long_cars_and_banked_track() {
+        let mut train = hybrid_model().train;
+        train.length_metres = 60.0;
+        train.cars = 1;
+        let map = World::new(
+            128,
+            128,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let retained = straight(40, 40, 10);
+        let index = ClearanceIndex::new(std::slice::from_ref(&retained));
+        for y in [20, 32, 38, 40, 42, 48, 60] {
+            let candidate = catalog()
+                .into_iter()
+                .find(|piece| piece.id == PieceId::BankedTurnStandalone)
+                .unwrap()
+                .at(TrackState {
+                    x: 40,
+                    y,
+                    z: 10,
+                    bank: crate::track::Bank::Left,
+                    ..TrackState::origin()
+                })
+                .unwrap();
+            assert_eq!(
+                check_reverse_track_clearance(&index, &candidate, &train),
+                check_clearance(&map, &retained, &train, &[candidate], &[]),
+                "y={y}"
+            );
+        }
+    }
+
+    #[test]
+    fn reverse_track_check_ignores_world_and_respects_connectors() {
+        let piece = straight(4, 4, 3);
+        let train = hybrid_model().train;
+        let index = ClearanceIndex::new(std::slice::from_ref(&piece));
+        assert_eq!(
+            check_clearance(
+                &world(20),
+                &piece,
+                &train,
+                std::slice::from_ref(&piece),
+                &[]
+            ),
+            Err(ClearanceCollision::Terrain)
+        );
+        assert_eq!(
+            check_reverse_track_clearance(&index, &piece, &train),
+            Err(ClearanceCollision::Track)
+        );
+        assert_eq!(
+            check_reverse_track_clearance(&index, &straight(12, 4, 3), &train),
+            Ok(())
         );
     }
 

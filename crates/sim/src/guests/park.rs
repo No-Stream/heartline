@@ -18,7 +18,7 @@ pub struct ParkGuests {
     pub(super) walking: WalkingSimulation,
     pub(super) behaviors: BehaviorSimulation,
     visits: VisitManager,
-    entrance: Position,
+    entrance: Option<Position>,
     reachable: Graph,
     world_revision: u64,
     leaving: Vec<bool>,
@@ -42,11 +42,28 @@ impl ParkGuests {
             walking,
             behaviors: BehaviorSimulation::new(roster_size),
             visits,
-            entrance,
+            entrance: Some(entrance),
             reachable: Graph::with_entrance(world, Some(entrance)),
             world_revision: world.revision(),
             leaving: vec![false; roster_size],
         }
+    }
+
+    pub fn set_entrance(&mut self, world: &World, entrance: Option<Position>) {
+        if self.entrance != entrance {
+            self.entrance = entrance;
+            self.reachable = Graph::with_entrance(world, entrance);
+            self.world_revision = world.revision();
+            self.walking.set_entrance(world, entrance);
+        }
+    }
+
+    pub fn revenue(&self) -> u64 {
+        self.behaviors
+            .guests
+            .iter()
+            .map(|guest| u64::from(guest.lifetime_money_spent))
+            .sum()
     }
 
     pub fn walking(&self) -> &WalkingSimulation {
@@ -85,7 +102,7 @@ impl ParkGuests {
         executor: &E,
     ) -> VisitChanges {
         if self.world_revision != world.revision() {
-            self.reachable = Graph::with_entrance(world, Some(self.entrance));
+            self.reachable = Graph::with_entrance(world, self.entrance);
             self.world_revision = world.revision();
         }
         self.walking.refresh_graph(world);
@@ -134,7 +151,9 @@ impl ParkGuests {
         let ready: Vec<_> = positions
             .iter()
             .enumerate()
-            .map(|(index, position)| self.leaving[index] && *position == Some(self.entrance))
+            .map(|(index, position)| {
+                self.leaving[index] && *position == self.entrance && self.entrance.is_some()
+            })
             .collect();
         let departed =
             self.visits
@@ -142,7 +161,7 @@ impl ParkGuests {
         for id in &departed {
             self.leaving[id.0 as usize] = false;
         }
-        let arrived = if departed.is_empty() && component(self.entrance).is_some() {
+        let arrived = if departed.is_empty() && self.entrance.and_then(component).is_some() {
             self.visits.arrive(
                 self.walking.traits_mut(),
                 &mut self.behaviors.guests,
@@ -152,7 +171,9 @@ impl ParkGuests {
         } else {
             Vec::new()
         };
-        self.walking.admit(&arrived);
+        if !arrived.is_empty() {
+            self.walking.admit(&arrived);
+        }
         let controls: Vec<_> = movements
             .into_iter()
             .enumerate()
@@ -161,7 +182,9 @@ impl ParkGuests {
                     return WalkControl::Stop;
                 }
                 if self.leaving[index] {
-                    return WalkControl::Destination(self.entrance);
+                    return self
+                        .entrance
+                        .map_or(WalkControl::Stop, WalkControl::Destination);
                 }
                 match movement {
                     Movement::Wander => WalkControl::Wander,
@@ -209,6 +232,7 @@ mod tests {
         .into_iter()
         .enumerate()
         .map(|(id, kind)| Facility {
+            exit_position: None,
             place: KnownPlace {
                 id: id as u32,
                 position: entrance,
@@ -275,6 +299,7 @@ mod tests {
             });
         }
         let facilities = [Facility {
+            exit_position: None,
             place: KnownPlace {
                 id: 1,
                 position: entrance,
@@ -328,6 +353,7 @@ mod tests {
             });
         }
         let facilities = [Facility {
+            exit_position: None,
             place: KnownPlace {
                 id: 1,
                 position: destination,

@@ -1,3 +1,5 @@
+import { buildFacilityGeometry, facilitySprites, type Facility, type FacilityKind } from "./facilities";
+import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera } from "./camera";
 import { bindInput } from "./input/bindings";
 import type { InputAction } from "./input/actions";
@@ -13,6 +15,7 @@ import { buildGhostQuads } from "./render/track/ghost";
 import { createGuestPanel } from "./guest-panel/guest-panel";
 import type { GuestDetail } from "./guest-panel/protocol";
 import { buildSelectionRing } from "./guest-panel/selection-ring";
+import { buildTestingRibbon, createTestingPanel, type TestingMetric } from "./coaster-testing";
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas");
 const tickOutput = document.querySelector<HTMLOutputElement>("[data-testid='tick-count']");
@@ -23,7 +26,7 @@ const viewport = { width: gameCanvas.width, height: gameCanvas.height };
 let camera: Camera = { centerX: 250, centerY: 256, zoom: 1, rotation: 0 };
 type CoasterWorld = WorldView & { coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array };
 type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array };
-type CoasterSnapshot = GuestSnapshot & { trainPoses: Float32Array; constructionTrainPoses: Float32Array };
+type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array };
 let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
@@ -73,6 +76,9 @@ function stationGhost(): Float32Array {
 const panelContainer = document.querySelector<HTMLElement>("[data-construction]");
 if (!panelContainer) throw new Error("Construction panel is missing");
 const panel = createConstructionPanel(panelContainer, dispatch);
+let testingMetric: TestingMetric | null = null;
+let testingReportJson = "";
+const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), (metric) => { testingMetric = metric; gameTest.ready = false; });
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
 const guestPanel = createGuestPanel(gameCanvas, atlas.themeStyle, {
@@ -88,10 +94,33 @@ const guestPanel = createGuestPanel(gameCanvas, atlas.themeStyle, {
   },
 });
 
+let facilities: Facility[] = [];
+let facilityPanelSnapshot = "";
+let facilityPlacement: { kind: FacilityKind; rotation: number } | undefined;
+let facilityRemoval = false;
+let advanceTicksComplete: (() => void) | undefined;
+const facilityContainer = document.querySelector<HTMLElement>("[data-facilities]");
+if (!facilityContainer) throw new Error("Facility panel is missing");
+const facilityPanel = createFacilityPanel(facilityContainer, (kind, rotation) => {
+  facilityPlacement = { kind, rotation };
+  facilityRemoval = false;
+  stationPlacement = false;
+}, () => { facilityRemoval = true; facilityPlacement = undefined; stationPlacement = false; },
+() => { facilityPlacement = undefined; facilityRemoval = false; },
+(id, price) => worker.postMessage({ type: "facility-price", id, price }));
+let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
 const gameTest: GameTest = {
   ready: false,
   guests() { return renderedGuests; },
+  facilities() { return facilities; },
+  requestGuestDetail(id) { worker.postMessage({ type: "guest-detail-request", guestId: id }); },
+  guestDetail() { return latestGuestDetail; },
+  testingReport() { return construction?.testingReport ?? null; },
+  advanceTicks(count) {
+    if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
+    return new Promise<void>((resolve) => { advanceTicksComplete = resolve; worker.postMessage({ type: "test-advance", count }); });
+  },
   setCamera(value) { camera = value; gameTest.ready = false; },
   setSurface(x, y, corners) { worker.postMessage({ type: "set-surface", x, y, corners: new Int16Array(corners) }); },
   project(point) { return projectWorld(camera, viewport, point); },
@@ -101,6 +130,8 @@ window.gameTest = gameTest;
 
 function dispatch(action: InputAction): void {
   if (action.type === "station-placement") {
+    facilityPlacement = undefined;
+    facilityRemoval = false;
     stationPlacement = action.enabled;
     station = undefined;
     gameCanvas.dataset.stationPreview = "";
@@ -112,6 +143,15 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "hover") {
     if (stationPlacement && action.position) updateStationPreview(action.position);
     else if (stationPlacement && !station?.locked) { station = undefined; gameCanvas.dataset.stationPreview = ""; gameTest.ready = false; }
+  } else if (action.type === "select" && facilityRemoval) {
+    const selection = renderer.pick(action.position.x, action.position.y);
+    const match = selection && "id" in selection ? /^facility-(\d+)$/.exec(selection.id) : null;
+    if (match) worker.postMessage({ type: "facility-remove", id: Number(match[1]) });
+    else facilityPanel.message("Choose a facility to remove.");
+  } else if (action.type === "select" && facilityPlacement) {
+    const selection = renderer.pick(action.position.x, action.position.y);
+    if (selection?.kind === "terrain") worker.postMessage({ type: "facility-place", ...facilityPlacement, x: selection.x, y: selection.y });
+    else facilityPanel.message("Choose a flat terrain tile.");
   } else if (action.type === "select" && stationPlacement) {
     updateStationPreview(action.position);
     if (station?.locked) {
@@ -123,7 +163,10 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "select") {
     const selection = renderer.pick(action.position.x, action.position.y);
     gameCanvas.dataset.selection = JSON.stringify(selection);
-    if (deleteMode && selection && "id" in selection) {
+    if (selection && "id" in selection && selection.kind === "testing") {
+      const match = /^testing-(\d+)$/.exec(selection.id);
+      if (match) testingPanel.inspect(Number(match[1]));
+    } else if (deleteMode && selection && "id" in selection) {
       const match = /^construction-track-(\d+)$/.exec(selection.id);
       if (match) dispatch({ type: "construction-delete", id: Number(match[1]) });
     } else if (selection && "id" in selection && /^guest-\d+$/.test(selection.id)) {
@@ -142,7 +185,7 @@ function dispatch(action: InputAction): void {
 bindInput(gameCanvas, dispatch);
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null }>) => {
+worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null }>) => {
   const message = event.data;
   if (message.type === "world") {
     const coasterGeometry = message.coasterGeometry ?? world?.coasterGeometry;
@@ -151,11 +194,28 @@ worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | Co
     if (!coasterGeometry || !coasterRails || !coasterTies) throw new Error("Initial coaster geometry is missing");
     world = { ...message, coasterGeometry, coasterRails, coasterTies };
     gameTest.ready = false;
+  } else if (message.type === "test-advanced") {
+    advanceTicksComplete?.();
+    advanceTicksComplete = undefined;
+  } else if (message.type === "facilities") {
+    if (frozen && facilities.length && !message.message && !message.forced) return;
+    facilities = message.facilities;
+    const panelSnapshot = JSON.stringify([facilities.map(({ id, kind, price }) => ({ id, kind, price })), message.revenue]);
+    if (panelSnapshot !== facilityPanelSnapshot) {
+      facilityPanel.update(facilities, message.revenue);
+      facilityPanelSnapshot = panelSnapshot;
+    }
+    if (message.placed) facilityPlacement = undefined;
+    if (message.message) facilityPanel.message(message.message);
+    gameTest.ready = false;
   } else if (message.type === "construction-state") {
     construction = message;
     panel.update(message);
+    const reportJson = JSON.stringify(message.testingReport ?? null);
+    if (reportJson !== testingReportJson) { testingReportJson = reportJson; testingPanel.update(message.testingReport ?? null); }
     gameTest.ready = false;
   } else if (message.type === "guest-detail") {
+    latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
   } else if (message.type === "snapshot") {
     previous = current;
@@ -176,10 +236,11 @@ function frame(now: number): void {
   if (selectedGuest) guestPanel.setAnchor(projectWorld(camera, viewport, { x: selectedGuest.x, y: selectedGuest.y, z: selectedGuest.height / 4 }));
   const trainPoses = current ? interpolateTrainPoses(previous?.trainPoses ?? current.trainPoses, current.trainPoses, interpolation) : new Float32Array();
   const constructionTrainPoses = current?.constructionTrainPoses ?? noGeometry;
-  const sprites = people;
+  const sprites = [...facilitySprites(facilities, camera.rotation), ...people];
   const view = { ...world, sprites, trainPoses };
   const currentWorld = world;
   renderer.render(view, camera, frozen ? 0 : Math.floor(now / 250) % 4, [
+    (renderCamera, renderViewport, renderAtlas) => buildFacilityGeometry(facilities, renderCamera, renderViewport, trackStyle(renderAtlas)),
     (renderCamera, renderViewport, renderAtlas) => buildSelectionRing(selectedGuest, renderCamera, renderViewport, renderAtlas),
     (renderCamera, renderViewport, renderAtlas, scale) => [
       ...staticTrack(currentWorld.coasterRails, currentWorld.coasterTies, currentWorld.coasterSupports, renderCamera, renderViewport),
@@ -189,6 +250,7 @@ function frame(now: number): void {
       ...buildTrackQuads(noGeometry, noGeometry, noGeometry, trainPoses, renderCamera, renderViewport, trackStyle(renderAtlas)),
       ...buildTrackQuads(noGeometry, noGeometry, noGeometry, constructionTrainPoses, renderCamera, renderViewport, trackStyle(renderAtlas)),
       ...buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale),
+      ...(testingMetric && construction?.testingReport ? buildTestingRibbon(construction.testingReport.samples, testingMetric, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
     ],
   ]);
   gameCanvas.dataset.drawnAgents = String(people.length);

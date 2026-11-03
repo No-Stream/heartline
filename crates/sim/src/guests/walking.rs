@@ -136,6 +136,13 @@ impl WalkingSimulation {
     pub fn traits_mut(&mut self) -> &mut GuestStore {
         &mut self.traits
     }
+    pub fn set_entrance(&mut self, world: &World, entrance: Option<Position>) {
+        if self.entrance != entrance {
+            self.entrance = entrance;
+            self.revision = world.revision().wrapping_sub(1);
+            self.refresh_graph(world);
+        }
+    }
     pub fn admit(&mut self, ids: &[GuestId]) {
         let entrance = self.entrance.expect("admissions require an entrance");
         let node = self.graph.indices[&entrance];

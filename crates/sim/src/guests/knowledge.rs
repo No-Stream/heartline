@@ -8,6 +8,7 @@ pub enum PlaceKind {
     Drink,
     Restroom,
     Bench,
+    Souvenir,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

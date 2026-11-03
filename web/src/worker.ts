@@ -1,3 +1,4 @@
+import type { Facility, FacilityAction } from "./facilities";
 import init, { WasmSimulation } from "./wasm/theme_park_sim_wasm.js";
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
@@ -6,7 +7,7 @@ import type { ConstructionAction, ConstructionPiece } from "./construction-proto
 type GuestDetailAction =
   | { readonly type: "guest-detail-request"; readonly guestId: string }
   | { readonly type: "guest-detail-close" };
-type WorkerAction = SetSurfaceMessage | ConstructionAction | GuestDetailAction;
+type WorkerAction = SetSurfaceMessage | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
 const workerScope = self as unknown as {
@@ -20,6 +21,8 @@ let coasterGeometrySent = false;
 let lastConstructionMessage = "";
 let selectedGuestId: number | undefined;
 let lastGuestDetailSentAt = 0;
+let lastFacilityRevenue = "";
+let lastFacilitiesJson = "";
 
 function wake(): void {
   const now = performance.now();
@@ -40,6 +43,7 @@ function wake(): void {
   const message = simulation.construction_message();
   if (message !== lastConstructionMessage) sendConstruction();
   if (selectedGuestId !== undefined && now - lastGuestDetailSentAt >= 500) sendGuestDetail();
+  if (simulation.facilities_json() !== lastFacilitiesJson || String(simulation.facility_revenue()) !== lastFacilityRevenue) sendFacilities();
   setTimeout(wake, Math.max(0, clock.tickDurationMs - clock.accumulatorMs));
 }
 
@@ -73,9 +77,17 @@ function sendConstruction(): void {
       return { id: Number(id), label };
     }) : [],
     canAppend: !!selectedChoice && !selectedChoice[6], canClose: simulation.construction_can_close(),
+    testingReport: JSON.parse(simulation.construction_test_report_json()) as unknown,
     canTest: simulation.construction_can_test(), message: lastConstructionMessage || selectedChoice?.[6] || "",
     previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports,
   }, [previewRails.buffer, previewTies.buffer, previewSupports.buffer, placedRails.buffer, placedTies.buffer, placedSupports.buffer]);
+}
+
+function sendFacilities(message = "", placed = false, forced = false): void {
+  lastFacilitiesJson = simulation.facilities_json();
+  const facilities = JSON.parse(lastFacilitiesJson) as Facility[];
+  lastFacilityRevenue = String(simulation.facility_revenue());
+  workerScope.postMessage({ type: "facilities", facilities, message, placed, forced, revenue: lastFacilityRevenue });
 }
 
 function sendWorld(): void {
@@ -95,6 +107,7 @@ function sendWorld(): void {
 const initialized = init().then(() => {
   simulation = new WasmSimulation(2026n, 12);
   sendWorld();
+  sendFacilities();
   workerScope.postMessage({ type: "ready" });
   lastWakeup = performance.now();
   wake();
@@ -103,6 +116,28 @@ const initialized = init().then(() => {
 workerScope.addEventListener("message", (event) => {
   void initialized.then(() => {
     const action = event.data;
+    if (action.type === "test-advance") {
+      if (!Number.isInteger(action.count) || action.count < 1 || action.count > 100000) throw new RangeError("Invalid test tick count");
+      for (let tick = 0; tick < action.count; tick++) simulation.tick();
+      sendFacilities("", false, true);
+      workerScope.postMessage({ type: "test-advanced" });
+      return;
+    }
+    if (action.type === "facility-price") {
+      const changed = simulation.set_facility_price(action.id, action.price);
+      sendFacilities(changed ? "Price updated." : simulation.facility_message());
+      return;
+    }
+    if (action.type === "facility-remove") {
+      const removed = simulation.remove_facility(action.id);
+      sendFacilities(removed ? "Facility removed." : simulation.facility_message());
+      return;
+    }
+    if (action.type === "facility-place") {
+      const placed = simulation.place_facility(action.kind, action.x, action.y, action.rotation);
+      sendFacilities(placed ? "Facility placed." : simulation.facility_message(), placed);
+      return;
+    }
     if (action.type === "guest-detail-request") {
       const match = /^guest-(\d+)$/.exec(action.guestId);
       if (!match) {

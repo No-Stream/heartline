@@ -1,0 +1,789 @@
+use super::CarReading;
+
+const HIGH_FORCE_SECTION_METRES: f64 = 8.0;
+const LONG_SLOW_SECTION_METRES: f64 = 100.0;
+const HIGH_FORCE_VERTICAL_G: f64 = 3.0;
+const HIGH_FORCE_NEGATIVE_VERTICAL_G: f64 = -1.0;
+const HIGH_FORCE_LATERAL_G: f64 = 2.0;
+const HIGH_FORCE_LONGITUDINAL_G: f64 = 1.5;
+const SLOW_SPEED_METRES_PER_SECOND: f64 = 8.0;
+
+/// One fixed-distance force and speed sample from a coaster test run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TestSample {
+    pub distance: f64,
+    pub speed: f64,
+    pub vertical_g: f64,
+    pub lateral_g: f64,
+    pub longitudinal_g: f64,
+    pub airtime: bool,
+    pub height_m: f64,
+    pub inverted: bool,
+}
+
+/// A completed or interrupted test run, including advisory ride ratings.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TestRun {
+    pub samples: Vec<TestSample>,
+    pub excitement: f64,
+    pub intensity: f64,
+    pub nausea: f64,
+    pub notes: Vec<String>,
+    pub completed: bool,
+    pub furthest_distance: f64,
+}
+
+impl TestRun {
+    pub fn unfinished_circuit() -> Self {
+        Self {
+            samples: Vec::new(),
+            excitement: 0.0,
+            intensity: 0.0,
+            nausea: 0.0,
+            notes: vec![
+                "The circuit is unfinished. Connect the track into a complete loop before testing the train."
+                    .to_owned(),
+            ],
+            completed: false,
+            furthest_distance: 0.0,
+        }
+    }
+}
+
+/// Turns per-tick train readings into one interpolated sample per track metre.
+pub struct TestRunRecorder {
+    circuit_length: f64,
+    samples: Vec<Option<TestSample>>,
+    started: bool,
+    start_unwrapped_distance: f64,
+    last_wrapped_distance: f64,
+    last_unwrapped_distance: f64,
+    last_reading: Option<CarReading>,
+    next_sample_distance: f64,
+    furthest_distance: f64,
+}
+
+impl TestRunRecorder {
+    pub fn new(circuit_length: f64) -> Self {
+        assert!(circuit_length.is_finite() && circuit_length > 0.0);
+        Self {
+            circuit_length,
+            samples: vec![None; circuit_length.ceil() as usize],
+            started: false,
+            start_unwrapped_distance: 0.0,
+            last_wrapped_distance: 0.0,
+            last_unwrapped_distance: 0.0,
+            last_reading: None,
+            next_sample_distance: 0.0,
+            furthest_distance: 0.0,
+        }
+    }
+
+    /// Records the front car from each physics step in a batch.
+    ///
+    /// Readings are sampled at 200 Hz, so interpolation at crossed metre marks
+    /// stays close to the simulated motion while keeping the overlay compact.
+    pub fn record(&mut self, frames: &[Vec<CarReading>]) {
+        for frame in frames {
+            let Some(reading) = frame.first().copied() else {
+                continue;
+            };
+            let wrapped_distance = reading.distance.rem_euclid(self.circuit_length);
+            if !self.started {
+                self.started = true;
+                self.start_unwrapped_distance = wrapped_distance;
+                self.last_wrapped_distance = wrapped_distance;
+                self.last_unwrapped_distance = wrapped_distance;
+                self.next_sample_distance =
+                    next_sample_at_or_after(wrapped_distance, self.circuit_length);
+                if (self.next_sample_distance - wrapped_distance).abs() < 1e-9 {
+                    self.store_sample(wrapped_distance, reading);
+                    self.next_sample_distance =
+                        next_sample_after(self.next_sample_distance, self.circuit_length);
+                }
+                self.last_reading = Some(reading);
+                continue;
+            }
+
+            let mut delta = wrapped_distance - self.last_wrapped_distance;
+            if delta < -self.circuit_length / 2.0 {
+                delta += self.circuit_length;
+            } else if delta > self.circuit_length / 2.0 {
+                delta -= self.circuit_length;
+            }
+            let unwrapped_distance = self.last_unwrapped_distance + delta;
+            self.furthest_distance = self
+                .furthest_distance
+                .max(unwrapped_distance - self.start_unwrapped_distance);
+            if delta > 0.0 {
+                let previous = self.last_reading.expect("started recorder has a reading");
+                while self.next_sample_distance <= unwrapped_distance + 1e-9 {
+                    let fraction = ((self.next_sample_distance - self.last_unwrapped_distance)
+                        / delta)
+                        .clamp(0.0, 1.0);
+                    self.store_sample(
+                        self.next_sample_distance.rem_euclid(self.circuit_length),
+                        interpolate_reading(previous, reading, fraction),
+                    );
+                    self.next_sample_distance =
+                        next_sample_after(self.next_sample_distance, self.circuit_length);
+                }
+            }
+            self.last_wrapped_distance = wrapped_distance;
+            self.last_unwrapped_distance = unwrapped_distance;
+            self.last_reading = Some(reading);
+        }
+    }
+
+    /// Finalizes the report. An incomplete run includes a distance note; a
+    /// caller-reported rollback adds a separate recovery note.
+    pub fn finish(self, completed: bool, rolled_back: bool) -> TestRun {
+        let circuit_length = self.circuit_length;
+        let samples: Vec<_> = self.samples.into_iter().flatten().collect();
+        let (excitement, intensity, nausea, mut notes) = ratings(&samples, circuit_length);
+        if !completed {
+            notes.push(format!(
+                "The train could not finish the circuit after travelling {:.1} m. Add a lift or launch, or shorten the circuit.",
+                self.furthest_distance
+            ));
+        }
+        if rolled_back {
+            notes.push("The train rolled back and was recovered safely.".to_owned());
+        }
+        TestRun {
+            samples,
+            excitement,
+            intensity,
+            nausea,
+            notes,
+            completed,
+            furthest_distance: self.furthest_distance,
+        }
+    }
+
+    fn store_sample(&mut self, distance: f64, reading: CarReading) {
+        let distance = distance.rem_euclid(self.circuit_length);
+        let index = distance.round() as usize % self.samples.len();
+        if self.samples[index].is_none() {
+            self.samples[index] = Some(TestSample {
+                distance,
+                speed: reading.speed,
+                vertical_g: reading.g.vertical,
+                lateral_g: reading.g.lateral,
+                longitudinal_g: reading.g.longitudinal,
+                airtime: reading.g.vertical < 0.0,
+                height_m: reading.height_m,
+                inverted: reading.inverted,
+            });
+        }
+    }
+}
+
+fn next_sample_at_or_after(distance: f64, circuit_length: f64) -> f64 {
+    let lap_start = (distance / circuit_length).floor() * circuit_length;
+    let within_lap = distance - lap_start;
+    let target = within_lap.ceil();
+    if target < circuit_length {
+        lap_start + target
+    } else {
+        lap_start + circuit_length
+    }
+}
+
+fn next_sample_after(distance: f64, circuit_length: f64) -> f64 {
+    let lap_start = (distance / circuit_length).floor() * circuit_length;
+    let within_lap = distance - lap_start;
+    let target = within_lap + 1.0;
+    if target < circuit_length {
+        lap_start + target
+    } else {
+        lap_start + circuit_length
+    }
+}
+
+fn interpolate_reading(first: CarReading, second: CarReading, fraction: f64) -> CarReading {
+    let interpolate = |first: f64, second: f64| first + (second - first) * fraction;
+    let vertical = interpolate(first.g.vertical, second.g.vertical);
+    CarReading {
+        distance: interpolate(first.distance, second.distance),
+        speed: interpolate(first.speed, second.speed),
+        g: super::GForces {
+            vertical,
+            lateral: interpolate(first.g.lateral, second.g.lateral),
+            longitudinal: interpolate(first.g.longitudinal, second.g.longitudinal),
+        },
+        airtime: vertical < 0.0,
+        height_m: interpolate(first.height_m, second.height_m),
+        inverted: if fraction < 0.5 {
+            first.inverted
+        } else {
+            second.inverted
+        },
+    }
+}
+
+/// Scores use distance-weighted averages from the one-metre record and clamp to
+/// 0–100. Intensity is `20 + 14*mean(|vertical_g-1|) + 18*mean(|lateral_g|) +
+/// 10*mean(|longitudinal_g|) + 8*airtime_fraction + 10*min(high_force_run/20m,1)`.
+/// Per-sample nausea exposure is `max(vertical_g-3.5,0)/2 +
+/// max(-vertical_g-0.5,0)/1.5 + max(|lateral_g|-1.5,0)/1.5 +
+/// max(|longitudinal_g|-1.5,0)/1.5`; nausea is 100 times its mean. Excitement is
+/// `10 + 1.6*mean(speed_m/s) + 25*airtime_fraction + 24*moderate_force +
+/// 15*min(max_downhill_drop/30m,1) + 15*min(inversion_passages/3,1) - 0.45*nausea`,
+/// where `moderate_force = min(mean(|vertical_g-1| + |lateral_g| +
+/// |longitudinal_g|)/7,1)`. These are feedback scores, not safety limits.
+/// Notes require a contiguous 8m high-force section or 100m below 8m/s.
+fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<String>) {
+    if samples.is_empty() {
+        return (0.0, 0.0, 0.0, Vec::new());
+    }
+    let count = samples.len() as f64;
+    let mean = |value: fn(&TestSample) -> f64| samples.iter().map(value).sum::<f64>() / count;
+    let mean_speed = mean(|sample| sample.speed);
+    let airtime_fraction = samples.iter().filter(|sample| sample.airtime).count() as f64 / count;
+    let mean_vertical_deviation = mean(|sample| (sample.vertical_g - 1.0).abs());
+    let mean_lateral_load = mean(|sample| sample.lateral_g.abs());
+    let mean_longitudinal_load = mean(|sample| sample.longitudinal_g.abs());
+    let maximum_lateral_load = samples
+        .iter()
+        .map(|sample| sample.lateral_g.abs())
+        .fold(0.0, f64::max);
+    let high_force_run = longest_contiguous_section(samples, circuit_length, |sample| {
+        sample.vertical_g > HIGH_FORCE_VERTICAL_G
+            || sample.vertical_g < HIGH_FORCE_NEGATIVE_VERTICAL_G
+            || sample.lateral_g.abs() > HIGH_FORCE_LATERAL_G
+            || sample.longitudinal_g.abs() > HIGH_FORCE_LONGITUDINAL_G
+    });
+    let long_slow_run = longest_contiguous_section(samples, circuit_length, |sample| {
+        sample.speed < SLOW_SPEED_METRES_PER_SECOND
+    });
+    let maximum_drop = largest_downhill_drop(samples);
+    let inversion_passages = count_inversion_passages(samples);
+    let drop_score = (maximum_drop / 30.0).clamp(0.0, 1.0);
+    let inversion_score = (inversion_passages as f64 / 3.0).clamp(0.0, 1.0);
+    let discomfort = mean(|sample| {
+        (sample.vertical_g - 3.5).max(0.0) / 2.0
+            + (-sample.vertical_g - 0.5).max(0.0) / 1.5
+            + (sample.lateral_g.abs() - 1.5).max(0.0) / 1.5
+            + (sample.longitudinal_g.abs() - 1.5).max(0.0) / 1.5
+    });
+    let moderate_force = (mean(|sample| {
+        (sample.vertical_g - 1.0).abs() + sample.lateral_g.abs() + sample.longitudinal_g.abs()
+    }) / 7.0)
+        .clamp(0.0, 1.0);
+    let intensity = (20.0
+        + 14.0 * mean_vertical_deviation
+        + 18.0 * mean_lateral_load
+        + 10.0 * mean_longitudinal_load
+        + 8.0 * airtime_fraction
+        + 10.0 * (high_force_run / 20.0).clamp(0.0, 1.0))
+    .clamp(0.0, 100.0);
+    let nausea = (100.0 * discomfort).clamp(0.0, 100.0);
+    let excitement = (10.0
+        + 1.6 * mean_speed
+        + 25.0 * airtime_fraction
+        + 24.0 * moderate_force
+        + 15.0 * drop_score
+        + 15.0 * inversion_score
+        - 0.45 * nausea)
+        .clamp(0.0, 100.0);
+    let mut notes = Vec::new();
+    if mean_lateral_load >= 1.5 || maximum_lateral_load >= 2.5 {
+        notes.push(
+            "Some turns pull riders sideways strongly. More banking or wider turns can improve comfort."
+                .to_owned(),
+        );
+    }
+    if high_force_run >= HIGH_FORCE_SECTION_METRES {
+        notes.push(
+            "Riders spend at least 8 m in a row under high forces. Add gentler sections between intense elements."
+                .to_owned(),
+        );
+    }
+    if intensity >= 70.0 {
+        notes.push(
+            "This is a very intense ride. A few lower-force sections can make it more comfortable."
+                .to_owned(),
+        );
+    }
+    if long_slow_run >= LONG_SLOW_SECTION_METRES {
+        notes.push(
+            "This layout has at least 100 m in a row below 8 m/s. A taller first drop or a faster section could make it feel livelier."
+                .to_owned(),
+        );
+    }
+    (excitement, intensity, nausea, notes)
+}
+
+fn longest_contiguous_section(
+    samples: &[TestSample],
+    circuit_length: f64,
+    matches: impl Fn(&TestSample) -> bool,
+) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let mut previous_distance = 0.0;
+    let mut previous_matches = false;
+    let mut current_length = 0.0;
+    let mut longest_length: f64 = 0.0;
+    for index in 0..samples.len() * 2 {
+        let sample = &samples[index % samples.len()];
+        let distance_delta = if sample.distance > previous_distance || index == 0 {
+            sample.distance - previous_distance
+        } else {
+            circuit_length - previous_distance + sample.distance
+        };
+        let is_contiguous = index > 0 && distance_delta > 0.0 && distance_delta <= 1.000_001;
+        let is_match = matches(sample);
+        if is_match {
+            current_length = if previous_matches && is_contiguous {
+                current_length + distance_delta
+            } else {
+                1.0
+            };
+            longest_length = longest_length.max(current_length);
+        } else {
+            current_length = 0.0;
+        }
+        previous_distance = sample.distance;
+        previous_matches = is_match;
+    }
+    longest_length.min(samples.len() as f64)
+}
+
+fn largest_downhill_drop(samples: &[TestSample]) -> f64 {
+    let Some(first) = samples.first() else {
+        return 0.0;
+    };
+    let mut highest_point = first.height_m;
+    let mut largest_drop: f64 = 0.0;
+    for sample in samples.iter().chain(samples) {
+        largest_drop = largest_drop.max(highest_point - sample.height_m);
+        highest_point = highest_point.max(sample.height_m);
+    }
+    largest_drop
+}
+
+fn count_inversion_passages(samples: &[TestSample]) -> usize {
+    if samples.is_empty() {
+        return 0;
+    }
+    let mut previous_inverted = samples.last().expect("nonempty samples").inverted;
+    let mut passages = 0;
+    for sample in samples {
+        if sample.inverted && !previous_inverted {
+            passages += 1;
+        }
+        previous_inverted = sample.inverted;
+    }
+    passages
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physics::{CarReading, GForces, PhysicsConfig, Train, demo_circuit};
+    use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
+
+    fn reading(
+        distance: f64,
+        speed: f64,
+        vertical: f64,
+        lateral: f64,
+        longitudinal: f64,
+    ) -> CarReading {
+        CarReading {
+            distance,
+            speed,
+            g: GForces {
+                vertical,
+                lateral,
+                longitudinal,
+            },
+            airtime: vertical < 0.0,
+            height_m: 0.0,
+            inverted: false,
+        }
+    }
+
+    fn reading_with_track(
+        distance: f64,
+        speed: f64,
+        vertical: f64,
+        lateral: f64,
+        longitudinal: f64,
+        height_m: f64,
+        inverted: bool,
+    ) -> CarReading {
+        CarReading {
+            height_m,
+            inverted,
+            ..reading(distance, speed, vertical, lateral, longitudinal)
+        }
+    }
+
+    fn record(recorder: &mut TestRunRecorder, car_reading: CarReading) {
+        recorder.record(&[vec![car_reading]]);
+    }
+
+    fn circuit_from_ids(ids: &[PieceId]) -> crate::physics::Circuit {
+        let catalog = catalog();
+        let mut state = TrackState::origin();
+        let mut pieces = Vec::with_capacity(ids.len());
+        for id in ids {
+            let piece = catalog
+                .iter()
+                .find(|piece| piece.id == *id)
+                .expect("reference piece exists")
+                .at(state)
+                .expect("reference pieces connect");
+            state = piece.exit;
+            pieces.push(piece);
+        }
+        crate::physics::Circuit::new(pieces).expect("reference circuit closes")
+    }
+
+    fn simulate_reference_lap(
+        circuit: crate::physics::Circuit,
+        train_configuration: &crate::track::TrainConfiguration,
+        config: PhysicsConfig,
+        initial_speed: f64,
+    ) -> TestRun {
+        let mut start_distance = 0.0;
+        for piece in circuit.pieces() {
+            if piece.kind == PieceKind::Station {
+                start_distance += piece.length() / 2.0;
+                break;
+            }
+            start_distance += piece.length();
+        }
+        let mut train = Train::new(
+            &circuit,
+            train_configuration,
+            config,
+            start_distance,
+            initial_speed,
+        );
+        let mut recorder = TestRunRecorder::new(circuit.length());
+        let mut completed = false;
+        for _ in 0..60_000 {
+            train.step(&circuit);
+            recorder.record(&train.take_readings());
+            if train.distance() - start_distance >= circuit.length() {
+                completed = true;
+                break;
+            }
+            if !train.notes().is_empty() {
+                break;
+            }
+        }
+        recorder.finish(completed, !train.notes().is_empty())
+    }
+
+    #[test]
+    fn recorder_interpolates_at_each_fixed_metre() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        record(&mut recorder, reading(0.2, 10.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(1.2, 20.0, 2.0, 1.0, 0.5));
+        record(&mut recorder, reading(3.2, 30.0, 4.0, 3.0, 1.5));
+
+        let result = recorder.finish(true, false);
+        assert!(result.completed);
+        assert_eq!(
+            result
+                .samples
+                .iter()
+                .map(|sample| sample.distance)
+                .collect::<Vec<_>>(),
+            [1.0, 2.0, 3.0]
+        );
+        assert_eq!(result.samples[0].speed, 18.0);
+        assert_eq!(result.samples[0].vertical_g, 1.8);
+        assert_eq!(result.samples[1].speed, 24.0);
+        assert_eq!(result.samples[1].lateral_g, 1.8);
+        assert_eq!(result.samples[2].longitudinal_g, 1.4);
+    }
+
+    #[test]
+    fn recorder_interpolates_across_the_circuit_seam() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        record(&mut recorder, reading(9.5, 10.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(0.5, 20.0, -1.0, 2.0, 0.0));
+
+        let result = recorder.finish(true, false);
+        let seam = result
+            .samples
+            .iter()
+            .find(|sample| sample.distance == 0.0)
+            .unwrap();
+        assert_eq!(seam.speed, 15.0);
+        assert_eq!(seam.vertical_g, 0.0);
+        assert_eq!(seam.lateral_g, 1.0);
+        assert!(!seam.airtime);
+    }
+
+    #[test]
+    fn uncomfortable_forces_raise_intensity_and_nausea_and_reduce_excitement() {
+        fn report(vertical: f64, lateral: f64, longitudinal: f64) -> TestRun {
+            let mut recorder = TestRunRecorder::new(10.0);
+            record(
+                &mut recorder,
+                reading(0.0, 20.0, vertical, lateral, longitudinal),
+            );
+            record(
+                &mut recorder,
+                reading(1.0, 20.0, vertical, lateral, longitudinal),
+            );
+            recorder.finish(true, false)
+        }
+
+        let comfortable = report(1.0, 0.1, 0.0);
+        let uncomfortable = report(5.0, 3.0, 2.0);
+        assert!(uncomfortable.intensity > comfortable.intensity);
+        assert!(uncomfortable.nausea > comfortable.nausea);
+        assert!(uncomfortable.excitement < comfortable.excitement);
+        assert!(
+            (0.0..=100.0).contains(&uncomfortable.excitement)
+                && (0.0..=100.0).contains(&uncomfortable.intensity)
+                && (0.0..=100.0).contains(&uncomfortable.nausea)
+        );
+    }
+
+    #[test]
+    fn unfinished_circuits_and_stalls_return_friendly_notes() {
+        let unfinished = TestRun::unfinished_circuit();
+        assert!(!unfinished.completed);
+        assert!(unfinished.samples.is_empty());
+        assert_eq!(unfinished.notes.len(), 1);
+        assert!(unfinished.notes[0].to_lowercase().contains("connect"));
+
+        let mut recorder = TestRunRecorder::new(10.0);
+        record(&mut recorder, reading(4.0, 10.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(6.25, 0.0, 1.0, 0.0, 0.0));
+        let stalled = recorder.finish(false, true);
+        assert!(!stalled.completed);
+        assert_eq!(stalled.furthest_distance, 2.25);
+        assert!(stalled.notes.iter().any(|note| note.contains("2.2 m")));
+        assert!(
+            stalled
+                .notes
+                .iter()
+                .any(|note| note.to_lowercase().contains("rolled back"))
+        );
+    }
+
+    #[test]
+    fn drops_and_inversions_raise_excitement() {
+        fn excitement(readings: &[CarReading]) -> f64 {
+            let mut recorder = TestRunRecorder::new(10.0);
+            for reading in readings {
+                record(&mut recorder, *reading);
+            }
+            recorder.finish(true, false).excitement
+        }
+
+        let flat = [
+            reading_with_track(0.0, 20.0, 1.0, 0.1, 0.0, 10.0, false),
+            reading_with_track(1.0, 20.0, 1.0, 0.1, 0.0, 10.0, false),
+            reading_with_track(2.0, 20.0, 1.0, 0.1, 0.0, 10.0, false),
+        ];
+        let drop_and_inversion = [
+            reading_with_track(0.0, 20.0, 1.0, 0.1, 0.0, 30.0, false),
+            reading_with_track(1.0, 20.0, 1.0, 0.1, 0.0, 0.0, true),
+            reading_with_track(2.0, 20.0, 1.0, 0.1, 0.0, 0.0, true),
+            reading_with_track(3.0, 20.0, 1.0, 0.1, 0.0, 10.0, false),
+        ];
+        assert!(excitement(&drop_and_inversion) > excitement(&flat));
+    }
+
+    #[test]
+    fn strong_lateral_and_sustained_high_g_produce_advisory_notes() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        for distance in 0..=10 {
+            record(
+                &mut recorder,
+                reading_with_track(f64::from(distance), 18.0, 5.0, 2.5, 1.0, 0.0, false),
+            );
+        }
+        let report = recorder.finish(true, false);
+        assert!(report.intensity >= 70.0);
+        assert!(report.nausea > 0.0);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.to_lowercase().contains("sideways"))
+        );
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.to_lowercase().contains("high forces"))
+        );
+
+        let mut dispersed = TestRunRecorder::new(100.0);
+        for distance in 0..=100 {
+            let is_force_peak = distance % 10 == 0;
+            record(
+                &mut dispersed,
+                reading(
+                    f64::from(distance),
+                    18.0,
+                    if is_force_peak { 5.0 } else { 1.0 },
+                    if is_force_peak { 2.5 } else { 0.0 },
+                    0.0,
+                ),
+            );
+        }
+        let dispersed_report = dispersed.finish(true, false);
+        assert!(
+            !dispersed_report
+                .notes
+                .iter()
+                .any(|note| note.to_lowercase().contains("in a row under high forces"))
+        );
+    }
+
+    #[test]
+    fn long_slow_layout_gets_a_friendly_note() {
+        let mut recorder = TestRunRecorder::new(600.0);
+        for distance in 0..=600 {
+            record(
+                &mut recorder,
+                reading(
+                    f64::from(distance),
+                    if distance < 120 { 2.0 } else { 20.0 },
+                    1.0,
+                    0.0,
+                    0.0,
+                ),
+            );
+        }
+        let report = recorder.finish(true, false);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.to_lowercase().contains("at least 100 m in a row"))
+        );
+    }
+
+    #[test]
+    fn reference_oval_and_drop_loop_produce_distinct_ratings() {
+        let mut train_configuration = hybrid_model().train;
+        train_configuration.cars = 1;
+        train_configuration.length_metres = 4.0;
+        let gentle_circuit = circuit_from_ids(&[
+            PieceId::Station,
+            PieceId::LevelToGentleUp,
+            PieceId::GentleUpToLevel,
+            PieceId::TurnLargeEntry,
+            PieceId::TurnLargeExit,
+            PieceId::Straight,
+            PieceId::LevelToGentleDown,
+            PieceId::GentleDownToLevel,
+            PieceId::TurnLargeEntry,
+            PieceId::TurnLargeExit,
+        ]);
+        let gentle = simulate_reference_lap(
+            gentle_circuit,
+            &train_configuration,
+            PhysicsConfig {
+                rolling_resistance: 0.0,
+                drag_coefficient: 0.0,
+                powered_sections: false,
+                ..PhysicsConfig::default()
+            },
+            20.0,
+        );
+        let drop_and_loop = simulate_reference_lap(
+            demo_circuit(),
+            &train_configuration,
+            PhysicsConfig {
+                lift_speed: 5.0,
+                ..PhysicsConfig::default()
+            },
+            2.0,
+        );
+
+        assert!(gentle.completed, "gentle notes={:?}", gentle.notes);
+        assert!(
+            drop_and_loop.completed,
+            "drop and loop notes={:?}",
+            drop_and_loop.notes
+        );
+        assert!(!gentle.samples.iter().any(|sample| sample.inverted));
+        assert!(drop_and_loop.samples.iter().any(|sample| sample.inverted));
+        assert!(drop_and_loop.excitement > gentle.excitement);
+        assert!(drop_and_loop.samples.len() > gentle.samples.len());
+    }
+
+    #[test]
+    fn simulated_stall_note_reports_the_forward_distance_before_recovery() {
+        let circuit = circuit_from_ids(&[
+            PieceId::Station,
+            PieceId::LevelToGentleUp,
+            PieceId::GentleUpToLevel,
+            PieceId::TurnLargeEntry,
+            PieceId::TurnLargeExit,
+            PieceId::Straight,
+            PieceId::LevelToGentleDown,
+            PieceId::GentleDownToLevel,
+            PieceId::TurnLargeEntry,
+            PieceId::TurnLargeExit,
+        ]);
+        let mut train_configuration = hybrid_model().train;
+        train_configuration.cars = 1;
+        train_configuration.length_metres = 4.0;
+        let start_distance = circuit.pieces[..2]
+            .iter()
+            .map(|piece| piece.length())
+            .sum::<f64>()
+            + 5.0;
+        let mut train = Train::new(
+            &circuit,
+            &train_configuration,
+            PhysicsConfig {
+                rolling_resistance: 0.8,
+                powered_sections: false,
+                ..PhysicsConfig::default()
+            },
+            start_distance,
+            0.1,
+        );
+        let mut recorder = TestRunRecorder::new(circuit.length());
+        for _ in 0..100 {
+            train.step(&circuit);
+            recorder.record(&train.take_readings());
+            if !train.notes().is_empty() {
+                break;
+            }
+        }
+
+        let report = recorder.finish(false, !train.notes().is_empty());
+        assert!(!report.completed);
+        assert!(report.furthest_distance < 2.0);
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("after travelling") && note.contains("m"))
+        );
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.to_lowercase().contains("rolled back"))
+        );
+    }
+
+    #[test]
+    fn a_successful_run_without_rollback_has_no_notes() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        record(&mut recorder, reading(0.0, 5.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(1.0, 6.0, 1.0, 0.0, 0.0));
+        let result = recorder.finish(true, false);
+        assert!(result.notes.is_empty());
+    }
+}

@@ -1,6 +1,7 @@
 use crate::physics::Circuit;
 use crate::track::clearance::{
     ClearanceBox, ClearanceCollision, ClearanceIndex, check_clearance_indexed,
+    check_reverse_track_clearance,
 };
 use crate::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle, generate_supports,
@@ -283,7 +284,10 @@ impl Construction {
             connected.push(*index);
             end = segment.pieces.last().expect("nonempty segment").exit;
         }
-        if !connected.is_empty() {
+        if connected.is_empty() {
+            check_reverse_track_clearance(clearance_index, piece, &self.model.train)
+                .map_err(ConstructionError::Clearance)?;
+        } else {
             let index_for_recheck = ClearanceIndex::new(&all_pieces);
             for (index, retained_piece) in all_pieces.iter().enumerate() {
                 if index < cache.existing.len() {

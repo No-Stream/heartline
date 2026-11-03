@@ -19,6 +19,7 @@ pub struct GuestBehavior {
     pub visit_number: u32,
     pub thought: Thought,
     pub cannot_afford_activity: bool,
+    pub souvenir_purchased: bool,
     pub(super) known_places: Vec<KnownPlace>,
     recent_memories: VecDeque<GuestMemoryDetail>,
     pub(super) elapsed_ticks: u64,
@@ -37,6 +38,7 @@ impl Default for GuestBehavior {
             visit_number: 0,
             thought: Thought::Exploring,
             cannot_afford_activity: false,
+            souvenir_purchased: false,
             known_places: Vec::new(),
             recent_memories: VecDeque::with_capacity(8),
             elapsed_ticks: 0,
@@ -145,6 +147,13 @@ impl GuestBehavior {
                     PlaceKind::Drink => i32::from(self.needs.thirst) * 4 + 1,
                     PlaceKind::Restroom => i32::from(self.needs.restroom) * 4 + 2,
                     PlaceKind::Bench => i32::from(100 - self.energy) * 4,
+                    PlaceKind::Souvenir => {
+                        if self.rides_completed > 0 && !self.souvenir_purchased {
+                            190
+                        } else {
+                            0
+                        }
+                    }
                     PlaceKind::Ride => {
                         180 - (i32::from(guests.intensity(guest)) - i32::from(place.intensity))
                             .abs()
@@ -191,6 +200,17 @@ impl GuestBehavior {
         let money_before = self.money;
         self.money = self.money.saturating_sub(place.price);
         self.lifetime_money_spent += u32::from(money_before - self.money);
+        self.complete_paid(place, tick, enjoyment, guests, guest);
+    }
+
+    pub(super) fn complete_paid(
+        &mut self,
+        place: KnownPlace,
+        tick: u64,
+        enjoyment: i8,
+        guests: &mut GuestStore,
+        guest: GuestId,
+    ) {
         match place.kind {
             PlaceKind::Ride => {
                 self.happiness = self.happiness.saturating_add(5).min(100);
@@ -231,6 +251,11 @@ impl GuestBehavior {
                 self.needs.restroom = 0;
                 self.stops_completed = self.stops_completed.saturating_add(1);
             }
+            PlaceKind::Souvenir => {
+                self.souvenir_purchased = true;
+                self.happiness = self.happiness.saturating_add(5).min(100);
+                self.stops_completed = self.stops_completed.saturating_add(1);
+            }
             PlaceKind::Bench => {
                 self.energy = 100;
                 self.stops_completed = self.stops_completed.saturating_add(1);
@@ -254,6 +279,7 @@ impl GuestBehavior {
         self.visit_number = self.visit_number.saturating_add(1);
         self.thought = Thought::Exploring;
         self.cannot_afford_activity = false;
+        self.souvenir_purchased = false;
     }
 }
 

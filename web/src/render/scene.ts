@@ -10,7 +10,7 @@ export interface Atlas {
   pages: Record<string, { file: string; width: number; height: number }[]>;
   frames: Record<string, AtlasFrame>;
 }
-export interface WorldSprite { id: string; sprite: string; x: number; y: number; height: number; view?: string; animation?: string; frame?: number }
+export interface WorldSprite { id: string; sprite: string; x: number; y: number; height: number; view?: string; animation?: string; frame?: number; scale?: number }
 export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; paths: Int32Array; carved?: Int32Array; sprites?: readonly WorldSprite[] }
 export type Pick = { kind: "terrain" | "water" | "path" | "cliff"; x: number; y: number; height: number } | { kind: string; id: string; x: number; y: number; height: number };
 export interface Vertex { x: number; y: number; depth: number; height: number; u: number; v: number }
@@ -216,8 +216,9 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
   for (const sprite of world.sprites ?? []) {
     const frame = frameFor(atlas, sprite.sprite, sprite.view, sprite.animation, sprite.frame, scale);
     const anchor = point(sprite.x, sprite.y, sprite.height);
-    const left = anchor.x - frame.anchor.x * camera.zoom; const top = anchor.y - frame.anchor.y * camera.zoom;
-    const right = left + frame.width * camera.zoom; const bottom = top + frame.height * camera.zoom;
+    const spriteScale = camera.zoom * (sprite.scale ?? 1);
+    const left = anchor.x - frame.anchor.x * spriteScale; const top = anchor.y - frame.anchor.y * spriteScale;
+    const right = left + frame.width * spriteScale; const bottom = top + frame.height * spriteScale;
     const vertices = [[left,top], [right,top], [right,bottom], [left,bottom]].map(([x,y]) => ({ x,y,depth:anchor.depth,height:sprite.height,u:0,v:0 })) as [Vertex,Vertex,Vertex,Vertex];
     const placement = frame.placements[scale]; const size = atlas.pages[scale][placement.page];
     const coordinates = [[0,0],[1,0],[1,1],[0,1]];

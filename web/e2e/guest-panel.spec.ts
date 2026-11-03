@@ -21,7 +21,7 @@ async function openGuestPanel(page: Page): Promise<{ guestId: string; panel: Loc
     for (let y = 0; y < canvas.height; y += 4) {
       for (let x = 0; x < canvas.width; x += 4) {
         const picked = window.gameTest.pick(x, y);
-        if (picked?.kind === "sprite" && picked.id.startsWith("guest-")) {
+        if (picked?.kind === "sprite" && picked.id === "guest-9") {
           return { id: picked.id, x, y };
         }
       }

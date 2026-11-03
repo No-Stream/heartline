@@ -15,6 +15,20 @@ pub struct Facility {
     pub place: KnownPlace,
     pub capacity: usize,
     pub duration_ticks: u32,
+    pub exit_position: Option<Position>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RidePhase {
+    Idle,
+    Running,
+    Unloading,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RideState {
+    pub phase: RidePhase,
+    pub progress: f32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,6 +36,7 @@ enum Activity {
     Walking(u32),
     Queuing(u32, u64),
     Using(u32, u32),
+    Unloading(u32, Position),
     Waiting(u32),
 }
 
@@ -37,6 +52,7 @@ pub struct BehaviorSimulation {
     pub guests: Vec<GuestBehavior>,
     activities: Vec<Option<Activity>>,
     queues: BTreeMap<u32, Vec<GuestId>>,
+    income: BTreeMap<u32, u64>,
     tick: u64,
 }
 
@@ -46,8 +62,42 @@ impl BehaviorSimulation {
             guests: vec![GuestBehavior::default(); guest_count],
             activities: vec![None; guest_count],
             queues: BTreeMap::new(),
+            income: BTreeMap::new(),
             tick: 0,
         }
+    }
+
+    pub fn ride_state(&self, facility: &Facility) -> RideState {
+        assert_eq!(facility.place.kind, PlaceKind::Ride);
+        assert!(facility.duration_ticks > 0);
+        let mut unloading = false;
+        for activity in &self.activities {
+            match activity {
+                Some(Activity::Using(id, remaining)) if *id == facility.place.id => {
+                    return RideState {
+                        phase: RidePhase::Running,
+                        progress: 1.0 - (*remaining as f32 / facility.duration_ticks as f32),
+                    };
+                }
+                Some(Activity::Unloading(id, _)) if *id == facility.place.id => unloading = true,
+                _ => {}
+            }
+        }
+        if unloading {
+            RideState {
+                phase: RidePhase::Unloading,
+                progress: 1.0,
+            }
+        } else {
+            RideState {
+                phase: RidePhase::Idle,
+                progress: 0.0,
+            }
+        }
+    }
+
+    pub fn facility_income(&self, place_id: u32) -> u64 {
+        self.income.get(&place_id).copied().unwrap_or(0)
     }
 
     pub fn activity_detail(&self, guest: GuestId) -> ActivityDetail {
@@ -68,20 +118,26 @@ impl BehaviorSimulation {
                     Some(PlaceKind::Drink) => ActivityKind::Drinking,
                     Some(PlaceKind::Restroom) => ActivityKind::Restroom,
                     Some(PlaceKind::Bench) => ActivityKind::Resting,
+                    Some(PlaceKind::Souvenir) => ActivityKind::Shopping,
                     None => ActivityKind::Walking,
                 };
                 (kind, Some(place_id))
             }
             Some(Activity::Waiting(place_id)) => (ActivityKind::Waiting, Some(place_id)),
+            Some(Activity::Unloading(place_id, _)) => (ActivityKind::Walking, Some(place_id)),
             None => (ActivityKind::Wandering, None),
         };
-        let destination = place_id.and_then(|place_id| {
-            self.guests[index]
-                .known_places()
-                .iter()
-                .find(|place| place.id == place_id)
-                .map(|place| place.position)
-        });
+        let destination = if let Some(Activity::Unloading(_, exit)) = activity {
+            Some(exit)
+        } else {
+            place_id.and_then(|place_id| {
+                self.guests[index]
+                    .known_places()
+                    .iter()
+                    .find(|place| place.id == place_id)
+                    .map(|place| place.position)
+            })
+        };
         ActivityDetail {
             kind,
             destination,
@@ -210,6 +266,13 @@ impl BehaviorSimulation {
                 continue;
             }
             match self.activities[index] {
+                Some(
+                    Activity::Using(place_id, _)
+                    | Activity::Waiting(place_id)
+                    | Activity::Unloading(place_id, _),
+                ) if !by_id.contains_key(&place_id) => {
+                    self.activities[index] = None;
+                }
                 Some(Activity::Using(place_id, remaining)) if remaining <= 1 => {
                     if let Some(facility) = by_id.get(&place_id) {
                         let enjoyment = (80_i16
@@ -219,7 +282,7 @@ impl BehaviorSimulation {
                                 * 2
                             - self.guests[index].needs.nausea as i16)
                             .clamp(-100, 100) as i8;
-                        self.guests[index].complete(
+                        self.guests[index].complete_paid(
                             facility.place,
                             self.tick,
                             enjoyment,
@@ -227,6 +290,11 @@ impl BehaviorSimulation {
                             id,
                         );
                     }
+                    self.activities[index] = by_id[&place_id]
+                        .exit_position
+                        .map(|exit| Activity::Unloading(place_id, exit));
+                }
+                Some(Activity::Unloading(_, exit)) if positions[index] == Some(exit) => {
                     self.activities[index] = None;
                 }
                 Some(Activity::Using(place_id, remaining)) => {
@@ -242,8 +310,16 @@ impl BehaviorSimulation {
                 Some(Activity::Walking(place_id))
                     if positions[index] == Some(by_id[&place_id].place.position) =>
                 {
-                    self.queues.entry(place_id).or_default().push(id);
-                    self.activities[index] = Some(Activity::Queuing(place_id, self.tick));
+                    let facility = by_id[&place_id];
+                    let queue = self.queues.entry(place_id).or_default();
+                    if facility.place.kind != PlaceKind::Ride
+                        && queue.len() >= facility.capacity * 2
+                    {
+                        self.activities[index] = None;
+                    } else {
+                        queue.push(id);
+                        self.activities[index] = Some(Activity::Queuing(place_id, self.tick));
+                    }
                 }
                 Some(Activity::Queuing(place_id, _)) if !by_id.contains_key(&place_id) => {
                     self.activities[index] = None
@@ -263,7 +339,7 @@ impl BehaviorSimulation {
                 .collect();
             for &id in &active {
                 if let Some(Activity::Waiting(place_id)) = self.activities[id.0 as usize] {
-                    let riders_remain = active.iter().any(|other| matches!(self.activities[other.0 as usize], Some(Activity::Walking(id) | Activity::Queuing(id, _) | Activity::Using(id, _)) if id == place_id));
+                    let riders_remain = active.iter().any(|other| matches!(self.activities[other.0 as usize], Some(Activity::Walking(id) | Activity::Queuing(id, _) | Activity::Using(id, _) | Activity::Unloading(id, _)) if id == place_id));
                     if !riders_remain {
                         self.activities[id.0 as usize] = None;
                     }
@@ -289,6 +365,11 @@ impl BehaviorSimulation {
                 continue;
             }
             let mut available = self.guests[index].clone();
+            for place in &mut available.known_places {
+                if let Some(facility) = by_id.get(&place.id) {
+                    *place = facility.place;
+                }
+            }
             available.known_places.retain(|place| {
                 by_id.contains_key(&place.id)
                     && guest_components[index].is_some()
@@ -339,8 +420,20 @@ impl BehaviorSimulation {
             });
             if let Some(facility) = by_id.get(&place_id) {
                 let occupied = self.activities.iter().filter(|activity| matches!(activity, Some(Activity::Using(id, _)) if *id == place_id)).count();
-                let take = facility.capacity.saturating_sub(occupied).min(queue.len());
+                let take = if facility.place.kind == PlaceKind::Ride && occupied > 0 {
+                    0
+                } else {
+                    facility.capacity.saturating_sub(occupied).min(queue.len())
+                };
                 for id in queue.drain(..take) {
+                    let behavior = &mut self.guests[id.0 as usize];
+                    if behavior.money < facility.place.price {
+                        self.activities[id.0 as usize] = None;
+                        continue;
+                    }
+                    behavior.money -= facility.place.price;
+                    behavior.lifetime_money_spent += u32::from(facility.place.price);
+                    *self.income.entry(place_id).or_default() += u64::from(facility.place.price);
                     let queued_at = match self.activities[id.0 as usize] {
                         Some(Activity::Queuing(_, queued_at)) => queued_at,
                         _ => unreachable!("only queued guests are admitted"),
@@ -360,6 +453,7 @@ impl BehaviorSimulation {
             .enumerate()
             .map(|(index, activity)| match activity {
                 Some(Activity::Walking(id)) => Movement::Destination(by_id[id].place.position),
+                Some(Activity::Unloading(_, exit)) => Movement::Destination(*exit),
                 Some(Activity::Waiting(id))
                     if by_id.get(id).is_some_and(|facility| {
                         positions[index] != Some(facility.place.position)
@@ -395,6 +489,212 @@ mod tests {
             theme: 0,
             price: 0,
         }
+    }
+
+    #[test]
+    fn ride_admits_a_new_cohort_only_after_the_current_cycle_finishes() {
+        let mut guests = generate_guests(31, 2);
+        let mut simulation = BehaviorSimulation::new(2);
+        let ride = KnownPlace {
+            price: 7,
+            ..place(1, PlaceKind::Ride)
+        };
+        let facilities = [Facility {
+            place: ride,
+            capacity: 2,
+            exit_position: None,
+            duration_ticks: 3,
+        }];
+        simulation.activities[0] = Some(Activity::Using(ride.id, 2));
+        simulation.activities[1] = Some(Activity::Queuing(ride.id, 0));
+        simulation.queues.insert(ride.id, vec![GuestId(1)]);
+        simulation.tick(
+            &mut guests,
+            &[Some(ride.position); 2],
+            &facilities,
+            &[Some(0); 2],
+            &[Some(0)],
+        );
+        assert!(matches!(
+            simulation.activities[1],
+            Some(Activity::Queuing(_, _))
+        ));
+        simulation.tick(
+            &mut guests,
+            &[Some(ride.position); 2],
+            &facilities,
+            &[Some(0); 2],
+            &[Some(0)],
+        );
+        assert!(matches!(
+            simulation.activities[1],
+            Some(Activity::Using(_, 3))
+        ));
+        assert_eq!(simulation.facility_income(ride.id), 7);
+    }
+
+    #[test]
+    fn current_price_controls_choice_and_admission() {
+        let mut guests = generate_guests(31, 1);
+        let mut simulation = BehaviorSimulation::new(1);
+        let old = place(1, PlaceKind::Ride);
+        simulation.guests[0].observe(old);
+        simulation.guests[0].money = 5;
+        let ride = KnownPlace { price: 8, ..old };
+        let facilities = [Facility {
+            place: ride,
+            capacity: 1,
+            exit_position: None,
+            duration_ticks: 2,
+        }];
+        simulation.tick = 29;
+        simulation.tick(
+            &mut guests,
+            &[Some(ride.position)],
+            &facilities,
+            &[Some(0)],
+            &[Some(0)],
+        );
+        assert!(simulation.guests[0].cannot_afford_activity);
+        assert_eq!(simulation.facility_income(ride.id), 0);
+    }
+
+    #[test]
+    fn souvenir_purchase_records_income_and_improves_happiness() {
+        let mut guests = generate_guests(31, 1);
+        let mut simulation = BehaviorSimulation::new(1);
+        let shop = KnownPlace {
+            price: 7,
+            ..place(1, PlaceKind::Souvenir)
+        };
+        let facilities = [Facility {
+            place: shop,
+            capacity: 1,
+            exit_position: None,
+            duration_ticks: 1,
+        }];
+        simulation.guests[0].rides_completed = 1;
+        simulation.guests[0].happiness = 50;
+        simulation.tick = 29;
+        for _ in 0..3 {
+            simulation.tick(
+                &mut guests,
+                &[Some(shop.position)],
+                &facilities,
+                &[Some(0)],
+                &[Some(0)],
+            );
+        }
+        assert_eq!(simulation.guests[0].money, 93);
+        assert_eq!(simulation.facility_income(shop.id), 7);
+        assert_eq!(simulation.guests[0].happiness, 55);
+    }
+
+    #[test]
+    fn ride_state_reports_running_progress_and_unloading() {
+        let ride = place(1, PlaceKind::Ride);
+        let exit = Position {
+            x: 2,
+            y: 0,
+            height: 0,
+        };
+        let facility = Facility {
+            place: ride,
+            capacity: 2,
+            duration_ticks: 4,
+            exit_position: Some(exit),
+        };
+        let mut simulation = BehaviorSimulation::new(1);
+        assert_eq!(
+            simulation.ride_state(&facility),
+            RideState {
+                phase: RidePhase::Idle,
+                progress: 0.0
+            }
+        );
+        simulation.activities[0] = Some(Activity::Using(ride.id, 3));
+        assert_eq!(
+            simulation.ride_state(&facility),
+            RideState {
+                phase: RidePhase::Running,
+                progress: 0.25
+            }
+        );
+        simulation.activities[0] = Some(Activity::Unloading(ride.id, exit));
+        assert_eq!(
+            simulation.ride_state(&facility),
+            RideState {
+                phase: RidePhase::Unloading,
+                progress: 1.0
+            }
+        );
+    }
+
+    #[test]
+    fn completed_ride_moves_guest_to_exit_before_releasing_them() {
+        let mut guests = generate_guests(31, 1);
+        let mut simulation = BehaviorSimulation::new(1);
+        let ride = place(1, PlaceKind::Ride);
+        let exit = Position {
+            x: 2,
+            y: 0,
+            height: 0,
+        };
+        let facilities = [Facility {
+            place: ride,
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: Some(exit),
+        }];
+        simulation.activities[0] = Some(Activity::Using(ride.id, 1));
+        assert_eq!(
+            simulation.tick(
+                &mut guests,
+                &[Some(ride.position)],
+                &facilities,
+                &[Some(0)],
+                &[Some(0)]
+            )[0],
+            Movement::Destination(exit)
+        );
+        assert_eq!(
+            simulation.tick(
+                &mut guests,
+                &[Some(exit)],
+                &facilities,
+                &[Some(0)],
+                &[Some(0)]
+            )[0],
+            Movement::Wander
+        );
+        assert_eq!(simulation.guests[0].rides_completed, 1);
+    }
+
+    #[test]
+    fn removing_queued_ride_clears_the_queue() {
+        let mut guests = generate_guests(31, 1);
+        let mut simulation = BehaviorSimulation::new(1);
+        let ride = place(1, PlaceKind::Ride);
+        simulation.activities[0] = Some(Activity::Queuing(ride.id, 0));
+        simulation.queues.insert(ride.id, vec![GuestId(0)]);
+        assert_eq!(
+            simulation.tick(&mut guests, &[Some(ride.position)], &[], &[Some(0)], &[])[0],
+            Movement::Wander
+        );
+        assert!(simulation.queues[&ride.id].is_empty());
+    }
+
+    #[test]
+    fn removing_occupied_ride_cancels_without_sending_guest_to_missing_exit() {
+        let mut guests = generate_guests(31, 1);
+        let mut simulation = BehaviorSimulation::new(1);
+        let ride = place(1, PlaceKind::Ride);
+        simulation.activities[0] = Some(Activity::Using(ride.id, 1));
+        assert_eq!(
+            simulation.tick(&mut guests, &[Some(ride.position)], &[], &[Some(0)], &[])[0],
+            Movement::Wander
+        );
+        assert_eq!(simulation.guests[0].rides_completed, 0);
     }
 
     #[test]
@@ -510,6 +810,7 @@ mod tests {
         let facilities = [Facility {
             place: ride,
             capacity: 1,
+            exit_position: None,
             duration_ticks: 2,
         }];
         let destinations = simulation.tick(
@@ -581,6 +882,7 @@ mod tests {
         let facilities = [Facility {
             place: ride,
             capacity: 4,
+            exit_position: None,
             duration_ticks: 2,
         }];
         for _ in 0..100 {
@@ -639,6 +941,7 @@ mod tests {
                 ..place(id as u32, kind)
             },
             capacity: 1,
+            exit_position: None,
             duration_ticks: if kind == PlaceKind::Ride { 5_000 } else { 600 },
         })
         .collect();
@@ -670,6 +973,7 @@ mod tests {
         let facilities = [Facility {
             place: ride,
             capacity: 1,
+            exit_position: None,
             duration_ticks: 2,
         }];
         assert_eq!(
@@ -698,6 +1002,7 @@ mod tests {
         let facilities = [Facility {
             place: ride,
             capacity: 1,
+            exit_position: None,
             duration_ticks: 2,
         }];
         simulation.tick(
@@ -720,6 +1025,7 @@ mod tests {
         let facilities = [Facility {
             place: ride,
             capacity: 1,
+            exit_position: None,
             duration_ticks: 2,
         }];
         let origin = Position {
@@ -749,6 +1055,7 @@ mod tests {
         let facilities = [Facility {
             place: food,
             capacity: 1,
+            exit_position: None,
             duration_ticks: 2,
         }];
         let origin = Position {
@@ -776,6 +1083,7 @@ mod tests {
         let facilities = [Facility {
             place: ride,
             capacity: 1,
+            exit_position: None,
             duration_ticks: 2,
         }];
         for _ in 0..32 {

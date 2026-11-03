@@ -71,6 +71,7 @@ fn main() {
     .into_iter()
     .enumerate()
     .map(|(id, kind)| Facility {
+        exit_position: None,
         place: KnownPlace {
             id: id as u32,
             position: Position {

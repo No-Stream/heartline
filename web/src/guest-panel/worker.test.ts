@@ -5,6 +5,8 @@ const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), tick: vi.fn() }));
 vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   default: wasmMock.initialize,
   WasmSimulation: class {
+    facilities_json() { return "[]"; }
+    facility_revenue() { return 0n; }
     world_dimensions() { return new Uint16Array([3, 3]); }
     world_surfaces() { return new Int32Array(54); }
     world_paths() { return new Int32Array(); }

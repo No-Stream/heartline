@@ -1,3 +1,5 @@
+import type { TestingReport } from "./coaster-testing";
+
 /** Commands are processed in order by the simulation worker. */
 export type ConstructionAction =
   | { readonly type: "construction-start"; readonly x: number; readonly y: number; readonly z: number; readonly heading: number }
@@ -29,6 +31,7 @@ export interface ConstructionState {
   readonly canClose: boolean;
   readonly canTest: boolean;
   readonly message: string;
+  readonly testingReport?: TestingReport | null;
   readonly placedRails: Float32Array;
   readonly placedTies: Float32Array;
   readonly placedSupports: Float32Array;

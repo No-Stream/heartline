@@ -61,6 +61,7 @@ pub enum ActivityKind {
     Drinking,
     Restroom,
     Resting,
+    Shopping,
     Waiting,
 }
 
@@ -520,6 +521,7 @@ const fn activity_name(activity: ActivityKind) -> &'static str {
         ActivityKind::Drinking => "drinking",
         ActivityKind::Restroom => "restroom",
         ActivityKind::Resting => "resting",
+        ActivityKind::Shopping => "shopping",
         ActivityKind::Waiting => "waiting",
     }
 }
@@ -610,6 +612,7 @@ mod tests {
             price: 12,
         };
         let facilities = [Facility {
+            exit_position: None,
             place: ride,
             capacity: 1,
             duration_ticks: 1,

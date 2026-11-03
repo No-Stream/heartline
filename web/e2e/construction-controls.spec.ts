@@ -43,3 +43,11 @@ test("construction controls dispatch actions with the keyboard and reflect worke
   await expect(page.getByRole("button", { name: "Place piece" })).toBeDisabled();
   await expect(page.getByRole("status")).toHaveText("Track collides");
 });
+
+
+test("testing panel shows an all-clear for a report without notes", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({ samples: [], notes: [], rating: { excitement: 20, intensity: 30, nausea: 5 } }));
+  await expect(page.locator("[data-notes]")).toHaveText("No concerns were noted during this test.");
+  await expect(page.locator("[data-rating]")).toHaveText("Excitement: 20.0 · Intensity: 30.0 · Nausea: 5.0");
+});

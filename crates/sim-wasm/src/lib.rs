@@ -3,9 +3,13 @@ mod guest_benchmark;
 use std::collections::HashMap;
 
 use theme_park_sim::demo_world::demo_world;
+use theme_park_sim::facilities::{FacilityKind, ParkFacilities};
+use theme_park_sim::guest_behavior::RidePhase;
 use theme_park_sim::guests::{AgeGroup, GuestId};
 use theme_park_sim::park_guests::ParkGuests;
-use theme_park_sim::physics::{Circuit, PhysicsConfig, Train, demo_circuit};
+use theme_park_sim::physics::{
+    Circuit, PhysicsConfig, TestRun, TestRunRecorder, Train, demo_circuit,
+};
 use theme_park_sim::track::construction::{Construction, track_support_obstacles};
 use theme_park_sim::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, SupportError, SupportObstacle, SupportSegment,
@@ -29,6 +33,8 @@ struct SupportRenderCache {
 pub struct WasmSimulation {
     simulation: ParkGuests,
     world: World,
+    facilities: ParkFacilities,
+    facility_message: String,
     circuit: Circuit,
     train: Train,
     train_configuration: TrainConfiguration,
@@ -41,6 +47,8 @@ pub struct WasmSimulation {
     support_render_cache: HashMap<usize, SupportRenderCache>,
     construction_slow_steps: u32,
     construction_outcome: Option<String>,
+    construction_recorder: Option<TestRunRecorder>,
+    construction_report: Option<TestRun>,
 }
 
 #[wasm_bindgen]
@@ -48,19 +56,65 @@ impl WasmSimulation {
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u64, agent_count: usize) -> Self {
         let world = demo_world();
+        let mut facilities = ParkFacilities::new();
+        facilities
+            .place(
+                &world,
+                FacilityKind::Entrance,
+                Position {
+                    x: 218,
+                    y: 246,
+                    height: 8,
+                },
+                Direction::South,
+            )
+            .expect("demo entrance placement");
+        for (x, kind) in [
+            (220, FacilityKind::Food),
+            (223, FacilityKind::Drink),
+            (226, FacilityKind::Restroom),
+            (229, FacilityKind::Souvenir),
+            (232, FacilityKind::Carousel),
+            (235, FacilityKind::FerrisWheel),
+        ] {
+            facilities
+                .place(
+                    &world,
+                    kind,
+                    Position {
+                        x,
+                        y: 254,
+                        height: 8,
+                    },
+                    Direction::South,
+                )
+                .expect("demo facility placement");
+        }
         let simulation = ParkGuests::new(
             seed,
             agent_count,
             &world,
             Position {
                 x: 218,
-                y: 256,
+                y: 250,
                 height: 8,
             },
             agent_count.max(1),
         );
         let circuit = demo_circuit();
         let train_configuration = hybrid_model().train;
+        for building in facilities.buildings() {
+            assert!(
+                !facility_intersects_track(
+                    building.kind,
+                    building.position,
+                    building.direction,
+                    circuit.pieces(),
+                    &train_configuration
+                ),
+                "demo facility intersects track"
+            );
+        }
         let train = Train::new(
             &circuit,
             &train_configuration,
@@ -74,6 +128,8 @@ impl WasmSimulation {
         Self {
             simulation,
             world,
+            facilities,
+            facility_message: String::new(),
             circuit,
             train,
             train_configuration,
@@ -86,6 +142,8 @@ impl WasmSimulation {
             support_render_cache: HashMap::new(),
             construction_slow_steps: 0,
             construction_outcome: None,
+            construction_recorder: None,
+            construction_report: None,
         }
     }
 
@@ -150,6 +208,126 @@ impl WasmSimulation {
         self.world.state_hash()
     }
 
+    pub fn place_facility(&mut self, kind: &str, x: u16, y: u16, rotation: u8) -> bool {
+        let kind = match kind {
+            "entrance" => FacilityKind::Entrance,
+            "food_stall" => FacilityKind::Food,
+            "drink_stall" => FacilityKind::Drink,
+            "souvenir" => FacilityKind::Souvenir,
+            "restroom" => FacilityKind::Restroom,
+            "carousel" => FacilityKind::Carousel,
+            "ferris_wheel" => FacilityKind::FerrisWheel,
+            _ => {
+                self.facility_message = "Unknown facility".into();
+                return false;
+            }
+        };
+        let direction = match rotation {
+            0 => Direction::North,
+            1 => Direction::East,
+            2 => Direction::South,
+            3 => Direction::West,
+            _ => {
+                self.facility_message = "Invalid rotation".into();
+                return false;
+            }
+        };
+        let (width, height) = self.world.dimensions();
+        if x >= width || y >= height {
+            self.facility_message = "Outside world".into();
+            return false;
+        }
+        let position = Position {
+            x,
+            y,
+            height: self.world.surface(x, y).corners[0],
+        };
+        let mut pieces = self.circuit.pieces().to_vec();
+        if let Some(construction) = &self.construction {
+            pieces.extend_from_slice(construction.pieces());
+            for segment in construction.disconnected_segments() {
+                pieces.extend_from_slice(&segment.pieces);
+            }
+        }
+        if facility_intersects_track(
+            kind,
+            position,
+            direction,
+            &pieces,
+            &self.train_configuration,
+        ) {
+            self.facility_message = "Facility intersects track or train clearance".into();
+            return false;
+        }
+        match self
+            .facilities
+            .place(&self.world, kind, position, direction)
+        {
+            Ok(_) => {
+                self.support_render_cache.clear();
+                self.facility_message.clear();
+                true
+            }
+            Err(error) => {
+                self.facility_message = format!("{error:?}");
+                false
+            }
+        }
+    }
+
+    pub fn remove_facility(&mut self, id: u32) -> bool {
+        let removed = self.facilities.remove(id);
+        if removed {
+            self.support_render_cache.clear();
+        }
+        removed
+    }
+
+    pub fn set_facility_price(&mut self, id: u32, price: u16) -> bool {
+        match self.facilities.set_price(id, price) {
+            Ok(()) => {
+                self.facility_message.clear();
+                true
+            }
+            Err(error) => {
+                self.facility_message = format!("{error:?}");
+                false
+            }
+        }
+    }
+
+    pub fn facility_message(&self) -> String {
+        self.facility_message.clone()
+    }
+
+    pub fn facility_revenue(&self) -> u64 {
+        self.simulation.revenue()
+    }
+
+    pub fn facilities_json(&self) -> String {
+        let guest_facilities = self.facilities.guest_facilities(&self.world);
+        let buildings = self.facilities.buildings().iter().map(|building| {
+            let kind = match building.kind {
+                FacilityKind::Entrance => "entrance", FacilityKind::Food => "food_stall",
+                FacilityKind::Drink => "drink_stall", FacilityKind::Souvenir => "souvenir", FacilityKind::Restroom => "restroom",
+                FacilityKind::Carousel => "carousel", FacilityKind::FerrisWheel => "ferris_wheel",
+            };
+            let rotation = match building.direction {
+                Direction::North => 0, Direction::East => 1, Direction::South => 2, Direction::West => 3,
+            };
+            let state = guest_facilities.iter().find(|facility| facility.place.id == building.id)
+                .filter(|_| matches!(building.kind, FacilityKind::Carousel | FacilityKind::FerrisWheel))
+                .map(|facility| self.simulation.behaviors().ride_state(facility));
+            let (ride_state, ride_progress) = match state {
+                Some(state) => (match state.phase { RidePhase::Idle => "idle", RidePhase::Running => "running", RidePhase::Unloading => "unloading" }, state.progress),
+                None => ("idle", 0.0),
+            };
+            format!("{{\"id\":{},\"kind\":\"{}\",\"x\":{},\"y\":{},\"z\":{},\"rotation\":{},\"price\":{},\"ride_state\":\"{}\",\"ride_progress\":{}}}",
+                building.id, kind, building.position.x, building.position.y, building.position.height, rotation, building.price, ride_state, ride_progress)
+        }).collect::<Vec<_>>().join(",");
+        format!("[{buildings}]")
+    }
+
     /// Replace a surface and report whether the world changed.
     pub fn set_world_surface(
         &mut self,
@@ -172,7 +350,10 @@ impl WasmSimulation {
     pub fn tick(&mut self) {
         let population = self.simulation.walking().guests().len();
         self.simulation
-            .tick(&self.world, &[], 100, Some(population));
+            .set_entrance(&self.world, self.facilities.entrance(&self.world));
+        let facilities = self.facilities.guest_facilities(&self.world);
+        self.simulation
+            .tick(&self.world, &facilities, 100, Some(population));
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
             self.train.step(&self.circuit);
@@ -204,7 +385,17 @@ impl WasmSimulation {
                     {
                         self.construction_outcome = Some(self.construction_message.clone());
                     }
-                    train.take_readings();
+                    let readings = train.take_readings();
+                    if let Some(recorder) = &mut self.construction_recorder {
+                        recorder.record(&readings);
+                    }
+                    if self.construction_outcome.is_some() {
+                        let recorder = self.construction_recorder.take().expect("test recorder");
+                        self.construction_report = Some(recorder.finish(
+                            self.construction_message == "Train completed a lap.",
+                            !train.notes().is_empty(),
+                        ));
+                    }
                 }
             }
             self.physics_remainder -= 30;
@@ -356,7 +547,9 @@ impl WasmSimulation {
             },
             hybrid_model(),
         );
-        if let Err(error) = construction.append(PieceId::Station, &self.world, &[]) {
+        if let Err(error) =
+            construction.append(PieceId::Station, &self.world, &self.facility_obstacles())
+        {
             self.construction_message = construction_error(error);
             return;
         }
@@ -367,6 +560,8 @@ impl WasmSimulation {
         self.recovered_station = None;
         self.support_render_cache.clear();
         self.construction_outcome = None;
+        self.construction_recorder = None;
+        self.construction_report = None;
         self.construction_message.clear();
     }
     pub fn construction_active(&self) -> bool {
@@ -393,7 +588,7 @@ impl WasmSimulation {
             return String::new();
         };
         construction
-            .available_choices(&self.world, &[])
+            .available_choices(&self.world, &self.facility_obstacles())
             .into_iter()
             .map(|(piece, choice)| {
                 let reason = choice
@@ -439,7 +634,7 @@ impl WasmSimulation {
             .zip(self.selected)
             .is_some_and(|(construction, selected)| {
                 construction
-                    .choices(&self.world, &[])
+                    .choices(&self.world, &self.facility_obstacles())
                     .iter()
                     .any(|choice| choice.id == selected && choice.result.is_ok())
             })
@@ -452,7 +647,7 @@ impl WasmSimulation {
             return String::new();
         };
         construction
-            .choices(&self.world, &[])
+            .choices(&self.world, &self.facility_obstacles())
             .into_iter()
             .find(|choice| choice.id == selected)
             .expect("selected piece is in catalog")
@@ -482,6 +677,7 @@ impl WasmSimulation {
         }
     }
     pub fn construction_append(&mut self) {
+        let obstacles = self.facility_obstacles();
         let result = self
             .construction
             .as_mut()
@@ -489,10 +685,14 @@ impl WasmSimulation {
             .ok_or("Select a piece first".to_string())
             .and_then(|(construction, selected)| {
                 construction
-                    .append(selected, &self.world, &[])
+                    .append(selected, &self.world, &obstacles)
                     .map_err(construction_error)
             });
         if result.is_ok() {
+            self.construction_recorder = None;
+            self.construction_report = None;
+            self.construction_train = None;
+            self.construction_outcome = None;
             self.select_compatible_piece();
         }
         self.construction_message = result.err().unwrap_or_default();
@@ -516,6 +716,8 @@ impl WasmSimulation {
             .ok_or("Construction is inactive".to_string())
             .and_then(|construction| construction.delete_from(index).map_err(construction_error));
         if result.is_ok() {
+            self.construction_recorder = None;
+            self.construction_report = None;
             let construction = self.construction.as_ref().expect("successful deletion");
             let station = construction
                 .pieces()
@@ -575,11 +777,37 @@ impl WasmSimulation {
             0.0,
             2.0,
         );
+        self.construction_recorder = Some(TestRunRecorder::new(circuit.length()));
+        self.construction_report = None;
         self.construction_train = Some((circuit, train));
         self.recovered_station = None;
         self.construction_slow_steps = 0;
         self.construction_outcome = None;
         self.construction_message = "Test train running.".into();
+    }
+    pub fn construction_test_report_json(&self) -> String {
+        let Some(report) = &self.construction_report else {
+            return "null".into();
+        };
+        let circuit = &self
+            .construction_train
+            .as_ref()
+            .expect("report requires train")
+            .0;
+        let samples = report.samples.iter().map(|sample| {
+            let position = circuit.sample(sample.distance).position / 4.0;
+            format!("{{\"distance\":{},\"x\":{},\"y\":{},\"z\":{},\"speed\":{},\"verticalG\":{},\"lateralG\":{},\"longitudinalG\":{},\"airtime\":{}}}", sample.distance, position.x, position.y, position.z, sample.speed, sample.vertical_g, sample.lateral_g, sample.longitudinal_g, sample.airtime)
+        }).collect::<Vec<_>>().join(",");
+        let notes = report
+            .notes
+            .iter()
+            .map(|note| json_string(note))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"samples\":[{samples}],\"notes\":[{notes}],\"rating\":{{\"excitement\":{},\"intensity\":{},\"nausea\":{}}}}}",
+            report.excitement, report.intensity, report.nausea
+        )
     }
     pub fn construction_rails(&self) -> Vec<f32> {
         render_rails(&self.construction_preview(), &self.world)
@@ -591,13 +819,36 @@ impl WasmSimulation {
         if !self.construction_preview_valid() {
             return Vec::new();
         }
-        let construction = self.construction.as_ref().expect("valid preview requires construction");
-        let placed: Vec<_> = construction.pieces().iter().cloned().chain(
-            construction.disconnected_segments().iter().flat_map(|segment| segment.pieces.iter().cloned()),
-        ).collect();
+        let construction = self
+            .construction
+            .as_ref()
+            .expect("valid preview requires construction");
+        let placed: Vec<_> = construction
+            .piece_ids()
+            .iter()
+            .zip(construction.pieces())
+            .chain(
+                construction
+                    .disconnected_segments()
+                    .iter()
+                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+            )
+            .collect();
         let preview = self.construction_preview();
-        let piece = preview.first().expect("valid preview requires a selected piece");
-        match render_preview_supports(piece, &placed, &self.world, &construction.model().train) {
+        let piece = preview
+            .first()
+            .expect("valid preview requires a selected piece");
+        sync_support_obstacles(
+            &placed,
+            &construction.model().train,
+            &mut self.support_render_cache,
+        );
+        let mut obstacles: Vec<_> = placed
+            .iter()
+            .flat_map(|(id, _)| self.support_render_cache[id].obstacles.iter().copied())
+            .collect();
+        obstacles.extend(self.facility_obstacles());
+        match render_preview_supports(piece, &obstacles, &self.world) {
             Ok(supports) => supports,
             Err(_) => {
                 self.construction_message = "Could not route preview supports.".into();
@@ -612,6 +863,7 @@ impl WasmSimulation {
         self.construction_render(render_ties, 13)
     }
     pub fn construction_placed_supports(&mut self) -> Vec<f32> {
+        let facility_obstacles = self.facility_obstacles();
         let Some(construction) = &self.construction else {
             return Vec::new();
         };
@@ -630,6 +882,7 @@ impl WasmSimulation {
             &entries,
             &self.world,
             &construction.model().train,
+            &facility_obstacles,
             &mut self.support_render_cache,
         ) {
             Ok(supports) => supports,
@@ -670,11 +923,32 @@ impl WasmSimulation {
 }
 
 impl WasmSimulation {
+    fn facility_obstacles(&self) -> Vec<SupportObstacle> {
+        self.facilities
+            .buildings()
+            .iter()
+            .map(|building| {
+                let (width, depth) = building.kind.footprint(building.direction);
+                let x = f64::from(building.position.x) * 4.0;
+                let y = f64::from(building.position.y) * 4.0;
+                let z = f64::from(building.position.height);
+                let height = facility_height(building.kind);
+                SupportObstacle {
+                    min: Vec3::new(x, y, z),
+                    max: Vec3::new(
+                        x + f64::from(width) * 4.0,
+                        y + f64::from(depth) * 4.0,
+                        z + height,
+                    ),
+                }
+            })
+            .collect()
+    }
     fn select_compatible_piece(&mut self) {
         let Some(construction) = &self.construction else {
             return;
         };
-        let available = construction.available_choices(&self.world, &[]);
+        let available = construction.available_choices(&self.world, &self.facility_obstacles());
         if self
             .selected
             .is_some_and(|selected| available.iter().any(|(piece, _)| piece.id == selected))
@@ -720,7 +994,7 @@ impl WasmSimulation {
             return Vec::new();
         }
         construction
-            .available_choices(&self.world, &[])
+            .available_choices(&self.world, &self.facility_obstacles())
             .into_iter()
             .filter_map(|(piece, _)| (Some(piece.id) == self.selected).then_some(piece))
             .collect()
@@ -746,6 +1020,26 @@ fn piece_group(id: PieceId) -> &'static str {
     } else {
         "special"
     }
+}
+
+fn json_string(value: &str) -> String {
+    let mut result = String::from("\"");
+    for character in value.chars() {
+        match character {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            character if character.is_control() => {
+                use std::fmt::Write;
+                write!(result, "\\u{:04x}", character as u32).expect("write to string");
+            }
+            character => result.push(character),
+        }
+    }
+    result.push('"');
+    result
 }
 
 fn construction_error(error: theme_park_sim::track::construction::ConstructionError) -> String {
@@ -784,6 +1078,37 @@ fn construction_error(error: theme_park_sim::track::construction::ConstructionEr
 
 fn append_vector(result: &mut Vec<f32>, vector: Vec3) {
     result.extend([vector.x as f32, vector.y as f32, vector.z as f32]);
+}
+
+fn facility_height(kind: FacilityKind) -> f64 {
+    match kind {
+        FacilityKind::Carousel | FacilityKind::FerrisWheel => 12.0,
+        _ => 4.0,
+    }
+}
+
+fn facility_intersects_track(
+    kind: FacilityKind,
+    position: Position,
+    direction: Direction,
+    pieces: &[Piece],
+    train: &TrainConfiguration,
+) -> bool {
+    let (width, depth) = kind.footprint(direction);
+    let min_x = f64::from(position.x) * 4.0;
+    let min_y = f64::from(position.y) * 4.0;
+    let min_z = f64::from(position.height);
+    let height = facility_height(kind);
+    track_support_obstacles(pieces, train)
+        .iter()
+        .any(|obstacle| {
+            obstacle.max.x > min_x
+                && obstacle.min.x < min_x + f64::from(width) * 4.0
+                && obstacle.max.y > min_y
+                && obstacle.min.y < min_y + f64::from(depth) * 4.0
+                && obstacle.max.z > min_z
+                && obstacle.min.z < min_z + height
+        })
 }
 
 fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
@@ -1122,6 +1447,60 @@ mod world_tests {
 }
 
 #[cfg(test)]
+mod facility_bridge_tests {
+    use super::WasmSimulation;
+
+    #[test]
+    fn ride_snapshots_expose_idle_cycle_state() {
+        let simulation = WasmSimulation::new(42, 0);
+        let snapshot = simulation.facilities_json();
+        assert!(snapshot.contains("\"ride_state\":\"idle\",\"ride_progress\":0"));
+    }
+
+    #[test]
+    fn track_construction_rejects_existing_building_footprints() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(440, 508, 5, 0);
+        assert!(!simulation.construction_active());
+        assert!(!simulation.construction_message().is_empty());
+    }
+
+    #[test]
+    fn placement_reports_errors_and_exports_and_removes_buildings() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        assert!(
+            simulation
+                .facilities_json()
+                .contains("\"kind\":\"entrance\"")
+        );
+        assert!(!simulation.place_facility("unknown", 240, 254, 2));
+        assert!(!simulation.facility_message().is_empty());
+        assert!(simulation.place_facility("carousel", 240, 254, 2));
+        assert!(simulation.facility_message().is_empty());
+        let snapshot = simulation.facilities_json();
+        assert!(snapshot.contains("\"kind\":\"carousel\""));
+        assert!(snapshot.contains("\"x\":240,\"y\":254,\"z\":8,\"rotation\":2"));
+        assert!(!simulation.place_facility("restroom", 240, 254, 2));
+        assert!(!simulation.facility_message().is_empty());
+        let id = simulation
+            .facilities
+            .buildings()
+            .iter()
+            .find(|building| building.position.x == 240)
+            .unwrap()
+            .id;
+        assert!(simulation.remove_facility(id));
+        assert!(
+            !simulation
+                .facilities
+                .buildings()
+                .iter()
+                .any(|building| building.id == id)
+        );
+    }
+}
+
+#[cfg(test)]
 mod construction_bridge_tests {
     use super::WasmSimulation;
 
@@ -1133,6 +1512,13 @@ mod construction_bridge_tests {
         simulation.construction_select("Straight");
         assert!(simulation.construction_can_append());
         assert!(!simulation.construction_rails().is_empty());
+        let construction = simulation.construction.as_ref().unwrap();
+        let obstacles =
+            super::track_support_obstacles(construction.pieces(), &construction.model().train);
+        let preview = simulation.construction_preview();
+        let expected_supports =
+            super::render_preview_supports(&preview[0], &obstacles, &simulation.world).unwrap();
+        assert_eq!(simulation.construction_supports(), expected_supports);
         simulation.construction_append();
         assert_eq!(simulation.construction_track(), "0\tStation\n1\tStraight");
         assert!(!simulation.construction_placed_rails().is_empty());
@@ -1248,6 +1634,7 @@ mod construction_bridge_tests {
             &[(&first_id, &first), (&second_id, &second)],
             &simulation.world,
             &train,
+            &[],
             &mut cache,
         )
         .unwrap();
@@ -1264,6 +1651,7 @@ mod construction_bridge_tests {
             &[(&first_id, &first)],
             &simulation.world,
             &train,
+            &[],
             &mut cache,
         )
         .unwrap();
@@ -1327,6 +1715,7 @@ mod construction_bridge_tests {
             &[(&0, &lower), (&1, &upper)],
             &world,
             &super::hybrid_model().train,
+            &[],
             &mut cache,
         )
         .unwrap();
@@ -1337,7 +1726,7 @@ mod construction_bridge_tests {
             .copied()
             .collect();
         assert_eq!(upper_records, expected_records);
-        let preview = super::render_preview_supports(&upper, &[lower], &world, &super::hybrid_model().train).unwrap();
+        let preview = super::render_preview_supports(&upper, &obstacles, &world).unwrap();
         let mut expected_preview = expected_records;
         for record in expected_preview.chunks_exact_mut(7) {
             record[0] = 0.0;
@@ -1415,6 +1804,7 @@ mod construction_bridge_tests {
     #[test]
     fn construction_closes_and_runs_physics_deterministically() {
         let mut simulation = WasmSimulation::new(42, 0);
+        assert_eq!(simulation.construction_test_report_json(), "null");
         simulation.construction_start(200, 200, 20, 0);
         for piece in [
             "TurnSmallStandalone",
@@ -1435,6 +1825,7 @@ mod construction_bridge_tests {
         simulation.construction_close();
         assert!(simulation.construction_can_test());
         simulation.construction_test();
+        assert_eq!(simulation.construction_test_report_json(), "null");
         let initial_poses = simulation.construction_train_poses();
         assert!(initial_poses.chunks_exact(11).all(|car| car[10] == 0.0));
         for _ in 0..9000 {
@@ -1448,6 +1839,11 @@ mod construction_bridge_tests {
             simulation.construction_message(),
             "Train stopped before completing a lap."
         );
+        let report = simulation.construction_test_report_json();
+        assert!(report.contains("\"samples\":[{"), "{report}");
+        assert!(report.contains("\"longitudinalG\":"), "{report}");
+        assert!(report.contains("\"rating\":{"), "{report}");
+        assert!(report.contains("\"notes\":[\""), "{report}");
         let stopped_poses = simulation.construction_train_poses();
         for _ in 0..60 {
             simulation.tick();
@@ -1459,6 +1855,7 @@ mod construction_bridge_tests {
             "Train stopped before completing a lap."
         );
         simulation.construction_delete(5);
+        assert_eq!(simulation.construction_test_report_json(), "null");
         let (_, recovered_train) = simulation.construction_train.as_ref().unwrap();
         assert_eq!(recovered_train.speed(), 0.0);
         let recovered_poses = simulation.construction_train_poses();
@@ -1532,9 +1929,12 @@ fn render_supports(pieces: &[Piece], world: &World) -> Vec<f32> {
     try_render_supports(pieces, world).expect("demo support cannot be routed")
 }
 
-fn render_preview_supports(piece: &Piece, placed: &[Piece], world: &World, train: &TrainConfiguration) -> Result<Vec<f32>, SupportError> {
-    let obstacles = track_support_obstacles(placed, train);
-    let supports = generate_wooden_lattice(piece, world, &obstacles)?;
+fn render_preview_supports(
+    piece: &Piece,
+    obstacles: &[SupportObstacle],
+    world: &World,
+) -> Result<Vec<f32>, SupportError> {
+    let supports = generate_wooden_lattice(piece, world, obstacles)?;
     let mut result = Vec::new();
     for support in supports {
         if support.start != support.end {
@@ -1546,12 +1946,11 @@ fn render_preview_supports(piece: &Piece, placed: &[Piece], world: &World, train
     Ok(result)
 }
 
-fn render_cached_supports(
+fn sync_support_obstacles(
     entries: &[(&usize, &Piece)],
-    world: &World,
     train: &TrainConfiguration,
     cache: &mut HashMap<usize, SupportRenderCache>,
-) -> Result<Vec<f32>, SupportError> {
+) {
     cache.retain(|id, _| entries.iter().any(|(entry_id, _)| *entry_id == id));
     for (id, piece) in entries {
         cache.entry(**id).or_insert_with(|| SupportRenderCache {
@@ -1561,6 +1960,16 @@ fn render_cached_supports(
             segments: Err(SupportError::NoRoute),
         });
     }
+}
+
+fn render_cached_supports(
+    entries: &[(&usize, &Piece)],
+    world: &World,
+    train: &TrainConfiguration,
+    facility_obstacles: &[SupportObstacle],
+    cache: &mut HashMap<usize, SupportRenderCache>,
+) -> Result<Vec<f32>, SupportError> {
+    sync_support_obstacles(entries, train, cache);
     let mut result = Vec::new();
     for (id, piece) in entries {
         let count = (piece.length() / 8.0).ceil() as usize;
@@ -1594,11 +2003,12 @@ fn render_cached_supports(
         dependencies.sort_unstable();
         let cached = &cache[id];
         if cached.world_revision != world.revision() || cached.dependencies != dependencies {
-            let obstacles: Vec<_> = entries
+            let mut obstacles: Vec<_> = entries
                 .iter()
                 .filter(|(other_id, _)| dependencies.binary_search(other_id).is_ok())
                 .flat_map(|(other_id, _)| cache[other_id].obstacles.iter().copied())
                 .collect();
+            obstacles.extend_from_slice(facility_obstacles);
             let segments = generate_wooden_lattice(piece, world, &obstacles);
             let cached = cache.get_mut(id).expect("support cache entry");
             cached.world_revision = world.revision();

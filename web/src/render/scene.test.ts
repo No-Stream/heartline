@@ -47,6 +47,14 @@ function atlasWithDistinctTerrainFrames(): { atlas: Atlas; pagesByFrame: Map<str
 }
 
 describe("world scene", () => {
+  test("scales sprites around their anchor while preserving their picking identity", () => {
+    const sprite = { id: "facility-1", sprite: "scenery/tree", x: 1, y: 1, height: 0 };
+    const full = buildScene({ ...world, sprites: [sprite] }, camera, viewport, atlas).triangles.filter((triangle) => triangle.id === sprite.id);
+    const half = buildScene({ ...world, sprites: [{ ...sprite, scale: 0.5 }] }, camera, viewport, atlas).triangles.filter((triangle) => triangle.id === sprite.id);
+    expect(half[0].vertices[1].x - half[0].vertices[0].x).toBe((full[0].vertices[1].x - full[0].vertices[0].x) / 2);
+    const [a, b, c] = half[0].vertices;
+    expect(pickScene({ triangles: half }, (a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3)).toMatchObject({ id: sprite.id });
+  });
   test("extra geometry shares depth and picking with terrain", () => {
     const scene = buildScene(world, camera, viewport, atlas);
     const terrain = scene.triangles.find((triangle) => triangle.kind === "terrain")!;
