@@ -7,8 +7,8 @@ export const pieceGroups = ["straight", "turn", "slope", "bank", "inversion", "s
 
 const slopeOrder = ["DownSixty", "DownSteep", "DownModerate", "DownGentle", "Level", "UpGentle", "UpModerate", "UpSteep", "UpSixty"];
 const slopeLabels: Record<string, string> = {
-  DownSixty: "60° down", DownSteep: "Steep down", DownModerate: "Moderate down", DownGentle: "Gentle down", Level: "Level",
-  UpGentle: "Gentle up", UpModerate: "Moderate up", UpSteep: "Steep up", UpSixty: "60° up",
+  DownSixty: "Very steep down 60°", DownSteep: "Steep down 45°", DownModerate: "Moderate down 37°", DownGentle: "Gentle down 27°", Level: "Level",
+  UpGentle: "Gentle up 27°", UpModerate: "Moderate up 37°", UpSteep: "Steep up 45°", UpSixty: "Very steep up 60°",
 };
 const bankOrder = ["Left", "Level", "Right"];
 
@@ -59,8 +59,9 @@ export function pieceDisplayName(piece: Pick<ConstructionPiece, "group" | "label
   if (piece.group !== "turn") return piece.label;
   const prefix = piece.slope.startsWith("Up") ? "Climbing" : piece.slope.startsWith("Down") ? "Descending" : "";
   if (!prefix) return piece.label;
-  const name = `${piece.label.charAt(0).toLowerCase()}${piece.label.slice(1)}`;
-  return `${prefix} ${name}`;
+  const phase = /^(Begin|End) /.exec(piece.label);
+  if (phase) return `${phase[0]}${prefix.toLowerCase()} ${piece.label.slice(phase[0].length)}`;
+  return `${prefix} ${piece.label.charAt(0).toLowerCase()}${piece.label.slice(1)}`;
 }
 
 /**

@@ -102,6 +102,15 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
           </div>`).join("")}
         </div>
       </section>
+      <div class="tool-panel__section builder__chain" data-chain-section>
+        <button type="button" class="builder__chain-toggle" data-chain-toggle aria-pressed="false" aria-label="Chain lift" aria-keyshortcuts="${keyHint(builderShortcuts.chain)}" aria-describedby="chain-lift-hint">
+          <svg class="builder__chain-links" viewBox="0 0 30 14" width="30" height="14" aria-hidden="true"><rect class="builder__chain-plate" x="2.6" y="3.4" width="14" height="8" rx="4"/><rect class="builder__chain-plate" x="13.6" y="3.4" width="14" height="8" rx="4"/><rect class="builder__chain-line" x="1.5" y="2.5" width="14" height="8" rx="4"/><rect class="builder__chain-line" x="12.5" y="2.5" width="14" height="8" rx="4"/></svg>
+          <span class="builder__chain-name">Chain lift</span>
+          <span class="builder__chain-state" data-chain-state aria-hidden="true">Off</span>
+          ${hint("chain")}
+        </button>
+        <p class="builder__chain-hint" id="chain-lift-hint" data-chain-hint></p>
+      </div>
       <section class="tool-panel__section builder__palette" role="radiogroup" aria-label="Next piece" data-palette></section>
       <section class="tool-panel__section" aria-label="Track actions">
         <div class="builder__actions">
@@ -175,6 +184,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <dt>${hint("previousPiece")} ${hint("nextPiece")}</dt><dd>Previous or next piece</dd>
         <dt><kbd>1</kbd>–<kbd>6</kbd></dt><dd>Jump to a group of pieces</dd>
         <dt>${hint("place")} <kbd>B</kbd></dt><dd>Place the piece</dd>
+        <dt>${hint("chain")}</dt><dd>Turn the chain lift on or off</dd>
         <dt>${hint("undo")}</dt><dd>Undo the last piece</dd>
         <dt>${hint("deleteMode")}</dt><dd>Delete track by clicking it</dd>
         <dt>${hint("close")} ${hint("test")}</dt><dd>Close the circuit, then test it</dd>
@@ -198,6 +208,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const coasterPrice = element<HTMLInputElement>("[data-coaster-price]");
   const coasterIncome = element("[data-coaster-income]");
   const deleteMode = element<HTMLInputElement>("[data-delete-mode]");
+  const chainSection = element("[data-chain-section]");
+  const chainToggle = element<HTMLButtonElement>("[data-chain-toggle]");
+  const chainState = element("[data-chain-state]");
+  const chainHint = element("[data-chain-hint]");
   const message = element("[data-message]");
   const track = element<HTMLOListElement>("[data-track]");
   const stamp = element("[data-stamp]");
@@ -290,6 +304,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   coasterPriceButtons.forEach((button) => button.addEventListener("click", () => {
     setCoasterPrice(Number(coasterPrice.value) + Number(button.dataset.coasterPriceStep));
   }));
+  chainToggle.addEventListener("click", () => { if (state) dispatch({ type: "construction-set-chain", enabled: !state.chain }); });
   deleteMode.addEventListener("change", () => dispatch({ type: "construction-delete-mode", enabled: deleteMode.checked }));
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
     element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => { if (state) select(steppedPiece(state.pieces, shapes, state.selected, attribute, step)); });
@@ -553,6 +568,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       modelSelect.disabled = next.active;
       container.dataset.selected = next.selected ?? "";
       container.dataset.chain = String(next.chain);
+      chainToggle.setAttribute("aria-pressed", String(next.chain));
+      chainState.textContent = next.chain ? "On" : "Off";
+      chainHint.textContent = next.chain
+        ? "New pieces are chain lifts. Hatched pieces cannot carry a chain."
+        : "Turn on to pull trains up the next pieces.";
       const event = constructionEvent(previous, next);
       if (event === "closed") closed = true;
       else if (previous && previous.track.length !== next.track.length) closed = false;
@@ -560,6 +580,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element("[data-ready]").hidden = !next.canClose;
       element("[data-next]").hidden = closed || next.canClose;
       palette.hidden = closed;
+      chainSection.hidden = closed;
       close.classList.toggle("tool-panel__action--primary", next.canClose);
       append.classList.toggle("tool-panel__action--primary", !next.canClose);
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");

@@ -67,7 +67,7 @@ describe("construction steppers", () => {
 
   it("orders turns from left to right and slopes from down to up, and clamps at the ends", () => {
     expect(stepperOptions(pieces, shapes, "Straight", "turn")).toEqual({ values: ["Left 90°", "Ahead"], index: 1 });
-    expect(stepperOptions(pieces, shapes, "Straight", "slope")).toEqual({ values: ["Gentle down", "Level", "Gentle up"], index: 1 });
+    expect(stepperOptions(pieces, shapes, "Straight", "slope")).toEqual({ values: ["Gentle down 27°", "Level", "Gentle up 27°"], index: 1 });
     expect(stepperOptions(pieces, shapes, "Straight", "bank")).toEqual({ values: ["Left", "Level", "Right"], index: 1 });
     expect(steppedPiece(pieces, shapes, "Straight", "turn", -1)).toBe("TurnSmallStandalone");
     expect(steppedPiece(pieces, shapes, "Straight", "turn", 1)).toBeUndefined();
@@ -76,7 +76,7 @@ describe("construction steppers", () => {
     expect(steppedPiece(pieces, shapes, "Straight", "slope", -1)).toBe("LevelToGentleDown");
   });
 
-  it("orders and labels 60-degree slope states outside the 45-degree slopes", () => {
+  it("orders 60-degree slope states outside the 45-degree slopes and labels every slope with its angle", () => {
     const sixtyDegreePieces = [
       piece("DownSixty", "slope", "DownSixty"),
       piece("DownSteep", "slope", "DownSteep"),
@@ -86,7 +86,7 @@ describe("construction steppers", () => {
     const sixtyDegreeShapes = new Map(sixtyDegreePieces.map(({ id }) => [id, shape(id, 0)]));
 
     expect(stepperOptions(sixtyDegreePieces, sixtyDegreeShapes, "DownSteep", "slope")).toEqual({
-      values: ["60° down", "Steep down", "Steep up", "60° up"],
+      values: ["Very steep down 60°", "Steep down 45°", "Steep up 45°", "Very steep up 60°"],
       index: 1,
     });
   });
@@ -115,6 +115,15 @@ describe("construction steppers", () => {
     expect(pieceDisplayName(descendingTurn)).toBe("Descending small left turn");
     expect(pieceDisplayName(levelTurn)).toBe("Small left turn");
     expect(pieceDisplayName(climbingSlope)).toBe("Gentle climb");
+  });
+
+  it("puts the climbing or descending word after Begin and End so the name reads as a phrase", () => {
+    const turn = (label: string, slope: string) => ({ ...piece("TurnSmallEntry", "turn", slope), label });
+
+    expect(pieceDisplayName(turn("Begin small left turn", "UpGentle"))).toBe("Begin climbing small left turn");
+    expect(pieceDisplayName(turn("End large right-banked right turn", "DownGentle"))).toBe("End descending large right-banked right turn");
+    expect(pieceDisplayName(turn("Standalone small left turn", "UpGentle"))).toBe("Climbing standalone small left turn");
+    expect(pieceDisplayName(turn("Begin small left turn", "Level"))).toBe("Begin small left turn");
   });
 
   it("prefers placeable pieces when several share the stepped value", () => {

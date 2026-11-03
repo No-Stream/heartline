@@ -150,7 +150,7 @@ test("shows and places visible slope-to-level choices on Velocity Viper @slow", 
   const upLevelOut = palette.locator('[data-piece="GentleUpToLevel"]');
   await expect(upLevelOut).toBeVisible();
   await expect(upLevelOut).toContainText(/level/i);
-  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Gentle up");
+  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Gentle up 27°");
   await page.getByRole("button", { name: "Slope down" }).click();
   await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", "GentleUpToLevel");
   await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");
@@ -162,7 +162,7 @@ test("shows and places visible slope-to-level choices on Velocity Viper @slow", 
   const downLevelOut = palette.locator('[data-piece="GentleDownToLevel"]');
   await expect(downLevelOut).toBeVisible();
   await expect(downLevelOut).toContainText(/level/i);
-  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Gentle down");
+  await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Gentle down 27°");
   await page.getByRole("button", { name: "Slope up" }).click();
   await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", "GentleDownToLevel");
   await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");

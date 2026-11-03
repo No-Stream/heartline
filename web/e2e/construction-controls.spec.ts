@@ -135,6 +135,28 @@ test("piece steppers and palette show the choice, and refused pieces explain why
   await expect(page.locator("[data-track] li").last()).toContainText("Straight");
 });
 
+test("the chain lift toggle asks for the opposite of the worker's chain state and shows that state @fast", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const chain = page.getByRole("button", { name: "Chain lift", exact: true });
+  await expect(chain).toHaveAttribute("aria-pressed", "false");
+  await expect(chain).toHaveAccessibleDescription("Turn on to pull trains up the next pieces.");
+  await chain.focus();
+  await page.keyboard.press("Enter");
+  // The fixture stands in for the worker, so nothing changes until a new state arrives.
+  await expect(chain).toHaveAttribute("aria-pressed", "false");
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ chain: true }));
+  await expect(chain).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("region", { name: "Coaster construction" })).toHaveAttribute("data-chain", "true");
+  await expect(chain).toHaveAccessibleDescription(/Hatched pieces cannot carry a chain/);
+  await chain.click();
+  await page.keyboard.press("h");
+  expect(await recorded(page)).toEqual([
+    { type: "construction-set-chain", enabled: true },
+    { type: "construction-set-chain", enabled: false },
+    { type: "chain-toggle" },
+  ]);
+});
+
 test("the whole build loop runs from the keyboard with the panel focused", async ({ page }) => {
   await page.goto(fixtureUrl);
   await page.getByRole("button", { name: "Undo last piece" }).focus();
