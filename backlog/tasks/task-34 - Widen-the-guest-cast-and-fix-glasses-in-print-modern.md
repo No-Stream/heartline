@@ -1,9 +1,10 @@
 ---
 id: TASK-34
 title: Widen the guest cast and fix glasses in print-modern
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 05:41'
+updated_date: '2026-11-03 05:46'
 labels:
   - art
 milestone: m-1

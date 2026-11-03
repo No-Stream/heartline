@@ -1,9 +1,10 @@
 ---
 id: TASK-11
 title: Add coaster testing overlay and friendly notes
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 05:46'
 labels:
   - coaster
   - interface
