@@ -1,10 +1,10 @@
 ---
 id: TASK-35
 title: Show Gus's moustache in every theme
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 05:56'
-updated_date: '2026-11-03 06:46'
+updated_date: '2026-11-03 07:06'
 labels:
   - art
 milestone: m-1
@@ -21,5 +21,11 @@ The face drawing only draws moustaches in the candy face style, the same bug gla
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Gus's moustache shows in every theme, and candy stays byte-identical
+- [x] #1 Gus's moustache shows in every theme, and candy stays byte-identical
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shared moustache drawing for non-candy styles; only Gus's front-facing frames changed.
+<!-- SECTION:FINAL_SUMMARY:END -->
