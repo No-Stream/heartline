@@ -18,7 +18,7 @@ const directionNames = ["North", "East", "South", "West"] as const;
 const price = { minimum: 0, maximum: 65535 };
 
 export interface FacilityArt { atlas: Atlas; images: Record<string, HTMLImageElement[]> }
-export interface FacilityPanel { message(text: string): void; update(facilities: readonly Facility[], revenue: string): void }
+export interface FacilityPanel { message(text: string): void; activate(): void; previewDirection(rotation: number | undefined): void; update(facilities: readonly Facility[], revenue: string): void }
 
 /** Rides without atlas artwork get a small drawing in the same inks as their in-world geometry. */
 function drawRide(context: CanvasRenderingContext2D, kind: "carousel" | "ferris_wheel", width: number, height: number, style: TrackStyle): void {
@@ -138,6 +138,7 @@ export function createFacilityPanel(
   const revenue = element("[data-revenue]");
   let selectedKind: FacilityKind = "entrance";
   let rotation = 0;
+  let hoveredRotation: number | undefined;
   let priceRowsKey = "";
 
   for (const tile of picker.querySelectorAll<HTMLButtonElement>("[data-kind]")) {
@@ -145,17 +146,19 @@ export function createFacilityPanel(
     tile.setAttribute("aria-label", facilityNames[tile.dataset.kind as FacilityKind]);
   }
   function renderSelection(): void {
+    const previewRotation = hoveredRotation ?? rotation;
     for (const tile of picker.querySelectorAll<HTMLButtonElement>("[data-kind]")) {
       const checked = tile.dataset.kind === selectedKind;
       tile.setAttribute("aria-checked", String(checked));
       tile.tabIndex = checked ? 0 : -1;
     }
-    element("[data-preview-art]").replaceChildren(facilityThumbnail(art, selectedKind, rotation, 64, 56));
-    element("[data-preview-name]").textContent = `${facilityNames[selectedKind]}, facing ${directionNames[rotation].toLowerCase()}`;
-    direction.textContent = directionNames[rotation];
+    element("[data-preview-art]").replaceChildren(facilityThumbnail(art, selectedKind, previewRotation, 64, 56));
+    element("[data-preview-name]").textContent = `${facilityNames[selectedKind]}, facing ${directionNames[previewRotation].toLowerCase()}`;
+    direction.textContent = directionNames[previewRotation];
   }
   function choose(kind: FacilityKind, focus: boolean): void {
     selectedKind = kind;
+    hoveredRotation = undefined;
     renderSelection();
     if (focus) element(`[data-kind="${kind}"]`).focus();
   }
@@ -173,7 +176,8 @@ export function createFacilityPanel(
     rotation = (rotation + Number(button.dataset.directionStep) + 4) % 4;
     renderSelection();
   }));
-  element("[data-place]").addEventListener("click", () => { select(selectedKind, rotation); message.textContent = "Choose a tile for the facility."; });
+  function activate(): void { select(selectedKind, rotation); message.textContent = "Choose a tile for the facility."; }
+  element("[data-place]").addEventListener("click", activate);
   element("[data-remove]").addEventListener("click", () => { remove(); message.textContent = "Choose a facility to remove."; });
   element("[data-cancel]").addEventListener("click", () => { cancel(); message.textContent = "Facility selection cancelled."; });
   renderSelection();
@@ -209,6 +213,8 @@ export function createFacilityPanel(
 
   return {
     message(text) { message.textContent = text; },
+    activate,
+    previewDirection(rotation) { hoveredRotation = rotation; renderSelection(); },
     update(facilities, nextRevenue) {
       revenue.textContent = nextRevenue;
       const nextRowsKey = facilities.map(({ id, kind, rotation: facing }) => `${id}:${kind}:${facing}`).join("|");

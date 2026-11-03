@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { canvasSize, moveOverCanvas, openTool } from "./game-page";
+import { canvasSize, canvasToPage, moveOverCanvas, openTool } from "./game-page";
 
 const panels = {
   Coaster: "Coaster construction",
@@ -77,8 +77,8 @@ test.describe("tool switching", () => {
     await openTool(page, "Paths");
     await page.getByRole("button", { name: "Build paths" }).click();
     await openTool(page, "Landscape");
+    await expect(page.locator("[data-paths] p[role='status']")).toHaveText("Path selection cancelled.");
     await openTool(page, "Paths");
-    await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path selection cancelled.");
 
     await openTool(page, "Coaster");
     await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
@@ -87,6 +87,51 @@ test.describe("tool switching", () => {
     await expect(page.locator("canvas")).toHaveAttribute("data-station-preview", /^50,50,/);
     await openTool(page, "Facilities");
     await expect(page.locator("canvas")).toHaveAttribute("data-station-preview", "");
+  });
+
+  test("toolbar selection activates each tool's default map action", async ({ page }) => {
+    test.setTimeout(120_000);
+    await startGame(page);
+    await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+    await openTool(page, "Paths");
+    const pathStatus = page.getByRole("region", { name: "Paths" }).getByRole("status");
+    await expect(pathStatus).toHaveText("Drag between tiles to build a path.");
+
+    const pathPoints = await page.evaluate(() => [
+      window.gameTest.project({ x: 48.5, y: 51.5, z: 2 }),
+      window.gameTest.project({ x: 48.5, y: 47.5, z: 2 }),
+    ]);
+    await moveOverCanvas(page, pathPoints[0]);
+    await expect.poll(() => page.evaluate(() => window.gameTest.pathPreview())).toHaveLength(1);
+    const pathStart = await canvasToPage(page, pathPoints[0]);
+    await page.mouse.move(pathStart.x, pathStart.y);
+    await page.mouse.down();
+    const pathEnd = await canvasToPage(page, pathPoints[1]);
+    await page.mouse.move(pathEnd.x, pathEnd.y, { steps: 8 });
+    await page.mouse.up();
+    await expect(pathStatus).toHaveText("Path built.");
+    await expect.poll(() => page.evaluate(() => window.gameTest.paths().length)).toBeGreaterThan(0);
+
+    await openTool(page, "Landscape");
+    await expect(page.getByRole("region", { name: "Landscaping" }).locator("p[role='status']")).toHaveText("Raise tiles active. Drag over the park to apply it.");
+    const landscapePoint = await page.evaluate(() => window.gameTest.project({ x: 47.5, y: 49.5, z: 2 }));
+    const landscapeTarget = await canvasToPage(page, landscapePoint);
+    await page.mouse.click(landscapeTarget.x, landscapeTarget.y);
+    const landscapeStatus = page.locator("[data-landscaping] p[role='status']");
+    await expect(landscapeStatus).not.toHaveText("Raise tiles active. Drag over the park to apply it.");
+
+    await openTool(page, "Scenery");
+    const sceneryPoint = await page.evaluate(() => window.gameTest.project({ x: 52.5, y: 49.5, z: 2 }));
+    const sceneryTarget = await canvasToPage(page, sceneryPoint);
+    await page.mouse.click(sceneryTarget.x, sceneryTarget.y);
+    await expect(page.getByRole("region", { name: "Scenery" }).getByRole("status")).not.toBeEmpty();
+
+    await openTool(page, "Facilities");
+    await expect(page.getByRole("region", { name: "Facilities" }).getByRole("status")).toHaveText("Choose a tile for the facility.");
+    const facilityPoint = await page.evaluate(() => window.gameTest.project({ x: 53.5, y: 51.5, z: 2 }));
+    const facilityTarget = await canvasToPage(page, facilityPoint);
+    await page.mouse.click(facilityTarget.x, facilityTarget.y);
+    await expect(page.getByRole("region", { name: "Facilities" }).getByRole("status")).not.toHaveText("Choose a tile for the facility.");
   });
 
   test("ignores coaster keys unless the coaster tool is open", async ({ page }) => {

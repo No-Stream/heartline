@@ -9,7 +9,7 @@ export function createPathPanel(
   build: (selection: PathSelection) => void,
   remove: () => void,
   cancel: () => void,
-): { message(text: string): void } {
+): { message(text: string): void; activate(): void } {
   container.classList.add("tool-panel", "path-panel");
   container.innerHTML = `<header class="tool-panel__header">
       <div><p class="tool-panel__eyebrow">Park paths</p><h2>Paths</h2></div>
@@ -28,11 +28,12 @@ export function createPathPanel(
   const kind = container.querySelector<HTMLSelectElement>('[aria-label="Path type"]')!;
   const style = container.querySelector<HTMLSelectElement>('[aria-label="Path style"]')!;
   const status = container.querySelector<HTMLElement>('[role="status"]')!;
-  container.querySelector("[data-build]")!.addEventListener("click", () => {
+  function activate(): void {
     build({ kind: kind.value as PathKind, style: Number(style.value) });
     status.textContent = "Drag between tiles to build a path.";
-  });
+  }
+  container.querySelector("[data-build]")!.addEventListener("click", activate);
   container.querySelector("[data-remove]")!.addEventListener("click", () => { remove(); status.textContent = "Choose a path to remove."; });
   container.querySelector("[data-cancel]")!.addEventListener("click", () => { cancel(); status.textContent = "Path selection cancelled."; });
-  return { message(text) { status.textContent = text; } };
+  return { message(text) { status.textContent = text; }, activate };
 }

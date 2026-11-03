@@ -27,7 +27,8 @@ export interface GameTest {
   guests(): readonly WorldSprite[];
   riders(): readonly { id: string; car: number; seat: number; x: number; y: number; z: number }[];
   facilities(): readonly Facility[];
-  paths(): { x: number; y: number; z: number; slope: number; kind: number; style: number }[];
+  paths(): { x: number; y: number; z: number; slope: number; kind: number; style: number; edges: number }[];
+  pathPreview(): readonly { x: number; y: number; edges: number }[];
   carvedSpans(): readonly [number, number, number, number][];
   requestGuestDetail(id: string): void;
   guestDetail(): GuestDetail | null;

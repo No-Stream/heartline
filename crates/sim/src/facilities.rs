@@ -32,6 +32,41 @@ impl FacilityKind {
     }
 }
 
+/// Finds the first facing whose complete entrance has flat path access.
+pub fn facility_access_direction(
+    world: &World,
+    kind: FacilityKind,
+    position: Position,
+    preferred: Direction,
+) -> Option<Direction> {
+    [
+        preferred,
+        Direction::North,
+        Direction::East,
+        Direction::South,
+        Direction::West,
+    ]
+    .into_iter()
+    .find(|&direction| {
+        let building = Building {
+            id: 0,
+            kind,
+            position,
+            direction,
+            price: 0,
+        };
+        let access_tiles = if matches!(kind, FacilityKind::Carousel | FacilityKind::FerrisWheel) {
+            2
+        } else {
+            1
+        };
+        (0..access_tiles).all(|offset| {
+            access_position(world, &building, offset)
+                .is_some_and(|access| world.path(access).is_some_and(|path| path.slope.is_none()))
+        })
+    })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Building {
     pub id: u32,
@@ -648,6 +683,88 @@ mod tests {
             slope: None,
         });
         world
+    }
+
+    #[test]
+    fn access_direction_prefers_requested_facing_then_cardinal_order() {
+        let mut world = World::new(
+            8,
+            8,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        world.place_path(Path {
+            position: Position {
+                x: 3,
+                y: 2,
+                height: 0,
+            },
+            slope: None,
+        });
+        let position = Position {
+            x: 3,
+            y: 3,
+            height: 0,
+        };
+        assert_eq!(
+            facility_access_direction(&world, FacilityKind::Food, position, Direction::South),
+            Some(Direction::North)
+        );
+        world.place_path(Path {
+            position: Position {
+                x: 3,
+                y: 5,
+                height: 0,
+            },
+            slope: None,
+        });
+        assert_eq!(
+            facility_access_direction(&world, FacilityKind::Food, position, Direction::South),
+            Some(Direction::South)
+        );
+    }
+
+    #[test]
+    fn ride_access_direction_requires_both_flat_access_tiles() {
+        let mut world = World::new(
+            8,
+            8,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        world.place_path(Path {
+            position: Position {
+                x: 3,
+                y: 2,
+                height: 0,
+            },
+            slope: None,
+        });
+        let position = Position {
+            x: 3,
+            y: 3,
+            height: 0,
+        };
+        assert_eq!(
+            facility_access_direction(&world, FacilityKind::Carousel, position, Direction::North),
+            None
+        );
+        world.place_path(Path {
+            position: Position {
+                x: 4,
+                y: 2,
+                height: 0,
+            },
+            slope: None,
+        });
+        assert_eq!(
+            facility_access_direction(&world, FacilityKind::Carousel, position, Direction::North),
+            Some(Direction::North)
+        );
     }
 
     #[test]

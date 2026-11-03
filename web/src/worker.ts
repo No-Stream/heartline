@@ -20,7 +20,7 @@ type PathAction =
   | { readonly type: "path-preview"; readonly requestId?: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
-type WorkerAction = SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
+type WorkerAction = SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
 const workerName = (self as unknown as { name?: string }).name ?? "";
@@ -225,10 +225,19 @@ workerScope.addEventListener("message", (event) => {
       sendFacilities(removed ? "Facility removed." : simulation.facility_message());
       return;
     }
+    if (action.type === "facility-access-preview") {
+      const rotation = simulation.facility_access_rotation(action.kind, action.x, action.y, action.height, action.rotation);
+      workerScope.postMessage({ type: "facility-access-preview", requestId: action.requestId, rotation: rotation < 0 ? undefined : rotation });
+      return;
+    }
     if (action.type === "facility-place") {
-      const placed = action.height === undefined
-        ? simulation.place_facility(action.kind, action.x, action.y, action.rotation)
-        : simulation.place_facility_at(action.kind, action.x, action.y, action.rotation, action.height);
+      let placed: boolean;
+      if (action.height === undefined) placed = simulation.place_facility(action.kind, action.x, action.y, action.rotation);
+      else {
+        const inferredRotation = simulation.facility_access_rotation(action.kind, action.x, action.y, action.height, action.rotation);
+        const rotation = inferredRotation < 0 ? action.rotation : inferredRotation;
+        placed = simulation.place_facility_at(action.kind, action.x, action.y, rotation, action.height);
+      }
       if (placed) sendWorld();
       sendFacilities(placed ? "Facility placed." : simulation.facility_message(), placed);
       return;

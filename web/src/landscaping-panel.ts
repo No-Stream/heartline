@@ -27,6 +27,7 @@ export function createLandscapingPanel(
   dispatch: (action: InputAction) => void,
 ): {
   message(text: string): void;
+  activate(): void;
   setUndergroundView(enabled: boolean, level?: number): void;
 } {
   container.classList.add("tool-panel", "landscaping");
@@ -80,7 +81,7 @@ export function createLandscapingPanel(
     });
   }
 
-  container.querySelector<HTMLButtonElement>("[data-landscape-apply]")!.addEventListener("click", () => {
+  function activate(): void {
     try {
       const selection: LandscapingSelection = {
         tool: selectedTool,
@@ -96,7 +97,8 @@ export function createLandscapingPanel(
       if (!(error instanceof RangeError)) throw error;
       status.textContent = error.message;
     }
-  });
+  }
+  container.querySelector<HTMLButtonElement>("[data-landscape-apply]")!.addEventListener("click", activate);
 
   container.querySelector<HTMLButtonElement>("[data-landscape-cancel]")!.addEventListener("click", () => {
     dispatch({ type: "landscaping-cancel" });
@@ -119,6 +121,7 @@ export function createLandscapingPanel(
 
   return {
     message(text: string): void { status.textContent = text; },
+    activate,
     setUndergroundView(enabled: boolean, nextLevel?: number): void {
       undergroundEnabled = enabled;
       undergroundButton.textContent = undergroundEnabled ? "Show surface" : "Show underground";

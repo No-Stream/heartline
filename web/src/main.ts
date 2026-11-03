@@ -143,6 +143,7 @@ const guestPanel = createGuestPanel(gameCanvas, atlas.themeStyle, {
 let facilities: Facility[] = [];
 let facilityPanelSnapshot = "";
 let facilityPlacement: { kind: FacilityKind; rotation: number } | undefined;
+let facilityPreviewRequestId = 0;
 let facilityRemoval = false;
 let advanceTicksComplete: (() => void) | undefined;
 let advanceBlockAnalysisComplete: (() => void) | undefined;
@@ -150,6 +151,7 @@ const facilityContainer = document.querySelector<HTMLElement>("[data-facilities]
 if (!facilityContainer) throw new Error("Facility panel is missing");
 const facilityPanel = createFacilityPanel(facilityContainer, { atlas, images }, (kind, rotation) => {
   openTool("facilities");
+  facilityPreviewRequestId += 1;
   facilityPlacement = { kind, rotation };
   facilityRemoval = false;
 }, () => { openTool("facilities"); facilityRemoval = true; facilityPlacement = undefined; },
@@ -250,7 +252,9 @@ function endInputModes(): void {
   if (sceneryTool.state().mode !== "inactive") sceneryTool.cancel();
   if (landscapingTool.state().active) landscapingTool.cancel();
   if (pathTool.state().mode !== "inactive") pathTool.cancel();
+  facilityPreviewRequestId += 1;
   facilityPlacement = undefined; facilityRemoval = false;
+  facilityPanel.previewDirection(undefined);
   deleteMode = false; panel.setDeleteMode(false);
   if (stationPlacement) dispatch({ type: "station-placement", enabled: false });
 }
@@ -266,6 +270,10 @@ function openTool(tool: Tool): void {
   toolDock.scrollTop = 0;
   // Resize now rather than on the next observer callback, so the world is projected onto the new canvas size at once.
   fitCanvas();
+  if (tool === "paths") pathPanel.activate();
+  else if (tool === "landscape") landscapingPanel.activate();
+  else if (tool === "scenery") sceneryPanel.activate();
+  else if (tool === "facilities") facilityPanel.activate();
 }
 let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
@@ -281,10 +289,14 @@ const gameTest: GameTest = {
     const paths = [];
     for (let offset = 0; offset < world.paths.length; offset += 4) {
       const [x, y, z, slope] = world.paths.subarray(offset, offset + 4);
-      const [kind, style] = world.pathMetadata.subarray(offset / 4 * 3, offset / 4 * 3 + 2);
-      paths.push({ x, y, z, slope, kind, style });
+      const [kind, style, edges] = world.pathMetadata.subarray(offset / 4 * 3, offset / 4 * 3 + 3);
+      paths.push({ x, y, z, slope, kind, style, edges });
     }
     return paths;
+  },
+  pathPreview() {
+    const preview = pathTool.state().preview;
+    return preview ? decodePathPreview(preview.paths).map(({ x, y, edges }) => ({ x, y, edges })) : [];
   },
   carvedSpans() {
     if (!world) return [];
@@ -398,9 +410,15 @@ function dispatch(action: InputAction): void {
     if (station) station.z += action.height - stationHeight;
     stationHeight = action.height;
     gameTest.ready = false;
-  } else if (action.type === "hover") {
+  } else if (stationPlacement && action.type === "hover") {
     if (stationPlacement && action.position) updateStationPreview(action.position);
     else if (stationPlacement && !station?.locked) { station = undefined; gameCanvas.dataset.stationPreview = ""; gameTest.ready = false; }
+  } else if (facilityPlacement && action.type === "hover") {
+    const surface = action.position ? renderer.pickSurface(action.position.x, action.position.y) : null;
+    const requestId = ++facilityPreviewRequestId;
+    if (surface && (surface.kind === "terrain" || surface.kind === "carved-floor")) {
+      worker.postMessage({ type: "facility-access-preview", requestId, kind: facilityPlacement.kind, x: surface.x, y: surface.y, height: Math.round(surface.height), rotation: facilityPlacement.rotation });
+    } else facilityPanel.previewDirection(undefined);
   } else if (action.type === "select" && facilityRemoval) {
     const selection = renderer.pick(action.position.x, action.position.y);
     const match = selection && "id" in selection ? /^facility-(\d+)$/.exec(selection.id) : null;
@@ -408,7 +426,10 @@ function dispatch(action: InputAction): void {
     else facilityPanel.message("Choose a facility to remove.");
   } else if (action.type === "select" && facilityPlacement) {
     const selection = renderer.pick(action.position.x, action.position.y);
-    if (selection?.kind === "terrain" || selection?.kind === "carved-floor") worker.postMessage({ type: "facility-place", ...facilityPlacement, x: selection.x, y: selection.y, ...(selection.kind === "carved-floor" ? { height: Math.round(selection.height) } : {}) });
+    if (selection?.kind === "terrain" || selection?.kind === "carved-floor") {
+      const height = Math.round(selection.height);
+      worker.postMessage({ type: "facility-place", ...facilityPlacement, x: selection.x, y: selection.y, height });
+    }
     else facilityPanel.message("Choose a flat terrain tile.");
   } else if (action.type === "select" && stationPlacement) {
     updateStationPreview(action.position);
@@ -483,9 +504,11 @@ const worker = new Worker(new URL("./worker.ts", import.meta.url), {
   type: "module",
   name: frozen ? `theme-park-test${manualBlockAnalysis ? "-manual" : ""}${testAgents === null ? "" : `:${testAgents}`}` : "theme-park",
 });
-worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
+worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facility-access-preview"; requestId: number; rotation: number | undefined } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
   const message = event.data;
-  if (message.type === "scenery") {
+  if (message.type === "facility-access-preview") {
+    if (facilityPlacement && message.requestId === facilityPreviewRequestId) facilityPanel.previewDirection(message.rotation);
+  } else if (message.type === "scenery") {
     scenery = message.scenery;
     if (message.message) sceneryTool.receive(message.message);
     gameTest.ready = false;

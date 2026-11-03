@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::facilities::{
     FacilityKind, ParkFacilities, PathOpening, coaster_access_openings, coaster_facility,
-    station_positions, validate_facility_path_access,
+    facility_access_direction, station_positions, validate_facility_path_access,
 };
 use theme_park_sim::guest_behavior::{Facility, RidePhase};
 use theme_park_sim::guests::{AgeGroup, GuestId};
@@ -294,6 +294,43 @@ impl WasmSimulation {
                 ]
             })
             .collect()
+    }
+
+    pub fn facility_access_rotation(
+        &self,
+        kind: &str,
+        x: u16,
+        y: u16,
+        height: i16,
+        preferred: u8,
+    ) -> i32 {
+        let kind = match kind {
+            "entrance" => FacilityKind::Entrance,
+            "food_stall" => FacilityKind::Food,
+            "drink_stall" => FacilityKind::Drink,
+            "souvenir" => FacilityKind::Souvenir,
+            "restroom" => FacilityKind::Restroom,
+            "carousel" => FacilityKind::Carousel,
+            "ferris_wheel" => FacilityKind::FerrisWheel,
+            _ => return -1,
+        };
+        let directions = [
+            Direction::North,
+            Direction::East,
+            Direction::South,
+            Direction::West,
+        ];
+        let Some(preferred) = directions.get(usize::from(preferred)).copied() else {
+            return -1;
+        };
+        facility_access_direction(&self.world, kind, Position { x, y, height }, preferred)
+            .map(|direction| match direction {
+                Direction::North => 0,
+                Direction::East => 1,
+                Direction::South => 2,
+                Direction::West => 3,
+            })
+            .unwrap_or(-1)
     }
 
     /// Preview entries: x, y, height, slope, kind, style, refusal, path edges, facility openings.

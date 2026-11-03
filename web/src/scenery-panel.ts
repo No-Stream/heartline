@@ -33,9 +33,10 @@ export function createSceneryPanel(container: HTMLElement, art: FacilityArt, pla
     button.addEventListener("click", () => { selected = kind; update(); });
   }
   for (const button of container.querySelectorAll<HTMLButtonElement>("[data-turn]")) button.addEventListener("click", () => { rotation = (rotation + Number(button.dataset.turn) + 4) % 4; update(); });
-  container.querySelector<HTMLButtonElement>("[data-place]")!.addEventListener("click", () => { place(selected, rotation); });
+  function activate(): void { place(selected, rotation); }
+  container.querySelector<HTMLButtonElement>("[data-place]")!.addEventListener("click", activate);
   container.querySelector<HTMLButtonElement>("[data-remove]")!.addEventListener("click", remove);
   container.querySelector<HTMLButtonElement>("[data-cancel]")!.addEventListener("click", cancel);
   update();
-  return { message(text: string) { status.textContent = text; } };
+  return { message(text: string) { status.textContent = text; }, activate };
 }
