@@ -1,9 +1,10 @@
 ---
 id: TASK-8
 title: Simulate train physics along track
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 02:43'
 labels:
   - coaster
   - simulation
@@ -24,7 +25,13 @@ Real forces at a fixed step: gravity, rolling and air drag, lifts, launches and 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Tests confirm energy conservation with drag off and sensible values against known ride figures
-- [ ] #2 A train completes a test circuit deterministically
-- [ ] #3 A stalled train rolls back and is recovered without penalty, and trains never crash
+- [x] #1 Tests confirm energy conservation with drag off and sensible values against known ride figures
+- [x] #2 A train completes a test circuit deterministically
+- [x] #3 A stalled train rolls back and is recovered without penalty, and trains never crash
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+200 Hz velocity Verlet, rider-frame g-forces, lift, launch, brakes, station, rollback recovery. Found that pieces end at zero curvature, so lateral g drops from 1.47 g to 0 at joins between back-to-back turns; track fix dispatched separately.
+<!-- SECTION:FINAL_SUMMARY:END -->
