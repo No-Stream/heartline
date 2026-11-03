@@ -14,6 +14,7 @@ use crate::track::{
 };
 use crate::world::World;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 #[cfg(test)]
@@ -167,7 +168,9 @@ impl Construction {
         }
         let mut choices = Vec::new();
         let mut available_choices: Vec<(Piece, PieceChoice)> = Vec::new();
-        for template in templates() {
+        let mut seen_ids = HashSet::new();
+        for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
+            let template = template_for(base.id, self.end());
             let placed = self.model_placeable_geometry(template);
             let result = if self.closed {
                 Err(ConstructionError::Closed)
@@ -232,10 +235,7 @@ impl Construction {
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Result<(), ConstructionError> {
-        let template = templates()
-            .iter()
-            .find(|piece| piece.id == id)
-            .expect("catalog contains every piece id");
+        let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
         self.validate_piece(&piece, world, obstacles).map(|_| ())
     }
@@ -454,10 +454,7 @@ impl Construction {
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Result<(), ConstructionError> {
-        let template = templates()
-            .iter()
-            .find(|piece| piece.id == id)
-            .expect("catalog contains every piece id");
+        let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
         let supports = self.validate_piece(&piece, world, obstacles)?;
         if self.disconnected.is_empty() {
@@ -740,4 +737,24 @@ pub fn track_support_obstacles(
 fn templates() -> &'static [Piece] {
     static CATALOG: OnceLock<Vec<Piece>> = OnceLock::new();
     CATALOG.get_or_init(catalog)
+}
+
+fn template_for(id: PieceId, end: TrackState) -> &'static Piece {
+    let mut matching = templates().iter().filter(|piece| piece.id == id);
+    let first = matching.next().expect("catalog contains every piece id");
+    if first.entry.slope == end.slope
+        && first.entry.bank == end.bank
+        && first.entry.horizontal_curvature == end.horizontal_curvature
+        && first.entry.vertical_curvature == end.vertical_curvature
+    {
+        return first;
+    }
+    matching
+        .find(|piece| {
+            piece.entry.slope == end.slope
+                && piece.entry.bank == end.bank
+                && piece.entry.horizontal_curvature == end.horizontal_curvature
+                && piece.entry.vertical_curvature == end.vertical_curvature
+        })
+        .unwrap_or(first)
 }

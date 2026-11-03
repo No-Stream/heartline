@@ -4,7 +4,7 @@ import { constructionEvent, createConstructionEffects } from "./construction-eff
 
 const rails = new Float32Array([0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 2, 1, 1, 0, 1, 0, 0, 0, 1]);
 const state = (update: Partial<ConstructionState>): ConstructionState => ({
-  type: "construction-state", active: true, chain: false, pieces: [], selected: "Straight", track: [{ id: 0, label: "Station" }],
+  type: "construction-state", active: true, chain: false, pieces: [], selected: "Straight", track: [{ id: 0, label: "Station", name: "Station", group: "special", slope: "Level" }],
   canAppend: true, canClose: false, canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [], message: "",
   blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
   trainCount: 1, placedRails: rails, railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
@@ -17,7 +17,7 @@ const camera = { centerX: 1, centerY: 1, zoom: 1, rotation: 0 as const };
 describe("construction effects", () => {
   it("recognises a placed piece and a closed circuit, and ignores undo and refusals", () => {
     const one = state({});
-    const two = state({ track: [...one.track, { id: 1, label: "Straight" }] });
+    const two = state({ track: [...one.track, { id: 1, label: "Straight", name: "Straight", group: "straight", slope: "Level" }] });
     expect(constructionEvent(undefined, one)).toBeUndefined();
     expect(constructionEvent(one, two)).toBe("placed");
     expect(constructionEvent(two, one)).toBeUndefined();
@@ -27,7 +27,10 @@ describe("construction effects", () => {
 
   it("draws a short-lived burst after a placement and confetti after closing", () => {
     const effects = createConstructionEffects(style);
-    effects.observe(state({}), state({ track: [{ id: 0, label: "Station" }, { id: 1, label: "Straight" }] }), 1000);
+    effects.observe(state({}), state({ track: [
+      { id: 0, label: "Station", name: "Station", group: "special", slope: "Level" },
+      { id: 1, label: "Straight", name: "Straight", group: "straight", slope: "Level" },
+    ] }), 1000);
     expect(effects.active(1100)).toBe(true);
     expect(effects.quads(1100, camera, viewport).some((quad) => quad.id.startsWith("effect-snap-"))).toBe(true);
     expect(effects.active(2000)).toBe(false);

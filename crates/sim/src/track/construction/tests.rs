@@ -934,3 +934,34 @@ fn elevated_crossing_rejects_rail_through_existing_train_space() {
     );
     assert_eq!(construction.pieces().len(), previous_count);
 }
+
+#[test]
+fn climbing_turn_choices_validate_and_append_the_matching_slope() {
+    let world = world();
+    for slope in [Slope::UpGentle, Slope::DownGentle] {
+        let mut construction = Construction::new(
+            TrackState {
+                z: 30,
+                slope,
+                ..start()
+            },
+            hybrid_model(),
+        );
+        let choices = construction.choices(&world, &[]);
+        assert_eq!(
+            choices
+                .iter()
+                .filter(|choice| choice.id == PieceId::TurnSmallStandalone)
+                .count(),
+            1
+        );
+        assert_eq!(
+            construction.validate(PieceId::TurnSmallStandalone, &world, &[]),
+            Ok(())
+        );
+        construction
+            .append(PieceId::TurnSmallStandalone, &world, &[])
+            .unwrap();
+        assert_eq!(construction.end().slope, slope);
+    }
+}

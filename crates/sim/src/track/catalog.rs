@@ -752,5 +752,59 @@ pub fn catalog() -> Vec<Piece> {
         piece.rebuild_arc();
         pieces.push(piece);
     }
+    let turn_ids = [
+        TurnSmallEntry,
+        TurnSmall,
+        TurnSmallExit,
+        TurnSmallStandalone,
+        TurnSmallRightEntry,
+        TurnSmallRight,
+        TurnSmallRightExit,
+        TurnSmallRightStandalone,
+        TurnLargeEntry,
+        TurnLarge,
+        TurnLargeExit,
+        TurnLargeStandalone,
+        TurnLargeRightEntry,
+        TurnLargeRight,
+        TurnLargeRightExit,
+        TurnLargeRightStandalone,
+        BankedTurnEntry,
+        BankedTurn,
+        BankedTurnExit,
+        BankedTurnStandalone,
+        SmallRightBankedTurnEntry,
+        SmallRightBankedTurn,
+        SmallRightBankedTurnExit,
+        SmallRightBankedTurnStandalone,
+        LargeLeftBankedTurnEntry,
+        LargeLeftBankedTurn,
+        LargeLeftBankedTurnExit,
+        LargeLeftBankedTurnStandalone,
+        LargeRightBankedTurnEntry,
+        LargeRightBankedTurn,
+        LargeRightBankedTurnExit,
+        LargeRightBankedTurnStandalone,
+    ];
+    let sloped_turns: Vec<_> = pieces
+        .iter()
+        .filter(|piece| turn_ids.contains(&piece.id))
+        .flat_map(|piece| {
+            [UpGentle, DownGentle].into_iter().map(move |slope| {
+                let mut turn = piece.clone();
+                turn.entry.slope = slope;
+                turn.exit.slope = slope;
+                let rise = match turn.exit.x {
+                    8 => 6,
+                    16 => 12,
+                    _ => unreachable!("turn template has an unexpected radius"),
+                };
+                turn.exit.z = if slope == UpGentle { rise } else { -rise };
+                turn.rebuild_arc();
+                turn
+            })
+        })
+        .collect();
+    pieces.extend(sloped_turns);
     pieces
 }

@@ -66,6 +66,7 @@ pub struct CoasterModel {
     pub name: &'static str,
     pub description: &'static str,
     pub allowed_pieces: Vec<PieceId>,
+    pub sloped_turn_slopes: Vec<Slope>,
     pub minimum_radius_metres: f64,
     pub minimum_height_cm: u16,
     pub allowed_inversions: Vec<Inversion>,
@@ -84,6 +85,10 @@ impl CoasterModel {
         hash.write_len(self.allowed_pieces.len());
         for piece in &self.allowed_pieces {
             hash.write_u8(*piece as u8);
+        }
+        hash.write_len(self.sloped_turn_slopes.len());
+        for slope in &self.sloped_turn_slopes {
+            hash.write_u8(*slope as u8);
         }
         hash.write_f64(self.minimum_radius_metres);
         hash.write_u16(self.minimum_height_cm);
@@ -107,6 +112,9 @@ impl CoasterModel {
 
     pub fn allows_piece(&self, piece: &Piece) -> bool {
         self.allowed_pieces.contains(&piece.id)
+            && (piece.entry.heading == piece.exit.heading
+                || piece.entry.slope == Slope::Level
+                || self.sloped_turn_slopes.contains(&piece.entry.slope))
             && piece.inversion.is_none_or(|inversion| {
                 self.allowed_inversions.contains(&inversion)
                     && (self.track_material != Material::Wood
@@ -218,6 +226,7 @@ pub fn wooden_twister_model() -> CoasterModel {
                 TightTwisterRight,
             ]
         },
+        sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 8.0,
         minimum_height_cm: 122,
         allowed_inversions: vec![Inversion::VerticalLoop],
@@ -318,6 +327,7 @@ pub fn hybrid_model() -> CoasterModel {
                 HybridOverbankRight,
             ]
         },
+        sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 5.0,
         minimum_height_cm: 122,
         allowed_inversions: vec![
@@ -426,6 +436,7 @@ pub fn multi_launch_model() -> CoasterModel {
                 AirtimeHill,
             ]
         },
+        sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 5.0,
         minimum_height_cm: 132,
         allowed_inversions: vec![

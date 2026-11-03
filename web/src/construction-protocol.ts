@@ -86,7 +86,14 @@ export interface ConstructionState {
   readonly chain: boolean;
   readonly pieces: readonly ConstructionPiece[];
   readonly selected: string | null;
-  readonly track: readonly { readonly id: number; readonly label: string }[];
+  readonly track: readonly {
+    readonly id: number;
+    /** Piece id used to find its icon geometry. */
+    readonly label: string;
+    readonly name: string;
+    readonly group: string;
+    readonly slope: string;
+  }[];
   readonly canAppend: boolean;
   readonly canClose: boolean;
   readonly canTest: boolean;

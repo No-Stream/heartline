@@ -1103,3 +1103,56 @@ fn coaster_run_waits_for_a_block_and_resumes_without_recovery() {
     assert!(outcome.reports[0].completed);
     assert!(!outcome.recovered);
 }
+
+#[test]
+fn climbing_small_turn_vertical_g_matches_straight_climb() {
+    let pieces = catalog();
+    let straight = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::GentleUp)
+        .unwrap();
+    let baseline = rider_g(straight, straight.length() / 2.0, 15.0, 0.0).vertical;
+    for piece in pieces.iter().filter(|piece| {
+        piece.id == PieceId::TurnSmallStandalone
+            && piece.entry.slope == crate::track::Slope::UpGentle
+    }) {
+        for index in 0..=100 {
+            let vertical =
+                rider_g(piece, piece.length() * f64::from(index) / 100.0, 15.0, 0.0).vertical;
+            assert!(
+                (vertical - baseline).abs() <= 0.2,
+                "{}: {vertical} vs {baseline}",
+                piece.name
+            );
+        }
+        return;
+    }
+    panic!("missing climbing small turn");
+}
+
+#[test]
+fn climbing_large_turn_grid_rise_minimizes_midpoint_vertical_force() {
+    let pieces = catalog();
+    let straight = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::GentleUp)
+        .unwrap();
+    let baseline = rider_g(straight, straight.length() / 2.0, 15.0, 0.0).vertical;
+    let turn = pieces
+        .iter()
+        .find(|piece| {
+            piece.id == PieceId::TurnLarge && piece.entry.slope == crate::track::Slope::UpGentle
+        })
+        .unwrap();
+    let mut alternative = turn.clone();
+    alternative.exit.z = 13;
+    alternative.rebuild_arc();
+    let deviation =
+        |piece: &Piece| (rider_g(piece, piece.length() / 2.0, 15.0, 0.0).vertical - baseline).abs();
+    assert!(
+        deviation(turn) <= deviation(&alternative),
+        "chosen {}, alternative {}",
+        deviation(turn),
+        deviation(&alternative)
+    );
+}

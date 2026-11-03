@@ -38,7 +38,7 @@ use theme_park_sim::track::supports::{
     generate_steel_columns, generate_wooden_lattice,
 };
 use theme_park_sim::track::{
-    Heading, Material, Piece, PieceId, PieceKind, SupportStyle, TrackSample, TrackState,
+    Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle, TrackSample, TrackState,
     TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{
@@ -213,24 +213,23 @@ impl WasmSimulation {
     }
 }
 
-fn piece_group(id: PieceId) -> &'static str {
-    let name = format!("{id:?}");
-    if name.contains("Bank") {
-        "bank"
-    } else if name.contains("Turn") {
-        "turn"
-    } else if name.contains("Loop")
-        || name.contains("Roll")
-        || name.contains("Corkscrew")
-        || name.contains("Inversion")
-    {
+fn piece_group(piece: &Piece) -> &'static str {
+    if piece.inversion.is_some() {
         "inversion"
-    } else if name.contains("Up") || name.contains("Down") || name.contains("Vertical") {
+    } else if piece.entry.heading != piece.exit.heading {
+        "turn"
+    } else if piece.entry.slope != Slope::Level || piece.exit.slope != Slope::Level {
         "slope"
-    } else if name == "Straight" {
-        "straight"
-    } else {
+    } else if piece.entry.bank != piece.exit.bank {
+        "bank"
+    } else if matches!(
+        piece.kind,
+        PieceKind::Station | PieceKind::Brakes | PieceKind::Launch
+    ) || piece.entry.z != piece.exit.z
+    {
         "special"
+    } else {
+        "straight"
     }
 }
 

@@ -39,6 +39,53 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
 use super::WasmSimulation;
 
 #[test]
+fn piece_groups_follow_track_geometry_instead_of_piece_names() {
+    let catalog = super::catalog();
+    let expected_groups = [
+        (super::PieceId::Straight, "straight"),
+        (super::PieceId::TurnSmallStandalone, "turn"),
+        (super::PieceId::GentleUp, "slope"),
+        (super::PieceId::BankLeft, "bank"),
+        (super::PieceId::Loop, "inversion"),
+        (super::PieceId::Station, "special"),
+        (super::PieceId::Brakes, "special"),
+        (super::PieceId::Launch, "special"),
+        (super::PieceId::TerrainRise, "special"),
+        (super::PieceId::TerrainFall, "special"),
+    ];
+
+    for (id, expected_group) in expected_groups {
+        let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
+        assert_eq!(super::piece_group(piece), expected_group, "{id:?}");
+    }
+
+    let mut turn_named_straight = catalog
+        .iter()
+        .find(|piece| piece.id == super::PieceId::Straight)
+        .unwrap()
+        .clone();
+    turn_named_straight.id = super::PieceId::TurnSmallStandalone;
+    assert_eq!(super::piece_group(&turn_named_straight), "straight");
+
+    let mut terrain_named_straight = catalog
+        .iter()
+        .find(|piece| piece.id == super::PieceId::Straight)
+        .unwrap()
+        .clone();
+    terrain_named_straight.exit.z = 1;
+    assert_eq!(super::piece_group(&terrain_named_straight), "special");
+
+    let mut climbing_turn = catalog
+        .iter()
+        .find(|piece| piece.id == super::PieceId::TurnSmallStandalone)
+        .unwrap()
+        .clone();
+    climbing_turn.entry.slope = theme_park_sim::track::Slope::UpGentle;
+    climbing_turn.exit.slope = theme_park_sim::track::Slope::UpGentle;
+    assert_eq!(super::piece_group(&climbing_turn), "turn");
+}
+
+#[test]
 fn coaster_ticket_price_defaults_to_six_and_can_be_changed_to_zero() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
 
@@ -248,14 +295,23 @@ fn construction_commands_validate_and_preview_without_mutating_on_failure() {
     .unwrap();
     assert_eq!(simulation.construction_supports(), expected_supports);
     simulation.construction_append();
-    assert_eq!(simulation.construction_track(), "0\tStation\n1\tStraight");
+    assert_eq!(
+        simulation.construction_track(),
+        "0\tStation\tStation\tspecial\tLevel\n1\tStraight\tStraight\tstraight\tLevel"
+    );
     assert!(!simulation.construction_placed_rails().is_empty());
     simulation.construction_select("GentleUp");
     simulation.construction_append();
-    assert_eq!(simulation.construction_track(), "0\tStation\n1\tStraight");
+    assert_eq!(
+        simulation.construction_track(),
+        "0\tStation\tStation\tspecial\tLevel\n1\tStraight\tStraight\tstraight\tLevel"
+    );
     assert!(!simulation.construction_message().is_empty());
     simulation.construction_undo();
-    assert_eq!(simulation.construction_track(), "0\tStation");
+    assert_eq!(
+        simulation.construction_track(),
+        "0\tStation\tStation\tspecial\tLevel"
+    );
 }
 
 #[test]
@@ -268,11 +324,17 @@ fn deleting_middle_piece_preserves_and_identifies_retained_track() {
         assert!(simulation.construction_message().is_empty());
     }
     simulation.construction_delete(1);
-    assert_eq!(simulation.construction_track(), "0\tStation\n2\tStraight");
+    assert_eq!(
+        simulation.construction_track(),
+        "0\tStation\tStation\tspecial\tLevel\n2\tStraight\tStraight\tstraight\tLevel"
+    );
     let rails = simulation.construction_placed_rails();
     assert!(rails.chunks_exact(19).any(|rail| rail[0] == 2.0));
     simulation.construction_delete(2);
-    assert_eq!(simulation.construction_track(), "0\tStation");
+    assert_eq!(
+        simulation.construction_track(),
+        "0\tStation\tStation\tspecial\tLevel"
+    );
 }
 
 #[test]

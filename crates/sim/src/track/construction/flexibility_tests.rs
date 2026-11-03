@@ -174,7 +174,6 @@ fn connector_exhaustion_has_continuations_can_level_and_crest() {
 }
 
 #[test]
-#[ignore = "TASK-68: climbing and descending turns are not implemented"]
 fn gentle_slopes_offer_heading_changes_from_every_reachable_connector() {
     let level = ConnectorState::from(TrackState::origin());
     let mut failures = Vec::new();
@@ -237,7 +236,6 @@ fn every_model_offers_a_reachable_chain_lift() {
 }
 
 #[test]
-#[ignore = "TASK-68: climbing turns are not implemented"]
 fn chain_lifts_can_turn_on_a_reachable_climb() {
     let level = ConnectorState::from(TrackState::origin());
     let mut failures = Vec::new();

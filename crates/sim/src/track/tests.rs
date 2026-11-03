@@ -1002,3 +1002,46 @@ fn coaster_models_have_a_minimum_rider_height() {
     assert_eq!(super::hybrid_model().minimum_height_cm, 122);
     assert_eq!(super::multi_launch_model().minimum_height_cm, 132);
 }
+
+#[test]
+fn sloped_turns_obey_model_capabilities_and_radius() {
+    let mut model = hybrid_model();
+    for slope in [Slope::UpGentle, Slope::DownGentle] {
+        let state = TrackState {
+            slope,
+            ..TrackState::origin()
+        };
+        let turns: Vec<_> = model
+            .available_pieces(state)
+            .into_iter()
+            .filter(|piece| piece.entry.heading != piece.exit.heading)
+            .collect();
+        assert!(!turns.is_empty());
+        assert!(
+            turns
+                .iter()
+                .all(|piece| piece.maximum_curvature() <= 1.0 / model.minimum_radius_metres)
+        );
+        let mut restricted = model.clone();
+        restricted.minimum_radius_metres = 1000.0;
+        assert!(
+            restricted
+                .available_pieces(state)
+                .iter()
+                .all(|piece| piece.entry.heading == piece.exit.heading)
+        );
+    }
+    model.sloped_turn_slopes.clear();
+    for slope in [Slope::UpGentle, Slope::DownGentle] {
+        let state = TrackState {
+            slope,
+            ..TrackState::origin()
+        };
+        assert!(
+            model
+                .available_pieces(state)
+                .iter()
+                .all(|piece| piece.entry.heading == piece.exit.heading)
+        );
+    }
+}

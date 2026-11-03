@@ -55,6 +55,14 @@ export function groupedPieces(pieces: readonly ConstructionPiece[]): { group: st
   return pieceGroups.map((group) => ({ group, pieces: pieces.filter((piece) => piece.group === group) })).filter((entry) => entry.pieces.length > 0);
 }
 
+export function pieceDisplayName(piece: Pick<ConstructionPiece, "group" | "label" | "slope">): string {
+  if (piece.group !== "turn") return piece.label;
+  const prefix = piece.slope.startsWith("Up") ? "Climbing" : piece.slope.startsWith("Down") ? "Descending" : "";
+  if (!prefix) return piece.label;
+  const name = `${piece.label.charAt(0).toLowerCase()}${piece.label.slice(1)}`;
+  return `${prefix} ${name}`;
+}
+
 /**
  * The piece one step away from the selection: along one attribute (clamped at the ends, preferring placeable
  * pieces of the same kind, such as staying on the chain lift) or through the whole palette (wrapping).

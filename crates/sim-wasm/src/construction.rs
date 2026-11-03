@@ -129,7 +129,7 @@ impl WasmSimulation {
                     "{:?}\t{}\t{}\t{:?}\t{:?}\t{:?}\t{}",
                     piece.id,
                     piece.name,
-                    piece_group(piece.id),
+                    piece_group(&piece),
                     piece.exit.heading,
                     piece.exit.slope,
                     piece.exit.bank,
@@ -154,7 +154,15 @@ impl WasmSimulation {
                     .iter()
                     .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
             )
-            .map(|(id, piece)| format!("{id}\t{:?}", piece.id))
+            .map(|(id, piece)| {
+                format!(
+                    "{id}\t{:?}\t{}\t{}\t{:?}",
+                    piece.id,
+                    piece.name,
+                    piece_group(piece),
+                    piece.exit.slope
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }

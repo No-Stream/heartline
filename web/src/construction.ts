@@ -1,6 +1,6 @@
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState, steppedTrainCount } from "./block-panel-state";
-import { groupedPieces, pieceInGroup, steppedPiece, stepperOptions, type StepAttribute } from "./construction-choices";
+import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions, type StepAttribute } from "./construction-choices";
 import type { BlockReport, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
@@ -231,8 +231,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   let selectedBlock: number | null = null;
   let closed = false;
 
-  const shapeOf = (id: string): PieceShape => {
-    const shape = shapes.get(id);
+  const shapeOf = (id: string, slope?: string): PieceShape => {
+    const shape = (slope && shapes.get(`${id}\0${slope}`)) ?? shapes.get(id);
     if (!shape) throw new Error(`Missing shape for piece ${id}`);
     return shape;
   };
@@ -318,7 +318,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       row.style.setProperty("--plate", groupPlates[group]);
       row.innerHTML = `<h3>${groupNames[group]} <kbd>${groupKeyHint(group)}</kbd></h3><div class="builder__tiles"></div>`;
       row.lastElementChild!.append(...members.map((piece) => {
-        const shape = shapeOf(piece.id);
+        const shape = shapeOf(piece.id, piece.slope);
+        const displayName = pieceDisplayName(piece);
         const tile = document.createElement("button");
         tile.type = "button";
         tile.className = `piece-tile${piece.refusal ? " piece-tile--refused" : ""}`;
@@ -326,11 +327,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         if (levelOut) tile.classList.add("piece-tile--level-out");
         tile.dataset.piece = piece.id;
         tile.setAttribute("role", "radio");
-        tile.setAttribute("aria-label", shape.name);
+        tile.setAttribute("aria-label", displayName);
         const tipId = `piece-tip-${piece.id}`;
         tile.setAttribute("aria-describedby", tipId);
         tile.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}${levelOut ? '<span class="piece-tile__level-out">Level out</span>' : ""}<span class="piece-tile__tip" role="tooltip" id="${tipId}"><strong></strong><span></span></span>`;
-        tile.querySelector("strong")!.textContent = shape.name;
+        tile.querySelector("strong")!.textContent = displayName;
         tile.querySelector(".piece-tile__tip span")!.textContent = piece.refusal;
         return tile;
       }));
@@ -349,10 +350,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const preview = element("[data-preview]");
     preview.hidden = !selected;
     if (selected) {
-      const shape = shapeOf(selected.id);
+      const shape = shapeOf(selected.id, selected.slope);
       preview.style.setProperty("--plate", groupPlates[selected.group]);
       element("[data-preview-icons]").innerHTML = iconViews(shape).map((view) => pieceIconSvg(shape, view, 70, 52)).join("");
-      element("[data-preview-name]").textContent = shape.name;
+      element("[data-preview-name]").textContent = pieceDisplayName(selected);
       element("[data-preview-group]").textContent = groupNames[selected.group];
     }
     for (const { attribute } of steppers) {
@@ -373,8 +374,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   function renderLaunchPositions(current: ConstructionState): void {
     let distance = 0;
     const positions: { piece: number; distance: number }[] = [];
-    current.track.forEach(({ label }, index) => {
-      const shape = shapeOf(label);
+    current.track.forEach(({ label, slope }, index) => {
+      const shape = shapeOf(label, slope);
       const length = sampledLength(shape);
       if (shape.kind === "Launch") positions.push({ piece: index + 1, distance: distance + length / 2 });
       distance += length;
@@ -388,17 +389,18 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   }
 
   function renderTrack(current: ConstructionState, grew: boolean): void {
-    track.replaceChildren(...current.track.map(({ id, label }, index) => {
-      const shape = shapeOf(label);
+    track.replaceChildren(...current.track.map(({ id, label, name, group, slope }, index) => {
+      const shape = shapeOf(label, slope);
+      const displayName = pieceDisplayName({ label: name, group, slope });
       const item = document.createElement("li");
       item.className = `track-chip${grew && index === current.track.length - 1 ? " track-chip--new" : ""}`;
-      item.title = shape.name;
+      item.title = displayName;
       item.innerHTML = `<span class="track-chip__number">${index + 1}</span>${pieceIconSvg(shape, iconViews(shape)[0], 26, 20)}<span class="track-chip__name"></span>`;
-      item.querySelector(".track-chip__name")!.textContent = shape.name;
+      item.querySelector(".track-chip__name")!.textContent = displayName;
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "×";
-      remove.setAttribute("aria-label", `Delete ${shape.name}, piece ${index + 1}`);
+      remove.setAttribute("aria-label", `Delete ${displayName}, piece ${index + 1}`);
       remove.addEventListener("click", () => dispatch({ type: "construction-delete", id }));
       item.append(remove);
       return item;
@@ -524,8 +526,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     setShapes(value) {
       const nextShapes = new Map<string, PieceShape>();
       for (const shape of value) {
-        if (nextShapes.has(shape.id)) throw new Error(`Duplicate piece shape ID ${shape.id}`);
-        nextShapes.set(shape.id, shape);
+        if (!nextShapes.has(shape.id)) nextShapes.set(shape.id, shape);
+        const variantKey = `${shape.id}\0${shape.exitSlope}`;
+        if (nextShapes.has(variantKey)) throw new Error(`Duplicate piece shape variant ${shape.id} at ${shape.exitSlope}`);
+        nextShapes.set(variantKey, shape);
       }
       shapes = nextShapes;
     },

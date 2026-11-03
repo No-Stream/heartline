@@ -1,10 +1,12 @@
 #[test]
-fn catalog_names_uniquely_identify_shapes_in_construction_track() {
-    let names: std::collections::HashSet<_> = super::catalog()
+fn catalog_shape_variants_have_unique_piece_and_exit_slope_keys() {
+    let pieces = super::catalog();
+    let piece_count = pieces.len();
+    let keys: std::collections::HashSet<_> = pieces
         .into_iter()
-        .map(|piece| piece.name)
+        .map(|piece| (piece.id, format!("{:?}", piece.exit.slope)))
         .collect();
-    assert_eq!(names.len(), super::catalog().len());
+    assert_eq!(keys.len(), piece_count);
 }
 
 #[test]

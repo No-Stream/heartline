@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConstructionPiece, PieceShape } from "./construction-protocol";
-import { groupedPieces, pieceInGroup, steppedPiece, stepperOptions } from "./construction-choices";
+import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions } from "./construction-choices";
 
 function shape(id: string, turn: number, kind = "Track"): PieceShape {
   return { id, name: id, kind, turn, entrySlope: "Level", exitSlope: "Level", entryBank: "Level", exitBank: "Level", points: [] };
@@ -14,6 +14,8 @@ const shapes = new Map([
   ["TurnLargeStandalone", shape("TurnLargeStandalone", 2)], ["LevelToGentleUp", shape("LevelToGentleUp", 0)],
   ["SteepToGentleUp", shape("SteepToGentleUp", 0)],
   ["LevelToGentleDown", shape("LevelToGentleDown", 0)], ["BankLeft", shape("BankLeft", 0)], ["BankRight", shape("BankRight", 0)],
+  ["ClimbingTurnLeft", shape("ClimbingTurnLeft", 2)], ["ClimbingTurnRight", shape("ClimbingTurnRight", -2)],
+  ["GentleUp", shape("GentleUp", 0)],
 ]);
 const pieces = [
   piece("Straight", "straight"), piece("LevelToGentleUp", "slope", "UpGentle", "Level", "The train would collide with terrain."),
@@ -72,6 +74,32 @@ describe("construction steppers", () => {
     expect(steppedPiece(pieces, shapes, "Straight", "bank", 1)).toBe("BankRight");
     expect(steppedPiece(pieces, shapes, "Straight", "bank", -1)).toBe("BankLeft");
     expect(steppedPiece(pieces, shapes, "Straight", "slope", -1)).toBe("LevelToGentleDown");
+  });
+
+  it("offers heading changes among pieces with the same climbing slope", () => {
+    const climbingPieces = [
+      piece("ClimbingTurnRight", "turn", "UpGentle"),
+      piece("GentleUp", "straight", "UpGentle"),
+      piece("ClimbingTurnLeft", "turn", "UpGentle"),
+    ];
+
+    expect(stepperOptions(climbingPieces, shapes, "ClimbingTurnLeft", "turn")).toEqual({
+      values: ["Left 90°", "Ahead", "Right 90°"],
+      index: 0,
+    });
+    expect(steppedPiece(climbingPieces, shapes, "ClimbingTurnLeft", "turn", 1)).toBe("GentleUp");
+  });
+
+  it("adds climbing and descending prefixes to turn names", () => {
+    const climbingTurn = { ...piece("TurnSmallStandalone", "turn", "UpGentle"), label: "Small left turn" };
+    const descendingTurn = { ...piece("TurnSmallStandalone", "turn", "DownGentle"), label: "Small left turn" };
+    const levelTurn = { ...piece("TurnSmallStandalone", "turn"), label: "Small left turn" };
+    const climbingSlope = { ...piece("GentleUp", "slope", "UpGentle"), label: "Gentle climb" };
+
+    expect(pieceDisplayName(climbingTurn)).toBe("Climbing small left turn");
+    expect(pieceDisplayName(descendingTurn)).toBe("Descending small left turn");
+    expect(pieceDisplayName(levelTurn)).toBe("Small left turn");
+    expect(pieceDisplayName(climbingSlope)).toBe("Gentle climb");
   });
 
   it("prefers placeable pieces when several share the stepped value", () => {
