@@ -142,6 +142,44 @@ fn multi_launch_model_offers_powered_straights_and_terrain_transitions() {
     assert!(!model.allowed_pieces.contains(&PieceId::Lift));
 }
 
+#[test]
+fn signature_pieces_are_exclusive_to_their_coaster_models() {
+    let hybrid = hybrid_model();
+    let multi_launch = multi_launch_model();
+    let wooden_twister = wooden_twister_model();
+
+    for piece in [PieceId::HybridOverbankLeft, PieceId::HybridOverbankRight] {
+        assert!(hybrid.allowed_pieces.contains(&piece));
+        assert!(!multi_launch.allowed_pieces.contains(&piece));
+        assert!(!wooden_twister.allowed_pieces.contains(&piece));
+    }
+
+    for piece in [PieceId::TwisterFanLeft, PieceId::TwisterFanRight] {
+        assert!(wooden_twister.allowed_pieces.contains(&piece));
+        assert!(!hybrid.allowed_pieces.contains(&piece));
+        assert!(!multi_launch.allowed_pieces.contains(&piece));
+    }
+
+    for piece in [PieceId::LaunchShort, PieceId::Launch, PieceId::LaunchLong] {
+        assert!(multi_launch.allowed_pieces.contains(&piece));
+        assert!(!hybrid.allowed_pieces.contains(&piece));
+        assert!(!wooden_twister.allowed_pieces.contains(&piece));
+    }
+
+    assert!(wooden_twister.allowed_pieces.contains(&PieceId::SteelLoop));
+    assert!(!hybrid.allowed_pieces.contains(&PieceId::SteelLoop));
+    assert!(!multi_launch.allowed_pieces.contains(&PieceId::SteelLoop));
+
+    for piece in [
+        PieceId::Lift,
+        PieceId::LiftFlat,
+        PieceId::LiftLevelToGentleUp,
+        PieceId::LiftGentleUpToLevel,
+    ] {
+        assert!(!multi_launch.allowed_pieces.contains(&piece));
+    }
+}
+
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-8, "{a} != {b}");
 }
@@ -190,23 +228,7 @@ fn every_turn_and_offset_has_a_mirrored_catalog_piece() {
     {
         let mirrored = pieces
             .iter()
-            .find(|candidate| {
-                candidate.entry.bank.radians() == -piece.entry.bank.radians()
-                    && candidate.exit.bank.radians() == -piece.exit.bank.radians()
-                    && candidate.entry.x == piece.entry.x
-                    && candidate.entry.y == -piece.entry.y
-                    && candidate.exit.x == piece.exit.x
-                    && candidate.exit.y == -piece.exit.y
-                    && candidate.exit.z == piece.exit.z
-                    && candidate.exit.heading.index() == (-piece.exit.heading.index()).rem_euclid(8)
-                    && (candidate.entry.curvature_vector().y + piece.entry.curvature_vector().y)
-                        .abs()
-                        < 1e-10
-                    && (candidate.exit.curvature_vector().x - piece.exit.curvature_vector().x).abs()
-                        < 1e-10
-                    && (candidate.exit.curvature_vector().y + piece.exit.curvature_vector().y).abs()
-                        < 1e-10
-            })
+            .find(|candidate| mirrored_geometry_matches(piece, candidate))
             .unwrap_or_else(|| panic!("missing mirror for {}", piece.name));
         for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
             let a = piece.sample(piece.length() * fraction);
@@ -218,6 +240,89 @@ fn every_turn_and_offset_has_a_mirrored_catalog_piece() {
             near_vec(b.up, Vec3::new(a.up.x, -a.up.y, a.up.z));
             near(b.roll, -a.roll);
         }
+    }
+}
+
+fn mirrored_geometry_matches(piece: &Piece, candidate: &Piece) -> bool {
+    if candidate.entry.x != piece.entry.x
+        || candidate.entry.y != -piece.entry.y
+        || candidate.entry.z != piece.entry.z
+        || candidate.entry.heading.index() != (-piece.entry.heading.index()).rem_euclid(8)
+        || candidate.entry.slope != piece.entry.slope
+        || candidate.entry.bank.radians() != -piece.entry.bank.radians()
+        || candidate.exit.x != piece.exit.x
+        || candidate.exit.y != -piece.exit.y
+        || candidate.exit.z != piece.exit.z
+        || candidate.exit.heading.index() != (-piece.exit.heading.index()).rem_euclid(8)
+        || candidate.exit.slope != piece.exit.slope
+        || candidate.exit.bank.radians() != -piece.exit.bank.radians()
+        || (candidate.entry.curvature_vector().y + piece.entry.curvature_vector().y).abs() >= 1e-10
+        || (candidate.exit.curvature_vector().x - piece.exit.curvature_vector().x).abs() >= 1e-10
+        || (candidate.exit.curvature_vector().y + piece.exit.curvature_vector().y).abs() >= 1e-10
+    {
+        return false;
+    }
+
+    [0.0, 0.25, 0.5, 0.75, 1.0].into_iter().all(|fraction| {
+        let original = piece.sample(piece.length() * fraction);
+        let mirrored = candidate.sample(candidate.length() * fraction);
+        let expected_position = Vec3::new(
+            original.position.x,
+            -original.position.y,
+            original.position.z,
+        );
+        let expected_up = Vec3::new(original.up.x, -original.up.y, original.up.z);
+        (mirrored.position - expected_position).length() < 1e-8
+            && (mirrored.up - expected_up).length() < 1e-8
+            && (mirrored.roll + original.roll).sin().abs() < 1e-8
+            && (mirrored.roll + original.roll).cos() > 1.0 - 1e-8
+    })
+}
+
+#[test]
+fn hybrid_overbanks_exceed_ninety_degrees_mirror_and_join_smoothly() {
+    let pieces = catalog();
+    let left = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::HybridOverbankLeft)
+        .unwrap();
+    let right = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::HybridOverbankRight)
+        .unwrap();
+    let largest_roll = (0..=100)
+        .map(|index| {
+            left.sample(left.length() * (f64::from(index) / 100.0))
+                .roll
+                .abs()
+        })
+        .fold(0.0, f64::max);
+    assert!(largest_roll > std::f64::consts::FRAC_PI_2);
+
+    for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let a = left.sample(left.length() * fraction);
+        let b = right.sample(right.length() * fraction);
+        near_vec(
+            b.position,
+            Vec3::new(a.position.x, -a.position.y, a.position.z),
+        );
+        near_vec(b.up, Vec3::new(a.up.x, -a.up.y, a.up.z));
+        near(b.roll, -a.roll);
+    }
+
+    let following_pieces: Vec<_> = pieces
+        .iter()
+        .filter_map(|template| template.at(left.exit))
+        .collect();
+    assert!(!following_pieces.is_empty());
+    for following_piece in &following_pieces {
+        let incoming = left.sample(left.length());
+        let outgoing = following_piece.sample(0.0);
+        near_vec(incoming.position, outgoing.position);
+        near_vec(incoming.tangent, outgoing.tangent);
+        near_vec(incoming.up, outgoing.up);
+        near_angle(incoming.roll, outgoing.roll);
+        near(incoming.curvature, outgoing.curvature);
     }
 }
 

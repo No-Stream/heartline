@@ -172,6 +172,47 @@ fn closed_circuit_requires_explicit_close_and_reopens_on_deletion() {
 }
 
 #[test]
+fn every_coaster_model_can_build_a_closed_circuit() {
+    use PieceId::*;
+
+    let track_world = world();
+    for model in [
+        hybrid_model(),
+        crate::track::multi_launch_model(),
+        crate::track::wooden_twister_model(),
+    ] {
+        let mut construction = Construction::new(start(), model);
+        for piece_id in [
+            Station,
+            TurnSmallStandalone,
+            TurnSmallStandalone,
+            Straight,
+            TurnSmallStandalone,
+            TurnSmallStandalone,
+        ] {
+            construction
+                .append(piece_id, &track_world, &[])
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} rejected {piece_id:?}: {error:?}",
+                        construction.model().name
+                    )
+                });
+        }
+
+        assert_eq!(construction.end(), start(), "{}", construction.model().name);
+        construction.close().unwrap();
+        let circuit = construction.circuit().unwrap();
+        assert!(construction.is_closed());
+        assert!(
+            circuit.length() > construction.model().train.length_metres,
+            "{}",
+            construction.model().name
+        );
+    }
+}
+
+#[test]
 fn right_turn_circuit_builds_and_completes_a_lap() {
     use PieceId::*;
 

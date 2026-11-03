@@ -263,6 +263,8 @@ pub enum PieceId {
     AirtimeHill,
     TightTwisterLeft,
     TightTwisterRight,
+    HybridOverbankLeft,
+    HybridOverbankRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -282,6 +284,7 @@ pub enum Inversion {
 enum Shape {
     Plain,
     AirtimeHill,
+    Overbank,
     Loop,
     Corkscrew,
     Heartline,
@@ -518,7 +521,15 @@ impl Piece {
         } else {
             0.0
         };
-        let angle = self.entry.bank.radians()
+        let overbank = if matches!(self.shape, Shape::Overbank) {
+            2.0 * std::f64::consts::PI / 3.0
+                * (std::f64::consts::PI * t).sin().powi(2)
+                * if self.mirrored { -1.0 } else { 1.0 }
+        } else {
+            0.0
+        };
+        let angle = overbank
+            + self.entry.bank.radians()
             + (self.exit.bank.radians() - self.entry.bank.radians()) * s
             + turns;
         let left = base_up.cross(tangent).unit();
@@ -1221,6 +1232,11 @@ pub fn catalog() -> Vec<Piece> {
             "Descending left banked helix",
         ),
         (Straight, AirtimeHill, "Small airtime hill"),
+        (
+            TurnLargeStandalone,
+            HybridOverbankLeft,
+            "Left overbanked turn",
+        ),
     ] {
         let mut piece = pieces
             .iter()
@@ -1238,6 +1254,7 @@ pub fn catalog() -> Vec<Piece> {
                 piece.tangent_scale *= 0.75;
             }
             TwisterHelixLeft => piece.exit.z = -4,
+            HybridOverbankLeft => piece.shape = Shape::Overbank,
             AirtimeHill => {
                 piece.exit.x = 16;
                 piece.tangent_scale = 32.0;
@@ -1249,6 +1266,11 @@ pub fn catalog() -> Vec<Piece> {
         pieces.push(piece);
     }
     for (source, id, name) in [
+        (
+            HybridOverbankLeft,
+            HybridOverbankRight,
+            "Right overbanked turn",
+        ),
         (TwisterFanLeft, TwisterFanRight, "Right fan turn"),
         (TightTwisterLeft, TightTwisterRight, "Tight right turn"),
         (
@@ -1440,6 +1462,7 @@ pub fn wooden_twister_model() -> CoasterModel {
         manufacturer: "Great Coaster Workshop",
         name: "Briar Blitz",
         description: "An articulated wooden twister with a chain lift and dense timber structure. The steel-structure loop is a plausible extension.",
+        // A steel-structure loop is a plausible extension to a wooden twister.
         allowed_pieces: {
             use PieceId::*;
             vec![
@@ -1536,14 +1559,83 @@ pub fn hybrid_model() -> CoasterModel {
         manufacturer: "Rocky Road Construction",
         name: "Timber Tumbler",
         description: "Steel box track on a wooden structure. Some elements are plausible extensions beyond the rides that inspired this model.",
-        allowed_pieces: catalog()
-            .into_iter()
-            .filter(|piece| {
-                piece.kind != PieceKind::Launch
-                    && !matches!(piece.id, PieceId::TerrainRise | PieceId::TerrainFall)
-            })
-            .map(|piece| piece.id)
-            .collect(),
+        // Vertical loops are a plausible extension to the hybrid inversion repertoire.
+        allowed_pieces: {
+            use PieceId::*;
+            vec![
+                Straight,
+                GentleUp,
+                GentleDown,
+                SteepUp,
+                SteepDown,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                GentleToSteepUp,
+                SteepToGentleUp,
+                LevelToGentleDown,
+                GentleDownToLevel,
+                GentleToSteepDown,
+                SteepToGentleDown,
+                TurnSmallEntry,
+                TurnSmall,
+                TurnSmallExit,
+                TurnSmallStandalone,
+                TurnSmallRightEntry,
+                TurnSmallRight,
+                TurnSmallRightExit,
+                TurnSmallRightStandalone,
+                TurnLargeEntry,
+                TurnLarge,
+                TurnLargeExit,
+                TurnLargeStandalone,
+                TurnLargeRightEntry,
+                TurnLargeRight,
+                TurnLargeRightExit,
+                TurnLargeRightStandalone,
+                VerticalUpEntry,
+                VerticalUpContinue,
+                VerticalUpExit,
+                VerticalDownEntry,
+                VerticalDownContinue,
+                VerticalDownExit,
+                BankLeft,
+                UnbankLeft,
+                BankRight,
+                UnbankRight,
+                BankedTurnEntry,
+                BankedTurn,
+                BankedTurnExit,
+                BankedTurnStandalone,
+                SmallRightBankedTurnEntry,
+                SmallRightBankedTurn,
+                SmallRightBankedTurnExit,
+                SmallRightBankedTurnStandalone,
+                LargeLeftBankedTurnEntry,
+                LargeLeftBankedTurn,
+                LargeLeftBankedTurnExit,
+                LargeLeftBankedTurnStandalone,
+                LargeRightBankedTurnEntry,
+                LargeRightBankedTurn,
+                LargeRightBankedTurnExit,
+                LargeRightBankedTurnStandalone,
+                OffsetLeft,
+                OffsetRight,
+                Loop,
+                Corkscrew,
+                CorkscrewRight,
+                HeartlineRoll,
+                HeartlineRollRight,
+                Lift,
+                LiftFlat,
+                LiftLevelToGentleUp,
+                LiftGentleUpToLevel,
+                Brakes,
+                Station,
+                AirtimeHill,
+                HybridOverbankLeft,
+                HybridOverbankRight,
+            ]
+        },
         minimum_radius_metres: 5.0,
         minimum_height_cm: 122,
         allowed_inversions: vec![
@@ -1573,11 +1665,82 @@ pub fn multi_launch_model() -> CoasterModel {
         manufacturer: "Impulse Engineering",
         name: "Velocity Viper",
         description: "A steel coaster with linear motor launches. Some elements are plausible extensions beyond the rides that inspired this model.",
-        allowed_pieces: catalog()
-            .into_iter()
-            .filter(|piece| piece.kind != PieceKind::Lift)
-            .map(|piece| piece.id)
-            .collect(),
+        // Vertical loops and corkscrews are plausible extensions to LSM layouts.
+        allowed_pieces: {
+            use PieceId::*;
+            vec![
+                Straight,
+                GentleUp,
+                GentleDown,
+                SteepUp,
+                SteepDown,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                GentleToSteepUp,
+                SteepToGentleUp,
+                LevelToGentleDown,
+                GentleDownToLevel,
+                GentleToSteepDown,
+                SteepToGentleDown,
+                TurnSmallEntry,
+                TurnSmall,
+                TurnSmallExit,
+                TurnSmallStandalone,
+                TurnSmallRightEntry,
+                TurnSmallRight,
+                TurnSmallRightExit,
+                TurnSmallRightStandalone,
+                TurnLargeEntry,
+                TurnLarge,
+                TurnLargeExit,
+                TurnLargeStandalone,
+                TurnLargeRightEntry,
+                TurnLargeRight,
+                TurnLargeRightExit,
+                TurnLargeRightStandalone,
+                VerticalUpEntry,
+                VerticalUpContinue,
+                VerticalUpExit,
+                VerticalDownEntry,
+                VerticalDownContinue,
+                VerticalDownExit,
+                BankLeft,
+                UnbankLeft,
+                BankRight,
+                UnbankRight,
+                BankedTurnEntry,
+                BankedTurn,
+                BankedTurnExit,
+                BankedTurnStandalone,
+                SmallRightBankedTurnEntry,
+                SmallRightBankedTurn,
+                SmallRightBankedTurnExit,
+                SmallRightBankedTurnStandalone,
+                LargeLeftBankedTurnEntry,
+                LargeLeftBankedTurn,
+                LargeLeftBankedTurnExit,
+                LargeLeftBankedTurnStandalone,
+                LargeRightBankedTurnEntry,
+                LargeRightBankedTurn,
+                LargeRightBankedTurnExit,
+                LargeRightBankedTurnStandalone,
+                OffsetLeft,
+                OffsetRight,
+                Loop,
+                Corkscrew,
+                CorkscrewRight,
+                HeartlineRoll,
+                HeartlineRollRight,
+                LaunchShort,
+                Launch,
+                LaunchLong,
+                Brakes,
+                Station,
+                TerrainRise,
+                TerrainFall,
+                AirtimeHill,
+            ]
+        },
         minimum_radius_metres: 5.0,
         minimum_height_cm: 132,
         allowed_inversions: vec![
