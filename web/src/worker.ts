@@ -7,6 +7,7 @@ import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
 import { pathPreviewMessage } from "./render/path-ghost";
+import { SessionRecorder } from "./session-recording";
 
 type GuestDetailAction =
   | { readonly type: "guest-detail-request"; readonly guestId: string }
@@ -22,7 +23,7 @@ type PathAction =
   | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
 type InitAction = { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean };
-type WorkerAction = InitAction | { type: "set-speed"; speed: number } | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
+type WorkerAction = InitAction | { type: "export-session"; requestId: number } | { type: "set-speed"; speed: number } | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
 let manualBlockAnalysis = false;
@@ -33,6 +34,7 @@ const workerScope = self as unknown as {
   addEventListener(type: "message", listener: (event: MessageEvent<WorkerAction>) => void): void;
 };
 let simulation: WasmSimulation;
+let recorder: SessionRecorder;
 let clock = createSimulationClock(tickRate, 4);
 let lastWakeup: number;
 let coasterGeometrySent = false;
@@ -45,6 +47,12 @@ let lastFacilityRevenue = "";
 let lastFacilitiesJson = "";
 let blockAnalysisScheduled = false;
 
+function tickSimulation(): void {
+  simulation.tick();
+  const tick = Number(simulation.tick_count());
+  if (tick % 300 === 0) recorder.recordCheckpoint(tick, simulation.state_hash());
+}
+
 function scheduleBlockAnalysis(): void {
   if (manualBlockAnalysis || blockAnalysisScheduled) return;
   blockAnalysisScheduled = true;
@@ -56,6 +64,7 @@ function scheduleBlockAnalysis(): void {
 }
 
 function advanceBlockAnalysis(budget: number): boolean {
+  recorder.recordCommand(Number(simulation.tick_count()), { type: "test-advance-block-analysis", budget });
   const complete = simulation.construction_advance_block_analysis(budget);
   const report = simulation.construction_block_report_json();
   if (simulation.construction_active() && report !== lastBlockReport) {
@@ -72,7 +81,7 @@ function wake(forceSnapshot = false): void {
   lastWakeup = now;
   clock = result.clock;
   if (!simulationPaused) {
-    for (let tick = 0; tick < result.ticksToRun; tick += 1) simulation.tick();
+    for (let tick = 0; tick < result.ticksToRun; tick += 1) tickSimulation();
   }
 
   if (forceSnapshot || simulationPaused || result.ticksToRun > 0) {
@@ -125,8 +134,8 @@ function sendConstruction(): void {
   lastConstructionEconomy = `${coasterPrice}:${coasterIncome}`;
   workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), pieces,
     selected: selected || null, track: track ? track.split("\n").map((row) => {
-      const [id, label] = row.split("\t");
-      return { id: Number(id), label };
+      const [id, label, name, group, slope] = row.split("\t");
+      return { id: Number(id), label, name, group, slope };
     }) : [],
     canAppend: !!selectedChoice && !selectedChoice[6], canClose: simulation.construction_can_close(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as unknown,
@@ -196,6 +205,7 @@ workerScope.addEventListener("message", (event) => {
     simulationPaused = action.frozen;
     initialized = init().then(() => {
       simulation = new WasmSimulation(action.seed, action.guestCount, action.park);
+      recorder = new SessionRecorder({ seed: action.seed.toString(), park: action.park, guestCount: action.guestCount });
       sendWorld();
       sendFacilities();
       sendScenery();
@@ -208,6 +218,13 @@ workerScope.addEventListener("message", (event) => {
   }
   if (!initialized) throw new Error("Worker must be initialized first");
   void initialized.then(() => {
+    if (action.type === "export-session") {
+      workerScope.postMessage({ type: "session-export", requestId: action.requestId, recording: recorder.snapshot(Number(simulation.tick_count())) });
+      return;
+    }
+    if (!["test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode"].includes(action.type)) {
+      recorder.recordCommand(Number(simulation.tick_count()), action);
+    }
     if (action.type === "set-speed") {
       if (!Number.isInteger(action.speed) || action.speed < 1 || action.speed > 16) throw new RangeError("Invalid game speed");
       gameSpeed = action.speed;
@@ -222,7 +239,7 @@ workerScope.addEventListener("message", (event) => {
     }
     if (action.type === "test-advance") {
       if (!Number.isInteger(action.count) || action.count < 1 || action.count > 100000) throw new RangeError("Invalid test tick count");
-      for (let tick = 0; tick < action.count; tick++) simulation.tick();
+      for (let tick = 0; tick < action.count; tick++) tickSimulation();
       wake();
       sendFacilities("", false, true);
       workerScope.postMessage({ type: "test-advanced" });

@@ -36,6 +36,14 @@ import { buildSceneryGhostQuads, createSceneryTool, scenerySprites, type Scenery
 import { createSceneryPanel } from "./scenery-panel";
 import { createToolbar, type Tool } from "./toolbar";
 import { createThemeToggle } from "./theme";
+import type { WorkerRecording } from "./session-recording";
+
+declare const __GIT_HASH__: string;
+
+interface RecordedInput { action: InputAction; time: number; tick: number; viewport: Viewport; camera: Camera }
+const inputLog: RecordedInput[] = [];
+let sessionExportRequest = 0;
+const pendingSessionExports = new Map<number, RecordedInput[]>();
 
 const themeToggleContainer = document.querySelector<HTMLElement>("[data-theme-toggle]");
 if (!themeToggleContainer) throw new Error("Theme toggle is missing");
@@ -235,7 +243,7 @@ if (!dayClockContainer) throw new Error("Day clock is missing");
 const dayClock = createDayClock(dayClockContainer, setTimeOfDay, (speed) => { daySpeed = speed; }, (speed) => {
   renderClock.setSpeed(speed);
   worker.postMessage({ type: "set-speed", speed });
-});
+}, () => dispatch({ type: "session-export" }));
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
   const bounds = gameCanvas.getBoundingClientRect();
@@ -350,9 +358,14 @@ fitCanvas(false);
 const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group", "delete-mode-toggle", "chain-toggle"]);
 
 function dispatch(action: InputAction): void {
+  inputLog.push({ action: structuredClone(action), time: performance.now(), tick: current?.tickCount ?? 0, viewport: { ...viewport }, camera: { ...camera } });
   // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
   if (activeTool !== "coaster" && (coasterActions.has(action.type) || action.type.startsWith("construction-"))) return;
-  if (action.type === "game-speed-cycle") {
+  if (action.type === "session-export") {
+    const requestId = ++sessionExportRequest;
+    pendingSessionExports.set(requestId, inputLog.slice());
+    worker.postMessage({ type: "export-session", requestId });
+  } else if (action.type === "game-speed-cycle") {
     dayClock.cycleGameSpeed();
   } else if (action.type === "tool-select") {
     openTool(action.tool);
@@ -529,9 +542,20 @@ if (park !== "new" && park !== "demo") throw new RangeError("Invalid park");
 const guestCount = testAgents === null ? 12 : Number(testAgents);
 if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 500) throw new RangeError("Invalid test guest count");
 worker.postMessage({ type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
-worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facility-access-preview"; requestId: number; rotation: number | undefined } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
+worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"; requestId: number; recording: WorkerRecording } | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facility-access-preview"; requestId: number; rotation: number | undefined } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
   const message = event.data;
-  if (message.type === "facility-access-preview") {
+  if (message.type === "session-export") {
+    const inputs = pendingSessionExports.get(message.requestId);
+    if (!inputs) throw new Error("Unknown session export request");
+    pendingSessionExports.delete(message.requestId);
+    const session = { format: "theme-park-session", version: 1, build: { gitHash: __GIT_HASH__, mode: import.meta.env.MODE }, ...message.recording, inputs };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(session, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `session-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  } else if (message.type === "facility-access-preview") {
     if (facilityPlacement && message.requestId === facilityPreviewRequestId) facilityPanel.previewDirection(message.rotation);
   } else if (message.type === "scenery") {
     scenery = message.scenery;

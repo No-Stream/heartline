@@ -28,7 +28,7 @@ export type InputAction =
   | { readonly type: "piece-group"; readonly group: string }
   | { readonly type: "delete-mode-toggle" }
   | { readonly type: "chain-toggle" }
-  | { readonly type: "game-speed-cycle" }
+  | { readonly type: "game-speed-cycle" | "session-export" }
   | { readonly type: "landscaping-activate"; readonly selection: LandscapingSelection }
   | { readonly type: "landscaping-cancel" }
   | { readonly type: "underground-view-toggle" }
