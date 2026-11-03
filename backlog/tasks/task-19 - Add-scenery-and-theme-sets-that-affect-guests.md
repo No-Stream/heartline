@@ -4,7 +4,7 @@ title: Add scenery and theme sets that affect guests
 status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 14:47'
+updated_date: '2026-11-03 16:26'
 labels:
   - art
   - world
@@ -27,6 +27,12 @@ Theming is a first-class building activity. Start with a few charming theme sets
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 At least two theme sets of scenery and building pieces can be placed
-- [ ] #2 Tests show guests' theme preferences and theming care change their enjoyment
+- [x] #1 At least two theme sets of scenery and building pieces can be placed
+- [x] #2 Tests show guests' theme preferences and theming care change their enjoyment
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Garden and Woodland sets, Scenery tool, guest theming responses and demo lamps committed in d65b724. Closing waits on a green full gate (four coaster browser tests time out under parallel load; fix in progress).
+<!-- SECTION:NOTES:END -->

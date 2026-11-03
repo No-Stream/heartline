@@ -4,7 +4,7 @@ title: Add automatic block sections
 status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 14:12'
+updated_date: '2026-11-03 16:26'
 labels:
   - coaster
   - interface
@@ -25,13 +25,13 @@ The owner skipped block zones in RCT1 because of the complexity. The game finds 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One action places sensible block sections on test layouts and reports train capacity
-- [ ] #2 Experts can move blocks by hand
+- [x] #1 One action places sensible block sections on test layouts and reports train capacity
+- [x] #2 Experts can move blocks by hand
 - [x] #3 Tests confirm trains never collide at any block layout; poor layouts only cost capacity
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Simulation and bridge committed. Remaining: the builder UI button, block markers and capacity report display, and manual block moves in the panel. Placement searches generated brake positions within a budget; throughput excludes loading time.
+Builder UI committed in 4c805b5: automatic placement, train stepper, capacity and throughput, draggable markers. Closing waits on the same green gate.
 <!-- SECTION:NOTES:END -->
