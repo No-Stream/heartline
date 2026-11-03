@@ -1,9 +1,10 @@
 ---
 id: TASK-23
 title: Add automatic block sections
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 12:06'
 labels:
   - coaster
   - interface
