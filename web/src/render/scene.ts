@@ -11,7 +11,7 @@ export interface Atlas {
   pages: Record<string, { file: string; width: number; height: number }[]>;
   frames: Record<string, AtlasFrame>;
 }
-export interface WorldSprite { id: string; sprite: string; x: number; y: number; height: number; view?: string; animation?: string; frame?: number; scale?: number }
+export interface WorldSprite { id: string; sprite: string; x: number; y: number; height: number; view?: string; animation?: string; frame?: number; scale?: number; heightDepth?: boolean }
 export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; paths: Int32Array; pathMetadata?: Int32Array; facilityOpenings?: Int32Array; carved?: Int32Array; sprites?: readonly WorldSprite[]; undergroundLevel?: number }
 export type Pick = { kind: "terrain" | "water" | "path" | "cliff" | "carved-floor" | "cavern-wall"; x: number; y: number; height: number } | { kind: string; id: string; x: number; y: number; height: number };
 export interface Vertex { x: number; y: number; depth: number; height: number; u: number; v: number }
@@ -437,10 +437,12 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
     const spriteScale = camera.zoom * (sprite.scale ?? 1);
     const left = anchor.x - frame.anchor.x * spriteScale; const top = anchor.y - frame.anchor.y * spriteScale;
     const right = left + frame.width * spriteScale; const bottom = top + frame.height * spriteScale;
-    const spriteHeight = undergroundLevel === undefined ? 0 : frame.height * (sprite.scale ?? 1) / 8;
+    const spriteHeight = frame.height * (sprite.scale ?? 1) / 8;
     const vertices = [[left,top], [right,top], [right,bottom], [left,bottom]].map(([x,y], index) => {
-      const height = sprite.height + (index < 2 ? spriteHeight : 0);
-      return { x, y, depth: anchor.depth + (height - sprite.height) / 4 + (undergroundLevel === undefined ? 0 : UNDERGROUND_CONTENT_DEPTH_BIAS), height, u: 0, v: 0 };
+      const heightOffset = index < 2 ? spriteHeight : 0;
+      const height = sprite.height + (undergroundLevel === undefined ? 0 : heightOffset);
+      const depthOffset = undergroundLevel !== undefined || sprite.heightDepth ? heightOffset / 4 : 0;
+      return { x, y, depth: anchor.depth + depthOffset + (undergroundLevel === undefined ? 0 : UNDERGROUND_CONTENT_DEPTH_BIAS), height, u: 0, v: 0 };
     }) as [Vertex,Vertex,Vertex,Vertex];
     const placement = frame.placements[scale]; const size = atlas.pages[scale][placement.page];
     const coordinates = [[0,0],[1,0],[1,1],[0,1]];

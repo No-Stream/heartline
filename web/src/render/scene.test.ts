@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, type Atlas, type GeometryQuad, type WorldView } from "./scene";
 import { projectWorld, type Camera } from "../camera";
 import { buildPathGhostQuads } from "./path-ghost";
+import { facilitySprites, type Facility } from "../facilities";
 
 const frame = { width: 72, height: 40, anchor: { x: 36, y: 20 }, placements: { "1": { page: 0, x: 0, y: 0, width: 72, height: 40 } } };
 const atlas: Atlas = {
@@ -55,6 +56,16 @@ describe("world scene", () => {
     expect(half[0].vertices[1].x - half[0].vertices[0].x).toBe((full[0].vertices[1].x - full[0].vertices[0].x) / 2);
     const [a, b, c] = half[0].vertices;
     expect(pickScene({ triangles: half }, (a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3)).toMatchObject({ id: sprite.id });
+  });
+  test("building sprites gain depth toward their top edge", () => {
+    const facility: Facility = { id: 1, kind: "food_stall", x: 0, y: 0, z: 0, rotation: 0, price: 0, ride_state: "idle", ride_progress: 0 };
+    const sprite = facilitySprites([facility], 0)[0];
+    const buildingAtlas = { ...atlas, frames: { ...atlas.frames, [`${sprite.sprite}/${sprite.view}/static/0`]: frame } };
+    const triangles = buildScene({ ...world, sprites: [sprite] }, camera, viewport, buildingAtlas).triangles.filter((triangle) => triangle.id === sprite.id);
+    const vertices = triangles.flatMap((triangle) => triangle.vertices);
+    const top = vertices.filter((vertex) => vertex.y === Math.min(...vertices.map((item) => item.y)));
+    const bottom = vertices.filter((vertex) => vertex.y === Math.max(...vertices.map((item) => item.y)));
+    expect(Math.min(...top.map((vertex) => vertex.depth))).toBeGreaterThan(Math.max(...bottom.map((vertex) => vertex.depth)));
   });
   test("extra geometry shares depth and picking with terrain", () => {
     const scene = buildScene(world, camera, viewport, atlas);

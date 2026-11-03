@@ -21,7 +21,7 @@ export function facilitySprites(facilities: readonly Facility[], cameraRotation:
     const { width, height } = facilityFootprint(facility);
     if (!building) return [];
     const view = `rot${((facility.rotation - cameraRotation + 4) % 4) * 90}`;
-    const gate = { id: `facility-${facility.id}`, sprite: `buildings/${building}`, x: facility.x + width / 2, y: facility.y + height / 2, height: facility.z, view };
+    const gate = { id: `facility-${facility.id}`, sprite: `buildings/${building}`, x: facility.x + width / 2, y: facility.y + height / 2, height: facility.z, view, heightDepth: true };
     if (facility.kind !== "entrance") return [gate];
     return [gate, { ...gate, sprite: "buildings/ticket_booth", x: facility.x + 0.5, y: facility.y + 0.5, scale: 0.5 }];
   });
