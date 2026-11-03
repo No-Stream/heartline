@@ -54,6 +54,8 @@ Pieces that are real but beyond what a model's real-world examples do should app
 
 Supports generate automatically from the curve and terrain, and they are styled by model (**Designer's call**). The player can route track through tunnels, along cliffs and over other rides (**Owner**).
 
+Clearance is checked against the real swept shape of the train around the curve, with a generous tolerance so that tight near-misses remain possible (**Designer's call**). Piece data carries what this check needs, and the near-miss and headchopper events in section 4 share it. If a generated support would land on a path, ride or buried tunnel, it reroutes, and the piece is refused only when no route exists (**Designer's call**).
+
 ### Initial coaster models
 
 Launch with three models that have very different building feel, using real traits as the source of limits (**Owner** named these three, **Designer's call** to start with them). The builder should verify the details of each model against real rides when writing the data.
@@ -88,11 +90,25 @@ Groups walk and decide together. A family might split because a child is too sho
 
 Thoughts are visible only when the player clicks a guest, in a details panel. Speech bubbles do not appear in the park (**Owner**). Guests walk and mill around like people, and do not hop (**Owner**). The panel shows the guest's name, relationships, thoughts, traits, needs and memories (**Designer's call** for the exact contents).
 
+### Visits and time
+
+A visit should be realistic in how much a guest does, about as many rides and stops as a real day at a park, even if that spans several day-night cycles (**Owner**). A day-night cycle lasts about 20 to 30 real minutes, because that pace is more fun (**Owner**). Coasters run at real speed, so a realistic visit takes more than one cycle.
+
+To make this work, visit length is measured in what a guest does and is not tied to the clock (**Designer's call**). The park never closes. Guests arrive and leave continuously, and they keep going through the night, so an individual guest may see two or three sunsets in one visit. Night changes mood and lighting and can lightly shift preferences, such as favoring lit rides and fireworks, but it does not empty the park. Guests may return for later visits with their memories, so memory data must stay compact and bounded (**Designer's call**).
+
+Guest numbers follow how appealing the park is, and sandbox also has a slider to override them so the player can fill a park at any time (**Owner**).
+
+### Walking and crowds
+
+Paths stay on the tile grid, and wide plazas are adjacent path tiles (**Designer's call**). Queues are built by the player from path pieces, as in RCT2 (**Owner**). Guests avoid each other only loosely, enough to look like a crowd without the cost of full collision avoidance for 10,000 guests on one thread (**Designer's call**). The guest benchmark must include this avoidance, so it measures the real workload.
+
 Guest simulation should stay understandable. Exact trait distributions and need rates are for the builder to tune. The bar is that clicking any guest finds something coherent and often entertaining, and that park-wide crowd behavior responds visibly to how the park is built.
 
 ## 7. World and theming
 
-The world is an isometric grid with sculpted terrain, water, paths, scenery and buildings (**Owner**). Terrain supports hills, cliffs, tunnels and caverns, and the player can build underground (**Owner**). An underground view mode is needed so buried work remains visible and editable (**Designer's call**). Four rotated camera views and smooth zoom are expected, as in RCT2 plus modern zoom (**Designer's call**).
+The world is an isometric grid with sculpted terrain, water, paths, scenery and buildings (**Owner**). Terrain supports hills, cliffs, tunnels and caverns, and guests as well as track can go underground, including paths, stations and shops in carved spaces (**Owner**). The terrain data model must be layered from the start, and pathfinding must handle several levels, even if caverns ship after surface terrain (**Designer's call**, because a plain height map would be expensive to replace). An underground view mode is needed so buried work remains visible and editable (**Designer's call**).
+
+The first playable park includes a park entrance, food stalls, restrooms and a small set of flat rides such as a carousel and a ferris wheel (**Owner**). Flat rides need their own simple framework outside the track curve system (**Designer's call**). Four rotated camera views and smooth zoom are expected, as in RCT2 plus modern zoom (**Designer's call**).
 
 Theming is a first-class building activity with sets of scenery and building pieces (**Owner**). The first theme sets are for the builder to choose, and they should be few and charming. Guests' theme preferences and theming sensitivity connect scenery to enjoyment.
 
@@ -108,7 +124,7 @@ Details from that mockup that the builder should carry forward (**Designer's cal
 
 Modern techniques are welcome, since the look need not be limited by what isometric games did 20 years ago (**Owner**). Effects must not make dense parks hard to read (**Designer's call**).
 
-Art is produced mainly by code. Track, supports and structures are generated from their curves, and scenery, people and buildings come from procedural drawing code rendered into cached sprite textures (**Designer's call**). This is the project's biggest risk. The builder must prove it on people and buildings early, because hand-authored art is not available to the project. If code-drawn characters and buildings cannot hold up, the owner needs to hear about it quickly.
+Art is produced mainly by code. Track, supports and structures are generated from their curves, and scenery, people and buildings come from procedural drawing code rendered into cached sprite textures (**Designer's call**). The owner is confident this can look good, and AI-generated vector drawing is the expected way to author these pieces (**Owner**). It is still the largest art effort in the project, so the builder should produce an early proof of people and buildings for the owner to judge by eye, while coaster and guest work continue alongside it. No fallback art source is planned. The sprite pipeline should take any vector drawing as input, so a drawing can be replaced without code changes (**Designer's call**).
 
 ## 10. Technical architecture
 
@@ -143,8 +159,8 @@ The builder owns the plan, but the riskiest things should be proved first:
 1. Toolchain and walking skeleton: Rust to WebAssembly in a worker, renderer on screen and a deployable static build.
 2. Rendering and art proof: renderer benchmark with depth sorting, plus code-drawn people and buildings the owner can judge.
 3. Coaster core: track pieces as data, physics, building tools for one model and a train completing a circuit.
-4. Guest core: thousands of walking guests on paths with needs, decisions, groups and a click-in panel, benchmarked at scale.
-5. World: terrain, tunnels, underground view, scenery and day-night cycle.
+4. Guest core: thousands of walking guests on paths with needs, decisions, groups, queues and a click-in panel, plus the entrance, stalls, restrooms and flat rides they use, benchmarked at scale.
+5. World: layered terrain, tunnels, underground paths and view, scenery and day-night cycle. The layered data model itself must be in place before the guest core, since pathfinding depends on it.
 6. The other two coaster models, automatic block sections and proximity events.
 7. Save and load, public deployment and polish.
 8. Later: scenarios, more models, money pressure in scenarios, then possibly a desktop wrapper and touch input.
