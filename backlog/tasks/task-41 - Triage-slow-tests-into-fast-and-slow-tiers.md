@@ -4,7 +4,7 @@ title: Triage slow tests into fast and slow tiers
 status: To Do
 assignee: []
 created_date: '2026-11-03 16:26'
-updated_date: '2026-11-03 19:04'
+updated_date: '2026-11-03 19:08'
 labels:
   - infra
   - performance
@@ -24,7 +24,7 @@ The full gate takes about 7 minutes: Playwright about 4 minutes with 4 workers (
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A fast tier (make check) runs in under 90 seconds and covers each feature at least once
+- [x] #1 A fast tier (make check) runs in under 90 seconds and covers each feature at least once
 - [x] #2 Slow end-to-end flows run in a separate tier (make ci still runs everything) and none waits on wall-clock time
 - [x] #3 Each slow test's purpose is kept, with cheaper fixtures or checks moved to unit tests where possible
 <!-- AC:END -->
@@ -47,4 +47,8 @@ Slow-flow audit found the original assertions retained; existing Rust and TypeSc
 The construction browser flow passed in 48.0 s with the current concurrently updated baseline. The full block-operation physics test passed in 12.71 s alone; it remains in make test/ci, while make check now excludes that long case and still runs other block physics tests. The first measurement of this revised selection stopped after 28.24 s at compilation errors in the concurrent track refactor (unresolved TrackState, catalog and related names); its wall time remains unverified.
 
 The focused multi-launch browser flow passed in 14.2 s against the existing browser build. The revised fast Rust selection lists 141 tests from the previously built binary; the excluded long block-operation test remains in the full suite. Two targeted WebAssembly checks still failed in the concurrent Park refactor on facility_intersects_track being test-only and a missing SupportSearchExhausted variant, so no new end-to-end check timing is available.
+
+Revised make check passed in 71.43 s, including 141 Rust tests, 185 application Vitest tests, nine art tests, typechecking and eight Playwright tests. The second measurement stopped after 33.12 s because the concurrent WebAssembly refactor had eight missing refresh_construction_support_error method errors. Criterion 1 remains unchecked until a second passing timing is measured.
+
+The revised make check passed twice in 71.43 s and 61.41 s, including the art tests and the path-rebuild food-visit fixture. A concurrent WebAssembly refactor caused one intervening compile failure; both successful runs include a build. The full gate remains for the lead to run.
 <!-- SECTION:NOTES:END -->
