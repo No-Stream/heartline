@@ -1,9 +1,10 @@
 ---
 id: TASK-22
 title: Add the wooden twister coaster model
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 10:06'
 labels:
   - coaster
 milestone: m-2
