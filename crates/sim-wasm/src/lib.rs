@@ -11,8 +11,10 @@ use theme_park_sim::guest_behavior::{Facility, RidePhase};
 use theme_park_sim::guests::{AgeGroup, GuestId};
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{
-    Circuit, CoasterRun, PhysicsConfig, TestRun, TestRunRecorder, Train, demo_circuit,
+    BlockOperation, Circuit, CoasterOutcome, PhysicsConfig, TIME_STEP, TestRun, TestRunRecorder,
+    Train, demo_circuit,
 };
+use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch};
 use theme_park_sim::track::clearance::{ClearanceBox, ClearanceCollision, check_clearance};
 use theme_park_sim::track::construction::{Construction, track_support_obstacles};
 use theme_park_sim::track::proximity::{
@@ -58,9 +60,19 @@ pub struct WasmSimulation {
     construction_message: String,
     construction_train: Option<(Circuit, Train)>,
     coaster_open: bool,
-    coaster_run: Option<(Circuit, CoasterRun)>,
-    coaster_riders: Vec<GuestId>,
+    coaster_operation: Option<BlockOperation>,
+    coaster_riders: HashMap<u64, Vec<GuestId>>,
     coaster_facility: Option<Facility>,
+    block_layout: Option<BlockLayout>,
+    block_placement_search: Option<BlockPlacementSearch>,
+    block_apply_best_requested: bool,
+    block_manual_search: Option<BlockManualSearch>,
+    block_layout_is_automatic: bool,
+    block_message: String,
+    block_hourly_throughput: f64,
+    block_throughput_reason: String,
+    block_throughput_estimator: Option<ThroughputEstimator>,
+    block_throughput_cache: HashMap<Vec<u64>, (f64, String)>,
     recovered_station: Option<Piece>,
     support_render_cache: HashMap<usize, SupportRenderCache>,
     construction_slow_steps: u32,
@@ -171,9 +183,19 @@ impl WasmSimulation {
             construction_message: String::new(),
             construction_train: None,
             coaster_open: false,
-            coaster_run: None,
-            coaster_riders: Vec::new(),
+            coaster_operation: None,
+            coaster_riders: HashMap::new(),
             coaster_facility: None,
+            block_layout: None,
+            block_placement_search: None,
+            block_apply_best_requested: false,
+            block_manual_search: None,
+            block_layout_is_automatic: false,
+            block_message: String::new(),
+            block_hourly_throughput: 0.0,
+            block_throughput_reason: String::new(),
+            block_throughput_estimator: None,
+            block_throughput_cache: HashMap::new(),
             recovered_station: None,
             support_render_cache: HashMap::new(),
             construction_slow_steps: 0,
@@ -778,6 +800,7 @@ impl WasmSimulation {
     }
 
     pub fn tick(&mut self) {
+        self.construction_advance_block_analysis(200);
         let population = self.simulation.walking().guests().len();
         self.simulation
             .set_entrance(&self.world, self.facilities.entrance(&self.world));
@@ -800,13 +823,6 @@ impl WasmSimulation {
         });
         self.simulation
             .tick(&self.world, &facilities, 100, Some(population));
-        if self.coaster_open && self.coaster_riders.is_empty() {
-            self.coaster_riders = self.simulation.board_coaster(
-                self.coaster_facility
-                    .as_ref()
-                    .expect("open coaster has access"),
-            );
-        }
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
             let mut report_finished = false;
@@ -829,64 +845,37 @@ impl WasmSimulation {
                 })
                 .collect();
             self.train.take_readings();
-            let outcome = if self.coaster_riders.is_empty() {
-                None
-            } else {
-                self.coaster_run
-                    .as_mut()
-                    .and_then(|(circuit, run)| run.step_with_other_trains(circuit, &demo_trains))
-            };
-            if let Some(mut outcome) = outcome {
-                self.construction_placed_supports();
-                let obstacles = self.proximity_obstacles();
-                let supports = self.proximity_supports();
-                let construction = self.construction.as_ref().expect("open coaster has track");
-                let geometry = scan_proximity_with_supports(
-                    &self.world,
-                    construction.pieces(),
-                    &construction.model().train,
-                    self.circuit.pieces(),
-                    &obstacles,
-                    &supports,
-                );
-                for report in &mut outcome.reports {
-                    let events = geometry.events_for_run(&report.samples);
-                    report.add_proximity_events(&events);
-                }
-                let seats_per_car = usize::from(construction.model().train.rows_per_car)
-                    * usize::from(construction.model().train.seats_per_row);
-                let ratings: Vec<_> = (0..self.coaster_riders.len())
-                    .map(|seat| {
-                        let report = &outcome.reports[seat / seats_per_car];
-                        (report.excitement, report.intensity, report.nausea)
-                    })
-                    .collect();
-                let proximity_events: Vec<_> = (0..self.coaster_riders.len())
-                    .map(|seat| {
-                        outcome.reports[seat / seats_per_car]
-                            .proximity_events
-                            .clone()
-                    })
-                    .collect();
-                self.simulation.finish_coaster(
-                    &self.world,
-                    self.coaster_facility
+            if self.coaster_open && !self.automatic_placement_waiting_for_trains() {
+                while let Some(train_id) = {
+                    let operation = self
+                        .coaster_operation
                         .as_ref()
-                        .expect("open coaster has access"),
-                    &ratings,
-                    &proximity_events,
-                    outcome.recovered,
-                );
-                self.coaster_riders.clear();
-                let (circuit, run) = self.coaster_run.as_mut().expect("open coaster has train");
-                *run = CoasterRun::new(
-                    circuit,
-                    &construction.model().train,
-                    PhysicsConfig {
-                        lift_speed: 5.0,
-                        ..PhysicsConfig::default()
-                    },
-                );
+                        .expect("open coaster has an operation");
+                    operation.next_dispatch_id()
+                } {
+                    let riders = self.simulation.board_coaster_train(
+                        self.coaster_facility
+                            .as_ref()
+                            .expect("open coaster has access"),
+                        train_id,
+                    );
+                    if riders.is_empty() {
+                        break;
+                    }
+                    assert_eq!(
+                        self.coaster_operation.as_mut().unwrap().dispatch(),
+                        train_id
+                    );
+                    self.coaster_riders.insert(train_id, riders);
+                }
+            }
+            let outcomes = self
+                .coaster_operation
+                .as_mut()
+                .map(|operation| operation.step(&demo_trains))
+                .unwrap_or_default();
+            for (train_id, outcome) in outcomes {
+                self.finish_live_train(train_id, outcome);
             }
             if self.construction_outcome.is_none() {
                 if let Some((circuit, train)) = &mut self.construction_train {
@@ -1117,6 +1106,7 @@ impl WasmSimulation {
         }
         self.close_live_coaster();
         self.construction = Some(construction);
+        self.clear_block_layout();
         self.selected = None;
         self.select_compatible_piece();
         self.construction_train = None;
@@ -1254,6 +1244,325 @@ impl WasmSimulation {
         self.coaster_open
     }
 
+    /// Advance pending block analysis by at most the requested number of physics steps.
+    /// Returns true once analysis has finished. Large requests are capped per call.
+    pub fn construction_advance_block_analysis(&mut self, work_steps: u32) -> bool {
+        if let Some(mut search) = self.block_manual_search.take() {
+            search.advance(work_steps.min(1_000) as usize);
+            match search.result() {
+                Some(Ok(layout)) => {
+                    self.install_block_layout(layout.clone(), false);
+                    return self.block_throughput_estimator.is_none();
+                }
+                Some(Err(reason)) => {
+                    self.set_block_error(reason);
+                    return self.block_throughput_estimator.is_none();
+                }
+                None => {
+                    self.block_manual_search = Some(search);
+                    return false;
+                }
+            }
+        }
+        if let Some(mut search) = self.block_placement_search.take() {
+            if !self.block_apply_best_requested {
+                search.advance(work_steps.min(1_000) as usize);
+            }
+            let complete = search.is_complete() || self.block_apply_best_requested;
+            let best = search.best();
+            let installed = self
+                .block_layout
+                .as_ref()
+                .expect("search has an installed layout");
+            let improves_capacity = best.capacity() > installed.capacity();
+            let should_install = self.block_apply_best_requested
+                || improves_capacity
+                || (complete && best.capacity() >= installed.capacity());
+            let same_layout = block_layout_fingerprint(best) == block_layout_fingerprint(installed);
+            if should_install && !same_layout && self.coaster_has_active_trains() {
+                self.block_placement_search = Some(search);
+                return false;
+            }
+            if should_install {
+                let layout = best.clone();
+                if same_layout {
+                    self.block_layout = Some(layout);
+                    self.block_layout_is_automatic = true;
+                } else {
+                    self.install_block_layout(layout, true);
+                }
+            }
+            if complete {
+                self.block_apply_best_requested = false;
+                return self.block_throughput_estimator.is_none();
+            }
+            self.block_placement_search = Some(search);
+            return false;
+        }
+        let Some(mut estimator) = self.block_throughput_estimator.take() else {
+            return true;
+        };
+        if let Some(result) = estimator.advance(work_steps.min(1_000) as usize) {
+            let estimate = match result {
+                Ok(throughput) => (throughput, String::new()),
+                Err(reason) => (0.0, reason.to_owned()),
+            };
+            self.block_hourly_throughput = estimate.0;
+            self.block_throughput_reason.clone_from(&estimate.1);
+            let layout = self.block_layout.as_ref().expect("estimator has a layout");
+            self.block_throughput_cache
+                .insert(block_layout_fingerprint(layout), estimate);
+            true
+        } else {
+            self.block_throughput_estimator = Some(estimator);
+            false
+        }
+    }
+
+    pub fn construction_auto_blocks(&mut self) -> bool {
+        let Some((circuit, train)) = self.construction_circuit_and_train() else {
+            self.set_block_error("A closed circuit is required to place block sections.");
+            return false;
+        };
+        let config = block_physics_config();
+        match BlockPlacementSearch::new(circuit, train, config) {
+            Ok(search) => {
+                self.block_manual_search = None;
+                self.block_apply_best_requested = false;
+                if self.block_layout.is_none() {
+                    self.install_block_layout(search.best().clone(), true);
+                }
+                self.block_placement_search = Some(search);
+                self.construction_advance_block_analysis(0);
+                self.block_message.clear();
+                self.construction_message.clear();
+                true
+            }
+            Err(reason) => {
+                self.set_block_error(reason);
+                false
+            }
+        }
+    }
+
+    /// Install the best verified placement found so far and stop searching.
+    pub fn construction_apply_best_block_sections(&mut self) -> bool {
+        let Some(search) = self.block_placement_search.take() else {
+            self.set_block_error("There is no automatic block placement search in progress.");
+            return false;
+        };
+        if self.coaster_has_active_trains() {
+            self.block_apply_best_requested = true;
+            self.block_placement_search = Some(search);
+            return true;
+        }
+        self.install_block_layout(search.best().clone(), true);
+        true
+    }
+
+    pub fn construction_add_block_section(&mut self, boundary_metres: f64) -> bool {
+        let Some(layout) = &self.block_layout else {
+            self.set_block_error("Place automatic block sections before editing them.");
+            return false;
+        };
+        let mut boundaries = editable_block_boundaries(layout);
+        boundaries.push(boundary_metres);
+        self.construction_set_block_sections(boundaries)
+    }
+
+    pub fn construction_move_block_section(&mut self, index: usize, boundary_metres: f64) -> bool {
+        let Some(layout) = &self.block_layout else {
+            self.set_block_error("Place automatic block sections before editing them.");
+            return false;
+        };
+        let mut boundaries = editable_block_boundaries(layout);
+        let Some(boundary) = boundaries.get_mut(index) else {
+            self.set_block_error("Block section index is out of range.");
+            return false;
+        };
+        *boundary = boundary_metres;
+        self.construction_set_block_sections(boundaries)
+    }
+
+    pub fn construction_remove_block_section(&mut self, index: usize) -> bool {
+        let Some(layout) = &self.block_layout else {
+            self.set_block_error("Place automatic block sections before editing them.");
+            return false;
+        };
+        let mut boundaries = editable_block_boundaries(layout);
+        if index >= boundaries.len() {
+            self.set_block_error("Block section index is out of range.");
+            return false;
+        }
+        boundaries.remove(index);
+        self.construction_set_block_sections(boundaries)
+    }
+
+    pub fn construction_set_block_sections(&mut self, boundaries: Vec<f64>) -> bool {
+        let Some((circuit, train)) = self.construction_circuit_and_train() else {
+            self.set_block_error("A closed circuit is required to edit block sections.");
+            return false;
+        };
+        match BlockManualSearch::new(circuit, train, block_physics_config(), boundaries) {
+            Ok(search) => {
+                self.block_placement_search = None;
+                self.block_apply_best_requested = false;
+                self.block_manual_search = Some(search);
+                self.block_message.clear();
+                self.construction_message.clear();
+                true
+            }
+            Err(reason) => {
+                self.set_block_error(reason);
+                false
+            }
+        }
+    }
+
+    pub fn construction_block_report_json(&self) -> String {
+        let Some(layout) = &self.block_layout else {
+            let reasons = self.block_reasons_json();
+            return format!(
+                "{{\"sections\":[],\"trainCapacity\":0,\"capacitySearchComplete\":null,\"theoreticalHourlyRiders\":null,\"throughputStatus\":\"unavailable\",\"placementStatus\":\"idle\",\"placementSearchComplete\":null,\"reasons\":{reasons},\"notes\":[],\"suggestions\":[]}}"
+            );
+        };
+        let sections = layout
+            .boundaries()
+            .iter()
+            .enumerate()
+            .map(|(index, boundary)| {
+                let brake_pieces = layout.brake_pieces(index);
+                let brake_piece_indices = brake_pieces
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let editable = !brake_pieces.is_empty();
+                let editable_index = layout
+                    .boundaries()
+                    .iter()
+                    .enumerate()
+                    .take(index)
+                    .filter(|(previous_index, _)| {
+                        !layout.brake_pieces(*previous_index).is_empty()
+                    })
+                    .count();
+                let (reason, piece_indices, track_kind) = if editable {
+                    (
+                        "Placed on a level brake run long enough to hold a train.",
+                        format!("[{brake_piece_indices}]"),
+                        "blockBrake",
+                    )
+                } else {
+                    (
+                        "Fixed pass-through boundary after station, lift, or launch hardware.",
+                        String::from("[]"),
+                        kind_for_boundary(layout.circuit(), *boundary),
+                    )
+                };
+                format!(
+                    "{{\"boundaryMetres\":{boundary},\"brakeStartMetres\":{},\"brakePieceIndices\":{piece_indices},\"editable\":{editable},\"editableIndex\":{},\"reason\":{},\"trackKind\":{}}}",
+                    if editable {
+                        layout.brake_start(index).to_string()
+                    } else {
+                        "null".into()
+                    },
+                    if editable { editable_index.to_string() } else { "null".into() },
+                    json_string(reason),
+                    json_string(track_kind)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let reasons = self.block_reasons_json();
+        let source = if self.block_layout_is_automatic {
+            "automatic"
+        } else {
+            "manual"
+        };
+        let mut notes = vec![
+            "Trains wait at a block brake while the next section is occupied.",
+            "The hourly estimate averages three dispatch intervals after the first refill and excludes station loading time.",
+            "Fixed pass-through boundaries at stations, lifts, and launches cannot be moved or removed.",
+        ];
+        if self.block_placement_search.is_some() {
+            notes.push(
+                "Automatic placement is still searching; the installed layout remains in use.",
+            );
+        } else if self.block_manual_search.is_some() {
+            notes.push(
+                "The requested block edit is being validated; the installed layout remains in use.",
+            );
+        } else if !layout.placement_search_complete() {
+            notes.push("Automatic placement reached its search limit. This is the best verified layout found so far; additional trains may be possible.");
+        }
+        if !layout.capacity_search_complete() {
+            notes.push("The reported train capacity is verified; additional capacity could not be ruled out.");
+        }
+        let notes = notes
+            .into_iter()
+            .map(json_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let suggestions = block_layout_suggestions(layout)
+            .iter()
+            .map(|suggestion| json_string(suggestion))
+            .collect::<Vec<_>>()
+            .join(",");
+        let throughput_status = if self.block_throughput_estimator.is_some() {
+            "pending"
+        } else if self.block_throughput_reason.is_empty() {
+            "ready"
+        } else {
+            "unavailable"
+        };
+        let throughput = if throughput_status == "ready" {
+            self.block_hourly_throughput.to_string()
+        } else {
+            "null".into()
+        };
+        let placement_status = if self.block_placement_search.is_some() {
+            "searching"
+        } else if self.block_manual_search.is_some() {
+            "validating"
+        } else if !self.block_layout_is_automatic {
+            "manual"
+        } else if layout.placement_search_complete() {
+            "complete"
+        } else {
+            "incomplete"
+        };
+        let search_complete = if matches!(placement_status, "manual" | "validating") {
+            "null"
+        } else if placement_status == "complete" {
+            "true"
+        } else {
+            "false"
+        };
+        let placement_work_completed = self
+            .block_placement_search
+            .as_ref()
+            .map(BlockPlacementSearch::work_completed)
+            .or_else(|| {
+                self.block_manual_search
+                    .as_ref()
+                    .map(BlockManualSearch::work_completed)
+            })
+            .unwrap_or(0);
+        let best_capacity = self
+            .block_placement_search
+            .as_ref()
+            .map_or(layout.capacity(), |search| search.best().capacity());
+        format!(
+            "{{\"sections\":[{sections}],\"source\":{},\"trainCapacity\":{},\"capacitySearchComplete\":{},\"theoreticalHourlyRiders\":{throughput},\"throughputStatus\":{},\"placementStatus\":{},\"placementSearchComplete\":{search_complete},\"placementWorkCompleted\":{placement_work_completed},\"placementBestTrainCapacity\":{best_capacity},\"reasons\":{reasons},\"notes\":[{notes}],\"suggestions\":[{suggestions}]}}",
+            json_string(source),
+            layout.capacity(),
+            layout.capacity_search_complete(),
+            json_string(throughput_status),
+            json_string(placement_status)
+        )
+    }
+
     /// Queue entrance and exit tiles as x, y, height triples.
     pub fn construction_station_positions(&self) -> Vec<i32> {
         self.construction
@@ -1302,15 +1611,25 @@ impl WasmSimulation {
         let circuit = construction
             .circuit()
             .expect("complete circuit checked above");
-        let run = CoasterRun::new(
-            &circuit,
-            &construction.model().train,
-            PhysicsConfig {
-                lift_speed: 5.0,
-                ..PhysicsConfig::default()
-            },
+        if self.block_layout.is_none() {
+            let train = construction.model().train.clone();
+            let config = block_physics_config();
+            let layout = match block_layout_for_open(&circuit, &train, config) {
+                Ok(layout) => layout,
+                Err(reason) => {
+                    self.set_block_error(reason);
+                    return false;
+                }
+            };
+            self.install_block_layout(layout, false);
+        }
+        let operation = BlockOperation::new(
+            self.block_layout
+                .as_ref()
+                .expect("open coaster has a block layout")
+                .clone(),
         );
-        self.coaster_run = Some((circuit, run));
+        self.coaster_operation = Some(operation);
         self.coaster_facility = Some(facility);
         self.construction_train = None;
         self.construction_recorder = None;
@@ -1327,12 +1646,19 @@ impl WasmSimulation {
         };
         let seats_per_car = u32::from(construction.model().train.rows_per_car)
             * u32::from(construction.model().train.seats_per_row);
-        self.coaster_riders
-            .iter()
-            .enumerate()
-            .flat_map(|(seat, guest)| {
-                let seat = seat as u32;
-                [seat / seats_per_car, seat % seats_per_car, guest.0]
+        let mut trains: Vec<_> = self.coaster_riders.iter().collect();
+        trains.sort_by_key(|(train_id, _)| **train_id);
+        trains
+            .into_iter()
+            .flat_map(|(train_id, guests)| {
+                guests.iter().enumerate().flat_map(move |(seat, guest)| {
+                    let car_index = rider_car_index(
+                        *train_id,
+                        construction.model().train.cars,
+                        seat / seats_per_car as usize,
+                    );
+                    [car_index, (seat as u32) % seats_per_car, guest.0]
+                })
             })
             .collect()
     }
@@ -1357,6 +1683,7 @@ impl WasmSimulation {
             });
         if result.is_ok() {
             self.close_live_coaster();
+            self.clear_block_layout();
             self.construction_recorder = None;
             self.construction_report = None;
             self.construction_train = None;
@@ -1385,6 +1712,7 @@ impl WasmSimulation {
             .and_then(|construction| construction.delete_from(index).map_err(construction_error));
         if result.is_ok() {
             self.close_live_coaster();
+            self.clear_block_layout();
             self.construction_recorder = None;
             self.construction_report = None;
             let construction = self.construction.as_ref().expect("successful deletion");
@@ -1427,6 +1755,9 @@ impl WasmSimulation {
             .as_mut()
             .ok_or("Construction is inactive".to_string())
             .and_then(|construction| construction.close().map_err(construction_error));
+        if result.is_ok() {
+            self.clear_block_layout();
+        }
         self.construction_message = result.err().unwrap_or_default();
     }
     pub fn construction_test(&mut self) {
@@ -1588,17 +1919,6 @@ impl WasmSimulation {
         }
     }
     pub fn construction_train_poses(&self) -> Vec<f32> {
-        let live = self
-            .coaster_run
-            .as_ref()
-            .map(|(circuit, run)| (circuit, run.train()));
-        let Some((circuit, train)) = live.or(self
-            .construction_train
-            .as_ref()
-            .map(|(circuit, train)| (circuit, train)))
-        else {
-            return Vec::new();
-        };
         let config = &self
             .construction
             .as_ref()
@@ -1606,25 +1926,36 @@ impl WasmSimulation {
             .model()
             .train;
         let mut result = Vec::new();
-        for index in 0..usize::from(config.cars) {
-            let offset = index as f64 * config.length_metres / f64::from(config.cars);
-            let sample = match (&self.recovered_station, live.is_some()) {
-                (Some(station), false) => station.sample((station.length() - offset).max(0.0)),
-                _ => circuit.sample(train.distance() - offset),
-            };
-            result.push(index as f32);
-            append_vector(&mut result, sample.position / 4.0);
-            append_vector(&mut result, sample.tangent);
-            append_vector(&mut result, sample.up);
-            let seats_per_car =
-                usize::from(config.rows_per_car) * usize::from(config.seats_per_row);
-            let occupied = self
-                .coaster_riders
-                .len()
-                .saturating_sub(index * seats_per_car)
-                .min(seats_per_car);
-            result.push(((1_u32 << occupied) - 1) as f32);
+        if let Some(operation) = &self.coaster_operation {
+            let circuit = self
+                .block_layout
+                .as_ref()
+                .expect("operation has a block layout")
+                .circuit();
+            let mut trains: Vec<_> = operation.trains().collect();
+            trains.sort_by_key(|(train_id, _)| *train_id);
+            for (train_id, train) in trains {
+                let riders = self
+                    .coaster_riders
+                    .get(&train_id)
+                    .map_or(&[][..], Vec::as_slice);
+                append_train_poses(&mut result, circuit, train, config, train_id, riders, None);
+            }
+            return result;
         }
+
+        let Some((circuit, train)) = &self.construction_train else {
+            return result;
+        };
+        append_train_poses(
+            &mut result,
+            circuit,
+            train,
+            config,
+            0,
+            &[],
+            self.recovered_station.as_ref(),
+        );
         result
     }
     pub fn state_hash(&self) -> u64 {
@@ -1633,6 +1964,28 @@ impl WasmSimulation {
 }
 
 impl WasmSimulation {
+    fn coaster_has_active_trains(&self) -> bool {
+        self.coaster_operation
+            .as_ref()
+            .is_some_and(|operation| operation.trains().next().is_some())
+    }
+
+    fn automatic_placement_waiting_for_trains(&self) -> bool {
+        let Some(search) = &self.block_placement_search else {
+            return false;
+        };
+        let installed = self
+            .block_layout
+            .as_ref()
+            .expect("search has an installed layout");
+        let best = search.best();
+        (self.block_apply_best_requested
+            || best.capacity() > installed.capacity()
+            || (search.is_complete() && best.capacity() >= installed.capacity()))
+            && block_layout_fingerprint(best) != block_layout_fingerprint(installed)
+            && self.coaster_has_active_trains()
+    }
+
     fn proximity_obstacles(&self) -> Vec<ClearanceBox> {
         self.facility_obstacles()
             .into_iter()
@@ -1658,26 +2011,137 @@ impl WasmSimulation {
     }
 
     fn close_live_coaster(&mut self) {
-        if !self.coaster_riders.is_empty() {
-            let (_, run) = self.coaster_run.as_mut().expect("riders have a train");
-            let outcome = run.recover();
-            self.simulation.finish_coaster(
-                &self.world,
-                self.coaster_facility
-                    .as_ref()
-                    .expect("riders have a station"),
-                &[],
-                &[],
-                outcome.recovered,
-            );
-            self.coaster_riders.clear();
-        }
+        self.recover_live_trains();
         if let Some(facility) = &self.coaster_facility {
             self.simulation.close_coaster(&self.world, facility);
         }
         self.coaster_open = false;
-        self.coaster_run = None;
+        self.coaster_operation = None;
         self.coaster_facility = None;
+    }
+
+    fn recover_live_trains(&mut self) {
+        let outcomes = self
+            .coaster_operation
+            .take()
+            .map_or_else(Vec::new, |mut operation| operation.recover_all());
+        for (train_id, outcome) in outcomes {
+            self.finish_live_train(train_id, outcome);
+        }
+    }
+
+    fn finish_live_train(&mut self, train_id: u64, mut outcome: CoasterOutcome) {
+        let Some(riders) = self.coaster_riders.remove(&train_id) else {
+            return;
+        };
+        let facility = *self
+            .coaster_facility
+            .as_ref()
+            .expect("riders have an open coaster");
+        if outcome.recovered {
+            self.simulation
+                .finish_coaster_train(&self.world, &facility, train_id, &[], &[], true);
+            return;
+        }
+
+        self.construction_placed_supports();
+        let obstacles = self.proximity_obstacles();
+        let supports = self.proximity_supports();
+        let construction = self.construction.as_ref().expect("open coaster has track");
+        let geometry = scan_proximity_with_supports(
+            &self.world,
+            construction.pieces(),
+            &construction.model().train,
+            self.circuit.pieces(),
+            &obstacles,
+            &supports,
+        );
+        for report in &mut outcome.reports {
+            let events = geometry.events_for_run(&report.samples);
+            report.add_proximity_events(&events);
+        }
+        let seats_per_car = usize::from(construction.model().train.rows_per_car)
+            * usize::from(construction.model().train.seats_per_row);
+        let ratings: Vec<_> = (0..riders.len())
+            .map(|seat| {
+                let report = &outcome.reports[seat / seats_per_car];
+                (report.excitement, report.intensity, report.nausea)
+            })
+            .collect();
+        let proximity_events: Vec<_> = (0..riders.len())
+            .map(|seat| {
+                outcome.reports[seat / seats_per_car]
+                    .proximity_events
+                    .clone()
+            })
+            .collect();
+        self.simulation.finish_coaster_train(
+            &self.world,
+            &facility,
+            train_id,
+            &ratings,
+            &proximity_events,
+            false,
+        );
+    }
+
+    fn construction_circuit_and_train(&self) -> Option<(Circuit, TrainConfiguration)> {
+        let construction = self.construction.as_ref()?;
+        Some((
+            construction.circuit().ok()?,
+            construction.model().train.clone(),
+        ))
+    }
+
+    fn set_block_error(&mut self, reason: &str) {
+        self.block_message = reason.to_owned();
+        self.construction_message = self.block_message.clone();
+    }
+
+    fn block_reasons_json(&self) -> String {
+        let reasons = [&self.block_message, &self.block_throughput_reason]
+            .into_iter()
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| json_string(reason))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("[{reasons}]")
+    }
+
+    fn clear_block_layout(&mut self) {
+        self.block_layout = None;
+        self.block_placement_search = None;
+        self.block_apply_best_requested = false;
+        self.block_manual_search = None;
+        self.block_layout_is_automatic = false;
+        self.block_message.clear();
+        self.block_hourly_throughput = 0.0;
+        self.block_throughput_reason.clear();
+        self.block_throughput_estimator = None;
+        self.block_throughput_cache.clear();
+    }
+
+    fn install_block_layout(&mut self, layout: BlockLayout, automatic: bool) {
+        self.block_placement_search = None;
+        self.block_apply_best_requested = false;
+        self.block_manual_search = None;
+        let fingerprint = block_layout_fingerprint(&layout);
+        let (throughput, throughput_reason, estimator) =
+            match self.block_throughput_cache.get(&fingerprint) {
+                Some((throughput, reason)) => (*throughput, reason.clone(), None),
+                None => (0.0, String::new(), Some(ThroughputEstimator::new(&layout))),
+            };
+        if self.coaster_open {
+            self.recover_live_trains();
+            self.coaster_operation = Some(BlockOperation::new(layout.clone()));
+        }
+        self.block_layout = Some(layout);
+        self.block_layout_is_automatic = automatic;
+        self.block_hourly_throughput = throughput;
+        self.block_throughput_reason = throughput_reason;
+        self.block_throughput_estimator = estimator;
+        self.block_message.clear();
+        self.construction_message.clear();
     }
 
     fn checked_path_preview(
@@ -2100,12 +2564,1141 @@ fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
     append_vector(result, sample.up);
 }
 
+fn block_physics_config() -> PhysicsConfig {
+    PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    }
+}
+
+fn editable_block_boundaries(layout: &BlockLayout) -> Vec<f64> {
+    layout
+        .boundaries()
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !layout.brake_pieces(*index).is_empty())
+        .map(|(_, boundary)| *boundary)
+        .collect()
+}
+
+fn block_layout_fingerprint(layout: &BlockLayout) -> Vec<u64> {
+    let mut fingerprint = vec![layout.capacity() as u64];
+    for (index, boundary) in layout.boundaries().iter().enumerate() {
+        let pieces = layout.brake_pieces(index);
+        fingerprint.push(boundary.to_bits());
+        fingerprint.push(pieces.len() as u64);
+        fingerprint.extend(pieces.iter().map(|piece| *piece as u64));
+    }
+    fingerprint
+}
+
+fn kind_for_boundary(circuit: &Circuit, distance: f64) -> &'static str {
+    match circuit.pieces()[circuit.piece_index(distance - 1e-6)].kind {
+        PieceKind::Station => "station",
+        PieceKind::Lift => "lift",
+        PieceKind::Launch => "launch",
+        PieceKind::Brakes => "brake",
+        PieceKind::Track => "track",
+    }
+}
+
+fn rider_car_index(train_id: u64, cars_per_train: u8, car_index: usize) -> u32 {
+    let global_index = train_id
+        .checked_mul(u64::from(cars_per_train))
+        .and_then(|offset| offset.checked_add(car_index as u64))
+        .expect("train car index overflow");
+    u32::try_from(global_index).expect("train car index exceeds snapshot range")
+}
+
+fn append_train_poses(
+    result: &mut Vec<f32>,
+    circuit: &Circuit,
+    train: &Train,
+    configuration: &TrainConfiguration,
+    train_id: u64,
+    riders: &[GuestId],
+    recovered_station: Option<&Piece>,
+) {
+    let cars = usize::from(configuration.cars);
+    let seats_per_car =
+        usize::from(configuration.rows_per_car) * usize::from(configuration.seats_per_row);
+    for car_index in 0..cars {
+        let offset = car_index as f64 * configuration.length_metres / f64::from(configuration.cars);
+        let sample = recovered_station.map_or_else(
+            || circuit.sample(train.distance() - offset),
+            |station| station.sample((station.length() - offset).max(0.0)),
+        );
+        result.push(rider_car_index(train_id, configuration.cars, car_index) as f32);
+        append_vector(result, sample.position / 4.0);
+        append_vector(result, sample.tangent);
+        append_vector(result, sample.up);
+        let occupied = riders
+            .len()
+            .saturating_sub(car_index * seats_per_car)
+            .min(seats_per_car);
+        result.push(((1_u32 << occupied) - 1) as f32);
+    }
+}
+
+fn block_layout_for_open(
+    circuit: &Circuit,
+    train: &TrainConfiguration,
+    config: PhysicsConfig,
+) -> Result<BlockLayout, &'static str> {
+    BlockLayout::new(circuit, train, config, Vec::new())
+}
+
+struct ThroughputEstimator {
+    operation: BlockOperation,
+    max_idle_steps: usize,
+    step: usize,
+    last_dispatch_step: usize,
+    first_measured_step: Option<usize>,
+    measured_intervals: usize,
+    seats_per_train: usize,
+}
+
+impl ThroughputEstimator {
+    fn new(layout: &BlockLayout) -> Self {
+        let max_idle_seconds = (layout.circuit().length() * 4.0 + 60.0).clamp(300.0, 3600.0);
+        let mut operation = BlockOperation::new_without_reports(layout.clone());
+        while operation.can_dispatch() {
+            operation.dispatch();
+        }
+        Self {
+            operation,
+            max_idle_steps: (max_idle_seconds / TIME_STEP) as usize,
+            step: 0,
+            last_dispatch_step: 0,
+            first_measured_step: None,
+            measured_intervals: 0,
+            seats_per_train: usize::from(layout.train().cars)
+                * usize::from(layout.train().rows_per_car)
+                * usize::from(layout.train().seats_per_row),
+        }
+    }
+
+    fn advance(&mut self, work_steps: usize) -> Option<Result<f64, &'static str>> {
+        const MEASURED_INTERVALS: usize = 3;
+        for _ in 0..work_steps {
+            if self.step - self.last_dispatch_step >= self.max_idle_steps {
+                return Some(Err(
+                    "The throughput simulation did not observe enough sustained dispatches.",
+                ));
+            }
+            self.step += 1;
+            if self
+                .operation
+                .step(&[])
+                .iter()
+                .any(|(_, outcome)| outcome.recovered)
+            {
+                return Some(Err("A train recovered during the throughput simulation."));
+            }
+            while self.operation.can_dispatch() {
+                self.operation.dispatch();
+                self.last_dispatch_step = self.step;
+                let Some(first_step) = self.first_measured_step else {
+                    self.first_measured_step = Some(self.step);
+                    continue;
+                };
+                self.measured_intervals += 1;
+                if self.measured_intervals >= MEASURED_INTERVALS && self.step > first_step {
+                    let elapsed_seconds = (self.step - first_step) as f64 * TIME_STEP;
+                    return Some(Ok(self.seats_per_train as f64
+                        * self.measured_intervals as f64
+                        * 3600.0
+                        / elapsed_seconds));
+                }
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+fn theoretical_hourly_riders(layout: &BlockLayout) -> Result<f64, &'static str> {
+    let mut estimator = ThroughputEstimator::new(layout);
+    loop {
+        if let Some(result) = estimator.advance(1_000) {
+            return result;
+        }
+    }
+}
+
+fn block_layout_suggestions(layout: &BlockLayout) -> Vec<String> {
+    let editable_boundaries = editable_block_boundaries(layout);
+    if editable_boundaries.len() < 3 {
+        return vec![format!(
+            "This layout supports up to {} train(s). Try another separate level brake run at least one train long, then check whether the validated capacity changes.",
+            layout.capacity()
+        )];
+    }
+    let circuit_length = layout.circuit().length();
+    let largest_gap = editable_boundaries
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .chain(std::iter::once(
+            circuit_length - editable_boundaries[editable_boundaries.len() - 1]
+                + editable_boundaries[0],
+        ))
+        .max_by(f64::total_cmp)
+        .expect("three editable boundaries have a gap");
+    vec![format!(
+        "The largest gap between editable brake runs is {largest_gap:.1} m. Try moving or adding a brake there and check whether the validated dispatch estimate changes."
+    )]
+}
+
 #[cfg(test)]
 mod world_tests {
-    use super::{Position, Surface, WasmSimulation, track_support_obstacles};
+    use super::{
+        BlockLayout, Position, Surface, WasmSimulation, block_physics_config,
+        editable_block_boundaries, theoretical_hourly_riders, track_support_obstacles,
+    };
+    use theme_park_sim::facilities::{FacilityKind, ParkFacilities};
+    use theme_park_sim::guests::GuestId;
+    use theme_park_sim::park_guests::ParkGuests;
+    use theme_park_sim::physics::Circuit;
     use theme_park_sim::track::supports::generate_supports;
     use theme_park_sim::track::{PieceId, TrackState, catalog, hybrid_model};
-    use theme_park_sim::world::World;
+    use theme_park_sim::world::{Direction, PathKind, World};
+
+    fn block_test_circuit() -> Circuit {
+        let pieces_catalog = catalog();
+        let mut state = TrackState::origin();
+        let mut pieces = Vec::new();
+        for id in [
+            PieceId::Station,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::LiftFlat,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::TurnLargeEntry,
+            PieceId::TurnLargeExit,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::LiftFlat,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::TurnLargeEntry,
+            PieceId::TurnLargeExit,
+        ] {
+            let piece = pieces_catalog
+                .iter()
+                .find(|piece| piece.id == id)
+                .unwrap()
+                .at(state)
+                .unwrap();
+            state = piece.exit;
+            pieces.push(piece);
+        }
+        Circuit::new(pieces).unwrap()
+    }
+
+    fn block_test_boundaries(circuit: &Circuit) -> Vec<f64> {
+        [2, 6, 10, 13]
+            .into_iter()
+            .map(|end| {
+                circuit.pieces()[..end]
+                    .iter()
+                    .map(|piece| piece.length())
+                    .sum()
+            })
+            .collect()
+    }
+
+    fn report_number(report: &str, key: &str) -> f64 {
+        let marker = format!("\"{key}\":");
+        report
+            .split_once(&marker)
+            .unwrap()
+            .1
+            .split([',', '}'])
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    fn build_block_test_construction(simulation: &mut WasmSimulation) {
+        simulation.construction_start(100, 100, 40, 0);
+        for piece in [
+            "Straight",
+            "Straight",
+            "LiftFlat",
+            "Straight",
+            "Straight",
+            "TurnLargeEntry",
+            "TurnLargeExit",
+            "Straight",
+            "Straight",
+            "LiftFlat",
+            "Straight",
+            "Straight",
+            "Straight",
+            "TurnLargeEntry",
+            "TurnLargeExit",
+        ] {
+            simulation.construction_select(piece);
+            simulation.construction_append();
+            assert!(simulation.construction_message().is_empty());
+        }
+        assert!(simulation.construction_can_close());
+        simulation.construction_close();
+        assert!(simulation.construction_can_test());
+    }
+
+    fn apply_automatic_blocks_after_finding(
+        simulation: &mut WasmSimulation,
+        minimum_brakes: usize,
+    ) {
+        assert!(simulation.construction_auto_blocks());
+        for _ in 0..10_000 {
+            if let Some(search) = &simulation.block_placement_search {
+                if editable_block_boundaries(search.best()).len() >= minimum_brakes {
+                    assert!(simulation.construction_apply_best_block_sections());
+                    return;
+                }
+                simulation.construction_advance_block_analysis(1_000);
+            } else if editable_block_boundaries(simulation.block_layout.as_ref().unwrap()).len()
+                >= minimum_brakes
+            {
+                return;
+            } else {
+                break;
+            }
+        }
+        panic!("automatic search did not find {minimum_brakes} usable brake runs");
+    }
+
+    fn finish_manual_block_validation(simulation: &mut WasmSimulation) {
+        for _ in 0..10_000 {
+            if simulation.block_manual_search.is_none() {
+                assert!(
+                    simulation.block_message.is_empty(),
+                    "{}",
+                    simulation.block_message
+                );
+                return;
+            }
+            simulation.construction_advance_block_analysis(1_000);
+        }
+        panic!("manual block validation did not finish");
+    }
+
+    fn connect_station_to_park_paths(simulation: &mut WasmSimulation) {
+        let construction = simulation.construction.as_ref().expect("coaster exists");
+        let station = construction
+            .pieces()
+            .iter()
+            .find(|piece| piece.kind == theme_park_sim::track::PieceKind::Station)
+            .expect("station exists");
+        let (queue, exit) = super::station_positions(station).expect("station access tiles");
+        let network_y = 26;
+        let queue_tail_x = 29;
+        let exit_tail_x = 4;
+        let queue_tail_y = network_y + 1;
+        let at = |x, y| Position {
+            x,
+            y,
+            height: queue.height,
+        };
+        assert_eq!(queue.height, exit.height);
+        for x in 4..=queue_tail_x {
+            simulation.world.set_surface(
+                x,
+                network_y,
+                Surface {
+                    corners: [queue.height; 4],
+                    water: None,
+                },
+            );
+        }
+        for y in 4..=network_y {
+            simulation.world.set_surface(
+                4,
+                y,
+                Surface {
+                    corners: [queue.height; 4],
+                    water: None,
+                },
+            );
+        }
+        for x in queue.x.min(queue_tail_x)..=queue.x.max(queue_tail_x) {
+            simulation.world.set_surface(
+                x,
+                queue.y,
+                Surface {
+                    corners: [queue.height; 4],
+                    water: None,
+                },
+            );
+        }
+        for y in queue.y.min(queue_tail_y)..=queue.y.max(queue_tail_y) {
+            simulation.world.set_surface(
+                queue_tail_x,
+                y,
+                Surface {
+                    corners: [queue.height; 4],
+                    water: None,
+                },
+            );
+        }
+        for x in exit.x.min(exit_tail_x)..=exit.x.max(exit_tail_x) {
+            simulation.world.set_surface(
+                x,
+                exit.y,
+                Surface {
+                    corners: [exit.height; 4],
+                    water: None,
+                },
+            );
+        }
+        for (x, corners) in [
+            (30, [15, 16, 16, 15]),
+            (29, [14, 15, 15, 14]),
+            (28, [13, 14, 14, 13]),
+            (21, [14, 13, 13, 14]),
+            (20, [15, 14, 14, 15]),
+            (19, [16, 15, 15, 16]),
+        ] {
+            simulation.world.set_surface(
+                x,
+                exit.y,
+                Surface {
+                    corners,
+                    water: None,
+                },
+            );
+        }
+        for x in 22..=27 {
+            simulation.world.set_surface(
+                x,
+                exit.y,
+                Surface {
+                    corners: [13; 4],
+                    water: None,
+                },
+            );
+        }
+        for y in exit.y.min(queue_tail_y)..=exit.y.max(queue_tail_y) {
+            simulation.world.set_surface(
+                exit_tail_x,
+                y,
+                Surface {
+                    corners: [exit.height; 4],
+                    water: None,
+                },
+            );
+        }
+        for y in 0..=3 {
+            simulation.world.set_surface(
+                4,
+                y,
+                Surface {
+                    corners: [queue.height; 4],
+                    water: None,
+                },
+            );
+        }
+        let entrance_position = Position {
+            x: 4,
+            y: 0,
+            height: queue.height,
+        };
+        simulation
+            .world
+            .build_path_route(at(4, 4), at(4, network_y), PathKind::Normal, 0)
+            .expect("build entrance path");
+        simulation
+            .world
+            .build_path_route(
+                at(4, network_y),
+                at(queue_tail_x, network_y),
+                PathKind::Normal,
+                0,
+            )
+            .expect("build park path");
+        let mut facilities = ParkFacilities::new();
+        facilities
+            .place(
+                &simulation.world,
+                FacilityKind::Entrance,
+                entrance_position,
+                Direction::South,
+            )
+            .expect("place park entrance");
+        let entrance = facilities
+            .entrance(&simulation.world)
+            .expect("park entrance access");
+        simulation
+            .world
+            .build_path_route(queue, at(queue_tail_x, queue.y), PathKind::Queue, 0)
+            .expect("build coaster queue to park path");
+        simulation
+            .world
+            .build_path_route(
+                at(queue_tail_x, queue.y),
+                at(queue_tail_x, queue_tail_y),
+                PathKind::Queue,
+                0,
+            )
+            .expect("extend coaster queue to park path");
+        simulation
+            .world
+            .build_path_route(
+                at(queue_tail_x, network_y),
+                at(queue_tail_x, queue_tail_y),
+                PathKind::Queue,
+                0,
+            )
+            .expect("connect coaster queue to park path");
+        simulation
+            .world
+            .build_path_route(exit, at(exit_tail_x, exit.y), PathKind::Normal, 0)
+            .expect("build coaster exit path");
+        simulation
+            .world
+            .build_path_route(
+                at(exit_tail_x, exit.y),
+                at(exit_tail_x, queue_tail_y),
+                PathKind::Normal,
+                0,
+            )
+            .expect("extend coaster exit to park path");
+        simulation
+            .world
+            .build_path_route(
+                at(exit_tail_x, queue_tail_y),
+                at(exit_tail_x, network_y),
+                PathKind::Normal,
+                0,
+            )
+            .expect("connect coaster exit to park path");
+
+        simulation.facilities = facilities;
+        simulation.simulation = ParkGuests::new(42, 64, &simulation.world, entrance, 64);
+        simulation
+            .simulation
+            .open_with_guests(&simulation.facilities.guest_facilities(&simulation.world));
+        assert_eq!(
+            simulation.simulation.walking().path_component(entrance),
+            simulation.simulation.walking().path_component(queue),
+            "coaster queue must connect to the park entrance"
+        );
+        assert!(
+            simulation.construction_set_open(true),
+            "{}",
+            simulation.construction_message()
+        );
+    }
+
+    #[test]
+    fn completed_automatic_search_installs_its_result() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        let circuit = block_test_circuit();
+        let train = hybrid_model().train;
+        let config = super::PhysicsConfig {
+            powered_sections: false,
+            ..block_physics_config()
+        };
+        let search = super::BlockPlacementSearch::new(circuit, train, config).unwrap();
+        assert!(search.is_complete());
+        simulation.install_block_layout(search.best().clone(), false);
+        simulation.block_placement_search = Some(search);
+        simulation.construction_advance_block_analysis(1);
+        assert!(simulation.block_placement_search.is_none());
+        assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 1);
+        assert!(simulation.block_layout_is_automatic);
+        let report = simulation.construction_block_report_json();
+        assert!(
+            report.contains("\"placementStatus\":\"complete\""),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn manual_block_validation_preserves_layout_and_reports_rejection() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        build_block_test_construction(&mut simulation);
+        let (circuit, train) = simulation.construction_circuit_and_train().unwrap();
+        let original =
+            BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
+        simulation.install_block_layout(original, false);
+        let old_boundaries = simulation
+            .block_layout
+            .as_ref()
+            .unwrap()
+            .boundaries()
+            .to_vec();
+        let runs = theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres);
+        let pair = runs
+            .iter()
+            .enumerate()
+            .find_map(|(index, first)| {
+                runs[index + 1..].iter().find_map(|second| {
+                    (first.boundary_metres != second.boundary_metres
+                        && first
+                            .piece_indices
+                            .iter()
+                            .any(|piece| second.piece_indices.contains(piece)))
+                    .then_some((first.boundary_metres, second.boundary_metres))
+                })
+            })
+            .expect("fixture has overlapping candidate brakes");
+        assert!(simulation.construction_set_block_sections(vec![pair.0, pair.1]));
+        assert!(
+            simulation
+                .construction_block_report_json()
+                .contains("\"placementStatus\":\"validating\"")
+        );
+        assert_eq!(
+            simulation.block_layout.as_ref().unwrap().boundaries(),
+            old_boundaries
+        );
+        for _ in 0..1_000 {
+            simulation.construction_advance_block_analysis(1_000);
+            if simulation.block_manual_search.is_none() {
+                break;
+            }
+        }
+        assert!(simulation.block_manual_search.is_none());
+        assert_eq!(
+            simulation.block_layout.as_ref().unwrap().boundaries(),
+            old_boundaries
+        );
+        assert!(
+            simulation.construction_message().contains("overlap"),
+            "{}",
+            simulation.construction_message()
+        );
+    }
+
+    #[test]
+    fn automatic_placement_is_incremental_and_preserves_installed_layout_while_searching() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        build_block_test_construction(&mut simulation);
+        let (circuit, train) = simulation.construction_circuit_and_train().unwrap();
+        let original =
+            BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
+        simulation.install_block_layout(original, false);
+        let old_boundaries = simulation
+            .block_layout
+            .as_ref()
+            .unwrap()
+            .boundaries()
+            .to_vec();
+        assert!(simulation.construction_auto_blocks());
+        let report = simulation.construction_block_report_json();
+        assert!(
+            report.contains("\"placementStatus\":\"searching\""),
+            "{report}"
+        );
+        assert!(!simulation.construction_advance_block_analysis(1));
+        assert_eq!(
+            simulation.block_layout.as_ref().unwrap().boundaries(),
+            old_boundaries
+        );
+        let before_tick = simulation
+            .block_placement_search
+            .as_ref()
+            .unwrap()
+            .work_completed();
+        simulation.tick();
+        let after_tick = simulation
+            .block_placement_search
+            .as_ref()
+            .unwrap()
+            .work_completed();
+        assert!(after_tick > before_tick && after_tick - before_tick <= 200);
+        simulation.construction_delete(3);
+        assert!(simulation.block_placement_search.is_none());
+    }
+
+    #[test]
+    fn block_report_marks_throughput_pending_until_incremental_estimate_completes() {
+        let circuit = block_test_circuit();
+        let train = hybrid_model().train;
+        let layout =
+            BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.install_block_layout(layout, false);
+        let report = simulation.construction_block_report_json();
+        assert!(
+            report.contains("\"theoreticalHourlyRiders\":null"),
+            "{report}"
+        );
+        assert!(
+            report.contains("\"throughputStatus\":\"pending\""),
+            "{report}"
+        );
+        assert!(!simulation.construction_advance_block_analysis(1));
+        for _ in 0..1_000 {
+            if simulation.construction_advance_block_analysis(1_000) {
+                break;
+            }
+        }
+        let report = simulation.construction_block_report_json();
+        assert!(
+            report.contains("\"throughputStatus\":\"ready\""),
+            "{report}"
+        );
+        assert!(
+            report_number(&report, "theoreticalHourlyRiders") > 0.0,
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn throughput_cache_distinguishes_different_brake_runs_at_the_same_boundary() {
+        let circuit = super::demo_circuit();
+        let train = hybrid_model().train;
+        let runs = theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres);
+        let normal = block_physics_config();
+        let gentle = super::PhysicsConfig {
+            braking_acceleration: 0.5,
+            ..normal
+        };
+        for run in &runs {
+            if !runs.iter().any(|other| {
+                other.boundary_metres == run.boundary_metres
+                    && other.piece_indices.len() > run.piece_indices.len()
+            }) {
+                continue;
+            }
+            let Ok(first) = BlockLayout::new(&circuit, &train, normal, vec![run.boundary_metres])
+            else {
+                continue;
+            };
+            let Ok(second) = BlockLayout::new(&circuit, &train, gentle, vec![run.boundary_metres])
+            else {
+                continue;
+            };
+            if first.boundaries() == second.boundaries()
+                && first
+                    .boundaries()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, _)| first.brake_pieces(index) != second.brake_pieces(index))
+            {
+                assert_ne!(
+                    super::block_layout_fingerprint(&first),
+                    super::block_layout_fingerprint(&second)
+                );
+                return;
+            }
+        }
+        panic!("expected two validated brake lengths at the same boundary");
+    }
+
+    #[test]
+    fn throughput_simulation_matches_recording_train_motion() {
+        let circuit = block_test_circuit();
+        let train = hybrid_model().train;
+        let layout = BlockLayout::new(
+            &circuit,
+            &train,
+            block_physics_config(),
+            block_test_boundaries(&circuit),
+        )
+        .unwrap();
+        assert!(layout.capacity() >= 3);
+        let mut recorded = super::BlockOperation::new(layout.clone());
+        let mut unrecorded = super::BlockOperation::new_without_reports(layout);
+        let mut completed = 0;
+        for _ in 0..30_000 {
+            assert_eq!(recorded.can_dispatch(), unrecorded.can_dispatch());
+            if recorded.can_dispatch() {
+                assert_eq!(recorded.dispatch(), unrecorded.dispatch());
+            }
+            let recorded_outcomes = recorded.step(&[]);
+            let unrecorded_outcomes = unrecorded.step(&[]);
+            assert_eq!(recorded_outcomes.len(), unrecorded_outcomes.len());
+            for ((id, outcome), (other_id, other_outcome)) in
+                recorded_outcomes.iter().zip(&unrecorded_outcomes)
+            {
+                assert_eq!(id, other_id);
+                assert_eq!(outcome.recovered, other_outcome.recovered);
+                completed += 1;
+            }
+            let recorded_positions: Vec<_> = recorded
+                .trains()
+                .map(|(id, train)| (id, train.distance(), train.speed()))
+                .collect();
+            let unrecorded_positions: Vec<_> = unrecorded
+                .trains()
+                .map(|(id, train)| (id, train.distance(), train.speed()))
+                .collect();
+            assert_eq!(recorded_positions, unrecorded_positions);
+        }
+        assert!(completed > 0);
+    }
+
+    #[test]
+    fn opening_starts_with_one_train_without_block_placement() {
+        let circuit = block_test_circuit();
+        let train = hybrid_model().train;
+        let layout =
+            super::block_layout_for_open(&circuit, &train, block_physics_config()).unwrap();
+        assert_eq!(layout.capacity(), 1);
+        assert!(editable_block_boundaries(&layout).is_empty());
+    }
+
+    #[test]
+    fn throughput_uses_sustained_dispatches_after_the_initial_fill() {
+        let circuit = block_test_circuit();
+        let train = hybrid_model().train;
+        let physics = block_physics_config();
+        let layout =
+            BlockLayout::new(&circuit, &train, physics, block_test_boundaries(&circuit)).unwrap();
+        assert_eq!(layout.capacity(), 3);
+
+        let mut operation = super::BlockOperation::new(layout.clone());
+        while operation.can_dispatch() {
+            operation.dispatch();
+        }
+        let mut dispatch_steps = Vec::new();
+        for step in 1..=200_000 {
+            assert!(
+                operation
+                    .step(&[])
+                    .iter()
+                    .all(|(_, outcome)| !outcome.recovered)
+            );
+            while operation.can_dispatch() {
+                operation.dispatch();
+                dispatch_steps.push(step);
+            }
+            if dispatch_steps.len() >= 4 {
+                break;
+            }
+        }
+        assert!(
+            dispatch_steps.len() >= 4,
+            "not enough dispatches for a sustained estimate"
+        );
+        let seconds = (dispatch_steps[3] - dispatch_steps[0]) as f64 * super::TIME_STEP;
+        let seats = usize::from(train.cars)
+            * usize::from(train.rows_per_car)
+            * usize::from(train.seats_per_row);
+        let expected = seats as f64 * 3.0 * 3600.0 / seconds;
+        let actual = theoretical_hourly_riders(&layout).unwrap();
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn block_report_uses_simulated_dispatch_spacing_for_one_two_and_three_trains() {
+        let circuit = block_test_circuit();
+        let train = hybrid_model().train;
+        let physics = block_physics_config();
+        let brake_boundaries = block_test_boundaries(&circuit);
+
+        let mut hourly_throughputs = Vec::new();
+        for train_capacity in 1..=3 {
+            let boundaries = brake_boundaries[..train_capacity + 1].to_vec();
+            let layout = BlockLayout::new(&circuit, &train, physics, boundaries)
+                .expect("the selected block layout is physically valid");
+            assert_eq!(layout.capacity(), train_capacity);
+
+            let mut simulation = WasmSimulation::new(42, 0);
+            simulation.block_layout = Some(layout.clone());
+            match theoretical_hourly_riders(&layout) {
+                Ok(throughput) => simulation.block_hourly_throughput = throughput,
+                Err(reason) => simulation.block_throughput_reason = reason.to_owned(),
+            }
+            let report = simulation.construction_block_report_json();
+            assert_eq!(
+                report_number(&report, "trainCapacity"),
+                train_capacity as f64
+            );
+            assert!(
+                report_number(&report, "theoreticalHourlyRiders") > 0.0,
+                "capacity {train_capacity}: {report}"
+            );
+            assert!(report.contains("\"editable\":true"));
+            assert!(report.contains("\"reasons\":[]"));
+            assert!(report.contains("\"placementSearchComplete\":null"));
+            assert!(report.contains("\"notes\":["));
+            assert!(report.contains("\"suggestions\":[\""));
+            hourly_throughputs.push(report_number(&report, "theoreticalHourlyRiders"));
+        }
+        assert!(
+            hourly_throughputs
+                .iter()
+                .all(|throughput| throughput.is_finite())
+        );
+        assert!(
+            hourly_throughputs[1] > hourly_throughputs[0],
+            "two-train throughput {}/h did not exceed one-train throughput {}/h",
+            hourly_throughputs[1],
+            hourly_throughputs[0]
+        );
+        assert!(
+            hourly_throughputs[2] > hourly_throughputs[0],
+            "three-train throughput {}/h did not exceed one-train throughput {}/h",
+            hourly_throughputs[2],
+            hourly_throughputs[0]
+        );
+    }
+
+    fn simulation_with_two_occupied_coaster_trains() -> WasmSimulation {
+        let mut simulation = WasmSimulation::new(42, 64);
+        simulation.world = World::new(
+            64,
+            64,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        simulation.facilities = ParkFacilities::new();
+        simulation.construction_start(60, 60, 8, 0);
+        for piece in [
+            "Straight",
+            "Straight",
+            "LiftFlat",
+            "Straight",
+            "Straight",
+            "TurnLargeEntry",
+            "TurnLargeExit",
+            "Straight",
+            "Straight",
+            "LiftFlat",
+            "Straight",
+            "Straight",
+            "Straight",
+            "TurnLargeEntry",
+            "TurnLargeExit",
+        ] {
+            simulation.construction_select(piece);
+            simulation.construction_append();
+            assert!(
+                simulation.construction_message().is_empty(),
+                "{piece}: {}",
+                simulation.construction_message()
+            );
+        }
+        assert!(simulation.construction_can_close());
+        simulation.construction_close();
+        apply_automatic_blocks_after_finding(&mut simulation, 3);
+        let boundaries = editable_block_boundaries(simulation.block_layout.as_ref().unwrap());
+        assert!(boundaries.len() >= 3);
+        assert!(simulation.construction_set_block_sections(boundaries[..3].to_vec()));
+        finish_manual_block_validation(&mut simulation);
+        assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 2);
+        connect_station_to_park_paths(&mut simulation);
+        simulation.construction_placed_supports();
+        assert!(
+            simulation.construction_message.is_empty(),
+            "support routes: {:?}",
+            simulation
+                .support_render_cache
+                .iter()
+                .filter_map(
+                    |(id, cache)| (cache.world_revision == simulation.world.revision())
+                        .then(|| cache.segments.as_ref().err().map(|err| (id, err)))
+                        .flatten()
+                )
+                .collect::<Vec<_>>()
+        );
+        let construction = simulation.construction.as_ref().unwrap();
+        for piece in construction.pieces() {
+            assert_eq!(
+                super::check_clearance(
+                    &simulation.world,
+                    piece,
+                    &construction.model().train,
+                    &[],
+                    &[]
+                ),
+                Ok(()),
+                "{:?}",
+                piece.id
+            );
+        }
+
+        simulation.tick();
+        assert_eq!(
+            simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .count(),
+            0,
+            "empty trains should not leave the station"
+        );
+
+        let mut occupied_train_ids = Vec::new();
+        for _ in 0..10_000 {
+            simulation.tick();
+            occupied_train_ids = simulation
+                .coaster_riders
+                .iter()
+                .filter_map(|(&train_id, guests)| (!guests.is_empty()).then_some(train_id))
+                .collect();
+            if occupied_train_ids.len() >= 2 {
+                break;
+            }
+        }
+        assert!(
+            occupied_train_ids.len() >= 2,
+            "expected passengers on two simultaneous trains, got {occupied_train_ids:?}; active={}, aware={}, revenue={}, trains={:?}",
+            simulation
+                .simulation
+                .walking()
+                .traits()
+                .ids()
+                .filter(|&id| simulation.simulation.walking().traits().is_active(id))
+                .count(),
+            simulation
+                .simulation
+                .behaviors()
+                .guests
+                .iter()
+                .filter(|guest| guest
+                    .known_places()
+                    .iter()
+                    .any(|place| place.id == super::COASTER_PLACE_ID))
+                .count(),
+            simulation.simulation.revenue(),
+            simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .map(|(id, train)| (id, train.distance(), train.speed()))
+                .collect::<Vec<_>>()
+        );
+        simulation
+    }
+
+    #[test]
+    fn deleting_coaster_track_recovers_passengers_from_two_live_trains() {
+        let mut simulation = simulation_with_two_occupied_coaster_trains();
+        let occupied_train_ids: Vec<_> = simulation.coaster_riders.keys().copied().collect();
+        let riders_before_deletion: Vec<GuestId> = occupied_train_ids
+            .iter()
+            .flat_map(|train_id| simulation.coaster_riders[train_id].iter().copied())
+            .collect();
+        assert!(!riders_before_deletion.is_empty());
+
+        simulation.construction_delete(1);
+
+        assert!(!simulation.coaster_open);
+        assert!(simulation.coaster_riders.is_empty());
+        assert!(simulation.construction_riders().is_empty());
+        for rider in riders_before_deletion {
+            assert!(simulation.simulation.walking().traits().is_active(rider));
+            assert!(!simulation.simulation.behaviors().is_coaster_riding(rider));
+        }
+    }
+
+    #[test]
+    fn automatic_improvement_waits_for_passengers_before_installing() {
+        let mut simulation = simulation_with_two_occupied_coaster_trains();
+        let riders: Vec<_> = simulation
+            .coaster_riders
+            .values()
+            .flatten()
+            .copied()
+            .collect();
+        let completed_before: Vec<_> = riders
+            .iter()
+            .map(|rider| simulation.simulation.behaviors().guests[rider.0 as usize].rides_completed)
+            .collect();
+        assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 2);
+        assert!(simulation.construction_auto_blocks());
+        for _ in 0..10_000 {
+            simulation.construction_advance_block_analysis(1_000);
+            if simulation
+                .block_placement_search
+                .as_ref()
+                .is_some_and(|search| search.best().capacity() > 2)
+            {
+                break;
+            }
+        }
+        assert!(
+            simulation
+                .block_placement_search
+                .as_ref()
+                .is_some_and(|search| search.best().capacity() > 2)
+        );
+        assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 2);
+        assert!(
+            riders
+                .iter()
+                .all(|&rider| simulation.simulation.behaviors().is_coaster_riding(rider))
+        );
+        for _ in 0..10_000 {
+            simulation.tick();
+            if simulation.block_layout.as_ref().unwrap().capacity() > 2 {
+                break;
+            }
+        }
+        assert!(simulation.block_layout.as_ref().unwrap().capacity() > 2);
+        assert!(
+            simulation.block_placement_search.is_some(),
+            "search should continue toward the maximum"
+        );
+        for (rider, before) in riders.into_iter().zip(completed_before) {
+            assert!(
+                simulation.simulation.behaviors().guests[rider.0 as usize].rides_completed > before,
+                "rider must complete, not be recovered"
+            );
+        }
+    }
+
+    #[test]
+    fn block_commands_keep_valid_layout_after_rejected_edit() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        build_block_test_construction(&mut simulation);
+        apply_automatic_blocks_after_finding(&mut simulation, 1);
+        let layout = simulation.block_layout.as_ref().unwrap();
+        let original_boundaries = editable_block_boundaries(layout);
+        assert!(!original_boundaries.is_empty());
+
+        assert!(!simulation.construction_move_block_section(0, f64::NAN));
+        assert!(
+            simulation
+                .construction_message()
+                .contains("outside the circuit")
+        );
+        assert_eq!(
+            editable_block_boundaries(simulation.block_layout.as_ref().unwrap()),
+            original_boundaries
+        );
+
+        let first_boundary = original_boundaries[0];
+        assert!(simulation.construction_move_block_section(0, first_boundary));
+        finish_manual_block_validation(&mut simulation);
+        assert!(simulation.construction_remove_block_section(0));
+        finish_manual_block_validation(&mut simulation);
+        assert!(simulation.construction_add_block_section(first_boundary));
+        finish_manual_block_validation(&mut simulation);
+        assert_eq!(
+            editable_block_boundaries(simulation.block_layout.as_ref().unwrap()),
+            original_boundaries
+        );
+        let report = simulation.construction_block_report_json();
+        assert!(report.contains("\"reasons\":[]"));
+        assert!(report.contains("\"editable\":false"));
+        assert!(report.contains("\"trackKind\":\"station\""));
+
+        simulation.construction_delete(3);
+        assert!(simulation.block_layout.is_none());
+        assert!(
+            simulation
+                .construction_block_report_json()
+                .contains("\"trainCapacity\":0")
+        );
+    }
 
     #[test]
     fn demo_exports_wooden_lattice_diagonals() {

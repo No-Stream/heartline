@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn tangent_only_matches_full_sample_for_every_piece() {
+    for piece in catalog() {
+        for index in 0..=16 {
+            let distance = piece.length() * f64::from(index) / 16.0;
+            assert_eq!(
+                piece.tangent_at(distance),
+                piece.sample(distance).tangent,
+                "{:?} at {distance}",
+                piece.id
+            );
+        }
+    }
+}
+
+#[test]
 fn wooden_twister_offers_only_steel_structure_inversions() {
     let model = wooden_twister_model();
     assert_eq!(model.lift_types, vec![LiftType::Chain]);

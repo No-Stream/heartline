@@ -12,6 +12,8 @@ mod testing;
 pub use testing::{TestRun, TestRunRecorder, TestSample};
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};
+mod block_operation;
+pub use block_operation::BlockOperation;
 
 #[derive(Clone, Debug)]
 pub struct Circuit {
@@ -291,17 +293,17 @@ impl Train {
             })
             .sum()
     }
-    fn acceleration(&self, circuit: &Circuit, distance: f64, speed: f64) -> f64 {
+    fn gravity_acceleration(&self, circuit: &Circuit, distance: f64) -> f64 {
         let mean_slope = (0..self.cars)
             .map(|index| {
-                circuit
-                    .sample(distance - index as f64 * self.spacing)
-                    .tangent
-                    .z
+                let (piece, local) = circuit.locate(distance - index as f64 * self.spacing);
+                circuit.pieces[piece].tangent_at(local).z
             })
             .sum::<f64>()
             / self.cars as f64;
-        let gravity = -GRAVITY * mean_slope;
+        -GRAVITY * mean_slope
+    }
+    fn acceleration_with_gravity(&self, gravity: f64, speed: f64) -> f64 {
         let rolling = if speed == 0.0 {
             0.0
         } else {
@@ -312,24 +314,46 @@ impl Train {
         gravity - rolling - drag
     }
     pub fn step(&mut self, circuit: &Circuit) {
+        self.step_block_brake(circuit, &[], false);
+    }
+    /// Apply installed block brakes over the given track pieces.
+    pub fn step_block_brake(&mut self, circuit: &Circuit, brake_pieces: &[usize], hold: bool) {
+        self.step_block_brake_impl(circuit, brake_pieces, hold, true);
+    }
+    /// Advance the same motion without producing rider force readings.
+    pub fn step_block_brake_without_readings(
+        &mut self,
+        circuit: &Circuit,
+        brake_pieces: &[usize],
+        hold: bool,
+    ) {
+        self.step_block_brake_impl(circuit, brake_pieces, hold, false);
+    }
+    fn step_block_brake_impl(
+        &mut self,
+        circuit: &Circuit,
+        brake_pieces: &[usize],
+        hold: bool,
+        record_readings: bool,
+    ) {
         if self.recovered {
             return;
         }
         let previous_speed = self.speed;
         let resistance = self.config.rolling_resistance * GRAVITY;
-        let initial_gravity = self.acceleration(circuit, self.distance, 0.0);
+        let initial_gravity = self.gravity_acceleration(circuit, self.distance);
         let held_at_rest = previous_speed == 0.0 && initial_gravity.abs() <= resistance;
         let acceleration = if held_at_rest {
             0.0
         } else {
-            self.acceleration(circuit, self.distance, self.speed)
+            self.acceleration_with_gravity(initial_gravity, self.speed)
         };
-        let next_distance =
+        let mut next_distance =
             self.distance + self.speed * TIME_STEP + 0.5 * acceleration * TIME_STEP * TIME_STEP;
         let estimate = self.speed + acceleration * TIME_STEP;
-        let next_acceleration = self.acceleration(circuit, next_distance, estimate);
+        let downhill = self.gravity_acceleration(circuit, next_distance);
+        let next_acceleration = self.acceleration_with_gravity(downhill, estimate);
         let mut next_speed = self.speed + 0.5 * (acceleration + next_acceleration) * TIME_STEP;
-        let downhill = self.acceleration(circuit, next_distance, 0.0);
         if downhill.abs() <= resistance && previous_speed * next_speed <= 0.0 {
             next_speed = 0.0;
         }
@@ -374,35 +398,50 @@ impl Train {
                 }
             }
         }
+        if brake_pieces.contains(&index) && !self.rolled_back {
+            let target = if hold { 0.0 } else { self.config.brake_speed };
+            if next_speed > target {
+                next_speed =
+                    (next_speed - self.config.braking_acceleration * TIME_STEP).max(target);
+            } else if next_speed < target {
+                next_speed = (next_speed + self.config.drive_acceleration * TIME_STEP).min(target);
+            }
+            if hold && previous_speed == 0.0 {
+                next_distance = self.distance;
+                next_speed = 0.0;
+            }
+        }
         self.distance = next_distance;
         self.speed = next_speed;
         if previous_speed >= 0.0 && self.speed < 0.0 {
             self.rolled_back = true;
         }
-        let longitudinal_acceleration = (self.speed - previous_speed) / TIME_STEP;
-        self.readings.push(
-            (0..self.cars)
-                .map(|car| {
-                    let distance = self.distance - car as f64 * self.spacing;
-                    let (index, local) = circuit.locate(distance);
-                    let track_sample = circuit.pieces[index].sample(local);
-                    let g = rider_g(
-                        &circuit.pieces[index],
-                        local,
-                        self.speed,
-                        longitudinal_acceleration,
-                    );
-                    CarReading {
-                        distance: distance.rem_euclid(circuit.length),
-                        speed: self.speed.abs(),
-                        g,
-                        airtime: g.vertical < 0.0,
-                        height_m: track_sample.position.z,
-                        inverted: track_sample.up.z < 0.0,
-                    }
-                })
-                .collect(),
-        );
+        if record_readings {
+            let longitudinal_acceleration = (self.speed - previous_speed) / TIME_STEP;
+            self.readings.push(
+                (0..self.cars)
+                    .map(|car| {
+                        let distance = self.distance - car as f64 * self.spacing;
+                        let (index, local) = circuit.locate(distance);
+                        let track_sample = circuit.pieces[index].sample(local);
+                        let g = rider_g(
+                            &circuit.pieces[index],
+                            local,
+                            self.speed,
+                            longitudinal_acceleration,
+                        );
+                        CarReading {
+                            distance: distance.rem_euclid(circuit.length),
+                            speed: self.speed.abs(),
+                            g,
+                            airtime: g.vertical < 0.0,
+                            height_m: track_sample.position.z,
+                            inverted: track_sample.up.z < 0.0,
+                        }
+                    })
+                    .collect(),
+            );
+        }
         let stopped_on_slope = previous_speed > 0.0 && self.speed == 0.0 && downhill.abs() > 1e-9;
         if stopped_on_slope
             || (self.rolled_back

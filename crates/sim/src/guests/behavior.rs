@@ -58,7 +58,7 @@ pub struct BehaviorSimulation {
     queues: BTreeMap<u32, Vec<GuestId>>,
     income: BTreeMap<u32, u64>,
     external_rides: BTreeSet<u32>,
-    coaster_riders: BTreeMap<u32, Vec<GuestId>>,
+    coaster_riders: BTreeMap<(u32, u64), Vec<GuestId>>,
     tick: u64,
 }
 
@@ -88,9 +88,19 @@ impl BehaviorSimulation {
 
     /// Admit one train in queue order and charge each rider at boarding.
     pub fn board_coaster(&mut self, facility: &Facility, guests: &GuestStore) -> Vec<GuestId> {
+        self.board_coaster_train(facility, 0, guests)
+    }
+
+    /// Admit one identified train in queue order and charge each rider at boarding.
+    pub fn board_coaster_train(
+        &mut self,
+        facility: &Facility,
+        train_id: u64,
+        guests: &GuestStore,
+    ) -> Vec<GuestId> {
         let id = facility.place.id;
         assert!(self.external_rides.contains(&id));
-        assert!(!self.coaster_riders.contains_key(&id));
+        assert!(!self.coaster_riders.contains_key(&(id, train_id)));
         let queue = self.queues.entry(id).or_default();
         let mut selected: Vec<GuestId> = Vec::new();
         while let Some(&first) = queue.iter().find(|guest| !selected.contains(*guest)) {
@@ -140,7 +150,7 @@ impl BehaviorSimulation {
             riders.push(guest);
         }
         if !riders.is_empty() {
-            self.coaster_riders.insert(id, riders.clone());
+            self.coaster_riders.insert((id, train_id), riders.clone());
         }
         riders
     }
@@ -168,9 +178,22 @@ impl BehaviorSimulation {
         proximity_events: &[Vec<ProximityEvent>],
         recovered: bool,
     ) -> Vec<GuestId> {
+        self.finish_coaster_train(facility, 0, guests, ratings, proximity_events, recovered)
+    }
+
+    /// Complete or recover one identified train. Ratings are in boarded guest order.
+    pub fn finish_coaster_train(
+        &mut self,
+        facility: &Facility,
+        train_id: u64,
+        guests: &mut GuestStore,
+        ratings: &[(f64, f64, f64)],
+        proximity_events: &[Vec<ProximityEvent>],
+        recovered: bool,
+    ) -> Vec<GuestId> {
         let riders = self
             .coaster_riders
-            .remove(&facility.place.id)
+            .remove(&(facility.place.id, train_id))
             .unwrap_or_default();
         assert!(
             recovered || (ratings.len() == riders.len() && proximity_events.len() == riders.len())
@@ -842,6 +865,59 @@ mod tests {
             simulation.activity_detail(GuestId(0)).kind,
             ActivityKind::Walking
         );
+    }
+
+    #[test]
+    fn coaster_train_cohorts_finish_independently() {
+        let mut guests = generate_guests(31, 2);
+        let mut simulation = BehaviorSimulation::new(2);
+        let ride = place(1, PlaceKind::Ride);
+        let facility = Facility {
+            place: ride,
+            capacity: 1,
+            duration_ticks: 3,
+            exit_position: Some(ride.position),
+        };
+        simulation.set_external_rides(&[ride.id]);
+        for index in 0..2 {
+            simulation.guests[index].observe(ride);
+            simulation.activities[index] = Some(Activity::Queuing(ride.id, 0));
+        }
+        simulation
+            .queues
+            .insert(ride.id, vec![GuestId(0), GuestId(1)]);
+
+        assert_eq!(
+            simulation.board_coaster_train(&facility, 11, &guests),
+            vec![GuestId(0)]
+        );
+        assert_eq!(
+            simulation.board_coaster_train(&facility, 22, &guests),
+            vec![GuestId(1)]
+        );
+
+        assert_eq!(
+            simulation.finish_coaster_train(&facility, 11, &mut guests, &[], &[], true),
+            vec![GuestId(0)]
+        );
+        assert!(!simulation.is_coaster_riding(GuestId(0)));
+        assert!(simulation.is_coaster_riding(GuestId(1)));
+        assert!(guests.memory(GuestId(0)).is_empty());
+        assert!(guests.memory(GuestId(1)).is_empty());
+
+        assert_eq!(
+            simulation.finish_coaster_train(
+                &facility,
+                22,
+                &mut guests,
+                &[(50.0, 20.0, 0.0)],
+                &[vec![]],
+                false,
+            ),
+            vec![GuestId(1)]
+        );
+        assert!(!simulation.is_coaster_riding(GuestId(1)));
+        assert_eq!(guests.memory(GuestId(1)).len(), 1);
     }
 
     #[test]

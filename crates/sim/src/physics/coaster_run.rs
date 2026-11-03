@@ -23,6 +23,23 @@ impl CoasterRun {
         configuration: &TrainConfiguration,
         config: PhysicsConfig,
     ) -> Self {
+        Self::with_reports(circuit, configuration, config, true)
+    }
+
+    pub(super) fn new_without_reports(
+        circuit: &Circuit,
+        configuration: &TrainConfiguration,
+        config: PhysicsConfig,
+    ) -> Self {
+        Self::with_reports(circuit, configuration, config, false)
+    }
+
+    fn with_reports(
+        circuit: &Circuit,
+        configuration: &TrainConfiguration,
+        config: PhysicsConfig,
+        record_reports: bool,
+    ) -> Self {
         let station = circuit
             .pieces
             .iter()
@@ -36,7 +53,11 @@ impl CoasterRun {
         Self {
             train: Train::new(circuit, configuration, config, station_distance, 0.0),
             recorders: Some(
-                (0..configuration.cars)
+                (0..if record_reports {
+                    configuration.cars
+                } else {
+                    0
+                })
                     .map(|_| TestRunRecorder::new(circuit.length()))
                     .collect(),
             ),
@@ -53,6 +74,13 @@ impl CoasterRun {
     pub fn train(&self) -> &Train {
         &self.train
     }
+    pub(super) fn stop_for_interlock(&mut self) {
+        self.train.speed = 0.0;
+    }
+    #[cfg(test)]
+    pub(super) fn train_mut(&mut self) -> &mut Train {
+        &mut self.train
+    }
 
     /// Advances one physics step; returns the outcome exactly once.
     pub fn step(&mut self, circuit: &Circuit) -> Option<CoasterOutcome> {
@@ -64,15 +92,32 @@ impl CoasterRun {
         circuit: &Circuit,
         others: &[TrainPosition],
     ) -> Option<CoasterOutcome> {
+        self.step_with_block_brake(circuit, others, &[], false)
+    }
+
+    pub fn step_with_block_brake(
+        &mut self,
+        circuit: &Circuit,
+        others: &[TrainPosition],
+        brake_pieces: &[usize],
+        hold: bool,
+    ) -> Option<CoasterOutcome> {
         let recorders = self.recorders.as_mut()?;
-        self.train.step(circuit);
-        for frame in self.train.take_readings() {
-            for (recorder, reading) in recorders.iter_mut().zip(frame) {
-                recorder.record_dueling(circuit, reading, others);
-                recorder.record(&[vec![reading]]);
+        if recorders.is_empty() {
+            self.train
+                .step_block_brake_without_readings(circuit, brake_pieces, hold);
+        } else {
+            self.train.step_block_brake(circuit, brake_pieces, hold);
+            for frame in self.train.take_readings() {
+                for (recorder, reading) in recorders.iter_mut().zip(frame) {
+                    recorder.record_dueling(circuit, reading, others);
+                    recorder.record(&[vec![reading]]);
+                }
             }
         }
-        if self.train.speed().abs() < 0.01 {
+        if hold && brake_pieces.contains(&circuit.piece_index(self.train.distance())) {
+            self.stationary_steps = 0;
+        } else if self.train.speed().abs() < 0.01 {
             self.stationary_steps += 1;
         } else {
             self.stationary_steps = 0;

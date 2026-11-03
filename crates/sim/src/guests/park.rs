@@ -78,8 +78,12 @@ impl ParkGuests {
     }
 
     pub fn board_coaster(&mut self, facility: &Facility) -> Vec<GuestId> {
+        self.board_coaster_train(facility, 0)
+    }
+
+    pub fn board_coaster_train(&mut self, facility: &Facility, train_id: u64) -> Vec<GuestId> {
         self.behaviors
-            .board_coaster(facility, self.walking.traits())
+            .board_coaster_train(facility, train_id, self.walking.traits())
     }
 
     pub fn finish_coaster(
@@ -90,8 +94,21 @@ impl ParkGuests {
         proximity_events: &[Vec<crate::track::proximity::ProximityEvent>],
         recovered: bool,
     ) {
-        let riders = self.behaviors.finish_coaster(
+        self.finish_coaster_train(world, facility, 0, ratings, proximity_events, recovered);
+    }
+
+    pub fn finish_coaster_train(
+        &mut self,
+        world: &World,
+        facility: &Facility,
+        train_id: u64,
+        ratings: &[(f64, f64, f64)],
+        proximity_events: &[Vec<crate::track::proximity::ProximityEvent>],
+        recovered: bool,
+    ) {
+        let riders = self.behaviors.finish_coaster_train(
             facility,
+            train_id,
             self.walking.traits_mut(),
             ratings,
             proximity_events,
@@ -1119,3 +1136,7 @@ mod tests {
         assert_eq!(park.tick(&world, &[], 100, None), VisitChanges::default());
     }
 }
+
+#[cfg(all(test, feature = "threads"))]
+#[path = "park_determinism_tests.rs"]
+mod park_determinism_tests;

@@ -794,3 +794,210 @@ fn coaster_run_recovers_a_train_that_cannot_leave_the_station() {
     assert!(outcome.recovered);
     assert!(outcome.reports.iter().all(|report| !report.completed));
 }
+
+#[test]
+fn block_operation_keeps_trains_separate_and_completes_runs() {
+    let circuit = circuit(&[
+        PieceId::Station,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::LiftFlat,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::LiftFlat,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+    ]);
+    let configuration = crate::track::hybrid_model().train;
+    let boundary = |end: usize| {
+        circuit.pieces()[..end]
+            .iter()
+            .map(|piece| piece.length())
+            .sum()
+    };
+    let layout = crate::track::blocks::BlockLayout::new(
+        &circuit,
+        &configuration,
+        super::PhysicsConfig {
+            lift_speed: 5.0,
+            ..Default::default()
+        },
+        vec![boundary(2), boundary(6), boundary(10), boundary(13)],
+    )
+    .unwrap();
+    let mut operation = super::BlockOperation::new(layout);
+    let mut dispatched = 0;
+    let mut completed = 0;
+    let mut maximum_concurrent = 0;
+    for _ in 0..200_000 {
+        if dispatched < 3 && operation.can_dispatch() {
+            operation.dispatch();
+            dispatched += 1;
+        }
+        for (_, outcome) in operation.step(&[]) {
+            assert!(!outcome.recovered);
+            completed += 1;
+        }
+        let positions: Vec<_> = operation
+            .trains()
+            .map(|(_, train)| train.distance())
+            .collect();
+        maximum_concurrent = maximum_concurrent.max(positions.len());
+        for (index, &distance) in positions.iter().enumerate() {
+            for &other in &positions[index + 1..] {
+                let separation = (distance - other).rem_euclid(circuit.length());
+                assert!(
+                    separation >= configuration.length_metres
+                        && circuit.length() - separation >= configuration.length_metres
+                );
+            }
+        }
+        if completed == 3 {
+            break;
+        }
+    }
+    assert_eq!(completed, 3);
+    assert!(maximum_concurrent >= 2);
+}
+
+#[test]
+fn optimized_acceleration_matches_full_track_samples() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let config = super::PhysicsConfig::default();
+    let train = super::Train::new(&circuit, &configuration, config, 0.0, 0.0);
+    for &start in &circuit.starts {
+        for offset in [0.0, 1.0, 5.0] {
+            let distance = start + offset;
+            let mean_slope = (0..usize::from(configuration.cars))
+                .map(|car| {
+                    circuit
+                        .sample(distance - car as f64 * train.spacing)
+                        .tangent
+                        .z
+                })
+                .sum::<f64>()
+                / f64::from(configuration.cars);
+            for speed in [-10.0_f64, 0.0, 2.0, 20.0] {
+                let rolling = if speed == 0.0 {
+                    0.0
+                } else {
+                    config.rolling_resistance * super::GRAVITY * speed.signum()
+                };
+                let drag = config.drag_coefficient * speed * speed.abs()
+                    / (config.car_mass_kg * f64::from(configuration.cars));
+                let original = -super::GRAVITY * mean_slope - rolling - drag;
+                let actual = train.acceleration_with_gravity(
+                    train.gravity_acceleration(&circuit, distance),
+                    speed,
+                );
+                assert_eq!(actual.to_bits(), original.to_bits());
+            }
+        }
+    }
+}
+
+#[test]
+fn train_motion_matches_with_and_without_rider_readings() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let config = super::PhysicsConfig {
+        lift_speed: 5.0,
+        ..Default::default()
+    };
+    let mut recorded = super::Train::new(&circuit, &configuration, config, 2.0, 1.0);
+    let mut unrecorded = recorded.clone();
+    for step in 0..30_000 {
+        let hold = step < 1_000;
+        recorded.step_block_brake(&circuit, &[0], hold);
+        unrecorded.step_block_brake_without_readings(&circuit, &[0], hold);
+        assert_eq!(recorded.distance(), unrecorded.distance());
+        assert_eq!(recorded.speed(), unrecorded.speed());
+        assert_eq!(recorded.notes(), unrecorded.notes());
+        recorded.take_readings();
+        assert!(unrecorded.readings().is_empty());
+    }
+}
+
+#[test]
+fn block_brake_holds_and_restarts_a_train() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let mut train = super::Train::new(
+        &circuit,
+        &configuration,
+        super::PhysicsConfig::default(),
+        2.0,
+        1.0,
+    );
+    for _ in 0..3000 {
+        train.step_block_brake(&circuit, &[0], true);
+        train.take_readings();
+    }
+    assert_eq!(train.speed(), 0.0);
+    let held_distance = train.distance();
+    for _ in 0..100 {
+        train.step_block_brake(&circuit, &[0], false);
+        train.take_readings();
+    }
+    assert!(train.speed() > 0.0);
+    assert!(train.distance() > held_distance);
+}
+
+#[test]
+fn block_brake_does_not_creep_while_held_on_a_downhill_piece() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let piece_index = circuit
+        .pieces()
+        .iter()
+        .position(|piece| piece.id == crate::track::PieceId::GentleDown)
+        .unwrap();
+    let distance = circuit.starts[piece_index] + circuit.pieces()[piece_index].length() / 2.0;
+    let mut train = super::Train::new(
+        &circuit,
+        &configuration,
+        super::PhysicsConfig::default(),
+        distance,
+        0.0,
+    );
+    for _ in 0..10_000 {
+        train.step_block_brake(&circuit, &[piece_index], true);
+        train.take_readings();
+    }
+    assert_eq!(train.distance(), distance);
+    assert_eq!(train.speed(), 0.0);
+}
+
+#[test]
+fn coaster_run_waits_for_a_block_and_resumes_without_recovery() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let mut run = super::CoasterRun::new(
+        &circuit,
+        &configuration,
+        super::PhysicsConfig {
+            lift_speed: 5.0,
+            ..Default::default()
+        },
+    );
+    for _ in 0..1000 {
+        assert!(
+            run.step_with_block_brake(&circuit, &[], &[0], true)
+                .is_none()
+        );
+    }
+    assert_eq!(run.train().speed(), 0.0);
+    let outcome = (0..200_000)
+        .find_map(|_| run.step_with_block_brake(&circuit, &[], &[0], false))
+        .expect("train completes after block releases");
+    assert!(outcome.reports[0].completed);
+    assert!(!outcome.recovered);
+}

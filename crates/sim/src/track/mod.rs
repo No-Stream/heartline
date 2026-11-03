@@ -486,7 +486,7 @@ impl Piece {
             })
             .fold(0.0, f64::max)
     }
-    pub fn sample(&self, distance: f64) -> TrackSample {
+    fn parameter_at_distance(&self, distance: f64) -> f64 {
         assert!(
             distance.is_finite() && distance >= 0.0 && distance <= self.length(),
             "distance outside piece"
@@ -495,13 +495,19 @@ impl Piece {
             .arc_lengths
             .partition_point(|length| *length < distance)
             .min(ARC_STEPS);
-        let t = if index == 0 {
+        if index == 0 {
             0.0
         } else {
             let low = self.arc_lengths[index - 1];
             (index as f64 - 1.0 + (distance - low) / (self.arc_lengths[index] - low))
                 / ARC_STEPS as f64
-        };
+        }
+    }
+    pub(crate) fn tangent_at(&self, distance: f64) -> Vec3 {
+        self.raw(self.parameter_at_distance(distance)).1.unit()
+    }
+    pub fn sample(&self, distance: f64) -> TrackSample {
+        let t = self.parameter_at_distance(distance);
         let (position, velocity, acceleration) = self.raw(t);
         let tangent = velocity.unit();
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
@@ -1773,3 +1779,5 @@ pub mod construction;
 pub mod clearance;
 
 pub mod proximity;
+
+pub mod blocks;
