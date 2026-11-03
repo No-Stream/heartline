@@ -499,6 +499,8 @@ function drawScene(seconds: number): void {
   drawBatches(groundCommands(camera.rotation), camera.zoom, density, originX, originY, atlasScale);
   gl.uniform1f(spriteLocations.shimmer, camera.shimmer ? (0.32 * atlasScale) / pixelZoom : 0);
   drawBatches(objectCommands(camera.rotation, seconds), camera.zoom, density, originX, originY, atlasScale);
+  document.documentElement.dataset.renderedRotation = String(camera.rotation);
+  document.documentElement.dataset.renderedZoom = String(camera.zoom);
 }
 
 const statsElement = element("stats");
