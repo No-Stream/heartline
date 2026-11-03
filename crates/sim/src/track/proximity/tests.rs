@@ -421,3 +421,42 @@ fn diagonal_support_does_not_fill_its_horizontal_bounding_rectangle() {
             .any(|event| event.kind == ProximityKind::NearMiss)
     );
 }
+
+#[test]
+fn placed_scenery_participates_in_clearance_and_proximity() {
+    use crate::track::clearance::{ClearanceCollision, check_clearance};
+    use crate::world::{Position, Scenery, SceneryKind};
+    let mut world = World::new(
+        32,
+        32,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let piece = straight(4, 3);
+    let mut tree = Scenery {
+        kind: SceneryKind::TreeOval,
+        position: Position {
+            x: 3,
+            y: 2,
+            height: 0,
+        },
+        quarter: 0,
+        rotation: 0,
+    };
+    world.place_scenery(tree).unwrap();
+    assert_eq!(
+        check_clearance(&world, &piece, &hybrid_model().train, &[], &[]),
+        Err(ClearanceCollision::Scenery)
+    );
+    world.remove_scenery(tree.position, tree.quarter);
+    tree.quarter = 3;
+    world.place_scenery(tree).unwrap();
+    assert!(check_clearance(&world, &piece, &hybrid_model().train, &[], &[]).is_ok());
+    assert!(
+        detect_proximity(&world, &[piece], &hybrid_model().train, &[], &[], &[])
+            .iter()
+            .any(|event| event.kind == ProximityKind::NearMiss)
+    );
+}

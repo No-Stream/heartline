@@ -1,4 +1,4 @@
-use crate::world::{Direction, Path, Position, Surface, World};
+use crate::world::{Direction, Path, Position, Scenery, SceneryKind, Surface, World};
 
 pub fn demo_world() -> World {
     let mut world = World::new(
@@ -132,6 +132,28 @@ pub fn demo_world() -> World {
                 });
             }
         }
+    }
+    for (kind, x, y, quarter, rotation) in [
+        (SceneryKind::TreeOval, 214, 249, 0, 0),
+        (SceneryKind::BushFlowering, 216, 250, 1, 0),
+        (SceneryKind::FlowerBed, 217, 251, 0, 0),
+        (SceneryKind::Bench, 217, 253, 0, 1),
+        (SceneryKind::Lamp, 217, 255, 1, 0),
+        (SceneryKind::Lamp, 220, 257, 0, 0),
+        (SceneryKind::Lamp, 230, 257, 0, 0),
+        (SceneryKind::Lamp, 240, 257, 0, 0),
+        (SceneryKind::TreeCone, 213, 257, 2, 0),
+        (SceneryKind::Planter, 216, 257, 1, 0),
+        (SceneryKind::Bin, 217, 258, 2, 0),
+    ] {
+        world
+            .place_scenery(Scenery {
+                kind,
+                position: Position { x, y, height: 8 },
+                quarter,
+                rotation,
+            })
+            .expect("demo scenery placement");
     }
     world
 }

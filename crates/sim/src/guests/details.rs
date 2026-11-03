@@ -115,6 +115,12 @@ pub enum GuestMemoryDetail {
     Wait {
         place_id: u32,
         duration_ticks: u64,
+        perceived_duration_ticks: u64,
+        tick: u64,
+    },
+    Scenery {
+        theme: u8,
+        enjoyment: u8,
         tick: u64,
     },
 }
@@ -125,7 +131,8 @@ impl GuestMemoryDetail {
             Self::Ride { tick, .. }
             | Self::Proximity { tick, .. }
             | Self::Food { tick, .. }
-            | Self::Wait { tick, .. } => tick,
+            | Self::Wait { tick, .. }
+            | Self::Scenery { tick, .. } => tick,
         }
     }
 }
@@ -397,6 +404,7 @@ pub fn thought_text(guest: GuestId, thought: Thought) -> String {
             7 ^ ride_id,
         ),
         Thought::Proximity(ride_id, kind) => (&[proximity_text(kind)][..], 9 ^ ride_id),
+        Thought::EnjoyedScenery(theme) => (&["The scenery here is lovely."][..], u32::from(theme)),
         Thought::DislikedRide(ride_id) => (
             &[
                 "That ride was a bit much for me.",
@@ -468,9 +476,17 @@ fn memory_json(memory: &GuestMemoryDetail) -> String {
         GuestMemoryDetail::Wait {
             place_id,
             duration_ticks,
+            perceived_duration_ticks,
             tick,
         } => format!(
-            "{{\"kind\":\"wait\",\"placeId\":{place_id},\"durationTicks\":{duration_ticks},\"tick\":{tick}}}"
+            "{{\"kind\":\"wait\",\"placeId\":{place_id},\"durationTicks\":{duration_ticks},\"perceivedDurationTicks\":{perceived_duration_ticks},\"tick\":{tick}}}"
+        ),
+        GuestMemoryDetail::Scenery {
+            theme,
+            enjoyment,
+            tick,
+        } => format!(
+            "{{\"kind\":\"scenery\",\"theme\":{theme},\"enjoyment\":{enjoyment},\"tick\":{tick}}}"
         ),
     }
 }
@@ -486,6 +502,7 @@ fn thought_json(thought: Thought) -> (&'static str, String) {
         Thought::Unhappy => ("unhappy", "null".into()),
         Thought::EnjoyedRide(ride_id) => ("enjoyedRide", ride_id.to_string()),
         Thought::DislikedRide(ride_id) => ("dislikedRide", ride_id.to_string()),
+        Thought::EnjoyedScenery(theme) => ("enjoyedScenery", theme.to_string()),
         Thought::Proximity(ride_id, kind) => (
             "proximity",
             format!(

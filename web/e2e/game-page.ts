@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 
-export type ToolName = "Watch" | "Coaster" | "Paths" | "Landscape" | "Facilities";
+export type ToolName = "Watch" | "Coaster" | "Paths" | "Landscape" | "Facilities" | "Scenery";
 
 /** Open a tool from the toolbar, which shows its panel and switches the input mode. */
 export async function openTool(page: Page, tool: ToolName): Promise<void> {

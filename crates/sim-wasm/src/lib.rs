@@ -14,7 +14,9 @@ use theme_park_sim::physics::{
     BlockOperation, Circuit, CoasterOutcome, PhysicsConfig, TIME_STEP, TestRun, TestRunRecorder,
     Train, demo_circuit,
 };
-use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch};
+use theme_park_sim::track::blocks::{
+    BlockLayout, BlockManualSearch, BlockPlacementSearch, brake_runs,
+};
 use theme_park_sim::track::clearance::{ClearanceBox, ClearanceCollision, check_clearance};
 use theme_park_sim::track::construction::{Construction, track_support_obstacles};
 use theme_park_sim::track::proximity::{
@@ -29,8 +31,8 @@ use theme_park_sim::track::{
     TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{
-    Brush, Corner, Direction, PathBuildError, PathKind, PathPreviewTile, Position, Surface,
-    TerrainCommand, TerrainEditError, World,
+    Brush, Corner, Direction, PathBuildError, PathKind, PathPreviewTile, Position, Scenery,
+    SceneryKind, Surface, TerrainCommand, TerrainEditError, World,
 };
 use wasm_bindgen::prelude::*;
 
@@ -49,6 +51,7 @@ pub struct WasmSimulation {
     facility_message: String,
     path_message: String,
     terrain_message: String,
+    scenery_message: String,
     terrain_invalidated_paths: Vec<Position>,
     circuit: Circuit,
     train: Train,
@@ -64,14 +67,17 @@ pub struct WasmSimulation {
     coaster_riders: HashMap<u64, Vec<GuestId>>,
     coaster_facility: Option<Facility>,
     block_layout: Option<BlockLayout>,
+    desired_train_count: Option<usize>,
     block_placement_search: Option<BlockPlacementSearch>,
     block_apply_best_requested: bool,
     block_manual_search: Option<BlockManualSearch>,
+    block_baseline_validation: bool,
     block_layout_is_automatic: bool,
     block_message: String,
     block_hourly_throughput: f64,
     block_throughput_reason: String,
     block_throughput_estimator: Option<ThroughputEstimator>,
+    block_analysis_extra_to_throughput: bool,
     block_throughput_cache: HashMap<Vec<u64>, (f64, String)>,
     recovered_station: Option<Piece>,
     support_render_cache: HashMap<usize, SupportRenderCache>,
@@ -172,6 +178,7 @@ impl WasmSimulation {
             facility_message: String::new(),
             path_message: String::new(),
             terrain_message: String::new(),
+            scenery_message: String::new(),
             terrain_invalidated_paths: Vec::new(),
             circuit,
             train,
@@ -187,14 +194,17 @@ impl WasmSimulation {
             coaster_riders: HashMap::new(),
             coaster_facility: None,
             block_layout: None,
+            desired_train_count: None,
             block_placement_search: None,
             block_apply_best_requested: false,
             block_manual_search: None,
+            block_baseline_validation: false,
             block_layout_is_automatic: false,
             block_message: String::new(),
             block_hourly_throughput: 0.0,
             block_throughput_reason: String::new(),
             block_throughput_estimator: None,
+            block_analysis_extra_to_throughput: false,
             block_throughput_cache: HashMap::new(),
             recovered_station: None,
             support_render_cache: HashMap::new(),
@@ -647,6 +657,126 @@ impl WasmSimulation {
         false
     }
 
+    pub fn place_scenery(&mut self, kind: &str, x: u16, y: u16, rotation: u8, quarter: u8) -> bool {
+        let Some(kind) = scenery_kind(kind) else {
+            self.scenery_message = "Unknown scenery".into();
+            return false;
+        };
+        let (width, height) = self.world.dimensions();
+        if x >= width || y >= height {
+            self.scenery_message = "Outside world".into();
+            return false;
+        }
+        if rotation > 3 || quarter > 3 {
+            self.scenery_message = "Invalid scenery orientation".into();
+            return false;
+        }
+        let scenery = Scenery {
+            kind,
+            position: Position {
+                x,
+                y,
+                height: self.world.surface(x, y).corners[0],
+            },
+            rotation,
+            quarter,
+        };
+        let bounds = scenery.clearance_box();
+        if self.facility_obstacles().iter().any(|obstacle| {
+            boxes_overlap(
+                bounds,
+                ClearanceBox {
+                    min: obstacle.min,
+                    max: obstacle.max,
+                },
+            )
+        }) {
+            self.scenery_message = "Scenery intersects a facility".into();
+            return false;
+        }
+        let hits_track = |piece: &Piece, train: &TrainConfiguration| {
+            track_support_obstacles(std::slice::from_ref(piece), train)
+                .iter()
+                .any(|obstacle| {
+                    boxes_overlap(
+                        bounds,
+                        ClearanceBox {
+                            min: obstacle.min,
+                            max: obstacle.max,
+                        },
+                    )
+                })
+        };
+        if self
+            .circuit
+            .pieces()
+            .iter()
+            .any(|piece| hits_track(piece, &self.train_configuration))
+            || self.construction.as_ref().is_some_and(|construction| {
+                construction
+                    .pieces()
+                    .iter()
+                    .chain(
+                        construction
+                            .disconnected_segments()
+                            .iter()
+                            .flat_map(|segment| &segment.pieces),
+                    )
+                    .any(|piece| hits_track(piece, &construction.model().train))
+            })
+        {
+            self.scenery_message = "Scenery intersects coaster track or train clearance".into();
+            return false;
+        }
+        let mut candidate = self.world.clone();
+        if let Err(error) = candidate.place_scenery(scenery) {
+            self.scenery_message = format!("{error:?}");
+            return false;
+        }
+        let previous_terrain_message = self.terrain_message.clone();
+        let hits_track = self.terrain_hits_track(&candidate);
+        self.terrain_message = previous_terrain_message;
+        if hits_track {
+            self.scenery_message = "Scenery leaves no route for coaster supports".into();
+            return false;
+        }
+        self.world
+            .place_scenery(scenery)
+            .expect("validated scenery placement remains valid");
+        self.support_render_cache.clear();
+        self.scenery_message.clear();
+        true
+    }
+
+    pub fn remove_scenery(&mut self, id: &str) -> bool {
+        let item = self
+            .world
+            .scenery()
+            .find(|item| scenery_id(item) == id)
+            .copied();
+        let Some(item) = item else {
+            self.scenery_message = "No scenery with that ID".into();
+            return false;
+        };
+        let removed = self.world.remove_scenery(item.position, item.quarter);
+        self.support_render_cache.clear();
+        self.scenery_message.clear();
+        removed
+    }
+
+    pub fn scenery_message(&self) -> String {
+        self.scenery_message.clone()
+    }
+
+    pub fn scenery_json(&self) -> String {
+        let items = self.world.scenery().map(|item| format!(
+            "{{\"id\":\"{}\",\"kind\":\"{}\",\"x\":{},\"y\":{},\"z\":{},\"rotation\":{},\"quarter\":{}}}",
+            scenery_id(item), scenery_kind_name(item.kind), item.position.x, item.position.y,
+            item.position.height, item.rotation, item.quarter
+        )).collect::<Vec<_>>().join(",");
+        format!("[{items}]")
+    }
+
     pub fn place_facility(&mut self, kind: &str, x: u16, y: u16, rotation: u8) -> bool {
         let (width, height) = self.world.dimensions();
         if x >= width || y >= height {
@@ -845,13 +975,17 @@ impl WasmSimulation {
                 })
                 .collect();
             self.train.take_readings();
-            if self.coaster_open && !self.automatic_placement_waiting_for_trains() {
+            if self.coaster_open && !self.block_layout_change_waiting_for_trains() {
                 while let Some(train_id) = {
                     let operation = self
                         .coaster_operation
                         .as_ref()
                         .expect("open coaster has an operation");
-                    operation.next_dispatch_id()
+                    if operation.trains().count() < self.construction_train_count() {
+                        operation.next_dispatch_id()
+                    } else {
+                        None
+                    }
                 } {
                     let riders = self.simulation.board_coaster_train(
                         self.coaster_facility
@@ -1247,26 +1381,54 @@ impl WasmSimulation {
     /// Advance pending block analysis by at most the requested number of physics steps.
     /// Returns true once analysis has finished. Large requests are capped per call.
     pub fn construction_advance_block_analysis(&mut self, work_steps: u32) -> bool {
+        let budget = work_steps.min(1_000) as usize;
+        let has_layout_search =
+            self.block_manual_search.is_some() || self.block_placement_search.is_some();
+        let search_budget = if has_layout_search && self.block_throughput_estimator.is_some() {
+            let extra_to_throughput = self.block_analysis_extra_to_throughput && budget % 2 == 1;
+            if budget % 2 == 1 {
+                self.block_analysis_extra_to_throughput = !self.block_analysis_extra_to_throughput;
+            }
+            (budget + usize::from(budget % 2 == 1 && !extra_to_throughput)) / 2
+        } else if has_layout_search {
+            budget
+        } else {
+            0
+        };
+        let mut search_steps = 0;
         if let Some(mut search) = self.block_manual_search.take() {
-            search.advance(work_steps.min(1_000) as usize);
+            let before = search.work_completed();
+            search.advance(search_budget);
+            search_steps = search.work_completed() - before;
             match search.result() {
                 Some(Ok(layout)) => {
-                    self.install_block_layout(layout.clone(), false);
-                    return self.block_throughput_estimator.is_none();
+                    let installed = self
+                        .block_layout
+                        .as_ref()
+                        .expect("validation has an installed layout");
+                    if block_layout_fingerprint(layout) == block_layout_fingerprint(installed) {
+                        self.block_layout = Some(layout.clone());
+                        self.block_layout_is_automatic = false;
+                        self.block_baseline_validation = false;
+                    } else if self.coaster_has_active_trains() {
+                        self.block_manual_search = Some(search);
+                    } else {
+                        self.install_block_layout(layout.clone(), false);
+                    }
                 }
                 Some(Err(reason)) => {
+                    self.block_baseline_validation = false;
                     self.set_block_error(reason);
-                    return self.block_throughput_estimator.is_none();
                 }
                 None => {
                     self.block_manual_search = Some(search);
-                    return false;
                 }
             }
-        }
-        if let Some(mut search) = self.block_placement_search.take() {
+        } else if let Some(mut search) = self.block_placement_search.take() {
             if !self.block_apply_best_requested {
-                search.advance(work_steps.min(1_000) as usize);
+                let before = search.work_completed();
+                search.advance(search_budget);
+                search_steps = search.work_completed() - before;
             }
             let complete = search.is_complete() || self.block_apply_best_requested;
             let best = search.best();
@@ -1275,48 +1437,52 @@ impl WasmSimulation {
                 .as_ref()
                 .expect("search has an installed layout");
             let improves_capacity = best.capacity() > installed.capacity();
+            let same_layout = block_layout_fingerprint(best) == block_layout_fingerprint(installed);
+            let verifies_installed = same_layout
+                && !installed.capacity_search_complete()
+                && best.capacity_search_complete();
             let should_install = self.block_apply_best_requested
                 || improves_capacity
+                || verifies_installed
+                || confirmed_stalled_baseline(best, installed)
                 || (complete && best.capacity() >= installed.capacity());
-            let same_layout = block_layout_fingerprint(best) == block_layout_fingerprint(installed);
             if should_install && !same_layout && self.coaster_has_active_trains() {
                 self.block_placement_search = Some(search);
-                return false;
-            }
-            if should_install {
-                let layout = best.clone();
-                if same_layout {
-                    self.block_layout = Some(layout);
-                    self.block_layout_is_automatic = true;
+            } else {
+                if should_install {
+                    let layout = best.clone();
+                    if same_layout {
+                        self.block_layout = Some(layout);
+                        self.block_layout_is_automatic = true;
+                    } else {
+                        self.install_block_layout(layout, true);
+                    }
+                }
+                if complete {
+                    self.block_apply_best_requested = false;
                 } else {
-                    self.install_block_layout(layout, true);
+                    self.block_placement_search = Some(search);
                 }
             }
-            if complete {
-                self.block_apply_best_requested = false;
-                return self.block_throughput_estimator.is_none();
+        }
+        if let Some(mut estimator) = self.block_throughput_estimator.take() {
+            if let Some(result) = estimator.advance(budget - search_steps) {
+                let estimate = match result {
+                    Ok(throughput) => (throughput, String::new()),
+                    Err(reason) => (0.0, reason.to_owned()),
+                };
+                self.block_hourly_throughput = estimate.0;
+                self.block_throughput_reason.clone_from(&estimate.1);
+                let layout = self.block_layout.as_ref().expect("estimator has a layout");
+                self.block_throughput_cache
+                    .insert(block_layout_fingerprint(layout), estimate);
+            } else {
+                self.block_throughput_estimator = Some(estimator);
             }
-            self.block_placement_search = Some(search);
-            return false;
         }
-        let Some(mut estimator) = self.block_throughput_estimator.take() else {
-            return true;
-        };
-        if let Some(result) = estimator.advance(work_steps.min(1_000) as usize) {
-            let estimate = match result {
-                Ok(throughput) => (throughput, String::new()),
-                Err(reason) => (0.0, reason.to_owned()),
-            };
-            self.block_hourly_throughput = estimate.0;
-            self.block_throughput_reason.clone_from(&estimate.1);
-            let layout = self.block_layout.as_ref().expect("estimator has a layout");
-            self.block_throughput_cache
-                .insert(block_layout_fingerprint(layout), estimate);
-            true
-        } else {
-            self.block_throughput_estimator = Some(estimator);
-            false
-        }
+        self.block_manual_search.is_none()
+            && self.block_placement_search.is_none()
+            && self.block_throughput_estimator.is_none()
     }
 
     pub fn construction_auto_blocks(&mut self) -> bool {
@@ -1328,6 +1494,7 @@ impl WasmSimulation {
         match BlockPlacementSearch::new(circuit, train, config) {
             Ok(search) => {
                 self.block_manual_search = None;
+                self.block_baseline_validation = false;
                 self.block_apply_best_requested = false;
                 if self.block_layout.is_none() {
                     self.install_block_layout(search.best().clone(), true);
@@ -1398,6 +1565,19 @@ impl WasmSimulation {
         self.construction_set_block_sections(boundaries)
     }
 
+    pub fn construction_block_candidates(&self) -> Vec<f64> {
+        let Some((circuit, train)) = self.construction_circuit_and_train() else {
+            return Vec::new();
+        };
+        let mut candidates: Vec<_> = brake_runs(&circuit, train.length_metres)
+            .into_iter()
+            .map(|run| run.boundary_metres)
+            .collect();
+        candidates.sort_by(f64::total_cmp);
+        candidates.dedup();
+        candidates
+    }
+
     pub fn construction_set_block_sections(&mut self, boundaries: Vec<f64>) -> bool {
         let Some((circuit, train)) = self.construction_circuit_and_train() else {
             self.set_block_error("A closed circuit is required to edit block sections.");
@@ -1407,6 +1587,7 @@ impl WasmSimulation {
             Ok(search) => {
                 self.block_placement_search = None;
                 self.block_apply_best_requested = false;
+                self.block_baseline_validation = false;
                 self.block_manual_search = Some(search);
                 self.block_message.clear();
                 self.construction_message.clear();
@@ -1490,14 +1671,30 @@ impl WasmSimulation {
                 "Automatic placement is still searching; the installed layout remains in use.",
             );
         } else if self.block_manual_search.is_some() {
-            notes.push(
-                "The requested block edit is being validated; the installed layout remains in use.",
-            );
-        } else if !layout.placement_search_complete() {
-            notes.push("Automatic placement reached its search limit. This is the best verified layout found so far; additional trains may be possible.");
+            if self.block_baseline_validation {
+                notes.push("The one-train circuit is being checked while the coaster operates.");
+            } else {
+                notes.push("The requested block edit is being validated; the installed layout remains in use.");
+            }
         }
-        if !layout.capacity_search_complete() {
-            notes.push("The reported train capacity is verified; additional capacity could not be ruled out.");
+        if self.block_layout_change_waiting_for_trains() {
+            notes.push("New dispatches are paused until the current trains return.");
+        }
+        if self.block_placement_search.is_none()
+            && self.block_manual_search.is_none()
+            && self.block_layout_is_automatic
+            && !layout.placement_search_complete()
+        {
+            notes.push("Automatic placement is incomplete. The current layout may not support the maximum number of trains.");
+        }
+        if layout.capacity() == 0 {
+            notes.push("A train stalled and could not complete this circuit. Adjust the layout before running the coaster.");
+        } else if !layout.capacity_search_complete() {
+            if editable_block_boundaries(layout).is_empty() {
+                notes.push("The one-train circuit has not yet been verified; a train may stall.");
+            } else {
+                notes.push("The reported train capacity is a verified lower bound; additional capacity may be possible.");
+            }
         }
         let notes = notes
             .into_iter()
@@ -1588,6 +1785,25 @@ impl WasmSimulation {
             })
     }
 
+    pub fn construction_train_count(&self) -> usize {
+        self.block_layout.as_ref().map_or(0, |layout| {
+            self.desired_train_count.unwrap_or(1).min(layout.capacity())
+        })
+    }
+
+    pub fn construction_set_train_count(&mut self, count: usize) -> bool {
+        if count == 0
+            || self
+                .block_layout
+                .as_ref()
+                .is_none_or(|layout| count > layout.capacity())
+        {
+            return false;
+        }
+        self.desired_train_count = Some(count);
+        true
+    }
+
     pub fn construction_set_open(&mut self, open: bool) -> bool {
         if !open {
             self.close_live_coaster();
@@ -1622,6 +1838,11 @@ impl WasmSimulation {
                 }
             };
             self.install_block_layout(layout, false);
+            self.block_manual_search = Some(
+                BlockManualSearch::new(circuit.clone(), train, config, Vec::new())
+                    .expect("baseline inputs were validated"),
+            );
+            self.block_baseline_validation = true;
         }
         let operation = BlockOperation::new(
             self.block_layout
@@ -1884,6 +2105,30 @@ impl WasmSimulation {
     pub fn construction_placed_rails(&self) -> Vec<f32> {
         self.construction_render(render_rails, 19)
     }
+    pub fn construction_rail_distances(&self) -> Vec<f32> {
+        let Some(construction) = &self.construction else {
+            return Vec::new();
+        };
+        let pieces = construction.pieces().iter().chain(
+            construction
+                .disconnected_segments()
+                .iter()
+                .flat_map(|segment| &segment.pieces),
+        );
+        let mut distances = Vec::new();
+        let mut piece_start = 0.0;
+        for piece in pieces {
+            let length = piece.length();
+            let intervals = (length / 2.0).ceil() as usize;
+            for index in 0..intervals {
+                distances.push((piece_start + length * index as f64 / intervals as f64) as f32);
+                distances
+                    .push((piece_start + length * (index + 1) as f64 / intervals as f64) as f32);
+            }
+            piece_start += length;
+        }
+        distances
+    }
     pub fn construction_placed_ties(&self) -> Vec<f32> {
         self.construction_render(render_ties, 13)
     }
@@ -1970,7 +2215,21 @@ impl WasmSimulation {
             .is_some_and(|operation| operation.trains().next().is_some())
     }
 
-    fn automatic_placement_waiting_for_trains(&self) -> bool {
+    fn block_layout_change_waiting_for_trains(&self) -> bool {
+        if !self.coaster_has_active_trains() {
+            return false;
+        }
+        if let Some(Ok(layout)) = self
+            .block_manual_search
+            .as_ref()
+            .and_then(BlockManualSearch::result)
+        {
+            let installed = self
+                .block_layout
+                .as_ref()
+                .expect("validation has an installed layout");
+            return block_layout_fingerprint(layout) != block_layout_fingerprint(installed);
+        }
         let Some(search) = &self.block_placement_search else {
             return false;
         };
@@ -1981,9 +2240,9 @@ impl WasmSimulation {
         let best = search.best();
         (self.block_apply_best_requested
             || best.capacity() > installed.capacity()
+            || confirmed_stalled_baseline(best, installed)
             || (search.is_complete() && best.capacity() >= installed.capacity()))
             && block_layout_fingerprint(best) != block_layout_fingerprint(installed)
-            && self.coaster_has_active_trains()
     }
 
     fn proximity_obstacles(&self) -> Vec<ClearanceBox> {
@@ -2110,14 +2369,17 @@ impl WasmSimulation {
 
     fn clear_block_layout(&mut self) {
         self.block_layout = None;
+        self.desired_train_count = None;
         self.block_placement_search = None;
         self.block_apply_best_requested = false;
         self.block_manual_search = None;
+        self.block_baseline_validation = false;
         self.block_layout_is_automatic = false;
         self.block_message.clear();
         self.block_hourly_throughput = 0.0;
         self.block_throughput_reason.clear();
         self.block_throughput_estimator = None;
+        self.block_analysis_extra_to_throughput = false;
         self.block_throughput_cache.clear();
     }
 
@@ -2125,12 +2387,16 @@ impl WasmSimulation {
         self.block_placement_search = None;
         self.block_apply_best_requested = false;
         self.block_manual_search = None;
+        self.block_baseline_validation = false;
         let fingerprint = block_layout_fingerprint(&layout);
-        let (throughput, throughput_reason, estimator) =
+        let (throughput, throughput_reason, estimator) = if layout.capacity() == 0 {
+            (0.0, "A train could not complete the circuit.".into(), None)
+        } else {
             match self.block_throughput_cache.get(&fingerprint) {
                 Some((throughput, reason)) => (*throughput, reason.clone(), None),
                 None => (0.0, String::new(), Some(ThroughputEstimator::new(&layout))),
-            };
+            }
+        };
         if self.coaster_open {
             self.recover_live_trains();
             self.coaster_operation = Some(BlockOperation::new(layout.clone()));
@@ -2445,6 +2711,7 @@ fn terrain_edit_error(error: TerrainEditError) -> &'static str {
         TerrainEditError::CarveAboveTerrain => "Excavation exceeds the terrain height",
         TerrainEditError::NoWater => "There is no water to lower in this area",
         TerrainEditError::HeightOverflow => "Terrain height exceeds the supported range",
+        TerrainEditError::SceneryObstructed => "Terrain edit would disturb scenery",
     }
 }
 
@@ -2526,6 +2793,67 @@ fn append_vector(result: &mut Vec<f32>, vector: Vec3) {
     result.extend([vector.x as f32, vector.y as f32, vector.z as f32]);
 }
 
+fn scenery_id(item: &Scenery) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        item.position.x, item.position.y, item.position.height, item.quarter
+    )
+}
+
+fn scenery_kind(name: &str) -> Option<SceneryKind> {
+    match name {
+        "tree_oval" => Some(SceneryKind::TreeOval),
+        "bush_flowering" => Some(SceneryKind::BushFlowering),
+        "flower_bed" => Some(SceneryKind::FlowerBed),
+        "bench" => Some(SceneryKind::Bench),
+        "lamp" => Some(SceneryKind::Lamp),
+        "fountain" => Some(SceneryKind::Fountain),
+        "planter" => Some(SceneryKind::Planter),
+        "tree_cone" => Some(SceneryKind::TreeCone),
+        "tree_cone_ochre" => Some(SceneryKind::TreeConeOchre),
+        "tree_cypress" => Some(SceneryKind::TreeCypress),
+        "tree_cypress_short" => Some(SceneryKind::TreeCypressShort),
+        "tree_oval_coral" => Some(SceneryKind::TreeOvalCoral),
+        "tree_tiers" => Some(SceneryKind::TreeTiers),
+        "fence" => Some(SceneryKind::Fence),
+        "signpost" => Some(SceneryKind::Signpost),
+        "bin" => Some(SceneryKind::Bin),
+        "balloon_cart" => Some(SceneryKind::BalloonCart),
+        _ => None,
+    }
+}
+
+fn scenery_kind_name(kind: SceneryKind) -> &'static str {
+    match kind {
+        SceneryKind::TreeOval => "tree_oval",
+        SceneryKind::BushFlowering => "bush_flowering",
+        SceneryKind::FlowerBed => "flower_bed",
+        SceneryKind::Bench => "bench",
+        SceneryKind::Lamp => "lamp",
+        SceneryKind::Fountain => "fountain",
+        SceneryKind::Planter => "planter",
+        SceneryKind::TreeCone => "tree_cone",
+        SceneryKind::TreeConeOchre => "tree_cone_ochre",
+        SceneryKind::TreeCypress => "tree_cypress",
+        SceneryKind::TreeCypressShort => "tree_cypress_short",
+        SceneryKind::TreeOvalCoral => "tree_oval_coral",
+        SceneryKind::TreeTiers => "tree_tiers",
+        SceneryKind::Fence => "fence",
+        SceneryKind::Signpost => "signpost",
+        SceneryKind::Bin => "bin",
+        SceneryKind::BalloonCart => "balloon_cart",
+    }
+}
+
+fn boxes_overlap(a: ClearanceBox, b: ClearanceBox) -> bool {
+    a.min.x < b.max.x
+        && b.min.x < a.max.x
+        && a.min.y < b.max.y
+        && b.min.y < a.max.y
+        && a.min.z < b.max.z
+        && b.min.z < a.max.z
+}
+
 fn facility_height(kind: FacilityKind) -> f64 {
     match kind {
         FacilityKind::Carousel | FacilityKind::FerrisWheel => 12.0,
@@ -2592,6 +2920,13 @@ fn block_layout_fingerprint(layout: &BlockLayout) -> Vec<u64> {
     fingerprint
 }
 
+fn confirmed_stalled_baseline(best: &BlockLayout, installed: &BlockLayout) -> bool {
+    best.capacity() == 0
+        && best.capacity_search_complete()
+        && !installed.capacity_search_complete()
+        && editable_block_boundaries(installed).is_empty()
+}
+
 fn kind_for_boundary(circuit: &Circuit, distance: f64) -> &'static str {
     match circuit.pieces()[circuit.piece_index(distance - 1e-6)].kind {
         PieceKind::Station => "station",
@@ -2645,7 +2980,7 @@ fn block_layout_for_open(
     train: &TrainConfiguration,
     config: PhysicsConfig,
 ) -> Result<BlockLayout, &'static str> {
-    BlockLayout::new(circuit, train, config, Vec::new())
+    BlockLayout::unverified_baseline(circuit, train, config)
 }
 
 struct ThroughputEstimator {
@@ -2713,6 +3048,87 @@ impl ThroughputEstimator {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod scenery_bridge_tests {
+    use super::WasmSimulation;
+
+    #[test]
+    fn scenery_snapshot_place_and_remove_use_stable_ids() {
+        let mut simulation = WasmSimulation::new(1, 0);
+        assert_ne!(simulation.scenery_json(), "[]");
+        assert!(simulation.place_scenery("bench", 210, 245, 1, 2));
+        simulation.tick();
+        let snapshot = simulation.scenery_json();
+        assert!(snapshot.contains(
+            "\"kind\":\"bench\",\"x\":210,\"y\":245,\"z\":8,\"rotation\":1,\"quarter\":2"
+        ));
+        let id = "210:245:8:2";
+        assert!(simulation.remove_scenery(id));
+        assert!(!simulation.remove_scenery(id));
+        assert!(!simulation.scenery_json().contains("\"x\":210,\"y\":245"));
+    }
+
+    #[test]
+    fn scenery_and_facilities_reject_overlap_in_both_directions() {
+        let mut simulation = WasmSimulation::new(1, 0);
+        assert!(!simulation.place_scenery("tree_oval", 220, 254, 0, 0));
+        assert!(!simulation.place_scenery("tree_oval", 218, 256, 0, 0));
+        assert!(!simulation.place_scenery("tree_oval", 210, 245, 0, 4));
+        assert!(simulation.place_scenery("tree_oval", 210, 245, 0, 0));
+        assert!(!simulation.place_facility("food_stall", 210, 245, 0));
+        assert!(!simulation.place_scenery("unknown", 210, 244, 0, 0));
+        assert!(!simulation.scenery_message().is_empty());
+    }
+
+    #[test]
+    fn scenery_identity_includes_height() {
+        use theme_park_sim::world::{Position, Scenery, SceneryKind};
+
+        let lower = Scenery {
+            kind: SceneryKind::Lamp,
+            position: Position {
+                x: 1,
+                y: 2,
+                height: 3,
+            },
+            quarter: 0,
+            rotation: 0,
+        };
+        let upper = Scenery {
+            position: Position {
+                height: 10,
+                ..lower.position
+            },
+            ..lower
+        };
+        assert_ne!(super::scenery_id(&lower), super::scenery_id(&upper));
+    }
+
+    #[test]
+    fn demo_scenery_does_not_intersect_track_or_facilities() {
+        let simulation = WasmSimulation::new(1, 0);
+        let track = super::track_support_obstacles(
+            simulation.circuit.pieces(),
+            &simulation.train_configuration,
+        );
+        for scenery in simulation.world.scenery() {
+            let bounds = scenery.clearance_box();
+            for obstacle in track.iter().chain(simulation.facility_obstacles().iter()) {
+                assert!(
+                    !super::boxes_overlap(
+                        bounds,
+                        super::ClearanceBox {
+                            min: obstacle.min,
+                            max: obstacle.max
+                        }
+                    ),
+                    "demo scenery intersects a ride or facility: {scenery:?}"
+                );
+            }
+        }
     }
 }
 
@@ -3104,19 +3520,41 @@ mod world_tests {
             powered_sections: false,
             ..block_physics_config()
         };
-        let search = super::BlockPlacementSearch::new(circuit, train, config).unwrap();
+        let mut search = super::BlockPlacementSearch::new(circuit, train, config).unwrap();
+        search.advance(2_000);
         assert!(search.is_complete());
         simulation.install_block_layout(search.best().clone(), false);
         simulation.block_placement_search = Some(search);
         simulation.construction_advance_block_analysis(1);
         assert!(simulation.block_placement_search.is_none());
-        assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 1);
+        assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 0);
         assert!(simulation.block_layout_is_automatic);
         let report = simulation.construction_block_report_json();
         assert!(
             report.contains("\"placementStatus\":\"complete\""),
             "{report}"
         );
+    }
+
+    #[test]
+    fn block_candidates_are_sorted_exact_distances_accepted_by_manual_search() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        assert!(simulation.construction_block_candidates().is_empty());
+        build_block_test_construction(&mut simulation);
+        let (circuit, train) = simulation.construction_circuit_and_train().unwrap();
+        let mut expected: Vec<_> =
+            theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres)
+                .iter()
+                .map(|run| run.boundary_metres)
+                .collect();
+        expected.sort_by(f64::total_cmp);
+        expected.dedup();
+        assert!(!expected.is_empty());
+        let candidates = simulation.construction_block_candidates();
+        assert_eq!(candidates, expected);
+        for candidate in candidates {
+            assert!(simulation.construction_set_block_sections(vec![candidate]));
+        }
     }
 
     #[test]
@@ -3174,6 +3612,119 @@ mod world_tests {
             "{}",
             simulation.construction_message()
         );
+    }
+
+    #[test]
+    fn manual_validation_and_throughput_both_advance() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        build_block_test_construction(&mut simulation);
+        let (circuit, train) = simulation.construction_circuit_and_train().unwrap();
+        let initial =
+            BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
+        simulation.install_block_layout(initial, false);
+        let boundary = theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres)[0]
+            .boundary_metres;
+        assert!(simulation.construction_set_block_sections(vec![boundary]));
+        assert!(!simulation.construction_advance_block_analysis(200));
+        let validation_steps = simulation
+            .block_manual_search
+            .as_ref()
+            .unwrap()
+            .work_completed();
+        let throughput_steps = simulation.block_throughput_estimator.as_ref().unwrap().step;
+        assert!(validation_steps > 0 && throughput_steps > 0);
+        assert!(validation_steps + throughput_steps <= 200);
+    }
+
+    #[test]
+    fn placement_and_throughput_share_bounded_work_without_starvation() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        build_block_test_construction(&mut simulation);
+        let (circuit, train) = simulation.construction_circuit_and_train().unwrap();
+        let initial =
+            BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
+        simulation.install_block_layout(initial, false);
+        assert!(simulation.construction_auto_blocks());
+        let progress = |simulation: &WasmSimulation| {
+            (
+                simulation
+                    .block_placement_search
+                    .as_ref()
+                    .unwrap()
+                    .work_completed(),
+                simulation.block_throughput_estimator.as_ref().unwrap().step,
+            )
+        };
+        assert_eq!(progress(&simulation), (0, 0));
+        assert!(!simulation.construction_advance_block_analysis(0));
+        assert_eq!(progress(&simulation), (0, 0));
+        assert!(!simulation.construction_advance_block_analysis(200));
+        let (placement, throughput) = progress(&simulation);
+        assert!(placement > 0 && throughput > 0);
+        assert!(placement + throughput <= 200);
+        assert!(!simulation.construction_advance_block_analysis(1));
+        assert!(!simulation.construction_advance_block_analysis(1));
+        let (next_placement, next_throughput) = progress(&simulation);
+        assert!(next_placement > placement && next_throughput > throughput);
+        assert!(next_placement - placement + next_throughput - throughput <= 2);
+        assert!(!simulation.construction_advance_block_analysis(5_000));
+        let (capped_placement, capped_throughput) = progress(&simulation);
+        assert!(capped_placement - next_placement + capped_throughput - next_throughput <= 1_000);
+    }
+
+    #[test]
+    fn baseline_report_distinguishes_unverified_from_observed_stall() {
+        let circuit = super::demo_circuit();
+        let train = hybrid_model().train;
+        let config = super::PhysicsConfig {
+            powered_sections: false,
+            ..Default::default()
+        };
+        let mut search = super::BlockPlacementSearch::new(circuit, train, config).unwrap();
+        assert_eq!(search.best().capacity(), 1);
+        assert!(!search.best().capacity_search_complete());
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.install_block_layout(search.best().clone(), true);
+        let report = simulation.construction_block_report_json();
+        assert!(
+            report.contains("one-train circuit has not yet been verified"),
+            "{report}"
+        );
+        assert!(!report.contains("A train stalled"), "{report}");
+        search.advance(2_000);
+        assert!(search.is_complete());
+        assert_eq!(search.best().capacity(), 0);
+        assert!(search.best().capacity_search_complete());
+        simulation.block_placement_search = Some(search);
+        simulation.construction_advance_block_analysis(0);
+        let report = simulation.construction_block_report_json();
+        assert!(
+            report.contains("A train stalled and could not complete this circuit"),
+            "{report}"
+        );
+        assert!(
+            report.contains("\"throughputStatus\":\"unavailable\""),
+            "{report}"
+        );
+        assert!(simulation.block_throughput_estimator.is_none());
+    }
+
+    #[test]
+    fn applying_an_unfinished_placement_does_not_claim_a_search_limit_was_reached() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        build_block_test_construction(&mut simulation);
+        assert!(simulation.construction_auto_blocks());
+        assert!(simulation.construction_apply_best_block_sections());
+        let report = simulation.construction_block_report_json();
+        assert!(
+            report.contains("\"placementStatus\":\"incomplete\""),
+            "{report}"
+        );
+        assert!(
+            report.contains("Automatic placement is incomplete"),
+            "{report}"
+        );
+        assert!(!report.contains("reached its search limit"), "{report}");
     }
 
     #[test]
@@ -3253,7 +3804,13 @@ mod world_tests {
 
     #[test]
     fn throughput_cache_distinguishes_different_brake_runs_at_the_same_boundary() {
-        let circuit = super::demo_circuit();
+        let mut pieces = super::demo_circuit().pieces().to_vec();
+        pieces
+            .iter_mut()
+            .find(|piece| piece.id == PieceId::Straight)
+            .unwrap()
+            .kind = super::PieceKind::Track;
+        let circuit = Circuit::new(pieces).unwrap();
         let train = hybrid_model().train;
         let runs = theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres);
         let normal = block_physics_config();
@@ -3337,6 +3894,156 @@ mod world_tests {
     }
 
     #[test]
+    fn automatic_search_publishes_baseline_verification_without_recovering_train() {
+        let circuit = block_test_circuit();
+        let train = hybrid_model().train;
+        let config = block_physics_config();
+        let search = super::BlockPlacementSearch::new(circuit, train, config).unwrap();
+        let baseline = search.best().clone();
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.install_block_layout(baseline.clone(), true);
+        simulation.coaster_operation = Some(super::BlockOperation::new(baseline));
+        simulation.coaster_open = true;
+        let train_id = simulation.coaster_operation.as_mut().unwrap().dispatch();
+        simulation.block_placement_search = Some(search);
+        for _ in 0..1_000 {
+            simulation.construction_advance_block_analysis(1_000);
+            if simulation
+                .block_layout
+                .as_ref()
+                .unwrap()
+                .capacity_search_complete()
+            {
+                break;
+            }
+        }
+        assert!(
+            simulation
+                .block_layout
+                .as_ref()
+                .unwrap()
+                .capacity_search_complete()
+        );
+        assert!(simulation.block_placement_search.is_some());
+        let ids: Vec<_> = simulation
+            .coaster_operation
+            .as_ref()
+            .unwrap()
+            .trains()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec![train_id]);
+    }
+
+    #[test]
+    fn stalled_baseline_waits_for_active_train_before_reducing_capacity() {
+        let circuit = super::demo_circuit();
+        let train = hybrid_model().train;
+        let config = super::PhysicsConfig {
+            powered_sections: false,
+            ..Default::default()
+        };
+        let baseline = super::block_layout_for_open(&circuit, &train, config).unwrap();
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.install_block_layout(baseline.clone(), false);
+        simulation.coaster_operation = Some(super::BlockOperation::new(baseline));
+        simulation.coaster_open = true;
+        let train_id = simulation.coaster_operation.as_mut().unwrap().dispatch();
+        simulation.block_manual_search =
+            Some(super::BlockManualSearch::new(circuit, train, config, Vec::new()).unwrap());
+        simulation.block_baseline_validation = true;
+        for _ in 0..10 {
+            simulation.construction_advance_block_analysis(1_000);
+            if simulation.block_layout_change_waiting_for_trains() {
+                break;
+            }
+        }
+        assert!(simulation.block_layout_change_waiting_for_trains());
+        assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 1);
+        assert!(
+            simulation
+                .construction_block_report_json()
+                .contains("New dispatches are paused")
+        );
+        assert_eq!(
+            simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .next()
+                .unwrap()
+                .0,
+            train_id
+        );
+        for _ in 0..1_000 {
+            if !simulation
+                .coaster_operation
+                .as_mut()
+                .unwrap()
+                .step(&[])
+                .is_empty()
+            {
+                break;
+            }
+        }
+        assert_eq!(
+            simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .count(),
+            0
+        );
+        simulation.construction_advance_block_analysis(1);
+        assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 0);
+        assert!(
+            simulation
+                .construction_block_report_json()
+                .contains("A train stalled")
+        );
+    }
+
+    #[test]
+    fn completing_baseline_validation_preserves_a_running_train() {
+        let circuit = block_test_circuit();
+        let train = hybrid_model().train;
+        let config = block_physics_config();
+        let baseline = super::block_layout_for_open(&circuit, &train, config).unwrap();
+        assert!(!baseline.capacity_search_complete());
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.install_block_layout(baseline.clone(), false);
+        simulation.coaster_operation = Some(super::BlockOperation::new(baseline));
+        simulation.coaster_open = true;
+        let train_id = simulation.coaster_operation.as_mut().unwrap().dispatch();
+        simulation.block_manual_search =
+            Some(super::BlockManualSearch::new(circuit, train, config, Vec::new()).unwrap());
+        for _ in 0..1_000 {
+            simulation.construction_advance_block_analysis(1_000);
+            if simulation.block_manual_search.is_none() {
+                break;
+            }
+        }
+        assert!(simulation.block_manual_search.is_none());
+        assert!(
+            simulation
+                .block_layout
+                .as_ref()
+                .unwrap()
+                .capacity_search_complete()
+        );
+        let trains: Vec<_> = simulation
+            .coaster_operation
+            .as_ref()
+            .unwrap()
+            .trains()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(trains, vec![train_id]);
+    }
+
+    #[test]
     fn opening_starts_with_one_train_without_block_placement() {
         let circuit = block_test_circuit();
         let train = hybrid_model().train;
@@ -3344,6 +4051,10 @@ mod world_tests {
             super::block_layout_for_open(&circuit, &train, block_physics_config()).unwrap();
         assert_eq!(layout.capacity(), 1);
         assert!(editable_block_boundaries(&layout).is_empty());
+        assert!(
+            !layout.capacity_search_complete(),
+            "opening should not synchronously simulate a lap"
+        );
     }
 
     #[test]
@@ -3446,6 +4157,50 @@ mod world_tests {
         );
     }
 
+    #[test]
+    fn train_count_rejects_values_outside_capacity_and_limits_dispatch() {
+        let mut simulation = simulation_with_two_occupied_coaster_trains();
+        assert_eq!(simulation.construction_train_count(), 2);
+        assert!(!simulation.construction_set_train_count(0));
+        assert!(!simulation.construction_set_train_count(3));
+        assert_eq!(simulation.construction_train_count(), 2);
+        assert!(simulation.construction_set_train_count(1));
+        for _ in 0..5000 {
+            simulation.tick();
+            if simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .count()
+                <= 1
+            {
+                break;
+            }
+        }
+        assert!(
+            simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .count()
+                <= 1
+        );
+        for _ in 0..1000 {
+            simulation.tick();
+            assert!(
+                simulation
+                    .coaster_operation
+                    .as_ref()
+                    .unwrap()
+                    .trains()
+                    .count()
+                    <= 1
+            );
+        }
+    }
+
     fn simulation_with_two_occupied_coaster_trains() -> WasmSimulation {
         let mut simulation = WasmSimulation::new(42, 64);
         simulation.world = World::new(
@@ -3486,11 +4241,14 @@ mod world_tests {
         assert!(simulation.construction_can_close());
         simulation.construction_close();
         apply_automatic_blocks_after_finding(&mut simulation, 3);
-        let boundaries = editable_block_boundaries(simulation.block_layout.as_ref().unwrap());
-        assert!(boundaries.len() >= 3);
+        assert!(editable_block_boundaries(simulation.block_layout.as_ref().unwrap()).len() >= 3);
+        let (circuit, _) = simulation.construction_circuit_and_train().unwrap();
+        let boundaries = block_test_boundaries(&circuit);
         assert!(simulation.construction_set_block_sections(boundaries[..3].to_vec()));
         finish_manual_block_validation(&mut simulation);
         assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 2);
+        assert_eq!(simulation.construction_train_count(), 1);
+        assert!(simulation.construction_set_train_count(2));
         connect_station_to_park_paths(&mut simulation);
         simulation.construction_placed_supports();
         assert!(
@@ -4185,6 +4943,31 @@ mod construction_bridge_tests {
             simulation.construction.as_ref().unwrap().model().name,
             super::hybrid_model().name
         );
+    }
+
+    #[test]
+    fn rail_distances_follow_placed_rail_intervals_across_pieces() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        assert!(simulation.construction_rail_distances().is_empty());
+        simulation.construction_start(200, 200, 20, 0);
+        simulation.construction_select("Straight");
+        simulation.construction_append();
+        let construction = simulation.construction.as_ref().unwrap();
+        let rails = simulation.construction_placed_rails();
+        let distances = simulation.construction_rail_distances();
+        assert_eq!(distances.len(), rails.len() / 19);
+        let mut expected = Vec::new();
+        let mut start = 0.0;
+        for piece in construction.pieces() {
+            let intervals = (piece.length() / 2.0).ceil() as usize;
+            for index in 0..intervals {
+                expected.push((start + piece.length() * index as f64 / intervals as f64) as f32);
+                expected
+                    .push((start + piece.length() * (index + 1) as f64 / intervals as f64) as f32);
+            }
+            start += piece.length();
+        }
+        assert_eq!(distances, expected);
     }
 
     #[test]

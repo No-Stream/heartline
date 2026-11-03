@@ -1,6 +1,7 @@
 import { constructionEvent } from "./construction-effects";
+import { availableBlockBoundaries, blockPanelState, steppedTrainCount } from "./block-panel-state";
 import { groupedPieces, pieceInGroup, steppedPiece, stepperOptions, type StepAttribute } from "./construction-choices";
-import type { ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
+import type { BlockReport, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
@@ -14,10 +15,12 @@ export interface ConstructionPanel {
   /** Resolve a keyboard piece step against the current choices and select the result. */
   choose(action: PieceAction): void;
   setDeleteMode(enabled: boolean): void;
+  setSelectedBlock(index: number | null): void;
 }
 
 const groupNames: Record<string, string> = { straight: "Straight", turn: "Turns", slope: "Slopes", bank: "Banks", inversion: "Inversions", special: "Special" };
 const groupPlates: Record<string, string> = { straight: "var(--slate)", turn: "var(--teal)", slope: "var(--mustard)", bank: "var(--coral)", inversion: "var(--coral)", special: "var(--slate)" };
+const blockTrackKindNames: Record<string, string> = { blockBrake: "Brake run", station: "Station", lift: "Lift", launch: "Launch", brake: "Brake", track: "Track" };
 const coasterModels = {
   "model:hybrid": {
     name: "Timber Tumbler",
@@ -113,6 +116,36 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <p class="builder__test-hint" data-station-access></p>
         <section aria-label="Coaster testing" data-testing></section>
       </section>
+      <section class="tool-panel__section builder__blocks" aria-label="Block sections" data-block-panel>
+        <div class="builder__block-heading">
+          <h3>Block sections</h3>
+          <div class="builder__block-heading-actions">
+            <button type="button" class="tool-panel__action" data-auto-blocks>Add block sections</button>
+            <button type="button" class="tool-panel__action" data-apply-best-blocks hidden>Use current layout</button>
+          </div>
+        </div>
+        <div class="builder__train-count">
+          <span class="tool-panel__label" id="train-count-label">Trains to run</span>
+          <div class="stepper stepper--compact" role="group" aria-labelledby="train-count-label">
+            <button type="button" data-train-count-step="-1" aria-label="Run one fewer train">−</button>
+            <span class="stepper__value" data-train-count aria-live="polite"></span>
+            <button type="button" data-train-count-step="1" aria-label="Run one more train">+</button>
+          </div>
+        </div>
+        <p class="builder__block-status" aria-live="polite" data-block-report></p>
+        <p class="builder__block-capacity" data-block-capacity></p>
+        <p class="builder__block-throughput" data-block-throughput></p>
+        <p class="builder__block-message" aria-live="polite" data-block-message hidden></p>
+        <ol class="builder__block-list" data-block-sections></ol>
+        <datalist id="block-boundary-options" data-block-boundary-options></datalist>
+        <p class="tool-panel__hint">Choose an available listed brake boundary. The game keeps the current layout until an edit validates.</p>
+        <div class="builder__block-add" data-block-add-controls hidden>
+          <label><span class="tool-panel__label">New boundary (m)</span><input type="number" min="0" step="any" data-block-add-boundary list="block-boundary-options"></label>
+          <button type="button" class="tool-panel__action" data-block-add>Add block</button>
+        </div>
+        <ul class="builder__block-notes" data-block-notes></ul>
+        <ul class="builder__block-suggestions" data-block-suggestions></ul>
+      </section>
       <section class="tool-panel__section" aria-label="Launch positions" data-launches hidden>
         <h3>Launch positions</h3>
         <ol data-launch-list></ol>
@@ -156,10 +189,30 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const modelDescription = element("[data-model-description]");
   const launches = element("[data-launches]");
   const launchList = element<HTMLOListElement>("[data-launch-list]");
+  const blockPanel = element("[data-block-panel]");
+  const autoBlocks = element<HTMLButtonElement>("[data-auto-blocks]");
+  const applyBestBlocks = element<HTMLButtonElement>("[data-apply-best-blocks]");
+  const trainCount = element("[data-train-count]");
+  const fewerTrains = element<HTMLButtonElement>('[data-train-count-step="-1"]');
+  const moreTrains = element<HTMLButtonElement>('[data-train-count-step="1"]');
+  const blockReport = element("[data-block-report]");
+  const blockCapacity = element("[data-block-capacity]");
+  const blockThroughput = element("[data-block-throughput]");
+  const blockMessage = element("[data-block-message]");
+  const blockSections = element<HTMLOListElement>("[data-block-sections]");
+  const blockBoundaryOptions = element<HTMLDataListElement>("[data-block-boundary-options]");
+  const addBlockControls = element("[data-block-add-controls]");
+  const addBlockBoundary = element<HTMLInputElement>("[data-block-add-boundary]");
+  const addBlock = element<HTMLButtonElement>("[data-block-add]");
+  const blockNotes = element<HTMLUListElement>("[data-block-notes]");
+  const blockSuggestions = element<HTMLUListElement>("[data-block-suggestions]");
   let shapes = new Map<string, PieceShape>();
   let state: ConstructionState | undefined;
   let paletteKey = "";
   let trackKey = "";
+  let blockKey = "";
+  let applyBestRequested = false;
+  let selectedBlock: number | null = null;
   let closed = false;
 
   const shapeOf = (id: string): PieceShape => {
@@ -168,6 +221,25 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     return shape;
   };
   const select = (piece: string | undefined): void => { if (piece && piece !== state?.selected) dispatch({ type: "construction-select", piece }); };
+  autoBlocks.addEventListener("click", () => dispatch({ type: "construction-auto-blocks" }));
+  applyBestBlocks.addEventListener("click", () => {
+    if (state?.blockReport.placementStatus !== "searching") return;
+    applyBestRequested = true;
+    applyBestBlocks.disabled = true;
+    applyBestBlocks.textContent = "Using current layout…";
+    dispatch({ type: "construction-apply-best-blocks" });
+  });
+  for (const [button, step] of [[fewerTrains, -1], [moreTrains, 1]] as const) {
+    button.addEventListener("click", () => {
+      if (!state) return;
+      const count = steppedTrainCount(state.trainCount, state.blockReport.trainCapacity, step);
+      if (count !== undefined) dispatch({ type: "construction-set-train-count", count });
+    });
+  }
+  addBlock.addEventListener("click", () => {
+    const boundaryMetres = addBlockBoundary.valueAsNumber;
+    if (Number.isFinite(boundaryMetres)) dispatch({ type: "construction-add-block", boundaryMetres });
+  });
   container.dataset.model = modelSelect.value;
   modelSelect.addEventListener("change", () => {
     const model = coasterModels[modelSelect.value as keyof typeof coasterModels];
@@ -305,6 +377,119 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     renderLaunchPositions(current);
   }
 
+  function renderBlockSections(report: BlockReport, actionsDisabled: boolean): void {
+    blockSections.replaceChildren(...report.sections.map((section, index) => {
+      const item = document.createElement("li");
+      item.className = `builder__block-section${section.editableIndex === selectedBlock ? " builder__block-section--selected" : ""}`;
+      item.dataset.blockSection = "";
+      item.dataset.blockIndex = section.editableIndex === null ? "" : String(section.editableIndex);
+      const heading = document.createElement("strong");
+      const trackKindName = blockTrackKindNames[section.trackKind];
+      if (!trackKindName) throw new Error(`Unknown block boundary track kind ${section.trackKind}`);
+      heading.textContent = section.editable
+        ? `Block ${section.editableIndex! + 1} · ${trackKindName}`
+        : `Fixed boundary · ${trackKindName}`;
+      const boundary = document.createElement("span");
+      boundary.className = "builder__block-position";
+      boundary.textContent = `${section.boundaryMetres.toFixed(1)} m from the station`;
+      const reason = document.createElement("p");
+      reason.textContent = section.reason;
+      item.append(heading, boundary, reason);
+      if (section.editable) {
+        if (section.editableIndex === null) throw new Error("Editable block section is missing its editable index");
+        const label = document.createElement("label");
+        label.className = "builder__block-boundary";
+        const labelText = document.createElement("span");
+        labelText.className = "tool-panel__label";
+        labelText.textContent = "Move boundary (m)";
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = "0";
+        input.step = "any";
+        input.value = String(section.boundaryMetres);
+        input.setAttribute("aria-label", `Block ${section.editableIndex + 1} boundary in metres`);
+        input.dataset.blockBoundary = "";
+        input.dataset.editable = "true";
+        input.dataset.blockIndex = String(section.editableIndex);
+        input.setAttribute("list", "block-boundary-options");
+        input.disabled = actionsDisabled;
+        label.append(labelText, input);
+        const actions = document.createElement("div");
+        actions.className = "builder__block-actions";
+        const move = document.createElement("button");
+        move.type = "button";
+        move.className = "tool-panel__action";
+        move.textContent = "Move block";
+        move.dataset.blockMove = String(section.editableIndex);
+        move.disabled = actionsDisabled;
+        move.addEventListener("click", () => {
+          const boundaryMetres = input.valueAsNumber;
+          if (Number.isFinite(boundaryMetres)) dispatch({ type: "construction-move-block", index: section.editableIndex!, boundaryMetres });
+        });
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "tool-panel__action";
+        remove.textContent = "Remove block";
+        remove.dataset.blockRemove = String(section.editableIndex);
+        remove.disabled = actionsDisabled;
+        remove.addEventListener("click", () => dispatch({ type: "construction-remove-block", index: section.editableIndex! }));
+        actions.append(move, remove);
+        item.append(label, actions);
+      } else {
+        const fixed = document.createElement("span");
+        fixed.className = "builder__block-fixed";
+        fixed.textContent = "Cannot move or remove";
+        item.append(fixed);
+      }
+      return item;
+    }));
+  }
+
+  function renderBlockPanel(current: ConstructionState): void {
+    const report = current.blockReport;
+    if (selectedBlock !== null && !report.sections.some((section) => section.editableIndex === selectedBlock)) selectedBlock = null;
+    const view = blockPanelState(report);
+    if (!view.canApplyBest) applyBestRequested = false;
+    blockReport.textContent = view.statusText;
+    blockReport.dataset.placementStatus = report.placementStatus;
+    blockCapacity.textContent = view.capacityText;
+    blockThroughput.textContent = view.throughputText;
+    blockMessage.textContent = view.message;
+    blockMessage.hidden = view.message.length === 0;
+    autoBlocks.disabled = !current.canTest || view.busy;
+    applyBestBlocks.hidden = !view.canApplyBest;
+    applyBestBlocks.disabled = applyBestRequested;
+    applyBestBlocks.textContent = applyBestRequested ? "Using current layout…" : "Use current layout";
+    trainCount.textContent = String(current.trainCount);
+    fewerTrains.disabled = report.trainCapacity < current.trainCount || view.busy || current.trainCount <= 1;
+    moreTrains.disabled = report.trainCapacity < current.trainCount || view.busy || current.trainCount >= report.trainCapacity;
+    const canEdit = current.canTest && report.placementStatus !== "idle" && !view.busy;
+    addBlockControls.hidden = !canEdit;
+    addBlockBoundary.disabled = !canEdit;
+    addBlock.disabled = !canEdit;
+    blockNotes.replaceChildren(...report.notes.map((note) => {
+      const item = document.createElement("li");
+      item.textContent = note;
+      return item;
+    }));
+    blockSuggestions.replaceChildren(...report.suggestions.map((suggestion) => {
+      const item = document.createElement("li");
+      item.textContent = suggestion;
+      return item;
+    }));
+    blockBoundaryOptions.replaceChildren(...availableBlockBoundaries(current.blockCandidates, report).map((boundaryMetres) => {
+      const option = document.createElement("option");
+      option.value = String(boundaryMetres);
+      return option;
+    }));
+    const nextBlockKey = JSON.stringify([report.sections, report.notes, report.suggestions, report.placementStatus, view.busy, canEdit, view.message, current.message, selectedBlock]);
+    if (nextBlockKey !== blockKey) {
+      blockKey = nextBlockKey;
+      renderBlockSections(report, !canEdit);
+    }
+    blockPanel.dataset.selectedBlock = selectedBlock === null ? "" : String(selectedBlock);
+  }
+
   return {
     setShapes(value) {
       const nextShapes = new Map<string, PieceShape>();
@@ -319,10 +504,18 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       select(action.type === "piece-group" ? pieceInGroup(state.pieces, action.group) : steppedPiece(state.pieces, shapes, state.selected, action.attribute, action.step));
     },
     setDeleteMode(enabled) { deleteMode.checked = enabled; },
+    setSelectedBlock(index) {
+      if (index !== null && !state?.blockReport.sections.some((section) => section.editableIndex === index)) {
+        throw new Error(`Unknown editable block section ${index}`);
+      }
+      selectedBlock = index;
+      if (state) renderBlockPanel(state);
+    },
     update(next) {
       const previous = state;
       state = next;
       editor.hidden = !next.active;
+      blockPanel.hidden = !next.active || (!next.canTest && next.blockReport.sections.length === 0);
       modelSelect.disabled = next.active;
       container.dataset.selected = next.selected ?? "";
       const event = constructionEvent(previous, next);
@@ -352,6 +545,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element("[data-station-access]").textContent = access.length ? `Connect a queue at (${access[0]}, ${access[1]}) and a normal exit path at (${access[3]}, ${access[4]}), both at terrain height ${access[2]}. Connect the queue to the park's normal paths.` : "";
       element("[data-test-hint]").textContent = !next.canTest && !next.testingReport ? "Complete the circuit and make it longer than the train to test your coaster." : "";
       message.textContent = next.message;
+      renderBlockPanel(next);
     },
   };
 }

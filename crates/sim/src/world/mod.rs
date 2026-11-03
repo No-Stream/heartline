@@ -5,7 +5,11 @@
 use std::collections::BTreeMap;
 use std::mem::size_of;
 
+mod scenery;
+pub use scenery::{Scenery, SceneryKind, SceneryPlacementError, SceneryTheme};
 mod construction;
+#[cfg(test)]
+mod scenery_tests;
 pub use construction::{PathBuildError, PathKind, PathMetadata, PathPreviewTile};
 mod terrain;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -96,6 +100,7 @@ struct Column {
 }
 
 pub struct World {
+    scenery: BTreeMap<(u16, u16, i16, u8), Scenery>,
     path_metadata: BTreeMap<Position, PathMetadata>,
     width: u16,
     height: u16,
@@ -109,6 +114,7 @@ pub struct World {
 impl Clone for World {
     fn clone(&self) -> Self {
         Self {
+            scenery: self.scenery.clone(),
             path_metadata: self.path_metadata.clone(),
             width: self.width,
             height: self.height,
@@ -126,6 +132,7 @@ impl World {
         assert!(width > 0 && height > 0, "world dimensions must be positive");
         let count = usize::from(width) * usize::from(height);
         Self {
+            scenery: BTreeMap::new(),
             path_metadata: BTreeMap::new(),
             width,
             height,
@@ -181,6 +188,21 @@ impl World {
 
     /// Replaces the surface, clipping underground excavations and removing unsupported paths.
     pub fn set_surface(&mut self, x: u16, y: u16, surface: Surface) -> Vec<Position> {
+        if self
+            .scenery
+            .values()
+            .any(|item| item.position.x == x && item.position.y == y)
+        {
+            let mut candidate = self.clone();
+            candidate.scenery.clear();
+            candidate.set_surface(x, y, surface);
+            assert!(
+                self.scenery
+                    .values()
+                    .all(|item| candidate.scenery_supported(*item)),
+                "terrain edit obstructs scenery"
+            );
+        }
         self.revision = self.revision.wrapping_add(1);
         let index = self.index(x, y);
         self.surfaces[index] = surface;
@@ -196,6 +218,21 @@ impl World {
 
     /// Removes solid ground within [bottom, top), up to the highest surface corner.
     pub fn carve(&mut self, x: u16, y: u16, bottom: i16, top: i16) -> Vec<Position> {
+        if self
+            .scenery
+            .values()
+            .any(|item| item.position.x == x && item.position.y == y)
+        {
+            let mut candidate = self.clone();
+            candidate.scenery.clear();
+            candidate.carve(x, y, bottom, top);
+            assert!(
+                self.scenery
+                    .values()
+                    .all(|item| candidate.scenery_supported(*item)),
+                "terrain edit obstructs scenery"
+            );
+        }
         self.revision = self.revision.wrapping_add(1);
         let index = self.index(x, y);
         assert!(bottom < top, "empty or reversed interval");
@@ -222,6 +259,21 @@ impl World {
 
     /// Restores solid ground within [bottom, top), removing obstructed paths.
     pub fn fill(&mut self, x: u16, y: u16, bottom: i16, top: i16) -> Vec<Position> {
+        if self
+            .scenery
+            .values()
+            .any(|item| item.position.x == x && item.position.y == y)
+        {
+            let mut candidate = self.clone();
+            candidate.scenery.clear();
+            candidate.fill(x, y, bottom, top);
+            assert!(
+                self.scenery
+                    .values()
+                    .all(|item| candidate.scenery_supported(*item)),
+                "terrain edit obstructs scenery"
+            );
+        }
         self.revision = self.revision.wrapping_add(1);
         let index = self.index(x, y);
         assert!(bottom < top, "empty or reversed interval");
@@ -251,6 +303,9 @@ impl World {
     }
 
     fn path_supported(&self, index: usize, path: Path) -> bool {
+        if self.scenery_blocks_path(path) {
+            return false;
+        }
         let surface = self.surfaces[index];
         let corners = path.corners();
         if corners == surface.corners.map(i32::from) {
@@ -580,6 +635,13 @@ impl World {
                     Some(Direction::West) => 4,
                 }]);
             }
+        }
+        write(&(self.scenery.len() as u64).to_le_bytes());
+        for scenery in self.scenery.values() {
+            write(&scenery.position.x.to_le_bytes());
+            write(&scenery.position.y.to_le_bytes());
+            write(&scenery.position.height.to_le_bytes());
+            write(&[scenery.kind as u8, scenery.quarter, scenery.rotation]);
         }
         hash
     }

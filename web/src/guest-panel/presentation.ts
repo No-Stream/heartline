@@ -28,6 +28,11 @@ const PROXIMITY_THOUGHTS: Readonly<Record<string, string>> = {
   terrainHugging: "That coaster came so close to the ground!",
 };
 
+const SCENERY_THEME_LABELS: Readonly<Record<number, string>> = {
+  0: "Garden",
+  1: "Woodland",
+};
+
 export function activityLabel(activity: GuestActivity): string {
   const place = activity.placeId === null ? "" : ` · stop ${activity.placeId + 1}`;
   return `${ACTIVITY_LABELS[activity.kind] ?? activity.kind}${place}`;
@@ -42,10 +47,20 @@ export function memoryLabel(memory: GuestMemory): string {
     }
     case "food":
       return `Stopped for a bite at stall ${memory.placeId + 1}`;
-    case "wait":
-      return `Waited about ${Math.ceil(memory.durationTicks / 30)} seconds for stop ${memory.placeId + 1}`;
+    case "wait": {
+      const actualDurationSeconds = Math.ceil(memory.durationTicks / 30);
+      const perceivedDurationSeconds = Math.ceil(memory.perceivedDurationTicks / 30);
+      const perception = actualDurationSeconds === perceivedDurationSeconds
+        ? ""
+        : ` (felt like ${perceivedDurationSeconds} seconds)`;
+      return `Waited about ${actualDurationSeconds} seconds for stop ${memory.placeId + 1}${perception}`;
+    }
     case "proximity":
       return PROXIMITY_MEMORY_LABELS[memory.eventKind] ?? "Remembered a surprising moment on a coaster";
+    case "scenery": {
+      const theme = SCENERY_THEME_LABELS[memory.theme] ?? "park";
+      return `Enjoyed ${theme} scenery (+${memory.enjoyment} enjoyment)`;
+    }
     default:
       return "Remembered a day at the park";
   }
@@ -57,7 +72,11 @@ export function thoughtLabel(thought: GuestThought, thoughtText: string): string
     if (typeof data === "object" && data !== null) return PROXIMITY_THOUGHTS[data.eventKind] ?? "That coaster ride was full of surprises!";
     return "That coaster ride was full of surprises!";
   }
-  if (!["exploring", "hungry", "thirsty", "needsRestroom", "nauseous", "tired", "unhappy", "enjoyedRide", "dislikedRide"].includes(thought.kind)) return "I wonder what to do next.";
+  const friendlyThoughtKinds = [
+    "exploring", "hungry", "thirsty", "needsRestroom", "nauseous", "tired", "unhappy",
+    "enjoyedRide", "dislikedRide", "enjoyedScenery",
+  ];
+  if (!friendlyThoughtKinds.includes(thought.kind)) return "I wonder what to do next.";
   if (!thoughtText.trim()) throw new Error(`Guest thought ${thought.kind} has no friendly wording`);
   return thoughtText;
 }

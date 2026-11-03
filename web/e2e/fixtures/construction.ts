@@ -36,7 +36,8 @@ const state: ConstructionState = {
     { id: "LevelToGentleUp", label: "Begin gentle climb", group: "slope", heading: "East", slope: "UpGentle", bank: "Level", refusal: "The train would collide with terrain." },
   ], selected: "Straight",
   track: [{ id: 4, label: "Station" }, { id: 9, label: "Straight" }], canAppend: true, canClose: false, canTest: false, isOpen: false, stationPositions: [227, 251, 12, 227, 253, 12], message: "Ready to place",
-  placedRails: new Float32Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
+  blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
+  trainCount: 1, placedRails: new Float32Array(), railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
   previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array(),
 };
 let current = state;

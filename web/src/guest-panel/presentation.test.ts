@@ -9,7 +9,16 @@ describe("guest panel phrasing", () => {
     const memories: Array<{ memory: GuestMemory; phrase: string }> = [
       { memory: { kind: "ride", rideId: 3, enjoyment: 8, nausea: 0, tick: 1 }, phrase: "Ride 4" },
       { memory: { kind: "food", placeId: 2, tick: 2 }, phrase: "stall 3" },
-      { memory: { kind: "wait", placeId: 4, durationTicks: 90, tick: 3 }, phrase: "Waited about 3 seconds" },
+      {
+        memory: { kind: "wait", placeId: 4, durationTicks: 90, perceivedDurationTicks: 90, tick: 3 },
+        phrase: "Waited about 3 seconds",
+      },
+      {
+        memory: { kind: "wait", placeId: 4, durationTicks: 150, perceivedDurationTicks: 60, tick: 4 },
+        phrase: "Waited about 5 seconds for stop 5 (felt like 2 seconds)",
+      },
+      { memory: { kind: "scenery", theme: 0, enjoyment: 8, tick: 5 }, phrase: "Garden scenery (+8 enjoyment)" },
+      { memory: { kind: "scenery", theme: 1, enjoyment: 4, tick: 6 }, phrase: "Woodland scenery (+4 enjoyment)" },
       ...eventKinds.map((eventKind) => ({
         memory: { kind: "proximity" as const, rideId: 3, eventKind, position: { x: 1, y: 2, z: 3 }, strength: 0.8, tick: 4 },
         phrase: ({ nearMiss: "near-miss", headchopper: "overhead", dueling: "another train", tunnel: "tunnel", terrainHugging: "ground" } as const)[eventKind],
@@ -17,8 +26,12 @@ describe("guest panel phrasing", () => {
     ];
 
     for (const { memory, phrase } of memories) expect(memoryLabel(memory)).toContain(phrase);
-    const proximityMemory = memories[3].memory as Extract<GuestMemory, { kind: "proximity" }>;
+    expect(memoryLabel({ kind: "wait", placeId: 4, durationTicks: 90, perceivedDurationTicks: 90, tick: 3 }))
+      .toBe("Waited about 3 seconds for stop 5");
+    const proximityMemory = memories.find(({ memory }) => memory.kind === "proximity")?.memory;
+    if (proximityMemory?.kind !== "proximity") throw new Error("Expected a proximity memory fixture");
     expect(memoryLabel({ ...proximityMemory, eventKind: "futureEvent" })).not.toContain("futureEvent");
+    expect(memoryLabel({ kind: "scenery", theme: 99, enjoyment: 5, tick: 7 })).not.toContain("99");
   });
 
   it("phrases every thought variant from the wasm bridge", () => {
@@ -32,6 +45,7 @@ describe("guest panel phrasing", () => {
       { thought: { kind: "unhappy", data: null }, text: "I could use something to cheer me up.", phrase: "cheer me up" },
       { thought: { kind: "enjoyedRide", data: 3 }, text: "That ride was a real treat.", phrase: "real treat" },
       { thought: { kind: "dislikedRide", data: 3 }, text: "That ride was a bit much for me.", phrase: "bit much" },
+      { thought: { kind: "enjoyedScenery", data: 0 }, text: "The scenery here is lovely.", phrase: "scenery here is lovely" },
       ...eventKinds.map((eventKind) => ({
         thought: { kind: "proximity" as const, data: { rideId: 3, eventKind } }, text: "",
         phrase: ({ nearMiss: "near-miss", headchopper: "hat off", dueling: "alongside the other train", tunnel: "tunnel", terrainHugging: "ground" } as const)[eventKind],

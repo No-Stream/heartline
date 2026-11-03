@@ -400,7 +400,7 @@ mod tests {
         assert!(
             preferred_theme_uses
                 .iter()
-                .all(|&count| (11_500..13_500).contains(&count))
+                .all(|&count| (49_000..51_000).contains(&count))
         );
         assert!(guests.ids().all(|id| {
             let favourites = guests.favourite_ride_types(id).count_ones();

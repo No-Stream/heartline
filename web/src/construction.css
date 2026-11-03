@@ -98,6 +98,43 @@
 .builder__toggle input { accent-color: var(--coral); }
 .builder__toggle kbd { margin-left: auto; }
 
+/* Block sections */
+.builder__blocks { display: grid; gap: 0.45rem; }
+.builder__blocks[hidden],
+.builder__block-add[hidden] { display: none; }
+.builder__block-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.builder__block-heading-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 0.3rem; }
+.builder__block-heading-actions [hidden] { display: none; }
+.builder__block-heading .tool-panel__action { width: auto; }
+.builder__train-count { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.builder__train-count .stepper__value { width: 3.4rem; }
+.builder__block-status { margin: 0; font-size: 0.82rem; }
+.builder__block-capacity,
+.builder__block-throughput,
+.builder__block-message { margin: 0; color: var(--ink-soft); font-size: 0.78rem; }
+.builder__block-message { color: var(--coral); font-style: italic; }
+.builder__block-list { display: grid; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.builder__block-section { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.25rem 0.5rem; padding: 0.45rem; border: var(--hairline); background: var(--paper); }
+.builder__block-section--selected { outline: 2px solid var(--coral); outline-offset: 1px; }
+.builder__block-section strong { font-size: 0.8rem; }
+.builder__block-position,
+.builder__block-section p,
+.builder__block-fixed { color: var(--ink-soft); font-size: 0.74rem; }
+.builder__block-section p { grid-column: 1 / -1; margin: 0; }
+.builder__block-boundary { display: grid; gap: 0.2rem; min-width: 0; }
+.builder__block-boundary input,
+.builder__block-add input { width: 7rem; }
+.builder__block-actions { display: flex; gap: 0.3rem; }
+.builder__block-actions .tool-panel__action { width: auto; }
+.builder__block-fixed { grid-column: 1 / -1; }
+.builder__block-add { display: flex; align-items: end; justify-content: space-between; gap: 0.4rem; padding-top: 0.35rem; border-top: var(--hairline); }
+.builder__block-add label { display: grid; gap: 0.2rem; }
+.builder__block-add .tool-panel__action { width: auto; }
+.builder__block-notes,
+.builder__block-suggestions { margin: 0; padding-left: 1.2rem; color: var(--ink-soft); font-size: 0.74rem; }
+.builder__block-notes:empty,
+.builder__block-suggestions:empty { display: none; }
+
 /* Placed track as a numbered strip of small drawings. */
 .builder__track-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.35rem; }
 .builder__track-count { color: var(--ink-soft); font-style: italic; font-size: 0.78rem; }

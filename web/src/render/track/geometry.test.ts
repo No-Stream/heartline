@@ -108,6 +108,14 @@ describe("coaster geometry", () => {
     const current = new Float32Array([0, 2, 4, 6, 0, 1, 0, 0, 0, 1, 3]);
     expect([...interpolateTrainPoses(previous, current, 0.5)]).toEqual([0, 1, 2, 3, 0, 1, 0, 0, 0, 1, 3]);
   });
+  test("renders every car record when a snapshot contains multiple trains", () => {
+    const poses = new Float32Array([
+      0, 1, 2, 3, 1, 0, 0, 0, 0, 1, 0,
+      1, 4, 2, 3, 1, 0, 0, 0, 0, 1, 0,
+    ]);
+    const quads = buildTrackQuads(new Float32Array(), new Float32Array(), new Float32Array(), poses, { centerX: 2, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 });
+    expect(new Set(quads.filter((quad) => quad.kind === "train").map((quad) => quad.id))).toEqual(new Set(["train-0", "train-1"]));
+  });
   test("uses atlas theme and rotates riders with the car", () => {
     const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };
     const themeStyle = { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 };

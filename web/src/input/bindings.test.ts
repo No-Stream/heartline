@@ -160,3 +160,44 @@ describe("input bindings", () => {
     ]);
   });
 });
+
+describe("block marker input", () => {
+  it("routes a marker drag without panning and cancels interrupted drags", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action), () => false, (position) => position.x === 100);
+    surface.dispatchEvent(event("pointerdown", { pointerId: 1, button: 0, clientX: 60, clientY: 70 }));
+    surface.dispatchEvent(event("pointermove", { pointerId: 1, clientX: 70, clientY: 75 }));
+    surface.dispatchEvent(event("pointerup", { pointerId: 1, clientX: 75, clientY: 80 }));
+    surface.dispatchEvent(event("pointerdown", { pointerId: 2, button: 0, clientX: 60, clientY: 70 }));
+    surface.dispatchEvent(event("pointermove", { pointerId: 2, clientX: 70, clientY: 75 }));
+    surface.dispatchEvent(event("pointercancel", { pointerId: 2 }));
+    expect(actions).toEqual([
+      { type: "block-marker-drag-start", position: { x: 100, y: 100 } },
+      { type: "block-marker-drag-move", position: { x: 120, y: 110 } },
+      { type: "block-marker-drag-end", position: { x: 130, y: 120 } },
+      { type: "block-marker-drag-start", position: { x: 100, y: 100 } },
+      { type: "block-marker-drag-move", position: { x: 120, y: 110 } },
+      { type: "block-marker-drag-cancel" },
+    ]);
+  });
+
+  it("nudges and removes a selected marker while preserving normal camera and delete shortcuts", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    let selected = true;
+    bindKeyboard(surface as unknown as HTMLElement, (action) => actions.push(action), () => ({ x: 0, y: 0 }), () => selected);
+    for (const key of ["ArrowLeft", "ArrowRight", "Delete"]) surface.dispatchEvent(event("keydown", { key, repeat: false }));
+    surface.dispatchEvent(event("keydown", { key: "Delete", repeat: true }));
+    selected = false;
+    for (const key of ["ArrowLeft", "Delete"]) surface.dispatchEvent(event("keydown", { key, repeat: false }));
+    expect(actions).toEqual([
+      { type: "block-marker-nudge", step: -1 },
+      { type: "block-marker-nudge", step: 1 },
+      { type: "block-marker-remove" },
+      { type: "pan", dx: 32, dy: 0 },
+      { type: "delete-mode-toggle" },
+    ]);
+    expect([builderShortcuts.panLeft, builderShortcuts.panRight, builderShortcuts.deleteMode].map(keyHint)).toEqual(["←", "→", "Del"]);
+  });
+});

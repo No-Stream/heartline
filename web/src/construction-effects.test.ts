@@ -6,7 +6,8 @@ const rails = new Float32Array([0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 2, 1, 1, 0, 1, 0, 
 const state = (update: Partial<ConstructionState>): ConstructionState => ({
   type: "construction-state", active: true, pieces: [], selected: "Straight", track: [{ id: 0, label: "Station" }],
   canAppend: true, canClose: false, canTest: false, isOpen: false, stationPositions: [], message: "",
-  placedRails: rails, placedTies: new Float32Array(), placedSupports: new Float32Array(),
+  blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
+  trainCount: 1, placedRails: rails, railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
   previewRails: rails, previewTies: new Float32Array(), previewSupports: new Float32Array(), ...update,
 });
 const style = { steel: "#dc5c3e", wood: "#d88440", train: "#9fbbb1", ink: "#3a2e58", lineWeight: 0.6 };

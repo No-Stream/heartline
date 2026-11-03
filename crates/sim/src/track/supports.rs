@@ -125,7 +125,7 @@ fn generate_supports_at_spacing(
             "invalid obstacle bounds"
         );
     }
-    let path_obstacles: Vec<_> = world
+    let mut path_obstacles: Vec<_> = world
         .paths()
         .map(|path| SupportObstacle {
             min: Vec3::new(
@@ -140,6 +140,10 @@ fn generate_supports_at_spacing(
             ),
         })
         .collect();
+    path_obstacles.extend(world.scenery_boxes().map(|bounds| SupportObstacle {
+        min: bounds.min,
+        max: bounds.max,
+    }));
     let tunnels: Vec<_> = world.carved_spans().collect();
     let count = (piece.length() / spacing).ceil() as usize;
     let mut supports = Vec::with_capacity(count);
@@ -383,6 +387,10 @@ fn generate_wooden_lattice_at_spacing(
 ) -> Result<Vec<SupportSegment>, SupportError> {
     let supports = generate_supports_at_spacing(piece, world, obstacles, &[], spacing)?;
     let mut occupied = obstacles.to_vec();
+    occupied.extend(world.scenery_boxes().map(|bounds| SupportObstacle {
+        min: bounds.min,
+        max: bounds.max,
+    }));
     occupied.extend(world.paths().map(|path| SupportObstacle {
         min: Vec3::new(
             f64::from(path.position.x) * 4.0,

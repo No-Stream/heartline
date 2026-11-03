@@ -289,6 +289,8 @@ impl ParkGuests {
             &queue_entrances,
             &self.leaving,
         );
+        self.behaviors
+            .observe_scenery(world, self.walking.traits(), &positions, &self.leaving);
         let movements = self.behaviors.tick_with_exiting(
             self.walking.traits_mut(),
             &positions,
@@ -396,6 +398,69 @@ mod tests {
     use super::*;
     use crate::guest_behavior::{KnownPlace, PlaceKind};
     use crate::world::{Path, Surface};
+
+    #[test]
+    fn placed_scenery_changes_guest_happiness_and_details() {
+        use crate::guests::{GuestMemoryDetail, Thought};
+        use crate::world::{Scenery, SceneryKind};
+
+        let entrance = Position {
+            x: 0,
+            y: 0,
+            height: 0,
+        };
+        let mut bare = World::new(
+            2,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        bare.place_path(Path {
+            position: entrance,
+            slope: None,
+        });
+        let mut decorated = bare.clone();
+        let seed = (0..100)
+            .find(|&seed| {
+                crate::guests::generate_guests(seed, 1).cares_about_theming(GuestId(0)) >= 25
+            })
+            .unwrap();
+        let mut without = ParkGuests::new(seed, 1, &bare, entrance, 1);
+        let mut with = ParkGuests::new(seed, 1, &decorated, entrance, 1);
+        let guest = GuestId(0);
+        let traits = with.walking.traits();
+        assert!(traits.cares_about_theming(guest) >= 25);
+        let theme = traits.preferred_theme(guest);
+        decorated
+            .place_scenery(Scenery {
+                kind: if theme == 0 {
+                    SceneryKind::FlowerBed
+                } else {
+                    SceneryKind::TreeCone
+                },
+                position: Position {
+                    x: 1,
+                    y: 0,
+                    height: 0,
+                },
+                quarter: 0,
+                rotation: 0,
+            })
+            .unwrap();
+        without.open_with_guests(&[]);
+        with.open_with_guests(&[]);
+        for _ in 0..2 {
+            without.tick(&bare, &[], 100, None);
+            with.tick(&decorated, &[], 100, None);
+        }
+        let detail = with.guest_detail(guest).unwrap();
+        assert!(detail.happiness > without.guest_detail(guest).unwrap().happiness);
+        assert_eq!(detail.thought, Thought::EnjoyedScenery(theme));
+        assert!(detail.memories.iter().any(|memory| matches!(memory, GuestMemoryDetail::Scenery { theme: remembered, .. } if *remembered == theme)));
+        assert!(detail.to_json().contains("\"kind\":\"scenery\""));
+    }
 
     #[test]
     fn ambiguous_queue_does_not_advertise_either_ride() {

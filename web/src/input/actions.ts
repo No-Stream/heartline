@@ -18,6 +18,9 @@ export type InputAction =
   | { readonly type: "station-height"; readonly height: number }
   | { readonly type: "drag-start" | "drag-move" | "drag-end"; readonly position: ScreenPoint }
   | { readonly type: "drag-cancel" }
+  | { readonly type: "block-marker-drag-start" | "block-marker-drag-move" | "block-marker-drag-end"; readonly position: ScreenPoint }
+  | { readonly type: "block-marker-drag-cancel" | "block-marker-remove" }
+  | { readonly type: "block-marker-nudge"; readonly step: -1 | 1 }
   | { readonly type: "path-build-mode" | "path-remove-mode" }
   | { readonly type: "select"; readonly position: ScreenPoint }
   /** Choose the next piece one step along an attribute, or through the whole palette. */

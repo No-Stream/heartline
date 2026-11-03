@@ -9,6 +9,7 @@ pub use super::thoughts::Thought;
 use crate::guests::{AgeGroup, GuestId, GuestStore};
 use crate::track::proximity::ProximityEvent;
 use crate::world::Position;
+use crate::world::World;
 
 const QUEUE_ENTRANCE_VISIBILITY_TILES: u16 = 12;
 
@@ -59,10 +60,70 @@ pub struct BehaviorSimulation {
     income: BTreeMap<u32, u64>,
     external_rides: BTreeSet<u32>,
     coaster_riders: BTreeMap<(u32, u64), Vec<GuestId>>,
+    scenery_scores: Vec<u8>,
+    queue_scenery: Vec<u64>,
     tick: u64,
 }
 
 impl BehaviorSimulation {
+    pub(super) fn observe_scenery(
+        &mut self,
+        world: &World,
+        guests: &GuestStore,
+        positions: &[Option<Position>],
+        exiting: &[bool],
+    ) {
+        let has_scenery = world.scenery().next().is_some();
+        for (index, position) in positions.iter().enumerate() {
+            let guest = GuestId(index as u32);
+            if !guests.is_active(guest) || exiting[index] {
+                continue;
+            }
+            if matches!(self.activities[index], Some(Activity::CoasterRiding(_))) {
+                continue;
+            }
+            if !has_scenery {
+                self.scenery_scores[index] = 0;
+                continue;
+            }
+            let Some(position) = position else {
+                self.scenery_scores[index] = 0;
+                continue;
+            };
+            let occupied = matches!(
+                self.activities[index],
+                Some(Activity::Walking(_) | Activity::Queuing(_, _) | Activity::Using(_, _))
+            );
+            if !occupied && index as u64 % 30 != self.tick % 30 {
+                continue;
+            }
+            let preferred = guests.preferred_theme(guest);
+            let mut theme = None;
+            let mut weight = 0_u32;
+            for scenery in world.nearby_scenery(*position, 3) {
+                let candidate = scenery.kind.theme() as u8;
+                weight = (weight + if candidate == preferred { 4 } else { 2 }).min(10_000);
+                if theme.is_none() || candidate == preferred {
+                    theme = Some(candidate);
+                }
+            }
+            self.scenery_scores[index] = (20 * weight / (weight + 8)
+                * u32::from(guests.cares_about_theming(guest))
+                / 100) as u8;
+            if matches!(self.activities[index], Some(Activity::Queuing(_, _))) {
+                self.queue_scenery[index] += u64::from(self.scenery_scores[index]);
+            }
+            if let Some(theme) = theme.filter(|_| index as u64 % 1800 == self.tick % 1800) {
+                self.guests[index].enjoy_scenery(
+                    theme,
+                    preferred,
+                    guests.cares_about_theming(guest),
+                    matches!(self.activities[index], Some(Activity::Queuing(_, _))),
+                    self.tick,
+                );
+            }
+        }
+    }
     pub fn new(guest_count: usize) -> Self {
         Self {
             guests: vec![GuestBehavior::default(); guest_count],
@@ -71,6 +132,8 @@ impl BehaviorSimulation {
             income: BTreeMap::new(),
             external_rides: BTreeSet::new(),
             coaster_riders: BTreeMap::new(),
+            scenery_scores: vec![0; guest_count],
+            queue_scenery: vec![0; guest_count],
             tick: 0,
         }
     }
@@ -143,6 +206,10 @@ impl BehaviorSimulation {
             behavior.record_memory(GuestMemoryDetail::Wait {
                 place_id: id,
                 duration_ticks: self.tick.saturating_sub(queued_at),
+                perceived_duration_ticks: self
+                    .tick
+                    .saturating_sub(queued_at)
+                    .saturating_sub(self.queue_scenery[index] / 40),
                 tick: self.tick,
             });
             *self.income.entry(id).or_default() += u64::from(facility.place.price);
@@ -205,7 +272,8 @@ impl BehaviorSimulation {
                 assert!(excitement.is_finite() && intensity.is_finite() && nausea.is_finite());
                 let enjoyment = (excitement
                     - (intensity - f64::from(guests.intensity(guest))).abs()
-                    - f64::from(self.guests[index].needs.nausea))
+                    - f64::from(self.guests[index].needs.nausea)
+                    + f64::from(self.scenery_scores[index]))
                 .clamp(-100.0, 100.0) as i8;
                 let mut place = facility.place;
                 place.intensity = nausea.clamp(0.0, 100.0) as u8;
@@ -405,12 +473,22 @@ impl BehaviorSimulation {
             }
             self.guests[index].advance_for(1, guests.age(id));
             if self.guests[index].thought == Thought::Exploring {
-                if let Some(memory) = guests.memory(id).iter().last() {
-                    self.guests[index].thought = if memory.enjoyment >= 0 {
-                        Thought::EnjoyedRide(memory.ride_id)
-                    } else {
-                        Thought::DislikedRide(memory.ride_id)
-                    };
+                let scenery = self.guests[index].recent_memories().back();
+                let ride = guests.memory(id).iter().last();
+                match (scenery, ride) {
+                    (Some(GuestMemoryDetail::Scenery { theme, tick, .. }), ride)
+                        if ride.is_none_or(|memory| *tick >= memory.tick) =>
+                    {
+                        self.guests[index].thought = Thought::EnjoyedScenery(*theme);
+                    }
+                    (_, Some(memory)) => {
+                        self.guests[index].thought = if memory.enjoyment >= 0 {
+                            Thought::EnjoyedRide(memory.ride_id)
+                        } else {
+                            Thought::DislikedRide(memory.ride_id)
+                        }
+                    }
+                    _ => {}
                 }
             }
             // Night is the second half of a 25-minute day; mood shifts gently.
@@ -487,8 +565,13 @@ impl BehaviorSimulation {
                                 - i16::from(facility.place.intensity))
                             .abs()
                                 * 2
-                            - self.guests[index].needs.nausea as i16)
-                            .clamp(-100, 100) as i8;
+                            - self.guests[index].needs.nausea as i16
+                            + if facility.place.kind == PlaceKind::Ride {
+                                i16::from(self.scenery_scores[index])
+                            } else {
+                                0
+                            })
+                        .clamp(-100, 100) as i8;
                         self.guests[index].complete_paid(
                             facility.place,
                             self.tick,
@@ -525,6 +608,7 @@ impl BehaviorSimulation {
                         self.activities[index] = None;
                     } else {
                         queue.push(id);
+                        self.queue_scenery[index] = 0;
                         self.activities[index] = Some(Activity::Queuing(place_id, self.tick));
                     }
                 }
@@ -655,6 +739,10 @@ impl BehaviorSimulation {
                     self.guests[id.0 as usize].record_memory(GuestMemoryDetail::Wait {
                         place_id,
                         duration_ticks: self.tick.saturating_sub(queued_at),
+                        perceived_duration_ticks: self
+                            .tick
+                            .saturating_sub(queued_at)
+                            .saturating_sub(self.queue_scenery[id.0 as usize] / 40),
                         tick: self.tick,
                     });
                     self.activities[id.0 as usize] =
@@ -703,6 +791,112 @@ mod tests {
             theme: 0,
             price: 0,
         }
+    }
+
+    #[test]
+    fn scenery_changes_queue_perception_and_flat_and_coaster_enjoyment() {
+        use crate::world::{Scenery, SceneryKind, Surface, World};
+        let seed = (0..100)
+            .find(|&seed| generate_guests(seed, 1).cares_about_theming(GuestId(0)) >= 80)
+            .unwrap();
+        let guest = GuestId(0);
+        let mut guests = generate_guests(seed, 1);
+        let position = Position {
+            x: 0,
+            y: 0,
+            height: 0,
+        };
+        let mut world = World::new(
+            4,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let kind = if guests.preferred_theme(guest) == 0 {
+            SceneryKind::FlowerBed
+        } else {
+            SceneryKind::TreeCone
+        };
+        let mut simulation = BehaviorSimulation::new(1);
+        simulation.activities[0] = Some(Activity::Queuing(1, 0));
+        world
+            .place_scenery(Scenery {
+                kind,
+                position: Position {
+                    x: 1,
+                    y: 0,
+                    height: 0,
+                },
+                quarter: 0,
+                rotation: 0,
+            })
+            .unwrap();
+        simulation.observe_scenery(&world, &guests, &[Some(position)], &[false]);
+        let first_score = simulation.scenery_scores[0];
+        for x in 2..=3 {
+            world
+                .place_scenery(Scenery {
+                    kind,
+                    position: Position { x, y: 0, height: 0 },
+                    quarter: 0,
+                    rotation: 0,
+                })
+                .unwrap();
+        }
+        for tick in 0..100 {
+            simulation.tick = tick;
+            simulation.observe_scenery(&world, &guests, &[Some(position)], &[false]);
+        }
+        let score = simulation.scenery_scores[0];
+        assert!(score > first_score && score < first_score * 3);
+        let facility = Facility {
+            place: KnownPlace {
+                position,
+                intensity: guests.intensity(guest),
+                ..place(1, PlaceKind::Ride)
+            },
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: None,
+        };
+        simulation.tick = 100;
+        simulation.queues.insert(1, vec![guest]);
+        simulation.set_external_rides(&[1]);
+        assert_eq!(simulation.board_coaster(&facility, &guests), vec![guest]);
+        assert!(
+            matches!(simulation.guests[0].recent_memories().back(), Some(GuestMemoryDetail::Wait { duration_ticks: 100, perceived_duration_ticks, .. }) if *perceived_duration_ticks < 100)
+        );
+        simulation.observe_scenery(&world, &guests, &[None], &[false]);
+        assert_eq!(simulation.scenery_scores[0], score);
+        simulation.finish_coaster(
+            &facility,
+            &mut guests,
+            &[(50.0, f64::from(facility.place.intensity), 0.0)],
+            &[vec![]],
+            false,
+        );
+        assert_eq!(
+            guests.memory(guest).iter().last().unwrap().enjoyment,
+            50 + score as i8
+        );
+
+        let mut flat_guests = generate_guests(seed, 1);
+        let mut flat = BehaviorSimulation::new(1);
+        flat.activities[0] = Some(Activity::Using(1, 1));
+        flat.observe_scenery(&world, &flat_guests, &[Some(position)], &[false]);
+        flat.tick(
+            &mut flat_guests,
+            &[Some(position)],
+            &[facility],
+            &[Some(0)],
+            &[Some(0)],
+        );
+        assert_eq!(
+            flat_guests.memory(guest).iter().last().unwrap().enjoyment,
+            80 + score as i8
+        );
     }
 
     #[test]

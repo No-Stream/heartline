@@ -51,6 +51,35 @@ impl Default for GuestBehavior {
 }
 
 impl GuestBehavior {
+    pub(super) fn enjoy_scenery(
+        &mut self,
+        theme: u8,
+        preferred_theme: u8,
+        care: u8,
+        queued: bool,
+        tick: u64,
+    ) {
+        let preference = if theme == preferred_theme { 2 } else { 1 };
+        let queue_factor = if queued { 2 } else { 1 };
+        let enjoyment = u16::from(care) * preference * queue_factor / 25;
+        if enjoyment == 0 {
+            return;
+        }
+        self.happiness = self.happiness.saturating_add(enjoyment).min(100);
+        self.record_memory(GuestMemoryDetail::Scenery {
+            theme,
+            enjoyment: enjoyment as u8,
+            tick,
+        });
+        if self.thought == Thought::Exploring
+            || matches!(
+                self.thought,
+                Thought::EnjoyedRide(_) | Thought::DislikedRide(_) | Thought::EnjoyedScenery(_)
+            )
+        {
+            self.thought = Thought::EnjoyedScenery(theme);
+        }
+    }
     pub fn known_places(&self) -> &[KnownPlace] {
         &self.known_places
     }
@@ -338,4 +367,36 @@ pub fn split_for_ride(guests: &GuestStore, members: &[GuestId], ride: KnownPlace
         }
     }
     GroupSplit { riding, waiting }
+}
+
+#[cfg(test)]
+mod scenery_tests {
+    use super::GuestBehavior;
+    use crate::guests::details::GuestMemoryDetail;
+    use crate::guests::thoughts::Thought;
+
+    #[test]
+    fn scenery_enjoyment_depends_on_preference_care_and_waiting() {
+        let mut preferred = GuestBehavior::default();
+        let mut other = GuestBehavior::default();
+        let mut indifferent = GuestBehavior::default();
+        let mut queued = GuestBehavior::default();
+        preferred.enjoy_scenery(0, 0, 100, false, 1800);
+        other.enjoy_scenery(0, 1, 100, false, 1800);
+        indifferent.enjoy_scenery(0, 0, 0, false, 1800);
+        queued.enjoy_scenery(0, 0, 100, true, 1800);
+        assert!(queued.happiness > preferred.happiness);
+        assert!(preferred.happiness > other.happiness);
+        assert!(other.happiness > indifferent.happiness);
+        assert_eq!(preferred.thought, Thought::EnjoyedScenery(0));
+        assert!(matches!(
+            preferred.recent_memories().back(),
+            Some(GuestMemoryDetail::Scenery {
+                theme: 0,
+                tick: 1800,
+                ..
+            })
+        ));
+        assert!(indifferent.recent_memories().is_empty());
+    }
 }

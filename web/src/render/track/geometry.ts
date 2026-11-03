@@ -2,8 +2,9 @@ import { projectWorld, type Camera, type Viewport } from "../../camera";
 import type { Atlas, Triangle, Vertex } from "../scene";
 
 type Vec = [number, number, number];
-export interface TrackQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; color: Triangle["color"]; kind: "track" | "support" | "train" | "rider"; id: string; tileX: number; tileY: number; page?: number }
+export interface TrackQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; color: Triangle["color"]; kind: "track" | "support" | "train" | "rider" | "block-boundary" | "block-boundary-fixed"; id: string; tileX: number; tileY: number; page?: number }
 export interface TrackStyle { steel: string; wood: string; train: string; ink: string; lineWeight: number }
+export const BLOCK_SECTION_PALETTE = ["#38a3a5", "#e07a5f", "#d6a94f", "#7186c1", "#70a288", "#b779a8"] as const;
 const add = (a: Vec, b: Vec): Vec => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (a: Vec, n: number): Vec => [a[0] * n, a[1] * n, a[2] * n];
 const cross = (a: Vec, b: Vec): Vec => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
@@ -24,6 +25,42 @@ export function trackStyle(atlas: Atlas): TrackStyle {
   return themeStyle;
 }
 
+function sectionColorAt(distanceMetres: number, boundariesMetres: readonly number[]): Triangle["color"] {
+  let sectionIndex = 0;
+  for (const boundaryMetres of boundariesMetres) {
+    if (boundaryMetres > 0 && boundaryMetres <= distanceMetres) sectionIndex++;
+  }
+  const hex = BLOCK_SECTION_PALETTE[sectionIndex % BLOCK_SECTION_PALETTE.length];
+  return color(hex);
+}
+
+function sectionColorsForRails(rails: Float32Array, boundariesMetres: readonly number[], railDistancesMetres: Float32Array): Triangle["color"][] {
+  if (rails.length % 38 !== 0) throw new Error("Block-section coloring requires paired coaster rails");
+  if (railDistancesMetres.length !== rails.length / 19) throw new Error("Block-section distances do not match coaster rails");
+  for (let index = 0; index < boundariesMetres.length; index++) {
+    if (!Number.isFinite(boundariesMetres[index]) || boundariesMetres[index] < 0 || (index > 0 && boundariesMetres[index] < boundariesMetres[index - 1])) {
+      throw new RangeError("Invalid block-section boundary order");
+    }
+  }
+  const railColors: Triangle["color"][] = [];
+  let previousEndMetres = 0;
+  for (let offset = 0; offset < rails.length; offset += 38) {
+    const distanceOffset = offset / 19;
+    const startMetres = railDistancesMetres[distanceOffset];
+    const endMetres = railDistancesMetres[distanceOffset + 1];
+    if (rails[offset] !== rails[offset + 19] || !Number.isFinite(startMetres) || !Number.isFinite(endMetres) || startMetres !== previousEndMetres || endMetres <= startMetres) {
+      throw new RangeError("Invalid coaster rail distance span");
+    }
+    const fillColor = sectionColorAt((startMetres + endMetres) / 2, boundariesMetres);
+    railColors.push(fillColor, fillColor);
+    previousEndMetres = endMetres;
+  }
+  if (boundariesMetres.some((boundaryMetres) => boundaryMetres > previousEndMetres)) {
+    throw new RangeError("Block boundary is outside the rendered coaster rails");
+  }
+  return railColors;
+}
+
 export function interpolateTrainPoses(previous: Float32Array, current: Float32Array, interpolation: number): Float32Array {
   if (current.length % 11 || previous.length % 11 || interpolation < 0 || interpolation > 1) throw new Error("Invalid train snapshot");
   const result = new Float32Array(current);
@@ -39,9 +76,11 @@ export function interpolateTrainPoses(previous: Float32Array, current: Float32Ar
   return result;
 }
 
-export function buildTrackQuads(rails: Float32Array, ties: Float32Array, supports: Float32Array, poses: Float32Array, camera: Camera, viewport: Viewport, style: TrackStyle): TrackQuad[] {
+export function buildTrackQuads(rails: Float32Array, ties: Float32Array, supports: Float32Array, poses: Float32Array, camera: Camera, viewport: Viewport, style: TrackStyle, sectionBoundariesMetres?: readonly number[], railDistancesMetres?: Float32Array): TrackQuad[] {
   if (rails.length % 19 || ties.length % 13 || supports.length % 7 || poses.length % 11) throw new Error("Invalid coaster snapshot");
   const quads: TrackQuad[] = [];
+  if (sectionBoundariesMetres?.length && railDistancesMetres === undefined) throw new Error("Block-section coloring requires exact rail distances");
+  const sectionColors = sectionBoundariesMetres?.length ? sectionColorsForRails(rails, sectionBoundariesMetres, railDistancesMetres!) : undefined;
   const project = (point: Vec): Vertex => ({ ...projectWorld(camera, viewport, { x: point[0], y: point[1], z: point[2] }), depth: [point[0]+point[1], point[0]-point[1], -point[0]-point[1], -point[0]+point[1]][camera.rotation] + point[2], height: point[2]*4, u: 0, v: 0 });
   const box = (corners: Vec[], kind: TrackQuad["kind"], id: string, fillColor: TrackQuad["color"], openEnds = false) => {
     const faces = [[0,1,2,3], [4,7,6,5], [0,4,5,1], [1,5,6,2], [2,6,7,3], [3,7,4,0]];
@@ -97,12 +136,13 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
     const start = vector(rails, i+1), end = vector(rails, i+10);
     const sideStart = normalize(vector(rails, i+4)), sideEnd = normalize(vector(rails, i+13));
     const upStart = normalize(vector(rails, i+7)), upEnd = normalize(vector(rails, i+16));
+    const sectionColor = sectionColors?.[i / 19];
     if (id.woodenTrack) {
-      beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.055, "track", `track-${id.id}`, wood, true);
+      beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.055, "track", `track-${id.id}`, sectionColor ?? wood, true);
       beam(add(start, scale(upStart, 0.065)), add(end, scale(upEnd, 0.065)), sideStart, sideEnd, upStart, upEnd, 0.01, "track", `track-${id.id}`, steel, true);
     }
-    else if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, steel);
-    else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, steel, true);
+    else if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? steel);
+    else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? steel, true);
   }
   for (let i = 0; i < ties.length; i += 13) {
     const id = geometryId(ties[i]);

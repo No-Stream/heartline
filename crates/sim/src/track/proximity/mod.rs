@@ -171,7 +171,12 @@ pub fn scan_proximity_with_supports(
             ),
         }
     });
-    for obstacle in obstacles.iter().copied().chain(paths) {
+    for obstacle in obstacles
+        .iter()
+        .copied()
+        .chain(paths)
+        .chain(world.scenery_boxes())
+    {
         for x in cell(obstacle.min.x)..=cell(obstacle.max.x) {
             for y in cell(obstacle.min.y)..=cell(obstacle.max.y) {
                 index.entry((x, y)).or_default().push(obstacle);

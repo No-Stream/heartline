@@ -21,7 +21,7 @@
 //! guests allows 200 bytes per guest, leaving 64 bytes per ring for growth or padding.
 
 pub const RIDE_TYPE_COUNT: u8 = 6;
-pub const THEME_COUNT: u8 = 8;
+pub const THEME_COUNT: u8 = 2;
 pub const SKIN_TONE_COUNT: u8 = 8;
 pub const HAIR_STYLE_COUNT: u8 = 12;
 pub const CLOTHING_STYLE_COUNT: u8 = 16;

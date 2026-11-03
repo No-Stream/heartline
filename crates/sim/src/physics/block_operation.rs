@@ -4,6 +4,9 @@ use crate::track::TrainConfiguration;
 use crate::track::blocks::BlockLayout;
 use crate::track::proximity::TrainPosition;
 
+#[cfg(test)]
+mod powered_hold_tests;
+
 struct OperatingTrain {
     id: u64,
     run: CoasterRun,

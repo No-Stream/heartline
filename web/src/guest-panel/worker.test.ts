@@ -6,6 +6,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   default: wasmMock.initialize,
   piece_shapes_json: wasmMock.pieceShapes,
   WasmSimulation: class {
+    scenery_json() { return "[]"; }
     facilities_json() { return "[]"; }
     facility_revenue() { return 0n; }
     place_facility() { return true; }
@@ -34,6 +35,8 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     coaster_train_poses() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
+    construction_block_report_json() { return '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}'; }
+    construction_train_count() { return 1; }
     construction_start() { wasmMock.constructionActive.mockReturnValue(true); }
     construction_choices() { return ""; }
     construction_selected() { return ""; }
@@ -44,6 +47,8 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_active() { return wasmMock.constructionActive(); }
     construction_train_poses() { return wasmMock.constructionTrainPoses(); }
     construction_placed_rails() { return new Float32Array(); }
+    construction_rail_distances() { return new Float32Array(); }
+    construction_block_candidates() { return new Float64Array(); }
     construction_placed_ties() { return new Float32Array(); }
     construction_placed_supports() { return new Float32Array(); }
     construction_can_close() { return false; }

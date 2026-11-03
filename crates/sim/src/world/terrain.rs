@@ -85,6 +85,7 @@ pub struct TerrainEditResult {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerrainEditError {
+    SceneryObstructed,
     OutsideWorld,
     InvalidBrushSize,
     InvalidStepCount,
@@ -150,6 +151,27 @@ impl World {
 
     /// Apply one validated landscape edit and report every path it invalidated.
     pub fn apply_terrain(
+        &mut self,
+        command: TerrainCommand,
+    ) -> Result<TerrainEditResult, TerrainEditError> {
+        if !self.scenery.is_empty() {
+            let mut candidate = self.clone();
+            let result = candidate.apply_terrain_unchecked(command)?;
+            if candidate
+                .scenery
+                .values()
+                .any(|scenery| !candidate.scenery_supported(*scenery))
+            {
+                return Err(TerrainEditError::SceneryObstructed);
+            }
+            let applied = self.apply_terrain_unchecked(command)?;
+            assert_eq!(applied, result, "terrain preflight result changed");
+            return Ok(applied);
+        }
+        self.apply_terrain_unchecked(command)
+    }
+
+    fn apply_terrain_unchecked(
         &mut self,
         command: TerrainCommand,
     ) -> Result<TerrainEditResult, TerrainEditError> {

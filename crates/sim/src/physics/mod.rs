@@ -358,7 +358,10 @@ impl Train {
             next_speed = 0.0;
         }
         let (index, _) = circuit.locate(next_distance);
-        if self.config.powered_sections && !self.rolled_back {
+        if self.config.powered_sections
+            && !self.rolled_back
+            && !(hold && brake_pieces.contains(&index))
+        {
             if let Some(SectionControl::Launch {
                 target_speed,
                 acceleration,
@@ -398,17 +401,37 @@ impl Train {
                 }
             }
         }
-        if brake_pieces.contains(&index) && !self.rolled_back {
+        let on_block_brake = brake_pieces.contains(&index) && !self.rolled_back;
+        let brake_can_hold = on_block_brake
+            && hold
+            && self.config.braking_acceleration >= initial_gravity.abs().max(downhill.abs());
+        if on_block_brake {
             let target = if hold { 0.0 } else { self.config.brake_speed };
             if next_speed > target {
                 next_speed =
                     (next_speed - self.config.braking_acceleration * TIME_STEP).max(target);
             } else if next_speed < target {
+                let speed_before_drive = next_speed;
                 next_speed = (next_speed + self.config.drive_acceleration * TIME_STEP).min(target);
+                if !hold && initial_gravity < 0.0 {
+                    next_distance += 0.5 * (next_speed - speed_before_drive) * TIME_STEP;
+                }
             }
-            if hold && previous_speed == 0.0 {
-                next_distance = self.distance;
+            if brake_can_hold && next_speed <= 0.0 {
+                next_distance = if previous_speed == 0.0 {
+                    self.distance
+                } else {
+                    next_distance.max(self.distance)
+                };
                 next_speed = 0.0;
+            }
+            if !hold && previous_speed == 0.0 && initial_gravity < 0.0 {
+                let net_acceleration =
+                    self.config.drive_acceleration + initial_gravity - resistance;
+                if net_acceleration > 0.0 {
+                    next_distance = self.distance + 0.5 * net_acceleration * TIME_STEP * TIME_STEP;
+                    next_speed = net_acceleration * TIME_STEP;
+                }
             }
         }
         self.distance = next_distance;
@@ -442,7 +465,8 @@ impl Train {
                     .collect(),
             );
         }
-        let stopped_on_slope = previous_speed > 0.0 && self.speed == 0.0 && downhill.abs() > 1e-9;
+        let stopped_on_slope =
+            previous_speed > 0.0 && self.speed == 0.0 && downhill.abs() > 1e-9 && !brake_can_hold;
         if stopped_on_slope
             || (self.rolled_back
                 && (circuit.pieces[index].kind == PieceKind::Station

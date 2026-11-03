@@ -14,4 +14,5 @@ pub enum Thought {
     EnjoyedRide(u32),
     DislikedRide(u32),
     Proximity(u32, ProximityKind),
+    EnjoyedScenery(u8),
 }

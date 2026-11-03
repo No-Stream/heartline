@@ -155,7 +155,21 @@ impl ParkFacilities {
                 if !Self::terrain_supports_facility(world, x, y, position.height) {
                     return Err(PlacementError::InvalidTerrain);
                 }
-                if world
+                if world.scenery().any(|scenery| {
+                    scenery.position.x == x
+                        && scenery.position.y == y
+                        && scenery.clearance_box().max.z > f64::from(position.height)
+                        && scenery.clearance_box().min.z
+                            < f64::from(position.height)
+                                + if matches!(
+                                    kind,
+                                    FacilityKind::Carousel | FacilityKind::FerrisWheel
+                                ) {
+                                    12.0
+                                } else {
+                                    4.0
+                                }
+                }) || world
                     .path(Position {
                         x,
                         y,

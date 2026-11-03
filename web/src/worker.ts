@@ -3,6 +3,7 @@ import init, { WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_w
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
 import type { ConstructionAction, ConstructionPiece, PieceShape } from "./construction-protocol";
+import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
 
 type GuestDetailAction =
@@ -18,7 +19,7 @@ type PathAction =
   | { readonly type: "path-preview"; readonly requestId?: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
-type WorkerAction = SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
+type WorkerAction = SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
 const testMode = (self as unknown as { name?: string }).name === "theme-park-test";
@@ -32,6 +33,7 @@ let simulationPaused = testMode;
 let lastWakeup: number;
 let coasterGeometrySent = false;
 let lastConstructionMessage = "";
+let lastBlockReport = "";
 let selectedGuestId: number | undefined;
 let lastGuestDetailSentAt = 0;
 let lastFacilityRevenue = "";
@@ -57,7 +59,7 @@ function wake(): void {
     [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, constructionRiders.buffer],
   );
   const message = simulation.construction_message();
-  if (message !== lastConstructionMessage) sendConstruction();
+  if (simulation.construction_active() && (message !== lastConstructionMessage || simulation.construction_block_report_json() !== lastBlockReport)) sendConstruction();
   if (selectedGuestId !== undefined && now - lastGuestDetailSentAt >= 500) sendGuestDetail();
   if (simulation.facilities_json() !== lastFacilitiesJson || String(simulation.facility_revenue()) !== lastFacilityRevenue) sendFacilities();
   if (simulationPaused) return;
@@ -82,9 +84,12 @@ function sendConstruction(): void {
   const previewTies = simulation.construction_ties();
   const previewSupports = simulation.construction_supports();
   const placedRails = simulation.construction_placed_rails();
+  const railDistances = simulation.construction_rail_distances();
+  const blockCandidates = simulation.construction_block_candidates();
   const placedTies = simulation.construction_placed_ties();
   const placedSupports = simulation.construction_placed_supports();
   lastConstructionMessage = simulation.construction_message();
+  lastBlockReport = simulation.construction_block_report_json();
   workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), pieces,
     selected: selected || null, track: track ? track.split("\n").map((row) => {
       const [id, label] = row.split("\t");
@@ -93,8 +98,9 @@ function sendConstruction(): void {
     canAppend: !!selectedChoice && !selectedChoice[6], canClose: simulation.construction_can_close(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as unknown,
     canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.[6] || "",
-    previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports,
-  }, [previewRails.buffer, previewTies.buffer, previewSupports.buffer, placedRails.buffer, placedTies.buffer, placedSupports.buffer]);
+    blockReport: JSON.parse(lastBlockReport) as unknown, trainCount: simulation.construction_train_count(),
+    previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports, railDistances, blockCandidates,
+  }, [previewRails.buffer, previewTies.buffer, previewSupports.buffer, placedRails.buffer, placedTies.buffer, placedSupports.buffer, railDistances.buffer, blockCandidates.buffer]);
 }
 
 function sendFacilities(message = "", placed = false, forced = false): void {
@@ -102,6 +108,11 @@ function sendFacilities(message = "", placed = false, forced = false): void {
   const facilities = JSON.parse(lastFacilitiesJson) as Facility[];
   lastFacilityRevenue = String(simulation.facility_revenue());
   workerScope.postMessage({ type: "facilities", facilities, message, placed, forced, revenue: lastFacilityRevenue });
+}
+
+function sendScenery(message = ""): void {
+  const scenery = JSON.parse(simulation.scenery_json()) as Scenery[];
+  workerScope.postMessage({ type: "scenery", scenery, message });
 }
 
 function sendWorld(): void {
@@ -142,6 +153,7 @@ const initialized = init().then(() => {
   simulation = new WasmSimulation(2026n, 12);
   sendWorld();
   sendFacilities();
+  sendScenery();
   workerScope.postMessage({ type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
   workerScope.postMessage({ type: "ready" });
   lastWakeup = performance.now();
@@ -157,6 +169,14 @@ workerScope.addEventListener("message", (event) => {
       wake();
       sendFacilities("", false, true);
       workerScope.postMessage({ type: "test-advanced" });
+      return;
+    }
+    if (action.type === "scenery-place" || action.type === "scenery-remove") {
+      const success = action.type === "scenery-place"
+        ? simulation.place_scenery(action.kind, action.x, action.y, action.rotation, action.quarter)
+        : simulation.remove_scenery(action.id);
+      if (success) sendWorld();
+      sendScenery(simulation.scenery_message() || (success ? (action.type === "scenery-place" ? "Scenery placed." : "Scenery removed.") : "Scenery could not be changed."));
       return;
     }
     if (action.type === "facility-price") {
@@ -259,6 +279,12 @@ workerScope.addEventListener("message", (event) => {
         case "construction-close": simulation.construction_close(); break;
         case "construction-set-open": simulation.construction_set_open(action.open); break;
         case "construction-test": simulation.construction_test(); break;
+        case "construction-auto-blocks": simulation.construction_auto_blocks(); break;
+        case "construction-apply-best-blocks": simulation.construction_apply_best_block_sections(); break;
+        case "construction-set-train-count": simulation.construction_set_train_count(action.count); break;
+        case "construction-move-block": simulation.construction_move_block_section(action.index, action.boundaryMetres); break;
+        case "construction-remove-block": simulation.construction_remove_block_section(action.index); break;
+        case "construction-add-block": simulation.construction_add_block_section(action.boundaryMetres); break;
         case "construction-delete-mode": return;
       }
       sendConstruction();

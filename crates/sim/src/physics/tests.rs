@@ -964,7 +964,10 @@ fn block_brake_does_not_creep_while_held_on_a_downhill_piece() {
     let mut train = super::Train::new(
         &circuit,
         &configuration,
-        super::PhysicsConfig::default(),
+        super::PhysicsConfig {
+            braking_acceleration: 6.0,
+            ..Default::default()
+        },
         distance,
         0.0,
     );
@@ -974,6 +977,99 @@ fn block_brake_does_not_creep_while_held_on_a_downhill_piece() {
     }
     assert_eq!(train.distance(), distance);
     assert_eq!(train.speed(), 0.0);
+}
+
+#[test]
+fn downhill_brake_stops_holds_and_restarts_without_recovery() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let piece_index = circuit
+        .pieces()
+        .iter()
+        .enumerate()
+        .filter(|(_, piece)| piece.id == crate::track::PieceId::GentleDown)
+        .nth(2)
+        .unwrap()
+        .0;
+    let distance = circuit.starts[piece_index] + circuit.pieces()[piece_index].length() / 2.0;
+    let config = super::PhysicsConfig {
+        braking_acceleration: 6.0,
+        drive_acceleration: 6.0,
+        ..Default::default()
+    };
+    let mut train = super::Train::new(&circuit, &configuration, config, distance, 1.0);
+    for _ in 0..2_000 {
+        train.step_block_brake_without_readings(&circuit, &[piece_index], true);
+    }
+    assert_eq!(train.speed(), 0.0);
+    assert!(train.notes().is_empty());
+    let held_distance = train.distance();
+    for _ in 0..20 {
+        train.step_block_brake_without_readings(&circuit, &[piece_index], false);
+    }
+    assert!(train.distance() > held_distance);
+    assert!(train.speed() > 0.0);
+    assert!(train.notes().is_empty());
+}
+
+#[test]
+fn downhill_brake_with_insufficient_holding_force_does_not_freeze_train() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let piece_index = circuit
+        .pieces()
+        .iter()
+        .enumerate()
+        .filter(|(_, piece)| piece.id == crate::track::PieceId::GentleDown)
+        .nth(2)
+        .unwrap()
+        .0;
+    let distance = circuit.starts[piece_index] + circuit.pieces()[piece_index].length() / 2.0;
+    let config = super::PhysicsConfig {
+        braking_acceleration: 1.0,
+        ..Default::default()
+    };
+    let mut train = super::Train::new(&circuit, &configuration, config, distance, 0.0);
+    for _ in 0..100 {
+        train.step_block_brake_without_readings(&circuit, &[piece_index], true);
+    }
+    assert!(train.distance() > distance);
+    assert!(train.speed() > 0.0);
+}
+
+#[test]
+fn uphill_brake_drive_restarts_without_initial_rollback() {
+    let mut pieces = super::demo_circuit().pieces().to_vec();
+    for piece in &mut pieces {
+        if piece.kind == crate::track::PieceKind::Lift {
+            piece.kind = crate::track::PieceKind::Track;
+        }
+    }
+    let circuit = super::Circuit::new(pieces).unwrap();
+    let configuration = crate::track::hybrid_model().train;
+    let piece_index = circuit
+        .pieces()
+        .iter()
+        .enumerate()
+        .filter(|(_, piece)| piece.id == crate::track::PieceId::Lift)
+        .nth(2)
+        .unwrap()
+        .0;
+    let distance = circuit.starts[piece_index] + circuit.pieces()[piece_index].length() / 2.0;
+    let config = super::PhysicsConfig {
+        braking_acceleration: 6.0,
+        drive_acceleration: 6.0,
+        ..Default::default()
+    };
+    let mut train = super::Train::new(&circuit, &configuration, config, distance, 0.0);
+    for _ in 0..100 {
+        train.step_block_brake_without_readings(&circuit, &[piece_index], true);
+    }
+    assert_eq!(train.distance(), distance);
+    train.step_block_brake_without_readings(&circuit, &[piece_index], false);
+    assert!(train.distance() >= distance);
+    assert!(train.speed() > 0.0);
+    assert!(train.notes().is_empty());
 }
 
 #[test]

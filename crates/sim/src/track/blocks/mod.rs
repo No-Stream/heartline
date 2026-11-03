@@ -1,11 +1,11 @@
 //! Placement and validation of powered block-brake runs.
-use crate::physics::{BlockOperation, Circuit, PhysicsConfig, TIME_STEP, Train};
-use crate::track::{
-    Bank, HorizontalCurvature, Piece, PieceId, PieceKind, Slope, TrainConfiguration,
-    VerticalCurvature,
-};
+use crate::physics::{BlockOperation, Circuit, GRAVITY, PhysicsConfig, TIME_STEP, Train};
+use crate::track::{Bank, Piece, PieceKind, Slope, TrainConfiguration};
+use std::collections::HashMap;
 use std::future::{Future, poll_fn};
+use std::ops::Deref;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 #[cfg(test)]
@@ -16,19 +16,179 @@ pub struct BrakeRun {
     pub start_metres: f64,
     pub boundary_metres: f64,
     pub length_metres: f64,
-    pub piece_indices: Vec<usize>,
+    pub piece_indices: BrakePieces,
+}
+
+/// A contiguous view into the circuit's shared, doubled sequence of piece indices.
+#[derive(Clone, Debug)]
+pub struct BrakePieces {
+    storage: Arc<[usize]>,
+    start: usize,
+    length: usize,
+}
+
+impl Deref for BrakePieces {
+    type Target = [usize];
+    fn deref(&self) -> &Self::Target {
+        &self.storage[self.start..self.start + self.length]
+    }
+}
+
+impl PartialEq for BrakePieces {
+    fn eq(&self, other: &Self) -> bool {
+        self.deref() == other.deref()
+    }
+}
+impl Eq for BrakePieces {}
+
+impl From<Vec<usize>> for BrakePieces {
+    fn from(indices: Vec<usize>) -> Self {
+        let length = indices.len();
+        Self {
+            storage: Arc::from(indices),
+            start: 0,
+            length,
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a BrakePieces {
+    type Item = &'a usize;
+    type IntoIter = std::slice::Iter<'a, usize>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+fn brake_runs_overlap(first: &BrakeRun, second: &BrakeRun) -> bool {
+    let intervals = |run: &BrakeRun| {
+        let start = run.piece_indices.first().copied();
+        let end = run.piece_indices.last().copied();
+        match (start, end) {
+            (Some(start), Some(end)) if start <= end => [Some((start, end)), None],
+            (Some(start), Some(end)) => [Some((start, usize::MAX)), Some((0, end))],
+            _ => [None, None],
+        }
+    };
+    intervals(first)
+        .into_iter()
+        .flatten()
+        .any(|(first_start, first_end)| {
+            intervals(second)
+                .into_iter()
+                .flatten()
+                .any(|(second_start, second_end)| {
+                    first_start <= second_end && second_start <= first_end
+                })
+        })
+}
+
+struct SustainedCohorts {
+    capacity: usize,
+    remaining: Vec<u64>,
+    completed: usize,
+}
+
+impl SustainedCohorts {
+    fn new(capacity: usize) -> Self {
+        assert!(capacity > 0);
+        Self {
+            capacity,
+            remaining: Vec::new(),
+            completed: 0,
+        }
+    }
+
+    fn observe_active(&mut self, active: &[u64]) {
+        if self.remaining.is_empty() && self.completed < 2 && active.len() == self.capacity {
+            self.remaining.extend_from_slice(active);
+        }
+    }
+
+    fn complete(&mut self, train_id: u64) {
+        if let Some(index) = self.remaining.iter().position(|&id| id == train_id) {
+            self.remaining.remove(index);
+            if self.remaining.is_empty() {
+                self.completed += 1;
+            }
+        }
+    }
+
+    fn verified(&self) -> bool {
+        self.completed >= 2
+    }
 }
 
 fn eligible(piece: &Piece) -> bool {
-    (piece.id == PieceId::Straight || matches!(piece.kind, PieceKind::Station | PieceKind::Brakes))
-        && piece.entry.slope == Slope::Level
-        && piece.exit.slope == Slope::Level
+    const GEOMETRY_SAMPLES: usize = 32;
+    const ROLL_TOLERANCE: f64 = 1e-6;
+    const MAXIMUM_GENTLE_TANGENT_Z: f64 = 0.447_214;
+    matches!(
+        piece.kind,
+        PieceKind::Track | PieceKind::Station | PieceKind::Brakes
+    ) && piece.inversion.is_none()
+        && matches!(
+            piece.entry.slope,
+            Slope::Level | Slope::UpGentle | Slope::DownGentle
+        )
+        && matches!(
+            piece.exit.slope,
+            Slope::Level | Slope::UpGentle | Slope::DownGentle
+        )
         && piece.entry.bank == Bank::Level
         && piece.exit.bank == Bank::Level
-        && piece.entry.horizontal_curvature == HorizontalCurvature::Straight
-        && piece.exit.horizontal_curvature == HorizontalCurvature::Straight
-        && piece.entry.vertical_curvature == VerticalCurvature::Straight
-        && piece.exit.vertical_curvature == VerticalCurvature::Straight
+        && {
+            let mut uphill = false;
+            let mut downhill = false;
+            (0..=GEOMETRY_SAMPLES).all(|index| {
+                let sample = piece.sample(piece.length() * index as f64 / GEOMETRY_SAMPLES as f64);
+                uphill |= sample.tangent.z > ROLL_TOLERANCE;
+                downhill |= sample.tangent.z < -ROLL_TOLERANCE;
+                sample.tangent.z.abs() <= MAXIMUM_GENTLE_TANGENT_Z
+                    && sample.roll.abs() <= ROLL_TOLERANCE
+                    && sample.curvature.is_finite()
+                    && !(uphill && downhill)
+            })
+        }
+}
+
+fn validate_brake_forces(
+    circuit: &Circuit,
+    config: PhysicsConfig,
+    runs: &[BrakeRun],
+) -> Result<(), &'static str> {
+    const GEOMETRY_SAMPLES: usize = 32;
+    for run in runs {
+        for &index in &run.piece_indices {
+            let piece = &circuit.pieces()[index];
+            for sample_index in 0..=GEOMETRY_SAMPLES {
+                let sample =
+                    piece.sample(piece.length() * sample_index as f64 / GEOMETRY_SAMPLES as f64);
+                let gravity = GRAVITY * sample.tangent.z;
+                if gravity.abs() > config.braking_acceleration {
+                    return Err("Brake holding force is insufficient on this slope.");
+                }
+                if gravity > 0.0
+                    && gravity + config.rolling_resistance * GRAVITY >= config.drive_acceleration
+                {
+                    return Err("Brake drive force is insufficient to restart uphill.");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_train(circuit: &Circuit, train: &TrainConfiguration) -> Result<(), &'static str> {
+    if train.cars == 0
+        || !train.length_metres.is_finite()
+        || train.length_metres <= 0.0
+        || train.length_metres >= circuit.length()
+    {
+        Err("train length and car count must fit the circuit")
+    } else {
+        Ok(())
+    }
 }
 
 async fn yield_step() {
@@ -47,6 +207,10 @@ async fn yield_step() {
 pub fn brake_runs(circuit: &Circuit, train_length: f64) -> Vec<BrakeRun> {
     assert!(train_length.is_finite() && train_length > 0.0);
     let pieces = circuit.pieces();
+    let eligible_pieces: Vec<_> = pieces.iter().map(eligible).collect();
+    let shared_indices: Arc<[usize]> = (0..pieces.len() * 2)
+        .map(|index| index % pieces.len())
+        .collect();
     let mut starts = Vec::with_capacity(pieces.len());
     let mut distance = 0.0;
     for piece in pieces {
@@ -54,33 +218,35 @@ pub fn brake_runs(circuit: &Circuit, train_length: f64) -> Vec<BrakeRun> {
         distance += piece.length();
     }
     let mut runs = Vec::new();
-    for end in 0..pieces.len() {
-        if !eligible(&pieces[end]) {
+    let mut candidates_by_end = vec![0..0; pieces.len()];
+    for (end, range) in candidates_by_end.iter_mut().enumerate() {
+        if !eligible_pieces[end] {
             continue;
         }
-        let mut indices = Vec::new();
+        let first = runs.len();
         let mut length = 0.0;
         for offset in 0..pieces.len() {
             let index = (end + pieces.len() - offset) % pieces.len();
-            if !eligible(&pieces[index]) {
+            if !eligible_pieces[index] {
                 break;
             }
-            indices.push(index);
             length += pieces[index].length();
             if length > train_length && length < circuit.length() {
-                let mut ordered_indices = indices.clone();
-                ordered_indices.reverse();
                 runs.push(BrakeRun {
-                    start_metres: starts[ordered_indices[0]],
+                    start_metres: starts[index],
                     boundary_metres: (starts[end] + pieces[end].length())
                         .rem_euclid(circuit.length()),
                     length_metres: length,
-                    piece_indices: ordered_indices,
+                    piece_indices: BrakePieces {
+                        storage: Arc::clone(&shared_indices),
+                        start: index,
+                        length: offset + 1,
+                    },
                 });
             }
         }
+        *range = first..runs.len();
     }
-    let plain_runs = runs.clone();
     for start in 0..pieces.len() {
         let kind = pieces[start].kind;
         let previous = (start + pieces.len() - 1) % pieces.len();
@@ -91,11 +257,8 @@ pub fn brake_runs(circuit: &Circuit, train_length: f64) -> Vec<BrakeRun> {
         while (end + 1) % pieces.len() != start && pieces[(end + 1) % pieces.len()].kind == kind {
             end = (end + 1) % pieces.len();
         }
-        for brake in plain_runs
-            .iter()
-            .filter(|run| run.piece_indices.last() == Some(&previous))
-        {
-            let mut powered = brake.clone();
+        for candidate_index in candidates_by_end[previous].clone() {
+            let mut powered = runs[candidate_index].clone();
             powered.boundary_metres =
                 (starts[end] + pieces[end].length()).rem_euclid(circuit.length());
             runs.push(powered);
@@ -106,7 +269,22 @@ pub fn brake_runs(circuit: &Circuit, train_length: f64) -> Vec<BrakeRun> {
 }
 
 fn maximum_nonoverlapping_runs(candidates: &[&BrakeRun]) -> usize {
-    let mut linear: Vec<_> = candidates
+    // Runs sharing an end are nested, so their shortest member can always
+    // replace a longer one when computing a geometry-only upper bound.
+    let mut shortest_by_end: HashMap<usize, &BrakeRun> = HashMap::new();
+    for &run in candidates {
+        let end = *run.piece_indices.last().expect("candidate run is nonempty");
+        shortest_by_end
+            .entry(end)
+            .and_modify(|shortest| {
+                if run.piece_indices.len() < shortest.piece_indices.len() {
+                    *shortest = run;
+                }
+            })
+            .or_insert(run);
+    }
+    let shortest: Vec<_> = shortest_by_end.into_values().collect();
+    let mut linear: Vec<_> = shortest
         .iter()
         .copied()
         .filter(|run| run.piece_indices.first().unwrap() <= run.piece_indices.last().unwrap())
@@ -118,11 +296,7 @@ fn maximum_nonoverlapping_runs(candidates: &[&BrakeRun]) -> usize {
         for run in &linear {
             let start = run.piece_indices[0];
             if last_end.is_some_and(|end| start <= end)
-                || excluded.is_some_and(|other| {
-                    run.piece_indices
-                        .iter()
-                        .any(|piece| other.piece_indices.contains(piece))
-                })
+                || excluded.is_some_and(|other| brake_runs_overlap(run, other))
             {
                 continue;
             }
@@ -132,7 +306,7 @@ fn maximum_nonoverlapping_runs(candidates: &[&BrakeRun]) -> usize {
         count
     };
     let mut maximum = count_linear(None);
-    for run in candidates
+    for run in shortest
         .iter()
         .copied()
         .filter(|run| run.piece_indices.first().unwrap() > run.piece_indices.last().unwrap())
@@ -179,13 +353,7 @@ impl BlockManualSearch {
         config: PhysicsConfig,
         mut boundaries: Vec<f64>,
     ) -> Result<Self, &'static str> {
-        if train.cars == 0
-            || !train.length_metres.is_finite()
-            || train.length_metres <= 0.0
-            || train.length_metres >= circuit.length()
-        {
-            return Err("train length and car count must fit the circuit");
-        }
+        validate_train(&circuit, &train)?;
         if boundaries.iter().any(|distance| {
             !distance.is_finite() || *distance < 0.0 || *distance >= circuit.length()
         }) {
@@ -208,13 +376,9 @@ impl BlockManualSearch {
             }
             choices.push(matching);
         }
-        let result = if choices.is_empty() {
-            Some(BlockLayout::assemble_runs(
-                &circuit,
-                &train,
-                config,
-                Vec::new(),
-            ))
+        let active: Option<PlacementFuture> = if choices.is_empty() {
+            let layout = BlockLayout::assemble_runs(&circuit, &train, config, Vec::new())?;
+            Some(Box::pin(BlockLayout::verify_single_train(layout)))
         } else {
             None
         };
@@ -225,8 +389,8 @@ impl BlockManualSearch {
             config,
             choices,
             indices,
-            active: None,
-            result,
+            active,
+            result: None,
             first_error: None,
             capacity_unverified: false,
             work_completed: 0,
@@ -294,11 +458,9 @@ impl BlockManualSearch {
                 .map(|(position, &index)| self.choices[position][index].clone())
                 .collect();
             if runs.iter().enumerate().any(|(index, run)| {
-                runs[index + 1..].iter().any(|other| {
-                    run.piece_indices
-                        .iter()
-                        .any(|piece| other.piece_indices.contains(piece))
-                })
+                runs[index + 1..]
+                    .iter()
+                    .any(|other| brake_runs_overlap(run, other))
             }) {
                 self.first_error
                     .get_or_insert("block brake runs cannot overlap");
@@ -327,6 +489,7 @@ pub struct BlockPlacementSearch {
     bootstrap: Vec<Vec<usize>>,
     active: Option<PlacementFuture>,
     active_brake_count: usize,
+    active_baseline: bool,
     best: BlockLayout,
     maximum_brakes: usize,
     work_completed: usize,
@@ -340,7 +503,8 @@ impl BlockPlacementSearch {
         train: TrainConfiguration,
         config: PhysicsConfig,
     ) -> Result<Self, &'static str> {
-        let mut best = BlockLayout::new(&circuit, &train, config, Vec::new())?;
+        // Validate inputs without running physics before the incremental search starts.
+        let mut best = BlockLayout::unverified_baseline(&circuit, &train, config)?;
         let candidates = if config.powered_sections
             && config.drive_acceleration > 0.0
             && config.braking_acceleration > 0.0
@@ -360,11 +524,9 @@ impl BlockPlacementSearch {
                     .iter()
                     .enumerate()
                     .filter(|(_, run)| {
-                        chosen.iter().all(|&other| {
-                            run.piece_indices
-                                .iter()
-                                .all(|piece| !candidates[other].piece_indices.contains(piece))
-                        })
+                        chosen
+                            .iter()
+                            .all(|&other| !brake_runs_overlap(run, &candidates[other]))
                     })
                     .min_by(|(_, left), (_, right)| {
                         let distance = |run: &BrakeRun| {
@@ -383,8 +545,9 @@ impl BlockPlacementSearch {
                 bootstrap.push(chosen);
             }
         }
-        let complete = maximum_brakes == 0;
-        best.placement_search_complete = complete;
+        let complete = false;
+        best.placement_search_complete = false;
+        let baseline = Box::pin(BlockLayout::verify_single_train(best.clone()));
         Ok(Self {
             circuit,
             train,
@@ -394,8 +557,9 @@ impl BlockPlacementSearch {
             selected: Vec::new(),
             next_indices: vec![0],
             bootstrap,
-            active: None,
+            active: Some(baseline),
             active_brake_count: 0,
+            active_baseline: true,
             best,
             maximum_brakes,
             work_completed: 0,
@@ -428,6 +592,12 @@ impl BlockPlacementSearch {
                         self.active = None;
                         match result {
                             Ok(mut layout) => {
+                                if self.active_baseline {
+                                    layout.placement_search_complete = false;
+                                    self.best = layout;
+                                    self.active_baseline = false;
+                                    continue;
+                                }
                                 if !layout.capacity_search_complete() {
                                     self.unverified_upper_bound =
                                         self.unverified_upper_bound.max(self.active_brake_count);
@@ -507,11 +677,9 @@ impl BlockPlacementSearch {
         let available: Vec<_> = self.candidates[next.min(self.candidates.len())..]
             .iter()
             .filter(|run| {
-                self.selected.iter().all(|&other| {
-                    run.piece_indices
-                        .iter()
-                        .all(|piece| !self.candidates[other].piece_indices.contains(piece))
-                })
+                self.selected
+                    .iter()
+                    .all(|&other| !brake_runs_overlap(run, &self.candidates[other]))
             })
             .collect();
         if maximum_nonoverlapping_runs(&available) < needed {
@@ -525,11 +693,11 @@ impl BlockPlacementSearch {
             return Some(None);
         }
         let run = &self.candidates[next];
-        if self.selected.iter().any(|&other| {
-            run.piece_indices
-                .iter()
-                .any(|piece| self.candidates[other].piece_indices.contains(piece))
-        }) {
+        if self
+            .selected
+            .iter()
+            .any(|&other| brake_runs_overlap(run, &self.candidates[other]))
+        {
             *self.next_indices.last_mut().expect("search node") += 1;
             return Some(None);
         }
@@ -547,6 +715,18 @@ impl BlockPlacementSearch {
 }
 
 impl BlockLayout {
+    /// Permit a single train while its first complete circuit is still unverified.
+    pub fn unverified_baseline(
+        circuit: &Circuit,
+        train: &TrainConfiguration,
+        config: PhysicsConfig,
+    ) -> Result<Self, &'static str> {
+        validate_train(circuit, train)?;
+        let mut layout = Self::assemble_runs(circuit, train, config, Vec::new())?;
+        layout.placement_search_complete = false;
+        Ok(layout)
+    }
+
     pub fn automatic(
         circuit: &Circuit,
         train: &TrainConfiguration,
@@ -631,6 +811,9 @@ impl BlockLayout {
         runs: Vec<BrakeRun>,
     ) -> Result<Self, &'static str> {
         let mut layout = Self::assemble_runs(&circuit, &train, config, runs)?;
+        if layout.runs.iter().all(|run| run.piece_indices.is_empty()) {
+            return Self::verify_single_train(layout).await;
+        }
         if layout.runs.iter().any(|run| !run.piece_indices.is_empty()) {
             layout.validate_traversal(&circuit, &train, config).await?;
         }
@@ -639,6 +822,22 @@ impl BlockLayout {
             layout.capacity = capacity;
             layout.capacity_search_complete = complete;
         }
+        Ok(layout)
+    }
+
+    async fn verify_single_train(mut layout: Self) -> Result<Self, &'static str> {
+        const MAXIMUM_SECONDS: f64 = 600.0;
+        let mut operation = BlockOperation::new_without_reports(layout.clone());
+        operation.dispatch();
+        for _ in 0..(MAXIMUM_SECONDS / TIME_STEP) as usize {
+            yield_step().await;
+            if let Some((_, outcome)) = operation.step(&[]).into_iter().next() {
+                layout.capacity = usize::from(!outcome.recovered);
+                layout.capacity_search_complete = true;
+                return Ok(layout);
+            }
+        }
+        layout.capacity_search_complete = false;
         Ok(layout)
     }
 
@@ -668,7 +867,7 @@ impl BlockLayout {
                         start_metres: boundary,
                         boundary_metres: boundary,
                         length_metres: 0.0,
-                        piece_indices: Vec::new(),
+                        piece_indices: Vec::new().into(),
                     });
                 }
             }
@@ -676,11 +875,10 @@ impl BlockLayout {
         runs.sort_by(|a, b| a.boundary_metres.total_cmp(&b.boundary_metres));
         let boundaries = runs.iter().map(|run| run.boundary_metres).collect();
         for (index, run) in runs.iter().enumerate() {
-            if runs[index + 1..].iter().any(|other| {
-                run.piece_indices
-                    .iter()
-                    .any(|piece| other.piece_indices.contains(piece))
-            }) {
+            if runs[index + 1..]
+                .iter()
+                .any(|other| brake_runs_overlap(run, other))
+            {
                 return Err("block brake runs cannot overlap");
             }
         }
@@ -692,6 +890,7 @@ impl BlockLayout {
         {
             return Err("block brakes require powered drive and braking");
         }
+        validate_brake_forces(circuit, config, &runs)?;
         let brake_count = runs
             .iter()
             .filter(|run| !run.piece_indices.is_empty())
@@ -706,7 +905,7 @@ impl BlockLayout {
             train: train.clone(),
             config,
             capacity: provisional_capacity,
-            capacity_search_complete: true,
+            capacity_search_complete: brake_count > 0,
             placement_search_complete: true,
         })
     }
@@ -755,35 +954,43 @@ impl BlockLayout {
             trial.capacity = capacity;
             let mut operation = BlockOperation::new_without_reports(trial);
             let mut maximum_active = 0;
-            let mut peak_cohort = Vec::new();
+            let mut cohorts = SustainedCohorts::new(capacity);
             let mut deadlocked = false;
+            let mut unsafe_trial = false;
             for _ in 0..(MAXIMUM_SECONDS / TIME_STEP) as usize {
                 while operation.can_dispatch() {
                     operation.dispatch();
                 }
                 let active: Vec<_> = operation.trains().map(|(id, _)| id).collect();
-                if active.len() > maximum_active {
-                    maximum_active = active.len();
-                    peak_cohort = active;
-                }
+                maximum_active = maximum_active.max(active.len());
+                cohorts.observe_active(&active);
                 yield_step().await;
-                for (id, outcome) in operation.step(&[]) {
+                let outcomes = operation.step(&[]);
+                if operation.interlock_triggered() {
+                    higher_capacity_unverified = true;
+                    unsafe_trial = true;
+                    break;
+                }
+                for (id, outcome) in outcomes {
                     if outcome.recovered {
-                        return Err("a train recovered during block capacity validation");
+                        if maximum_active == 1 {
+                            return Err("a train recovered during block capacity validation");
+                        }
+                        higher_capacity_unverified = true;
+                        unsafe_trial = true;
+                        break;
                     }
-                    peak_cohort.retain(|&train_id| train_id != id);
+                    cohorts.complete(id);
                     if maximum_active == 1 {
                         // The only train returned before any other could leave the
                         // station. Its next departure has exactly the same state.
                         return Ok((1, !higher_capacity_unverified));
                     }
                 }
-                if operation.interlock_triggered() {
-                    return Err(
-                        "a train needed an emergency stop during block capacity validation",
-                    );
+                if unsafe_trial {
+                    break;
                 }
-                if maximum_active == capacity && peak_cohort.is_empty() {
+                if cohorts.verified() {
                     return Ok((maximum_active, !higher_capacity_unverified));
                 }
                 if operation.is_deadlocked() {
@@ -791,7 +998,7 @@ impl BlockLayout {
                     break;
                 }
             }
-            if !deadlocked {
+            if !deadlocked && !unsafe_trial {
                 higher_capacity_unverified = true;
             }
         }

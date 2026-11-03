@@ -15,6 +15,7 @@ export interface GameTest {
   requestGuestDetail(id: string): void;
   guestDetail(): GuestDetail | null;
   testingReport(): TestingReport | null;
+  constructionTrainPoses(): readonly number[];
   advanceTicks(count: number): Promise<void>;
   setCamera(camera: Camera): void;
   setSurface(x: number, y: number, corners: [number, number, number, number]): void;

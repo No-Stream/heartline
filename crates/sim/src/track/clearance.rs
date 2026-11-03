@@ -349,6 +349,10 @@ pub fn check_clearance_indexed(
             overall.max.z.max(envelope.bounds.max.z),
         );
     }
+    let nearby_scenery: Vec<_> = world
+        .scenery_boxes()
+        .filter(|bounds| intersects(overall, *bounds))
+        .collect();
     let radius = TRACK_RADIUS + SAMPLE_SPACING / 2.0;
     let mut nearby_track = Vec::new();
     for x in index_cell(overall.min.x - radius)..=index_cell(overall.max.x + radius) {
@@ -427,7 +431,9 @@ pub fn check_clearance_indexed(
         }
         if scenery
             .iter()
-            .any(|obstacle| intersects_envelope(&oriented, *obstacle))
+            .copied()
+            .chain(nearby_scenery.iter().copied())
+            .any(|obstacle| intersects_envelope(&oriented, obstacle))
         {
             return Err(ClearanceCollision::Scenery);
         }
