@@ -3,6 +3,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import { COLORS } from "./generators/palette.ts";
+import { themeNamed } from "./generators/themes.ts";
 
 interface Placement { page: number; x: number; y: number; width: number; height: number }
 interface Atlas {
@@ -30,6 +32,35 @@ function spritesIn(category: string): [string, Atlas["sprites"][string]][] {
 }
 
 describe("sprite atlas metadata", () => {
+  test("uses print-modern for the game's default atlas", () => {
+    const theme = themeNamed("print-modern");
+    expect(atlas.themeStyle).toEqual({
+      steel: theme.color(COLORS.red),
+      wood: theme.color(COLORS.wood),
+      train: theme.color(COLORS.mint),
+      ink: theme.line.color,
+      lineWeight: theme.line.weight,
+    });
+    expect(Object.keys(atlas.sprites)).not.toEqual(
+      expect.arrayContaining([
+        "scenery/mushroom_stool",
+        "scenery/tree_cloud",
+        "scenery/tree_cloud_blossom",
+        "scenery/tree_lollipop_green",
+        "scenery/tree_lollipop_pink",
+        "scenery/tree_lollipop_teal",
+        "scenery/tree_lollipop_yellow",
+        "scenery/tree_pine",
+      ]),
+    );
+  });
+
+  test("describes the restroom details drawn in every theme", () => {
+    expect(atlas.frames["buildings/restroom/rot0/static/0"].properties?.description).toBe(
+      "Restroom cottage with two marked doors, a flower box, a capped roof vent and a rear water tank",
+    );
+  });
+
   test("exports coaster colors and line weight once at atlas level", () => {
     expect(atlas.themeStyle).toEqual({ steel: expect.any(String), wood: expect.any(String), train: expect.any(String), ink: expect.any(String), lineWeight: expect.any(Number) });
     expect(Object.values(atlas.frames).some((frame) => Object.keys(frame.properties ?? {}).some((key) => key.startsWith("coaster-")))).toBe(false);

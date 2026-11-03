@@ -1,6 +1,7 @@
 use super::*;
 use crate::track::{Heading, Slope, Vec3, hybrid_model};
 use crate::world::Surface;
+use std::time::{Duration, Instant};
 
 fn world() -> World {
     World::new(
@@ -89,7 +90,7 @@ fn support_search_failure_does_not_mutate_track() {
     let mut construction = Construction::new(start(), hybrid_model());
     assert_eq!(
         construction.append(PieceId::Straight, &world(), &[obstacle]),
-        Err(ConstructionError::SupportSearchExhausted)
+        Err(ConstructionError::NoSupportRoute)
     );
     assert!(construction.pieces().is_empty());
 }
@@ -264,4 +265,301 @@ fn reconnect_checks_retained_track_against_current_obstacles() {
     ));
     assert!(construction.pieces().is_empty());
     assert_eq!(construction.disconnected_segments()[0].pieces.len(), 3);
+}
+
+#[test]
+fn choices_reflect_world_obstacle_and_track_changes() {
+    let mut world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    construction.append(PieceId::Straight, &world, &[]).unwrap();
+    let initial = construction.choices(&world, &[]);
+    assert_eq!(
+        initial
+            .iter()
+            .find(|choice| choice.id == PieceId::Straight)
+            .unwrap()
+            .result,
+        Ok(())
+    );
+    let obstacle = SupportObstacle {
+        min: Vec3::new(119.0, 99.0, 9.0),
+        max: Vec3::new(121.0, 101.0, 13.0),
+    };
+    assert!(
+        construction
+            .choices(&world, &[obstacle])
+            .iter()
+            .find(|choice| choice.id == PieceId::Straight)
+            .unwrap()
+            .result
+            .is_err()
+    );
+    assert_eq!(construction.choices(&world, &[]), initial);
+    world.set_surface(
+        30,
+        25,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    assert!(
+        construction
+            .choices(&world, &[])
+            .iter()
+            .find(|choice| choice.id == PieceId::Straight)
+            .unwrap()
+            .result
+            .is_err()
+    );
+    construction.delete_from(0).unwrap();
+    assert_eq!(
+        construction
+            .choices(&world, &[])
+            .iter()
+            .find(|choice| choice.id == PieceId::Straight)
+            .unwrap()
+            .result,
+        Ok(())
+    );
+}
+
+#[test]
+fn cached_choices_match_fresh_validation_after_track_edits() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for _ in 0..4 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    construction.delete_from(1).unwrap();
+    let cached = construction.choices(&world, &[]);
+    *construction.validation_cache.borrow_mut() = None;
+    *construction.choices_cache.borrow_mut() = None;
+    assert_eq!(cached, construction.choices(&world, &[]));
+    construction.append(PieceId::Straight, &world, &[]).unwrap();
+    let cached = construction.choices(&world, &[]);
+    *construction.validation_cache.borrow_mut() = None;
+    *construction.choices_cache.borrow_mut() = None;
+    assert_eq!(cached, construction.choices(&world, &[]));
+}
+
+#[test]
+fn failed_support_search_is_rechecked_when_candidate_is_nearby() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    construction.append(PieceId::Straight, &world, &[]).unwrap();
+    let obstacle = SupportObstacle {
+        min: Vec3::new(103.0, 99.0, 9.0),
+        max: Vec3::new(105.0, 101.0, 11.0),
+    };
+    let cached = construction.choices(&world, &[obstacle]);
+    *construction.validation_cache.borrow_mut() = None;
+    *construction.choices_cache.borrow_mut() = None;
+    assert_eq!(cached, construction.choices(&world, &[obstacle]));
+}
+
+#[test]
+fn nearby_track_obstacle_filter_preserves_support_routes() {
+    let world = world();
+    let model = hybrid_model();
+    let mut construction = Construction::new(start(), model.clone());
+    for _ in 0..8 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    for (index, piece) in construction.pieces().iter().enumerate() {
+        let all: Vec<_> = construction
+            .pieces()
+            .iter()
+            .enumerate()
+            .filter(|(other_index, _)| *other_index != index)
+            .flat_map(|(_, other)| {
+                track_support_obstacles(std::slice::from_ref(other), &model.train)
+            })
+            .collect();
+        let region = support_search_region(piece);
+        let nearby: Vec<_> = all
+            .iter()
+            .copied()
+            .filter(|obstacle| region.overlaps(obstacle))
+            .collect();
+        assert_eq!(
+            generate_supports(piece, &world, &all),
+            generate_supports(piece, &world, &nearby)
+        );
+    }
+}
+
+#[test]
+fn available_choices_match_model_candidates_before_and_after_closing() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [
+        Station,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let expected: Vec<_> = construction
+        .model()
+        .available_pieces(construction.end())
+        .into_iter()
+        .map(|piece| (piece.id, piece.exit))
+        .collect();
+    for closed in [false, true] {
+        if closed {
+            construction.close().unwrap();
+        }
+        let actual = construction.available_choices(&world, &[]);
+        assert_eq!(
+            actual
+                .iter()
+                .map(|(piece, _)| (piece.id, piece.exit))
+                .collect::<Vec<_>>(),
+            expected
+        );
+        if closed {
+            assert!(
+                actual
+                    .iter()
+                    .all(|(_, choice)| choice.result == Err(ConstructionError::Closed))
+            );
+        }
+    }
+}
+
+#[test]
+fn choices_after_deleting_from_150_piece_circuit() {
+    let world = World::new(
+        1024,
+        1024,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let mut construction = Construction::new(TrackState { z: 160, ..start() }, hybrid_model());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    for _ in 0..72 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    for _ in 0..2 {
+        construction
+            .append(PieceId::TurnSmallStandalone, &world, &[])
+            .unwrap();
+    }
+    for _ in 0..73 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    for _ in 0..2 {
+        construction
+            .append(PieceId::TurnSmallStandalone, &world, &[])
+            .unwrap();
+    }
+    assert_eq!(construction.pieces().len(), 150);
+    construction.close().unwrap();
+    construction.delete_from(75).unwrap();
+    let started = Instant::now();
+    let choices = construction.choices(&world, &[]);
+    let elapsed = started.elapsed();
+    assert!(choices.iter().any(|choice| choice.result.is_ok()));
+    if !cfg!(debug_assertions) {
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "choices took {elapsed:?}"
+        );
+    }
+}
+
+#[test]
+fn choices_match_individual_validation_for_reconnecting_candidates() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for _ in 0..4 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    construction.delete_from(1).unwrap();
+    for choice in construction.choices(&world, &[]) {
+        assert_eq!(
+            choice.result,
+            construction.validate(choice.id, &world, &[]),
+            "{:?}",
+            choice.id
+        );
+    }
+}
+
+#[test]
+fn elevated_crossing_rejects_rail_through_existing_train_space() {
+    use PieceId::*;
+    let world = world();
+    let mut model = hybrid_model();
+    model.train.height_metres = 10.0;
+    let mut construction = Construction::new(TrackState { z: 20, ..start() }, model);
+    for id in [
+        Straight,
+        Straight,
+        LevelToGentleUp,
+        GentleUpToLevel,
+        TurnSmallStandalone,
+        Straight,
+        TurnSmallStandalone,
+        Straight,
+        Straight,
+        TurnSmallStandalone,
+        Straight,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let candidate = construction
+        .model_placeable(
+            templates()
+                .iter()
+                .find(|piece| piece.id == Straight)
+                .unwrap(),
+        )
+        .unwrap();
+    let train = &construction.model().train;
+    assert_eq!(
+        crate::track::clearance::check_clearance(
+            &world,
+            &candidate,
+            train,
+            construction.pieces(),
+            &[]
+        ),
+        Ok(())
+    );
+    assert!(construction.pieces().iter().any(|existing| {
+        crate::track::clearance::check_clearance(
+            &world,
+            existing,
+            train,
+            std::slice::from_ref(&candidate),
+            &[],
+        ) == Err(ClearanceCollision::Track)
+    }));
+    let previous_count = construction.pieces().len();
+    assert_eq!(
+        construction
+            .choices(&world, &[])
+            .iter()
+            .find(|choice| choice.id == Straight)
+            .unwrap()
+            .result,
+        Err(ConstructionError::Clearance(ClearanceCollision::Track))
+    );
+    assert_eq!(
+        construction.validate(Straight, &world, &[]),
+        Err(ConstructionError::Clearance(ClearanceCollision::Track))
+    );
+    assert_eq!(
+        construction.append(Straight, &world, &[]),
+        Err(ConstructionError::Clearance(ClearanceCollision::Track))
+    );
+    assert_eq!(construction.pieces().len(), previous_count);
 }

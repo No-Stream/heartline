@@ -42,11 +42,15 @@ async function main() {
       worker.onerror = (event) => { clearTimeout(timeout); worker.terminate(); reject(new Error(event.message)); };
     }));
     if (result.error) throw new Error(result.error);
-    if (!(result.elapsedMs > 0) || result.guestCount !== 10_000 || result.measuredTicks !== 200) {
-      throw new Error(`Invalid benchmark result: ${JSON.stringify(result)}`);
+    for (const [name, measurement] of Object.entries(result)) {
+      if (!(measurement.elapsedMs > 0) || measurement.guestCount !== 10_000 || measurement.measuredTicks !== 200) {
+        throw new Error(`Invalid benchmark result for ${name}: ${JSON.stringify(measurement)}`);
+      }
+      const label = name === 'directWalking' ? 'Direct walking control' : 'ParkGuests gameplay';
+      console.log(`Browser worker ${label} (single thread, includes coaster physics): ${(measurement.measuredTicks * 1000 / measurement.elapsedMs).toFixed(2)} ticks/s, ${(measurement.elapsedMs / measurement.measuredTicks).toFixed(3)} ms/tick, state hash ${measurement.stateHash}`);
+      console.log(`${label} guest snapshot transfer: ${measurement.snapshotBytes} bytes/snapshot (${measurement.snapshotBytes / measurement.guestCount} bytes/guest)`);
     }
-    console.log(`Browser worker (single thread, includes coaster physics): ${(result.measuredTicks * 1000 / result.elapsedMs).toFixed(2)} ticks/s, ${(result.elapsedMs / result.measuredTicks).toFixed(3)} ms/tick, state hash ${result.stateHash}`);
-    console.log(`Guest snapshot transfer: ${result.snapshotBytes} bytes/snapshot (${result.snapshotBytes / result.guestCount} bytes/guest)`);
+
   } finally {
     if (browser) await browser.close();
     if (server.exitCode === null) {

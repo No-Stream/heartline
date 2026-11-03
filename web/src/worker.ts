@@ -3,16 +3,23 @@ import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } fro
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
 import type { ConstructionAction, ConstructionPiece } from "./construction-protocol";
 
+type GuestDetailAction =
+  | { readonly type: "guest-detail-request"; readonly guestId: string }
+  | { readonly type: "guest-detail-close" };
+type WorkerAction = SetSurfaceMessage | ConstructionAction | GuestDetailAction;
+
 const tickRate = 30;
 const workerScope = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
-  addEventListener(type: "message", listener: (event: MessageEvent<SetSurfaceMessage | ConstructionAction>) => void): void;
+  addEventListener(type: "message", listener: (event: MessageEvent<WorkerAction>) => void): void;
 };
 let simulation: WasmSimulation;
 let clock = createSimulationClock(tickRate, 4);
 let lastWakeup: number;
 let coasterGeometrySent = false;
 let lastConstructionMessage = "";
+let selectedGuestId: number | undefined;
+let lastGuestDetailSentAt = 0;
 
 function wake(): void {
   const now = performance.now();
@@ -32,7 +39,15 @@ function wake(): void {
   );
   const message = simulation.construction_message();
   if (message !== lastConstructionMessage) sendConstruction();
+  if (selectedGuestId !== undefined && now - lastGuestDetailSentAt >= 500) sendGuestDetail();
   setTimeout(wake, Math.max(0, clock.tickDurationMs - clock.accumulatorMs));
+}
+
+function sendGuestDetail(guestId = selectedGuestId): void {
+  if (guestId === undefined) return;
+  const detail = JSON.parse(simulation.guest_detail_json(guestId)) as unknown;
+  workerScope.postMessage({ type: "guest-detail", guestId: `guest-${guestId}`, detail });
+  lastGuestDetailSentAt = performance.now();
 }
 
 function sendConstruction(): void {
@@ -88,6 +103,20 @@ const initialized = init().then(() => {
 workerScope.addEventListener("message", (event) => {
   void initialized.then(() => {
     const action = event.data;
+    if (action.type === "guest-detail-request") {
+      const match = /^guest-(\d+)$/.exec(action.guestId);
+      if (!match) {
+        workerScope.postMessage({ type: "guest-detail", guestId: action.guestId, detail: null });
+        return;
+      }
+      selectedGuestId = Number(match[1]);
+      sendGuestDetail();
+      return;
+    }
+    if (action.type === "guest-detail-close") {
+      selectedGuestId = undefined;
+      return;
+    }
     if (action.type !== "set-surface") {
       switch (action.type) {
         case "construction-start": simulation.construction_start(action.x * 2, action.y * 2, action.z / 2, action.heading * 2); break;

@@ -293,3 +293,25 @@ fn carved_span_iteration_is_canonical_and_reflects_edits() {
         vec![(0, 0, 1, 2), (0, 0, 5, 6), (2, 1, 1, 3)]
     );
 }
+
+#[test]
+fn occupied_column_index_tracks_paths_and_excavations_through_edits() {
+    let mut world = World::new(100, 100, flat_surface(8));
+    let path = Path {
+        position: position(90, 90, 8),
+        slope: None,
+    };
+    world.place_path(path);
+    world.carve(1, 2, 1, 4);
+    world.carve(90, 90, 1, 4);
+    assert_eq!(world.occupied_columns, vec![201, 9090]);
+    assert_eq!(world.paths().collect::<Vec<_>>(), vec![path]);
+    world.remove_path(path.position);
+    assert_eq!(world.occupied_columns, vec![201, 9090]);
+    world.fill(90, 90, 1, 4);
+    assert_eq!(world.occupied_columns, vec![201]);
+    world.set_surface(1, 2, flat_surface(1));
+    assert!(world.occupied_columns.is_empty());
+    assert!(world.paths().next().is_none());
+    assert!(world.carved_spans().next().is_none());
+}

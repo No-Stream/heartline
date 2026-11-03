@@ -1,10 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="72" height="40" viewBox="0 0 72 40" data-anchor-x="36" data-anchor-y="20" data-description="Path tile joined on sides +x +y -x -y = 1111">
+<defs><filter id="texture" x="-4%" y="-4%" width="108%" height="108%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" seed="11" result="grain"/><feDisplacementMap in="SourceGraphic" in2="grain" scale="0.35" xChannelSelector="R" yChannelSelector="G" result="rough"/><feColorMatrix in="grain" type="matrix" values="0 0 0 0 0.949  0 0 0 0 0.918  0 0 0 0 0.859  0 0 0 -30 6.0" result="specks"/><feComponentTransfer in="specks" result="faintSpecks"><feFuncA type="linear" slope="0.45"/></feComponentTransfer><feComposite in="faintSpecks" in2="rough" operator="in" result="specksOnInk"/><feMerge><feMergeNode in="rough"/><feMergeNode in="specksOnInk"/></feMerge></filter></defs>
+<g filter="url(#texture)">
 <g transform="translate(36 20)">
-<path d="M0 -16.4L32.8 0L0 16.4L-32.8 0Z" fill="#fff0c7"/>
-<ellipse cx="14.696310223080218" cy="0.465289567131219" rx="1.189465132006444" ry="0.754040620289743" fill="#dbc8b8"/>
-<ellipse cx="2.4068045290187" cy="1.3502729381244503" rx="1.1707257291767745" ry="0.7596658532507718" fill="#dbc8b8"/>
-<ellipse cx="7.859122431837022" cy="-3.6691112333628837" rx="1.8077470101881774" ry="0.761005297768861" fill="#dbc8b8"/>
-<ellipse cx="13.084717111196369" cy="0.8145071215433873" rx="1.9647792055737228" ry="0.9271647455170751" fill="#dbc8b8"/>
-<ellipse cx="-10.324574438855052" cy="2.9715922700164277" rx="2.0608121170895175" ry="0.8740851193666459" fill="#dbc8b8"/>
+<path d="M0 -16.4L32.8 0L0 16.4L-32.8 0Z" fill="#f1e0c1"/>
+<ellipse cx="14.696310223080218" cy="0.465289567131219" rx="1.189465132006444" ry="0.754040620289743" fill="#d1c8c3"/>
+<ellipse cx="2.4068045290187" cy="1.3502729381244503" rx="1.1707257291767745" ry="0.7596658532507718" fill="#d1c8c3"/>
+<ellipse cx="7.859122431837022" cy="-3.6691112333628837" rx="1.8077470101881774" ry="0.761005297768861" fill="#d1c8c3"/>
+<ellipse cx="13.084717111196369" cy="0.8145071215433873" rx="1.9647792055737228" ry="0.9271647455170751" fill="#d1c8c3"/>
+<ellipse cx="-10.324574438855052" cy="2.9715922700164277" rx="2.0608121170895175" ry="0.8740851193666459" fill="#d1c8c3"/>
+</g>
 </g>
 </svg>

@@ -1,19 +1,33 @@
+mod guest_benchmark;
+
+use std::collections::HashMap;
+
 use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::guests::{AgeGroup, GuestId};
+use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train, demo_circuit};
-use theme_park_sim::track::construction::Construction;
-use theme_park_sim::track::supports::{SupportObstacle, generate_wooden_lattice};
-use theme_park_sim::track::{
-    Heading, Piece, PieceId, SupportStyle, TrackSample, TrackState, TrainConfiguration, Vec3,
-    catalog, hybrid_model,
+use theme_park_sim::track::construction::{Construction, track_support_obstacles};
+use theme_park_sim::track::supports::{
+    SUPPORT_INFLUENCE_RADIUS_METRES, SupportError, SupportObstacle, SupportSegment,
+    generate_wooden_lattice,
 };
-use theme_park_sim::walking::WalkingSimulation;
+use theme_park_sim::track::{
+    Heading, Piece, PieceId, PieceKind, SupportStyle, TrackSample, TrackState, TrainConfiguration,
+    Vec3, catalog, hybrid_model,
+};
 use theme_park_sim::world::{Direction, Position, Surface, World};
 use wasm_bindgen::prelude::*;
 
+struct SupportRenderCache {
+    obstacles: Vec<SupportObstacle>,
+    dependencies: Vec<usize>,
+    world_revision: u64,
+    segments: Result<Vec<SupportSegment>, SupportError>,
+}
+
 #[wasm_bindgen]
 pub struct WasmSimulation {
-    simulation: WalkingSimulation,
+    simulation: ParkGuests,
     world: World,
     circuit: Circuit,
     train: Train,
@@ -23,6 +37,8 @@ pub struct WasmSimulation {
     selected: Option<PieceId>,
     construction_message: String,
     construction_train: Option<(Circuit, Train)>,
+    recovered_station: Option<Piece>,
+    support_render_cache: HashMap<usize, SupportRenderCache>,
     construction_slow_steps: u32,
     construction_outcome: Option<String>,
 }
@@ -32,7 +48,7 @@ impl WasmSimulation {
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u64, agent_count: usize) -> Self {
         let world = demo_world();
-        let simulation = WalkingSimulation::with_entrance(
+        let simulation = ParkGuests::new(
             seed,
             agent_count,
             &world,
@@ -41,6 +57,7 @@ impl WasmSimulation {
                 y: 256,
                 height: 8,
             },
+            agent_count.max(1),
         );
         let circuit = demo_circuit();
         let train_configuration = hybrid_model().train;
@@ -65,6 +82,8 @@ impl WasmSimulation {
             selected: None,
             construction_message: String::new(),
             construction_train: None,
+            recovered_station: None,
+            support_render_cache: HashMap::new(),
             construction_slow_steps: 0,
             construction_outcome: None,
         }
@@ -151,7 +170,9 @@ impl WasmSimulation {
     }
 
     pub fn tick(&mut self) {
-        self.simulation.tick(&self.world);
+        let population = self.simulation.walking().guests().len();
+        self.simulation
+            .tick(&self.world, &[], 100, Some(population));
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
             self.train.step(&self.circuit);
@@ -246,13 +267,18 @@ impl WasmSimulation {
     }
 
     pub fn tick_count(&self) -> u64 {
-        self.simulation.tick_count()
+        self.simulation.walking().tick_count()
     }
 
     pub fn snapshot(&self) -> Vec<f32> {
-        self.simulation
+        let walking = self.simulation.walking();
+        let traits = walking.traits();
+        walking
             .guests()
             .iter()
+            .enumerate()
+            .filter(|(index, _)| traits.is_active(GuestId(*index as u32)))
+            .map(|(_, guest)| guest)
             .flat_map(|guest| {
                 [
                     guest.x,
@@ -268,13 +294,25 @@ impl WasmSimulation {
     }
 
     pub fn guest_ids(&self) -> Vec<u32> {
-        self.simulation.traits().ids().map(|id| id.0).collect()
+        let traits = self.simulation.walking().traits();
+        traits
+            .ids()
+            .filter(|&id| traits.is_active(id))
+            .map(|id| id.0)
+            .collect()
+    }
+
+    pub fn guest_detail_json(&self, id: u32) -> String {
+        self.simulation
+            .guest_detail(GuestId(id))
+            .map_or_else(|| "null".to_owned(), |detail| detail.to_json())
     }
 
     pub fn guest_appearances(&self) -> Vec<u8> {
-        let traits = self.simulation.traits();
+        let traits = self.simulation.walking().traits();
         traits
             .ids()
+            .filter(|&id| traits.is_active(id))
             .flat_map(|id: GuestId| {
                 let appearance = traits.appearance(id);
                 let age = match traits.age(id) {
@@ -326,6 +364,8 @@ impl WasmSimulation {
         self.selected = None;
         self.select_compatible_piece();
         self.construction_train = None;
+        self.recovered_station = None;
+        self.support_render_cache.clear();
         self.construction_outcome = None;
         self.construction_message.clear();
     }
@@ -352,16 +392,11 @@ impl WasmSimulation {
         let Some(construction) = &self.construction else {
             return String::new();
         };
-        let choices = construction.choices(&self.world, &[]);
         construction
-            .model()
-            .available_pieces(construction.end())
+            .available_choices(&self.world, &[])
             .into_iter()
-            .map(|piece| {
-                let reason = choices
-                    .iter()
-                    .find(|choice| choice.id == piece.id)
-                    .expect("catalog choice")
+            .map(|(piece, choice)| {
+                let reason = choice
                     .result
                     .err()
                     .map(construction_error)
@@ -403,7 +438,10 @@ impl WasmSimulation {
             .as_ref()
             .zip(self.selected)
             .is_some_and(|(construction, selected)| {
-                construction.validate(selected, &self.world, &[]).is_ok()
+                construction
+                    .choices(&self.world, &[])
+                    .iter()
+                    .any(|choice| choice.id == selected && choice.result.is_ok())
             })
     }
     pub fn construction_preview_valid(&self) -> bool {
@@ -414,7 +452,11 @@ impl WasmSimulation {
             return String::new();
         };
         construction
-            .validate(selected, &self.world, &[])
+            .choices(&self.world, &[])
+            .into_iter()
+            .find(|choice| choice.id == selected)
+            .expect("selected piece is in catalog")
+            .result
             .err()
             .map(construction_error)
             .unwrap_or_default()
@@ -474,8 +516,36 @@ impl WasmSimulation {
             .ok_or("Construction is inactive".to_string())
             .and_then(|construction| construction.delete_from(index).map_err(construction_error));
         if result.is_ok() {
-            self.construction_train = None;
-            self.construction_outcome = None;
+            let construction = self.construction.as_ref().expect("successful deletion");
+            let station = construction
+                .pieces()
+                .iter()
+                .chain(
+                    construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| &segment.pieces),
+                )
+                .find(|piece| piece.kind == PieceKind::Station)
+                .cloned();
+            if let (Some((circuit, train)), Some(station)) = (&mut self.construction_train, station)
+            {
+                *train = Train::new(
+                    circuit,
+                    &construction.model().train,
+                    PhysicsConfig::default(),
+                    station.length(),
+                    0.0,
+                );
+                self.recovered_station = Some(station);
+                self.construction_outcome =
+                    Some("Train recovered to the station after track deletion.".into());
+            } else {
+                self.construction_train = None;
+                self.recovered_station = None;
+                self.construction_outcome = None;
+            }
+            self.construction_slow_steps = 0;
             self.select_compatible_piece();
         }
         self.construction_message = result.err().unwrap_or_default();
@@ -506,6 +576,7 @@ impl WasmSimulation {
             2.0,
         );
         self.construction_train = Some((circuit, train));
+        self.recovered_station = None;
         self.construction_slow_steps = 0;
         self.construction_outcome = None;
         self.construction_message = "Test train running.".into();
@@ -520,7 +591,13 @@ impl WasmSimulation {
         if !self.construction_preview_valid() {
             return Vec::new();
         }
-        match try_render_supports(&self.construction_preview(), &self.world) {
+        let construction = self.construction.as_ref().expect("valid preview requires construction");
+        let placed: Vec<_> = construction.pieces().iter().cloned().chain(
+            construction.disconnected_segments().iter().flat_map(|segment| segment.pieces.iter().cloned()),
+        ).collect();
+        let preview = self.construction_preview();
+        let piece = preview.first().expect("valid preview requires a selected piece");
+        match render_preview_supports(piece, &placed, &self.world, &construction.model().train) {
             Ok(supports) => supports,
             Err(_) => {
                 self.construction_message = "Could not route preview supports.".into();
@@ -549,14 +626,13 @@ impl WasmSimulation {
                     .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
             )
             .collect();
-        let pieces: Vec<_> = entries.iter().map(|(_, piece)| (*piece).clone()).collect();
-        match try_render_supports(&pieces, &self.world) {
-            Ok(mut supports) => {
-                for record in supports.chunks_exact_mut(7) {
-                    record[0] = *entries[record[0] as usize].0 as f32;
-                }
-                supports
-            }
+        match render_cached_supports(
+            &entries,
+            &self.world,
+            &construction.model().train,
+            &mut self.support_render_cache,
+        ) {
+            Ok(supports) => supports,
             Err(_) => {
                 self.construction_message = "Could not route supports for the placed track.".into();
                 Vec::new()
@@ -575,9 +651,11 @@ impl WasmSimulation {
             .train;
         let mut result = Vec::new();
         for index in 0..usize::from(config.cars) {
-            let sample = circuit.sample(
-                train.distance() - index as f64 * config.length_metres / f64::from(config.cars),
-            );
+            let offset = index as f64 * config.length_metres / f64::from(config.cars);
+            let sample = match &self.recovered_station {
+                Some(station) => station.sample((station.length() - offset).max(0.0)),
+                None => circuit.sample(train.distance() - offset),
+            };
             result.push(index as f32);
             append_vector(&mut result, sample.position / 4.0);
             append_vector(&mut result, sample.tangent);
@@ -587,7 +665,7 @@ impl WasmSimulation {
         result
     }
     pub fn state_hash(&self) -> u64 {
-        self.simulation.state_hash()
+        self.simulation.walking().state_hash()
     }
 }
 
@@ -596,17 +674,17 @@ impl WasmSimulation {
         let Some(construction) = &self.construction else {
             return;
         };
-        let available = construction.model().available_pieces(construction.end());
+        let available = construction.available_choices(&self.world, &[]);
         if self
             .selected
-            .is_some_and(|selected| available.iter().any(|piece| piece.id == selected))
+            .is_some_and(|selected| available.iter().any(|(piece, _)| piece.id == selected))
         {
             return;
         }
         self.selected = available
             .into_iter()
-            .find(|piece| construction.validate(piece.id, &self.world, &[]).is_ok())
-            .map(|piece| piece.id);
+            .find(|(_, choice)| choice.result.is_ok())
+            .map(|(piece, _)| piece.id);
     }
     fn construction_render(
         &self,
@@ -642,10 +720,9 @@ impl WasmSimulation {
             return Vec::new();
         }
         construction
-            .model()
-            .available_pieces(construction.end())
+            .available_choices(&self.world, &[])
             .into_iter()
-            .filter(|piece| Some(piece.id) == self.selected)
+            .filter_map(|(piece, _)| (Some(piece.id) == self.selected).then_some(piece))
             .collect()
     }
 }
@@ -709,35 +786,6 @@ fn append_vector(result: &mut Vec<f32>, vector: Vec3) {
     result.extend([vector.x as f32, vector.y as f32, vector.z as f32]);
 }
 
-fn track_obstacles(piece: &Piece) -> Vec<SupportObstacle> {
-    let intervals = (piece.length() / 2.0).ceil() as usize;
-    let samples: Vec<_> = (0..=intervals)
-        .map(|index| {
-            piece
-                .sample(piece.length() * index as f64 / intervals as f64)
-                .position
-        })
-        .collect();
-    samples
-        .windows(2)
-        .map(|pair| {
-            let (start, end) = (pair[0], pair[1]);
-            SupportObstacle {
-                min: Vec3::new(
-                    start.x.min(end.x) - 0.5,
-                    start.y.min(end.y) - 0.5,
-                    start.z.min(end.z) - 0.5,
-                ),
-                max: Vec3::new(
-                    start.x.max(end.x) + 0.5,
-                    start.y.max(end.y) + 0.5,
-                    start.z.max(end.z) + 0.5,
-                ),
-            }
-        })
-        .collect()
-}
-
 fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
     result.push(index as f32);
     append_vector(result, sample.position / 4.0);
@@ -747,9 +795,9 @@ fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
 
 #[cfg(test)]
 mod world_tests {
-    use super::{Position, Surface, WasmSimulation, track_obstacles};
+    use super::{Position, Surface, WasmSimulation, track_support_obstacles};
     use theme_park_sim::track::supports::generate_supports;
-    use theme_park_sim::track::{PieceId, TrackState, catalog};
+    use theme_park_sim::track::{PieceId, TrackState, catalog, hybrid_model};
     use theme_park_sim::world::World;
 
     #[test]
@@ -837,7 +885,12 @@ mod world_tests {
             },
         );
         let direct = generate_supports(&upper, &world, &[]).unwrap();
-        let rerouted = generate_supports(&upper, &world, &track_obstacles(&lower)).unwrap();
+        let rerouted = generate_supports(
+            &upper,
+            &world,
+            &track_support_obstacles(&[lower], &hybrid_model().train),
+        )
+        .unwrap();
         assert!(
             direct
                 .iter()
@@ -907,13 +960,17 @@ mod world_tests {
     #[test]
     fn guest_snapshot_contains_stable_ids_appearance_and_walking_state() {
         let mut simulation = WasmSimulation::new(42, 12);
+        assert!(simulation.guest_ids().is_empty());
+        assert!(simulation.guest_appearances().is_empty());
+        assert!(simulation.snapshot().is_empty());
+        simulation.tick();
         let ids = simulation.guest_ids();
         let appearances = simulation.guest_appearances();
         let initial = simulation.snapshot();
         assert_eq!(ids, (0..12).collect::<Vec<_>>());
         assert_eq!(appearances.len(), 12 * 5);
         assert_eq!(initial.len(), 12 * 7);
-        for _ in 0..30 {
+        for _ in 1..30 {
             simulation.tick();
         }
         assert_eq!(simulation.guest_ids(), ids);
@@ -1124,6 +1181,171 @@ mod construction_bridge_tests {
     }
 
     #[test]
+    fn placed_support_cache_matches_full_render_after_track_changes() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        for _ in 0..4 {
+            simulation.construction_select("Straight");
+            simulation.construction_append();
+            assert!(simulation.construction_message().is_empty());
+        }
+        for deleted in [None, Some(2), Some(4)] {
+            if let Some(id) = deleted {
+                simulation.construction_delete(id);
+            }
+            let construction = simulation.construction.as_ref().unwrap();
+            let entries: Vec<_> = construction
+                .piece_ids()
+                .iter()
+                .zip(construction.pieces())
+                .chain(
+                    construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+                )
+                .collect();
+            let pieces: Vec<_> = entries.iter().map(|(_, piece)| (*piece).clone()).collect();
+            let mut expected = super::try_render_supports(&pieces, &simulation.world).unwrap();
+            for record in expected.chunks_exact_mut(7) {
+                record[0] = *entries[record[0] as usize].0 as f32;
+            }
+            let entry_count = entries.len();
+            assert_eq!(simulation.construction_placed_supports(), expected);
+            assert_eq!(simulation.support_render_cache.len(), entry_count);
+            assert_eq!(simulation.construction_placed_supports(), expected);
+        }
+    }
+
+    #[test]
+    fn deleting_distant_track_reuses_cached_supports() {
+        let simulation = WasmSimulation::new(42, 0);
+        let template = super::catalog()
+            .into_iter()
+            .find(|piece| piece.id == super::PieceId::Straight)
+            .unwrap();
+        let first = template
+            .at(super::TrackState {
+                x: 100,
+                y: 100,
+                z: 20,
+                ..super::TrackState::origin()
+            })
+            .unwrap();
+        let second = template
+            .at(super::TrackState {
+                x: 200,
+                y: 200,
+                z: 20,
+                ..super::TrackState::origin()
+            })
+            .unwrap();
+        let first_id = 1;
+        let second_id = 2;
+        let mut cache = std::collections::HashMap::new();
+        let train = super::hybrid_model().train;
+        let initial = super::render_cached_supports(
+            &[(&first_id, &first), (&second_id, &second)],
+            &simulation.world,
+            &train,
+            &mut cache,
+        )
+        .unwrap();
+        let mut expected_initial =
+            super::try_render_supports(&[first.clone(), second], &simulation.world).unwrap();
+        for record in expected_initial.chunks_exact_mut(7) {
+            record[0] += first_id as f32;
+        }
+        assert_eq!(initial, expected_initial);
+        let segments = cache[&first_id].segments.as_ref().unwrap();
+        assert!(!segments.is_empty());
+        let original_allocation = segments.as_ptr();
+        let cached = super::render_cached_supports(
+            &[(&first_id, &first)],
+            &simulation.world,
+            &train,
+            &mut cache,
+        )
+        .unwrap();
+        assert_eq!(
+            cache[&first_id].segments.as_ref().unwrap().as_ptr(),
+            original_allocation
+        );
+        let mut expected = super::try_render_supports(&[first], &simulation.world).unwrap();
+        for record in expected.chunks_exact_mut(7) {
+            record[0] = first_id as f32;
+        }
+        assert_eq!(cached, expected);
+    }
+
+    #[test]
+    fn rendered_supports_clear_other_tracks_train_envelope() {
+        let world = super::World::new(
+            128,
+            128,
+            super::Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let template = super::catalog()
+            .into_iter()
+            .find(|piece| piece.id == super::PieceId::Straight)
+            .unwrap();
+        let lower = template
+            .at(super::TrackState {
+                x: 50,
+                y: 48,
+                z: 3,
+                ..super::TrackState::origin()
+            })
+            .unwrap();
+        let upper = template
+            .at(super::TrackState {
+                x: 54,
+                y: 46,
+                z: 5,
+                heading: super::Heading::North,
+                ..super::TrackState::origin()
+            })
+            .unwrap();
+        let obstacles = theme_park_sim::track::construction::track_support_obstacles(
+            std::slice::from_ref(&lower),
+            &super::hybrid_model().train,
+        );
+        let expected = super::generate_wooden_lattice(&upper, &world, &obstacles).unwrap();
+        let mut expected_records = Vec::new();
+        for segment in expected {
+            if segment.start != segment.end {
+                expected_records.push(1.0);
+                super::append_vector(&mut expected_records, segment.start / 4.0);
+                super::append_vector(&mut expected_records, segment.end / 4.0);
+            }
+        }
+        let mut cache = std::collections::HashMap::new();
+        let actual = super::render_cached_supports(
+            &[(&0, &lower), (&1, &upper)],
+            &world,
+            &super::hybrid_model().train,
+            &mut cache,
+        )
+        .unwrap();
+        let upper_records: Vec<_> = actual
+            .chunks_exact(7)
+            .filter(|record| record[0] == 1.0)
+            .flatten()
+            .copied()
+            .collect();
+        assert_eq!(upper_records, expected_records);
+        let preview = super::render_preview_supports(&upper, &[lower], &world, &super::hybrid_model().train).unwrap();
+        let mut expected_preview = expected_records;
+        for record in expected_preview.chunks_exact_mut(7) {
+            record[0] = 0.0;
+        }
+        assert_eq!(preview, expected_preview);
+    }
+
+    #[test]
     fn lift_drop_circuit_completes_lap() {
         let mut simulation = WasmSimulation::new(42, 0);
         simulation.construction_start(100, 100, 40, 0);
@@ -1237,8 +1459,30 @@ mod construction_bridge_tests {
             "Train stopped before completing a lap."
         );
         simulation.construction_delete(5);
-        assert!(simulation.construction_train_poses().is_empty());
+        let (_, recovered_train) = simulation.construction_train.as_ref().unwrap();
+        assert_eq!(recovered_train.speed(), 0.0);
+        let recovered_poses = simulation.construction_train_poses();
+        let station = &simulation.construction.as_ref().unwrap().pieces()[0];
+        assert_eq!(recovered_train.distance(), station.length());
+        let config = &simulation.construction.as_ref().unwrap().model().train;
+        assert_eq!(recovered_poses.len(), usize::from(config.cars) * 11);
+        for (index, car) in recovered_poses.chunks_exact(11).enumerate() {
+            let distance = (station.length()
+                - index as f64 * config.length_metres / f64::from(config.cars))
+            .max(0.0);
+            let expected = station.sample(distance).position / 4.0;
+            assert_eq!(
+                &car[1..4],
+                &[expected.x as f32, expected.y as f32, expected.z as f32]
+            );
+        }
+        for _ in 0..60 {
+            simulation.tick();
+        }
+        assert_eq!(simulation.construction_train_poses(), recovered_poses);
         assert!(!simulation.construction_can_test());
+        simulation.construction_delete(0);
+        assert!(simulation.construction_train_poses().is_empty());
     }
 }
 
@@ -1288,19 +1532,106 @@ fn render_supports(pieces: &[Piece], world: &World) -> Vec<f32> {
     try_render_supports(pieces, world).expect("demo support cannot be routed")
 }
 
+fn render_preview_supports(piece: &Piece, placed: &[Piece], world: &World, train: &TrainConfiguration) -> Result<Vec<f32>, SupportError> {
+    let obstacles = track_support_obstacles(placed, train);
+    let supports = generate_wooden_lattice(piece, world, &obstacles)?;
+    let mut result = Vec::new();
+    for support in supports {
+        if support.start != support.end {
+            result.push(0.0);
+            append_vector(&mut result, support.start / 4.0);
+            append_vector(&mut result, support.end / 4.0);
+        }
+    }
+    Ok(result)
+}
+
+fn render_cached_supports(
+    entries: &[(&usize, &Piece)],
+    world: &World,
+    train: &TrainConfiguration,
+    cache: &mut HashMap<usize, SupportRenderCache>,
+) -> Result<Vec<f32>, SupportError> {
+    cache.retain(|id, _| entries.iter().any(|(entry_id, _)| *entry_id == id));
+    for (id, piece) in entries {
+        cache.entry(**id).or_insert_with(|| SupportRenderCache {
+            obstacles: track_support_obstacles(std::slice::from_ref(piece), train),
+            dependencies: Vec::new(),
+            world_revision: u64::MAX,
+            segments: Err(SupportError::NoRoute),
+        });
+    }
+    let mut result = Vec::new();
+    for (id, piece) in entries {
+        let count = (piece.length() / 8.0).ceil() as usize;
+        let anchors: Vec<_> = (0..count)
+            .map(|index| {
+                piece
+                    .sample(piece.length() * (index as f64 + 0.5) / count as f64)
+                    .position
+            })
+            .collect();
+        let mut dependencies: Vec<_> = entries
+            .iter()
+            .filter_map(|(other_id, _)| {
+                if other_id == id {
+                    return None;
+                }
+                cache[other_id]
+                    .obstacles
+                    .iter()
+                    .any(|obstacle| {
+                        anchors.iter().any(|anchor| {
+                            obstacle.min.x <= anchor.x + SUPPORT_INFLUENCE_RADIUS_METRES
+                                && obstacle.max.x >= anchor.x - SUPPORT_INFLUENCE_RADIUS_METRES
+                                && obstacle.min.y <= anchor.y + SUPPORT_INFLUENCE_RADIUS_METRES
+                                && obstacle.max.y >= anchor.y - SUPPORT_INFLUENCE_RADIUS_METRES
+                        })
+                    })
+                    .then_some(**other_id)
+            })
+            .collect();
+        dependencies.sort_unstable();
+        let cached = &cache[id];
+        if cached.world_revision != world.revision() || cached.dependencies != dependencies {
+            let obstacles: Vec<_> = entries
+                .iter()
+                .filter(|(other_id, _)| dependencies.binary_search(other_id).is_ok())
+                .flat_map(|(other_id, _)| cache[other_id].obstacles.iter().copied())
+                .collect();
+            let segments = generate_wooden_lattice(piece, world, &obstacles);
+            let cached = cache.get_mut(id).expect("support cache entry");
+            cached.world_revision = world.revision();
+            cached.dependencies = dependencies;
+            cached.segments = segments;
+        }
+        for segment in cache[id].segments.as_ref().map_err(|error| *error)? {
+            if segment.start != segment.end {
+                result.push(**id as f32);
+                append_vector(&mut result, segment.start / 4.0);
+                append_vector(&mut result, segment.end / 4.0);
+            }
+        }
+    }
+    Ok(result)
+}
+
 fn try_render_supports(
     pieces: &[Piece],
     world: &World,
 ) -> Result<Vec<f32>, theme_park_sim::track::supports::SupportError> {
     let mut result = Vec::new();
+    let model = hybrid_model();
     for (index, piece) in pieces.iter().enumerate() {
         let obstacles: Vec<_> = pieces
             .iter()
             .enumerate()
             .filter(|(other_index, _)| *other_index != index)
-            .flat_map(|(_, other)| track_obstacles(other))
+            .flat_map(|(_, other)| {
+                track_support_obstacles(std::slice::from_ref(other), &model.train)
+            })
             .collect();
-        let supports = match hybrid_model().support_style {
+        let supports = match model.support_style {
             SupportStyle::WoodenLattice => generate_wooden_lattice(piece, world, &obstacles),
         }?;
         for support in supports {

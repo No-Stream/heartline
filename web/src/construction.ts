@@ -1,16 +1,13 @@
-import type { ConstructionAction, ConstructionState } from "./construction-protocol";
+import type { ConstructionState } from "./construction-protocol";
+import type { InputAction } from "./input/actions";
 
 /** Native controls keep every construction action available to keyboard and assistive technology users. */
-export function createConstructionPanel(container: HTMLElement, dispatch: (action: ConstructionAction) => void): { update(state: ConstructionState): void } {
+export function createConstructionPanel(container: HTMLElement, dispatch: (action: InputAction) => void): { update(state: ConstructionState): void } {
   container.innerHTML = `
     <h2>Build a coaster</h2>
-    <form data-start>
-      <label>Station X (tiles) <input name="x" type="number" step="1" value="240" required></label>
-      <label>Station Y (tiles) <input name="y" type="number" step="1" value="240" required></label>
-      <label>Station rail height (metres) <input name="z" type="number" step="2" value="12" required></label>
-      <label>Station direction <select name="heading"><option value="0">East</option><option value="1">North</option><option value="2">West</option><option value="3">South</option></select></label>
-      <button type="submit">Start coaster</button>
-    </form>
+    <button type="button" data-start>Place station</button>
+    <label>Station height above ground (metres) <select data-height></select></label>
+    <p>Choose a tile, then point and click to choose the station direction.</p>
     <p role="status" data-message></p>
     <div data-editor hidden>
       <p>With the world focused: B places, Backspace undoes, C closes, and T tests.</p>
@@ -23,7 +20,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       <label><input type="checkbox" data-delete-mode> Delete track by clicking it</label>
       <h3>Track pieces</h3><ol data-track></ol>
     </div>`;
-  const start = container.querySelector<HTMLFormElement>("[data-start]")!;
+  const start = container.querySelector<HTMLButtonElement>("[data-start]")!;
+  const height = container.querySelector<HTMLSelectElement>("[data-height]")!;
+  for (let value = 4; value <= 100; value += 2) height.add(new Option(String(value), String(value)));
+  height.value = "12";
   const editor = container.querySelector<HTMLElement>("[data-editor]")!;
   const piece = container.querySelector<HTMLSelectElement>("[data-piece]")!;
   const append = container.querySelector<HTMLButtonElement>("[data-append]")!;
@@ -34,11 +34,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const steppers = container.querySelector<HTMLElement>("[data-steppers]")!;
   const message = container.querySelector<HTMLElement>("[data-message]")!;
   const track = container.querySelector<HTMLOListElement>("[data-track]")!;
-  start.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const fields = new FormData(start);
-    dispatch({ type: "construction-start", x: Number(fields.get("x")), y: Number(fields.get("y")), z: Number(fields.get("z")), heading: Number(fields.get("heading")) });
-  });
+  start.addEventListener("click", () => dispatch({ type: "station-placement", enabled: true }));
+  height.addEventListener("change", () => dispatch({ type: "station-height", height: Number(height.value) }));
   piece.addEventListener("change", () => dispatch({ type: "construction-select", piece: piece.value }));
   append.addEventListener("click", () => dispatch({ type: "construction-append" }));
   undo.addEventListener("click", () => dispatch({ type: "construction-undo" }));

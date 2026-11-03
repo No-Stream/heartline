@@ -93,6 +93,7 @@ pub struct World {
     instance_id: usize,
     surfaces: Vec<Surface>,
     columns: Vec<Option<Box<Column>>>,
+    occupied_columns: Vec<usize>,
 }
 
 impl World {
@@ -106,6 +107,7 @@ impl World {
             instance_id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
             surfaces: vec![surface; count],
             columns: (0..count).map(|_| None).collect(),
+            occupied_columns: Vec::new(),
         }
     }
 
@@ -273,7 +275,21 @@ impl World {
                 self.columns[index] = None;
             }
         }
+        self.update_occupied_column(index);
         invalid
+    }
+
+    fn update_occupied_column(&mut self, index: usize) {
+        match (
+            self.occupied_columns.binary_search(&index),
+            self.columns[index].is_some(),
+        ) {
+            (Err(position), true) => self.occupied_columns.insert(position, index),
+            (Ok(position), false) => {
+                self.occupied_columns.remove(position);
+            }
+            _ => {}
+        }
     }
 
     pub fn place_path(&mut self, path: Path) {
@@ -298,6 +314,7 @@ impl World {
         column
             .paths
             .sort_unstable_by_key(|path| path.position.height);
+        self.update_occupied_column(index);
     }
 
     pub fn path(&self, position: Position) -> Option<Path> {
@@ -313,9 +330,9 @@ impl World {
 
     /// Iterates over paths in row-major column and ascending height order.
     pub fn paths(&self) -> impl Iterator<Item = Path> + '_ {
-        self.columns
+        self.occupied_columns
             .iter()
-            .flatten()
+            .map(|&index| self.columns[index].as_ref().unwrap())
             .flat_map(|column| column.paths.iter().copied())
     }
 
@@ -323,10 +340,11 @@ impl World {
     /// Each interval is half-open: [bottom, top).
     pub fn carved_spans(&self) -> impl Iterator<Item = (u16, u16, i16, i16)> + '_ {
         let width = usize::from(self.width);
-        self.columns
+        self.occupied_columns
             .iter()
-            .enumerate()
-            .flat_map(move |(index, column)| {
+            .copied()
+            .flat_map(move |index| {
+                let column = &self.columns[index];
                 column.iter().flat_map(move |column| {
                     column.carved.iter().map(move |span| {
                         (
@@ -352,6 +370,7 @@ impl World {
         if column.paths.is_empty() && column.carved.is_empty() {
             self.columns[index] = None;
         }
+        self.update_occupied_column(index);
         if removed { vec![position] } else { Vec::new() }
     }
 
@@ -391,6 +410,7 @@ impl World {
         size_of::<Self>()
             + self.surfaces.capacity() * size_of::<Surface>()
             + self.columns.capacity() * size_of::<Option<Box<Column>>>()
+            + self.occupied_columns.capacity() * size_of::<usize>()
             + self
                 .columns
                 .iter()

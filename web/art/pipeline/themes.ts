@@ -1,10 +1,10 @@
 // Builds the alternative art themes and writes screenshots for comparing them.
 //
 // Usage: themes.ts [theme ...]
-// Rebuilds the drawings and atlas of each named theme (all alternative themes when none are named)
+// Rebuilds the drawings and atlas of each named theme (all alternatives when none are named)
 // under web/art/themes/<theme>/, then screenshots every theme, candy included, into
 // web/art/screenshots/themes/, with comparison.png showing COMPARISON_THEMES side by side.
-// Candy comes from the game's own atlas, so run `make art` first.
+// Print-modern comes from the game's own atlas, so run `make art` first.
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -38,9 +38,9 @@ async function buildTheme(themeName: string): Promise<void> {
 
 const requested = process.argv.slice(2);
 for (const name of requested) {
-  if (!(name in THEMES) || name === "candy") throw new Error(`Cannot build theme "${name}"; candy is built by make art`);
+  if (!(name in THEMES) || name === "print-modern") throw new Error(`Cannot build theme "${name}"; print-modern is built by make art`);
 }
-await Promise.all((requested.length > 0 ? requested : ALL_THEMES.filter((name) => name !== "candy")).map(buildTheme));
+await Promise.all((requested.length > 0 ? requested : ALL_THEMES.filter((name) => name !== "print-modern")).map(buildTheme));
 
 const server = await createServer({ root: ART_DIRECTORY, configFile: false, server: { port: PORT, strictPort: true, host: "127.0.0.1" }, logLevel: "error" });
 await server.listen();

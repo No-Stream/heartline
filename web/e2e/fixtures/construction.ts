@@ -1,7 +1,8 @@
 import { createConstructionPanel } from "../../src/construction";
-import type { ConstructionAction, ConstructionState } from "../../src/construction-protocol";
+import type { ConstructionState } from "../../src/construction-protocol";
+import type { InputAction } from "../../src/input/actions";
 
-const actions: ConstructionAction[] = [];
+const actions: InputAction[] = [];
 const panel = createConstructionPanel(document.querySelector("section")!, (action) => actions.push(action));
 const state: ConstructionState = {
   type: "construction-state", active: true,

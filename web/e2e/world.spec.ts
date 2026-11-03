@@ -1,4 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { build, preview } from "vite";
 import type { GameTest } from "../src/game-test";
 
 test.use({
@@ -60,24 +64,34 @@ test("picks known terrain and path points at every rotation", async ({ page }) =
       { kind: "path", x: 250, y: 256, height: expect.closeTo(13.5, 1) },
     ]);
 
-    await renderCamera(220, 250, rotation);
+    await renderCamera(219, 250, rotation);
     const entrance = await page.evaluate(() => {
-      const screen = window.gameTest.project({ x: 220.25, y: 250.35, z: 1.6875 });
+      const screen = window.gameTest.project({ x: 219.1, y: 250.5, z: 1.975 });
       return window.gameTest.pick(screen.x, screen.y);
     });
-    expect(entrance, `entrance at rotation ${rotation}`).toEqual({ kind: "path", x: 220, y: 250, height: expect.closeTo(6.75, 1) });
+    expect(entrance, `entrance at rotation ${rotation}`).toEqual({ kind: "path", x: 219, y: 250, height: expect.closeTo(7.9, 1) });
   }
 });
 
 
 test("guest appearances on paths", async ({ page }) => {
-  await page.goto("/?test=1");
-  await page.waitForFunction(() => window.gameTest?.ready);
-  await page.evaluate(() => window.gameTest.setCamera({ centerX: 219.5, centerY: 250.5, zoom: 2, rotation: 0 }));
-  await page.waitForFunction(() => window.gameTest.ready);
-  await expect(page.locator("canvas")).toHaveScreenshot("guests-on-paths.png", {
-    animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001,
-  });
+  const outDir = await mkdtemp(join(tmpdir(), "guests-e2e-"));
+  const config = { configFile: false as const, root: "web", publicDir: resolve("web/art/atlas"), build: { outDir, rollupOptions: { input: resolve("web/e2e/fixtures/guests.html") } } };
+  await build(config);
+  const server = await preview({ ...config, preview: { host: "127.0.0.1", port: 0 } });
+  try {
+    const address = server.httpServer?.address();
+    if (!address || typeof address === "string") throw new Error("Vite did not start on a TCP port");
+    await page.goto(`http://127.0.0.1:${address.port}/e2e/fixtures/guests.html`);
+    const visibleGuests = await page.evaluate(() => window.renderGuestFixture());
+    expect(visibleGuests.length).toBeGreaterThanOrEqual(2);
+    await expect(page.locator("canvas")).toHaveScreenshot("guests-on-paths.png", {
+      animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001,
+    });
+  } finally {
+    await new Promise<void>((resolveClose, reject) => server.httpServer.close((error) => error ? reject(error) : resolveClose()));
+    await rm(outDir, { recursive: true });
+  }
 });
 
 test("a terrain edit repaints the frozen world and updates picking", async ({ page }) => {

@@ -124,7 +124,7 @@ async function main(): Promise<void> {
   const [drawingsArgument, outputArgument, themeArgument] = process.argv.slice(2);
   const drawingsDirectory = drawingsArgument ?? join(ART_DIRECTORY, "drawings");
   const outputDirectory = outputArgument ?? join(ART_DIRECTORY, "atlas");
-  const theme = themeNamed(themeArgument ?? "candy");
+  const theme = themeNamed(themeArgument ?? "print-modern");
   const drawings = listSvgFiles(drawingsDirectory).map((path) => readDrawing(path, drawingsDirectory));
   if (drawings.length === 0) throw new Error(`No drawings found under ${drawingsDirectory}`);
   const sprites = buildSpriteIndex(drawings);

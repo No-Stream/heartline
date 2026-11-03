@@ -2,8 +2,8 @@
 // `make art` reads only those files, so any file can be replaced by a hand-made SVG.
 // Running this generator again overwrites the drawings it owns.
 //
-// Usage: generate.ts [theme] [output directory]. The default is the candy theme written to
-// web/art/drawings/, which is what the game uses.
+// Usage: generate.ts [theme] [output directory]. The default is the print-modern theme written
+// to web/art/drawings/, which is what the game uses.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +16,7 @@ import { sceneryDesigns } from "./scenery.ts";
 import { themeNamed } from "./themes.ts";
 
 const [themeArgument, outputArgument] = process.argv.slice(2);
-const theme = themeNamed(themeArgument ?? "candy");
+const theme = themeNamed(themeArgument ?? "print-modern");
 const DRAWINGS_DIRECTORY = outputArgument ? resolve(outputArgument) : join(dirname(fileURLToPath(import.meta.url)), "..", "drawings");
 const FACINGS: readonly Facing[] = ["se", "sw", "ne", "nw"];
 const ROTATION_NAMES = ["rot0", "rot90", "rot180", "rot270"];

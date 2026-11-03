@@ -64,7 +64,7 @@ art-demo:
 art-screenshots:
 	$(NODE_TS) web/art/pipeline/screenshots.ts
 
-# Builds the alternative art themes under web/art/themes/ and screenshots them next to candy
+# Builds the alternative art themes under web/art/themes/ and screenshots them next to print-modern
 # in web/art/screenshots/themes/. Open one in the demo with demo.html?theme=<name>.
 art-themes: art
 	$(NODE_TS) web/art/pipeline/themes.ts

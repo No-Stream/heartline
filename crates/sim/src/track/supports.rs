@@ -1,5 +1,6 @@
 use crate::track::{Piece, Vec3};
 use crate::world::World;
+use std::sync::OnceLock;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Support {
@@ -22,7 +23,7 @@ pub struct SupportObstacle {
 /// The outcome of attempting to route supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupportError {
-    /// An obstacle intersects a required anchor, so every brace intersects it.
+    /// No footing candidate in the bounded search domain clears every constraint.
     NoRoute,
     /// A bounded search found no support; a route may still exist.
     SearchExhausted,
@@ -33,13 +34,30 @@ pub enum SupportError {
 const BEAM_CLEARANCE: f64 = 0.18 * std::f64::consts::SQRT_2;
 const FOOTER_HALF_WIDTH: f64 = 0.4;
 const FOOTER_HEIGHT: f64 = 0.2;
+const SUPPORT_SEARCH_RADIUS_METRES: i32 = 32;
+/// Maximum distance at which world changes can affect generated support geometry.
+pub const SUPPORT_INFLUENCE_RADIUS_METRES: f64 =
+    SUPPORT_SEARCH_RADIUS_METRES as f64 + 2.0 + FOOTER_HALF_WIDTH;
+
+/// Checks the same beam, brace, and footer clearances used when routing a support.
+pub fn support_intersects_obstacle(support: &Support, obstacle: &SupportObstacle) -> bool {
+    let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
+    let beam_bounds = expanded(obstacle, BEAM_CLEARANCE, BEAM_CLEARANCE);
+    let footer_bounds = expanded(obstacle, FOOTER_HALF_WIDTH, 0.0);
+    intersects(support.footing, top, &beam_bounds)
+        || intersects(top, support.anchor, &beam_bounds)
+        || intersects(
+            support.footing,
+            support.footing + Vec3::new(0.0, 0.0, FOOTER_HEIGHT),
+            &footer_bounds,
+        )
+}
 
 /// Routes supports at intervals along a piece. Coordinates and obstacle bounds are in metres.
 /// Paths and excavations are taken from the world; callers supply ride and scenery bounds.
-/// Footings are searched on a one-metre grid within eight metres of each anchor,
-/// then at obstacle boundary candidates within 32 metres. `SearchExhausted`
-/// means the search was inconclusive; callers must not interpret it as proof
-/// that a piece cannot be supported.
+/// Footings are searched on a one-metre grid within 32 metres of each anchor,
+/// and at obstacle-boundary candidates within a 32-metre square around it.
+/// The complete candidate set is checked before returning `NoRoute`.
 pub fn generate_supports(
     piece: &Piece,
     world: &World,
@@ -101,22 +119,10 @@ pub fn generate_supports_on_structures(
             return Err(SupportError::NoRoute);
         }
         let mut selected = None;
-        let mut offsets: Vec<_> = (-8_i32..=8)
-            .flat_map(|dx| (-8_i32..=8).map(move |dy| (dx, dy)))
-            .collect();
-        offsets.sort_by_key(|(dx, dy)| (dx * dx + dy * dy, *dx, *dy));
-        let candidates = offsets
-            .into_iter()
-            .map(|(dx, dy)| (anchor.x + f64::from(dx), anchor.y + f64::from(dy)))
-            .chain(
-                std::iter::once_with(|| {
-                    boundary_candidates(
-                        anchor,
-                        obstacles.iter().chain(&path_obstacles).chain(structures),
-                    )
-                })
-                .flatten(),
-            );
+        let candidates = footing_candidates(
+            anchor,
+            obstacles.iter().chain(&path_obstacles).chain(structures),
+        );
         for (x, y) in candidates {
             let (width, height) = world.dimensions();
             if x < 0.0 || y < 0.0 || x >= f64::from(width) * 4.0 || y >= f64::from(height) * 4.0 {
@@ -169,35 +175,30 @@ pub fn generate_supports_on_structures(
                 continue;
             }
             let top = Vec3::new(x, y, anchor.z);
-            if obstacles.iter().chain(&path_obstacles).any(|obstacle| {
-                let beam_bounds = expanded(obstacle, BEAM_CLEARANCE, BEAM_CLEARANCE);
-                let footer_bounds = expanded(obstacle, FOOTER_HALF_WIDTH, 0.0);
-                intersects(footing, top, &beam_bounds)
-                    || intersects(top, anchor, &beam_bounds)
-                    || intersects(
-                        footing,
-                        footing + Vec3::new(0.0, 0.0, FOOTER_HEIGHT),
-                        &footer_bounds,
-                    )
-            }) || structures.iter().enumerate().any(|(index, structure)| {
-                let beam_bounds = expanded(structure, BEAM_CLEARANCE, BEAM_CLEARANCE);
-                let footer_bounds = expanded(structure, FOOTER_HALF_WIDTH, 0.0);
-                intersects(top, anchor, &beam_bounds)
-                    || (supporting_structure
-                        .is_none_or(|(support_index, _)| support_index != index)
-                        && (intersects(footing, top, &beam_bounds)
-                            || intersects(
-                                footing,
-                                footing + Vec3::new(0.0, 0.0, FOOTER_HEIGHT),
-                                &footer_bounds,
-                            )))
-            }) {
+            if obstacles
+                .iter()
+                .chain(&path_obstacles)
+                .any(|obstacle| support_intersects_obstacle(&Support { anchor, footing }, obstacle))
+                || structures.iter().enumerate().any(|(index, structure)| {
+                    let beam_bounds = expanded(structure, BEAM_CLEARANCE, BEAM_CLEARANCE);
+                    let footer_bounds = expanded(structure, FOOTER_HALF_WIDTH, 0.0);
+                    intersects(top, anchor, &beam_bounds)
+                        || (supporting_structure
+                            .is_none_or(|(support_index, _)| support_index != index)
+                            && (intersects(footing, top, &beam_bounds)
+                                || intersects(
+                                    footing,
+                                    footing + Vec3::new(0.0, 0.0, FOOTER_HEIGHT),
+                                    &footer_bounds,
+                                )))
+                })
+            {
                 continue;
             }
             selected = Some(Support { anchor, footing });
             break;
         }
-        supports.push(selected.ok_or(SupportError::SearchExhausted)?);
+        supports.push(selected.ok_or(SupportError::NoRoute)?);
     }
     Ok(supports)
 }
@@ -205,6 +206,7 @@ pub fn generate_supports_on_structures(
 fn boundary_candidates<'a>(
     anchor: Vec3,
     obstacles: impl Iterator<Item = &'a SupportObstacle>,
+    clearances: &[f64],
 ) -> Vec<(f64, f64)> {
     let mut candidate_x = vec![anchor.x];
     let mut candidate_y = vec![anchor.y];
@@ -216,20 +218,22 @@ fn boundary_candidates<'a>(
         {
             continue;
         }
-        for boundary in [
-            obstacle.min.x - FOOTER_HALF_WIDTH - 0.001,
-            obstacle.max.x + FOOTER_HALF_WIDTH + 0.001,
-        ] {
-            if (boundary - anchor.x).abs() <= 32.0 {
-                candidate_x.push(boundary);
+        for &clearance in clearances {
+            for boundary in [
+                obstacle.min.x - clearance - 0.001,
+                obstacle.max.x + clearance + 0.001,
+            ] {
+                if (boundary - anchor.x).abs() <= f64::from(SUPPORT_SEARCH_RADIUS_METRES) {
+                    candidate_x.push(boundary);
+                }
             }
-        }
-        for boundary in [
-            obstacle.min.y - FOOTER_HALF_WIDTH - 0.001,
-            obstacle.max.y + FOOTER_HALF_WIDTH + 0.001,
-        ] {
-            if (boundary - anchor.y).abs() <= 32.0 {
-                candidate_y.push(boundary);
+            for boundary in [
+                obstacle.min.y - clearance - 0.001,
+                obstacle.max.y + clearance + 0.001,
+            ] {
+                if (boundary - anchor.y).abs() <= f64::from(SUPPORT_SEARCH_RADIUS_METRES) {
+                    candidate_y.push(boundary);
+                }
             }
         }
     }
@@ -246,6 +250,60 @@ fn boundary_candidates<'a>(
             .total_cmp(&((second.0 - anchor.x).powi(2) + (second.1 - anchor.y).powi(2)))
     });
     candidates
+}
+
+fn footing_candidates<'a>(
+    anchor: Vec3,
+    obstacles: impl Iterator<Item = &'a SupportObstacle>,
+) -> impl Iterator<Item = (f64, f64)> + 'a {
+    let obstacles: Vec<_> = obstacles.collect();
+    let boundary_obstacles = obstacles.clone();
+    static NEARBY_OFFSETS: OnceLock<Vec<(i32, i32)>> = OnceLock::new();
+    let offsets = NEARBY_OFFSETS.get_or_init(|| {
+        let mut offsets: Vec<_> = (-8_i32..=8)
+            .flat_map(|dx| (-8_i32..=8).map(move |dy| (dx, dy)))
+            .collect();
+        offsets.sort_by_key(|(dx, dy)| (dx * dx + dy * dy, *dx, *dy));
+        offsets
+    });
+    offsets
+        .iter()
+        .map(move |&(dx, dy)| (anchor.x + f64::from(dx), anchor.y + f64::from(dy)))
+        .chain(
+            std::iter::once_with(move || {
+                boundary_candidates(anchor, boundary_obstacles.into_iter(), &[FOOTER_HALF_WIDTH])
+            })
+            .flatten(),
+        )
+        .chain(
+            std::iter::once_with(move || additional_footing_candidates(anchor, &obstacles))
+                .flatten(),
+        )
+}
+
+fn additional_footing_candidates(anchor: Vec3, obstacles: &[&SupportObstacle]) -> Vec<(f64, f64)> {
+    let radius_squared = f64::from(SUPPORT_SEARCH_RADIUS_METRES).powi(2);
+    let mut additional: Vec<_> = (-SUPPORT_SEARCH_RADIUS_METRES..=SUPPORT_SEARCH_RADIUS_METRES)
+        .flat_map(|dx| {
+            (-SUPPORT_SEARCH_RADIUS_METRES..=SUPPORT_SEARCH_RADIUS_METRES).map(move |dy| (dx, dy))
+        })
+        .filter(|(dx, dy)| f64::from(dx * dx + dy * dy) <= radius_squared)
+        .map(|(dx, dy)| (anchor.x + f64::from(dx), anchor.y + f64::from(dy)))
+        .collect();
+    additional.extend(boundary_candidates(
+        anchor,
+        obstacles.iter().copied(),
+        &[BEAM_CLEARANCE, FOOTER_HALF_WIDTH],
+    ));
+    additional.retain(|(x, y)| (x - anchor.x).powi(2) + (y - anchor.y).powi(2) <= radius_squared);
+    additional.sort_by(|first, second| {
+        ((first.0 - anchor.x).powi(2) + (first.1 - anchor.y).powi(2))
+            .total_cmp(&((second.0 - anchor.x).powi(2) + (second.1 - anchor.y).powi(2)))
+            .then_with(|| first.0.total_cmp(&second.0))
+            .then_with(|| first.1.total_cmp(&second.1))
+    });
+    additional.dedup_by(|first, second| first.0 == second.0 && first.1 == second.1);
+    additional
 }
 
 fn expanded(obstacle: &SupportObstacle, horizontal: f64, vertical: f64) -> SupportObstacle {
@@ -595,6 +653,44 @@ mod tests {
     }
 
     #[test]
+    fn support_obstacle_collision_checks_beam_brace_and_footer() {
+        let support = Support {
+            footing: Vec3::new(0.0, 0.0, 0.0),
+            anchor: Vec3::new(4.0, 4.0, 8.0),
+        };
+        for (min, max, expected) in [
+            (Vec3::new(0.1, 0.1, 3.0), Vec3::new(0.2, 0.2, 4.0), true),
+            (Vec3::new(1.9, 1.9, 7.9), Vec3::new(2.1, 2.1, 8.1), true),
+            (Vec3::new(0.3, 0.3, 0.0), Vec3::new(0.4, 0.4, 0.1), true),
+            (Vec3::new(0.0, 4.0, 4.0), Vec3::new(0.1, 4.1, 5.0), false),
+        ] {
+            assert_eq!(
+                support_intersects_obstacle(&support, &SupportObstacle { min, max }),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn grid_candidates_precede_closer_obstacle_boundaries() {
+        let anchor = Vec3::new(20.0, 20.0, 10.0);
+        let obstacle = SupportObstacle {
+            min: Vec3::new(20.1, 20.1, 0.0),
+            max: Vec3::new(20.2, 20.2, 1.0),
+        };
+        let candidates: Vec<_> = footing_candidates(anchor, std::iter::once(&obstacle)).collect();
+        let grid_index = candidates
+            .iter()
+            .position(|&point| point == (21.0, 20.0))
+            .unwrap();
+        let boundary_index = candidates
+            .iter()
+            .position(|&(x, y)| x.fract() != 0.0 || y.fract() != 0.0)
+            .unwrap();
+        assert!(grid_index < boundary_index);
+    }
+
+    #[test]
     fn detects_a_short_intersection_at_a_terrain_tile_corner() {
         let mut world = world();
         world.set_surface(
@@ -806,16 +902,16 @@ mod tests {
     }
 
     #[test]
-    fn routes_beyond_eight_metres_when_a_nearby_wall_blocks_footings() {
+    fn routes_beyond_eight_metres_within_the_bounded_search_radius() {
         let wall = SupportObstacle {
             min: Vec3::new(0.0, 0.0, -1.0),
-            max: Vec3::new(64.0, 17.0, 9.0),
+            max: Vec3::new(64.0, 24.0, 9.0),
         };
         let supports = generate_supports(&piece(), &world(), &[wall]).unwrap();
         assert!(
             supports
                 .iter()
-                .all(|support| support.footing.y > 17.0 + FOOTER_HALF_WIDTH)
+                .all(|support| support.footing.y > 24.0 + FOOTER_HALF_WIDTH)
         );
     }
 
@@ -870,27 +966,21 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_search_does_not_prove_no_route_exists() {
-        let wall = SupportObstacle {
-            min: Vec3::new(0.0, 0.0, -1.0),
-            max: Vec3::new(64.0, 50.0, 9.0),
-        };
+    fn reports_no_route_after_exhausting_the_bounded_search_domain() {
+        let world = world();
         let anchor = piece().sample(piece().length() / 2.0).position;
-        let footing = Vec3::new(anchor.x, 51.0, 0.0);
-        let top = Vec3::new(footing.x, footing.y, anchor.z);
+        let obstruction = SupportObstacle {
+            min: Vec3::new(-1.0, -1.0, -1.0),
+            max: Vec3::new(65.0, 65.0, anchor.z - BEAM_CLEARANCE - 0.01),
+        };
         assert!(!intersects(
-            footing,
-            top,
-            &expanded(&wall, FOOTER_HALF_WIDTH, 0.0)
-        ));
-        assert!(!intersects(
-            top,
             anchor,
-            &expanded(&wall, BEAM_CLEARANCE, BEAM_CLEARANCE)
+            anchor,
+            &expanded(&obstruction, BEAM_CLEARANCE, BEAM_CLEARANCE)
         ));
         assert_eq!(
-            generate_supports(&piece(), &world(), &[wall]),
-            Err(SupportError::SearchExhausted)
+            generate_supports(&piece(), &world, &[obstruction]),
+            Err(SupportError::NoRoute)
         );
     }
 

@@ -417,10 +417,10 @@ const tree = (theme: Theme, { id, description, height, shape }: TreeDesign): Sce
 export function sceneryDesigns(theme: Theme): SceneryDesign[] {
   return [
     ...theme.trees.map((design) => tree(theme, design)),
-    { id: "bush_round", description: "Round curly bush", width: 54, height: 44, anchorY: 32, rotates: false, frames: 1, draw: () => drawBush("bush_round", theme, COLORS.leafGreen, undefined) },
+    { id: "bush_round", description: "Round green bush", width: 54, height: 44, anchorY: 32, rotates: false, frames: 1, draw: () => drawBush("bush_round", theme, COLORS.leafGreen, undefined) },
     { id: "bush_flowering", description: "Bush with pink flowers", width: 54, height: 44, anchorY: 32, rotates: false, frames: 1, draw: () => drawBush("bush_flowering", theme, COLORS.leafTeal, COLORS.pink) },
-    { id: "bench", description: "Red park bench with curled yellow ends", width: 64, height: 56, anchorY: 36, rotates: true, frames: 1, draw: (view) => drawBench(theme, view) },
-    { id: "lamp", description: "Curly violet lamp post", width: 56, height: 78, anchorY: 66, rotates: true, frames: 1, draw: (view) => drawLamp(theme, view) },
+    { id: "bench", description: "Park bench with curved ends", width: 64, height: 56, anchorY: 36, rotates: true, frames: 1, draw: (view) => drawBench(theme, view) },
+    { id: "lamp", description: "Curved lamp post", width: 56, height: 78, anchorY: 66, rotates: true, frames: 1, draw: (view) => drawLamp(theme, view) },
     { id: "flower_bed", description: "Wooden flower bed with mixed blooms", width: 72, height: 62, anchorY: 42, rotates: true, frames: 1, draw: (view) => drawFlowerBed(theme, view) },
     { id: "fence", description: "Picket fence section along one tile edge", width: 72, height: 62, anchorY: 42, rotates: true, frames: 1, draw: (view) => drawFence(theme, view) },
     { id: "bin", description: theme.props.binFace ? "Smiling green bin with a yellow lid" : "Green bin with a yellow lid", width: 36, height: 44, anchorY: 34, rotates: false, frames: 1, draw: () => drawBin(theme) },

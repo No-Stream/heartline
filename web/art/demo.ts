@@ -36,8 +36,8 @@ function required<T>(value: T | null | undefined, what: string): T {
 }
 const element = <T extends HTMLElement>(id: string): T => required(document.getElementById(id) as T | null, `element #${id}`);
 
-const theme = themeNamed(new URLSearchParams(location.search).get("theme") ?? "candy");
-const ATLAS_DIRECTORY = theme.name === "candy" ? "./atlas" : `./themes/${theme.name}/atlas`;
+const theme = themeNamed(new URLSearchParams(location.search).get("theme") ?? "print-modern");
+const ATLAS_DIRECTORY = theme.name === "print-modern" ? "./atlas" : `./themes/${theme.name}/atlas`;
 document.documentElement.style.setProperty("--paper", theme.scene.background);
 document.documentElement.style.setProperty("--stage", theme.color(COLORS.grass));
 document.documentElement.style.setProperty("--stage-sides", theme.color(COLORS.grassAlternate));

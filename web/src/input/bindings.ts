@@ -14,7 +14,8 @@ export function bindInput(canvas: HTMLCanvasElement, dispatch: (action: InputAct
     canvas.setPointerCapture(event.pointerId);
   };
   const move = (event: PointerEvent): void => {
-    if (!pointer || pointer.id !== event.pointerId) return;
+    if (!pointer) { dispatch({ type: "hover", position: point(event) }); return; }
+    if (pointer.id !== event.pointerId) return;
     const position = point(event);
     if (!pointer.dragging && Math.hypot(position.x - pointer.start.x, position.y - pointer.start.y) < 4) return;
     pointer.dragging = true;
@@ -53,6 +54,8 @@ export function bindInput(canvas: HTMLCanvasElement, dispatch: (action: InputAct
     }
     if (action) { event.preventDefault(); dispatch(action); }
   };
+  const leave = (): void => { if (!pointer) dispatch({ type: "hover", position: null }); };
+  canvas.addEventListener("pointerleave", leave);
   canvas.addEventListener("pointerdown", down);
   canvas.addEventListener("pointermove", move);
   canvas.addEventListener("pointerup", up);
@@ -60,6 +63,7 @@ export function bindInput(canvas: HTMLCanvasElement, dispatch: (action: InputAct
   canvas.addEventListener("wheel", wheel, { passive: false });
   canvas.addEventListener("keydown", key);
   return () => {
+    canvas.removeEventListener("pointerleave", leave);
     canvas.removeEventListener("pointerdown", down);
     canvas.removeEventListener("pointermove", move);
     canvas.removeEventListener("pointerup", up);

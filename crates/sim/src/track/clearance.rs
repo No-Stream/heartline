@@ -1,9 +1,15 @@
 //! Conservative sampled clearance envelopes in metres.
 use crate::track::{Piece, TrainConfiguration, Vec3};
 use crate::world::{Ground, World};
+use std::collections::HashMap;
 
 const SAMPLE_SPACING: f64 = 0.5;
 const TRACK_RADIUS: f64 = 0.15;
+const INDEX_CELL_SIZE: f64 = 16.0;
+
+fn index_cell(coordinate: f64) -> i32 {
+    (coordinate / INDEX_CELL_SIZE).floor() as i32
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ClearanceBox {
@@ -21,21 +27,67 @@ pub enum ClearanceCollision {
 }
 
 fn intersects(a: ClearanceBox, b: ClearanceBox) -> bool {
-    a.min.x < b.max.x
-        && a.max.x > b.min.x
-        && a.min.y < b.max.y
-        && a.max.y > b.min.y
-        && a.min.z < b.max.z
-        && a.max.z > b.min.z
+    a.min.x <= b.max.x
+        && a.max.x >= b.min.x
+        && a.min.y <= b.max.y
+        && a.max.y >= b.min.y
+        && a.min.z <= b.max.z
+        && a.max.z >= b.min.z
 }
 
-fn envelope(piece: &Piece, distance: f64, train: &TrainConfiguration) -> ClearanceBox {
+struct OrientedEnvelope {
+    centre: Vec3,
+    axes: [Vec3; 3],
+    half: [f64; 3],
+    bounds: ClearanceBox,
+}
+
+fn intersects_envelope(envelope: &OrientedEnvelope, obstacle: ClearanceBox) -> bool {
+    if !intersects(envelope.bounds, obstacle) {
+        return false;
+    }
+    let centre = (obstacle.min + obstacle.max) * 0.5;
+    let half = (obstacle.max - obstacle.min) * 0.5;
+    let world_axes = [
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(0.0, 0.0, 1.0),
+    ];
+    let delta = centre - envelope.centre;
+    let separated = |axis: Vec3| {
+        let radius = envelope
+            .axes
+            .iter()
+            .zip(envelope.half)
+            .map(|(basis, extent)| basis.dot(axis).abs() * extent)
+            .sum::<f64>();
+        let other = half.x * axis.x.abs() + half.y * axis.y.abs() + half.z * axis.z.abs();
+        axis.dot(delta).abs() > radius + other && axis.dot(axis) > 1e-20
+    };
+    !envelope
+        .axes
+        .iter()
+        .chain(world_axes.iter())
+        .copied()
+        .any(separated)
+        && !envelope
+            .axes
+            .iter()
+            .any(|a| world_axes.iter().any(|b| separated(a.cross(*b))))
+}
+
+fn envelope(
+    piece: &Piece,
+    distance: f64,
+    train: &TrainConfiguration,
+    spacing: f64,
+) -> OrientedEnvelope {
     let sample = piece.sample(distance);
     let left = sample.up.cross(sample.tangent);
     let centre = sample.position + sample.up * (train.height_metres / 2.0);
-    let half_length = train.length_metres / f64::from(train.cars) / 2.0 + SAMPLE_SPACING;
-    let half_width = train.width_metres / 2.0 + SAMPLE_SPACING;
-    let half_height = train.height_metres / 2.0 + SAMPLE_SPACING;
+    let half_length = train.length_metres / f64::from(train.cars) / 2.0 + spacing / 2.0;
+    let half_width = train.width_metres / 2.0;
+    let half_height = train.height_metres / 2.0;
     let extent = Vec3::new(
         sample.tangent.x.abs() * half_length
             + left.x.abs() * half_width
@@ -47,25 +99,129 @@ fn envelope(piece: &Piece, distance: f64, train: &TrainConfiguration) -> Clearan
             + left.z.abs() * half_width
             + sample.up.z.abs() * half_height,
     );
-    ClearanceBox {
-        min: centre - extent,
-        max: centre + extent,
+    OrientedEnvelope {
+        centre,
+        axes: [sample.tangent, left, sample.up],
+        half: [half_length, half_width, half_height],
+        bounds: ClearanceBox {
+            min: centre - extent,
+            max: centre + extent,
+        },
     }
 }
 
-fn samples(piece: &Piece) -> impl Iterator<Item = f64> + '_ {
-    let steps = (piece.length() / SAMPLE_SPACING).ceil() as usize;
+fn train_sample_spacing(train: &TrainConfiguration) -> f64 {
+    SAMPLE_SPACING.min(train.length_metres / f64::from(train.cars) / 2.0)
+}
+
+fn samples(piece: &Piece, spacing: f64) -> impl Iterator<Item = f64> + '_ {
+    let steps = (piece.length() / spacing).ceil() as usize;
     (0..=steps).map(move |index| piece.length() * index as f64 / steps as f64)
+}
+
+/// Cached rail samples for repeated clearance checks against the same track.
+pub struct ClearanceIndex {
+    pieces: Vec<Piece>,
+    samples: Vec<Vec<(f64, ClearanceBox)>>,
+    cells: HashMap<(i32, i32), Vec<(usize, usize)>>,
+}
+
+impl ClearanceIndex {
+    pub fn new(pieces: &[Piece]) -> Self {
+        let mut index = Self {
+            pieces: Vec::new(),
+            samples: Vec::new(),
+            cells: HashMap::new(),
+        };
+        for piece in pieces {
+            index.push(piece);
+        }
+        index
+    }
+
+    pub fn push(&mut self, piece: &Piece) {
+        let radius = TRACK_RADIUS + SAMPLE_SPACING / 2.0;
+        let extent = Vec3::new(radius, radius, radius);
+        let piece_samples: Vec<_> = samples(piece, SAMPLE_SPACING)
+            .map(|distance| {
+                let position = piece.sample(distance).position;
+                (
+                    distance,
+                    ClearanceBox {
+                        min: position - extent,
+                        max: position + extent,
+                    },
+                )
+            })
+            .collect();
+        let piece_index = self.pieces.len();
+        for (sample_index, (_, bounds)) in piece_samples.iter().enumerate() {
+            let centre = (bounds.min + bounds.max) * 0.5;
+            self.cells
+                .entry((index_cell(centre.x), index_cell(centre.y)))
+                .or_default()
+                .push((piece_index, sample_index));
+        }
+        self.pieces.push(piece.clone());
+        self.samples.push(piece_samples);
+    }
+
+    /// Retains and orders entries according to their current indices.
+    pub fn reorder(&mut self, indices: &[usize]) {
+        let mut seen = vec![false; self.pieces.len()];
+        for &index in indices {
+            assert!(!seen[index], "duplicate clearance index");
+            seen[index] = true;
+        }
+        self.pieces = indices
+            .iter()
+            .map(|&index| self.pieces[index].clone())
+            .collect();
+        self.samples = indices
+            .iter()
+            .map(|&index| self.samples[index].clone())
+            .collect();
+        self.cells.clear();
+        for (piece_index, piece_samples) in self.samples.iter().enumerate() {
+            for (sample_index, (_, bounds)) in piece_samples.iter().enumerate() {
+                let centre = (bounds.min + bounds.max) * 0.5;
+                self.cells
+                    .entry((index_cell(centre.x), index_cell(centre.y)))
+                    .or_default()
+                    .push((piece_index, sample_index));
+            }
+        }
+    }
 }
 
 /// Checks a piece against the world and supplied track and scenery.
 /// Connected track is ignored only in the immediate vicinity of a common connector.
-/// The envelope is a conservative axis-aligned bound of sampled oriented train cars.
+/// The envelope uses sampled oriented train cars and conservative rail bounds.
 pub fn check_clearance(
     world: &World,
     piece: &Piece,
     train: &TrainConfiguration,
     existing_track: &[Piece],
+    scenery: &[ClearanceBox],
+) -> Result<(), ClearanceCollision> {
+    check_clearance_indexed(
+        world,
+        piece,
+        train,
+        &ClearanceIndex::new(existing_track),
+        None,
+        scenery,
+    )
+}
+
+/// Checks a piece using cached track samples. `excluded_piece` omits one entry
+/// when checking an existing piece against the rest of the index.
+pub fn check_clearance_indexed(
+    world: &World,
+    piece: &Piece,
+    train: &TrainConfiguration,
+    index: &ClearanceIndex,
+    excluded_piece: Option<usize>,
     scenery: &[ClearanceBox],
 ) -> Result<(), ClearanceCollision> {
     assert!(
@@ -96,8 +252,45 @@ pub fn check_clearance(
         (half_length * half_length + half_width * half_width + envelope_height * envelope_height)
             .sqrt()
             + (TRACK_RADIUS + SAMPLE_SPACING / 2.0) * 3.0_f64.sqrt();
-    for distance in samples(piece) {
-        let bounds = envelope(piece, distance, train);
+    // Adjacent samples are at most half a car length apart, including for
+    // non-default trains. The longitudinal padding covers translation between
+    // samples; orientation between samples remains an approximation.
+    let spacing = train_sample_spacing(train);
+    let envelopes: Vec<_> = samples(piece, spacing)
+        .map(|distance| (distance, envelope(piece, distance, train, spacing)))
+        .collect();
+    let mut overall = envelopes[0].1.bounds;
+    for (_, envelope) in &envelopes[1..] {
+        overall.min = Vec3::new(
+            overall.min.x.min(envelope.bounds.min.x),
+            overall.min.y.min(envelope.bounds.min.y),
+            overall.min.z.min(envelope.bounds.min.z),
+        );
+        overall.max = Vec3::new(
+            overall.max.x.max(envelope.bounds.max.x),
+            overall.max.y.max(envelope.bounds.max.y),
+            overall.max.z.max(envelope.bounds.max.z),
+        );
+    }
+    let radius = TRACK_RADIUS + SAMPLE_SPACING / 2.0;
+    let mut nearby_track = Vec::new();
+    for x in index_cell(overall.min.x - radius)..=index_cell(overall.max.x + radius) {
+        for y in index_cell(overall.min.y - radius)..=index_cell(overall.max.y + radius) {
+            if let Some(entries) = index.cells.get(&(x, y)) {
+                for &(piece_index, sample_index) in entries {
+                    if Some(piece_index) == excluded_piece {
+                        continue;
+                    }
+                    let (distance, bounds) = index.samples[piece_index][sample_index];
+                    if intersects(overall, bounds) {
+                        nearby_track.push((&index.pieces[piece_index], distance, bounds));
+                    }
+                }
+            }
+        }
+    }
+    for (distance, oriented) in envelopes {
+        let bounds = oriented.bounds;
         if bounds.min.x < 0.0
             || bounds.min.y < 0.0
             || bounds.max.x > f64::from(width) * 4.0
@@ -112,9 +305,28 @@ pub fn check_clearance(
                 ..=(bounds.max.y / 4.0).floor().min(f64::from(height - 1)) as u16
             {
                 let min_height = bounds.min.z.floor().max(f64::from(i16::MIN)) as i16;
+                if world.surface(x, y).corners.into_iter().max().unwrap() <= min_height {
+                    continue;
+                }
                 let max_height = bounds.max.z.ceil().min(f64::from(i16::MAX)) as i16;
                 for z in min_height..max_height {
-                    if matches!(world.ground(x, y, z), Ground::Solid | Ground::SurfaceSlope) {
+                    if matches!(world.ground(x, y, z), Ground::Solid | Ground::SurfaceSlope)
+                        && intersects_envelope(
+                            &oriented,
+                            ClearanceBox {
+                                min: Vec3::new(
+                                    f64::from(x) * 4.0,
+                                    f64::from(y) * 4.0,
+                                    f64::from(z),
+                                ),
+                                max: Vec3::new(
+                                    f64::from(x) * 4.0 + 4.0,
+                                    f64::from(y) * 4.0 + 4.0,
+                                    f64::from(z) + 1.0,
+                                ),
+                            },
+                        )
+                    {
                         return Err(ClearanceCollision::Terrain);
                     }
                 }
@@ -132,34 +344,23 @@ pub fn check_clearance(
                     z + if path.slope.is_some() { 2.0 } else { 1.0 },
                 ),
             };
-            if intersects(bounds, path_bounds) {
+            if intersects_envelope(&oriented, path_bounds) {
                 return Err(ClearanceCollision::Path);
             }
         }
-        if scenery.iter().any(|obstacle| intersects(bounds, *obstacle)) {
+        if scenery
+            .iter()
+            .any(|obstacle| intersects_envelope(&oriented, *obstacle))
+        {
             return Err(ClearanceCollision::Scenery);
         }
-        for other in existing_track {
-            for other_distance in samples(other) {
-                let near_entry = piece.entry == other.exit
-                    && distance + (other.length() - other_distance) <= connector_allowance;
-                let near_exit = piece.exit == other.entry
-                    && (piece.length() - distance) + other_distance <= connector_allowance;
-                if near_entry || near_exit {
-                    continue;
-                }
-                let position = other.sample(other_distance).position;
-                let radius = TRACK_RADIUS + SAMPLE_SPACING / 2.0;
-                let extent = Vec3::new(radius, radius, radius);
-                if intersects(
-                    bounds,
-                    ClearanceBox {
-                        min: position - extent,
-                        max: position + extent,
-                    },
-                ) {
-                    return Err(ClearanceCollision::Track);
-                }
+        for (other, other_distance, other_bounds) in &nearby_track {
+            let near_entry = piece.entry == other.exit
+                && distance + (other.length() - other_distance) <= connector_allowance;
+            let near_exit = piece.exit == other.entry
+                && (piece.length() - distance) + other_distance <= connector_allowance;
+            if !near_entry && !near_exit && intersects_envelope(&oriented, *other_bounds) {
+                return Err(ClearanceCollision::Track);
             }
         }
     }
@@ -235,6 +436,34 @@ mod tests {
     }
 
     #[test]
+    fn sloped_terrain_blocks_below_highest_corner_but_not_above_it() {
+        let piece = straight(4, 4, 3);
+        let train = hybrid_model().train;
+        let mut map = world(0);
+        map.set_surface(
+            3,
+            2,
+            Surface {
+                corners: [0, 0, 7, 7],
+                water: None,
+            },
+        );
+        assert_eq!(
+            check_clearance(&map, &piece, &train, &[], &[]),
+            Err(ClearanceCollision::Terrain)
+        );
+        map.set_surface(
+            3,
+            2,
+            Surface {
+                corners: [0, 0, 6, 6],
+                water: None,
+            },
+        );
+        assert_eq!(check_clearance(&map, &piece, &train, &[], &[]), Ok(()));
+    }
+
+    #[test]
     fn clearance_uses_train_width() {
         let piece = straight(4, 4, 3);
         let mut train = hybrid_model().train;
@@ -261,6 +490,85 @@ mod tests {
             }
         }
         assert!(check_clearance(&map, &piece, &train, &[], &[]).is_ok());
+    }
+
+    #[test]
+    fn short_car_samples_are_closer_than_its_length_and_detect_overlap() {
+        let piece = straight(4, 4, 3);
+        let mut train = hybrid_model().train;
+        train.length_metres = 0.2;
+        train.cars = 1;
+        let distances: Vec<_> = samples(&piece, train_sample_spacing(&train)).collect();
+        assert!(
+            distances
+                .windows(2)
+                .all(|pair| pair[1] - pair[0] <= train.length_metres / 2.0 + 1e-10)
+        );
+        let position = piece.sample(0.25).position + Vec3::new(0.0, 0.0, 0.5);
+        let extent = Vec3::new(0.01, 0.01, 0.01);
+        let obstacle = ClearanceBox {
+            min: position - extent,
+            max: position + extent,
+        };
+        assert_eq!(
+            check_clearance(&world(0), &piece, &train, &[], &[obstacle]),
+            Err(ClearanceCollision::Scenery)
+        );
+    }
+
+    #[test]
+    fn cached_track_checks_match_uncached_and_can_exclude_a_piece() {
+        let piece = straight(4, 4, 3);
+        let track = vec![piece.clone(), straight(12, 4, 3)];
+        let index = ClearanceIndex::new(&track);
+        let map = world(0);
+        let train = hybrid_model().train;
+        assert_eq!(
+            check_clearance_indexed(&map, &piece, &train, &index, None, &[]),
+            check_clearance(&map, &piece, &train, &track, &[])
+        );
+        assert_eq!(
+            check_clearance_indexed(&map, &piece, &train, &index, Some(0), &[]),
+            check_clearance(&map, &piece, &train, &track[1..], &[])
+        );
+    }
+
+    #[test]
+    fn cached_track_can_be_reordered_and_extended() {
+        let first = straight(4, 4, 3);
+        let second = straight(12, 4, 3);
+        let mut index = ClearanceIndex::new(&[first.clone(), second.clone()]);
+        index.reorder(&[1]);
+        index.push(&first);
+        let map = world(0);
+        let train = hybrid_model().train;
+        assert_eq!(
+            check_clearance_indexed(&map, &first, &train, &index, Some(1), &[]),
+            check_clearance(&map, &first, &train, &[second], &[])
+        );
+        assert_eq!(
+            check_clearance_indexed(&map, &first, &train, &index, Some(0), &[]),
+            Err(ClearanceCollision::Track)
+        );
+    }
+
+    #[test]
+    fn cached_track_finds_collisions_across_spatial_bin_boundaries() {
+        let piece = straight(8, 8, 3);
+        let mut track = vec![straight(4, 8, 3), straight(8, 8, 3), straight(12, 8, 3)];
+        let mut index = ClearanceIndex::new(&track);
+        let map = world(0);
+        let train = hybrid_model().train;
+        assert_eq!(
+            check_clearance_indexed(&map, &piece, &train, &index, Some(0), &[]),
+            Err(ClearanceCollision::Track)
+        );
+        index.reorder(&[2, 0]);
+        track.remove(1);
+        assert_eq!(
+            check_clearance_indexed(&map, &piece, &train, &index, None, &[]),
+            check_clearance(&map, &piece, &train, &track, &[])
+        );
     }
 
     #[test]
@@ -318,6 +626,101 @@ mod tests {
         assert_eq!(
             check_clearance(&map, &piece, &hybrid_model().train, &[connected_loop], &[]),
             Err(ClearanceCollision::Track)
+        );
+    }
+}
+
+#[cfg(test)]
+mod tight_clearance_tests {
+    use super::*;
+    use crate::track::{PieceId, TrackState, catalog, hybrid_model};
+    use crate::world::Surface;
+
+    #[test]
+    fn half_metre_near_miss_passes_and_overlap_fails() {
+        let piece = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .unwrap()
+            .at(TrackState {
+                x: 20,
+                y: 20,
+                z: 5,
+                ..TrackState::origin()
+            })
+            .unwrap();
+        let train = hybrid_model().train;
+        let map = World::new(
+            64,
+            64,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let centre = piece.sample(piece.length() / 2.0).position;
+        let obstacle = |gap: f64| ClearanceBox {
+            min: Vec3::new(
+                centre.x - 0.2,
+                centre.y + train.width_metres / 2.0 + gap,
+                centre.z + 0.5,
+            ),
+            max: Vec3::new(
+                centre.x + 0.2,
+                centre.y + train.width_metres / 2.0 + gap + 0.2,
+                centre.z + 1.0,
+            ),
+        };
+        assert_eq!(
+            check_clearance(&map, &piece, &train, &[], &[obstacle(0.5)]),
+            Ok(())
+        );
+        assert_eq!(
+            check_clearance(&map, &piece, &train, &[], &[obstacle(-0.1)]),
+            Err(ClearanceCollision::Scenery)
+        );
+    }
+    #[test]
+    fn diagonal_train_allows_half_metre_near_miss() {
+        let piece = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .unwrap()
+            .at(TrackState {
+                x: 20,
+                y: 20,
+                z: 5,
+                heading: crate::track::Heading::NorthEast,
+                ..TrackState::origin()
+            })
+            .unwrap();
+        let train = hybrid_model().train;
+        let map = World::new(
+            64,
+            64,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let sample = piece.sample(piece.length() / 2.0);
+        let left = sample.up.cross(sample.tangent);
+        let obstacle = |gap: f64| {
+            let centre =
+                sample.position + left * (train.width_metres / 2.0 + gap) + sample.up * 1.0;
+            let extent = Vec3::new(0.05, 0.05, 0.05);
+            ClearanceBox {
+                min: centre - extent,
+                max: centre + extent,
+            }
+        };
+        assert_eq!(
+            check_clearance(&map, &piece, &train, &[], &[obstacle(0.5)]),
+            Ok(())
+        );
+        assert_eq!(
+            check_clearance(&map, &piece, &train, &[], &[obstacle(-0.1)]),
+            Err(ClearanceCollision::Scenery)
         );
     }
 }

@@ -1,11 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="72" height="40" viewBox="0 0 72 40" data-anchor-x="36" data-anchor-y="20" data-description="Water tile with drifting ripples">
+<defs><filter id="texture" x="-4%" y="-4%" width="108%" height="108%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" seed="11" result="grain"/><feDisplacementMap in="SourceGraphic" in2="grain" scale="0.35" xChannelSelector="R" yChannelSelector="G" result="rough"/><feColorMatrix in="grain" type="matrix" values="0 0 0 0 0.949  0 0 0 0 0.918  0 0 0 0 0.859  0 0 0 -30 6.0" result="specks"/><feComponentTransfer in="specks" result="faintSpecks"><feFuncA type="linear" slope="0.45"/></feComponentTransfer><feComposite in="faintSpecks" in2="rough" operator="in" result="specksOnInk"/><feMerge><feMergeNode in="rough"/><feMergeNode in="specksOnInk"/></feMerge></filter></defs>
+<g filter="url(#texture)">
 <g transform="translate(36 20)">
-<path d="M0 -16.4L32.8 0L0 16.4L-32.8 0Z" fill="#57cfe6"/>
-<path d="M-2.11 8.05q3.35 -1.4 6.7 0t6.7 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
-<path d="M2.88 3.88q3.14 -1.4 6.28 0t6.28 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
-<path d="M-0.78 -5.1q1.89 -1.4 3.78 0t3.78 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
-<path d="M-9.4 5.12q3.03 -1.4 6.05 0t6.05 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
-<path d="M7.09 0.72q2.2 -1.4 4.39 0t4.39 0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
-<path d="M-32 0L0 -16L32 0L28.8 1.2L0 -13.6L-28.8 1.2Z" fill="#55b1d3" fill-opacity="0.5"/>
+<path d="M0 -16.4L32.8 0L0 16.4L-32.8 0Z" fill="#6a8f85"/>
+<path d="M-2.11 8.05q3.35 -1.4 6.7 0t6.7 0" fill="none" stroke="#f2eadb" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M2.88 3.88q3.14 -1.4 6.28 0t6.28 0" fill="none" stroke="#f2eadb" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M-0.78 -5.1q1.89 -1.4 3.78 0t3.78 0" fill="none" stroke="#f2eadb" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M-9.4 5.12q3.03 -1.4 6.05 0t6.05 0" fill="none" stroke="#f2eadb" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M7.09 0.72q2.2 -1.4 4.39 0t4.39 0" fill="none" stroke="#f2eadb" stroke-opacity="0.55" stroke-width="0.8" stroke-linecap="round"/>
+<path d="M-32 0L0 -16L32 0L28.8 1.2L0 -13.6L-28.8 1.2Z" fill="#516860" fill-opacity="0.5"/>
+</g>
 </g>
 </svg>

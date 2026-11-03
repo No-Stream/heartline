@@ -10,7 +10,10 @@ export type InputAction =
   | { readonly type: "pan"; readonly dx: number; readonly dy: number }
   | { readonly type: "zoom"; readonly factor: number; readonly anchor: ScreenPoint }
   | { readonly type: "rotate"; readonly turns: number }
+  | { readonly type: "hover"; readonly position: ScreenPoint | null }
+  | { readonly type: "station-placement"; readonly enabled: boolean }
+  | { readonly type: "station-height"; readonly height: number }
   | { readonly type: "select"; readonly position: ScreenPoint }
   | ConstructionAction;
 
-export type CameraAction = Exclude<InputAction, { readonly type: "select" } | ConstructionAction>;
+export type CameraAction = Exclude<InputAction, { readonly type: "select" | "hover" | "station-placement" | "station-height" } | ConstructionAction>;

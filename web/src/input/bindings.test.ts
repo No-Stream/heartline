@@ -32,6 +32,18 @@ describe("input bindings", () => {
     expect(actions).toHaveLength(2);
   });
 
+  it("reports pointer movement and exit through the action layer", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    surface.dispatchEvent(event("pointermove", { pointerId: 1, clientX: 60, clientY: 70 }));
+    surface.dispatchEvent(event("pointerleave", {}));
+    expect(actions).toEqual([
+      { type: "hover", position: { x: 100, y: 100 } },
+      { type: "hover", position: null },
+    ]);
+  });
+
   it("maps wheel and keyboard to abstract zoom and rotation actions", () => {
     const surface = new Surface();
     const actions: InputAction[] = [];
