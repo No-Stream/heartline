@@ -22,9 +22,27 @@ export function constructionRiderPositions(poses: Float32Array, riders: Uint32Ar
   return result;
 }
 
+export interface FrameLogEntry {
+  now: number;
+  tickCount: number;
+  renderTick: number;
+  interpolation: number;
+  trainX: number;
+  trainY: number;
+  trainZ: number;
+}
+
+export interface SnapshotArrivalEntry {
+  now: number;
+  sentAt: number;
+  tickCount: number;
+}
+
 export interface GameTest {
   ready: boolean;
   tickCount(): number;
+  frameLog(): readonly FrameLogEntry[];
+  snapshotArrivals(): readonly SnapshotArrivalEntry[];
   guests(): readonly WorldSprite[];
   riders(): readonly { id: string; car: number; seat: number; x: number; y: number; z: number }[];
   facilities(): readonly Facility[];

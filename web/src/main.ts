@@ -5,7 +5,7 @@ import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
 import type { CameraAction, InputAction } from "./input/actions";
-import { constructionRiderPositions, validateBlockAnalysisBudget, type GameTest } from "./game-test";
+import { constructionRiderPositions, validateBlockAnalysisBudget, type FrameLogEntry, type GameTest, type SnapshotArrivalEntry } from "./game-test";
 import { blockLayoutChanged } from "./block-analysis-progress";
 import { createWorldRenderer, loadAtlas, type AtmospherePass, type WorldView, type WorldSprite } from "./render/index";
 import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, lightingAt, NOON, printOnBackdrop, START_PHASE, sunAt } from "./render/daylight";
@@ -75,6 +75,9 @@ let current: CoasterSnapshot | undefined;
 const renderClock = new RenderClock<CoasterSnapshot>(30);
 const noGeometry = new Float32Array();
 const frozen = new URLSearchParams(location.search).has("test");
+const frameLogEnabled = new URLSearchParams(location.search).get("frameLog") === "1";
+const frameLogEntries: FrameLogEntry[] = [];
+const snapshotArrivalEntries: SnapshotArrivalEntry[] = [];
 const manualBlockAnalysis = frozen && new URLSearchParams(location.search).has("manualBlockAnalysis");
 const testAgents = frozen ? new URLSearchParams(location.search).get("agents") : null;
 const timing = new URLSearchParams(location.search).get("timing") === "work";
@@ -299,6 +302,8 @@ let renderedGuests: readonly WorldSprite[] = [];
 const gameTest: GameTest = {
   ready: false,
   tickCount() { return current?.tickCount ?? 0; },
+  frameLog() { return frameLogEnabled ? frameLogEntries.map((entry) => ({ ...entry })) : []; },
+  snapshotArrivals() { return frameLogEnabled ? snapshotArrivalEntries.map((entry) => ({ ...entry })) : []; },
   guests() { return renderedGuests; },
   riders() {
     return current ? constructionRiderPositions(current.constructionTrainPoses, current.constructionRiders) : [];
@@ -542,7 +547,7 @@ if (park !== "new" && park !== "demo") throw new RangeError("Invalid park");
 const guestCount = testAgents === null ? 12 : Number(testAgents);
 if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 500) throw new RangeError("Invalid test guest count");
 worker.postMessage({ type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
-worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"; requestId: number; recording: WorkerRecording } | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facility-access-preview"; requestId: number; rotation: number | undefined } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
+worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"; requestId: number; recording: WorkerRecording } | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facility-access-preview"; requestId: number; rotation: number | undefined } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
   const message = event.data;
   if (message.type === "session-export") {
     const inputs = pendingSessionExports.get(message.requestId);
@@ -613,6 +618,7 @@ worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
   } else if (message.type === "snapshot") {
+    if (frameLogEnabled) snapshotArrivalEntries.push({ now: performance.now(), sentAt: message.sentAt, tickCount: message.tickCount });
     if (!frozen && !renderClock.push(message)) return;
     previous = current;
     if (!frozen || !current || current.guestIds.length === 0 || advanceTicksComplete) current = message;
@@ -713,6 +719,17 @@ function frame(now: number): void {
       ...constructionEffects.quads(now, renderCamera, renderViewport),
     ],
   ], atmosphere);
+  if (frameLogEnabled && renderCurrent && trainPoses.length >= 11) {
+    frameLogEntries.push({
+      now,
+      tickCount: renderCurrent.tickCount,
+      renderTick: renderFrame?.tick ?? renderCurrent.tickCount,
+      interpolation,
+      trainX: trainPoses[1],
+      trainY: trainPoses[2],
+      trainZ: trainPoses[3],
+    });
+  }
   gameCanvas.dataset.drawnAgents = String(people.length);
   gameTest.ready = renderer.isContextAvailable() && (current?.guestIds.length ?? 0) > 0;
 }

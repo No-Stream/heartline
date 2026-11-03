@@ -92,7 +92,7 @@ function wake(forceSnapshot = false): void {
     const constructionTrainPoses = simulation.construction_active() ? simulation.construction_train_poses() : new Float32Array();
     const constructionRiders = simulation.construction_riders();
     workerScope.postMessage(
-      { type: "snapshot", tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, constructionRiders },
+      { type: "snapshot", sentAt: performance.now(), tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, constructionRiders },
       [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, constructionRiders.buffer],
     );
   }
