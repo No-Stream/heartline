@@ -2,6 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::guests::behavior::{Facility, KnownPlace, PlaceKind};
+use crate::state_hash::StateHasher;
 use crate::world::{Direction, Ground, Position, World};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,6 +112,23 @@ impl ParkFacilities {
     }
     pub fn buildings(&self) -> &[Building] {
         &self.buildings
+    }
+
+    pub fn state_hash(&self) -> u64 {
+        let mut hash = StateHasher::new();
+        hash.write_tag(b"ParkFacilities-v1");
+        hash.write_u32(self.next_id);
+        hash.write_len(self.buildings.len());
+        for building in &self.buildings {
+            hash.write_u32(building.id);
+            hash.write_u8(building.kind as u8);
+            hash.write_u16(building.position.x);
+            hash.write_u16(building.position.y);
+            hash.write_i16(building.position.height);
+            hash.write_u8(building.direction as u8);
+            hash.write_u16(building.price);
+        }
+        hash.finish()
     }
 
     /// Returns the path tiles and edges that face each placed building.
@@ -683,6 +701,29 @@ mod tests {
             slope: None,
         });
         world
+    }
+
+    #[test]
+    fn state_hash_is_reproducible_and_covers_facility_edits() {
+        let world = world();
+        let position = Position {
+            x: 2,
+            y: 2,
+            height: 0,
+        };
+        let mut first = ParkFacilities::new();
+        let mut second = ParkFacilities::new();
+        assert_eq!(first.state_hash(), second.state_hash());
+        let first_id = first
+            .place(&world, FacilityKind::Food, position, Direction::North)
+            .unwrap();
+        let second_id = second
+            .place(&world, FacilityKind::Food, position, Direction::North)
+            .unwrap();
+        assert_eq!(first_id, second_id);
+        assert_eq!(first.state_hash(), second.state_hash());
+        first.set_price(first_id, 8).unwrap();
+        assert_ne!(first.state_hash(), second.state_hash());
     }
 
     #[test]

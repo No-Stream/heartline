@@ -1,4 +1,5 @@
 use crate::physics::Circuit;
+use crate::state_hash::StateHasher;
 use crate::track::clearance::{
     ClearanceBox, ClearanceCollision, ClearanceIndex, check_clearance_indexed,
     check_reverse_track_clearance,
@@ -25,7 +26,6 @@ pub enum ConstructionError {
     Unavailable,
     ModelForbidden,
     AmbiguousConnection,
-    SupportSearchExhausted,
     NoSupportRoute,
     InvalidIndex,
     NotClosed,
@@ -108,6 +108,36 @@ impl Construction {
     }
     pub fn model(&self) -> &CoasterModel {
         &self.model
+    }
+
+    /// Stable fingerprint of the editable track state, excluding derived validation caches.
+    pub fn state_hash(&self) -> u64 {
+        let mut hash = StateHasher::new();
+        hash.write_tag(b"Construction-v1");
+        self.start.hash_into(&mut hash);
+        self.model.hash_into(&mut hash);
+        hash.write_len(self.pieces.len());
+        for piece in &self.pieces {
+            piece.hash_into(&mut hash);
+        }
+        hash.write_len(self.ids.len());
+        for &id in &self.ids {
+            hash.write_len(id);
+        }
+        hash.write_len(self.disconnected.len());
+        for segment in &self.disconnected {
+            hash.write_len(segment.ids.len());
+            for &id in &segment.ids {
+                hash.write_len(id);
+            }
+            hash.write_len(segment.pieces.len());
+            for piece in &segment.pieces {
+                piece.hash_into(&mut hash);
+            }
+        }
+        hash.write_len(self.next_id);
+        hash.write_bool(self.closed);
+        hash.finish()
     }
 
     pub fn choices(&self, world: &World, obstacles: &[SupportObstacle]) -> Vec<PieceChoice> {
@@ -571,7 +601,6 @@ fn same_geometry(first: &Piece, second: &Piece) -> bool {
 
 fn construction_support_error(error: SupportError) -> ConstructionError {
     match error {
-        SupportError::SearchExhausted => ConstructionError::SupportSearchExhausted,
         SupportError::NoRoute => ConstructionError::NoSupportRoute,
     }
 }

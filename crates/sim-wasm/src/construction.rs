@@ -44,11 +44,12 @@ impl WasmSimulation {
         self.select_compatible_piece();
         self.construction_train = None;
         self.recovered_station = None;
-        self.support_render_cache.clear();
+        self.park.support_render_cache.clear();
         self.construction_outcome = None;
         self.construction_recorder = None;
         self.construction_report = None;
         self.construction_message.clear();
+        self.refresh_construction_support_rendering();
     }
 
     pub fn construction_active(&self) -> bool {
@@ -60,16 +61,19 @@ impl WasmSimulation {
             "model:hybrid" => {
                 self.construction_model = ConstructionModel::Hybrid;
                 self.construction_message.clear();
+                self.refresh_construction_support_rendering();
                 return;
             }
             "model:velocity_viper" => {
                 self.construction_model = ConstructionModel::MultiLaunch;
                 self.construction_message.clear();
+                self.refresh_construction_support_rendering();
                 return;
             }
             "model:wooden_twister" => {
                 self.construction_model = ConstructionModel::WoodenTwister;
                 self.construction_message.clear();
+                self.refresh_construction_support_rendering();
                 return;
             }
             _ => {}
@@ -83,6 +87,11 @@ impl WasmSimulation {
         } else {
             "Unknown piece".into()
         };
+        if self.selected.is_some() {
+            self.refresh_construction_support_rendering();
+        } else {
+            self.construction_preview_supports_cache.clear();
+        }
     }
 
     pub fn construction_selected(&self) -> String {
@@ -176,12 +185,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_can_test(&self) -> bool {
-        self.construction.as_ref().is_some_and(|construction| {
-            construction.is_closed()
-                && construction.circuit().is_ok_and(|circuit| {
-                    circuit.length() > construction.model().train.length_metres
-                })
-        })
+        self.park.construction_can_test()
     }
 
     pub fn construction_is_open(&self) -> bool {
@@ -214,78 +218,29 @@ impl WasmSimulation {
     }
 
     pub fn construction_train_count(&self) -> usize {
-        self.block_layout.as_ref().map_or(0, |layout| {
-            self.desired_train_count.unwrap_or(1).min(layout.capacity())
-        })
+        self.park.construction_train_count()
     }
 
     pub fn construction_set_train_count(&mut self, count: usize) -> bool {
-        if count == 0
-            || self
-                .block_layout
-                .as_ref()
-                .is_none_or(|layout| count > layout.capacity())
-        {
-            return false;
-        }
-        self.desired_train_count = Some(count);
-        true
+        self.park.construction_set_train_count(count).is_ok()
     }
 
     pub fn construction_set_open(&mut self, open: bool) -> bool {
-        if !open {
-            self.close_live_coaster();
-            self.construction_message.clear();
-            return true;
-        }
-        if self.coaster_open {
-            return true;
-        }
-        if open && !self.construction_can_test() {
-            self.construction_message =
-                "A complete circuit is required to open the coaster.".into();
-            return false;
-        }
-        let construction = self.construction.as_ref().expect("complete coaster exists");
-        let Some(facility) = coaster_facility(&self.world, construction, COASTER_PLACE_ID, 0)
-        else {
-            self.construction_message = "Connect a queue and an exit path to the station.".into();
-            return false;
-        };
-        let circuit = construction
-            .circuit()
-            .expect("complete circuit checked above");
-        if self.block_layout.is_none() {
-            let train = construction.model().train.clone();
-            let config = block_physics_config();
-            let layout = match block_layout_for_open(&circuit, &train, config) {
-                Ok(layout) => layout,
-                Err(reason) => {
-                    self.set_block_error(reason);
-                    return false;
+        match self.park.construction_set_open(open) {
+            Ok(()) => true,
+            Err(error) => {
+                if matches!(
+                    error,
+                    theme_park_sim::park::block_analysis::BlockCommandError::Validation(_)
+                ) {
+                    self.record_block_error(error);
+                } else {
+                    self.park.construction_message =
+                        crate::command_errors::block_error_message(error).to_owned();
                 }
-            };
-            self.install_block_layout(layout, false);
-            self.block_manual_search = Some(
-                BlockManualSearch::new(circuit.clone(), train, config, Vec::new())
-                    .expect("baseline inputs were validated"),
-            );
-            self.block_baseline_validation = true;
+                false
+            }
         }
-        let operation = BlockOperation::new(
-            self.block_layout
-                .as_ref()
-                .expect("open coaster has a block layout")
-                .clone(),
-        );
-        self.coaster_operation = Some(operation);
-        self.coaster_facility = Some(facility);
-        self.construction_train = None;
-        self.construction_recorder = None;
-        self.construction_report = None;
-        self.coaster_open = true;
-        self.construction_message.clear();
-        true
     }
 
     /// Car index, seat index, and guest ID for each occupied seat.
@@ -314,19 +269,24 @@ impl WasmSimulation {
 
     pub fn construction_append(&mut self) {
         let obstacles = self.facility_obstacles();
+        let selected = self.selected;
+        let world = &self.park.world;
         let result = self
+            .park
             .construction
             .as_mut()
-            .zip(self.selected)
+            .zip(selected)
             .ok_or("Select a piece first".to_string())
             .and_then(|(construction, selected)| {
                 construction
-                    .append(selected, &self.world, &obstacles)
+                    .append(selected, world, &obstacles)
                     .map_err(construction_error)
             });
-        if result.is_ok() {
+        let changed = result.is_ok();
+        if changed {
             self.close_live_coaster();
             self.clear_block_layout();
+            self.park.support_render_cache.clear();
             self.construction_recorder = None;
             self.construction_report = None;
             self.construction_train = None;
@@ -334,6 +294,9 @@ impl WasmSimulation {
             self.select_compatible_piece();
         }
         self.construction_message = result.err().unwrap_or_default();
+        if changed {
+            self.refresh_construction_support_rendering();
+        }
     }
 
     pub fn construction_undo(&mut self) {
@@ -355,28 +318,38 @@ impl WasmSimulation {
             .as_mut()
             .ok_or("Construction is inactive".to_string())
             .and_then(|construction| construction.delete_from(index).map_err(construction_error));
-        if result.is_ok() {
+        let changed = result.is_ok();
+        if changed {
             self.close_live_coaster();
             self.clear_block_layout();
+            self.park.support_render_cache.clear();
             self.construction_recorder = None;
             self.construction_report = None;
-            let construction = self.construction.as_ref().expect("successful deletion");
-            let station = construction
-                .pieces()
-                .iter()
-                .chain(
-                    construction
-                        .disconnected_segments()
-                        .iter()
-                        .flat_map(|segment| &segment.pieces),
-                )
-                .find(|piece| piece.kind == PieceKind::Station)
-                .cloned();
-            if let (Some((circuit, train)), Some(station)) = (&mut self.construction_train, station)
+            let (station, train_configuration) = {
+                let construction = self
+                    .park
+                    .construction
+                    .as_ref()
+                    .expect("successful deletion");
+                let station = construction
+                    .pieces()
+                    .iter()
+                    .chain(
+                        construction
+                            .disconnected_segments()
+                            .iter()
+                            .flat_map(|segment| &segment.pieces),
+                    )
+                    .find(|piece| piece.kind == PieceKind::Station)
+                    .cloned();
+                (station, construction.model().train.clone())
+            };
+            if let (Some((circuit, train)), Some(station)) =
+                (&mut self.park.construction_train, station)
             {
                 *train = Train::new(
                     circuit,
-                    &construction.model().train,
+                    &train_configuration,
                     PhysicsConfig::default(),
                     station.length(),
                     0.0,
@@ -393,6 +366,9 @@ impl WasmSimulation {
             self.select_compatible_piece();
         }
         self.construction_message = result.err().unwrap_or_default();
+        if changed {
+            self.refresh_construction_support_rendering();
+        }
     }
 
     pub fn construction_close(&mut self) {
@@ -401,10 +377,14 @@ impl WasmSimulation {
             .as_mut()
             .ok_or("Construction is inactive".to_string())
             .and_then(|construction| construction.close().map_err(construction_error));
-        if result.is_ok() {
+        let changed = result.is_ok();
+        if changed {
             self.clear_block_layout();
         }
         self.construction_message = result.err().unwrap_or_default();
+        if changed {
+            self.refresh_construction_support_rendering();
+        }
     }
 
     pub fn construction_test(&mut self) {
@@ -486,51 +466,8 @@ impl WasmSimulation {
         )
     }
 
-    pub fn construction_supports(&mut self) -> Vec<f32> {
-        if !self.construction_preview_valid() {
-            return Vec::new();
-        }
-        let construction = self
-            .construction
-            .as_ref()
-            .expect("valid preview requires construction");
-        let placed: Vec<_> = construction
-            .piece_ids()
-            .iter()
-            .zip(construction.pieces())
-            .chain(
-                construction
-                    .disconnected_segments()
-                    .iter()
-                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
-            )
-            .collect();
-        let preview = self.construction_preview();
-        let piece = preview
-            .first()
-            .expect("valid preview requires a selected piece");
-        sync_support_obstacles(
-            &placed,
-            &construction.model().train,
-            &mut self.support_render_cache,
-        );
-        let mut obstacles: Vec<_> = placed
-            .iter()
-            .flat_map(|(id, _)| self.support_render_cache[id].obstacles.iter().copied())
-            .collect();
-        obstacles.extend(self.facility_obstacles());
-        match render_preview_supports(
-            piece,
-            &obstacles,
-            &self.world,
-            construction.model().support_style,
-        ) {
-            Ok(supports) => self.encode_construction_geometry(supports, 7),
-            Err(_) => {
-                self.construction_message = "Could not route preview supports.".into();
-                Vec::new()
-            }
-        }
+    pub fn construction_supports(&self) -> Vec<f32> {
+        self.construction_preview_supports_cache.clone()
     }
 
     pub fn construction_placed_rails(&self) -> Vec<f32> {
@@ -566,36 +503,8 @@ impl WasmSimulation {
         self.construction_render(render_ties, 13)
     }
 
-    pub fn construction_placed_supports(&mut self) -> Vec<f32> {
-        let facility_obstacles = self.facility_obstacles();
-        let Some(construction) = &self.construction else {
-            return Vec::new();
-        };
-        let entries: Vec<_> = construction
-            .piece_ids()
-            .iter()
-            .zip(construction.pieces())
-            .chain(
-                construction
-                    .disconnected_segments()
-                    .iter()
-                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
-            )
-            .collect();
-        match render_cached_supports(
-            &entries,
-            &self.world,
-            &construction.model().train,
-            construction.model().support_style,
-            &facility_obstacles,
-            &mut self.support_render_cache,
-        ) {
-            Ok(supports) => self.encode_construction_geometry(supports, 7),
-            Err(_) => {
-                self.construction_message = "Could not route supports for the placed track.".into();
-                Vec::new()
-            }
-        }
+    pub fn construction_placed_supports(&self) -> Vec<f32> {
+        self.construction_placed_supports_cache.clone()
     }
 
     pub fn construction_train_poses(&self) -> Vec<f32> {
@@ -637,5 +546,163 @@ impl WasmSimulation {
             self.recovered_station.as_ref(),
         );
         result
+    }
+}
+
+impl WasmSimulation {
+    fn construction_support_entries(&self) -> Option<Vec<(&usize, &Piece)>> {
+        let construction = self.construction.as_ref()?;
+        Some(
+            construction
+                .piece_ids()
+                .iter()
+                .zip(construction.pieces())
+                .chain(
+                    construction
+                        .disconnected_segments()
+                        .iter()
+                        .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+                )
+                .collect(),
+        )
+    }
+
+    fn construction_preview_supports_geometry(&self) -> Result<Vec<f32>, SupportError> {
+        if !self.construction_preview_valid() {
+            return Ok(Vec::new());
+        }
+        let construction = self
+            .construction
+            .as_ref()
+            .expect("valid preview requires construction");
+        let preview = self.construction_preview();
+        let Some(piece) = preview.first() else {
+            return Ok(Vec::new());
+        };
+        let mut obstacles: Vec<_> = self
+            .construction_support_entries()
+            .expect("valid preview requires construction")
+            .into_iter()
+            .flat_map(|(_, placed_piece)| {
+                track_support_obstacles(
+                    std::slice::from_ref(placed_piece),
+                    &construction.model().train,
+                )
+            })
+            .collect();
+        obstacles.extend(self.facility_obstacles());
+        render_preview_supports(
+            piece,
+            &obstacles,
+            &self.world,
+            construction.model().support_style,
+        )
+        .map(|supports| self.encode_construction_geometry(supports, 7))
+    }
+
+    pub(crate) fn refresh_construction_support_rendering(&mut self) {
+        let placed_supports = self.park.refresh_construction_supports();
+        let preview_supports = self.construction_preview_supports_geometry();
+        let placed_supports_failed = placed_supports.is_err();
+        let preview_supports_failed = preview_supports.is_err();
+
+        self.construction_placed_supports_cache = placed_supports
+            .map(|supports| self.encode_construction_geometry(supports, 7))
+            .unwrap_or_default();
+        self.construction_preview_supports_cache = preview_supports.unwrap_or_default();
+
+        if placed_supports_failed {
+            self.park.construction_message =
+                "Could not route supports for the placed track.".into();
+        } else if preview_supports_failed {
+            self.park.construction_message = "Could not route preview supports.".into();
+        } else if matches!(
+            self.park.construction_message.as_str(),
+            "Could not route supports for the placed track." | "Could not route preview supports."
+        ) {
+            self.park.construction_message.clear();
+        }
+    }
+}
+
+#[cfg(test)]
+mod getter_tests {
+    use super::WasmSimulation;
+
+    #[test]
+    fn support_render_getters_do_not_mutate_park_state() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        simulation.construction_select("Straight");
+        let message_before = simulation.park.construction_message.clone();
+        let preview_supports_before = simulation.construction_preview_supports_cache.clone();
+        let placed_supports_before = simulation.construction_placed_supports_cache.clone();
+        let cache_entry_count = simulation.park.support_render_cache.len();
+
+        assert!(!simulation.construction_supports().is_empty());
+        assert!(!simulation.construction_placed_supports().is_empty());
+
+        assert_eq!(simulation.park.construction_message, message_before);
+        assert_eq!(
+            simulation.construction_preview_supports_cache,
+            preview_supports_before
+        );
+        assert_eq!(
+            simulation.construction_placed_supports_cache,
+            placed_supports_before
+        );
+        assert_eq!(
+            simulation.park.support_render_cache.len(),
+            cache_entry_count
+        );
+    }
+
+    #[test]
+    fn support_render_errors_are_derived_without_mutating_park_state() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        for y in 95..105 {
+            for x in 95..110 {
+                simulation.set_world_surface(x, y, vec![100; 4], None);
+            }
+        }
+        let message_before = simulation.park.construction_message.clone();
+        let placed_supports_before = simulation.construction_placed_supports_cache.clone();
+        let cache_entry_count = simulation.park.support_render_cache.len();
+
+        assert!(simulation.construction_placed_supports().is_empty());
+        assert_eq!(
+            simulation.construction_message(),
+            "Could not route supports for the placed track."
+        );
+
+        assert_eq!(simulation.park.construction_message, message_before);
+        assert_eq!(
+            simulation.construction_placed_supports_cache,
+            placed_supports_before
+        );
+        assert_eq!(
+            simulation.park.support_render_cache.len(),
+            cache_entry_count
+        );
+    }
+
+    #[test]
+    fn newer_construction_command_error_overrides_cached_support_error() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        for y in 95..105 {
+            for x in 95..110 {
+                simulation.set_world_surface(x, y, vec![100; 4], None);
+            }
+        }
+        assert_eq!(
+            simulation.construction_message(),
+            "Could not route supports for the placed track."
+        );
+
+        simulation.construction_select("unknown-piece");
+
+        assert_eq!(simulation.construction_message(), "Unknown piece");
     }
 }

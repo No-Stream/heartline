@@ -7,7 +7,7 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
         start: point + super::Vec3::new(-40.0, 0.0, 0.0),
         end: point + super::Vec3::new(0.0, 40.0, 0.0),
     };
-    let baseline = super::scan_proximity_with_supports(
+    let baseline = theme_park_sim::track::proximity::scan_proximity_with_supports(
         &simulation.world,
         std::slice::from_ref(&piece),
         &simulation.train_configuration,
@@ -15,7 +15,7 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
         &[],
         &[],
     );
-    let diagonal = super::scan_proximity_with_supports(
+    let diagonal = theme_park_sim::track::proximity::scan_proximity_with_supports(
         &simulation.world,
         &[piece],
         &simulation.train_configuration,
@@ -24,24 +24,6 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
         &[segment],
     );
     assert_eq!(baseline.events_for_run(&[]), diagonal.events_for_run(&[]));
-}
-#[test]
-fn proximity_inputs_keep_routed_supports_as_segments() {
-    let mut simulation = super::WasmSimulation::new(42, 0);
-    let segment = super::SupportSegment {
-        start: super::Vec3::new(0.0, 0.0, 0.0),
-        end: super::Vec3::new(10.0, 10.0, 0.0),
-    };
-    simulation.support_render_cache.insert(
-        1,
-        super::SupportRenderCache {
-            obstacles: Vec::new(),
-            dependencies: Vec::new(),
-            world_revision: 0,
-            segments: Ok(vec![segment]),
-        },
-    );
-    assert_eq!(simulation.proximity_supports(), vec![segment]);
 }
 use super::WasmSimulation;
 
@@ -321,8 +303,14 @@ fn placed_support_cache_matches_full_render_after_track_changes() {
             record[0] = *entries[record[0] as usize].0 as f32;
         }
         let entry_count = entries.len();
+        assert_eq!(simulation.park.support_render_cache.len(), entry_count);
         assert_eq!(simulation.construction_placed_supports(), expected);
-        assert_eq!(simulation.support_render_cache.len(), entry_count);
+        assert_eq!(simulation.park.support_render_cache.len(), entry_count);
+        assert_eq!(
+            simulation.park.refresh_construction_supports().unwrap(),
+            expected
+        );
+        assert_eq!(simulation.park.support_render_cache.len(), entry_count);
         assert_eq!(simulation.construction_placed_supports(), expected);
     }
 }
@@ -505,19 +493,13 @@ fn lift_drop_circuit_completes_lap() {
     }
     assert!(simulation.construction_can_close());
     simulation.construction_close();
-    assert!(simulation.support_render_cache.is_empty());
+    assert!(!simulation.park.support_render_cache.is_empty());
     simulation.construction_test();
     for _ in 0..9000 {
         simulation.tick();
         if simulation.construction_message() == "Train completed a lap." {
-            assert!(!simulation.support_render_cache.is_empty());
-            assert!(
-                simulation.support_render_cache.values().any(|entry| !entry
-                    .segments
-                    .as_ref()
-                    .unwrap()
-                    .is_empty())
-            );
+            assert!(!simulation.park.support_render_cache.is_empty());
+            assert!(!simulation.park.proximity_supports().is_empty());
             return;
         }
         if simulation.construction_outcome.is_some() {

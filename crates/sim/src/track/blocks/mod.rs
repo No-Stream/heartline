@@ -1,5 +1,8 @@
 //! Placement and validation of powered block-brake runs.
+mod throughput;
+
 use crate::physics::{BlockOperation, Circuit, GRAVITY, PhysicsConfig, TIME_STEP, Train};
+use crate::state_hash::StateHasher;
 use crate::track::{Bank, Piece, PieceKind, Slope, TrainConfiguration};
 use std::collections::HashMap;
 use std::future::{Future, poll_fn};
@@ -8,8 +11,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
+pub use throughput::ThroughputEstimator;
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod hash_tests;
 
 #[derive(Clone, Debug)]
 pub struct BrakeRun {
@@ -17,6 +25,20 @@ pub struct BrakeRun {
     pub boundary_metres: f64,
     pub length_metres: f64,
     pub piece_indices: BrakePieces,
+}
+
+fn write_brake_run(hash: &mut StateHasher, run: &BrakeRun) {
+    hash.write_f64(run.start_metres);
+    hash.write_f64(run.boundary_metres);
+    hash.write_f64(run.length_metres);
+    write_indices(hash, &run.piece_indices);
+}
+
+fn write_indices(hash: &mut StateHasher, indices: &[usize]) {
+    hash.write_len(indices.len());
+    for &index in indices {
+        hash.write_len(index);
+    }
 }
 
 /// A contiguous view into the circuit's shared, doubled sequence of piece indices.
@@ -392,6 +414,46 @@ pub struct BlockManualSearch {
 }
 
 impl BlockManualSearch {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"BlockManualSearch-v1");
+        self.circuit.hash_into(hash);
+        self.train.hash_into(hash);
+        self.config.hash_into(hash);
+        hash.write_len(self.choices.len());
+        for choices in &self.choices {
+            hash.write_len(choices.len());
+            for run in choices {
+                write_brake_run(hash, run);
+            }
+        }
+        hash.write_option(self.indices.as_ref(), |hash, indices| {
+            write_indices(hash, indices);
+        });
+        // advance() polls once per work unit; the future is a deterministic replay of these inputs.
+        hash.write_bool(self.active.is_some());
+        hash.write_option(self.result.as_ref(), |hash, result| match result {
+            Ok(layout) => {
+                hash.write_u8(0);
+                layout.hash_into(hash);
+            }
+            Err(error) => {
+                hash.write_u8(1);
+                hash.write_bytes(error.as_bytes());
+            }
+        });
+        hash.write_option(self.best.as_ref(), |hash, layout| layout.hash_into(hash));
+        hash.write_option(self.first_error, |hash, error| {
+            hash.write_bytes(error.as_bytes());
+        });
+        hash.write_option(self.first_unverified_error, |hash, error| {
+            hash.write_bytes(error.as_bytes());
+        });
+        hash.write_len(self.unverified_upper_bound);
+        hash.write_len(self.active_upper_bound);
+        hash.write_len(self.maximum_capacity);
+        hash.write_len(self.work_completed);
+    }
+
     pub fn new(
         circuit: Circuit,
         train: TrainConfiguration,
@@ -625,6 +687,33 @@ pub struct BlockPlacementSearch {
 }
 
 impl BlockPlacementSearch {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"BlockPlacementSearch-v1");
+        self.circuit.hash_into(hash);
+        self.train.hash_into(hash);
+        self.config.hash_into(hash);
+        hash.write_len(self.candidates.len());
+        for run in &self.candidates {
+            write_brake_run(hash, run);
+        }
+        hash.write_len(self.search_size);
+        write_indices(hash, &self.selected);
+        write_indices(hash, &self.next_indices);
+        hash.write_len(self.bootstrap.len());
+        for indices in &self.bootstrap {
+            write_indices(hash, indices);
+        }
+        // The active validation future is determined by these inputs and the poll count.
+        hash.write_bool(self.active.is_some());
+        hash.write_len(self.active_brake_count);
+        hash.write_bool(self.active_baseline);
+        self.best.hash_into(hash);
+        hash.write_len(self.maximum_brakes);
+        hash.write_len(self.work_completed);
+        hash.write_bool(self.complete);
+        hash.write_len(self.unverified_upper_bound);
+    }
+
     pub fn new(
         circuit: Circuit,
         train: TrainConfiguration,
@@ -846,6 +935,32 @@ impl BlockPlacementSearch {
 }
 
 impl BlockLayout {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"BlockLayout-v1");
+        hash.write_len(self.boundaries.len());
+        for &boundary in &self.boundaries {
+            hash.write_f64(boundary);
+        }
+        hash.write_len(self.runs.len());
+        for run in &self.runs {
+            hash.write_f64(run.start_metres);
+            hash.write_f64(run.boundary_metres);
+            hash.write_f64(run.length_metres);
+            hash.write_len(run.piece_indices.len());
+            for &piece_index in &run.piece_indices {
+                hash.write_len(piece_index);
+            }
+        }
+        hash.write_f64(self.train_length);
+        hash.write_f64(self.circuit_length);
+        self.circuit.hash_into(hash);
+        self.train.hash_into(hash);
+        self.config.hash_into(hash);
+        hash.write_len(self.capacity);
+        hash.write_bool(self.capacity_search_complete);
+        hash.write_bool(self.placement_search_complete);
+    }
+
     /// Permit a single train while its first complete circuit is still unverified.
     pub fn unverified_baseline(
         circuit: &Circuit,

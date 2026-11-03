@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::executor::{Executor, SequentialExecutor};
 use crate::guests::pathfinding::Graph;
 use crate::guests::{GuestId, GuestStore, generate_guests};
+use crate::state_hash::StateHasher;
 use crate::world::{Direction, Path, Position, World};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -550,6 +551,48 @@ impl WalkingSimulation {
             hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
         }
         hash
+    }
+
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"WalkingSimulation-v1");
+        hash.write_u64(self.seed);
+        hash.write_option(self.entrance, |hash, position| {
+            hash.write_u16(position.x);
+            hash.write_u16(position.y);
+            hash.write_i16(position.height);
+        });
+        hash.write_len(self.guests.len());
+        for guest in &self.guests {
+            hash.write_f32(guest.x);
+            hash.write_f32(guest.y);
+            hash.write_f32(guest.height);
+            hash.write_f32(guest.heading_x);
+            hash.write_f32(guest.heading_y);
+            hash.write_f32(guest.distance);
+            hash.write_bool(guest.moving);
+            hash.write_option(guest.path, |hash, position| {
+                hash.write_u16(position.x);
+                hash.write_u16(position.y);
+                hash.write_i16(position.height);
+            });
+            hash.write_len(guest.node);
+            hash.write_len(guest.next);
+            hash.write_f32(guest.progress);
+            hash.write_u32(guest.trip);
+            hash.write_len(guest.goal);
+            hash.write_f32(guest.offset);
+        }
+        hash.write_len(self.group_for_guest.len());
+        for &group in &self.group_for_guest {
+            hash.write_len(group);
+        }
+        hash.write_len(self.group_speeds.len());
+        for &speed in &self.group_speeds {
+            hash.write_f32(speed);
+        }
+        self.traits.hash_into(hash);
+        self.graph.hash_into(hash);
+        hash.write_u64(self.tick_count);
     }
 }
 

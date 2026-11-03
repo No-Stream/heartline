@@ -23,10 +23,7 @@ pub struct SupportObstacle {
 /// The outcome of attempting to route supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupportError {
-    /// No footing candidate in the bounded search domain clears every constraint.
     NoRoute,
-    /// A bounded search found no support; a route may still exist.
-    SearchExhausted,
 }
 
 // The renderer uses 0.045-tile half-width beams and 0.1-tile footer half-widths.

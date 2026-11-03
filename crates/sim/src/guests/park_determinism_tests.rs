@@ -1,15 +1,50 @@
 use super::*;
 use crate::executor::{Executor, SequentialExecutor, ThreadedExecutor};
-use crate::guests::behavior::{KnownPlace, PlaceKind};
-use crate::physics::{BlockOperation, Circuit, PhysicsConfig};
+use crate::facilities::{ParkFacilities, coaster_access_openings, coaster_facility};
+use crate::guests::GuestId;
+use crate::guests::park::ParkGuests;
+use crate::park::Park;
+use crate::park::tick::COASTER_PLACE_ID;
+use crate::physics::{BlockOperation, PhysicsConfig, Train};
 use crate::track::blocks::BlockLayout;
-use crate::track::{PieceId, TrackState, catalog, hybrid_model};
+use crate::track::construction::Construction;
+use crate::track::{PieceId, TrackState, hybrid_model};
 use crate::world::{PathKind, Surface};
 
-fn test_circuit() -> Circuit {
-    let catalog = catalog();
-    let mut state = TrackState::origin();
-    let mut pieces = Vec::new();
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CoasterEventKind {
+    Boarded,
+    Completed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CoasterEvent {
+    tick: usize,
+    train_id: u64,
+    guest_count: usize,
+    kind: CoasterEventKind,
+}
+
+struct Replay {
+    park: Park,
+    park_state_hash: u64,
+    demo_train_state: u64,
+    train_states: Vec<(u64, u64)>,
+    events: Vec<CoasterEvent>,
+    boarded_guest_count: usize,
+    completed_train_count: usize,
+    completed_guest_count: usize,
+    maximum_occupied_trains: usize,
+}
+
+fn construction_for(world: &World) -> Construction {
+    let start = TrackState {
+        x: 256,
+        y: 256,
+        z: 5,
+        ..TrackState::origin()
+    };
+    let mut construction = Construction::new(start, hybrid_model());
     for id in [
         PieceId::Station,
         PieceId::Straight,
@@ -28,150 +63,27 @@ fn test_circuit() -> Circuit {
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
     ] {
-        let piece = catalog
-            .iter()
-            .find(|piece| piece.id == id)
-            .unwrap()
-            .at(state)
-            .unwrap();
-        state = piece.exit;
-        pieces.push(piece);
+        construction
+            .append(id, world, &[])
+            .unwrap_or_else(|error| panic!("could not append {id:?}: {error:?}"));
     }
-    Circuit::new(pieces).unwrap()
+    construction.close().unwrap();
+    construction
 }
 
-struct Replay {
-    park: ParkGuests,
-    train_states: Vec<(u64, u64)>,
-    events: Vec<(usize, u64, usize, bool)>,
-    maximum_occupied_trains: usize,
-    completed: usize,
-}
-
-fn replay<E: Executor<WalkingGuest>>(
-    world: &World,
-    facility: Facility,
-    layout: &BlockLayout,
-    executor: &E,
-) -> Replay {
-    let entrance = Position {
-        x: 0,
-        y: 0,
-        height: 0,
-    };
-    let mut park = ParkGuests::new(42, 64, world, entrance, 64);
-    park.open_with_guests(&[facility]);
-    park.set_external_rides(&[facility.place.id]);
-    let mut operation = BlockOperation::new(layout.clone());
-    let mut riders = BTreeMap::new();
-    let mut events = Vec::new();
-    let mut maximum_occupied_trains = 0;
-    let mut completed = 0;
-    let mut physics_remainder = 0;
-    for tick in 0..5000 {
-        park.tick_with(world, &[facility], 100, Some(64), executor);
-        physics_remainder += 200;
-        while physics_remainder >= 30 {
-            if let Some(train_id) = operation.next_dispatch_id() {
-                let boarded = park.board_coaster_train(&facility, train_id);
-                if !boarded.is_empty() {
-                    assert_eq!(operation.dispatch(), train_id);
-                    events.push((tick, train_id, boarded.len(), false));
-                    riders.insert(train_id, boarded);
-                    maximum_occupied_trains = maximum_occupied_trains.max(riders.len());
-                }
-            }
-            for (train_id, outcome) in operation.step(&[]) {
-                let boarded: Vec<GuestId> = riders.remove(&train_id).unwrap();
-                let seats_per_car = usize::from(layout.train().rows_per_car)
-                    * usize::from(layout.train().seats_per_row);
-                let ratings: Vec<_> = (0..boarded.len())
-                    .map(|seat| {
-                        let report = &outcome.reports[seat / seats_per_car];
-                        (report.excitement, report.intensity, report.nausea)
-                    })
-                    .collect();
-                let proximity_events: Vec<_> = (0..boarded.len())
-                    .map(|seat| {
-                        outcome.reports[seat / seats_per_car]
-                            .proximity_events
-                            .clone()
-                    })
-                    .collect();
-                events.push((tick, train_id, boarded.len(), outcome.recovered));
-                assert!(!outcome.recovered);
-                park.finish_coaster_train(
-                    world,
-                    &facility,
-                    train_id,
-                    &ratings,
-                    &proximity_events,
-                    false,
-                );
-                completed += 1;
-            }
-            physics_remainder -= 30;
-        }
-    }
-    let train_states = operation
-        .trains()
-        .map(|(id, train)| (id, train.state_hash()))
-        .collect();
-    Replay {
-        park,
-        train_states,
-        events,
-        maximum_occupied_trains,
-        completed,
-    }
-}
-
-#[test]
-fn coaster_guests_and_trains_replay_identically_across_thread_counts() {
-    let entrance = Position {
-        x: 0,
-        y: 0,
-        height: 0,
-    };
+fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
     let mut world = World::new(
-        4,
-        1,
+        512,
+        512,
         Surface {
             corners: [0; 4],
             water: None,
         },
     );
-    world
-        .build_path_route(entrance, Position { x: 1, ..entrance }, PathKind::Normal, 0)
-        .unwrap();
-    world
-        .build_path_route(
-            Position { x: 1, ..entrance },
-            Position { x: 3, ..entrance },
-            PathKind::Queue,
-            0,
-        )
-        .unwrap();
-    let configuration = hybrid_model().train;
-    let facility = Facility {
-        place: KnownPlace {
-            id: 700,
-            position: Position { x: 3, ..entrance },
-            kind: PlaceKind::Ride,
-            minimum_height_cm: 0,
-            intensity: 50,
-            ride_type: 2,
-            theme: 0,
-            price: 0,
-        },
-        capacity: usize::from(configuration.cars)
-            * usize::from(configuration.rows_per_car)
-            * usize::from(configuration.seats_per_row),
-        duration_ticks: 1,
-        exit_position: Some(entrance),
-    };
-    let circuit = test_circuit();
-    let config = PhysicsConfig {
+    let construction = construction_for(&world);
+    let circuit = construction.circuit().unwrap();
+    let train_configuration = construction.model().train.clone();
+    let physics_config = PhysicsConfig {
         lift_speed: 5.0,
         ..Default::default()
     };
@@ -183,35 +95,223 @@ fn coaster_guests_and_trains_replay_identically_across_thread_counts() {
     };
     let layout = BlockLayout::new(
         &circuit,
-        &configuration,
-        config,
+        &train_configuration,
+        physics_config,
         vec![boundary(2), boundary(6), boundary(10), boundary(13)],
     )
     .unwrap();
     assert!(layout.capacity() >= 2);
-    let baseline = replay(&world, facility, &layout, &SequentialExecutor::new(7));
+
+    let [queue, exit] = coaster_access_openings(&construction).unwrap();
+    let queue_entry = [
+        Position {
+            x: queue.position.x.saturating_sub(1),
+            ..queue.position
+        },
+        Position {
+            x: queue.position.x.saturating_add(1),
+            ..queue.position
+        },
+        Position {
+            y: queue.position.y.saturating_sub(1),
+            ..queue.position
+        },
+        Position {
+            y: queue.position.y.saturating_add(1),
+            ..queue.position
+        },
+    ]
+    .into_iter()
+    .find(|position| *position != exit.position)
+    .unwrap();
+    for position in [queue.position, exit.position, queue_entry] {
+        assert!(
+            world
+                .set_surface(
+                    position.x,
+                    position.y,
+                    Surface {
+                        corners: [position.height; 4],
+                        water: None,
+                    },
+                )
+                .is_empty()
+        );
+    }
+    world
+        .build_path_route(queue_entry, queue_entry, PathKind::Normal, 0)
+        .unwrap();
+    world
+        .build_path_route(exit.position, exit.position, PathKind::Normal, 0)
+        .unwrap();
+    world
+        .build_path_route(queue_entry, queue.position, PathKind::Queue, 0)
+        .unwrap();
+
+    let facility = coaster_facility(&world, &construction, COASTER_PLACE_ID, 0).unwrap();
+    let roster_size = 64;
+    let mut simulation = ParkGuests::new(42, roster_size, &world, queue_entry, roster_size);
+    simulation.open_with_guests(&[facility]);
+    for guest_index in 0..roster_size {
+        simulation
+            .walking
+            .place_on_path(GuestId(guest_index as u32), queue_entry);
+    }
+
+    let demo_train = Train::new(&circuit, &train_configuration, physics_config, 0.0, 0.0);
+    let mut park = Park::new(
+        world,
+        ParkFacilities::new(),
+        simulation,
+        circuit,
+        demo_train,
+        train_configuration,
+    );
+    park.construction = Some(construction);
+    park.coaster_open = true;
+    park.coaster_operation = Some(BlockOperation::new(layout.clone()));
+    park.coaster_facility = Some(facility);
+    park.block_layout = Some(layout);
+    park.desired_train_count = Some(2);
+
+    let mut events = Vec::new();
+    let mut boarded_guest_count = 0;
+    let mut completed_train_count = 0;
+    let mut completed_guest_count = 0;
+    let mut maximum_occupied_trains = 0;
+    for tick in 0..5000 {
+        let riders_before = park.coaster_riders.clone();
+        let rides_completed_before: Vec<_> = park
+            .simulation
+            .behaviors()
+            .guests
+            .iter()
+            .map(|guest| guest.rides_completed)
+            .collect();
+        park.tick_with(executor);
+
+        for (&train_id, riders) in &park.coaster_riders {
+            if !riders_before.contains_key(&train_id) {
+                events.push(CoasterEvent {
+                    tick,
+                    train_id,
+                    guest_count: riders.len(),
+                    kind: CoasterEventKind::Boarded,
+                });
+                boarded_guest_count += riders.len();
+            }
+        }
+        for (&train_id, riders) in &riders_before {
+            if park.coaster_riders.contains_key(&train_id) {
+                continue;
+            }
+            let completed_riders = riders
+                .iter()
+                .filter(|guest| {
+                    park.simulation.behaviors().guests[guest.0 as usize].rides_completed
+                        > rides_completed_before[guest.0 as usize]
+                })
+                .count();
+            assert_eq!(
+                completed_riders,
+                riders.len(),
+                "train {train_id} must finish for every boarded guest"
+            );
+            events.push(CoasterEvent {
+                tick,
+                train_id,
+                guest_count: completed_riders,
+                kind: CoasterEventKind::Completed,
+            });
+            completed_train_count += 1;
+            completed_guest_count += completed_riders;
+        }
+        maximum_occupied_trains = maximum_occupied_trains.max(park.coaster_riders.len());
+    }
+
+    let train_states = park
+        .coaster_operation
+        .as_ref()
+        .unwrap()
+        .trains()
+        .map(|(id, train)| (id, train.state_hash()))
+        .collect();
+    Replay {
+        park_state_hash: park.state_hash(),
+        demo_train_state: park.train.state_hash(),
+        park,
+        train_states,
+        events,
+        boarded_guest_count,
+        completed_train_count,
+        completed_guest_count,
+        maximum_occupied_trains,
+    }
+}
+
+#[test]
+fn coaster_guests_and_trains_replay_identically_across_thread_counts() {
+    let baseline = replay(&SequentialExecutor::new(7));
+    assert!(baseline.boarded_guest_count > 0);
+    assert!(baseline.completed_train_count > 0);
+    assert!(baseline.completed_guest_count > 0);
     assert!(baseline.maximum_occupied_trains >= 2);
-    assert!(baseline.completed > 0);
+    assert_eq!(
+        baseline.completed_guest_count,
+        baseline
+            .park
+            .simulation
+            .behaviors()
+            .guests
+            .iter()
+            .map(|guest| guest.rides_completed as usize)
+            .sum::<usize>()
+    );
+
     for count in [1, 2, 4] {
-        let actual = replay(&world, facility, &layout, &ThreadedExecutor::new(count, 7));
+        let actual = replay(&ThreadedExecutor::new(count, 7));
         assert_eq!(baseline.events, actual.events, "thread count {count}");
+        assert_eq!(
+            baseline.boarded_guest_count, actual.boarded_guest_count,
+            "thread count {count}"
+        );
+        assert_eq!(
+            baseline.completed_train_count, actual.completed_train_count,
+            "thread count {count}"
+        );
+        assert_eq!(
+            baseline.completed_guest_count, actual.completed_guest_count,
+            "thread count {count}"
+        );
+        assert_eq!(
+            baseline.maximum_occupied_trains, actual.maximum_occupied_trains,
+            "thread count {count}"
+        );
+        assert_eq!(
+            baseline.demo_train_state, actual.demo_train_state,
+            "thread count {count}"
+        );
+        assert_eq!(
+            baseline.park_state_hash, actual.park_state_hash,
+            "thread count {count}"
+        );
         assert_eq!(
             baseline.train_states, actual.train_states,
             "thread count {count}"
         );
         assert_eq!(
-            baseline.park.walking().state_hash(),
-            actual.park.walking().state_hash(),
+            baseline.park.simulation.walking().state_hash(),
+            actual.park.simulation.walking().state_hash(),
             "thread count {count}"
         );
         assert_eq!(
-            baseline.park.walking().traits(),
-            actual.park.walking().traits(),
+            baseline.park.simulation.walking().traits(),
+            actual.park.simulation.walking().traits(),
             "thread count {count}"
         );
         assert_eq!(
-            baseline.park.behaviors().guests,
-            actual.park.behaviors().guests,
+            baseline.park.simulation.behaviors().guests,
+            actual.park.simulation.behaviors().guests,
             "thread count {count}"
         );
     }

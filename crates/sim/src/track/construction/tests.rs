@@ -25,6 +25,17 @@ fn start() -> TrackState {
 }
 
 #[test]
+fn construction_state_hash_covers_track_edits_but_ignores_validation_caches() {
+    let world = world();
+    let mut first = Construction::new(start(), hybrid_model());
+    let second = Construction::new(start(), hybrid_model());
+    first.choices(&world, &[]);
+    assert_eq!(first.state_hash(), second.state_hash());
+    first.append(PieceId::Straight, &world, &[]).unwrap();
+    assert_ne!(first.state_hash(), second.state_hash());
+}
+
+#[test]
 fn wooden_twister_validates_every_dense_support_anchor() {
     let mut construction = Construction::new(start(), crate::track::wooden_twister_model());
     construction

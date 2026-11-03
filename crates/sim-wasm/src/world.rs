@@ -1,3 +1,4 @@
+use super::command_errors::record_command_result;
 use super::*;
 
 #[wasm_bindgen]
@@ -76,47 +77,24 @@ impl WasmSimulation {
             2.0,
         );
         Self {
-            simulation,
-            world,
-            facilities,
+            park: Park::new(
+                world,
+                facilities,
+                simulation,
+                circuit,
+                train,
+                train_configuration,
+            ),
             facility_message: String::new(),
             path_message: String::new(),
             terrain_message: String::new(),
             scenery_message: String::new(),
             terrain_invalidated_paths: Vec::new(),
-            circuit,
-            train,
-            train_configuration,
-            physics_remainder: 0,
-            construction: None,
             construction_model: ConstructionModel::Hybrid,
             selected: None,
-            construction_message: String::new(),
-            construction_train: None,
-            coaster_open: false,
-            coaster_operation: None,
-            coaster_riders: HashMap::new(),
-            coaster_facility: None,
-            block_layout: None,
-            desired_train_count: None,
-            block_placement_search: None,
-            block_placement_cache: None,
-            block_apply_best_requested: false,
-            block_manual_search: None,
-            block_baseline_validation: false,
-            block_layout_is_automatic: false,
-            block_message: String::new(),
-            block_hourly_throughput: 0.0,
-            block_throughput_reason: String::new(),
-            block_throughput_estimator: None,
-            block_analysis_extra_to_throughput: false,
-            block_throughput_cache: HashMap::new(),
+            construction_preview_supports_cache: Vec::new(),
+            construction_placed_supports_cache: Vec::new(),
             recovered_station: None,
-            support_render_cache: HashMap::new(),
-            construction_slow_steps: 0,
-            construction_outcome: None,
-            construction_recorder: None,
-            construction_report: None,
         }
     }
 
@@ -186,7 +164,8 @@ impl WasmSimulation {
 
     /// Attraction access openings: x, y, height, direction mask.
     pub fn world_facility_openings(&self) -> Vec<i32> {
-        self.facility_openings()
+        self.park
+            .facility_openings()
             .into_iter()
             .flat_map(|opening| {
                 [
@@ -237,25 +216,18 @@ impl WasmSimulation {
     }
 
     /// Preview entries: x, y, height, slope, kind, style, refusal, path edges, facility openings.
-    pub fn path_preview(&mut self, coordinates: Vec<i32>, kind: &str, style: u8) -> Vec<i32> {
+    /// An error uses a single record with x and y set to -1 and its refusal code set.
+    pub fn path_preview(&self, coordinates: Vec<i32>, kind: &str, style: u8) -> Vec<i32> {
         let Some(kind) = parse_path_kind(kind) else {
-            self.path_message = "Unknown path kind".into();
-            return Vec::new();
+            return path_preview_error_record(CommandError::UnknownPathKind);
         };
         let (start, end) = match path_positions(&coordinates) {
             Ok(positions) => positions,
-            Err(message) => {
-                self.path_message = message.into();
-                return Vec::new();
-            }
+            Err(error) => return path_preview_error_record(error),
         };
-        match self.checked_path_preview(start, end, kind, style) {
+        match self.park.preview_path_route(start, end, kind, style) {
             Ok(route) => {
-                let openings = self.facility_openings();
-                self.path_message = route
-                    .iter()
-                    .find_map(|tile| tile.refusal)
-                    .map_or_else(String::new, |error| path_build_error(error).into());
+                let openings = self.park.facility_openings();
                 route
                     .into_iter()
                     .flat_map(|tile| {
@@ -286,57 +258,45 @@ impl WasmSimulation {
                     })
                     .collect()
             }
-            Err(error) => {
-                self.path_message = path_build_error(error).into();
-                Vec::new()
-            }
+            Err(error) => path_preview_error_record(error.into()),
         }
     }
 
     pub fn path_build(&mut self, coordinates: Vec<i32>, kind: &str, style: u8) -> bool {
         let Some(kind) = parse_path_kind(kind) else {
-            self.path_message = "Unknown path kind".into();
+            record_command_result::<()>(
+                Err(CommandError::UnknownPathKind),
+                &mut self.path_message,
+                false,
+            );
             return false;
         };
         let (start, end) = match path_positions(&coordinates) {
             Ok(positions) => positions,
-            Err(message) => {
-                self.path_message = message.into();
+            Err(error) => {
+                record_command_result::<()>(Err(error), &mut self.path_message, false);
                 return false;
             }
         };
-        let preview = match self.checked_path_preview(start, end, kind, style) {
-            Ok(preview) => preview,
-            Err(error) => {
-                self.path_message = path_build_error(error).into();
-                return false;
-            }
-        };
-        if let Some(error) = preview.iter().find_map(|tile| tile.refusal) {
-            self.path_message = path_build_error(error).into();
-            return false;
+        let result = self
+            .park
+            .build_path_route(start, end, kind, style)
+            .map_err(CommandError::from);
+        let built = record_command_result(result, &mut self.path_message, true).is_some();
+        if built {
+            self.refresh_construction_support_rendering();
         }
-        match self.world.build_path_route(start, end, kind, style) {
-            Ok(_) => {
-                self.path_message.clear();
-                true
-            }
-            Err(error) => {
-                self.path_message = path_build_error(error).into();
-                false
-            }
-        }
+        built
     }
 
     pub fn path_remove(&mut self, x: u16, y: u16, height: i16) -> bool {
         let position = Position { x, y, height };
-        if self.world.path(position).is_none() {
-            self.path_message = "No path at that position".into();
-            return false;
+        let result = self.park.remove_path(position).map_err(CommandError::from);
+        let removed = record_command_result(result, &mut self.path_message, true).is_some();
+        if removed {
+            self.refresh_construction_support_rendering();
         }
-        self.world.remove_path(position);
-        self.path_message.clear();
-        true
+        removed
     }
 
     pub fn path_message(&self) -> String {
@@ -375,8 +335,8 @@ impl WasmSimulation {
             top,
         } = match parse_terrain_parameters(parameters) {
             Ok(parameters) => parameters,
-            Err(message) => {
-                self.terrain_message = message.into();
+            Err(error) => {
+                record_command_result::<()>(Err(error), &mut self.terrain_message, false);
                 return false;
             }
         };
@@ -384,7 +344,11 @@ impl WasmSimulation {
         let terrain_command = match name {
             "raise_corner" | "lower_corner" => {
                 let Some(corner) = parse_corner(corner) else {
-                    self.terrain_message = "Unknown terrain corner".into();
+                    record_command_result::<()>(
+                        Err(CommandError::UnknownTerrainCorner),
+                        &mut self.terrain_message,
+                        false,
+                    );
                     return false;
                 };
                 if name == "raise_corner" {
@@ -417,46 +381,23 @@ impl WasmSimulation {
             "carve" => TerrainCommand::Carve { area, bottom, top },
             "fill" => TerrainCommand::Fill { area, bottom, top },
             _ => {
-                self.terrain_message = "Unknown terrain command".into();
+                record_command_result::<()>(
+                    Err(CommandError::UnknownTerrainCommand),
+                    &mut self.terrain_message,
+                    false,
+                );
                 return false;
             }
         };
-        if let Err(error) = self.world.terrain_edit_tiles(&terrain_command) {
-            self.terrain_message = terrain_edit_error(error).into();
-            return false;
-        }
-
-        let mut candidate = self.world.clone();
-        let candidate_result = match candidate.apply_terrain(terrain_command) {
-            Ok(result) => result,
-            Err(error) => {
-                self.terrain_message = terrain_edit_error(error).into();
-                return false;
-            }
-        };
-        if candidate_result.changed_tiles.iter().any(|tile| {
-            self.facilities.buildings().iter().any(|building| {
-                let (width, depth) = building.kind.footprint(building.direction);
-                tile.x >= building.position.x
-                    && u32::from(tile.x) < u32::from(building.position.x) + u32::from(width)
-                    && tile.y >= building.position.y
-                    && u32::from(tile.y) < u32::from(building.position.y) + u32::from(depth)
-            })
-        }) {
-            self.terrain_message = "Cannot edit terrain beneath a building or ride".into();
-            return false;
-        }
-        if self.terrain_hits_track(&candidate) {
-            return false;
-        }
-
         let result = self
-            .world
-            .apply_terrain(terrain_command)
-            .expect("validated terrain command remains valid");
-        assert_eq!(result, candidate_result, "terrain preflight result changed");
+            .park
+            .apply_terrain(terrain_command, self.selected)
+            .map_err(CommandError::from);
+        let Some(result) = record_command_result(result, &mut self.terrain_message, false) else {
+            return false;
+        };
         self.terrain_invalidated_paths = result.invalidated_paths;
-        self.support_render_cache.clear();
+        self.refresh_construction_support_rendering();
         self.terrain_message = "Terrain updated".into();
         true
     }
@@ -479,126 +420,6 @@ impl WasmSimulation {
             .collect()
     }
 
-    pub(super) fn terrain_hits_track(&mut self, candidate: &World) -> bool {
-        let clearance_worsened = |piece: &Piece, train: &TrainConfiguration| {
-            !matches!(
-                check_clearance(&self.world, piece, train, &[], &[]),
-                Err(ClearanceCollision::Terrain)
-            ) && matches!(
-                check_clearance(candidate, piece, train, &[], &[]),
-                Err(ClearanceCollision::Terrain)
-            )
-        };
-        if self
-            .circuit
-            .pieces()
-            .iter()
-            .any(|piece| clearance_worsened(piece, &self.train_configuration))
-        {
-            self.terrain_message = "Terrain edit would collide with coaster track".into();
-            return true;
-        }
-        if try_render_supports(self.circuit.pieces(), &self.world).is_ok()
-            && try_render_supports(self.circuit.pieces(), candidate).is_err()
-        {
-            self.terrain_message = "Terrain edit leaves no route for coaster supports".into();
-            return true;
-        }
-        let Some(construction) = &self.construction else {
-            return false;
-        };
-        let pieces: Vec<_> = construction
-            .pieces()
-            .iter()
-            .chain(
-                construction
-                    .disconnected_segments()
-                    .iter()
-                    .flat_map(|segment| &segment.pieces),
-            )
-            .collect();
-        if pieces
-            .iter()
-            .any(|piece| clearance_worsened(piece, &construction.model().train))
-        {
-            self.terrain_message = "Terrain edit would collide with coaster track".into();
-            return true;
-        }
-        let entries: Vec<_> = construction
-            .piece_ids()
-            .iter()
-            .zip(construction.pieces())
-            .chain(
-                construction
-                    .disconnected_segments()
-                    .iter()
-                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
-            )
-            .collect();
-        let facility_obstacles = self.facility_obstacles();
-        let mut original_cache = HashMap::new();
-        let mut candidate_cache = HashMap::new();
-        let original_supports = render_cached_supports(
-            &entries,
-            &self.world,
-            &construction.model().train,
-            construction.model().support_style,
-            &facility_obstacles,
-            &mut original_cache,
-        );
-        let candidate_supports = render_cached_supports(
-            &entries,
-            candidate,
-            &construction.model().train,
-            construction.model().support_style,
-            &facility_obstacles,
-            &mut candidate_cache,
-        );
-        if original_supports.is_ok() && candidate_supports.is_err() {
-            self.terrain_message = "Terrain edit leaves no route for coaster supports".into();
-            return true;
-        }
-        if self.construction_preview_valid() {
-            let preview = self.construction_preview();
-            if preview
-                .first()
-                .is_some_and(|piece| clearance_worsened(piece, &construction.model().train))
-            {
-                self.terrain_message = "Terrain edit would collide with coaster track".into();
-                return true;
-            }
-            if let Some(piece) = preview.first() {
-                let mut obstacles = facility_obstacles;
-                obstacles.extend(entries.iter().flat_map(|(_, placed)| {
-                    track_support_obstacles(
-                        std::slice::from_ref(placed),
-                        &construction.model().train,
-                    )
-                }));
-                if render_preview_supports(
-                    piece,
-                    &obstacles,
-                    &self.world,
-                    construction.model().support_style,
-                )
-                .is_ok()
-                    && render_preview_supports(
-                        piece,
-                        &obstacles,
-                        candidate,
-                        construction.model().support_style,
-                    )
-                    .is_err()
-                {
-                    self.terrain_message =
-                        "Terrain edit leaves no route for coaster supports".into();
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     /// Replace a surface and report whether the world changed.
     pub fn set_world_surface(
         &mut self,
@@ -615,6 +436,7 @@ impl WasmSimulation {
             return false;
         }
         self.world.set_surface(x, y, surface);
+        self.refresh_construction_support_rendering();
         true
     }
 

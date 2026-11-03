@@ -1,3 +1,4 @@
+use super::command_errors::{CommandError, record_command_result};
 use super::*;
 use theme_park_sim::guest_behavior::RidePhase;
 
@@ -6,7 +7,11 @@ impl WasmSimulation {
     pub fn place_facility(&mut self, kind: &str, x: u16, y: u16, rotation: u8) -> bool {
         let (width, height) = self.world.dimensions();
         if x >= width || y >= height {
-            self.facility_message = "Outside world".into();
+            record_command_result::<()>(
+                Err(CommandError::FacilityOutsideWorld),
+                &mut self.facility_message,
+                false,
+            );
             return false;
         }
         let surface_height = self.world.surface(x, y).corners[0];
@@ -30,7 +35,11 @@ impl WasmSimulation {
             "carousel" => FacilityKind::Carousel,
             "ferris_wheel" => FacilityKind::FerrisWheel,
             _ => {
-                self.facility_message = "Unknown facility".into();
+                record_command_result::<()>(
+                    Err(CommandError::UnknownFacility),
+                    &mut self.facility_message,
+                    false,
+                );
                 return false;
             }
         };
@@ -40,85 +49,49 @@ impl WasmSimulation {
             2 => Direction::South,
             3 => Direction::West,
             _ => {
-                self.facility_message = "Invalid rotation".into();
+                record_command_result::<()>(
+                    Err(CommandError::InvalidFacilityRotation),
+                    &mut self.facility_message,
+                    false,
+                );
                 return false;
             }
         };
         let (width, depth) = self.world.dimensions();
         if x >= width || y >= depth {
-            self.facility_message = "Outside world".into();
+            record_command_result::<()>(
+                Err(CommandError::FacilityOutsideWorld),
+                &mut self.facility_message,
+                false,
+            );
             return false;
         }
         let position = Position { x, y, height };
-        let construction_pieces =
-            self.construction
-                .as_ref()
-                .map_or_else(Vec::new, |construction| {
-                    construction
-                        .pieces()
-                        .iter()
-                        .chain(
-                            construction
-                                .disconnected_segments()
-                                .iter()
-                                .flat_map(|segment| &segment.pieces),
-                        )
-                        .cloned()
-                        .collect()
-                });
-        let construction_train = self
-            .construction
-            .as_ref()
-            .map_or(&self.train_configuration, |construction| {
-                &construction.model().train
-            });
-        if facility_intersects_track_sets(
-            kind,
-            position,
-            direction,
-            self.circuit.pieces(),
-            &self.train_configuration,
-            &construction_pieces,
-            construction_train,
-        ) {
-            self.facility_message = "Facility intersects track or train clearance".into();
-            return false;
+        let result = self
+            .park
+            .place_facility(kind, position, direction)
+            .map_err(CommandError::from);
+        let placed = record_command_result(result, &mut self.facility_message, true).is_some();
+        if placed {
+            self.refresh_construction_support_rendering();
         }
-        match self
-            .facilities
-            .place(&self.world, kind, position, direction)
-        {
-            Ok(_) => {
-                self.support_render_cache.clear();
-                self.facility_message.clear();
-                true
-            }
-            Err(error) => {
-                self.facility_message = format!("{error:?}");
-                false
-            }
-        }
+        placed
     }
 
     pub fn remove_facility(&mut self, id: u32) -> bool {
-        let removed = self.facilities.remove(id);
+        let removed = self.park.remove_facility(id).is_ok();
         if removed {
-            self.support_render_cache.clear();
+            self.refresh_construction_support_rendering();
         }
         removed
     }
 
     pub fn set_facility_price(&mut self, id: u32, price: u16) -> bool {
-        match self.facilities.set_price(id, price) {
-            Ok(()) => {
-                self.facility_message.clear();
-                true
-            }
-            Err(error) => {
-                self.facility_message = format!("{error:?}");
-                false
-            }
-        }
+        let result = self
+            .park
+            .set_facility_price(id, price)
+            .map_err(CommandError::from);
+        record_command_result(result, &mut self.facility_message, true).is_some()
     }
 
     pub fn facility_message(&self) -> String {

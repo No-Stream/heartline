@@ -26,3 +26,6 @@ pub use storage::*;
 
 #[cfg(test)]
 mod walking_tests;
+
+#[cfg(test)]
+mod path_food_rebuild_tests;

@@ -1,4 +1,5 @@
 use super::{CarReading, Circuit};
+use crate::state_hash::StateHasher;
 use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
 
 const HIGH_FORCE_SECTION_METRES: f64 = 8.0;
@@ -8,6 +9,32 @@ const HIGH_FORCE_NEGATIVE_VERTICAL_G: f64 = -1.0;
 const HIGH_FORCE_LATERAL_G: f64 = 2.0;
 const HIGH_FORCE_LONGITUDINAL_G: f64 = 1.5;
 const SLOW_SPEED_METRES_PER_SECOND: f64 = 8.0;
+const DROP_SCORE_CALIBRATION_METRES: f64 = 30.0;
+const INVERSION_SCORE_CALIBRATION_PASSAGES: f64 = 3.0;
+const VERTICAL_DISCOMFORT_THRESHOLD_G: f64 = 3.5;
+const NEGATIVE_VERTICAL_DISCOMFORT_THRESHOLD_G: f64 = 0.5;
+const LATERAL_DISCOMFORT_THRESHOLD_G: f64 = 1.5;
+const LONGITUDINAL_DISCOMFORT_THRESHOLD_G: f64 = 1.5;
+const DISCOMFORT_VERTICAL_SCALE_G: f64 = 2.0;
+const DISCOMFORT_NEGATIVE_VERTICAL_SCALE_G: f64 = 1.5;
+const DISCOMFORT_LATERAL_SCALE_G: f64 = 1.5;
+const DISCOMFORT_LONGITUDINAL_SCALE_G: f64 = 1.5;
+const MODERATE_FORCE_CALIBRATION: f64 = 7.0;
+const INTENSITY_BASE_SCORE: f64 = 20.0;
+const INTENSITY_VERTICAL_WEIGHT: f64 = 14.0;
+const INTENSITY_LATERAL_WEIGHT: f64 = 18.0;
+const INTENSITY_LONGITUDINAL_WEIGHT: f64 = 10.0;
+const INTENSITY_AIRTIME_WEIGHT: f64 = 8.0;
+const INTENSITY_HIGH_FORCE_WEIGHT: f64 = 10.0;
+const HIGH_FORCE_SCORE_CALIBRATION_METRES: f64 = 20.0;
+const NAUSEA_SCORE_SCALE: f64 = 100.0;
+const EXCITEMENT_BASE_SCORE: f64 = 10.0;
+const EXCITEMENT_SPEED_WEIGHT: f64 = 1.6;
+const EXCITEMENT_AIRTIME_WEIGHT: f64 = 25.0;
+const EXCITEMENT_MODERATE_FORCE_WEIGHT: f64 = 24.0;
+const EXCITEMENT_DROP_WEIGHT: f64 = 15.0;
+const EXCITEMENT_INVERSION_WEIGHT: f64 = 15.0;
+const EXCITEMENT_NAUSEA_WEIGHT: f64 = 0.45;
 
 /// One fixed-distance force and speed sample from a coaster test run.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,6 +66,30 @@ pub struct TestRun {
 }
 
 impl TestRun {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"TestRun-v1");
+        hash.write_len(self.samples.len());
+        for sample in &self.samples {
+            write_sample(hash, *sample);
+        }
+        hash.write_len(self.proximity_events.len());
+        for &event in &self.proximity_events {
+            write_proximity_event(hash, event);
+        }
+        hash.write_f64(self.excitement);
+        hash.write_f64(self.intensity);
+        hash.write_f64(self.nausea);
+        hash.write_len(self.notes.len());
+        for note in &self.notes {
+            hash.write_bytes(note.as_bytes());
+        }
+        hash.write_bool(self.completed);
+        hash.write_f64(self.furthest_distance);
+        write_ranges(hash, &self.visited_ranges);
+        hash.write_f64(self.base_excitement);
+        hash.write_f64(self.base_intensity);
+    }
+
     pub fn unfinished_circuit() -> Self {
         Self {
             samples: Vec::new(),
@@ -114,6 +165,27 @@ pub struct TestRunRecorder {
 }
 
 impl TestRunRecorder {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"TestRunRecorder-v1");
+        hash.write_f64(self.circuit_length);
+        hash.write_len(self.samples.len());
+        for sample in &self.samples {
+            hash.write_option(*sample, write_sample);
+        }
+        hash.write_bool(self.started);
+        hash.write_f64(self.start_unwrapped_distance);
+        hash.write_f64(self.last_wrapped_distance);
+        hash.write_f64(self.last_unwrapped_distance);
+        hash.write_option(self.last_reading, write_reading);
+        hash.write_f64(self.next_sample_distance);
+        hash.write_f64(self.furthest_distance);
+        hash.write_len(self.dueling_events.len());
+        for &event in &self.dueling_events {
+            write_proximity_event(hash, event);
+        }
+        write_ranges(hash, &self.visited_ranges);
+    }
+
     pub fn new(circuit_length: f64) -> Self {
         assert!(circuit_length.is_finite() && circuit_length > 0.0);
         Self {
@@ -295,6 +367,46 @@ impl TestRunRecorder {
     }
 }
 
+fn write_sample(hash: &mut StateHasher, sample: TestSample) {
+    hash.write_f64(sample.distance);
+    hash.write_f64(sample.speed);
+    hash.write_f64(sample.vertical_g);
+    hash.write_f64(sample.lateral_g);
+    hash.write_f64(sample.longitudinal_g);
+    hash.write_bool(sample.airtime);
+    hash.write_f64(sample.height_m);
+    hash.write_bool(sample.inverted);
+}
+
+fn write_reading(hash: &mut StateHasher, reading: CarReading) {
+    hash.write_f64(reading.distance);
+    hash.write_f64(reading.speed);
+    hash.write_f64(reading.g.vertical);
+    hash.write_f64(reading.g.lateral);
+    hash.write_f64(reading.g.longitudinal);
+    hash.write_bool(reading.airtime);
+    hash.write_f64(reading.height_m);
+    hash.write_bool(reading.inverted);
+}
+
+fn write_proximity_event(hash: &mut StateHasher, event: crate::track::proximity::ProximityEvent) {
+    hash.write_len(event.piece_index);
+    hash.write_u8(event.kind as u8);
+    hash.write_f64(event.position.x);
+    hash.write_f64(event.position.y);
+    hash.write_f64(event.position.z);
+    hash.write_f64(event.distance);
+    hash.write_f64(event.strength);
+}
+
+fn write_ranges(hash: &mut StateHasher, ranges: &[(f64, f64)]) {
+    hash.write_len(ranges.len());
+    for &(start, end) in ranges {
+        hash.write_f64(start);
+        hash.write_f64(end);
+    }
+}
+
 fn next_sample_at_or_after(distance: f64, circuit_length: f64) -> f64 {
     let lap_start = (distance / circuit_length).floor() * circuit_length;
     let within_lap = distance - lap_start;
@@ -377,33 +489,38 @@ fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<S
     });
     let maximum_drop = largest_downhill_drop(samples);
     let inversion_passages = count_inversion_passages(samples);
-    let drop_score = (maximum_drop / 30.0).clamp(0.0, 1.0);
-    let inversion_score = (inversion_passages as f64 / 3.0).clamp(0.0, 1.0);
+    let drop_score = (maximum_drop / DROP_SCORE_CALIBRATION_METRES).clamp(0.0, 1.0);
+    let inversion_score =
+        (inversion_passages as f64 / INVERSION_SCORE_CALIBRATION_PASSAGES).clamp(0.0, 1.0);
     let discomfort = mean(|sample| {
-        (sample.vertical_g - 3.5).max(0.0) / 2.0
-            + (-sample.vertical_g - 0.5).max(0.0) / 1.5
-            + (sample.lateral_g.abs() - 1.5).max(0.0) / 1.5
-            + (sample.longitudinal_g.abs() - 1.5).max(0.0) / 1.5
+        (sample.vertical_g - VERTICAL_DISCOMFORT_THRESHOLD_G).max(0.0) / DISCOMFORT_VERTICAL_SCALE_G
+            + (-sample.vertical_g - NEGATIVE_VERTICAL_DISCOMFORT_THRESHOLD_G).max(0.0)
+                / DISCOMFORT_NEGATIVE_VERTICAL_SCALE_G
+            + (sample.lateral_g.abs() - LATERAL_DISCOMFORT_THRESHOLD_G).max(0.0)
+                / DISCOMFORT_LATERAL_SCALE_G
+            + (sample.longitudinal_g.abs() - LONGITUDINAL_DISCOMFORT_THRESHOLD_G).max(0.0)
+                / DISCOMFORT_LONGITUDINAL_SCALE_G
     });
     let moderate_force = (mean(|sample| {
         (sample.vertical_g - 1.0).abs() + sample.lateral_g.abs() + sample.longitudinal_g.abs()
-    }) / 7.0)
+    }) / MODERATE_FORCE_CALIBRATION)
         .clamp(0.0, 1.0);
-    let intensity = (20.0
-        + 14.0 * mean_vertical_deviation
-        + 18.0 * mean_lateral_load
-        + 10.0 * mean_longitudinal_load
-        + 8.0 * airtime_fraction
-        + 10.0 * (high_force_run / 20.0).clamp(0.0, 1.0))
+    let intensity = (INTENSITY_BASE_SCORE
+        + INTENSITY_VERTICAL_WEIGHT * mean_vertical_deviation
+        + INTENSITY_LATERAL_WEIGHT * mean_lateral_load
+        + INTENSITY_LONGITUDINAL_WEIGHT * mean_longitudinal_load
+        + INTENSITY_AIRTIME_WEIGHT * airtime_fraction
+        + INTENSITY_HIGH_FORCE_WEIGHT
+            * (high_force_run / HIGH_FORCE_SCORE_CALIBRATION_METRES).clamp(0.0, 1.0))
     .clamp(0.0, 100.0);
-    let nausea = (100.0 * discomfort).clamp(0.0, 100.0);
-    let excitement = (10.0
-        + 1.6 * mean_speed
-        + 25.0 * airtime_fraction
-        + 24.0 * moderate_force
-        + 15.0 * drop_score
-        + 15.0 * inversion_score
-        - 0.45 * nausea)
+    let nausea = (NAUSEA_SCORE_SCALE * discomfort).clamp(0.0, 100.0);
+    let excitement = (EXCITEMENT_BASE_SCORE
+        + EXCITEMENT_SPEED_WEIGHT * mean_speed
+        + EXCITEMENT_AIRTIME_WEIGHT * airtime_fraction
+        + EXCITEMENT_MODERATE_FORCE_WEIGHT * moderate_force
+        + EXCITEMENT_DROP_WEIGHT * drop_score
+        + EXCITEMENT_INVERSION_WEIGHT * inversion_score
+        - EXCITEMENT_NAUSEA_WEIGHT * nausea)
         .clamp(0.0, 100.0);
     let mut notes = Vec::new();
     if mean_lateral_load >= 1.5 || maximum_lateral_load >= 2.5 {

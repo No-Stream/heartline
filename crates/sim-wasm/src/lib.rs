@@ -1,4 +1,5 @@
 mod blocks;
+mod command_errors;
 mod construction;
 mod facilities;
 mod guest_benchmark;
@@ -8,40 +9,45 @@ mod scenery;
 mod world;
 pub use reports::piece_shapes_json;
 
+use command_errors::CommandError;
+
+#[cfg(test)]
 use std::collections::HashMap;
 
 use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::facilities::{
-    FacilityKind, ParkFacilities, PathOpening, coaster_access_openings, coaster_facility,
-    facility_access_direction, station_positions, validate_facility_path_access,
+    FacilityKind, ParkFacilities, facility_access_direction, station_positions,
 };
-use theme_park_sim::guest_behavior::Facility;
 use theme_park_sim::guests::{AgeGroup, GuestId};
+use theme_park_sim::park::Park;
 use theme_park_sim::park_guests::ParkGuests;
-use theme_park_sim::physics::{
-    BlockOperation, Circuit, CoasterOutcome, PhysicsConfig, TIME_STEP, TestRun, TestRunRecorder,
-    Train, demo_circuit,
-};
+#[cfg(test)]
+use theme_park_sim::physics::BlockOperation;
+use theme_park_sim::physics::{Circuit, PhysicsConfig, TestRunRecorder, Train, demo_circuit};
+#[cfg(test)]
+use theme_park_sim::track::blocks::ThroughputEstimator;
 use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch};
-use theme_park_sim::track::clearance::{ClearanceBox, ClearanceCollision, check_clearance};
+#[cfg(test)]
+use theme_park_sim::track::clearance::ClearanceBox;
 use theme_park_sim::track::construction::{Construction, track_support_obstacles};
-use theme_park_sim::track::proximity::{
-    ProximityKind, TrainPosition, scan_proximity_with_supports,
-};
+use theme_park_sim::track::proximity::ProximityKind;
+#[cfg(test)]
+use theme_park_sim::track::supports::SUPPORT_INFLUENCE_RADIUS_METRES;
 use theme_park_sim::track::supports::{
-    SUPPORT_INFLUENCE_RADIUS_METRES, SupportError, SupportObstacle, SupportSegment,
-    generate_dense_wooden_lattice, generate_steel_columns, generate_wooden_lattice,
+    SupportError, SupportObstacle, SupportSegment, generate_dense_wooden_lattice,
+    generate_steel_columns, generate_wooden_lattice,
 };
 use theme_park_sim::track::{
     Heading, Material, Piece, PieceId, PieceKind, SupportStyle, TrackSample, TrackState,
     TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{
-    Brush, Corner, Direction, PathBuildError, PathKind, PathPreviewTile, Position, Scenery,
-    SceneryKind, Surface, TerrainCommand, TerrainEditError, World,
+    Brush, Corner, Direction, PathBuildError, PathKind, Position, Scenery, SceneryKind, Surface,
+    TerrainCommand, World,
 };
 use wasm_bindgen::prelude::*;
 
+#[cfg(test)]
 struct SupportRenderCache {
     obstacles: Vec<SupportObstacle>,
     dependencies: Vec<usize>,
@@ -51,47 +57,31 @@ struct SupportRenderCache {
 
 #[wasm_bindgen]
 pub struct WasmSimulation {
-    simulation: ParkGuests,
-    world: World,
-    facilities: ParkFacilities,
+    park: Park,
     facility_message: String,
     path_message: String,
     terrain_message: String,
     scenery_message: String,
     terrain_invalidated_paths: Vec<Position>,
-    circuit: Circuit,
-    train: Train,
-    train_configuration: TrainConfiguration,
-    physics_remainder: u32,
-    construction: Option<Construction>,
     construction_model: ConstructionModel,
     selected: Option<PieceId>,
-    construction_message: String,
-    construction_train: Option<(Circuit, Train)>,
-    coaster_open: bool,
-    coaster_operation: Option<BlockOperation>,
-    coaster_riders: HashMap<u64, Vec<GuestId>>,
-    coaster_facility: Option<Facility>,
-    block_layout: Option<BlockLayout>,
-    desired_train_count: Option<usize>,
-    block_placement_search: Option<BlockPlacementSearch>,
-    block_placement_cache: Option<BlockPlacementSearch>,
-    block_apply_best_requested: bool,
-    block_manual_search: Option<BlockManualSearch>,
-    block_baseline_validation: bool,
-    block_layout_is_automatic: bool,
-    block_message: String,
-    block_hourly_throughput: f64,
-    block_throughput_reason: String,
-    block_throughput_estimator: Option<ThroughputEstimator>,
-    block_analysis_extra_to_throughput: bool,
-    block_throughput_cache: HashMap<Vec<u64>, (f64, String)>,
+    construction_preview_supports_cache: Vec<f32>,
+    construction_placed_supports_cache: Vec<f32>,
     recovered_station: Option<Piece>,
-    support_render_cache: HashMap<usize, SupportRenderCache>,
-    construction_slow_steps: u32,
-    construction_outcome: Option<String>,
-    construction_recorder: Option<TestRunRecorder>,
-    construction_report: Option<TestRun>,
+}
+
+impl std::ops::Deref for WasmSimulation {
+    type Target = Park;
+
+    fn deref(&self) -> &Park {
+        &self.park
+    }
+}
+
+impl std::ops::DerefMut for WasmSimulation {
+    fn deref_mut(&mut self) -> &mut Park {
+        &mut self.park
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -101,154 +91,14 @@ enum ConstructionModel {
     WoodenTwister,
 }
 
-const COASTER_PLACE_ID: u32 = u32::MAX;
+#[cfg(test)]
+use theme_park_sim::park::block_analysis::block_physics_config;
+#[cfg(test)]
+use theme_park_sim::park::tick::{
+    COASTER_PLACE_ID, block_boundary_fingerprint, block_layout_fingerprint,
+};
 
 impl WasmSimulation {
-    fn coaster_has_active_trains(&self) -> bool {
-        self.coaster_operation
-            .as_ref()
-            .is_some_and(|operation| operation.trains().next().is_some())
-    }
-
-    fn block_layout_change_pending(&self) -> bool {
-        if let Some(Ok(layout)) = self
-            .block_manual_search
-            .as_ref()
-            .and_then(BlockManualSearch::result)
-        {
-            let installed = self
-                .block_layout
-                .as_ref()
-                .expect("validation has an installed layout");
-            return block_layout_fingerprint(layout) != block_layout_fingerprint(installed);
-        }
-        let Some(search) = &self.block_placement_search else {
-            return false;
-        };
-        let installed = self
-            .block_layout
-            .as_ref()
-            .expect("search has an installed layout");
-        let best = search.best();
-        (self.block_apply_best_requested
-            || best.capacity() > installed.capacity()
-            || confirmed_stalled_baseline(best, installed)
-            || (search.is_complete() && best.capacity() >= installed.capacity()))
-            && block_layout_fingerprint(best) != block_layout_fingerprint(installed)
-    }
-
-    fn proximity_obstacles(&self) -> Vec<ClearanceBox> {
-        self.facility_obstacles()
-            .into_iter()
-            .map(|obstacle| ClearanceBox {
-                min: obstacle.min,
-                max: obstacle.max,
-            })
-            .collect()
-    }
-
-    fn proximity_supports(&self) -> Vec<SupportSegment> {
-        self.support_render_cache
-            .values()
-            .flat_map(|cached| {
-                cached
-                    .segments
-                    .as_ref()
-                    .expect("placed support must be routable")
-                    .iter()
-                    .copied()
-            })
-            .collect()
-    }
-
-    fn close_live_coaster(&mut self) {
-        self.recover_live_trains();
-        if let Some(facility) = &self.coaster_facility {
-            self.simulation.close_coaster(&self.world, facility);
-        }
-        self.coaster_open = false;
-        self.coaster_operation = None;
-        self.coaster_facility = None;
-    }
-
-    fn recover_live_trains(&mut self) {
-        let outcomes = self
-            .coaster_operation
-            .take()
-            .map_or_else(Vec::new, |mut operation| operation.recover_all());
-        for (train_id, outcome) in outcomes {
-            self.finish_live_train(train_id, outcome);
-        }
-    }
-
-    fn finish_live_train(&mut self, train_id: u64, mut outcome: CoasterOutcome) {
-        let Some(riders) = self.coaster_riders.remove(&train_id) else {
-            return;
-        };
-        let facility = *self
-            .coaster_facility
-            .as_ref()
-            .expect("riders have an open coaster");
-        if outcome.recovered {
-            self.simulation
-                .finish_coaster_train(&self.world, &facility, train_id, &[], &[], true);
-            return;
-        }
-
-        self.construction_placed_supports();
-        let obstacles = self.proximity_obstacles();
-        let supports = self.proximity_supports();
-        let construction = self.construction.as_ref().expect("open coaster has track");
-        let geometry = scan_proximity_with_supports(
-            &self.world,
-            construction.pieces(),
-            &construction.model().train,
-            self.circuit.pieces(),
-            &obstacles,
-            &supports,
-        );
-        for report in &mut outcome.reports {
-            let events = geometry.events_for_run(&report.samples);
-            report.add_proximity_events(&events);
-        }
-        let seats_per_car = usize::from(construction.model().train.rows_per_car)
-            * usize::from(construction.model().train.seats_per_row);
-        let ratings: Vec<_> = (0..riders.len())
-            .map(|seat| {
-                let report = &outcome.reports[seat / seats_per_car];
-                (report.excitement, report.intensity, report.nausea)
-            })
-            .collect();
-        let proximity_events: Vec<_> = (0..riders.len())
-            .map(|seat| {
-                outcome.reports[seat / seats_per_car]
-                    .proximity_events
-                    .clone()
-            })
-            .collect();
-        self.simulation.finish_coaster_train(
-            &self.world,
-            &facility,
-            train_id,
-            &ratings,
-            &proximity_events,
-            false,
-        );
-    }
-
-    fn construction_circuit_and_train(&self) -> Option<(Circuit, TrainConfiguration)> {
-        let construction = self.construction.as_ref()?;
-        Some((
-            construction.circuit().ok()?,
-            construction.model().train.clone(),
-        ))
-    }
-
-    fn set_block_error(&mut self, reason: &str) {
-        self.block_message = reason.to_owned();
-        self.construction_message = self.block_message.clone();
-    }
-
     fn block_reasons_json(&self) -> String {
         let reasons = [&self.block_message, &self.block_throughput_reason]
             .into_iter()
@@ -259,95 +109,9 @@ impl WasmSimulation {
         format!("[{reasons}]")
     }
 
-    fn clear_block_layout(&mut self) {
-        self.block_layout = None;
-        self.desired_train_count = None;
-        self.block_placement_search = None;
-        self.block_placement_cache = None;
-        self.block_apply_best_requested = false;
-        self.block_manual_search = None;
-        self.block_baseline_validation = false;
-        self.block_layout_is_automatic = false;
-        self.block_message.clear();
-        self.block_hourly_throughput = 0.0;
-        self.block_throughput_reason.clear();
-        self.block_throughput_estimator = None;
-        self.block_analysis_extra_to_throughput = false;
-        self.block_throughput_cache.clear();
-    }
-
-    fn install_block_layout(&mut self, layout: BlockLayout, automatic: bool) {
-        self.block_placement_search = None;
-        self.block_apply_best_requested = false;
-        self.block_manual_search = None;
-        self.block_baseline_validation = false;
-        let fingerprint = block_layout_fingerprint(&layout);
-        let (throughput, throughput_reason, estimator) = if layout.capacity() == 0 {
-            (0.0, "A train could not complete the circuit.".into(), None)
-        } else {
-            match self.block_throughput_cache.get(&fingerprint) {
-                Some((throughput, reason)) => (*throughput, reason.clone(), None),
-                None => (0.0, String::new(), Some(ThroughputEstimator::new(&layout))),
-            }
-        };
-        if self.coaster_open {
-            self.recover_live_trains();
-            self.coaster_operation = Some(BlockOperation::new(layout.clone()));
-        }
-        self.block_layout = Some(layout);
-        self.block_layout_is_automatic = automatic;
-        self.block_hourly_throughput = throughput;
-        self.block_throughput_reason = throughput_reason;
-        self.block_throughput_estimator = estimator;
-        self.block_message.clear();
-        self.construction_message.clear();
-    }
-
-    fn checked_path_preview(
-        &self,
-        start: Position,
-        end: Position,
-        kind: PathKind,
-        style: u8,
-    ) -> Result<Vec<PathPreviewTile>, PathBuildError> {
-        let mut preview = self.world.preview_path_tiles(start, end, kind, style)?;
-        let mut blocked_by_facility = false;
-        for tile in &mut preview {
-            if self.facilities.occupies_path_position(tile.path.position) {
-                tile.refusal = Some(PathBuildError::FacilityOccupied);
-                blocked_by_facility = true;
-            } else if blocked_by_facility && tile.refusal.is_none() {
-                tile.refusal = Some(PathBuildError::Disconnected);
-            }
-        }
-        if preview.iter().all(|tile| tile.refusal.is_none()) {
-            let proposed = self.world.preview_path_world(start, end, kind)?;
-            if validate_facility_path_access(
-                &proposed,
-                &self.facilities,
-                self.construction.as_ref(),
-            )
-            .is_err()
-            {
-                for tile in &mut preview {
-                    tile.refusal = Some(PathBuildError::FacilityAccess);
-                }
-            }
-        }
-        Ok(preview)
-    }
-
-    fn facility_openings(&self) -> Vec<PathOpening> {
-        let mut openings = self.facilities.access_openings(&self.world);
-        if let Some(coaster_openings) = self.construction.as_ref().and_then(coaster_access_openings)
-        {
-            openings.extend(coaster_openings);
-        }
-        openings
-    }
-
     fn facility_obstacles(&self) -> Vec<SupportObstacle> {
-        self.facilities
+        self.park
+            .facilities
             .buildings()
             .iter()
             .map(|building| {
@@ -368,10 +132,11 @@ impl WasmSimulation {
             .collect()
     }
     fn select_compatible_piece(&mut self) {
-        let Some(construction) = &self.construction else {
+        let Some(construction) = &self.park.construction else {
             return;
         };
-        let available = construction.available_choices(&self.world, &self.facility_obstacles());
+        let available =
+            construction.available_choices(&self.park.world, &self.facility_obstacles());
         if self
             .selected
             .is_some_and(|selected| available.iter().any(|(piece, _)| piece.id == selected))
@@ -388,7 +153,7 @@ impl WasmSimulation {
         render: fn(&[Piece], &World) -> Vec<f32>,
         stride: usize,
     ) -> Vec<f32> {
-        let Some(construction) = &self.construction else {
+        let Some(construction) = &self.park.construction else {
             return Vec::new();
         };
         let entries: Vec<_> = construction
@@ -403,14 +168,14 @@ impl WasmSimulation {
             )
             .collect();
         let pieces: Vec<_> = entries.iter().map(|(_, piece)| (*piece).clone()).collect();
-        let mut geometry = render(&pieces, &self.world);
+        let mut geometry = render(&pieces, &self.park.world);
         for record in geometry.chunks_exact_mut(stride) {
             record[0] = *entries[record[0] as usize].0 as f32;
         }
         self.encode_construction_geometry(geometry, stride)
     }
     fn encode_construction_geometry(&self, mut geometry: Vec<f32>, stride: usize) -> Vec<f32> {
-        if self.construction.as_ref().is_some_and(|construction| {
+        if self.park.construction.as_ref().is_some_and(|construction| {
             construction.model().support_style == SupportStyle::SteelColumns
         }) {
             // Steel records use -(piece ID + 1); consumers decode before picking.
@@ -430,14 +195,14 @@ impl WasmSimulation {
         geometry
     }
     fn construction_preview(&self) -> Vec<Piece> {
-        let Some(construction) = &self.construction else {
+        let Some(construction) = &self.park.construction else {
             return Vec::new();
         };
         if construction.is_closed() {
             return Vec::new();
         }
         construction
-            .available_choices(&self.world, &self.facility_obstacles())
+            .available_choices(&self.park.world, &self.facility_obstacles())
             .into_iter()
             .filter_map(|(piece, _)| (Some(piece.id) == self.selected).then_some(piece))
             .collect()
@@ -493,16 +258,16 @@ fn parse_path_kind(kind: &str) -> Option<PathKind> {
     }
 }
 
-fn path_positions(coordinates: &[i32]) -> Result<(Position, Position), &'static str> {
+fn path_positions(coordinates: &[i32]) -> Result<(Position, Position), CommandError> {
     let [start_x, start_y, start_height, end_x, end_y, end_height] = coordinates else {
-        return Err("Path route needs six coordinates");
+        return Err(CommandError::PathRouteNeedsSixCoordinates);
     };
-    let position = |x: i32, y: i32, height: i32| -> Result<Position, &'static str> {
+    let position = |x: i32, y: i32, height: i32| -> Result<Position, CommandError> {
         Ok(Position {
-            x: u16::try_from(x).map_err(|_| "Path coordinates are outside the supported range")?,
-            y: u16::try_from(y).map_err(|_| "Path coordinates are outside the supported range")?,
+            x: u16::try_from(x).map_err(|_| CommandError::PathCoordinatesOutsideSupportedRange)?,
+            y: u16::try_from(y).map_err(|_| CommandError::PathCoordinatesOutsideSupportedRange)?,
             height: i16::try_from(height)
-                .map_err(|_| "Path coordinates are outside the supported range")?,
+                .map_err(|_| CommandError::PathCoordinatesOutsideSupportedRange)?,
         })
     };
     Ok((
@@ -532,38 +297,24 @@ struct TerrainParameters {
     top: i16,
 }
 
-fn parse_terrain_parameters(values: Vec<i32>) -> Result<TerrainParameters, &'static str> {
+fn parse_terrain_parameters(values: Vec<i32>) -> Result<TerrainParameters, CommandError> {
     let [x, y, size, corner, steps, height, bottom, top] = values
         .try_into()
-        .map_err(|_| "Terrain edit needs eight integer parameters")?;
+        .map_err(|_| CommandError::TerrainNeedsEightParameters)?;
     Ok(TerrainParameters {
-        x: u16::try_from(x).map_err(|_| "Terrain coordinates are outside the supported range")?,
-        y: u16::try_from(y).map_err(|_| "Terrain coordinates are outside the supported range")?,
+        x: u16::try_from(x).map_err(|_| CommandError::TerrainCoordinatesOutsideSupportedRange)?,
+        y: u16::try_from(y).map_err(|_| CommandError::TerrainCoordinatesOutsideSupportedRange)?,
         size: u8::try_from(size)
-            .map_err(|_| "Terrain brush size is outside the supported range")?,
+            .map_err(|_| CommandError::TerrainBrushSizeOutsideSupportedRange)?,
         corner: u8::try_from(corner)
-            .map_err(|_| "Terrain corner is outside the supported range")?,
-        steps: i16::try_from(steps)
-            .map_err(|_| "Terrain step count is outside the supported range")?,
+            .map_err(|_| CommandError::TerrainCornerOutsideSupportedRange)?,
+        steps: i16::try_from(steps).map_err(|_| CommandError::TerrainStepsOutsideSupportedRange)?,
         height: i16::try_from(height)
-            .map_err(|_| "Terrain height is outside the supported range")?,
+            .map_err(|_| CommandError::TerrainHeightOutsideSupportedRange)?,
         bottom: i16::try_from(bottom)
-            .map_err(|_| "Excavation bottom is outside the supported range")?,
-        top: i16::try_from(top).map_err(|_| "Excavation top is outside the supported range")?,
+            .map_err(|_| CommandError::ExcavationBottomOutsideSupportedRange)?,
+        top: i16::try_from(top).map_err(|_| CommandError::ExcavationTopOutsideSupportedRange)?,
     })
-}
-
-fn terrain_edit_error(error: TerrainEditError) -> &'static str {
-    match error {
-        TerrainEditError::OutsideWorld => "Terrain edit is outside the park",
-        TerrainEditError::InvalidBrushSize => "Brush size must be between 1 and 9",
-        TerrainEditError::InvalidStepCount => "Terrain change must be at least one step",
-        TerrainEditError::InvalidInterval => "Excavation interval is invalid",
-        TerrainEditError::CarveAboveTerrain => "Excavation exceeds the terrain height",
-        TerrainEditError::NoWater => "There is no water to lower in this area",
-        TerrainEditError::HeightOverflow => "Terrain height exceeds the supported range",
-        TerrainEditError::SceneryObstructed => "Terrain edit would disturb scenery",
-    }
 }
 
 fn path_slope_code(slope: Option<Direction>) -> i32 {
@@ -573,22 +324,6 @@ fn path_slope_code(slope: Option<Direction>) -> i32 {
         Some(Direction::East) => 2,
         Some(Direction::South) => 3,
         Some(Direction::West) => 4,
-    }
-}
-
-fn path_build_error(error: PathBuildError) -> &'static str {
-    match error {
-        PathBuildError::OutsideWorld => "Path route is outside the park",
-        PathBuildError::UnsupportedTerrain => "Path route crosses unsupported terrain",
-        PathBuildError::EndpointHeight => "Path endpoint heights do not match the route",
-        PathBuildError::Disconnected => "Path route does not connect across the terrain",
-        PathBuildError::Occupied => "Path route overlaps another path",
-        PathBuildError::Unsupported => "Path route lacks terrain support or clearance",
-        PathBuildError::QueueConnections => {
-            "A queue path must have at most one normal path entrance"
-        }
-        PathBuildError::FacilityOccupied => "Path overlaps a facility",
-        PathBuildError::FacilityAccess => "Path conflicts with attraction access",
     }
 }
 
@@ -606,6 +341,22 @@ fn path_error_code(error: PathBuildError) -> i32 {
     }
 }
 
+fn path_preview_error_code(error: CommandError) -> i32 {
+    match error {
+        CommandError::Park(theme_park_sim::park::commands::ParkCommandError::Path(error)) => {
+            path_error_code(error)
+        }
+        CommandError::UnknownPathKind => 10,
+        CommandError::PathRouteNeedsSixCoordinates => 11,
+        CommandError::PathCoordinatesOutsideSupportedRange => 12,
+        _ => unreachable!("only path preview errors can be encoded in a path preview"),
+    }
+}
+
+fn path_preview_error_record(error: CommandError) -> Vec<i32> {
+    vec![-1, -1, 0, 0, 0, 0, path_preview_error_code(error), 0, 0]
+}
+
 fn construction_error(error: theme_park_sim::track::construction::ConstructionError) -> String {
     use theme_park_sim::track::clearance::ClearanceCollision;
     use theme_park_sim::track::construction::ConstructionError;
@@ -615,9 +366,6 @@ fn construction_error(error: theme_park_sim::track::construction::ConstructionEr
         ConstructionError::AmbiguousConnection => "More than one track segment connects here.",
         ConstructionError::ModelForbidden => "This coaster model cannot use this piece.",
         ConstructionError::NoSupportRoute => "Supports cannot be placed here.",
-        ConstructionError::SupportSearchExhausted => {
-            "Support routing search exhausted; placement is unresolved."
-        }
         ConstructionError::InvalidIndex => "That track piece does not exist.",
         ConstructionError::NotClosed => "Close the circuit first.",
         ConstructionError::InvalidCircuit => "The track must connect back to its station.",
@@ -696,6 +444,7 @@ fn scenery_kind_name(kind: SceneryKind) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn boxes_overlap(a: ClearanceBox, b: ClearanceBox) -> bool {
     a.min.x < b.max.x
         && b.min.x < a.max.x
@@ -736,6 +485,7 @@ fn facility_intersects_track(
         })
 }
 
+#[cfg(test)]
 fn facility_intersects_track_sets(
     kind: FacilityKind,
     position: Position,
@@ -762,13 +512,6 @@ fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
     append_vector(result, sample.up);
 }
 
-fn block_physics_config() -> PhysicsConfig {
-    PhysicsConfig {
-        lift_speed: 5.0,
-        ..PhysicsConfig::default()
-    }
-}
-
 fn editable_block_boundaries(layout: &BlockLayout) -> Vec<f64> {
     layout
         .boundaries()
@@ -777,37 +520,6 @@ fn editable_block_boundaries(layout: &BlockLayout) -> Vec<f64> {
         .filter(|(index, _)| !layout.brake_pieces(*index).is_empty())
         .map(|(_, boundary)| *boundary)
         .collect()
-}
-
-fn block_layout_fingerprint(layout: &BlockLayout) -> Vec<u64> {
-    let mut fingerprint = vec![layout.capacity() as u64];
-    for (index, boundary) in layout.boundaries().iter().enumerate() {
-        fingerprint.extend(block_boundary_fingerprint(
-            *boundary,
-            layout.brake_pieces(index),
-            layout.powered_hold_pieces(index),
-        ));
-    }
-    fingerprint
-}
-
-fn block_boundary_fingerprint(
-    boundary: f64,
-    brake_pieces: &[usize],
-    powered_hold_pieces: &[usize],
-) -> Vec<u64> {
-    let mut fingerprint = vec![boundary.to_bits(), brake_pieces.len() as u64];
-    fingerprint.extend(brake_pieces.iter().map(|piece| *piece as u64));
-    fingerprint.push(powered_hold_pieces.len() as u64);
-    fingerprint.extend(powered_hold_pieces.iter().map(|piece| *piece as u64));
-    fingerprint
-}
-
-fn confirmed_stalled_baseline(best: &BlockLayout, installed: &BlockLayout) -> bool {
-    best.capacity() == 0
-        && best.capacity_search_complete()
-        && !installed.capacity_search_complete()
-        && editable_block_boundaries(installed).is_empty()
 }
 
 fn kind_for_boundary(circuit: &Circuit, distance: f64) -> &'static str {
@@ -858,80 +570,13 @@ fn append_train_poses(
     }
 }
 
+#[cfg(test)]
 fn block_layout_for_open(
     circuit: &Circuit,
     train: &TrainConfiguration,
     config: PhysicsConfig,
 ) -> Result<BlockLayout, &'static str> {
     BlockLayout::unverified_baseline(circuit, train, config)
-}
-
-struct ThroughputEstimator {
-    operation: BlockOperation,
-    max_idle_steps: usize,
-    step: usize,
-    last_dispatch_step: usize,
-    first_measured_step: Option<usize>,
-    measured_intervals: usize,
-    seats_per_train: usize,
-}
-
-impl ThroughputEstimator {
-    fn new(layout: &BlockLayout) -> Self {
-        let max_idle_seconds = (layout.circuit().length() * 4.0 + 60.0).clamp(300.0, 3600.0);
-        let mut operation = BlockOperation::new_without_reports(layout.clone());
-        while operation.can_dispatch() {
-            operation.dispatch();
-        }
-        Self {
-            operation,
-            max_idle_steps: (max_idle_seconds / TIME_STEP) as usize,
-            step: 0,
-            last_dispatch_step: 0,
-            first_measured_step: None,
-            measured_intervals: 0,
-            seats_per_train: usize::from(layout.train().cars)
-                * usize::from(layout.train().rows_per_car)
-                * usize::from(layout.train().seats_per_row),
-        }
-    }
-
-    fn advance(&mut self, work_steps: usize) -> Option<Result<f64, &'static str>> {
-        const MEASURED_INTERVALS: usize = 3;
-        for _ in 0..work_steps {
-            if self.step - self.last_dispatch_step >= self.max_idle_steps {
-                return Some(Err(
-                    "The throughput simulation did not observe enough sustained dispatches.",
-                ));
-            }
-            self.step += 1;
-            if self
-                .operation
-                .step(&[])
-                .iter()
-                .any(|(_, outcome)| outcome.recovered)
-            {
-                return Some(Err("A train recovered during the throughput simulation."));
-            }
-            while self.operation.can_dispatch() {
-                self.operation.dispatch();
-                self.last_dispatch_step = self.step;
-                let Some(first_step) = self.first_measured_step else {
-                    self.first_measured_step = Some(self.step);
-                    continue;
-                };
-                self.measured_intervals += 1;
-                if self.measured_intervals >= MEASURED_INTERVALS && self.step > first_step {
-                    let elapsed_seconds = (self.step - first_step) as f64 * TIME_STEP;
-                    return Some(Ok(self.seats_per_train as f64
-                        * self.measured_intervals as f64
-                        * 3600.0
-                        / elapsed_seconds));
-                }
-            }
-        }
-        None
-    }
 }
 
 #[cfg(test)]
@@ -1022,6 +667,7 @@ fn render_preview_supports(
     Ok(result)
 }
 
+#[cfg(test)]
 fn sync_support_obstacles(
     entries: &[(&usize, &Piece)],
     train: &TrainConfiguration,
@@ -1038,6 +684,7 @@ fn sync_support_obstacles(
     }
 }
 
+#[cfg(test)]
 fn render_cached_supports(
     entries: &[(&usize, &Piece)],
     world: &World,

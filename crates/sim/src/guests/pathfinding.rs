@@ -1,3 +1,4 @@
+use crate::state_hash::StateHasher;
 use crate::world::{Path, PathKind, Position, World};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -16,6 +17,51 @@ pub(crate) struct Graph {
 }
 
 impl Graph {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"GuestGraph-v1");
+        hash.write_len(self.paths.len());
+        for path in &self.paths {
+            write_position(hash, path.position);
+            hash.write_option(path.slope, |hash, direction| {
+                hash.write_u8(direction as u8);
+            });
+        }
+        hash.write_len(self.normal.len());
+        for &normal in &self.normal {
+            hash.write_bool(normal);
+        }
+        hash.write_len(self.queue_components.len());
+        for &component in &self.queue_components {
+            hash.write_option(component, |hash, component| hash.write_len(component));
+        }
+        hash.write_len(self.queue_ends.len());
+        for ends in &self.queue_ends {
+            write_indices(hash, ends);
+        }
+        hash.write_len(self.queue_has_entrance.len());
+        for &has_entrance in &self.queue_has_entrance {
+            hash.write_bool(has_entrance);
+        }
+        hash.write_len(self.queue_entrances.len());
+        for entrances in &self.queue_entrances {
+            write_indices(hash, entrances);
+        }
+        hash.write_len(self.neighbours.len());
+        for neighbours in &self.neighbours {
+            write_indices(hash, neighbours);
+        }
+        hash.write_len(self.indices.len());
+        for (position, &index) in &self.indices {
+            write_position(hash, *position);
+            hash.write_len(index);
+        }
+        write_indices(hash, &self.components);
+        hash.write_len(self.goals.len());
+        for goals in &self.goals {
+            write_indices(hash, goals);
+        }
+    }
+
     pub(crate) fn with_entrance(world: &World, entrance: Option<Position>) -> Self {
         let paths: Vec<_> = world.paths().collect();
         let normal: Vec<_> = paths
@@ -151,5 +197,18 @@ impl Graph {
             }
         }
         self.fields.insert(goal, next_step);
+    }
+}
+
+fn write_position(hash: &mut StateHasher, position: Position) {
+    hash.write_u16(position.x);
+    hash.write_u16(position.y);
+    hash.write_i16(position.height);
+}
+
+fn write_indices(hash: &mut StateHasher, indices: &[usize]) {
+    hash.write_len(indices.len());
+    for &index in indices {
+        hash.write_len(index);
     }
 }

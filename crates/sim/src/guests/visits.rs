@@ -2,6 +2,7 @@
 
 use crate::guests::behavior::GuestBehavior;
 use crate::guests::{GuestId, GuestStore};
+use crate::state_hash::StateHasher;
 
 /// Manages visits over the fixed roster in a `GuestStore`.
 ///
@@ -44,6 +45,14 @@ impl VisitManager {
 
     pub fn arrivals_per_tick(&self) -> usize {
         self.arrivals_per_tick
+    }
+
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"VisitManager-v1");
+        hash.write_len(self.roster_size);
+        hash.write_len(self.active_count);
+        hash.write_len(self.next_candidate);
+        hash.write_len(self.arrivals_per_tick);
     }
 
     /// Admits guests up to the target and returns their IDs in admission order.

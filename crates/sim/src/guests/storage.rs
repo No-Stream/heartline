@@ -11,6 +11,7 @@ pub use super::traits::{
     AgeGroup, Appearance, BODY_SHAPE_COUNT, CLOTHING_STYLE_COUNT, GroupKind, GuestId,
     HAIR_STYLE_COUNT, RIDE_TYPE_COUNT, SKIN_TONE_COUNT, SpendingLevel, THEME_COUNT,
 };
+use crate::state_hash::StateHasher;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuestStore {
@@ -257,6 +258,90 @@ impl GuestStore {
 
     pub fn memory_bytes(&self) -> usize {
         self.memories.capacity() * size_of::<GuestMemory>()
+    }
+
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"GuestStore-v1");
+        hash.write_u64(self.seed);
+        hash.write_len(self.ids.len());
+        for &id in &self.ids {
+            hash.write_u32(id.0);
+        }
+        hash.write_len(self.active.len());
+        for &active in &self.active {
+            hash.write_bool(active);
+        }
+        hash.write_len(self.group_indices.len());
+        for &index in &self.group_indices {
+            hash.write_u32(index);
+        }
+        hash.write_len(self.ages.len());
+        for &age in &self.ages {
+            hash.write_u8(age as u8);
+        }
+        write_u8_values(hash, &self.intensity);
+        write_u8_values(hash, &self.nausea_tolerance);
+        write_u8_values(hash, &self.favourite_ride_types);
+        write_u8_values(hash, &self.theming_care);
+        write_u8_values(hash, &self.preferred_theme);
+        hash.write_len(self.spending.len());
+        for &spending in &self.spending {
+            hash.write_u8(spending as u8);
+        }
+        write_u8_values(hash, &self.height_cm);
+        write_u8_values(hash, &self.walking_speed);
+        hash.write_len(self.appearance.len());
+        for appearance in &self.appearance {
+            hash.write_u8(appearance.skin_tone);
+            hash.write_u8(appearance.hair_style);
+            hash.write_u8(appearance.clothing_style);
+            hash.write_u8(appearance.body_shape);
+        }
+        hash.write_len(self.memories.len());
+        for memory in &self.memories {
+            hash.write_len(memory.len());
+            for entry in memory.iter() {
+                hash.write_u32(entry.ride_id);
+                hash.write_i8(entry.enjoyment);
+                hash.write_u8(entry.nausea);
+                hash.write_u64(entry.tick);
+            }
+        }
+        hash.write_len(self.groups.len());
+        for group in &self.groups {
+            hash.write_u8(group.kind as u8);
+            hash.write_len(group.members.len());
+            for member in &group.members {
+                hash.write_u32(member.0);
+            }
+            hash.write_len(group.relations.len());
+            for relation in &group.relations {
+                match *relation {
+                    Relationship::ParentChild { parent, child } => {
+                        hash.write_u8(0);
+                        hash.write_u32(parent.0);
+                        hash.write_u32(child.0);
+                    }
+                    Relationship::Partners { first, second } => {
+                        hash.write_u8(1);
+                        hash.write_u32(first.0);
+                        hash.write_u32(second.0);
+                    }
+                    Relationship::Friends { first, second } => {
+                        hash.write_u8(2);
+                        hash.write_u32(first.0);
+                        hash.write_u32(second.0);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn write_u8_values(hash: &mut StateHasher, values: &[u8]) {
+    hash.write_len(values.len());
+    for &value in values {
+        hash.write_u8(value);
     }
 }
 

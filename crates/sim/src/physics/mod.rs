@@ -1,4 +1,5 @@
 //! Fixed-step train motion along placed track, in metres, seconds and kilograms.
+use crate::state_hash::StateHasher;
 use crate::track::{LaunchParameters, Piece, PieceKind, TrackSample, TrainConfiguration, Vec3};
 
 #[cfg(test)]
@@ -73,6 +74,19 @@ impl Circuit {
         let (index, local) = self.locate(distance);
         self.pieces[index].sample(local)
     }
+
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"Circuit-v1");
+        hash.write_len(self.pieces.len());
+        for piece in &self.pieces {
+            piece.hash_into(hash);
+        }
+        hash.write_len(self.starts.len());
+        for &start in &self.starts {
+            hash.write_f64(start);
+        }
+        hash.write_f64(self.length);
+    }
 }
 
 /// A small closed circuit for the playable demonstration world.
@@ -141,6 +155,20 @@ pub struct PhysicsConfig {
     pub braking_acceleration: f64,
     pub powered_sections: bool,
 }
+
+impl PhysicsConfig {
+    pub(crate) fn hash_into(self, hash: &mut StateHasher) {
+        hash.write_f64(self.car_mass_kg);
+        hash.write_f64(self.rolling_resistance);
+        hash.write_f64(self.drag_coefficient);
+        hash.write_f64(self.lift_speed);
+        hash.write_f64(self.brake_speed);
+        hash.write_f64(self.station_speed);
+        hash.write_f64(self.drive_acceleration);
+        hash.write_f64(self.braking_acceleration);
+        hash.write_bool(self.powered_sections);
+    }
+}
 impl Default for PhysicsConfig {
     fn default() -> Self {
         Self {
@@ -198,6 +226,54 @@ pub struct Train {
     recovered: bool,
 }
 impl Train {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"Train-v1");
+        hash.write_f64(self.distance);
+        hash.write_f64(self.speed);
+        hash.write_len(self.cars);
+        hash.write_f64(self.spacing);
+        self.config.hash_into(hash);
+        hash.write_option(self.launch, |hash, launch| {
+            hash.write_f64(launch.target_speed);
+            hash.write_f64(launch.acceleration);
+        });
+        hash.write_len(self.controls.len());
+        for control in &self.controls {
+            hash.write_option(*control, |hash, control| match control {
+                SectionControl::Launch {
+                    target_speed,
+                    acceleration,
+                } => {
+                    hash.write_u8(0);
+                    hash.write_f64(target_speed);
+                    hash.write_f64(acceleration);
+                }
+            });
+        }
+        hash.write_len(self.readings.len());
+        for frame in &self.readings {
+            hash.write_len(frame.len());
+            for reading in frame {
+                hash.write_f64(reading.distance);
+                hash.write_f64(reading.speed);
+                hash.write_f64(reading.g.vertical);
+                hash.write_f64(reading.g.lateral);
+                hash.write_f64(reading.g.longitudinal);
+                hash.write_bool(reading.airtime);
+                hash.write_f64(reading.height_m);
+                hash.write_bool(reading.inverted);
+            }
+        }
+        hash.write_len(self.notes.len());
+        for note in &self.notes {
+            match note {
+                Note::RecoveredAfterRollback => hash.write_u8(0),
+            }
+        }
+        hash.write_bool(self.rolled_back);
+        hash.write_bool(self.recovered);
+    }
+
     pub fn new(
         circuit: &Circuit,
         train: &TrainConfiguration,

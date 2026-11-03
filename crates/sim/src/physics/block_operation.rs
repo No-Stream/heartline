@@ -1,4 +1,5 @@
 use super::{Circuit, CoasterOutcome, CoasterRun, PhysicsConfig, Train};
+use crate::state_hash::StateHasher;
 use crate::track::PieceKind;
 use crate::track::TrainConfiguration;
 use crate::track::blocks::BlockLayout;
@@ -28,6 +29,33 @@ pub struct BlockOperation {
 }
 
 impl BlockOperation {
+    pub fn state_hash(&self) -> u64 {
+        let mut hash = StateHasher::new();
+        self.hash_into(&mut hash);
+        hash.finish()
+    }
+
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"BlockOperation-v1");
+        self.circuit.hash_into(hash);
+        self.configuration.hash_into(hash);
+        self.config.hash_into(hash);
+        self.layout.hash_into(hash);
+        hash.write_f64(self.station_distance);
+        hash.write_len(self.trains.len());
+        for train in &self.trains {
+            hash.write_u64(train.id);
+            train.run.hash_into(hash);
+            hash.write_len(train.reserved.len());
+            for &section in &train.reserved {
+                hash.write_len(section);
+            }
+        }
+        hash.write_u64(self.next_id);
+        hash.write_bool(self.record_reports);
+        hash.write_bool(self.interlock_triggered);
+    }
+
     pub fn new(layout: BlockLayout) -> Self {
         Self::with_reports(layout, true)
     }
@@ -339,6 +367,32 @@ impl BlockOperation {
             .drain(..)
             .map(|mut train| (train.id, train.run.recover()))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod state_hash_tests {
+    use super::BlockOperation;
+    use crate::physics::{PhysicsConfig, demo_circuit};
+    use crate::track::blocks::BlockLayout;
+    use crate::track::hybrid_model;
+
+    #[test]
+    fn state_hash_covers_report_mode_and_dispatched_trains() {
+        let circuit = demo_circuit();
+        let configuration = hybrid_model().train;
+        let layout =
+            BlockLayout::unverified_baseline(&circuit, &configuration, PhysicsConfig::default())
+                .unwrap();
+        let first = BlockOperation::new_without_reports(layout.clone());
+        let second = BlockOperation::new_without_reports(layout.clone());
+        assert_eq!(first.state_hash(), second.state_hash());
+        let recorded = BlockOperation::new(layout.clone());
+        assert_ne!(first.state_hash(), recorded.state_hash());
+
+        let mut dispatched = BlockOperation::new_without_reports(layout);
+        dispatched.dispatch();
+        assert_ne!(first.state_hash(), dispatched.state_hash());
     }
 }
 

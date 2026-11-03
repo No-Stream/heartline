@@ -142,9 +142,10 @@ fn facility_openings_follow_ride_placement_and_access_paths() {
     assert!(simulation.path_build(vec![4, 3, 0, 4, 3, 0], "queue", 0));
     assert!(simulation.path_build(vec![5, 3, 0, 5, 3, 0], "normal", 0));
     let id = simulation
+        .park
         .facilities
         .place(
-            &simulation.world,
+            &simulation.park.world,
             super::FacilityKind::Carousel,
             Position {
                 x: 4,
@@ -238,7 +239,7 @@ fn queue_preview_keeps_a_reused_normal_path_endpoint_normal() {
 }
 
 #[test]
-fn invalid_path_preview_returns_a_message_without_mutating_the_world() {
+fn invalid_path_preview_keeps_the_last_command_message_and_does_not_mutate_the_world() {
     let mut simulation = WasmSimulation::new(42, 0);
     simulation.world = World::new(
         4,
@@ -251,20 +252,45 @@ fn invalid_path_preview_returns_a_message_without_mutating_the_world() {
     simulation.facilities = super::ParkFacilities::new();
 
     let before_preview = simulation.world_state_hash();
+    assert!(!simulation.path_build(vec![0, 0, 0, 3, 0, 1], "unknown", 0));
+    let command_message = simulation.path_message();
+    assert_eq!(command_message, "Unknown path kind");
     let preview = simulation.path_preview(vec![0, 0, 0, 3, 0, 1], "normal", 0);
     assert_eq!(preview.len(), 4 * 9);
     assert!(preview.chunks_exact(9).any(|tile| tile[6] != 0));
-    assert!(!simulation.path_message().is_empty());
+    assert_eq!(simulation.path_message(), command_message);
     assert_eq!(simulation.world_state_hash(), before_preview);
-    assert!(!simulation.path_build(vec![0, 0, 0, 3, 0, 1], "unknown", 0));
-    assert_eq!(simulation.world_state_hash(), before_preview);
-    assert!(
-        simulation
-            .path_preview(vec![0, 0, 0], "normal", 0)
-            .is_empty()
+
+    assert_eq!(
+        simulation.path_preview(vec![0, 0, 0, 3, 0, 1], "unknown", 0),
+        vec![-1, -1, 0, 0, 0, 0, 10, 0, 0]
     );
-    assert!(simulation.path_message().contains("six coordinates"));
+    assert_eq!(
+        simulation.path_preview(vec![0, 0, 0], "normal", 0),
+        vec![-1, -1, 0, 0, 0, 0, 11, 0, 0]
+    );
+    assert_eq!(
+        simulation.path_preview(vec![65_536, 0, 0, 3, 0, 1], "normal", 0),
+        vec![-1, -1, 0, 0, 0, 0, 12, 0, 0]
+    );
+    assert_eq!(
+        simulation.path_preview(vec![0, 0, 0, 4, 0, 0], "normal", 0),
+        vec![-1, -1, 0, 0, 0, 0, 1, 0, 0]
+    );
+    assert_eq!(simulation.path_message(), command_message);
     assert_eq!(simulation.world_state_hash(), before_preview);
+}
+
+#[test]
+fn path_preview_accepts_an_immutable_simulation_and_preserves_the_last_message() {
+    let mut simulation = WasmSimulation::new(42, 0);
+    assert!(!simulation.path_build(vec![0, 0, 0], "normal", 0));
+    let command_message = simulation.path_message();
+    let simulation = simulation;
+
+    let _preview = simulation.path_preview(vec![0, 0, 0, 0, 0, 0], "normal", 0);
+
+    assert_eq!(simulation.path_message(), command_message);
 }
 
 #[test]
@@ -283,7 +309,8 @@ fn path_preview_and_build_reject_a_facility_footprint() {
     let preview = simulation.path_preview(coordinates.clone(), "normal", 0);
     assert_eq!(preview.len(), 9);
     assert_eq!(preview[6], 8);
-    assert!(simulation.path_message().contains("facility"));
+    assert!(simulation.path_message().is_empty());
     assert!(!simulation.path_build(coordinates, "normal", 0));
+    assert_eq!(simulation.path_message(), "Path overlaps a facility");
     assert_eq!(simulation.world.revision(), revision);
 }

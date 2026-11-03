@@ -4,23 +4,58 @@ import type { GeometryQuad, Vertex } from "./scene";
 export interface PathPreview { x: number; y: number; z: number; slope: number; edges: number; facilityOpenings: number; refusal: string | null }
 
 export function pathRefusal(code: number): string | null {
-  const reasons = [null, "Path route is outside the park", "Path route crosses unsupported terrain", "Path endpoint heights do not match the route", "Path route does not connect across the terrain", "Path route overlaps another path", "Path route lacks terrain support or clearance", "A queue path must have at most one normal path entrance", "Path overlaps a facility"];
+  const reasons = [
+    null,
+    "Path route is outside the park",
+    "Path route crosses unsupported terrain",
+    "Path endpoint heights do not match the route",
+    "Path route does not connect across the terrain",
+    "Path route overlaps another path",
+    "Path route lacks terrain support or clearance",
+    "A queue path must have at most one normal path entrance",
+    "Path overlaps a facility",
+    "Path conflicts with attraction access",
+    "Unknown path kind",
+    "Path route needs six coordinates",
+    "Path coordinates are outside the supported range",
+  ];
   if (!Number.isInteger(code) || code < 0 || code >= reasons.length) throw new Error("Invalid path preview refusal");
   return reasons[code];
 }
 
-export function decodePathPreview(paths: Int32Array): PathPreview[] {
+interface DecodedPathPreviewRow { tile: PathPreview | null; refusal: string | null }
+
+const pathPreviewErrorCoordinate = -1;
+
+function decodePathPreviewRows(paths: Int32Array): DecodedPathPreviewRow[] {
   if (paths.length % 9 !== 0) throw new Error("Invalid path preview");
-  const preview: PathPreview[] = [];
+  const preview: DecodedPathPreviewRow[] = [];
   for (let index = 0; index < paths.length; index += 9) {
     if (paths[index + 7] < 0 || paths[index + 7] > 15 || paths[index + 8] < 0 || paths[index + 8] > 15) throw new Error("Invalid path preview edges");
-    preview.push({ facilityOpenings: paths[index + 8], edges: paths[index + 7], x: paths[index], y: paths[index + 1], z: paths[index + 2], slope: paths[index + 3], refusal: pathRefusal(paths[index + 6]) });
+    const [x, y, z, slope, kind, style, refusalCode, edges, facilityOpenings] = paths.slice(index, index + 9);
+    const refusal = pathRefusal(refusalCode);
+    if (x === pathPreviewErrorCoordinate || y === pathPreviewErrorCoordinate) {
+      if (x !== pathPreviewErrorCoordinate || y !== pathPreviewErrorCoordinate || z !== 0 || slope !== 0 || kind !== 0 || style !== 0 || refusal === null || edges !== 0 || facilityOpenings !== 0) {
+        throw new Error("Invalid path preview error record");
+      }
+      preview.push({ tile: null, refusal });
+      continue;
+    }
+    preview.push({ tile: { facilityOpenings, edges, x, y, z, slope, refusal }, refusal });
   }
   return preview;
 }
 
+export function decodePathPreview(paths: Int32Array): PathPreview[] {
+  return decodePathPreviewRows(paths).flatMap(({ tile }) => tile === null ? [] : [tile]);
+}
+
 export function pathPreviewRefusalAt(paths: readonly PathPreview[], x: number, y: number): string | null {
   return paths.find((path) => path.x === x && path.y === y)?.refusal ?? null;
+}
+
+export function pathPreviewMessage(paths: Int32Array): string {
+  return decodePathPreviewRows(paths).find(({ refusal }) => refusal !== null)?.refusal ?? "";
 }
 
 export function pathCornerHeights(z: number, slope: number): number[] {

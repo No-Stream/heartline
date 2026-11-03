@@ -6,6 +6,7 @@ import type { ConstructionAction, ConstructionPiece, PieceShape } from "./constr
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
+import { pathPreviewMessage } from "./render/path-ghost";
 
 type GuestDetailAction =
   | { readonly type: "guest-detail-request"; readonly guestId: string }
@@ -157,17 +158,22 @@ function sendWorld(): void {
   }
 }
 
-function validatePathPosition(position: PathPosition, dimensions: Uint16Array): void {
+function validatePathPosition(position: PathPosition): void {
   if (!Number.isInteger(position.x) || !Number.isInteger(position.y) || !Number.isInteger(position.z) ||
-      position.x < 0 || position.y < 0 || position.x >= dimensions[0] || position.y >= dimensions[1] ||
+      position.x < 0 || position.y < 0 || position.x > 65535 || position.y > 65535 ||
       position.z < -32768 || position.z > 32767) {
     throw new RangeError("Invalid path position");
   }
 }
 
-function validatePathRoute(action: Extract<PathAction, { type: "path-preview" | "path-build" }>, dimensions: Uint16Array): void {
-  validatePathPosition(action.start, dimensions);
-  validatePathPosition(action.end, dimensions);
+function validatePathPositionInWorld(position: PathPosition, dimensions: Uint16Array): void {
+  validatePathPosition(position);
+  if (position.x >= dimensions[0] || position.y >= dimensions[1]) throw new RangeError("Invalid path position");
+}
+
+function validatePathRoute(action: Extract<PathAction, { type: "path-preview" | "path-build" }>): void {
+  validatePathPosition(action.start);
+  validatePathPosition(action.end);
   if (!Number.isInteger(action.style) || action.style < 0 || action.style > 255) {
     throw new RangeError("Invalid path style");
   }
@@ -271,20 +277,20 @@ workerScope.addEventListener("message", (event) => {
       return;
     }
     if (action.type === "path-preview") {
-      validatePathRoute(action, simulation.world_dimensions());
+      validatePathRoute(action);
       const paths = simulation.path_preview(
         pathRouteCoordinates(action.start, action.end),
         action.kind,
         action.style,
       );
       workerScope.postMessage(
-        { type: "path-preview", requestId: action.requestId, valid: paths.length > 0 && paths.every((value, index) => index % 9 !== 6 || value === 0), paths, message: simulation.path_message() },
+        { type: "path-preview", requestId: action.requestId, valid: paths.length > 0 && paths.every((value, index) => index % 9 !== 6 || value === 0), paths, message: pathPreviewMessage(paths) },
         [paths.buffer],
       );
       return;
     }
     if (action.type === "path-build") {
-      validatePathRoute(action, simulation.world_dimensions());
+      validatePathRoute(action);
       const success = simulation.path_build(
         pathRouteCoordinates(action.start, action.end),
         action.kind,
@@ -301,7 +307,7 @@ workerScope.addEventListener("message", (event) => {
       return;
     }
     if (action.type === "path-remove") {
-      validatePathPosition({ x: action.x, y: action.y, z: action.z }, simulation.world_dimensions());
+      validatePathPositionInWorld({ x: action.x, y: action.y, z: action.z }, simulation.world_dimensions());
       const success = simulation.path_remove(action.x, action.y, action.z);
       if (success) sendWorld();
       workerScope.postMessage({

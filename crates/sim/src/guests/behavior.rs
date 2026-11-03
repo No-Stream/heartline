@@ -7,6 +7,7 @@ pub use super::knowledge::{KnownPlace, PlaceKind};
 pub use super::needs::Needs;
 pub use super::thoughts::Thought;
 use crate::guests::{AgeGroup, GuestId, GuestStore};
+use crate::state_hash::StateHasher;
 use crate::track::proximity::ProximityEvent;
 use crate::world::Position;
 use crate::world::World;
@@ -66,6 +67,53 @@ pub struct BehaviorSimulation {
 }
 
 impl BehaviorSimulation {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"BehaviorSimulation-v1");
+        hash.write_len(self.guests.len());
+        for guest in &self.guests {
+            guest.hash_into(hash);
+        }
+        hash.write_len(self.activities.len());
+        for activity in &self.activities {
+            hash.write_option(*activity, write_activity);
+        }
+        hash.write_len(self.queues.len());
+        for (&place_id, guests) in &self.queues {
+            hash.write_u32(place_id);
+            hash.write_len(guests.len());
+            for guest in guests {
+                hash.write_u32(guest.0);
+            }
+        }
+        hash.write_len(self.income.len());
+        for (&place_id, &income) in &self.income {
+            hash.write_u32(place_id);
+            hash.write_u64(income);
+        }
+        hash.write_len(self.external_rides.len());
+        for &ride in &self.external_rides {
+            hash.write_u32(ride);
+        }
+        hash.write_len(self.coaster_riders.len());
+        for (&(facility_id, train_id), guests) in &self.coaster_riders {
+            hash.write_u32(facility_id);
+            hash.write_u64(train_id);
+            hash.write_len(guests.len());
+            for guest in guests {
+                hash.write_u32(guest.0);
+            }
+        }
+        hash.write_len(self.scenery_scores.len());
+        for &score in &self.scenery_scores {
+            hash.write_u8(score);
+        }
+        hash.write_len(self.queue_scenery.len());
+        for &score in &self.queue_scenery {
+            hash.write_u64(score);
+        }
+        hash.write_u64(self.tick);
+    }
+
     pub(super) fn observe_scenery(
         &mut self,
         world: &World,
@@ -768,6 +816,44 @@ impl BehaviorSimulation {
             })
             .collect()
     }
+}
+
+fn write_activity(hash: &mut StateHasher, activity: Activity) {
+    match activity {
+        Activity::Walking(place_id) => {
+            hash.write_u8(0);
+            hash.write_u32(place_id);
+        }
+        Activity::Queuing(place_id, tick) => {
+            hash.write_u8(1);
+            hash.write_u32(place_id);
+            hash.write_u64(tick);
+        }
+        Activity::Using(place_id, remaining) => {
+            hash.write_u8(2);
+            hash.write_u32(place_id);
+            hash.write_u32(remaining);
+        }
+        Activity::CoasterRiding(place_id) => {
+            hash.write_u8(3);
+            hash.write_u32(place_id);
+        }
+        Activity::Unloading(place_id, position) => {
+            hash.write_u8(4);
+            hash.write_u32(place_id);
+            write_position(hash, position);
+        }
+        Activity::Waiting(place_id) => {
+            hash.write_u8(5);
+            hash.write_u32(place_id);
+        }
+    }
+}
+
+fn write_position(hash: &mut StateHasher, position: Position) {
+    hash.write_u16(position.x);
+    hash.write_u16(position.y);
+    hash.write_i16(position.height);
 }
 
 #[cfg(test)]

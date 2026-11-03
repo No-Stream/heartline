@@ -6,6 +6,7 @@ use crate::guests::behavior::{BehaviorSimulation, Facility, Movement};
 use crate::guests::pathfinding::Graph;
 use crate::guests::visits::VisitManager;
 use crate::guests::walking::{WalkControl, WalkingGuest, WalkingSimulation};
+use crate::state_hash::StateHasher;
 use crate::world::{Position, World};
 use std::collections::BTreeMap;
 
@@ -69,6 +70,26 @@ impl ParkGuests {
 
     pub fn walking(&self) -> &WalkingSimulation {
         &self.walking
+    }
+
+    /// Stable fingerprint of the live guest simulation, excluding world revision counters.
+    pub fn state_hash(&self) -> u64 {
+        let mut hash = StateHasher::new();
+        hash.write_tag(b"ParkGuests-v1");
+        self.walking.hash_into(&mut hash);
+        self.behaviors.hash_into(&mut hash);
+        self.visits.hash_into(&mut hash);
+        hash.write_option(self.entrance, |hash, position| {
+            hash.write_u16(position.x);
+            hash.write_u16(position.y);
+            hash.write_i16(position.height);
+        });
+        self.reachable.hash_into(&mut hash);
+        hash.write_len(self.leaving.len());
+        for &leaving in &self.leaving {
+            hash.write_bool(leaving);
+        }
+        hash.finish()
     }
     pub fn behaviors(&self) -> &BehaviorSimulation {
         &self.behaviors

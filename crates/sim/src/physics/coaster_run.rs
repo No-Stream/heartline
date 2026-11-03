@@ -1,4 +1,5 @@
 use super::{Circuit, PhysicsConfig, TestRun, TestRunRecorder, Train};
+use crate::state_hash::StateHasher;
 use crate::track::proximity::TrainPosition;
 use crate::track::{PieceKind, TrainConfiguration};
 
@@ -18,6 +19,21 @@ pub struct CoasterOutcome {
 }
 
 impl CoasterRun {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"CoasterRun-v1");
+        self.train.hash_into(hash);
+        hash.write_option(self.recorders.as_ref(), |hash, recorders| {
+            hash.write_len(recorders.len());
+            for recorder in recorders {
+                recorder.hash_into(hash);
+            }
+        });
+        hash.write_f64(self.station_distance);
+        hash.write_f64(self.circuit_length);
+        hash.write_len(self.capacity);
+        hash.write_len(self.stationary_steps);
+    }
+
     pub fn new(
         circuit: &Circuit,
         configuration: &TrainConfiguration,

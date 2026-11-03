@@ -45,6 +45,6 @@ pub fn piece_shapes_json() -> String {
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn state_hash(&self) -> u64 {
-        self.simulation.walking().state_hash()
+        self.park.state_hash()
     }
 }

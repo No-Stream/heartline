@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { projectWorld } from "../camera";
-import { buildPathGhostQuads, decodePathPreview, pathPreviewRefusalAt } from "./path-ghost";
+import { buildPathGhostQuads, decodePathPreview, pathPreviewMessage, pathPreviewRefusalAt } from "./path-ghost";
 
 const camera = { centerX: 0, centerY: 0, zoom: 1, rotation: 0 } as const;
 const viewport = { width: 800, height: 500 };
@@ -41,5 +41,23 @@ describe("path preview", () => {
     expect(preview[1].refusal).toMatch(/connect/);
     expect(() => decodePathPreview(new Int32Array([1, 2]))).toThrow("Invalid path preview");
     expect(() => decodePathPreview(new Int32Array([1, 2, 3, 0, 0, 0, 99, 0, 0]))).toThrow("Invalid path preview refusal");
+  });
+
+  test("reports the first preview refusal without reading mutable simulation state", () => {
+    expect(pathPreviewMessage(Int32Array.of(1, 2, 4, 1, 0, 0, 0, 1, 0, 2, 2, 4, 0, 0, 0, 9, 0, 0)))
+      .toBe("Path conflicts with attraction access");
+    expect(pathPreviewMessage(Int32Array.of(1, 2, 4, 1, 0, 0, 0, 1, 0, 2, 2, 4, 0, 0, 0, 4, 0, 0)))
+      .toBe("Path route does not connect across the terrain");
+    expect(pathPreviewMessage(new Int32Array())).toBe("");
+  });
+
+  test("decodes sentinel records for path preview errors without rendering them as tiles", () => {
+    const outOfWorld = Int32Array.of(-1, -1, 0, 0, 0, 0, 1, 0, 0);
+    expect(decodePathPreview(outOfWorld)).toEqual([]);
+    expect(pathPreviewMessage(outOfWorld)).toBe("Path route is outside the park");
+    expect(pathPreviewMessage(Int32Array.of(-1, -1, 0, 0, 0, 0, 10, 0, 0))).toBe("Unknown path kind");
+    expect(pathPreviewMessage(Int32Array.of(-1, -1, 0, 0, 0, 0, 11, 0, 0))).toBe("Path route needs six coordinates");
+    expect(pathPreviewMessage(Int32Array.of(-1, -1, 0, 0, 0, 0, 12, 0, 0))).toBe("Path coordinates are outside the supported range");
+    expect(() => decodePathPreview(Int32Array.of(-1, -1, 0, 0, 0, 0, 0, 0, 0))).toThrow("Invalid path preview error record");
   });
 });

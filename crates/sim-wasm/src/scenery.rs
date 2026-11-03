@@ -1,19 +1,32 @@
+use super::command_errors::record_command_result;
 use super::*;
 
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn place_scenery(&mut self, kind: &str, x: u16, y: u16, rotation: u8, quarter: u8) -> bool {
         let Some(kind) = scenery_kind(kind) else {
-            self.scenery_message = "Unknown scenery".into();
+            record_command_result::<()>(
+                Err(CommandError::UnknownScenery),
+                &mut self.scenery_message,
+                false,
+            );
             return false;
         };
         let (width, height) = self.world.dimensions();
         if x >= width || y >= height {
-            self.scenery_message = "Outside world".into();
+            record_command_result::<()>(
+                Err(CommandError::SceneryOutsideWorld),
+                &mut self.scenery_message,
+                false,
+            );
             return false;
         }
         if rotation > 3 || quarter > 3 {
-            self.scenery_message = "Invalid scenery orientation".into();
+            record_command_result::<()>(
+                Err(CommandError::InvalidSceneryOrientation),
+                &mut self.scenery_message,
+                false,
+            );
             return false;
         }
         let scenery = Scenery {
@@ -26,70 +39,11 @@ impl WasmSimulation {
             rotation,
             quarter,
         };
-        let bounds = scenery.clearance_box();
-        if self.facility_obstacles().iter().any(|obstacle| {
-            boxes_overlap(
-                bounds,
-                ClearanceBox {
-                    min: obstacle.min,
-                    max: obstacle.max,
-                },
-            )
-        }) {
-            self.scenery_message = "Scenery intersects a facility".into();
+        let result = self.park.place_scenery(scenery).map_err(CommandError::from);
+        if record_command_result(result, &mut self.scenery_message, true).is_none() {
             return false;
         }
-        let hits_track = |piece: &Piece, train: &TrainConfiguration| {
-            track_support_obstacles(std::slice::from_ref(piece), train)
-                .iter()
-                .any(|obstacle| {
-                    boxes_overlap(
-                        bounds,
-                        ClearanceBox {
-                            min: obstacle.min,
-                            max: obstacle.max,
-                        },
-                    )
-                })
-        };
-        if self
-            .circuit
-            .pieces()
-            .iter()
-            .any(|piece| hits_track(piece, &self.train_configuration))
-            || self.construction.as_ref().is_some_and(|construction| {
-                construction
-                    .pieces()
-                    .iter()
-                    .chain(
-                        construction
-                            .disconnected_segments()
-                            .iter()
-                            .flat_map(|segment| &segment.pieces),
-                    )
-                    .any(|piece| hits_track(piece, &construction.model().train))
-            })
-        {
-            self.scenery_message = "Scenery intersects coaster track or train clearance".into();
-            return false;
-        }
-        let mut candidate = self.world.clone();
-        if let Err(error) = candidate.place_scenery(scenery) {
-            self.scenery_message = format!("{error:?}");
-            return false;
-        }
-        let previous_terrain_message = self.terrain_message.clone();
-        let hits_track = self.terrain_hits_track(&candidate);
-        self.terrain_message = previous_terrain_message;
-        if hits_track {
-            self.scenery_message = "Scenery leaves no route for coaster supports".into();
-            return false;
-        }
-        self.world
-            .place_scenery(scenery)
-            .expect("validated scenery placement remains valid");
-        self.support_render_cache.clear();
-        self.scenery_message.clear();
+        self.refresh_construction_support_rendering();
         true
     }
 
@@ -100,13 +54,27 @@ impl WasmSimulation {
             .find(|item| scenery_id(item) == id)
             .copied();
         let Some(item) = item else {
-            self.scenery_message = "No scenery with that ID".into();
+            record_command_result::<()>(
+                Err(CommandError::from(
+                    theme_park_sim::park::commands::ParkCommandError::SceneryMissing,
+                )),
+                &mut self.scenery_message,
+                false,
+            );
             return false;
         };
-        let removed = self.world.remove_scenery(item.position, item.quarter);
-        self.support_render_cache.clear();
-        self.scenery_message.clear();
-        removed
+        let removed = self.park.remove_scenery(item.position, item.quarter);
+        if record_command_result(
+            removed.map_err(CommandError::from),
+            &mut self.scenery_message,
+            true,
+        )
+        .is_none()
+        {
+            return false;
+        }
+        self.refresh_construction_support_rendering();
+        true
     }
 
     pub fn scenery_message(&self) -> String {

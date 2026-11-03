@@ -6,6 +6,7 @@ use super::knowledge::{KnownPlace, PlaceKind};
 use super::needs::Needs;
 use super::thoughts::Thought;
 use crate::guests::{AgeGroup, GuestId, GuestStore, MemoryEntry, SpendingLevel};
+use crate::state_hash::StateHasher;
 
 const RIDE_MEMORY_BONUS_LIMIT: i32 = 20;
 const UNRIDDEN_RIDE_BONUS: i32 = 30;
@@ -51,6 +52,97 @@ impl Default for GuestBehavior {
 }
 
 impl GuestBehavior {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_u16(self.needs.hunger);
+        hash.write_u16(self.needs.thirst);
+        hash.write_u16(self.needs.restroom);
+        hash.write_u16(self.needs.nausea);
+        hash.write_u16(self.rides_completed);
+        hash.write_u16(self.stops_completed);
+        hash.write_u16(self.energy);
+        hash.write_u16(self.happiness);
+        hash.write_u16(self.money);
+        hash.write_u32(self.lifetime_money_spent);
+        hash.write_u32(self.visit_number);
+        write_thought(hash, self.thought);
+        hash.write_bool(self.cannot_afford_activity);
+        hash.write_bool(self.souvenir_purchased);
+        hash.write_len(self.known_places.len());
+        for place in &self.known_places {
+            hash.write_u32(place.id);
+            hash.write_u16(place.position.x);
+            hash.write_u16(place.position.y);
+            hash.write_i16(place.position.height);
+            hash.write_u8(place.kind as u8);
+            hash.write_u8(place.minimum_height_cm);
+            hash.write_u8(place.intensity);
+            hash.write_u8(place.ride_type);
+            hash.write_u8(place.theme);
+            hash.write_u16(place.price);
+        }
+        hash.write_len(self.recent_memories.len());
+        for memory in &self.recent_memories {
+            match *memory {
+                GuestMemoryDetail::Ride {
+                    ride_id,
+                    enjoyment,
+                    nausea,
+                    tick,
+                } => {
+                    hash.write_u8(0);
+                    hash.write_u32(ride_id);
+                    hash.write_i8(enjoyment);
+                    hash.write_u8(nausea);
+                    hash.write_u64(tick);
+                }
+                GuestMemoryDetail::Proximity {
+                    ride_id,
+                    kind,
+                    position,
+                    strength,
+                    tick,
+                } => {
+                    hash.write_u8(1);
+                    hash.write_u32(ride_id);
+                    hash.write_u8(kind as u8);
+                    hash.write_f64(position.x);
+                    hash.write_f64(position.y);
+                    hash.write_f64(position.z);
+                    hash.write_f64(strength);
+                    hash.write_u64(tick);
+                }
+                GuestMemoryDetail::Food { place_id, tick } => {
+                    hash.write_u8(2);
+                    hash.write_u32(place_id);
+                    hash.write_u64(tick);
+                }
+                GuestMemoryDetail::Wait {
+                    place_id,
+                    duration_ticks,
+                    perceived_duration_ticks,
+                    tick,
+                } => {
+                    hash.write_u8(3);
+                    hash.write_u32(place_id);
+                    hash.write_u64(duration_ticks);
+                    hash.write_u64(perceived_duration_ticks);
+                    hash.write_u64(tick);
+                }
+                GuestMemoryDetail::Scenery {
+                    theme,
+                    enjoyment,
+                    tick,
+                } => {
+                    hash.write_u8(4);
+                    hash.write_u8(theme);
+                    hash.write_u8(enjoyment);
+                    hash.write_u64(tick);
+                }
+            }
+        }
+        hash.write_u64(self.elapsed_ticks);
+    }
+
     pub(super) fn enjoy_scenery(
         &mut self,
         theme: u8,
@@ -338,6 +430,35 @@ impl GuestBehavior {
         self.thought = Thought::Exploring;
         self.cannot_afford_activity = false;
         self.souvenir_purchased = false;
+    }
+}
+
+fn write_thought(hash: &mut StateHasher, thought: Thought) {
+    match thought {
+        Thought::Exploring => hash.write_u8(0),
+        Thought::Hungry => hash.write_u8(1),
+        Thought::Thirsty => hash.write_u8(2),
+        Thought::NeedsRestroom => hash.write_u8(3),
+        Thought::Nauseous => hash.write_u8(4),
+        Thought::Tired => hash.write_u8(5),
+        Thought::Unhappy => hash.write_u8(6),
+        Thought::EnjoyedRide(id) => {
+            hash.write_u8(7);
+            hash.write_u32(id);
+        }
+        Thought::DislikedRide(id) => {
+            hash.write_u8(8);
+            hash.write_u32(id);
+        }
+        Thought::Proximity(id, kind) => {
+            hash.write_u8(9);
+            hash.write_u32(id);
+            hash.write_u8(kind as u8);
+        }
+        Thought::EnjoyedScenery(theme) => {
+            hash.write_u8(10);
+            hash.write_u8(theme);
+        }
     }
 }
 

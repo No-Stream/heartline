@@ -30,7 +30,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     path_preview(coordinates: Int32Array, kind: string, style: number) { return wasmMock.pathPreview(coordinates, kind, style); }
     path_build(coordinates: Int32Array, kind: string, style: number) { return wasmMock.pathBuild(coordinates, kind, style); }
     path_remove(x: number, y: number, z: number) { return wasmMock.pathRemove(x, y, z); }
-    path_message() { return "Path route does not connect across the terrain"; }
+    path_message() { return "Stale path command message"; }
     tick() { wasmMock.tick(); }
     tick_count() { return BigInt(wasmMock.tick.mock.calls.length); }
     guest_ids() { return new Uint32Array(); }
@@ -147,6 +147,22 @@ it("echoes the preview request id and reports invalid tiles", async () => {
   onMessage({ data: { type: "path-preview", requestId: 7, start: { x: 0, y: 0, z: 0 }, end: { x: 1, y: 0, z: 0 }, kind: "normal", style: 0 } } as MessageEvent);
   await Promise.resolve();
   expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({ type: "path-preview", requestId: 7, valid: false, paths: expect.any(Int32Array), message: "Path route does not connect across the terrain" });
+});
+
+it("reports an out-of-world path preview without rendering the error record", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  wasmMock.pathPreview.mockReturnValue(Int32Array.of(-1, -1, 0, 0, 0, 0, 1, 0, 0));
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  await Promise.resolve();
+
+  onMessage({ data: { type: "path-preview", requestId: 8, start: { x: 0, y: 0, z: 0 }, end: { x: 3, y: 0, z: 0 }, kind: "normal", style: 0 } } as MessageEvent);
+  await Promise.resolve();
+
+  expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({ type: "path-preview", requestId: 8, valid: false, paths: expect.any(Int32Array), message: "Path route is outside the park" });
 });
 
 it("echoes path command request ids so the controller can ignore stale results", async () => {

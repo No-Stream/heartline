@@ -5,7 +5,7 @@ use super::{
 use theme_park_sim::facilities::{FacilityKind, ParkFacilities};
 use theme_park_sim::guests::GuestId;
 use theme_park_sim::park_guests::ParkGuests;
-use theme_park_sim::physics::{Circuit, demo_circuit};
+use theme_park_sim::physics::{Circuit, TIME_STEP, demo_circuit};
 use theme_park_sim::track::supports::generate_supports;
 use theme_park_sim::track::{PieceId, TrackState, catalog, hybrid_model};
 use theme_park_sim::world::{Direction, PathKind, World};
@@ -377,9 +377,12 @@ fn connect_station_to_park_paths(simulation: &mut WasmSimulation) {
 
     simulation.facilities = facilities;
     simulation.simulation = ParkGuests::new(42, 64, &simulation.world, entrance, 64);
-    simulation
-        .simulation
-        .open_with_guests(&simulation.facilities.guest_facilities(&simulation.world));
+    simulation.park.simulation.open_with_guests(
+        &simulation
+            .park
+            .facilities
+            .guest_facilities(&simulation.park.world),
+    );
     assert_eq!(
         simulation.simulation.walking().path_component(entrance),
         simulation.simulation.walking().path_component(queue),
@@ -584,7 +587,11 @@ fn manual_validation_and_throughput_both_advance() {
         .as_ref()
         .unwrap()
         .work_completed();
-    let throughput_steps = simulation.block_throughput_estimator.as_ref().unwrap().step;
+    let throughput_steps = simulation
+        .block_throughput_estimator
+        .as_ref()
+        .unwrap()
+        .work_steps_completed();
     assert!(validation_steps > 0 && throughput_steps > 0);
     assert!(validation_steps + throughput_steps <= 200);
 }
@@ -604,7 +611,11 @@ fn placement_and_throughput_share_bounded_work_without_starvation() {
                 .as_ref()
                 .unwrap()
                 .work_completed(),
-            simulation.block_throughput_estimator.as_ref().unwrap().step,
+            simulation
+                .block_throughput_estimator
+                .as_ref()
+                .unwrap()
+                .work_steps_completed(),
         )
     };
     assert_eq!(progress(&simulation), (0, 0));
@@ -1225,7 +1236,7 @@ fn throughput_uses_sustained_dispatches_after_the_initial_fill() {
         dispatch_steps.len() >= 4,
         "not enough dispatches for a sustained estimate"
     );
-    let seconds = (dispatch_steps[3] - dispatch_steps[0]) as f64 * super::TIME_STEP;
+    let seconds = (dispatch_steps[3] - dispatch_steps[0]) as f64 * TIME_STEP;
     let seats = usize::from(train.cars)
         * usize::from(train.rows_per_car)
         * usize::from(train.seats_per_row);
@@ -1383,24 +1394,17 @@ fn simulation_with_two_occupied_coaster_trains() -> WasmSimulation {
     assert_eq!(simulation.construction_train_count(), 1);
     assert!(simulation.construction_set_train_count(2));
     connect_station_to_park_paths(&mut simulation);
-    simulation.construction_placed_supports();
+    simulation.refresh_construction_support_rendering();
+    assert!(!simulation.construction_placed_supports().is_empty());
     assert!(
-        simulation.construction_message.is_empty(),
-        "support routes: {:?}",
-        simulation
-            .support_render_cache
-            .iter()
-            .filter_map(
-                |(id, cache)| (cache.world_revision == simulation.world.revision())
-                    .then(|| cache.segments.as_ref().err().map(|err| (id, err)))
-                    .flatten()
-            )
-            .collect::<Vec<_>>()
+        simulation.construction_message().is_empty(),
+        "support route message: {}",
+        simulation.construction_message()
     );
     let construction = simulation.construction.as_ref().unwrap();
     for piece in construction.pieces() {
         assert_eq!(
-            super::check_clearance(
+            theme_park_sim::track::clearance::check_clearance(
                 &simulation.world,
                 piece,
                 &construction.model().train,
