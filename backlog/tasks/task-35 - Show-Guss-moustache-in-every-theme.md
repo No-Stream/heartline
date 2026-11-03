@@ -1,9 +1,10 @@
 ---
 id: TASK-35
 title: Show Gus's moustache in every theme
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 05:56'
+updated_date: '2026-11-03 06:46'
 labels:
   - art
 milestone: m-1
