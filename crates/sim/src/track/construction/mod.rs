@@ -19,6 +19,9 @@ use std::sync::OnceLock;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod flexibility_tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstructionError {
     Closed,
