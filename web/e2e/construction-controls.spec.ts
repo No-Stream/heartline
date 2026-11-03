@@ -31,7 +31,7 @@ test("offers the wooden twister in the model chooser", async ({ page }) => {
   await model.selectOption("model:wooden_twister");
   await expect(model.locator("option:checked")).toHaveText("Briar Blitz · Great Coaster Workshop");
   await expect(page.locator("[data-model-description]")).toContainText("wooden");
-  expect(await recorded(page)).toContainEqual({ type: "construction-select", piece: "model:wooden_twister" });
+  expect(await recorded(page)).toContainEqual({ type: "construction-set-model", model: "wooden_twister" });
 });
 
 test("opens and closes a completed coaster", async ({ page }) => {
