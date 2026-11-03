@@ -4,7 +4,7 @@ title: Add coaster proximity events
 status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 11:46'
+updated_date: '2026-11-03 11:58'
 labels:
   - coaster
   - guests
@@ -25,7 +25,13 @@ Near-misses, headchoppers, dueling sections, tunnels and terrain hugging feed ra
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each event type is detected in test layouts
-- [ ] #2 Events raise ride rating and appear in rider memories
-- [ ] #3 Detection cost is included in the benchmark
+- [x] #1 Each event type is detected in test layouts
+- [x] #2 Events raise ride rating and appear in rider memories
+- [x] #3 Detection cost is included in the benchmark
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Simulation side committed. Remaining: show events in the testing panel and phrase the new thoughts in the guest panel (web wiring, after the day-night work frees web/src).
+<!-- SECTION:NOTES:END -->
