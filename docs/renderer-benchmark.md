@@ -27,6 +27,13 @@ not an isolated CPU render duration or a GPU timestamp measurement. Renderer
 and scene setup happen before timing starts, and there is no separate warm-up
 period. Browser scheduling and queued GPU work can affect the results.
 
+Add `?timing=work` to the benchmark URL to run frames from a message loop and
+measure each frame through GPU completion. This mode warms up for 60 frames and
+then measures until it reaches 300 frames or 10 seconds, reporting mean and p95
+total time plus CPU time for scene update and command submission. WebGL2 uses a
+1-pixel `readPixels` synchronization, and WebGPU waits for submitted queue work.
+The default remains rAF interval timing.
+
 After each measured run, the harness samples six known canvas pixels: terrain,
 person, track, tunnel, track-over-track, and a transparent edge. These markers
 catch selected rendering and ordering mistakes; they do not establish that the
@@ -122,16 +129,37 @@ The fallback check is a correctness smoke check: it confirms that `auto`
 selects WebGL2 when WebGPU is unavailable. The runner logs whether the check
 passed, but it does not include fallback timings in its result table.
 
+## Hardware results
+
+On November 2, 2026, the owner's desktop Chrome on Windows ran the benchmark
+page served from WSL, on an NVIDIA GeForce RTX 5090. Windows treated the window
+as occluded, so `requestAnimationFrame` ran at exactly 1 Hz and the default
+frame-interval mode reported 1,000 ms for every configuration. Those numbers
+are meaningless. The work-time mode (`?timing=work`) measures from the start
+of a frame until the GPU finishes it, and does not depend on window visibility.
+
+| Renderer | Backend | Mean work (ms) | p95 work (ms) | Mean CPU (ms) | Frames |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Custom | WebGL2 (ANGLE, Direct3D 11) | 2.58 | 3.0 | 1.30 | 300 |
+| Custom | WebGPU | 6.13 | 7.2 | 2.47 | 300 |
+| PixiJS | WebGPU | 45.07 | 49.8 | 37.85 | 222 |
+| PixiJS | WebGL2 (ANGLE, Direct3D 11) | 44.82 | 48.7 | about 38 | 223 |
+
+PixiJS spends almost all of its frame on the CPU, sorting and updating about
+77,000 particles every frame. The custom renderer submits instance data and
+lets the depth buffer resolve ordering, so it is about 17 times faster here.
+
 ## Renderer choice
 
-I recommend PixiJS as the initial approach for the game: it owns the backend
-plumbing and its particle API handled the scene and selected depth checks on
-both software backends. It was also faster in this particular software run,
-though that result cannot settle hardware performance. The particle API is
-experimental, so pinning the version and rechecking upgrades matters. The game
-still needs representative hardware measurements and a design for occlusion of
-geometry that cannot be represented by a single depth per sprite. If those
-measurements show PixiJS misses the frame budget, revisit the custom renderer.
+The game uses the custom instanced renderer, starting with its WebGL2 path
+only. On real hardware it was the fastest configuration by a wide margin,
+WebGL2 runs in every target browser including Firefox and Chrome on Linux, and
+one backend is simpler to maintain than two. The software-only recommendation
+of PixiJS earlier in this document is superseded. WebGPU can be added later if
+it offers a measured benefit, such as compute work for effects. Occlusion of
+geometry that cannot be represented by a single depth per sprite, such as
+long track sprites crossing each other, still needs a design in the world and
+track drawing tickets.
 
 As of November 2, 2026, the [GPUWeb implementation status] lists Firefox on
 Linux as enabled by default in Nightly, rather than stable Firefox. It lists

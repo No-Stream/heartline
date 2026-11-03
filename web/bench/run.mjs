@@ -65,7 +65,7 @@ async function verifyMarkers(page, markers) {
   }
 }
 
-async function runConfiguration(browser, baseUrl, renderer, backend, disableWebGPU = false) {
+async function runConfiguration(browser, baseUrl, renderer, backend, disableWebGPU = false, timing = 'raf') {
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
   try {
     if (disableWebGPU) {
@@ -75,19 +75,24 @@ async function runConfiguration(browser, baseUrl, renderer, backend, disableWebG
     page.setDefaultTimeout(120_000);
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
-    const params = new URLSearchParams({ renderer, backend, duration: String(duration) });
+    const params = new URLSearchParams({ renderer, backend, duration: String(duration), timing });
     await page.goto(`${baseUrl}/bench/?${params}`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.benchmark?.ready || window.benchmark?.error, null, { timeout: 120_000 });
     let state = await page.evaluate(() => window.benchmark);
     if (state.error) return { error: state.error };
-    await page.waitForFunction(() => window.benchmark?.result || window.benchmark?.error, null, { timeout: duration + 120_000 });
+    const resultTimeout = duration + (timing === 'work' ? 600_000 : 120_000);
+    await page.waitForFunction(() => window.benchmark?.result || window.benchmark?.error, null, { timeout: resultTimeout });
     state = await page.evaluate(() => window.benchmark);
     if (state.error) return { error: state.error };
     if (pageErrors.length) throw new Error(`Page errors: ${pageErrors.join('; ')}`);
     const result = state.result;
     if (!result || !Number.isFinite(result.meanMs) || !Number.isFinite(result.p95Ms) ||
-        !Number.isFinite(result.frames) || result.frames <= 0 || result.durationMs < duration ||
+        !Number.isFinite(result.frames) || result.frames <= 0 ||
+        (timing === 'work' ? result.frames < 300 && result.durationMs < duration : result.durationMs < duration) ||
         !result.backend || !result.adapter) throw new Error('Invalid benchmark result');
+    if (timing === 'work' && (!Number.isFinite(result.cpuMeanMs) || !Number.isFinite(result.cpuP95Ms))) {
+      throw new Error('Invalid work-time CPU result');
+    }
     if (backend !== 'auto' && result.backend.toLowerCase() !== backend) {
       throw new Error(`Requested ${backend}, received ${result.backend}`);
     }
@@ -133,6 +138,7 @@ async function main() {
     console.log('WebGL2 device:', JSON.stringify(webgl));
     await probe.close();
     const rows = [];
+    const workRows = [];
     let failed = false;
     for (const renderer of ['custom', 'pixi']) {
       for (const backend of ['webgpu', 'webgl2']) {
@@ -155,6 +161,26 @@ async function main() {
           rows.push({ renderer, requested: backend, status: 'failed', reason: error.message });
         }
       }
+      for (const backend of ['webgpu', 'webgl2']) {
+        try {
+          console.log(`Running ${renderer} / ${backend} with work timing`);
+          const outcome = await runConfiguration(browser, baseUrl, renderer, backend, false, 'work');
+          if (outcome.error) {
+            if (backend !== 'webgpu' || outcome.error !== 'WebGPU adapter is unavailable') {
+              throw new Error(outcome.error);
+            }
+            console.error(`${renderer} ${backend} work timing unavailable: ${outcome.error}`);
+            workRows.push({ renderer, backend, status: 'unavailable', reason: outcome.error });
+          } else {
+            console.log(`${renderer} / ${backend} work timing: ${outcome.result.frames} frames, total mean ${outcome.result.meanMs.toFixed(2)} ms, CPU mean ${outcome.result.cpuMeanMs.toFixed(2)} ms`);
+            workRows.push({ renderer, requested: backend, status: 'ok', ...outcome.result });
+          }
+        } catch (error) {
+          failed = true;
+          console.error(`${renderer} ${backend} work timing failed:`, error);
+          workRows.push({ renderer, backend, status: 'failed', reason: error.message });
+        }
+      }
       try {
         console.log(`Checking ${renderer} automatic fallback with WebGPU disabled`);
         const outcome = await runConfiguration(browser, baseUrl, renderer, 'auto', true);
@@ -166,6 +192,10 @@ async function main() {
       }
     }
     console.table(rows);
+    console.log('Work timing: total includes GPU completion; CPU covers update and command submission.');
+    console.table(workRows.map(({ renderer, backend, adapter, frames, cpuMeanMs, cpuP95Ms, meanMs, p95Ms, status }) => ({
+      renderer, backend: backend ?? 'unavailable', adapter, frames, cpuMeanMs, cpuP95Ms, totalMeanMs: meanMs, totalP95Ms: p95Ms, status,
+    })));
     if (failed) process.exitCode = 1;
   } finally {
     if (browser) await browser.close();

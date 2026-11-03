@@ -12,7 +12,7 @@ export async function createPixi(
   canvas: HTMLCanvasElement,
   backend: "webgpu" | "webgl2",
   atlas: HTMLCanvasElement,
-): Promise<{ adapter: string; render(data: Float32Array, count: number): void }> {
+): Promise<{ adapter: string; render(data: Float32Array, count: number): void; waitForGpu(): void | Promise<void> }> {
   if (atlas.width < ATLAS_CELL_SIZE || atlas.height < ATLAS_CELL_SIZE) {
     throw new RangeError("Pixi atlas must contain at least one 16×16 cell");
   }
@@ -56,6 +56,7 @@ export async function createPixi(
   });
   app.ticker.stop();
   const adapter = getAdapterLabel(app.renderer, backend);
+  const waitForGpu = getCompletionWaiter(app.renderer, backend);
 
   const particles = new ParticleContainer<DepthParticle>({
     texture: atlasTexture,
@@ -75,6 +76,7 @@ export async function createPixi(
 
   return {
     adapter,
+    waitForGpu,
     render(data: Float32Array, count: number): void {
       if (!Number.isInteger(count) || count < 0) {
         throw new RangeError("Pixi instance count must be a non-negative integer");
@@ -149,6 +151,20 @@ export async function createPixi(
       app.render();
     },
   };
+}
+
+function getCompletionWaiter(
+  renderer: Application["renderer"],
+  backend: "webgpu" | "webgl2",
+): () => void | Promise<void> {
+  if (backend === "webgpu") {
+    if (!("gpu" in renderer)) throw new Error("Pixi did not initialize its WebGPU renderer");
+    return () => renderer.gpu.device.queue.onSubmittedWorkDone();
+  }
+
+  if (!("gl" in renderer)) throw new Error("Pixi did not initialize its WebGL renderer");
+  const gl = renderer.gl;
+  return () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
 }
 
 function getAdapterLabel(

@@ -1,4 +1,4 @@
-type Renderer = { adapter: string; render(data: Float32Array, count: number): void };
+type Renderer = { adapter: string; render(data: Float32Array, count: number): void; waitForGpu(): void | Promise<void> };
 
 export async function createCustom(
   canvas: HTMLCanvasElement,
@@ -88,6 +88,9 @@ function createWebGL(canvas: HTMLCanvasElement, atlas: HTMLCanvasElement): Rende
   const renderer = String(gl.getParameter(debugInfo ? debugInfo.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
   return {
     adapter: `${vendor} ${renderer}`,
+    waitForGpu(): void {
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+    },
     render(data, count) {
       if (count < 0 || !Number.isInteger(count) || count * 8 > data.length) {
         throw new Error("Invalid sprite count");
@@ -174,6 +177,9 @@ async function createWebGPU(canvas: HTMLCanvasElement, atlas: HTMLCanvasElement)
   let depthHeight = 0;
   return {
     adapter: adapterName,
+    waitForGpu(): Promise<void> {
+      return device.queue.onSubmittedWorkDone();
+    },
     render(data, count) {
       if (count < 0 || !Number.isInteger(count) || count * 8 > data.length) {
         throw new Error("Invalid sprite count");
