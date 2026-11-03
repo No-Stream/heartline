@@ -87,6 +87,7 @@ impl Heading {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slope {
     DownSteep,
+    DownSixty,
     DownModerate,
     DownGentle,
     Level,
@@ -99,6 +100,7 @@ impl Slope {
     pub(crate) fn gradient(self) -> f64 {
         match self {
             Self::DownSteep => -1.0,
+            Self::DownSixty => -1.732_050_807_568_877_2,
             Self::DownModerate => -0.75,
             Self::DownGentle => -0.5,
             Self::Level => 0.0,
@@ -192,6 +194,12 @@ pub enum PieceId {
     GentleDown,
     SteepUp,
     SteepDown,
+    SteepToSixtyUp,
+    SixtyUp,
+    SixtyToSteepUp,
+    SteepToSixtyDown,
+    SixtyDown,
+    SixtyToSteepDown,
     LevelToGentleUp,
     GentleUpToLevel,
     GentleToSteepUp,

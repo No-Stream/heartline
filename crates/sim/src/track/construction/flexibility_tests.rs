@@ -263,7 +263,6 @@ fn chain_lifts_can_turn_on_a_reachable_climb() {
 }
 
 #[test]
-#[ignore = "TASK-69: 60 degree slope geometry is not implemented"]
 fn chain_lifts_reach_each_models_maximum_lift_slope() {
     let level = ConnectorState::from(TrackState::origin());
     let mut failures = Vec::new();

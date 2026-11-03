@@ -5,10 +5,10 @@ export type PieceStep = StepAttribute | "piece";
 
 export const pieceGroups = ["straight", "turn", "slope", "bank", "inversion", "special"] as const;
 
-const slopeOrder = ["DownSteep", "DownModerate", "DownGentle", "Level", "UpGentle", "UpModerate", "UpSteep"];
+const slopeOrder = ["DownSixty", "DownSteep", "DownModerate", "DownGentle", "Level", "UpGentle", "UpModerate", "UpSteep", "UpSixty"];
 const slopeLabels: Record<string, string> = {
-  DownSteep: "Steep down", DownModerate: "Moderate down", DownGentle: "Gentle down", Level: "Level",
-  UpGentle: "Gentle up", UpModerate: "Moderate up", UpSteep: "Steep up",
+  DownSixty: "60° down", DownSteep: "Steep down", DownModerate: "Moderate down", DownGentle: "Gentle down", Level: "Level",
+  UpGentle: "Gentle up", UpModerate: "Moderate up", UpSteep: "Steep up", UpSixty: "60° up",
 };
 const bankOrder = ["Left", "Level", "Right"];
 

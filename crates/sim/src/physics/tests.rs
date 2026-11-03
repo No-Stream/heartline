@@ -1156,3 +1156,35 @@ fn climbing_large_turn_grid_rise_minimizes_midpoint_vertical_force() {
         deviation(&alternative)
     );
 }
+
+#[test]
+fn sixty_degree_slope_transitions_stay_below_four_vertical_g() {
+    let pieces = catalog();
+    for piece in pieces.iter().filter(|piece| {
+        matches!(
+            piece.id,
+            PieceId::SteepToSixtyUp
+                | PieceId::SixtyToSteepUp
+                | PieceId::SteepToSixtyDown
+                | PieceId::SixtyToSteepDown
+        )
+    }) {
+        let peak_vertical_g = (0..=100)
+            .map(|index| {
+                rider_g(
+                    piece,
+                    (piece.length() * f64::from(index) / 100.0).min(piece.length()),
+                    25.0,
+                    0.0,
+                )
+                .vertical
+                .abs()
+            })
+            .fold(0.0_f64, f64::max);
+        assert!(
+            peak_vertical_g <= 4.0,
+            "{}: {peak_vertical_g:.3} g",
+            piece.name
+        );
+    }
+}

@@ -76,6 +76,21 @@ describe("construction steppers", () => {
     expect(steppedPiece(pieces, shapes, "Straight", "slope", -1)).toBe("LevelToGentleDown");
   });
 
+  it("orders and labels 60-degree slope states outside the 45-degree slopes", () => {
+    const sixtyDegreePieces = [
+      piece("DownSixty", "slope", "DownSixty"),
+      piece("DownSteep", "slope", "DownSteep"),
+      piece("UpSteep", "slope", "UpSteep"),
+      piece("UpSixty", "slope", "UpSixty"),
+    ];
+    const sixtyDegreeShapes = new Map(sixtyDegreePieces.map(({ id }) => [id, shape(id, 0)]));
+
+    expect(stepperOptions(sixtyDegreePieces, sixtyDegreeShapes, "DownSteep", "slope")).toEqual({
+      values: ["60° down", "Steep down", "Steep up", "60° up"],
+      index: 1,
+    });
+  });
+
   it("offers heading changes among pieces with the same climbing slope", () => {
     const climbingPieces = [
       piece("ClimbingTurnRight", "turn", "UpGentle"),

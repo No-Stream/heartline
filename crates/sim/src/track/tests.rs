@@ -713,6 +713,92 @@ fn catalog_radius_meets_model_limit() {
 }
 
 #[test]
+fn sixty_degree_slope_templates_have_grid_aligned_geometry() {
+    use crate::track::Slope;
+    use PieceId::*;
+
+    let pieces = catalog();
+    let expected = [
+        (SteepToSixtyUp, Slope::UpSteep, Slope::UpSixty),
+        (SixtyUp, Slope::UpSixty, Slope::UpSixty),
+        (SixtyToSteepUp, Slope::UpSixty, Slope::UpSteep),
+        (SteepToSixtyDown, Slope::DownSteep, Slope::DownSixty),
+        (SixtyDown, Slope::DownSixty, Slope::DownSixty),
+        (SixtyToSteepDown, Slope::DownSixty, Slope::DownSteep),
+    ];
+    for (id, entry_slope, exit_slope) in expected {
+        let piece = pieces
+            .iter()
+            .find(|piece| piece.id == id)
+            .expect("60-degree template");
+        assert_eq!(
+            (piece.entry.slope, piece.exit.slope),
+            (entry_slope, exit_slope)
+        );
+        assert!((piece.exit.position().z - piece.entry.position().z).abs() > 0.0);
+        if matches!(id, SixtyUp | SixtyDown) {
+            let horizontal_distance = (piece.exit.position() - piece.entry.position())
+                .x
+                .hypot((piece.exit.position() - piece.entry.position()).y);
+            let vertical_distance = (piece.exit.position().z - piece.entry.position().z).abs();
+            let grid_angle = vertical_distance.atan2(horizontal_distance).to_degrees();
+            assert!(
+                (grid_angle - 60.0).abs() < 1.0,
+                "{id:?}: {grid_angle:.3} degrees"
+            );
+        }
+        for state in [piece.entry, piece.exit] {
+            let angle = state
+                .tangent()
+                .z
+                .atan2(state.tangent().x.hypot(state.tangent().y))
+                .to_degrees()
+                .abs();
+            if state.slope == Slope::UpSixty || state.slope == Slope::DownSixty {
+                assert!((angle - 60.0).abs() < 1.0, "{id:?}: {angle:.3} degrees");
+            }
+        }
+    }
+}
+
+#[test]
+fn sixty_degree_track_is_allowed_only_by_models_with_sixty_degree_limits() {
+    use PieceId::{
+        SixtyDown, SixtyToSteepDown, SixtyToSteepUp, SixtyUp, SteepToSixtyDown, SteepToSixtyUp,
+    };
+
+    let sixty_degree_pieces = [
+        SteepToSixtyUp,
+        SixtyUp,
+        SixtyToSteepUp,
+        SteepToSixtyDown,
+        SixtyDown,
+        SixtyToSteepDown,
+    ];
+    for model in [hybrid_model(), multi_launch_model()] {
+        assert!(
+            sixty_degree_pieces
+                .iter()
+                .all(|piece| model.allowed_pieces.contains(piece))
+        );
+        assert_eq!(
+            model.lift_rules.unwrap().max_slope,
+            crate::track::Slope::UpSixty
+        );
+    }
+    let wooden_twister = wooden_twister_model();
+    assert!(
+        sixty_degree_pieces
+            .iter()
+            .all(|piece| !wooden_twister.allowed_pieces.contains(piece))
+    );
+    assert_eq!(
+        wooden_twister.lift_rules.unwrap().max_slope,
+        crate::track::Slope::UpSteep
+    );
+}
+
+#[test]
 fn all_eight_headings_place_pieces_on_grid() {
     for heading in [
         Heading::East,
