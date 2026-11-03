@@ -1,9 +1,10 @@
 ---
 id: TASK-39
 title: Give each coaster model its own piece list
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 11:06'
+updated_date: '2026-11-03 11:26'
 labels:
   - coaster
 milestone: m-2
@@ -20,7 +21,13 @@ Timber Tumbler and Velocity Viper derive their allowed pieces from the whole cat
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each model lists its allowed pieces explicitly, based on what its real inspirations build plus clearly plausible extensions
-- [ ] #2 Tests check that signature pieces stay with their models (for example fan turns only on the twister, launches only on Velocity Viper)
-- [ ] #3 Existing circuits in tests and the demo still build
+- [x] #1 Each model lists its allowed pieces explicitly, based on what its real inspirations build plus clearly plausible extensions
+- [x] #2 Tests check that signature pieces stay with their models (for example fan turns only on the twister, launches only on Velocity Viper)
+- [x] #3 Existing circuits in tests and the demo still build
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Explicit lists: overbanks and chain lifts for Timber Tumbler, launches and terrain transitions for Velocity Viper, fan turns, helixes and the steel-structure loop for Briar Blitz.
+<!-- SECTION:FINAL_SUMMARY:END -->
