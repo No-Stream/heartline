@@ -1,9 +1,10 @@
 ---
 id: TASK-6
 title: 'Draw the world with rotating, zooming isometric camera'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 03:24'
 labels:
   - rendering
   - world
@@ -26,7 +27,13 @@ Draw terrain and paths in the chosen renderer with four rotated views and smooth
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 All four views and smooth zoom work on a 512 by 512 map at the target frame rate
-- [ ] #2 Picking correctly identifies tiles and objects in every view
-- [ ] #3 Input code uses abstract actions and does not assume a mouse
-- [ ] #4 Screenshot tests cover each view
+- [x] #2 Picking correctly identifies tiles and objects in every view
+- [x] #3 Input code uses abstract actions and does not assume a mouse
+- [x] #4 Screenshot tests cover each view
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+World draws with water, cliffs, paths and the underground entrance in four rotations with zoom and ID-buffer picking; input goes through abstract actions. Hardware frame rate on a 512x512 map is not yet measured: headless software rendering gave 62 ms per frame. The full-scale performance ticket covers the hardware check.
+<!-- SECTION:FINAL_SUMMARY:END -->
