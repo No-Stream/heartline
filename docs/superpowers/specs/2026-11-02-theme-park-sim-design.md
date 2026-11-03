@@ -62,6 +62,10 @@ Launch with three models that have very different building feel, using real trai
 
 In the game, manufacturers and models never use real names, for trademark reasons. They get playful names that hint at their real inspiration, in the way the GTA series names its vehicles, such as "Rocky Road Construction" for RMC (**Owner**). The table below uses real names only as design references.
 
+### What makes each model unique
+
+Every model shares a broad common vocabulary: straights, slopes and their transitions, turns, banks, helixes and airtime hills, and chain lifts unless the real type never uses them (**Owner**, 2026-11-03). Lifts have variable speed, and steep lifts go up to about 60 degrees where plausible. What makes a model unique is its signature elements: the most distinctive or extreme elements of its real counterparts stay unique to it, and its variations follow the parent type's style. Elements that are unusual for a type, such as a loop on a wooden coaster, can still be offered when plausible, but they are marked as unusual and will cost more once costs exist. Aesthetics differ per manufacturer as well: RMC-inspired models use wooden supports under steel track, Intamin-inspired models use Intamin-style steel supports, and GCI-inspired models use dense timber structure.
+
 | Model | Real-world basis | What makes it distinct |
 |---|---|---|
 | Steel-track hybrid | RMC I-Box: all-steel box track that can be built on a wooden structure (Steel Vengeance has a chain lift, 4 inversions and 24-rider trains) | Extreme banking and inversions, and the steep drops associated with the type |
