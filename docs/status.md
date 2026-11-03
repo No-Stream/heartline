@@ -16,10 +16,11 @@ On the owner's RTX 5090, the renderer drew 10,000 animated people with terrain a
 
 ## Known gaps and open items
 
-- Owner review is pending for the coaster building tool, its polish, and the night effects in a dense park.
-- Owner decision pending on Woody's shirt: keep the lift hill and loop, or switch to one bold loop.
+- The owner's first playtest (2026-11-03) found: no way back to level from a slope on Velocity Viper (TASK-42, fix in progress); tools need a second click before they work (TASK-45); the path tool places one tile at a time (TASK-46); buildings drawn cut off (TASK-47); food facilities refused with "missing access" (TASK-48); and the park resets when the dev server reloads (TASK-49, after saving exists). TASK-46 and TASK-48 are probably regressions from the explicit path edge connections.
+- The owner asked for a dark interface for OLED screens (TASK-44) and broader, more realistic coaster vocabularies with unique signatures and manufacturer styles (TASK-43; direction recorded in section 3 of the design doc).
+- Owner review is still pending for the night effects in a dense park, and the owner's decision on Woody's shirt (keep the lift hill and loop, or one bold loop).
 - Four coaster browser tests time out when the whole suite runs in parallel; a root-cause fix is in progress. The scenery and block sections tickets close once the gate is green.
-- The full gate takes about 7 minutes; triage into fast and slow tiers is ticket TASK-41.
-- Code organisation reviews from four reviewers are in `docs/reviews/` and will become refactor tickets.
+- The full gate takes about 7 minutes; triage into fast and slow tiers is TASK-41, with a per-test plan in the rendering, art and tests review.
+- Four code organisation reviews are in `docs/reviews/`, turned into refactor tickets TASK-50 to TASK-61 in the Code health milestone. The biggest are moving the park tick and cross-object rules out of the WebAssembly bridge into a `Park` type (TASK-54), a typed worker protocol (TASK-57), and restructuring `main.ts` around a shared tool interface (TASK-58).
 - Not started: saving and loading, the full-scale performance check, public deployment, sound, scenarios, touch input and a desktop wrapper.
 - Simplifications worth knowing: sandbox admission is free and ride loading is instant; building and ride clearance assume heights of 4 m and 12 m; automatic block placement searches generated brake positions within a budget, and throughput excludes loading time.
