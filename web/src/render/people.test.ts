@@ -45,10 +45,11 @@ describe("guest rendering", () => {
   });
 
   test("uses adult designs for seniors when the atlas has no senior design", () => {
+    const isSenior = (key: string): boolean => ageGroupBySprite.get(key.split("/").slice(0, 2).join("/")) === "senior";
     const withoutSenior: typeof atlas = {
       pages: {},
-      frames: Object.fromEntries(Object.entries(atlas.frames).filter(([key]) => !key.startsWith("people/lena/"))),
-      sprites: Object.fromEntries(Object.entries(atlas.sprites).filter(([sprite]) => sprite !== "people/lena")),
+      frames: Object.fromEntries(Object.entries(atlas.frames).filter(([key]) => !isSenior(key))),
+      sprites: Object.fromEntries(Object.entries(atlas.sprites).filter(([sprite]) => !isSenior(sprite))),
     };
     const person = buildPeople(undefined, snapshot([30], [0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 2]), 1, 0, withoutSenior)[0];
     expect(ageGroupBySprite.get(person.sprite)).toBe("adult");
@@ -80,6 +81,10 @@ describe("guest rendering", () => {
     for (const { sprite } of first) counts.set(sprite, (counts.get(sprite) ?? 0) + 1);
     const usedCounts = [...counts.values()].filter((value) => value > 0);
     expect(usedCounts.length).toBe(CAST.length);
-    expect(Math.max(...usedCounts)).toBeLessThan(Math.min(...usedCounts) * 10);
+    // Skin tone is matched before other traits, so spread is only comparable within an age group.
+    for (const ageGroup of ["child", "adult", "senior"] as const) {
+      const groupCounts = CAST.filter((person) => person.ageGroup === ageGroup).map(({ id }) => counts.get(`people/${id}`) ?? 0);
+      expect(Math.max(...groupCounts), ageGroup).toBeLessThan(Math.min(...groupCounts) * 10);
+    }
   });
 });

@@ -48,10 +48,22 @@ type HairStyle =
   | "puffs"
   | "hijab"
   | "wavyBob"
-  | "swoop";
-type HatStyle = "none" | "cap" | "sunhat" | "beanie";
+  | "swoop"
+  | "balding"
+  | "closeCrop";
+type HatStyle = "none" | "cap" | "sunhat" | "beanie" | "flatCap";
 type LowerBody = "trousers" | "shorts" | "cargoShorts" | "skirt" | "dress" | "leggings";
-type Accessory = "none" | "balloon" | "backpack" | "handbag" | "camera" | "iceCream" | "satchel";
+type Accessory = "none" | "balloon" | "backpack" | "handbag" | "camera" | "iceCream" | "satchel" | "tote" | "walkingStick";
+
+/** How a person walks and stands, as scales on the usual gait. */
+interface Gait {
+  footLift: number;
+  armSwing: number;
+  bounce: number;
+  /** How far the shoulders and head sit forward of the hips, in body units, walking or standing. */
+  stoop: number;
+}
+const USUAL_GAIT: Gait = { footLift: 1, armSwing: 1, bounce: 1, stoop: 0 };
 
 export interface PersonDesign {
   id: string;
@@ -89,6 +101,15 @@ export interface PersonDesign {
   socks?: string;
   pocketColor?: string;
   overallStraps?: boolean;
+  /** Long sleeves in another colour from the torso, as for a sleeveless vest over a shirt. */
+  sleeveColor?: string;
+  /** An open cardigan or jacket: the colour of the shirt that shows down the front. */
+  openFront?: string;
+  /** A knee-length tunic worn over the trousers, in this colour. */
+  tunic?: string;
+  /** Glasses with an ink frame drawn in every face style, as the strapped glasses are; `glasses` shows only with the candy face. */
+  framedGlasses?: boolean;
+  gait?: Gait;
 }
 
 export type PersonAgeGroup = "child" | "adult" | "senior";
@@ -123,6 +144,14 @@ const child = {
   chest: 0,
   limbRadius: 1.5,
   stride: 4.2,
+};
+/** Older people take shorter, lower steps with less swing and bounce. */
+const senior = {
+  ...adult,
+  ageGroup: "senior" as const,
+  height: 40,
+  stride: 4.6,
+  gait: { footLift: 0.62, armSwing: 0.7, bounce: 0.55, stoop: 0 },
 };
 const noExtras = { hat: "none", hatColor: "#000000", accessory: "none", accessoryColor: "#000000" } as const;
 
@@ -198,11 +227,32 @@ export const CAST: PersonDesign[] = [
     skin: "#e8b48a", hair: "#5a3a28", hairStyle: "shortCrop", top: "#39445c", coasterPrint: "#ffc531", sleeves: "short",
     lower: "cargoShorts", lowerColor: "#c9a26b", pocketColor: "#b08550", socks: "#fffaf0", shoes: "#6d4632", glassesStrap: "#ff5d5d",
   },
+  {
+    ...senior, ...noExtras, id: "earl", description: "Broad older man with silver cropped hair, a tweed flat cap and an open green cardigan",
+    height: 42, shoulderHalfWidth: 6, hipHalfWidth: 4.4, belly: 2.4, chest: 1, limbRadius: 2.1, headRadius: 6,
+    skin: "#5a3826", hair: "#e2dfda", hairStyle: "closeCrop", hat: "flatCap", hatColor: "#8a6a4a",
+    top: "#3f8a5c", openFront: "#fffaf0", sleeves: "long", lower: "trousers", lowerColor: "#5c5866", shoes: "#2a1b42",
+    gait: { ...senior.gait, stoop: 0.5 },
+  },
+  {
+    ...senior, ...noExtras, id: "mei", description: "Slim older woman with a silver bob, glasses, a light mustard jacket and a teal tote bag",
+    height: 38, shoulderHalfWidth: 3.8, hipHalfWidth: 2.6, limbRadius: 1.55, headRadius: 5.6,
+    skin: "#f0cfa8", hair: "#e4e3e6", hairStyle: "wavyBob", framedGlasses: true,
+    top: "#e9b44c", openFront: "#fffaf0", sleeves: "long", lower: "trousers", lowerColor: "#39445c", shoes: "#fffaf0",
+    accessory: "tote", accessoryColor: "#2e8f7a", gait: { ...senior.gait, stoop: 0.3 },
+  },
+  {
+    ...senior, ...noExtras, id: "ravi", description: "Older man with a grey beard and a walking stick, a maroon vest over a long cream kurta",
+    height: 40, shoulderHalfWidth: 4.8, hipHalfWidth: 3.4, belly: 1.4, limbRadius: 1.8, headRadius: 5.9,
+    skin: "#a8714a", hair: "#d4d0ca", hairStyle: "balding", beard: "#d4d0ca",
+    top: "#8a3f4a", sleeves: "long", sleeveColor: "#f3ead8", tunic: "#f3ead8", lower: "trousers", lowerColor: "#9a9488", shoes: "#6d4632",
+    accessory: "walkingStick", accessoryColor: "#4a2f22", gait: { ...senior.gait, stoop: 1.1 },
+  },
 ];
 
 const HAIR_GROUPS: Record<HairStyle, PersonAppearance["hairGroup"]> = {
   afro: "curly", shortCrop: "short", bun: "tied", bald: "bald", braid: "tied", bowl: "short",
-  pigtails: "tied", puffs: "curly", hijab: "covered", wavyBob: "bob", swoop: "short",
+  pigtails: "tied", puffs: "curly", hijab: "covered", wavyBob: "bob", swoop: "short", balding: "bald", closeCrop: "short",
 };
 
 function rgb(hex: string): [number, number, number] {
@@ -283,6 +333,7 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     up,
   ];
   const isWalking = animation === "walk";
+  const gait = person.gait ?? USUAL_GAIT;
   const frameCount = isWalking ? WALK_FRAME_COUNT : IDLE_FRAME_COUNT;
   const phase = (frame / frameCount) * Math.PI * 2;
   const leftIsNear = depthOf(toView(0, 1, 0)) > 0;
@@ -293,7 +344,7 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
   const legLength = hipHeight - 1.4;
   const headCenterHeight = person.height - person.headRadius;
   const shoulderHeight = headCenterHeight - person.headRadius - 0.6;
-  const bounce = isWalking ? -0.55 * sizeRatio * Math.cos(phase * 2) : 0.22 * Math.sin(phase);
+  const bounce = isWalking ? -0.55 * sizeRatio * Math.cos(phase * 2) * gait.bounce : 0.22 * Math.sin(phase);
   const lean = isWalking ? 0.8 * sizeRatio : 0;
 
   const layers: Layer[] = [];
@@ -313,7 +364,7 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
   for (const side of [1, -1]) {
     const legPhase = phase + (side === 1 ? 0 : Math.PI);
     const footForward = isWalking ? person.stride * Math.cos(legPhase) : 0;
-    const footLift = isWalking ? 3.4 * sizeRatio * Math.max(0, -Math.sin(legPhase)) ** 1.3 : 0;
+    const footLift = isWalking ? 3.4 * sizeRatio * gait.footLift * Math.max(0, -Math.sin(legPhase)) ** 1.3 : 0;
     const hipLeft = side * person.hipHalfWidth * 0.62;
     const hip = ball(0, hipLeft, hipHeight + bounce, person.limbRadius * 1.15);
     const ankle = ball(footForward, hipLeft, 1.8 + footLift, person.limbRadius * 0.82);
@@ -353,6 +404,8 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
 
   // Skirt and dress hems sway a little with the stride.
   const torsoLean = (height: number): number => lean * ((height - hipHeight) / (headCenterHeight - hipHeight));
+  /** The stoop bends the upper back, so it grows towards the shoulders. */
+  const stoopAt = (height: number): number => gait.stoop * Math.max(0, (height - hipHeight) / (headCenterHeight - hipHeight)) ** 1.6;
   const hemSway = isWalking ? Math.cos(phase) * 0.5 : 0;
   if (person.lower === "skirt" || person.lower === "dress") {
     const hemHeight = person.lower === "skirt" ? 5.5 * sizeRatio : hipHeight * 0.52;
@@ -364,18 +417,28 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     const waist = ball(torsoLean(hipHeight + 4) + person.belly * 0.4, 0, hipHeight + 4 + bounce, person.hipHalfWidth + person.belly * 0.5);
     addLayer(3, [[waist, ...hemBalls]], person.lowerColor);
   }
+  if (person.tunic) {
+    const hemRadius = person.hipHalfWidth + 1.2 + person.belly * 0.3;
+    const hemBalls = Array.from({ length: 10 }, (_, index) => {
+      const angle = (index / 10) * Math.PI * 2;
+      return ball(Math.cos(angle) * hemRadius + hemSway * 0.6, Math.sin(angle) * hemRadius, hipHeight * 0.58 + bounce * 0.7, 0.7);
+    });
+    const waist = ball(torsoLean(hipHeight + 4) + stoopAt(hipHeight + 4) + person.belly * 0.4, 0, hipHeight + 4 + bounce, person.hipHalfWidth + person.belly * 0.5);
+    addLayer(3.95, [[waist, ...hemBalls]], person.tunic);
+  }
 
   // Torso: shoulders and hips joined by one hull, with a belly and chest pushing it forward.
   const shoulderZ = shoulderHeight + bounce;
   const breath = isWalking ? 0 : 0.2 * Math.sin(phase);
-  const leftShoulder = ball(torsoLean(shoulderHeight), person.shoulderHalfWidth * 0.72, shoulderZ + breath, 1.9 * sizeRatio ** 0.5);
-  const rightShoulder = ball(torsoLean(shoulderHeight), -person.shoulderHalfWidth * 0.72, shoulderZ + breath, 1.9 * sizeRatio ** 0.5);
+  const shoulderForward = torsoLean(shoulderHeight) + stoopAt(shoulderHeight);
+  const leftShoulder = ball(shoulderForward, person.shoulderHalfWidth * 0.72, shoulderZ + breath, 1.9 * sizeRatio ** 0.5);
+  const rightShoulder = ball(shoulderForward, -person.shoulderHalfWidth * 0.72, shoulderZ + breath, 1.9 * sizeRatio ** 0.5);
   const hipCore = hipHeight + bounce + 1.5;
   const torsoBalls: Ball[] = [
     leftShoulder,
     rightShoulder,
-    ball(person.chest, 0, shoulderZ - 2.5, person.shoulderHalfWidth * 0.8),
-    ball(person.belly, 0, hipCore + 3, person.hipHalfWidth + person.belly * 0.55),
+    ball(person.chest + stoopAt(shoulderHeight - 2.5), 0, shoulderZ - 2.5, person.shoulderHalfWidth * 0.8),
+    ball(person.belly + stoopAt(hipCore + 3), 0, hipCore + 3, person.hipHalfWidth + person.belly * 0.55),
     ball(0, person.hipHalfWidth * 0.5, hipCore, 2.4),
     ball(0, -person.hipHalfWidth * 0.5, hipCore, 2.4),
   ];
@@ -423,31 +486,44 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     const printCenterUp = (shoulderZ + hipCore) / 2 + 0.6;
     torsoLayer.extra = (torsoLayer.extra ?? "") + coasterPrintMarkup(person, theme, torsoBalls, toView, printCenterUp, torsoLean(printCenterUp));
   }
+  if (person.openFront && facingViewer) {
+    const torsoLayer = layers.find((layer) => layer.order === 4);
+    if (!torsoLayer) throw new Error("The open front needs the torso layer");
+    torsoLayer.extra = (torsoLayer.extra ?? "") + openFrontMarkup(person, theme, torsoBalls, toView, shoulderZ, hipCore, (height) => torsoLean(height) + stoopAt(height));
+  }
 
   // Arms swing against the legs on the same side.
+  // A walking stick in the right hand moves with the left foot, planted while that foot is down.
+  const caneTipForward = isWalking ? person.stride * Math.cos(phase) + 1.4 : 2.2;
+  const caneTipLift = isWalking ? 2 * sizeRatio * Math.max(0, -Math.sin(phase)) ** 1.3 : 0;
   let carryingHand: Ball | undefined;
   for (const side of [1, -1]) {
     const armPhase = phase + (side === 1 ? Math.PI : 0);
-    const swing = isWalking ? person.stride * 0.72 * Math.cos(armPhase) : 0;
+    const swing = isWalking ? person.stride * 0.72 * gait.armSwing * Math.cos(armPhase) : 0;
     const isNear = (side === 1) === leftIsNear;
     const shoulderLeft = side * (person.shoulderHalfWidth * 0.86 + person.belly * 0.12);
-    const shoulder = ball(torsoLean(shoulderHeight), shoulderLeft, shoulderZ + breath - 0.3, person.limbRadius * 0.95);
+    const shoulder = ball(shoulderForward, shoulderLeft, shoulderZ + breath - 0.3, person.limbRadius * 0.95);
     const armLength = (shoulderHeight - hipHeight) * 1.0;
     const carriesAccessory = side === -1 && (person.accessory === "iceCream" || person.accessory === "balloon");
-    const handForward = carriesAccessory ? 3.2 * sizeRatio ** 0.5 : torsoLean(shoulderHeight) + swing * 0.95 + person.belly * 0.5;
-    const handUp = carriesAccessory
-      ? shoulderZ - armLength * 0.74
-      : shoulderZ - armLength + Math.abs(swing) * 0.22 + 0.5;
-    const handOut = shoulderLeft + side * ((carriesAccessory ? 3.2 : 1.5) + person.belly * 0.4);
+    const holdsCane = side === -1 && person.accessory === "walkingStick";
+    const handForward = holdsCane
+      ? caneTipForward * 0.45 + 0.8 + stoopAt(shoulderHeight) * 0.5
+      : carriesAccessory ? 3.2 * sizeRatio ** 0.5 : shoulderForward + swing * 0.95 + person.belly * 0.5;
+    const handUp = holdsCane
+      ? hipHeight + bounce + 1 + caneTipLift * 0.6
+      : carriesAccessory
+        ? shoulderZ - armLength * 0.74
+        : shoulderZ - armLength + Math.abs(swing) * 0.22 + 0.5;
+    const handOut = shoulderLeft + side * ((carriesAccessory ? 3.2 : holdsCane ? 2.4 : 1.5) + person.belly * 0.4);
     const elbow = ball(
-      (torsoLean(shoulderHeight) + handForward) * 0.42 - 0.3,
+      (shoulderForward + handForward) * 0.42 - 0.3,
       (shoulderLeft + handOut) * 0.5 + side * 0.5,
       (shoulderZ + handUp) * 0.5,
       person.limbRadius * 0.9,
     );
     const hand = ball(handForward, handOut, handUp, person.limbRadius * 0.92);
     const order = isNear ? 6 : 0.5;
-    const sleeveColor = person.sleeves === "long" ? person.top : person.skin;
+    const sleeveColor = person.sleeves === "long" ? (person.sleeveColor ?? person.top) : person.skin;
     if (person.sleeves === "short") {
       addLayer(order, [capsule(shoulder, elbow), capsule(elbow, hand)], person.skin);
       const sleeveEnd: Ball = { center: lerpVector(shoulder.center, elbow.center, 0.55), radius: person.limbRadius * 1.05 };
@@ -457,11 +533,18 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
       addLayer(order + 0.1, [[{ ...hand, radius: hand.radius * 0.95 }]], person.skin);
     }
     if (carriesAccessory) carryingHand = hand;
+    if (holdsCane) {
+      const tip = ball(caneTipForward, handOut + side * 0.4, 0.5 + caneTipLift, 0.4);
+      const top = ball(handForward, handOut, handUp + 1, 0.42);
+      const crook = ball(handForward + 1.1, handOut, handUp + 1.5, 0.4);
+      const crookEnd = ball(handForward + 1.9, handOut, handUp + 0.7, 0.38);
+      addLayer(isNear ? 5.9 : 0.4, [capsule(tip, top), capsule(top, crook), capsule(crook, crookEnd)], person.accessoryColor, undefined, 0.8);
+    }
   }
 
   // Head and hair.
-  const headLean = lean * 1.2 + (isWalking ? Math.cos(phase * 2) * -0.05 : 0);
-  const headUp = headCenterHeight + bounce * 1.1 + breath * 0.5;
+  const headLean = lean * 1.2 + (isWalking ? Math.cos(phase * 2) * -0.05 : 0) + stoopAt(headCenterHeight) * 1.25;
+  const headUp = headCenterHeight + bounce * 1.1 + breath * 0.5 - gait.stoop * 0.45;
   const headForward = headLean;
   const headRadius = person.headRadius;
   const headBall = (forward: number, left: number, up: number, radiusFactor: number): Ball =>
@@ -495,6 +578,11 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
   if (person.hat === "beanie") {
     addLayer(10, [[headBall(-0.28, 0, 0.5, 0.84)]], person.hatColor);
     addLayer(10.1, [[headBall(-0.28, 0, 1.38, 0.25)]], "#fffaf0");
+  }
+  if (person.hat === "flatCap") {
+    // Low and flat, sloping forward from the crown onto a short peak.
+    addLayer(10, [[headBall(-0.3, 0, 0.66, 0.74), headBall(0.22, 0, 0.74, 0.62)]], person.hatColor);
+    addLayer(10.1, [[headBall(0.98, 0.42, 0.56, 0.12), headBall(0.98, -0.42, 0.56, 0.12), headBall(0.7, 0, 0.66, 0.3)]], shadePlum(person.hatColor, 0.22), undefined, 0.8);
   }
   if (person.hat === "sunhat") {
     const brim = Array.from({ length: 12 }, (_, index) => {
@@ -530,6 +618,22 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
     ];
     addLayer(isNear ? 6.3 : 0.2, [bag], person.accessoryColor);
   }
+  if (person.accessory === "tote") {
+    // A tall canvas bag hanging from the left shoulder by a long strap.
+    const isNear = leftIsNear;
+    const swingOffset = isWalking ? Math.cos(phase + Math.PI) * 0.6 : 0;
+    const bagLeft = person.hipHalfWidth + 2.6 + person.belly * 0.4;
+    const bagTop = hipCore + 1.6;
+    const bag = [
+      ball(swingOffset - 1.5, bagLeft, bagTop, 1.1),
+      ball(swingOffset + 1.5, bagLeft, bagTop, 1.1),
+      ball(swingOffset - 1.6, bagLeft, bagTop - 4, 1.2),
+      ball(swingOffset + 1.6, bagLeft, bagTop - 4, 1.2),
+    ];
+    const strapTop = ball(shoulderForward, person.shoulderHalfWidth * 0.62, shoulderZ + 1.2, 0.4);
+    const straps = [capsule(strapTop, ball(swingOffset - 1.1, bagLeft, bagTop, 0.4)), capsule(strapTop, ball(swingOffset + 1.1, bagLeft, bagTop, 0.4))];
+    addLayer(isNear ? 6.3 : 0.2, [...straps, bag], person.accessoryColor);
+  }
   if (person.accessory === "camera") {
     const chestForward = person.chest + person.shoulderHalfWidth * 0.8 + 0.2 + (person.belly > 0 ? 0.4 : 0);
     if (facingViewer) {
@@ -560,7 +664,8 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
 
   const face =
     (facingViewer ? drawFace(person, theme, headBall, leftIsNear ? 1 : -1, animation === "idle" && frame === 1) : "") +
-    (person.glassesStrap ? drawStrappedGlasses(person, theme, headBall, leftIsNear ? 1 : -1, facingViewer) : "");
+    (person.glassesStrap ? drawStrappedGlasses(person, theme, headBall, leftIsNear ? 1 : -1, facingViewer) : "") +
+    (person.framedGlasses && facingViewer ? drawFramedLenses(person, theme, headBall, leftIsNear ? 1 : -1) : "");
 
   // Things drawn above everything else, for a held balloon or ice cream.
   let held = "";
@@ -697,7 +802,7 @@ function drawStrappedGlasses(
   const eyeUp = eyeHeight(person);
   const headCenter = headBall(0, 0, 0, 0).center;
   // Seen from the front, the face is turned towards the camera; from behind it is not.
-  const pointOnHead = (forward: number, left: number, up = eyeUp): Vector3 =>
+  const pointOnHead = (forward: number, left: number, up: number): Vector3 =>
     facingViewer ? onFace(headBall, nearSide, forward, left, up) : headBall(forward, left, up + 0.2, 0).center;
   const strapRadius = 1.04;
   const runs: Point[][] = [];
@@ -726,20 +831,76 @@ function drawStrappedGlasses(
     `<path d="${strapPath}" fill="none" stroke="${ink}" stroke-width="${formatNumber(1.2 * outline + 0.35)}" stroke-linecap="round" stroke-linejoin="round"/>`,
     `<path d="${strapPath}" fill="none" stroke="${theme.color(person.glassesStrap)}" stroke-width="0.7" stroke-linecap="round" stroke-linejoin="round"/>`,
   ];
-  if (facingViewer) {
-    const eyes = [pointOnHead(0.86, 0.46), pointOnHead(0.86, -0.46)].map(project);
-    const lensRadius = person.headRadius * 0.3;
-    const frameWidth = formatNumber(Math.max(0.55, 0.75 * outline));
-    for (const [eyeX, eyeY] of eyes) {
-      parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(lensRadius)}" fill="${theme.color("#ffffff")}" fill-opacity="0.45" stroke="${ink}" stroke-width="${frameWidth}"/>`);
-    }
-    parts.push(`<path d="M${formatPoint(eyes[0])}L${formatPoint(eyes[1])}" stroke="${ink}" stroke-width="${frameWidth}" fill="none"/>`);
-    if (theme.people.face !== "none") {
-      const pupilRadius = theme.people.face === "dots" ? Math.max(0.42, person.headRadius * 0.12) : person.headRadius * 0.12;
-      for (const [eyeX, eyeY] of eyes) parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(pupilRadius)}" fill="${ink}"/>`);
-    }
+  if (facingViewer) parts.push(drawFramedLenses(person, theme, headBall, nearSide));
+  return parts.join("");
+}
+
+/** Two lenses with an ink frame and the eyes behind them, bold enough to show in every face style. */
+function drawFramedLenses(
+  person: PersonDesign,
+  theme: Theme,
+  headBall: (forward: number, left: number, up: number, radiusFactor: number) => Ball,
+  nearSide: number,
+): string {
+  const ink = theme.line.color;
+  const eyeUp = eyeHeight(person);
+  const eyes = [onFace(headBall, nearSide, 0.86, 0.46, eyeUp), onFace(headBall, nearSide, 0.86, -0.46, eyeUp)].map(project);
+  const lensRadius = person.headRadius * 0.3;
+  const frameWidth = formatNumber(Math.max(0.55, 0.75 * theme.people.outline));
+  const parts: string[] = [];
+  for (const [eyeX, eyeY] of eyes) {
+    parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(lensRadius)}" fill="${theme.color("#ffffff")}" fill-opacity="0.45" stroke="${ink}" stroke-width="${frameWidth}"/>`);
+  }
+  parts.push(`<path d="M${formatPoint(eyes[0])}L${formatPoint(eyes[1])}" stroke="${ink}" stroke-width="${frameWidth}" fill="none"/>`);
+  if (theme.people.face !== "none") {
+    const pupilRadius = theme.people.face === "dots" ? Math.max(0.42, person.headRadius * 0.12) : person.headRadius * 0.12;
+    for (const [eyeX, eyeY] of eyes) parts.push(`<circle cx="${formatNumber(eyeX)}" cy="${formatNumber(eyeY)}" r="${formatNumber(pupilRadius)}" fill="${ink}"/>`);
   }
   return parts.join("");
+}
+
+/**
+ * The shirt showing down the front of an open cardigan or jacket: a V at the neck narrowing to a
+ * strip down to the hem, clipped to the torso. Only drawn from the front.
+ */
+function openFrontMarkup(
+  person: PersonDesign,
+  theme: Theme,
+  torsoBalls: readonly Ball[],
+  toView: (forward: number, left: number, up: number) => Vector3,
+  shoulderUp: number,
+  hipUp: number,
+  forwardAt: (up: number) => number,
+): string {
+  if (!person.openFront) throw new Error(`${person.id} has no open front`);
+  const chestFront = person.chest + person.shoulderHalfWidth * 0.8;
+  const bellyFront = person.belly + person.hipHalfWidth + person.belly * 0.55;
+  const surface = (up: number, left: number): Point => {
+    const fraction = Math.min(1, Math.max(0, (shoulderUp - up) / (shoulderUp - hipUp)));
+    const front = chestFront + (bellyFront - chestFront) * fraction;
+    // Pulled in from the true surface, so that the opening sits near the middle of the torso as seen.
+    return project(toView(forwardAt(up) + front * 0.6 * Math.sqrt(Math.max(0, 1 - (left / front) ** 2)), left, up));
+  };
+  const neckUp = shoulderUp + 1.2;
+  const vBottomUp = shoulderUp - (shoulderUp - hipUp) * 0.42;
+  const hemUp = hipUp - 1;
+  const neckHalfWidth = person.shoulderHalfWidth * 0.36;
+  const stripHalfWidth = Math.max(0.55, person.shoulderHalfWidth * 0.11);
+  const outline = [
+    surface(neckUp, neckHalfWidth),
+    surface(vBottomUp, stripHalfWidth),
+    surface(hemUp, stripHalfWidth),
+    surface(hemUp, -stripHalfWidth),
+    surface(vBottomUp, -stripHalfWidth),
+    surface(neckUp, -neckHalfWidth),
+  ];
+  const clipId = "front";
+  const torsoOutline = hullOfCircles(torsoBalls.map(screenCircle));
+  const ink = theme.line.color;
+  return (
+    `<clipPath id="${clipId}"><path d="${smoothPath(torsoOutline, true)}"/></clipPath>` +
+    `<g clip-path="url(#${clipId})"><path d="M${outline.map(formatPoint).join("L")}Z" fill="${theme.color(person.openFront)}" stroke="${ink}" stroke-width="${formatNumber(0.8 * theme.people.outline)}" stroke-linejoin="round"/></g>`
+  );
 }
 
 /**
@@ -869,9 +1030,23 @@ function hairBallsFor(style: HairStyle): HairLayer[] {
         { balls: [[-0.3, 0, 0.5, 0.8]], bias: 0.2, alwaysOnTop: true },
       ];
     case "wavyBob":
+      // Chin length all round. The fringe goes behind the head when seen from the back, so the back of
+      // the bob reads as one smooth shape.
       return [
-        { balls: [[-0.2, 0, -0.1, 1.15]], bias: 0 },
-        { balls: [[0, 0, 0.5, 0.88]], bias: 0.2, alwaysOnTop: true },
+        { balls: [[-0.24, 0, -0.12, 1.12], [-0.12, 0, 0.42, 0.98]], bias: 0 },
+        { balls: [[0.34, 0, 0.56, 0.72], [0.36, 0.56, 0.42, 0.36], [0.36, -0.56, 0.42, 0.36]], bias: 0.2 },
+      ];
+    case "closeCrop":
+      // Cropped close under a hat: only the back and the hair above the ears show.
+      return [
+        { balls: [backOfHead], bias: 0 },
+        { balls: [[-0.12, 0.84, 0.28, 0.3], [-0.42, 0.72, 0.32, 0.34]], bias: 0.2, alwaysOnTop: true },
+        { balls: [[-0.12, -0.84, 0.28, 0.3], [-0.42, -0.72, 0.32, 0.34]], bias: 0.2, alwaysOnTop: true },
+      ];
+    case "balding":
+      // Bare on top, with a fringe round the back and over the ears.
+      return [
+        { balls: [[-0.42, 0, -0.12, 0.78], [-0.08, 0.7, 0.02, 0.42], [-0.08, -0.7, 0.02, 0.42]], bias: 0, fixedBehind: undefined },
       ];
   }
 }
