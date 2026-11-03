@@ -2,7 +2,11 @@
 //! Surface data is dense, while only columns with carved spans or paths allocate
 //! extra storage; sorted half-open spans keep ordinary surface-only maps compact.
 
+use std::collections::BTreeMap;
 use std::mem::size_of;
+
+mod construction;
+pub use construction::{PathBuildError, PathKind, PathMetadata, PathPreviewTile};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_WORLD_ID: AtomicUsize = AtomicUsize::new(1);
@@ -87,6 +91,7 @@ struct Column {
 }
 
 pub struct World {
+    path_metadata: BTreeMap<Position, PathMetadata>,
     width: u16,
     height: u16,
     revision: u64,
@@ -101,6 +106,7 @@ impl World {
         assert!(width > 0 && height > 0, "world dimensions must be positive");
         let count = usize::from(width) * usize::from(height);
         Self {
+            path_metadata: BTreeMap::new(),
             width,
             height,
             revision: 0,
@@ -267,6 +273,9 @@ impl World {
                     .collect()
             })
             .unwrap_or_default();
+        for position in &invalid {
+            self.path_metadata.remove(position);
+        }
         if let Some(column) = &mut self.columns[index] {
             column
                 .paths
@@ -367,6 +376,7 @@ impl World {
         let original_len = column.paths.len();
         column.paths.retain(|path| path.position != position);
         let removed = column.paths.len() != original_len;
+        self.path_metadata.remove(&position);
         if column.paths.is_empty() && column.carved.is_empty() {
             self.columns[index] = None;
         }
@@ -453,6 +463,8 @@ impl World {
             let paths = column.as_ref().map_or(&[][..], |column| &column.paths);
             write(&(paths.len() as u64).to_le_bytes());
             for path in paths {
+                let metadata = self.path_metadata(path.position).unwrap();
+                write(&[metadata.kind as u8, metadata.style]);
                 write(&path.position.height.to_le_bytes());
                 write(&[match path.slope {
                     None => 0,

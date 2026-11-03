@@ -69,5 +69,11 @@ test("captures the open guest details panel", async ({ page }) => {
   await expect(panel.getByTestId("guest-name")).not.toBeEmpty();
   await expect(panel.getByTestId("guest-needs")).toBeVisible();
   await expect(panel.getByTestId("guest-thoughts")).toBeVisible();
+  await page.locator("canvas").evaluate((canvas) => { canvas.style.visibility = "hidden"; });
+  await panel.evaluate((element) => {
+    element.style.transition = "none";
+    element.style.left = `${Math.round(element.getBoundingClientRect().left)}px`;
+    element.style.top = `${Math.round(element.getBoundingClientRect().top)}px`;
+  });
   await expect(panel).toHaveScreenshot("guest-details-panel.png", { animations: "disabled" });
 });

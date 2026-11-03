@@ -56,6 +56,21 @@ impl ParkFacilities {
     pub fn buildings(&self) -> &[Building] {
         &self.buildings
     }
+
+    /// Returns whether a path at this height would overlap a placed building footprint.
+    pub fn occupies_path_position(&self, position: Position) -> bool {
+        self.buildings.iter().any(|building| {
+            if position.height != building.position.height {
+                return false;
+            }
+            let (width, height) = building.kind.footprint(building.direction);
+            position.x >= building.position.x
+                && u32::from(position.x) < u32::from(building.position.x) + u32::from(width)
+                && position.y >= building.position.y
+                && u32::from(position.y) < u32::from(building.position.y) + u32::from(height)
+        })
+    }
+
     pub fn place(
         &mut self,
         world: &World,
@@ -392,6 +407,36 @@ mod tests {
             park.place(&world, FacilityKind::Food, position, Direction::North),
             Err(PlacementError::Occupied)
         );
+    }
+
+    #[test]
+    fn path_occupancy_reports_only_tiles_at_the_building_walkable_height() {
+        let world = world();
+        let mut park = ParkFacilities::new();
+        let position = Position {
+            x: 2,
+            y: 2,
+            height: 0,
+        };
+        park.place(&world, FacilityKind::Food, position, Direction::North)
+            .unwrap();
+
+        assert!(park.occupies_path_position(position));
+        assert!(park.occupies_path_position(Position {
+            x: 3,
+            y: 3,
+            height: 0
+        }));
+        assert!(!park.occupies_path_position(Position {
+            x: 4,
+            y: 3,
+            height: 0
+        }));
+        assert!(!park.occupies_path_position(Position {
+            x: 2,
+            y: 2,
+            height: 1
+        }));
     }
 
     #[test]

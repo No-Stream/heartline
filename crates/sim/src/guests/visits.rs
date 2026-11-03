@@ -42,6 +42,10 @@ impl VisitManager {
         self.active_count
     }
 
+    pub fn arrivals_per_tick(&self) -> usize {
+        self.arrivals_per_tick
+    }
+
     /// Admits guests up to the target and returns their IDs in admission order.
     pub fn arrive(
         &mut self,

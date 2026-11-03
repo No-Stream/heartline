@@ -6,7 +6,8 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-  await page.getByLabel("Station height above ground (metres)").selectOption("72");
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
   const position = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 }));
   const canvas = page.locator("canvas");
@@ -24,7 +25,7 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   await expect(canvas).toHaveAttribute("data-station-preview", /50,50,80,0/);
   await page.mouse.click(bounds.x + direction.x * bounds.width / 800, bounds.y + direction.y * bounds.height / 500);
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 30, centerY: 30, zoom: 1, rotation: 0 }));
-  const choices = page.getByLabel("Next piece");
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
   await expect(track.locator("li")).toHaveCount(1);
   const pieces = [
@@ -34,17 +35,26 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
     "GentleDownToLevel", "Loop", "TurnLargeEntry", "TurnLargeExit",
   ];
   for (const [index, piece] of pieces.entries()) {
-    await expect(choices.locator(`option[value="${piece}"]`)).toHaveCount(1);
-    await choices.selectOption(piece);
+    await choices.locator(`[data-piece="${piece}"]`).click();
     await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
     if (index === 0) {
       await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
       await page.addStyleTag({ content: "[data-testid='tick-count'] { visibility: hidden; }" });
+      await page.mouse.move(0, 0);
       await expect(page.locator("main")).toHaveScreenshot("construction-preview.png", { animations: "disabled" });
     }
     await page.getByRole("button", { name: "Place piece" }).click();
     await expect(track.locator("li")).toHaveCount(index + 2);
+    if (index === 0) {
+      // The camera started far away at (30, 30); it follows the open track end back to the station.
+      await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+      const station = await page.evaluate(() => window.gameTest.project({ x: 52, y: 50.5, z: 20 }));
+      expect(station.x).toBeGreaterThan(0);
+      expect(station.x).toBeLessThan(800);
+      expect(station.y).toBeGreaterThan(0);
+      expect(station.y).toBeLessThan(500);
+    }
   }
   await page.getByRole("button", { name: "Close circuit" }).click();
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
@@ -88,9 +98,9 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   await expect(canvas).toHaveScreenshot("coaster-testing-overlay.png", { animations: "disabled" });
   await page.getByLabel("Track overlay").selectOption("airtime");
   await expect(page.getByText("No airtime")).toBeVisible();
-  await page.getByRole("button", { name: "Delete LiftLevelToGentleUp, piece 2" }).click();
+  await page.getByRole("button", { name: "Delete Begin chain lift climb, piece 2" }).click();
   await expect(track.locator("li")).toHaveCount(pieces.length, { timeout: 30_000 });
-  await expect(track.locator("li").last()).toContainText("TurnLargeExit");
+  await expect(track.locator("li").last()).toContainText("End large left turn");
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeDisabled();
   await expect(page.getByText("Complete the circuit and make it longer than the train to test your coaster.")).toBeVisible();
   await expect(page.getByLabel("Track overlay")).toBeDisabled();

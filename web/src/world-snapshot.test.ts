@@ -5,16 +5,19 @@ const workerMock = vi.hoisted(() => ({
   initialize: vi.fn(),
   tick: vi.fn(),
   setSurface: vi.fn(),
+  pieceShapes: vi.fn(() => "[]"),
 }));
 
 vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
   default: workerMock.initialize,
+  piece_shapes_json: workerMock.pieceShapes,
   WasmSimulation: class {
     facilities_json() { return "[]"; }
     facility_revenue() { return 0n; }
     world_dimensions() { return new Uint16Array([3, 3]); }
     world_surfaces() { return new Int32Array(54); }
     world_paths() { return new Int32Array(); }
+    world_path_metadata() { return new Int32Array(); }
     world_carved() { return new Int32Array(); }
     tick() { workerMock.tick(); }
     tick_count() { return BigInt(workerMock.tick.mock.calls.length); }
@@ -51,14 +54,16 @@ describe("world snapshot transfer", () => {
     const surfaces = new Int32Array(12);
     const paths = new Int32Array([1, 0, 4, 0]);
     const carved = new Int32Array([1, 0, 0, 4]);
+    const pathMetadata = new Int32Array([1, 2]);
     const result = captureWorldSnapshot({
       world_dimensions: () => dimensions,
       world_surfaces: () => surfaces,
       world_paths: () => paths,
+      world_path_metadata: () => pathMetadata,
       world_carved: () => carved,
     });
-    expect(result.message).toEqual({ type: "world", dimensions, surfaces, paths, carved });
-    expect(result.transfer).toEqual([dimensions.buffer, surfaces.buffer, paths.buffer, carved.buffer]);
+    expect(result.message).toEqual({ type: "world", dimensions, surfaces, paths, pathMetadata, carved });
+    expect(result.transfer).toEqual([dimensions.buffer, surfaces.buffer, paths.buffer, pathMetadata.buffer, carved.buffer]);
   });
 });
 
@@ -85,15 +90,17 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   finishInitialization();
   await Promise.resolve();
 
-  expect(postMessage).toHaveBeenCalledTimes(4);
+  expect(postMessage).toHaveBeenCalledTimes(5);
   const [world, worldTransfer] = postMessage.mock.calls[0];
   expect(world.coasterRails).toEqual(new Float32Array([1, 2]));
   expect(world.coasterTies).toEqual(new Float32Array([3]));
   expect(worldTransfer).toContain(world.coasterRails.buffer);
   expect(worldTransfer).toContain(world.coasterTies.buffer);
   expect(workerMock.tick).not.toHaveBeenCalled();
-  expect(postMessage.mock.calls[3][0]).toMatchObject({ type: "snapshot", tickCount: 0 });
-  const [snapshot, transfer] = postMessage.mock.calls[3];
+  expect(postMessage.mock.calls[2][0]).toEqual({ type: "piece-shapes", shapes: [] });
+  expect(postMessage.mock.calls[3][0]).toEqual({ type: "ready" });
+  expect(postMessage.mock.calls[4][0]).toMatchObject({ type: "snapshot", tickCount: 0 });
+  const [snapshot, transfer] = postMessage.mock.calls[4];
   expect(snapshot.guestIds).toEqual(new Uint32Array([7]));
   expect(snapshot.guests).toEqual(new Float32Array([1, 2, 3, 1, 0, 4, 1]));
   expect(snapshot.appearances).toEqual(new Uint8Array([1, 2, 3, 4, 0]));

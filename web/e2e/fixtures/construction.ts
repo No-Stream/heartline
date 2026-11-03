@@ -1,19 +1,48 @@
 import { createTestingPanel, type TestingReport } from "../../src/coaster-testing";
 import { createConstructionPanel } from "../../src/construction";
-import type { ConstructionState } from "../../src/construction-protocol";
+import type { ConstructionState, PieceShape } from "../../src/construction-protocol";
 import type { InputAction } from "../../src/input/actions";
+import { bindKeyboard } from "../../src/input/bindings";
 
 const actions: InputAction[] = [];
-const panel = createConstructionPanel(document.querySelector("section")!, (action) => actions.push(action));
+const container = document.querySelector<HTMLElement>("section")!;
+/** Stands in for main.ts and the worker: piece steps resolve in the panel, and a selection comes back as the new state. */
+function dispatch(action: InputAction): void {
+  actions.push(action);
+  if (action.type === "piece-step" || action.type === "piece-group") panel.choose(action);
+  if (action.type === "construction-select") setConstructionState({ selected: action.piece });
+}
+const panel = createConstructionPanel(container, dispatch);
+bindKeyboard(container, dispatch, () => ({ x: 400, y: 250 }));
+
+const line = (length: number, turn: number): PieceShape["points"] => Array.from({ length: 33 }, (_, index) => {
+  const fraction = index / 32;
+  if (turn === 0) return [length * fraction, 0, 0, 0, 0, 1] as const;
+  const angle = fraction * Math.PI / 2;
+  return [length * Math.sin(angle), length * (1 - Math.cos(angle)), 0, 0, 0, 1] as const;
+});
+const shape = (id: string, name: string, kind: string, turn: number, exitSlope = "Level"): PieceShape => ({
+  id, name, kind, turn: turn * 2, entrySlope: "Level", exitSlope, entryBank: "Level", exitBank: "Level", points: line(16, turn),
+});
+panel.setShapes([
+  shape("Station", "Station", "Station", 0), shape("Straight", "Straight", "Track", 0),
+  shape("TurnSmallStandalone", "Standalone small left turn", "Track", 1), shape("LevelToGentleUp", "Begin gentle climb", "Track", 0, "UpGentle"),
+]);
 const state: ConstructionState = {
   type: "construction-state", active: true,
-  pieces: [{ id: "straight", label: "Straight", group: "Track", heading: "East", slope: "Level", bank: "Level" }, { id: "turn", label: "Turn", group: "Track", heading: "South", slope: "Level", bank: "Level" }], selected: "straight",
+  pieces: [
+    { id: "Straight", label: "Straight", group: "straight", heading: "East", slope: "Level", bank: "Level", refusal: "" },
+    { id: "TurnSmallStandalone", label: "Standalone small left turn", group: "turn", heading: "North", slope: "Level", bank: "Level", refusal: "" },
+    { id: "LevelToGentleUp", label: "Begin gentle climb", group: "slope", heading: "East", slope: "UpGentle", bank: "Level", refusal: "The train would collide with terrain." },
+  ], selected: "Straight",
   track: [{ id: 4, label: "Station" }, { id: 9, label: "Straight" }], canAppend: true, canClose: false, canTest: false, message: "Ready to place",
   placedRails: new Float32Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
   previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array(),
 };
+let current = state;
+function setConstructionState(update: Partial<ConstructionState>): void { current = { ...current, ...update }; panel.update(current); }
 panel.update(state);
-Object.assign(window, { constructionActions: actions, setConstructionState: (update: Partial<ConstructionState>) => panel.update({ ...state, ...update }) });
+Object.assign(window, { constructionActions: actions, setConstructionState });
 
 const testingPanel = createTestingPanel(document.querySelector<HTMLElement>("[data-testing]")!,
   { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 }, () => {});

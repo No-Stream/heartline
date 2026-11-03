@@ -1,21 +1,33 @@
 import type { Facility, FacilityAction } from "./facilities";
-import init, { WasmSimulation } from "./wasm/theme_park_sim_wasm.js";
+import init, { WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_wasm.js";
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
-import type { ConstructionAction, ConstructionPiece } from "./construction-protocol";
+import type { ConstructionAction, ConstructionPiece, PieceShape } from "./construction-protocol";
 
 type GuestDetailAction =
   | { readonly type: "guest-detail-request"; readonly guestId: string }
   | { readonly type: "guest-detail-close" };
-type WorkerAction = SetSurfaceMessage | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
+interface PathPosition {
+  readonly x: number;
+  readonly y: number;
+  /** Height in quarter-tile steps. */
+  readonly z: number;
+}
+type PathAction =
+  | { readonly type: "path-preview"; readonly requestId?: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
+  | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
+  | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
+type WorkerAction = SetSurfaceMessage | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
+const testMode = (self as unknown as { name?: string }).name === "theme-park-test";
 const workerScope = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
   addEventListener(type: "message", listener: (event: MessageEvent<WorkerAction>) => void): void;
 };
 let simulation: WasmSimulation;
 let clock = createSimulationClock(tickRate, 4);
+let simulationPaused = testMode;
 let lastWakeup: number;
 let coasterGeometrySent = false;
 let lastConstructionMessage = "";
@@ -29,7 +41,9 @@ function wake(): void {
   const result = advanceSimulation(clock, now - lastWakeup);
   lastWakeup = now;
   clock = result.clock;
-  for (let tick = 0; tick < result.ticksToRun; tick += 1) simulation.tick();
+  if (!simulationPaused) {
+    for (let tick = 0; tick < result.ticksToRun; tick += 1) simulation.tick();
+  }
 
   const guestIds = simulation.guest_ids();
   const guests = simulation.snapshot();
@@ -44,6 +58,7 @@ function wake(): void {
   if (message !== lastConstructionMessage) sendConstruction();
   if (selectedGuestId !== undefined && now - lastGuestDetailSentAt >= 500) sendGuestDetail();
   if (simulation.facilities_json() !== lastFacilitiesJson || String(simulation.facility_revenue()) !== lastFacilityRevenue) sendFacilities();
+  if (simulationPaused) return;
   setTimeout(wake, Math.max(0, clock.tickDurationMs - clock.accumulatorMs));
 }
 
@@ -57,10 +72,7 @@ function sendGuestDetail(guestId = selectedGuestId): void {
 function sendConstruction(): void {
   const choices = simulation.construction_choices();
   const rows = choices ? choices.split("\n").map((row) => row.split("\t")) : [];
-  const pieces: ConstructionPiece[] = rows.filter((fields) => !fields[6]).map((fields) => {
-    const [id, label, group, heading, slope, bank] = fields;
-    return { id, label, group, heading, slope, bank };
-  });
+  const pieces: ConstructionPiece[] = rows.map(([id, label, group, heading, slope, bank, refusal]) => ({ id, label, group, heading, slope, bank, refusal }));
   const selected = simulation.construction_selected();
   const selectedChoice = rows.find((fields) => fields[0] === selected);
   const track = simulation.construction_track();
@@ -104,10 +116,31 @@ function sendWorld(): void {
   }
 }
 
+function validatePathPosition(position: PathPosition, dimensions: Uint16Array): void {
+  if (!Number.isInteger(position.x) || !Number.isInteger(position.y) || !Number.isInteger(position.z) ||
+      position.x < 0 || position.y < 0 || position.x >= dimensions[0] || position.y >= dimensions[1] ||
+      position.z < -32768 || position.z > 32767) {
+    throw new RangeError("Invalid path position");
+  }
+}
+
+function validatePathRoute(action: Extract<PathAction, { type: "path-preview" | "path-build" }>, dimensions: Uint16Array): void {
+  validatePathPosition(action.start, dimensions);
+  validatePathPosition(action.end, dimensions);
+  if (!Number.isInteger(action.style) || action.style < 0 || action.style > 255) {
+    throw new RangeError("Invalid path style");
+  }
+}
+
+function pathRouteCoordinates(start: PathPosition, end: PathPosition): Int32Array {
+  return Int32Array.of(start.x, start.y, start.z, end.x, end.y, end.z);
+}
+
 const initialized = init().then(() => {
   simulation = new WasmSimulation(2026n, 12);
   sendWorld();
   sendFacilities();
+  workerScope.postMessage({ type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
   workerScope.postMessage({ type: "ready" });
   lastWakeup = performance.now();
   wake();
@@ -119,6 +152,7 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "test-advance") {
       if (!Number.isInteger(action.count) || action.count < 1 || action.count > 100000) throw new RangeError("Invalid test tick count");
       for (let tick = 0; tick < action.count; tick++) simulation.tick();
+      wake();
       sendFacilities("", false, true);
       workerScope.postMessage({ type: "test-advanced" });
       return;
@@ -150,6 +184,49 @@ workerScope.addEventListener("message", (event) => {
     }
     if (action.type === "guest-detail-close") {
       selectedGuestId = undefined;
+      return;
+    }
+    if (action.type === "path-preview") {
+      validatePathRoute(action, simulation.world_dimensions());
+      const paths = simulation.path_preview(
+        pathRouteCoordinates(action.start, action.end),
+        action.kind,
+        action.style,
+      );
+      workerScope.postMessage(
+        { type: "path-preview", requestId: action.requestId, valid: paths.length > 0 && paths.every((value, index) => index % 7 !== 6 || value === 0), paths, message: simulation.path_message() },
+        [paths.buffer],
+      );
+      return;
+    }
+    if (action.type === "path-build") {
+      validatePathRoute(action, simulation.world_dimensions());
+      const success = simulation.path_build(
+        pathRouteCoordinates(action.start, action.end),
+        action.kind,
+        action.style,
+      );
+      if (success) sendWorld();
+      workerScope.postMessage({
+        type: "path-command-result",
+        requestId: action.requestId,
+        command: "build",
+        success,
+        message: simulation.path_message() || (success ? "Path built." : "Path build failed."),
+      });
+      return;
+    }
+    if (action.type === "path-remove") {
+      validatePathPosition({ x: action.x, y: action.y, z: action.z }, simulation.world_dimensions());
+      const success = simulation.path_remove(action.x, action.y, action.z);
+      if (success) sendWorld();
+      workerScope.postMessage({
+        type: "path-command-result",
+        requestId: action.requestId,
+        command: "remove",
+        success,
+        message: simulation.path_message() || (success ? "Path removed." : "Path removal failed."),
+      });
       return;
     }
     if (action.type !== "set-surface") {

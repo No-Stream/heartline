@@ -19,7 +19,9 @@ use theme_park_sim::track::{
     Heading, Piece, PieceId, PieceKind, SupportStyle, TrackSample, TrackState, TrainConfiguration,
     Vec3, catalog, hybrid_model,
 };
-use theme_park_sim::world::{Direction, Position, Surface, World};
+use theme_park_sim::world::{
+    Direction, PathBuildError, PathKind, PathPreviewTile, Position, Surface, World,
+};
 use wasm_bindgen::prelude::*;
 
 struct SupportRenderCache {
@@ -35,6 +37,7 @@ pub struct WasmSimulation {
     world: World,
     facilities: ParkFacilities,
     facility_message: String,
+    path_message: String,
     circuit: Circuit,
     train: Train,
     train_configuration: TrainConfiguration,
@@ -90,7 +93,7 @@ impl WasmSimulation {
                 )
                 .expect("demo facility placement");
         }
-        let simulation = ParkGuests::new(
+        let mut simulation = ParkGuests::new(
             seed,
             agent_count,
             &world,
@@ -101,6 +104,7 @@ impl WasmSimulation {
             },
             agent_count.max(1),
         );
+        simulation.open_with_guests(&facilities.guest_facilities(&world));
         let circuit = demo_circuit();
         let train_configuration = hybrid_model().train;
         for building in facilities.buildings() {
@@ -130,6 +134,7 @@ impl WasmSimulation {
             world,
             facilities,
             facility_message: String::new(),
+            path_message: String::new(),
             circuit,
             train,
             train_configuration,
@@ -187,6 +192,115 @@ impl WasmSimulation {
                 ]
             })
             .collect()
+    }
+
+    /// Path kind and style pairs aligned with `world_paths()`.
+    pub fn world_path_metadata(&self) -> Vec<i32> {
+        self.world
+            .paths()
+            .flat_map(|path| {
+                let metadata = self
+                    .world
+                    .path_metadata(path.position)
+                    .expect("world path metadata");
+                [metadata.kind as i32, i32::from(metadata.style)]
+            })
+            .collect()
+    }
+
+    /// Preview route entries: x, y, height, slope, kind, style, refusal code.
+    pub fn path_preview(&mut self, coordinates: Vec<i32>, kind: &str, style: u8) -> Vec<i32> {
+        let Some(kind) = parse_path_kind(kind) else {
+            self.path_message = "Unknown path kind".into();
+            return Vec::new();
+        };
+        let (start, end) = match path_positions(&coordinates) {
+            Ok(positions) => positions,
+            Err(message) => {
+                self.path_message = message.into();
+                return Vec::new();
+            }
+        };
+        match self.checked_path_preview(start, end, kind, style) {
+            Ok(route) => {
+                self.path_message = route
+                    .iter()
+                    .find_map(|tile| tile.refusal)
+                    .map_or_else(String::new, |error| path_build_error(error).into());
+                route
+                    .into_iter()
+                    .flat_map(|tile| {
+                        let metadata = self
+                            .world
+                            .path_metadata(tile.path.position)
+                            .unwrap_or(theme_park_sim::world::PathMetadata { kind, style });
+                        [
+                            i32::from(tile.path.position.x),
+                            i32::from(tile.path.position.y),
+                            i32::from(tile.path.position.height),
+                            path_slope_code(tile.path.slope),
+                            metadata.kind as i32,
+                            i32::from(metadata.style),
+                            tile.refusal.map_or(0, path_error_code),
+                        ]
+                    })
+                    .collect()
+            }
+            Err(error) => {
+                self.path_message = path_build_error(error).into();
+                Vec::new()
+            }
+        }
+    }
+
+    pub fn path_build(&mut self, coordinates: Vec<i32>, kind: &str, style: u8) -> bool {
+        let Some(kind) = parse_path_kind(kind) else {
+            self.path_message = "Unknown path kind".into();
+            return false;
+        };
+        let (start, end) = match path_positions(&coordinates) {
+            Ok(positions) => positions,
+            Err(message) => {
+                self.path_message = message.into();
+                return false;
+            }
+        };
+        let preview = match self.checked_path_preview(start, end, kind, style) {
+            Ok(preview) => preview,
+            Err(error) => {
+                self.path_message = path_build_error(error).into();
+                return false;
+            }
+        };
+        if let Some(error) = preview.iter().find_map(|tile| tile.refusal) {
+            self.path_message = path_build_error(error).into();
+            return false;
+        }
+        match self.world.build_path_route(start, end, kind, style) {
+            Ok(_) => {
+                self.path_message.clear();
+                true
+            }
+            Err(error) => {
+                self.path_message = path_build_error(error).into();
+                false
+            }
+        }
+    }
+
+    pub fn path_remove(&mut self, x: u16, y: u16, height: i16) -> bool {
+        let position = Position { x, y, height };
+        if self.world.path(position).is_none() {
+            self.path_message = "No path at that position".into();
+            return false;
+        }
+        self.world.remove_path(position);
+        self.path_message.clear();
+        true
+    }
+
+    pub fn path_message(&self) -> String {
+        self.path_message.clone()
     }
 
     /// Carved half-open intervals: x, y, bottom, top.
@@ -923,6 +1037,26 @@ impl WasmSimulation {
 }
 
 impl WasmSimulation {
+    fn checked_path_preview(
+        &self,
+        start: Position,
+        end: Position,
+        kind: PathKind,
+        style: u8,
+    ) -> Result<Vec<PathPreviewTile>, PathBuildError> {
+        let mut preview = self.world.preview_path_tiles(start, end, kind, style)?;
+        let mut blocked_by_facility = false;
+        for tile in &mut preview {
+            if self.facilities.occupies_path_position(tile.path.position) {
+                tile.refusal = Some(PathBuildError::FacilityOccupied);
+                blocked_by_facility = true;
+            } else if blocked_by_facility && tile.refusal.is_none() {
+                tile.refusal = Some(PathBuildError::Disconnected);
+            }
+        }
+        Ok(preview)
+    }
+
     fn facility_obstacles(&self) -> Vec<SupportObstacle> {
         self.facilities
             .buildings()
@@ -1001,6 +1135,48 @@ impl WasmSimulation {
     }
 }
 
+/// Each catalog piece's centreline and up vector, in metres, in a frame where the piece enters at
+/// the origin heading along +x, for drawing piece icons.
+#[wasm_bindgen]
+pub fn piece_shapes_json() -> String {
+    const SAMPLES: usize = 32;
+    let shapes: Vec<String> = catalog()
+        .iter()
+        .map(|piece| {
+            let origin = piece.entry.position();
+            let angle = -(piece.entry.heading as i32 as f64) * std::f64::consts::FRAC_PI_4;
+            let (sin, cos) = angle.sin_cos();
+            let local = |vector: Vec3| {
+                [vector.x * cos - vector.y * sin, vector.x * sin + vector.y * cos, vector.z]
+            };
+            let points: Vec<String> = (0..=SAMPLES)
+                .map(|index| {
+                    let sample = piece.sample(piece.length() * index as f64 / SAMPLES as f64);
+                    let position = local(sample.position - origin);
+                    let up = local(sample.up);
+                    format!(
+                        "[{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}]",
+                        position[0], position[1], position[2], up[0], up[1], up[2]
+                    )
+                })
+                .collect();
+            let turn = (piece.exit.heading as i32 - piece.entry.heading as i32 + 4).rem_euclid(8) - 4;
+            format!(
+                "{{\"id\":\"{:?}\",\"name\":{},\"kind\":\"{:?}\",\"turn\":{turn},\"entrySlope\":\"{:?}\",\"exitSlope\":\"{:?}\",\"entryBank\":\"{:?}\",\"exitBank\":\"{:?}\",\"points\":[{}]}}",
+                piece.id,
+                json_string(piece.name),
+                piece.kind,
+                piece.entry.slope,
+                piece.exit.slope,
+                piece.entry.bank,
+                piece.exit.bank,
+                points.join(",")
+            )
+        })
+        .collect();
+    format!("[{}]", shapes.join(","))
+}
+
 fn piece_group(id: PieceId) -> &'static str {
     let name = format!("{id:?}");
     if name.contains("Bank") {
@@ -1040,6 +1216,70 @@ fn json_string(value: &str) -> String {
     }
     result.push('"');
     result
+}
+
+fn parse_path_kind(kind: &str) -> Option<PathKind> {
+    match kind {
+        "normal" => Some(PathKind::Normal),
+        "queue" => Some(PathKind::Queue),
+        _ => None,
+    }
+}
+
+fn path_positions(coordinates: &[i32]) -> Result<(Position, Position), &'static str> {
+    let [start_x, start_y, start_height, end_x, end_y, end_height] = coordinates else {
+        return Err("Path route needs six coordinates");
+    };
+    let position = |x: i32, y: i32, height: i32| -> Result<Position, &'static str> {
+        Ok(Position {
+            x: u16::try_from(x).map_err(|_| "Path coordinates are outside the supported range")?,
+            y: u16::try_from(y).map_err(|_| "Path coordinates are outside the supported range")?,
+            height: i16::try_from(height)
+                .map_err(|_| "Path coordinates are outside the supported range")?,
+        })
+    };
+    Ok((
+        position(*start_x, *start_y, *start_height)?,
+        position(*end_x, *end_y, *end_height)?,
+    ))
+}
+
+fn path_slope_code(slope: Option<Direction>) -> i32 {
+    match slope {
+        None => 0,
+        Some(Direction::North) => 1,
+        Some(Direction::East) => 2,
+        Some(Direction::South) => 3,
+        Some(Direction::West) => 4,
+    }
+}
+
+fn path_build_error(error: PathBuildError) -> &'static str {
+    match error {
+        PathBuildError::OutsideWorld => "Path route is outside the park",
+        PathBuildError::UnsupportedTerrain => "Path route crosses unsupported terrain",
+        PathBuildError::EndpointHeight => "Path endpoint heights do not match the route",
+        PathBuildError::Disconnected => "Path route does not connect across the terrain",
+        PathBuildError::Occupied => "Path route overlaps another path",
+        PathBuildError::Unsupported => "Path route lacks terrain support or clearance",
+        PathBuildError::QueueConnections => {
+            "A queue path must have at most one normal path entrance"
+        }
+        PathBuildError::FacilityOccupied => "Path overlaps a facility",
+    }
+}
+
+fn path_error_code(error: PathBuildError) -> i32 {
+    match error {
+        PathBuildError::OutsideWorld => 1,
+        PathBuildError::UnsupportedTerrain => 2,
+        PathBuildError::EndpointHeight => 3,
+        PathBuildError::Disconnected => 4,
+        PathBuildError::Occupied => 5,
+        PathBuildError::Unsupported => 6,
+        PathBuildError::QueueConnections => 7,
+        PathBuildError::FacilityOccupied => 8,
+    }
 }
 
 fn construction_error(error: theme_park_sim::track::construction::ConstructionError) -> String {
@@ -1285,17 +1525,13 @@ mod world_tests {
     #[test]
     fn guest_snapshot_contains_stable_ids_appearance_and_walking_state() {
         let mut simulation = WasmSimulation::new(42, 12);
-        assert!(simulation.guest_ids().is_empty());
-        assert!(simulation.guest_appearances().is_empty());
-        assert!(simulation.snapshot().is_empty());
-        simulation.tick();
         let ids = simulation.guest_ids();
         let appearances = simulation.guest_appearances();
         let initial = simulation.snapshot();
         assert_eq!(ids, (0..12).collect::<Vec<_>>());
         assert_eq!(appearances.len(), 12 * 5);
         assert_eq!(initial.len(), 12 * 7);
-        for _ in 1..30 {
+        for _ in 0..30 {
             simulation.tick();
         }
         assert_eq!(simulation.guest_ids(), ids);
@@ -2053,4 +2289,169 @@ fn try_render_supports(
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod piece_shape_tests {
+    #[test]
+    fn piece_shapes_describe_every_catalog_piece_from_a_shared_entry_frame() {
+        let json = super::piece_shapes_json();
+        assert_eq!(json.matches("\"id\":").count(), super::catalog().len());
+        let straight = json
+            .split("{\"id\":")
+            .find(|shape| shape.starts_with("\"Straight\""))
+            .expect("straight shape");
+        assert!(straight.contains("\"turn\":0"));
+        assert!(straight.starts_with("\"Straight\",\"name\":\"Straight\",\"kind\":\"Track\""));
+        assert!(straight.contains("[0.000,0.000,0.000,0.000,0.000,1.000]"));
+        assert!(straight.contains("[16.000,0.000,0.000,0.000,0.000,1.000]]"));
+        let turn = json
+            .split("{\"id\":")
+            .find(|shape| shape.starts_with("\"TurnSmallStandalone\""))
+            .expect("small turn shape");
+        assert!(turn.contains("\"turn\":2"));
+    }
+}
+
+#[cfg(test)]
+mod path_bridge_tests {
+    use super::{Surface, WasmSimulation};
+    use theme_park_sim::world::World;
+
+    #[test]
+    fn path_preview_build_snapshot_and_remove_share_the_path_wire_contract() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.world = World::new(
+            4,
+            2,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+
+        let before_preview = simulation.world_state_hash();
+        let preview = simulation.path_preview(vec![0, 0, 0, 2, 0, 0], "queue", 2);
+        assert_eq!(
+            preview,
+            vec![
+                0, 0, 0, 0, 1, 2, 0, // x, y, height, slope, kind, style, refusal
+                1, 0, 0, 0, 1, 2, 0, 2, 0, 0, 0, 1, 2, 0,
+            ]
+        );
+        assert_eq!(simulation.world_state_hash(), before_preview);
+        assert!(simulation.path_message().is_empty());
+
+        assert!(simulation.path_build(vec![0, 0, 0, 2, 0, 0], "queue", 2));
+        assert_eq!(
+            simulation.world_paths(),
+            vec![0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0]
+        );
+        assert_eq!(simulation.world_path_metadata(), vec![1, 2, 1, 2, 1, 2]);
+
+        assert!(simulation.path_remove(1, 0, 0));
+        assert_eq!(simulation.world_paths(), vec![0, 0, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(simulation.world_path_metadata(), vec![1, 2, 1, 2]);
+        let revision = simulation.world.revision();
+        assert!(!simulation.path_remove(1, 0, 0));
+        assert_eq!(simulation.world.revision(), revision);
+    }
+
+    #[test]
+    fn path_preview_reports_existing_tile_metadata_that_build_preserves() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.world = World::new(
+            4,
+            2,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        assert!(simulation.path_build(vec![0, 0, 0, 0, 0, 0], "normal", 1));
+
+        let preview = simulation.path_preview(vec![0, 0, 0, 2, 0, 0], "normal", 3);
+        assert_eq!(
+            preview,
+            vec![
+                0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 3, 0, 2, 0, 0, 0, 0, 3, 0
+            ]
+        );
+        assert!(simulation.path_build(vec![0, 0, 0, 2, 0, 0], "normal", 3));
+        assert_eq!(simulation.world_path_metadata(), vec![0, 1, 0, 3, 0, 3]);
+    }
+
+    #[test]
+    fn queue_preview_keeps_a_reused_normal_path_endpoint_normal() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.world = World::new(
+            4,
+            2,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        assert!(simulation.path_build(vec![0, 0, 0, 0, 0, 0], "normal", 1));
+
+        let preview = simulation.path_preview(vec![0, 0, 0, 2, 0, 0], "queue", 2);
+        assert_eq!(
+            preview,
+            vec![
+                0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 2, 0, 2, 0, 0, 0, 1, 2, 0
+            ]
+        );
+        assert!(simulation.path_build(vec![0, 0, 0, 2, 0, 0], "queue", 2));
+        assert_eq!(simulation.world_path_metadata(), vec![0, 1, 1, 2, 1, 2]);
+    }
+
+    #[test]
+    fn invalid_path_preview_returns_a_message_without_mutating_the_world() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.world = World::new(
+            4,
+            2,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+
+        let before_preview = simulation.world_state_hash();
+        let preview = simulation.path_preview(vec![0, 0, 0, 3, 0, 1], "normal", 0);
+        assert_eq!(preview.len(), 4 * 7);
+        assert!(preview.chunks_exact(7).any(|tile| tile[6] != 0));
+        assert!(!simulation.path_message().is_empty());
+        assert_eq!(simulation.world_state_hash(), before_preview);
+        assert!(!simulation.path_build(vec![0, 0, 0, 3, 0, 1], "unknown", 0));
+        assert_eq!(simulation.world_state_hash(), before_preview);
+        assert!(
+            simulation
+                .path_preview(vec![0, 0, 0], "normal", 0)
+                .is_empty()
+        );
+        assert!(simulation.path_message().contains("six coordinates"));
+        assert_eq!(simulation.world_state_hash(), before_preview);
+    }
+
+    #[test]
+    fn path_preview_and_build_reject_a_facility_footprint() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        let building_position = simulation.facilities.buildings()[0].position;
+        let coordinates = vec![
+            i32::from(building_position.x),
+            i32::from(building_position.y),
+            i32::from(building_position.height),
+            i32::from(building_position.x),
+            i32::from(building_position.y),
+            i32::from(building_position.height),
+        ];
+        let revision = simulation.world.revision();
+        let preview = simulation.path_preview(coordinates.clone(), "normal", 0);
+        assert_eq!(preview.len(), 7);
+        assert_eq!(preview[6], 8);
+        assert!(simulation.path_message().contains("facility"));
+        assert!(!simulation.path_build(coordinates, "normal", 0));
+        assert_eq!(simulation.world.revision(), revision);
+    }
 }

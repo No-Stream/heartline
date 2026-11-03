@@ -76,6 +76,37 @@ impl ParkGuests {
         self.visits.active_count()
     }
 
+    /// Starts the roster on seeded paths as if the park had already been open.
+    pub fn open_with_guests(&mut self, facilities: &[Facility]) {
+        assert_eq!(self.visits.active_count(), 0, "park is already open");
+        let path_positions: Vec<_> = self.walking.path_positions().collect();
+        assert!(!path_positions.is_empty(), "open park needs guest paths");
+        let facility_positions: Vec<_> = facilities
+            .iter()
+            .map(|facility| facility.place.position)
+            .filter(|position| self.walking.path_component(*position).is_some())
+            .collect();
+        let all_positions: Vec<_> = facility_positions
+            .iter()
+            .copied()
+            .chain(path_positions.iter().copied())
+            .collect();
+        let groups = self.walking.traits().groups.clone();
+        for (group_index, group) in groups.iter().enumerate() {
+            let position = all_positions[group_index % all_positions.len()];
+            for &id in &group.members {
+                self.walking.traits_mut().mark_returned(id);
+                self.walking.place_on_path(id, position);
+                self.behaviors.guests[id.0 as usize].reset_visit();
+                for facility in facilities {
+                    self.behaviors.guests[id.0 as usize].observe(facility.place);
+                }
+                self.behaviors.guests[id.0 as usize].advance((group_index % 20 * 30) as u32);
+            }
+        }
+        self.visits = VisitManager::new(self.walking.traits(), self.visits.arrivals_per_tick());
+    }
+
     /// Advance one 1/30-second simulation tick.
     pub fn tick(
         &mut self,
@@ -203,6 +234,78 @@ mod tests {
     use super::*;
     use crate::guest_behavior::{KnownPlace, PlaceKind};
     use crate::world::{Path, Surface};
+
+    #[test]
+    fn open_park_starts_all_guests_on_seeded_paths_and_facilities() {
+        let entrance = Position {
+            x: 0,
+            y: 0,
+            height: 0,
+        };
+        let facility_path = Position {
+            x: 1,
+            y: 0,
+            height: 0,
+        };
+        let mut world = World::new(
+            2,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        for position in [entrance, facility_path] {
+            world.place_path(Path {
+                position,
+                slope: None,
+            });
+        }
+        let facility = Facility {
+            exit_position: None,
+            place: KnownPlace {
+                id: 1,
+                position: facility_path,
+                kind: PlaceKind::Food,
+                minimum_height_cm: 0,
+                intensity: 0,
+                ride_type: 0,
+                theme: 0,
+                price: 0,
+            },
+            capacity: 4,
+            duration_ticks: 10,
+        };
+        let mut first = ParkGuests::new(17, 12, &world, entrance, 2);
+        let mut second = ParkGuests::new(17, 12, &world, entrance, 2);
+        first.open_with_guests(&[facility]);
+        second.open_with_guests(&[facility]);
+
+        assert_eq!(first.active_count(), 12);
+        assert!(
+            first
+                .walking()
+                .traits()
+                .ids()
+                .all(|id| first.walking().traits().is_active(id))
+        );
+        assert_eq!(first.walking().state_hash(), second.walking().state_hash());
+        assert_eq!(first.walking().traits(), second.walking().traits());
+        assert!(
+            first
+                .walking()
+                .guests()
+                .iter()
+                .all(|guest| { guest.path == Some(entrance) || guest.path == Some(facility_path) })
+        );
+        assert!(
+            first
+                .behaviors()
+                .guests
+                .iter()
+                .all(|guest| guest.visit_number == 1)
+        );
+    }
 
     #[test]
     fn guests_arrive_complete_activities_depart_and_return_with_memories() {

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::guests::{GuestId, GuestStore, generate_guests};
 use crate::pathfinding::Graph;
-use crate::world::{Direction, Position, World};
+use crate::world::{Direction, Path, Position, World};
 use crate::{Executor, SequentialExecutor};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,6 +54,109 @@ pub struct WalkingSimulation {
     graph: Graph,
     revision: u64,
     tick_count: u64,
+}
+
+struct NearestPathNode {
+    path: usize,
+    axis: usize,
+    left: Option<usize>,
+    right: Option<usize>,
+}
+
+struct NearestPaths {
+    nodes: Vec<NearestPathNode>,
+    root: Option<usize>,
+}
+
+fn path_coordinate(path: &Path, axis: usize) -> f32 {
+    match axis {
+        0 => f32::from(path.position.x) + 0.5,
+        1 => f32::from(path.position.y) + 0.5,
+        _ => f32::from(path.position.height) * 0.25,
+    }
+}
+
+impl NearestPaths {
+    fn new(paths: &[Path]) -> Self {
+        fn build(
+            paths: &[Path],
+            indices: &mut [usize],
+            nodes: &mut Vec<NearestPathNode>,
+            depth: usize,
+        ) -> Option<usize> {
+            if indices.is_empty() {
+                return None;
+            }
+            let axis = depth % 3;
+            let middle = indices.len() / 2;
+            indices.select_nth_unstable_by(middle, |a, b| {
+                path_coordinate(&paths[*a], axis)
+                    .total_cmp(&path_coordinate(&paths[*b], axis))
+                    .then(a.cmp(b))
+            });
+            let (left, remaining) = indices.split_at_mut(middle);
+            let (center, right) = remaining.split_first_mut().unwrap();
+            let index = nodes.len();
+            nodes.push(NearestPathNode {
+                path: *center,
+                axis,
+                left: None,
+                right: None,
+            });
+            let left = build(paths, left, nodes, depth + 1);
+            let right = build(paths, right, nodes, depth + 1);
+            nodes[index].left = left;
+            nodes[index].right = right;
+            Some(index)
+        }
+        let mut nodes = Vec::with_capacity(paths.len());
+        let root = build(
+            paths,
+            &mut (0..paths.len()).collect::<Vec<_>>(),
+            &mut nodes,
+            0,
+        );
+        Self { nodes, root }
+    }
+
+    fn nearest(&self, paths: &[Path], x: f32, y: f32, height: f32) -> Option<usize> {
+        fn search(
+            index: &NearestPaths,
+            paths: &[Path],
+            node: Option<usize>,
+            target: [f32; 3],
+            best: &mut Option<(f32, usize)>,
+        ) {
+            let Some(node) = node else {
+                return;
+            };
+            let node = &index.nodes[node];
+            let path = &paths[node.path];
+            let dx = path_coordinate(path, 0) - target[0];
+            let dy = path_coordinate(path, 1) - target[1];
+            let dz = path_coordinate(path, 2) - target[2];
+            let distance = dx * dx + dy * dy + dz * dz;
+            if best.is_none_or(|(current, path)| {
+                distance.total_cmp(&current).is_lt()
+                    || (distance.total_cmp(&current).is_eq() && node.path < path)
+            }) {
+                *best = Some((distance, node.path));
+            }
+            let difference = path_coordinate(path, node.axis) - target[node.axis];
+            let (near, far) = if difference > 0.0 {
+                (node.left, node.right)
+            } else {
+                (node.right, node.left)
+            };
+            search(index, paths, near, target, best);
+            if best.is_none_or(|(distance, _)| difference * difference <= distance) {
+                search(index, paths, far, target, best);
+            }
+        }
+        let mut best = None;
+        search(self, paths, self.root, [x, y, height], &mut best);
+        best.map(|(_, index)| index)
+    }
 }
 
 impl WalkingSimulation {
@@ -158,6 +261,25 @@ impl WalkingSimulation {
             set_position(guest, &self.graph, 0.0);
         }
     }
+    pub fn place_on_path(&mut self, id: GuestId, position: Position) {
+        let node = *self
+            .graph
+            .indices
+            .get(&position)
+            .expect("initial guest position must be a path");
+        let guest = &mut self.guests[id.0 as usize];
+        guest.node = node;
+        guest.next = node;
+        guest.progress = 0.0;
+        guest.offset = 0.0;
+        guest.goal = usize::MAX;
+        guest.path = Some(position);
+        guest.moving = false;
+        set_position(guest, &self.graph, 0.0);
+    }
+    pub fn path_positions(&self) -> impl Iterator<Item = Position> + '_ {
+        self.graph.paths.iter().map(|path| path.position)
+    }
     pub fn guests(&self) -> &[WalkingGuest] {
         &self.guests
     }
@@ -192,6 +314,7 @@ impl WalkingSimulation {
             let old_graph =
                 std::mem::replace(&mut self.graph, Graph::with_entrance(world, self.entrance));
             self.revision = world.revision();
+            let mut nearest_paths = None;
             for guest in &mut self.guests {
                 let current = guest
                     .path
@@ -208,21 +331,9 @@ impl WalkingSimulation {
                         continue;
                     }
                 }
-                let nearest = self
-                    .graph
-                    .paths
-                    .iter()
-                    .enumerate()
-                    .min_by(|(_, a), (_, b)| {
-                        let distance = |path: &crate::world::Path| {
-                            let dx = f32::from(path.position.x) + 0.5 - guest.x;
-                            let dy = f32::from(path.position.y) + 0.5 - guest.y;
-                            let dz = f32::from(path.position.height) * 0.25 - guest.height;
-                            dx * dx + dy * dy + dz * dz
-                        };
-                        distance(a).total_cmp(&distance(b))
-                    })
-                    .map(|(index, _)| index);
+                let nearest = nearest_paths
+                    .get_or_insert_with(|| NearestPaths::new(&self.graph.paths))
+                    .nearest(&self.graph.paths, guest.x, guest.y, guest.height);
                 let Some(nearest) = nearest else {
                     guest.path = None;
                     guest.moving = false;
@@ -468,8 +579,65 @@ fn set_position(guest: &mut WalkingGuest, graph: &Graph, offset: f32) {
 
 #[cfg(test)]
 mod recovery_tests {
-    use super::WalkingSimulation;
+    use super::{NearestPaths, WalkingSimulation};
     use crate::world::{Path, Position, Surface, World};
+
+    #[test]
+    fn nearest_paths_matches_full_search_for_layered_paths_and_ties() {
+        let paths: Vec<_> = (0..120)
+            .map(|index| Path {
+                position: Position {
+                    x: ((index * 37) % 43) as u16,
+                    y: ((index * 19) % 47) as u16,
+                    height: ((index * 11) % 31) as i16 - 15,
+                },
+                slope: None,
+            })
+            .collect();
+        let index = NearestPaths::new(&paths);
+        for sample in 0..500 {
+            let x = ((sample * 17) % 90) as f32 / 2.0;
+            let y = ((sample * 29) % 100) as f32 / 2.0;
+            let height = ((sample * 7) % 44) as f32 / 4.0 - 5.5;
+            let expected = paths
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| {
+                    let distance = |path: &Path| {
+                        let dx = f32::from(path.position.x) + 0.5 - x;
+                        let dy = f32::from(path.position.y) + 0.5 - y;
+                        let dz = f32::from(path.position.height) * 0.25 - height;
+                        dx * dx + dy * dy + dz * dz
+                    };
+                    distance(a).total_cmp(&distance(b))
+                })
+                .map(|(index, _)| index);
+            assert_eq!(index.nearest(&paths, x, y, height), expected);
+        }
+        let tied = [
+            Path {
+                position: Position {
+                    x: 0,
+                    y: 0,
+                    height: 0,
+                },
+                slope: None,
+            },
+            Path {
+                position: Position {
+                    x: 2,
+                    y: 0,
+                    height: 0,
+                },
+                slope: None,
+            },
+        ];
+        assert_eq!(
+            NearestPaths::new(&tied).nearest(&tied, 1.5, 0.5, 0.0),
+            Some(0)
+        );
+        assert_eq!(NearestPaths::new(&[]).nearest(&[], 0.0, 0.0, 0.0), None);
+    }
 
     #[test]
     fn each_group_member_recovers_to_their_nearest_path() {

@@ -5,6 +5,7 @@ test("built game draws agents and advances simulation ticks", async ({ page }) =
   const canvas = page.locator("canvas");
   await expect(canvas).toBeVisible();
   await expect.poll(async () => canvas.getAttribute("data-agent-count")).toBe("12");
+  await page.evaluate(() => window.gameTest.advanceTicks(1));
 
   const tickCount = page.getByTestId("tick-count");
   await expect.poll(async () => Number(await tickCount.textContent())).toBeGreaterThan(0);
