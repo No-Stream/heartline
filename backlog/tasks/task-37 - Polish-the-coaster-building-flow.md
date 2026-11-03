@@ -1,9 +1,10 @@
 ---
 id: TASK-37
 title: Polish the coaster building flow
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 06:15'
+updated_date: '2026-11-03 06:26'
 labels:
   - coaster
   - interface
