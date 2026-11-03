@@ -1,10 +1,10 @@
 ---
 id: TASK-22
 title: Add the wooden twister coaster model
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 10:06'
+updated_date: '2026-11-03 10:44'
 labels:
   - coaster
 milestone: m-2
@@ -24,7 +24,13 @@ Based on GCI wooden coasters, with a playful manufacturer name. Tight layouts th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Model data is checked against real rides, including GCI lift and inversion norms
-- [ ] #2 Dense wooden structure generates from curves and draws readably
-- [ ] #3 Inversions are offered only with steel structure, and a browser test completes a circuit
+- [x] #1 Model data is checked against real rides, including GCI lift and inversion norms
+- [x] #2 Dense wooden structure generates from curves and draws readably
+- [x] #3 Inversions are offered only with steel structure, and a browser test completes a circuit
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Briar Blitz by Great Coaster Workshop: chain lift, articulated 24-seat train, tight turns, fan turns, helixes and a steel-structure loop; purely wooden inversions are refused. Note: the two steel models derive their piece lists from the whole catalog, so they also offer twister pieces.
+<!-- SECTION:FINAL_SUMMARY:END -->

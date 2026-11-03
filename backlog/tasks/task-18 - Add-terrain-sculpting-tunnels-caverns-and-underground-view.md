@@ -1,10 +1,10 @@
 ---
 id: TASK-18
 title: 'Add terrain sculpting, tunnels, caverns and underground view'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 08:37'
+updated_date: '2026-11-03 10:44'
 labels:
   - world
   - interface
@@ -26,7 +26,13 @@ Flexible landscaping is one of the owner's favorite parts. Guests and track can 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Player can sculpt hills, cliffs and water and carve tunnels and caverns
-- [ ] #2 Track, paths, stations and shops work underground, and guests reach them
-- [ ] #3 An underground view keeps buried work visible and editable
+- [x] #1 Player can sculpt hills, cliffs and water and carve tunnels and caverns
+- [x] #2 Track, paths, stations and shops work underground, and guests reach them
+- [x] #3 An underground view keeps buried work visible and editable
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Landscaping panel with corner and tile raise and lower, flatten, smooth, water, carve and fill; tunnels into hillsides and caverns with paths, stations and shops; an underground view with a cut level.
+<!-- SECTION:FINAL_SUMMARY:END -->
