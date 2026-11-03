@@ -205,7 +205,7 @@ pub fn scan_proximity_with_supports(
         let steps = (piece.length() / SPACING).ceil() as usize;
         for step in 0..=steps {
             let mut seen: [Option<usize>; 3] = [None; 3];
-            let local = piece.length() * step as f64 / steps as f64;
+            let local = piece.length() * (step as f64 / steps as f64);
             let distance = start + local;
             let sample = piece.sample(local);
             let pos = sample.position;

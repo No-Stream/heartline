@@ -16,7 +16,7 @@ pub fn piece_shapes_json() -> String {
             };
             let points: Vec<String> = (0..=SAMPLES)
                 .map(|index| {
-                    let sample = piece.sample(piece.length() * index as f64 / SAMPLES as f64);
+                    let sample = piece.sample(piece.length() * (index as f64 / SAMPLES as f64));
                     let position = local(sample.position - origin);
                     let up = local(sample.up);
                     format!(

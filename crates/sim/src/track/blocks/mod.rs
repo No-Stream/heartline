@@ -163,7 +163,8 @@ fn eligible(piece: &Piece) -> bool {
             let mut uphill = false;
             let mut downhill = false;
             (0..=GEOMETRY_SAMPLES).all(|index| {
-                let sample = piece.sample(piece.length() * index as f64 / GEOMETRY_SAMPLES as f64);
+                let sample =
+                    piece.sample(piece.length() * (index as f64 / GEOMETRY_SAMPLES as f64));
                 uphill |= sample.tangent.z > ROLL_TOLERANCE;
                 downhill |= sample.tangent.z < -ROLL_TOLERANCE;
                 sample.tangent.z.abs() <= MAXIMUM_GENTLE_TANGENT_Z
@@ -185,7 +186,7 @@ fn validate_brake_forces(
             let piece = &circuit.pieces()[index];
             for sample_index in 0..=GEOMETRY_SAMPLES {
                 let sample =
-                    piece.sample(piece.length() * sample_index as f64 / GEOMETRY_SAMPLES as f64);
+                    piece.sample(piece.length() * (sample_index as f64 / GEOMETRY_SAMPLES as f64));
                 let gravity = GRAVITY * sample.tangent.z;
                 if gravity.abs() > config.braking_acceleration {
                     return Err("Brake holding force is insufficient on this slope.");

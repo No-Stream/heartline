@@ -680,8 +680,8 @@ pub fn track_support_obstacles(
             let mut min = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
             let mut max = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
             for step in 0..=4 {
-                let distance =
-                    piece.length() * (segment as f64 + f64::from(step) / 4.0) / segments as f64;
+                let fraction = (segment as f64 + f64::from(step) / 4.0) / segments as f64;
+                let distance = piece.length() * fraction;
                 let sample = piece.sample(distance);
                 let left = sample.up.cross(sample.tangent);
                 for side in [-1.0, 1.0] {

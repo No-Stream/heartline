@@ -125,7 +125,7 @@ fn train_sample_spacing(train: &TrainConfiguration) -> f64 {
 
 fn samples(piece: &Piece, spacing: f64) -> impl Iterator<Item = f64> + '_ {
     let steps = (piece.length() / spacing).ceil() as usize;
-    (0..=steps).map(move |index| piece.length() * index as f64 / steps as f64)
+    (0..=steps).map(move |index| piece.length() * (index as f64 / steps as f64))
 }
 
 /// Cached rail samples for repeated clearance checks against the same track.

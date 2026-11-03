@@ -1,9 +1,10 @@
 ---
 id: TASK-78
 title: Fix the 'distance outside piece' panic during construction choice validation
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 20:24'
+updated_date: '2026-11-03 21:00'
 labels:
   - coaster
   - bug
@@ -20,6 +21,14 @@ Found by the TASK-63 random walk on 2026-11-03: Briar Blitz at 30 m above ground
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A regression test reproduces the panic and passes after the fix
-- [ ] #2 Every caller that samples a piece at a computed distance is checked for the same rounding
+- [x] #1 A regression test reproduces the panic and passes after the fix
+- [x] #2 Every caller that samples a piece at a computed distance is checked for the same rounding
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The support obstacle endpoint was computed as piece length multiplied by a segment position and then divided by the segment count. Floating-point rounding could make the result exceed the arc length and trigger Piece::sample’s bounds assertion during choices validation. Compute the bounded fraction before multiplying by length; the same endpoint-inclusive pattern was corrected in clearance, proximity, and block geometry sampling. The Briar Blitz construction regression reproduced the panic before the fix.
+
+The same fraction-first calculation was applied to WebAssembly rail, coaster geometry, and piece-shape sampling after auditing the bridge callers.
+<!-- SECTION:NOTES:END -->

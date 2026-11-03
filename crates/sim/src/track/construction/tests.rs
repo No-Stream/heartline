@@ -25,6 +25,47 @@ fn start() -> TrackState {
 }
 
 #[test]
+fn briar_blitz_choices_after_vertical_exit() {
+    let world = world();
+    let mut construction = Construction::new(
+        TrackState { z: 15, ..start() },
+        crate::track::wooden_twister_model(),
+    );
+    for piece in [
+        PieceId::Station,
+        PieceId::TightTwisterLeft,
+        PieceId::BankLeft,
+        PieceId::BankedTurnStandalone,
+        PieceId::LargeLeftBankedTurnEntry,
+        PieceId::LargeLeftBankedTurnExit,
+        PieceId::UnbankLeft,
+        PieceId::SteelLoop,
+        PieceId::Station,
+        PieceId::Brakes,
+        PieceId::Station,
+        PieceId::LevelToGentleDown,
+        PieceId::GentleDownToLevel,
+        PieceId::TurnLargeStandalone,
+        PieceId::TurnLargeRightStandalone,
+        PieceId::TurnSmallEntry,
+        PieceId::TurnSmallExit,
+        PieceId::OffsetLeft,
+        PieceId::BankRight,
+        PieceId::UnbankRight,
+        PieceId::LiftLevelToGentleUp,
+        PieceId::LiftGentleUpToLevel,
+        PieceId::VerticalUpEntry,
+        PieceId::VerticalUpContinue,
+        PieceId::VerticalUpExit,
+    ] {
+        construction
+            .append(piece, &world, &[])
+            .unwrap_or_else(|error| panic!("{piece:?}: {error:?}"));
+    }
+    assert!(!construction.choices(&world, &[]).is_empty());
+}
+
+#[test]
 fn construction_state_hash_covers_track_edits_but_ignores_validation_caches() {
     let world = world();
     let mut first = Construction::new(start(), hybrid_model());
