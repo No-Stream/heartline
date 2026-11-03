@@ -4,6 +4,7 @@ title: Add player-built queues and coaster boarding
 status: To Do
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 04:33'
 labels:
   - guests
   - coaster
@@ -28,4 +29,5 @@ Queues are built from path pieces, as in RCT2. Riders feel the physics, which fe
 - [ ] #1 Guests queue, board, ride and exit a player-built coaster in a browser test
 - [ ] #2 Forces recorded on the ride change rider nausea, enjoyment and memory
 - [ ] #3 Queue behavior holds up when a coaster is edited or deleted
+- [ ] #4 Deleting track with a train on it recovers riders to the station (moved here from the building tool, since riders exist only once boarding does)
 <!-- AC:END -->
