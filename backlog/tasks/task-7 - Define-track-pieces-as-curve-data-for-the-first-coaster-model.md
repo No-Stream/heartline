@@ -1,9 +1,10 @@
 ---
 id: TASK-7
 title: Define track pieces as curve data for the first coaster model
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 02:39'
 labels:
   - coaster
   - simulation
@@ -24,8 +25,14 @@ Every piece is a continuous 3D curve plus a roll profile with entry and exit sta
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Piece format covers turns, banks, slopes, half-tile offsets and inversions
-- [ ] #2 Model definition lists allowed pieces, radii, inversions, lifts, supports and trains, checked against real rides
-- [ ] #3 An automated test confirms each piece's entry and exit connect exactly to the curve ends
-- [ ] #4 No real manufacturer or ride names appear in player-facing data
+- [x] #1 Piece format covers turns, banks, slopes, half-tile offsets and inversions
+- [x] #2 Model definition lists allowed pieces, radii, inversions, lifts, supports and trains, checked against real rides
+- [x] #3 An automated test confirms each piece's entry and exit connect exactly to the curve ends
+- [x] #4 No real manufacturer or ride names appear in player-facing data
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Quintic Hermite centre lines with arc-length tables, 8 headings, half-tile offsets, inversions, lift, brakes and station. First model is Timber Tumbler by Rocky Road Construction. Pieces end with zero curvature, so back-to-back turns dip to straight at each join; revisit if riders feel it in physics.
+<!-- SECTION:FINAL_SUMMARY:END -->
