@@ -7,6 +7,7 @@ pub(crate) struct Graph {
     pub(crate) queue_components: Vec<Option<usize>>,
     pub(crate) queue_ends: Vec<Vec<usize>>,
     pub(crate) queue_has_entrance: Vec<bool>,
+    pub(crate) queue_entrances: Vec<Vec<usize>>,
     pub(crate) neighbours: Vec<Vec<usize>>,
     pub(crate) indices: BTreeMap<Position, usize>,
     pub(crate) components: Vec<usize>,
@@ -39,6 +40,7 @@ impl Graph {
         let mut queue_components = vec![None; paths.len()];
         let mut queue_ends = Vec::new();
         let mut queue_has_entrance = Vec::new();
+        let mut queue_entrances = Vec::new();
         for start in 0..paths.len() {
             if normal[start] || queue_components[start].is_some() {
                 continue;
@@ -48,6 +50,7 @@ impl Graph {
             queue_components[start] = Some(component);
             let mut ends = Vec::new();
             let mut entrance = false;
+            let mut entrances = Vec::new();
             while let Some(node) = pending.pop_front() {
                 let mut queue_degree = 0;
                 let mut touches_normal = false;
@@ -55,6 +58,7 @@ impl Graph {
                     if normal[next] {
                         entrance = true;
                         touches_normal = true;
+                        entrances.push(next);
                     } else {
                         queue_degree += 1;
                         if queue_components[next].is_none() {
@@ -69,6 +73,9 @@ impl Graph {
             }
             queue_ends.push(ends);
             queue_has_entrance.push(entrance);
+            entrances.sort_unstable();
+            entrances.dedup();
+            queue_entrances.push(entrances);
         }
         let mut components = vec![usize::MAX; paths.len()];
         let mut members: Vec<Vec<usize>> = Vec::new();
@@ -121,6 +128,7 @@ impl Graph {
             queue_components,
             queue_ends,
             queue_has_entrance,
+            queue_entrances,
             neighbours,
             indices,
             components,

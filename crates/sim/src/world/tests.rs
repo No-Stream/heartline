@@ -1,4 +1,7 @@
-use super::{Direction, Ground, Path, Position, Surface, World};
+use super::{
+    Brush, Corner, Direction, Ground, Path, Position, Surface, TerrainCommand, TerrainEditError,
+    World,
+};
 
 fn flat_surface(height: i16) -> Surface {
     Surface {
@@ -9,6 +12,343 @@ fn flat_surface(height: i16) -> Surface {
 
 fn position(x: u16, y: u16, height: i16) -> Position {
     Position { x, y, height }
+}
+
+#[test]
+fn corner_sculpting_updates_all_tiles_sharing_the_corner() {
+    let mut world = World::new(2, 2, flat_surface(4));
+
+    let result = world
+        .apply_terrain(TerrainCommand::RaiseCorner {
+            x: 1,
+            y: 1,
+            corner: Corner::NorthWest,
+            steps: 2,
+        })
+        .unwrap();
+
+    assert_eq!(world.surface(0, 0).corners[2], 6);
+    assert_eq!(world.surface(1, 0).corners[3], 6);
+    assert_eq!(world.surface(0, 1).corners[1], 6);
+    assert_eq!(world.surface(1, 1).corners[0], 6);
+    assert_eq!(result.changed_tiles.len(), 4);
+}
+
+#[test]
+fn tile_brush_raise_lower_flatten_and_smooth_use_quarter_steps() {
+    let mut world = World::new(5, 5, flat_surface(4));
+    let area = Brush {
+        x: 1,
+        y: 1,
+        size: 3,
+    };
+
+    world
+        .apply_terrain(TerrainCommand::RaiseTiles { area, steps: 4 })
+        .unwrap();
+    assert_eq!(world.surface(2, 2).corners, [8; 4]);
+    assert_eq!(world.surface(0, 0).corners[0], 4);
+    world
+        .apply_terrain(TerrainCommand::LowerTiles {
+            area: Brush {
+                x: 2,
+                y: 2,
+                size: 1,
+            },
+            steps: 2,
+        })
+        .unwrap();
+    assert_eq!(world.surface(2, 2).corners, [6; 4]);
+
+    world
+        .apply_terrain(TerrainCommand::Flatten { area, height: 5 })
+        .unwrap();
+    assert_eq!(world.surface(1, 1).corners, [5; 4]);
+    assert_eq!(world.surface(3, 3).corners, [5; 4]);
+
+    world
+        .apply_terrain(TerrainCommand::RaiseCorner {
+            x: 2,
+            y: 2,
+            corner: Corner::NorthWest,
+            steps: 4,
+        })
+        .unwrap();
+    world
+        .apply_terrain(TerrainCommand::Smooth {
+            area: Brush {
+                x: 2,
+                y: 2,
+                size: 1,
+            },
+        })
+        .unwrap();
+    assert!(world.surface(2, 2).corners.iter().any(|height| *height < 9));
+}
+
+#[test]
+fn water_commands_fill_a_basin_and_lower_its_level() {
+    let mut world = World::new(3, 3, flat_surface(8));
+    let basin = Brush {
+        x: 1,
+        y: 1,
+        size: 2,
+    };
+    for x in 1..3 {
+        world.set_surface(x, 1, flat_surface(6));
+        world.set_surface(x, 2, flat_surface(4));
+    }
+
+    world
+        .apply_terrain(TerrainCommand::RaiseWater {
+            area: basin,
+            steps: 3,
+        })
+        .unwrap();
+    for y in 1..3 {
+        for x in 1..3 {
+            assert_eq!(world.surface(x, y).water, Some(7));
+        }
+    }
+    world
+        .apply_terrain(TerrainCommand::LowerWater {
+            area: basin,
+            steps: 2,
+        })
+        .unwrap();
+    assert_eq!(world.surface(1, 1).water, None);
+    assert_eq!(world.surface(1, 2).water, Some(5));
+    world
+        .apply_terrain(TerrainCommand::SetWater {
+            area: basin,
+            level: None,
+        })
+        .unwrap();
+    assert_eq!(world.surface(1, 1).water, None);
+}
+
+#[test]
+fn hillside_tunnel_can_cross_the_low_surface_corner_and_hold_a_path() {
+    let mut world = World::new(3, 1, flat_surface(4));
+    world
+        .apply_terrain(TerrainCommand::RaiseCorner {
+            x: 1,
+            y: 0,
+            corner: Corner::NorthEast,
+            steps: 4,
+        })
+        .unwrap();
+    world
+        .apply_terrain(TerrainCommand::RaiseCorner {
+            x: 1,
+            y: 0,
+            corner: Corner::SouthEast,
+            steps: 4,
+        })
+        .unwrap();
+
+    let hillside = world.surface(1, 0);
+    assert_eq!(hillside.corners, [4, 8, 8, 4]);
+    let path_position = position(1, 0, 5);
+    let carve_result = world
+        .apply_terrain(TerrainCommand::Carve {
+            area: Brush {
+                x: 1,
+                y: 0,
+                size: 1,
+            },
+            bottom: 5,
+            top: 7,
+        })
+        .unwrap();
+    assert!(carve_result.invalidated_paths.is_empty());
+    assert_eq!(world.ground(1, 0, 6), Ground::Carved);
+    world.place_path(Path {
+        position: path_position,
+        slope: None,
+    });
+    assert!(world.path(path_position).is_some());
+}
+
+#[test]
+fn tunnel_brush_clips_its_ceiling_to_each_tile_surface() {
+    let mut world = World::new(3, 3, flat_surface(8));
+    for corner in [Corner::NorthEast, Corner::SouthEast] {
+        world
+            .apply_terrain(TerrainCommand::RaiseCorner {
+                x: 1,
+                y: 0,
+                corner,
+                steps: 4,
+            })
+            .unwrap();
+    }
+
+    world
+        .apply_terrain(TerrainCommand::Carve {
+            area: Brush {
+                x: 0,
+                y: 0,
+                size: 3,
+            },
+            bottom: 4,
+            top: 10,
+        })
+        .unwrap();
+
+    assert_eq!(
+        world
+            .carved_spans()
+            .filter(|(_, y, _, _)| *y == 0)
+            .collect::<Vec<_>>(),
+        vec![(0, 0, 4, 8), (1, 0, 4, 10), (2, 0, 4, 10)]
+    );
+    assert_eq!(world.ground(0, 0, 8), Ground::Air);
+    assert_eq!(world.ground(1, 0, 9), Ground::Carved);
+}
+
+#[test]
+fn lowering_a_hillside_ceiling_clips_the_tunnel_and_reports_its_path() {
+    let mut world = World::new(3, 1, flat_surface(4));
+    for corner in [Corner::NorthEast, Corner::SouthEast] {
+        world
+            .apply_terrain(TerrainCommand::RaiseCorner {
+                x: 1,
+                y: 0,
+                corner,
+                steps: 4,
+            })
+            .unwrap();
+    }
+    world
+        .apply_terrain(TerrainCommand::Carve {
+            area: Brush {
+                x: 1,
+                y: 0,
+                size: 1,
+            },
+            bottom: 5,
+            top: 7,
+        })
+        .unwrap();
+    let path_position = position(1, 0, 5);
+    world.place_path(Path {
+        position: path_position,
+        slope: None,
+    });
+
+    world
+        .apply_terrain(TerrainCommand::LowerCorner {
+            x: 1,
+            y: 0,
+            corner: Corner::NorthEast,
+            steps: 4,
+        })
+        .unwrap();
+    assert!(world.path(path_position).is_some());
+    let lowered_ceiling = world
+        .apply_terrain(TerrainCommand::LowerCorner {
+            x: 1,
+            y: 0,
+            corner: Corner::SouthEast,
+            steps: 4,
+        })
+        .unwrap();
+
+    assert_eq!(lowered_ceiling.invalidated_paths, vec![path_position]);
+    assert!(world.path(path_position).is_none());
+    assert_eq!(world.ground(1, 0, 5), Ground::Air);
+}
+
+#[test]
+fn cavern_carving_spans_multiple_tiles_and_supports_a_path_network() {
+    let mut world = World::new(5, 5, flat_surface(12));
+    let cavern = Brush {
+        x: 1,
+        y: 1,
+        size: 3,
+    };
+    world
+        .apply_terrain(TerrainCommand::Carve {
+            area: cavern,
+            bottom: 3,
+            top: 8,
+        })
+        .unwrap();
+    for y in 1..4 {
+        for x in 1..4 {
+            assert_eq!(world.ground(x, y, 6), Ground::Carved);
+        }
+    }
+    let path_position = position(2, 2, 3);
+    world.place_path(Path {
+        position: path_position,
+        slope: None,
+    });
+    assert!(world.path(path_position).is_some());
+    let filled_path = world
+        .apply_terrain(TerrainCommand::Fill {
+            area: Brush {
+                x: 2,
+                y: 2,
+                size: 1,
+            },
+            bottom: 3,
+            top: 4,
+        })
+        .unwrap();
+    assert_eq!(filled_path.invalidated_paths, vec![path_position]);
+    assert!(world.path(path_position).is_none());
+    assert_eq!(world.ground(2, 2, 3), Ground::Solid);
+}
+
+#[test]
+fn invalid_terrain_commands_fail_without_changing_world_state() {
+    let mut world = World::new(2, 2, flat_surface(8));
+    let original_hash = world.state_hash();
+    let error = world
+        .apply_terrain(TerrainCommand::Carve {
+            area: Brush {
+                x: 1,
+                y: 1,
+                size: 2,
+            },
+            bottom: 2,
+            top: 4,
+        })
+        .unwrap_err();
+    assert_eq!(error, TerrainEditError::OutsideWorld);
+    assert_eq!(world.state_hash(), original_hash);
+
+    world.set_surface(1, 0, flat_surface(3));
+    world.carve(0, 0, 1, 5);
+    let partially_valid_hash = world.state_hash();
+    let error = world
+        .apply_terrain(TerrainCommand::Fill {
+            area: Brush {
+                x: 0,
+                y: 0,
+                size: 2,
+            },
+            bottom: 1,
+            top: 5,
+        })
+        .unwrap_err();
+    assert_eq!(error, TerrainEditError::CarveAboveTerrain);
+    assert_eq!(world.state_hash(), partially_valid_hash);
+
+    let error = world
+        .apply_terrain(TerrainCommand::RaiseTiles {
+            area: Brush {
+                x: 0,
+                y: 0,
+                size: 0,
+            },
+            steps: 1,
+        })
+        .unwrap_err();
+    assert_eq!(error, TerrainEditError::InvalidBrushSize);
+    assert_eq!(world.state_hash(), partially_valid_hash);
 }
 
 #[test]
@@ -30,6 +370,15 @@ fn surface_initialization_is_queryable_and_part_of_the_state_hash() {
     assert_eq!(last_tile.corners, varied_surface.corners);
     assert_eq!(last_tile.water, varied_surface.water);
     assert_ne!(flat_hash, varied_world.state_hash());
+}
+
+#[test]
+fn cloned_world_preserves_state_without_reusing_cache_identity() {
+    let world = World::new(2, 2, flat_surface(8));
+    let cloned = world.clone();
+
+    assert_eq!(cloned.state_hash(), world.state_hash());
+    assert_ne!(cloned.instance_id(), world.instance_id());
 }
 
 #[test]

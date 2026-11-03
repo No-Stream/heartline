@@ -1330,6 +1330,7 @@ pub struct CoasterModel {
     pub description: &'static str,
     pub allowed_pieces: Vec<PieceId>,
     pub minimum_radius_metres: f64,
+    pub minimum_height_cm: u16,
     pub allowed_inversions: Vec<Inversion>,
     pub lift_types: Vec<LiftType>,
     pub launch_types: Vec<LaunchType>,
@@ -1367,6 +1368,7 @@ pub fn hybrid_model() -> CoasterModel {
             .map(|piece| piece.id)
             .collect(),
         minimum_radius_metres: 5.0,
+        minimum_height_cm: 122,
         allowed_inversions: vec![
             Inversion::VerticalLoop,
             Inversion::Corkscrew,
@@ -1400,6 +1402,7 @@ pub fn multi_launch_model() -> CoasterModel {
             .map(|piece| piece.id)
             .collect(),
         minimum_radius_metres: 5.0,
+        minimum_height_cm: 132,
         allowed_inversions: vec![
             Inversion::VerticalLoop,
             Inversion::Corkscrew,

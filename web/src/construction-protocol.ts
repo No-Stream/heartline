@@ -9,6 +9,7 @@ export type ConstructionAction =
   | { readonly type: "construction-delete"; readonly id: number }
   | { readonly type: "construction-delete-mode"; readonly enabled: boolean }
   | { readonly type: "construction-close" }
+  | { readonly type: "construction-set-open"; readonly open: boolean }
   | { readonly type: "construction-test" };
 
 export interface ConstructionPiece {
@@ -52,6 +53,8 @@ export interface ConstructionState {
   readonly canAppend: boolean;
   readonly canClose: boolean;
   readonly canTest: boolean;
+  readonly isOpen: boolean;
+  readonly stationPositions: readonly number[];
   readonly message: string;
   readonly testingReport?: TestingReport | null;
   readonly placedRails: Float32Array;

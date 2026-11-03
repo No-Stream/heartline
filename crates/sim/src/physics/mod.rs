@@ -10,6 +10,8 @@ pub const TIME_STEP: f64 = 0.005;
 
 mod testing;
 pub use testing::{TestRun, TestRunRecorder, TestSample};
+mod coaster_run;
+pub use coaster_run::{CoasterOutcome, CoasterRun};
 
 #[derive(Clone, Debug)]
 pub struct Circuit {

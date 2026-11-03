@@ -1,7 +1,8 @@
 import type { Camera, Viewport } from "../camera";
-import { appendGeometry, buildScene, pickScene, type Atlas, type GeometryQuad, type Pick, type Scene, type WorldView } from "./scene";
-export type { Atlas, Pick, WorldSprite, WorldView } from "./scene";
+import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, UNDERGROUND_CONTENT_DEPTH_BIAS, type Atlas, type GeometryQuad, type Pick, type Scene, type WorldView } from "./scene";
+export type { Atlas, GeometryQuad, Pick, WorldSprite, WorldView } from "./scene";
 export { terrainHeightAt } from "./scene";
+export { clipGeometryAboveLevel } from "./scene";
 
 export async function loadAtlas(url: string): Promise<{ atlas: Atlas; images: Record<string, HTMLImageElement[]> }> {
   const response = await fetch(url);
@@ -128,9 +129,12 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
       activeScale = String(scales.find((scale) => scale >= desiredScale) ?? scales[scales.length - 1]);
       const viewport = { width: canvas.width, height: canvas.height };
       scene = buildScene(world, camera, viewport, atlas, activeScale, waterFrame);
-      for (const geometryPass of geometryPasses) appendGeometry(scene, geometryPass(camera, viewport, atlas, activeScale), viewport);
+      for (const geometryPass of geometryPasses) {
+        const geometry = geometryPass(camera, viewport, atlas, activeScale);
+        appendGeometry(scene, world.undergroundLevel === undefined ? geometry : clipGeometryAboveLevel(geometry, world.undergroundLevel, UNDERGROUND_CONTENT_DEPTH_BIAS), viewport);
+      }
       if (scene.triangles.length / 2 >= 0xffffff) throw new Error("Too many visible objects for picking");
-      surfaceScene = { triangles: scene.triangles.filter(({ kind }) => kind === "terrain" || kind === "path") };
+      surfaceScene = { triangles: scene.triangles.filter(({ kind }) => kind === "terrain" || kind === "carved-floor" || kind === "path") };
       prepare();
       if (pickWidth !== canvas.width || pickHeight !== canvas.height) {
         pickWidth = canvas.width; pickHeight = canvas.height;

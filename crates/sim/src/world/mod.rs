@@ -7,7 +7,11 @@ use std::mem::size_of;
 
 mod construction;
 pub use construction::{PathBuildError, PathKind, PathMetadata, PathPreviewTile};
+mod terrain;
 use std::sync::atomic::{AtomicUsize, Ordering};
+pub use terrain::{
+    Brush, Corner, TerrainCommand, TerrainEditError, TerrainEditResult, TerrainTile,
+};
 
 static NEXT_WORLD_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -84,7 +88,7 @@ struct Span {
     top: i16,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Column {
     carved: Vec<Span>,
     paths: Vec<Path>,
@@ -99,6 +103,21 @@ pub struct World {
     surfaces: Vec<Surface>,
     columns: Vec<Option<Box<Column>>>,
     occupied_columns: Vec<usize>,
+}
+
+impl Clone for World {
+    fn clone(&self) -> Self {
+        Self {
+            path_metadata: self.path_metadata.clone(),
+            width: self.width,
+            height: self.height,
+            revision: self.revision,
+            instance_id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
+            surfaces: self.surfaces.clone(),
+            columns: self.columns.clone(),
+            occupied_columns: self.occupied_columns.clone(),
+        }
+    }
 }
 
 impl World {
@@ -143,17 +162,17 @@ impl World {
         let surface = self.surfaces[index];
         let minimum = *surface.corners.iter().min().unwrap();
         let maximum = *surface.corners.iter().max().unwrap();
-        if height >= maximum {
-            Ground::Air
-        } else if height >= minimum {
-            Ground::SurfaceSlope
-        } else if self.columns[index].as_ref().is_some_and(|column| {
+        if self.columns[index].as_ref().is_some_and(|column| {
             column
                 .carved
                 .iter()
                 .any(|span| span.bottom <= height && height < span.top)
         }) {
             Ground::Carved
+        } else if height >= maximum {
+            Ground::Air
+        } else if height >= minimum {
+            Ground::SurfaceSlope
         } else {
             Ground::Solid
         }
@@ -165,7 +184,7 @@ impl World {
         let index = self.index(x, y);
         self.surfaces[index] = surface;
         if let Some(column) = &mut self.columns[index] {
-            let ceiling = *surface.corners.iter().min().unwrap();
+            let ceiling = *surface.corners.iter().max().unwrap();
             for span in &mut column.carved {
                 span.top = span.top.min(ceiling);
             }
@@ -174,13 +193,13 @@ impl World {
         self.invalidate_paths(index)
     }
 
-    /// Removes solid ground within [bottom, top), strictly below all surface corners.
+    /// Removes solid ground within [bottom, top), up to the highest surface corner.
     pub fn carve(&mut self, x: u16, y: u16, bottom: i16, top: i16) -> Vec<Position> {
         self.revision = self.revision.wrapping_add(1);
         let index = self.index(x, y);
         assert!(bottom < top, "empty or reversed interval");
         assert!(
-            top <= *self.surfaces[index].corners.iter().min().unwrap(),
+            top <= *self.surfaces[index].corners.iter().max().unwrap(),
             "carve extends above surface"
         );
         let column = self.columns[index].get_or_insert_with(|| Box::new(Column::default()));
@@ -206,7 +225,7 @@ impl World {
         let index = self.index(x, y);
         assert!(bottom < top, "empty or reversed interval");
         assert!(
-            top <= *self.surfaces[index].corners.iter().min().unwrap(),
+            top <= *self.surfaces[index].corners.iter().max().unwrap(),
             "fill extends above surface"
         );
         if let Some(column) = &mut self.columns[index] {
@@ -242,7 +261,7 @@ impl World {
             });
         }
         let bottom = i32::from(path.position.height);
-        let ceiling = i32::from(*surface.corners.iter().min().unwrap());
+        let ceiling = i32::from(*surface.corners.iter().max().unwrap());
         if path.top() > ceiling {
             return false;
         }

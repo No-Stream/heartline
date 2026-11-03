@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { appendGeometry, buildScene, pickScene, type Atlas, type GeometryQuad, type WorldView } from "./scene";
-import type { Camera } from "../camera";
+import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, type Atlas, type GeometryQuad, type WorldView } from "./scene";
+import { projectWorld, type Camera } from "../camera";
 import { buildPathGhostQuads } from "./path-ghost";
 
 const frame = { width: 72, height: 40, anchor: { x: 36, y: 20 }, placements: { "1": { page: 0, x: 0, y: 0, width: 72, height: 40 } } };
@@ -287,6 +287,88 @@ describe("world scene", () => {
     expect(open.triangles.some((triangle) => triangle.kind === "terrain" && triangle.tileX === 0 && triangle.tileY === 0)).toBe(false);
     const covered = buildScene({ ...world, surfaces, paths: new Int32Array([0, 0, 4, 0]), carved: new Int32Array([0, 0, 4, 7]) }, camera, viewport, atlas);
     expect(covered.triangles.some((triangle) => triangle.kind === "path")).toBe(false);
+  });
+  test("cuts away terrain above the underground level and omits water above it", () => {
+    const surfaces = new Int32Array([8, 8, 8, 8, 1, 12]);
+    const scene = buildScene({ dimensions: new Uint16Array([1, 1]), surfaces, paths: new Int32Array(), undergroundLevel: 4 }, camera, viewport, atlas);
+    const terrain = scene.triangles.filter((triangle) => triangle.kind === "terrain");
+    expect(terrain.length).toBeGreaterThan(0);
+    expect(terrain.every((triangle) => triangle.vertices.every((vertex) => vertex.height <= 4))).toBe(true);
+    expect(terrain.some((triangle) => triangle.vertices.every((vertex) => vertex.height === 4))).toBe(true);
+    expect(scene.triangles.some((triangle) => triangle.kind === "water")).toBe(false);
+  });
+  test("clips water to the submerged half of a sloped tile", () => {
+    const shoreline: WorldView = {
+      dimensions: new Uint16Array([1, 1]),
+      surfaces: new Int32Array([0, 8, 8, 0, 1, 4]),
+      paths: new Int32Array(),
+    };
+    const scene = buildScene(shoreline, camera, viewport, atlas);
+    const water = scene.triangles.filter((triangle) => triangle.kind === "water");
+    const area = (triangle: typeof water[number]): number => {
+      const [a, b, c] = triangle.vertices;
+      return Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) / 2;
+    };
+    const tile = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([x, y]) => projectWorld(camera, viewport, { x, y, z: 1 }));
+    const tileArea = Math.abs(tile.reduce((sum, point, index) => {
+      const next = tile[(index + 1) % tile.length];
+      return sum + point.x * next.y - next.x * point.y;
+    }, 0)) / 2;
+
+    expect(water.filter((triangle) => area(triangle) > 0)).toHaveLength(3);
+    expect(water.length % 2).toBe(0);
+    expect(scene.triangles.length % 2).toBe(0);
+    expect(water.every((triangle) => triangle.vertices.every((vertex) => vertex.height === 4))).toBe(true);
+    expect(water.reduce((sum, triangle) => sum + area(triangle), 0)).toBeCloseTo(tileArea / 2);
+  });
+  test("shows and picks a carved cavern floor and an underground path beneath terrain", () => {
+    const surfaces = new Int32Array([16, 16, 16, 16, 0, 0, 16, 16, 16, 16, 0, 0]);
+    const underground: WorldView = {
+      dimensions: new Uint16Array([2, 1]), surfaces,
+      paths: new Int32Array([0, 0, 4, 0]),
+      carved: new Int32Array([0, 0, 4, 12, 1, 0, 4, 12]),
+      undergroundLevel: 8,
+    };
+    const scene = buildScene(underground, camera, viewport, atlas);
+    expect(scene.triangles.some((triangle) => triangle.kind === "path" && triangle.tileX === 0 && triangle.tileY === 0)).toBe(true);
+    const floor = scene.triangles.find((triangle) => triangle.kind === "carved-floor" && triangle.tileX === 1);
+    expect(floor).toBeDefined();
+    const x = floor!.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 3;
+    const y = floor!.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 3;
+    expect(pickScene(scene, x, y)).toMatchObject({ kind: "carved-floor", height: 4 });
+  });
+  test("prioritizes a one-tile tunnel floor over neighboring underground cut faces", () => {
+    const surfaces = new Int32Array(3 * 3 * 6);
+    for (let offset = 0; offset < surfaces.length; offset += 6) surfaces.set([16, 16, 16, 16, 0, 0], offset);
+    const underground: WorldView = {
+      dimensions: new Uint16Array([3, 3]), surfaces,
+      paths: new Int32Array(), carved: new Int32Array([1, 1, 4, 10]), undergroundLevel: 7,
+    };
+    const scene = buildScene(underground, camera, viewport, atlas);
+    const floorPoint = projectWorld(camera, viewport, { x: 1.5, y: 1.5, z: 1 });
+
+    expect(pickScene(scene, floorPoint.x, floorPoint.y)).toMatchObject({ kind: "carved-floor", x: 1, y: 1, height: 4 });
+    const pathScene = buildScene({ ...underground, paths: new Int32Array([1, 1, 4, 0]) }, camera, viewport, atlas);
+    expect(pickScene(pathScene, floorPoint.x, floorPoint.y)).toMatchObject({ kind: "path", x: 1, y: 1, height: 4 });
+  });
+  test("draws cavern walls where carved spans meet solid columns", () => {
+    const surfaces = new Int32Array([16, 16, 16, 16, 0, 0, 16, 16, 16, 16, 0, 0]);
+    const scene = buildScene({
+      dimensions: new Uint16Array([2, 1]), surfaces,
+      paths: new Int32Array(), carved: new Int32Array([0, 0, 4, 12]), undergroundLevel: 8,
+    }, camera, viewport, atlas);
+    expect(scene.triangles.some((triangle) => triangle.kind === "cavern-wall" && triangle.tileX === 0 && triangle.tileY === 0)).toBe(true);
+    expect(scene.triangles.filter((triangle) => triangle.kind === "cavern-wall").every((triangle) => triangle.vertices.every((vertex) => vertex.height <= 8))).toBe(true);
+  });
+  test("clips crossing track geometry at the underground level", () => {
+    const quad: GeometryQuad = {
+      vertices: [[0, 0, 0], [10, 0, 8], [10, 10, 8], [0, 10, 0]].map(([x, y, height]) => ({ x, y, depth: height, height, u: 0, v: 0 })) as GeometryQuad["vertices"],
+      color: [1, 1, 1, 1], kind: "track", id: "track-1", tileX: 0, tileY: 0,
+    };
+    const clipped = clipGeometryAboveLevel([quad], 4);
+    expect(clipped.length).toBeGreaterThan(0);
+    expect(clipped.every((item) => item.vertices.every((vertex) => vertex.height <= 4))).toBe(true);
+    expect(clipped.some((item) => item.vertices.some((vertex) => vertex.height === 4))).toBe(true);
   });
   test("draws the exposed walls around a surface opening in every rotation", () => {
     const surfaces = new Int32Array(3 * 3 * 6);

@@ -1,6 +1,6 @@
 //! Placeable buildings and their guest-facing services.
 use crate::guest_behavior::{Facility, KnownPlace, PlaceKind};
-use crate::world::{Direction, Position, World};
+use crate::world::{Direction, Ground, Position, World};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FacilityKind {
@@ -71,6 +71,25 @@ impl ParkFacilities {
         })
     }
 
+    fn terrain_supports_facility(world: &World, x: u16, y: u16, height: i16) -> bool {
+        let surface = world.surface(x, y);
+        if surface.corners == [height; 4] {
+            return !surface.water.is_some_and(|water| water > height);
+        }
+        let Some(floor) = height.checked_sub(1) else {
+            return false;
+        };
+        let Some(headroom) = height.checked_add(1) else {
+            return false;
+        };
+        world.ground(x, y, floor) == Ground::Solid
+            && world.ground(x, y, height) == Ground::Carved
+            && world.ground(x, y, headroom) == Ground::Carved
+            && !surface
+                .water
+                .is_some_and(|water| (height..=headroom).contains(&water))
+    }
+
     pub fn place(
         &mut self,
         world: &World,
@@ -87,10 +106,7 @@ impl ParkFacilities {
         }
         for y in position.y..end_y as u16 {
             for x in position.x..end_x as u16 {
-                let surface = world.surface(x, y);
-                if surface.corners != [position.height; 4]
-                    || surface.water.is_some_and(|water| water > position.height)
-                {
+                if !Self::terrain_supports_facility(world, x, y, position.height) {
                     return Err(PlacementError::InvalidTerrain);
                 }
                 if world
@@ -184,11 +200,7 @@ impl ParkFacilities {
         }
         for tile_y in building.position.y..building.position.y + height {
             for tile_x in building.position.x..building.position.x + width {
-                let surface = world.surface(tile_x, tile_y);
-                if surface.corners != [building.position.height; 4]
-                    || surface
-                        .water
-                        .is_some_and(|water| water > building.position.height)
+                if !Self::terrain_supports_facility(world, tile_x, tile_y, building.position.height)
                     || world
                         .path(Position {
                             x: tile_x,
@@ -496,6 +508,135 @@ mod tests {
         });
         assert!(park.guest_facilities(&world).is_empty());
     }
+
+    #[test]
+    fn cavern_shop_has_headroom_and_connects_to_the_entrance_path() {
+        use crate::guests::park::ParkGuests;
+        use crate::world::Ground;
+
+        let mut world = World::new(
+            6,
+            7,
+            Surface {
+                corners: [8; 4],
+                water: None,
+            },
+        );
+        for y in 1..6 {
+            world.set_surface(
+                1,
+                y,
+                Surface {
+                    corners: [1; 4],
+                    water: None,
+                },
+            );
+        }
+        for (x, y) in [(2, 1), (3, 1), (3, 2), (3, 3), (4, 2), (4, 3)] {
+            world.carve(x, y, 1, 4);
+        }
+        let entrance_path = Position {
+            x: 1,
+            y: 1,
+            height: 1,
+        };
+        let tunnel_path = Position {
+            x: 2,
+            y: 1,
+            height: 1,
+        };
+        let shop_path = Position {
+            x: 3,
+            y: 1,
+            height: 1,
+        };
+        for position in [entrance_path, tunnel_path, shop_path] {
+            world.place_path(Path {
+                position,
+                slope: None,
+            });
+        }
+        assert_eq!(world.ground(3, 2, 1), Ground::Carved);
+        assert_eq!(world.ground(3, 2, 2), Ground::Carved);
+
+        let mut park = ParkFacilities::new();
+        let entrance = park
+            .place(
+                &world,
+                FacilityKind::Entrance,
+                Position {
+                    x: 1,
+                    y: 2,
+                    height: 1,
+                },
+                Direction::North,
+            )
+            .unwrap();
+        let shop = park
+            .place(
+                &world,
+                FacilityKind::Food,
+                Position {
+                    x: 3,
+                    y: 2,
+                    height: 1,
+                },
+                Direction::North,
+            )
+            .unwrap();
+        let entrance_position = park.entrance(&world).unwrap();
+        let food = park
+            .guest_facilities(&world)
+            .into_iter()
+            .find(|facility| facility.place.id == shop)
+            .unwrap();
+        let guests = ParkGuests::new(9, 12, &world, entrance_position, 1);
+        assert_eq!(
+            guests.walking().path_component(entrance_position),
+            guests.walking().path_component(food.place.position)
+        );
+        assert!(
+            park.buildings()
+                .iter()
+                .any(|building| building.id == entrance)
+        );
+
+        let mut shallow_cavern = World::new(
+            4,
+            4,
+            Surface {
+                corners: [8; 4],
+                water: None,
+            },
+        );
+        shallow_cavern.carve(1, 1, 1, 2);
+        shallow_cavern.carve(2, 1, 1, 2);
+        shallow_cavern.carve(1, 2, 1, 2);
+        shallow_cavern.carve(2, 2, 1, 2);
+        shallow_cavern.carve(1, 0, 1, 2);
+        shallow_cavern.place_path(Path {
+            position: Position {
+                x: 1,
+                y: 0,
+                height: 1,
+            },
+            slope: None,
+        });
+        let mut shallow_park = ParkFacilities::new();
+        assert_eq!(
+            shallow_park.place(
+                &shallow_cavern,
+                FacilityKind::Food,
+                Position {
+                    x: 1,
+                    y: 1,
+                    height: 1,
+                },
+                Direction::North,
+            ),
+            Err(PlacementError::InvalidTerrain)
+        );
+    }
     #[test]
     fn each_placed_service_completes_the_expected_activity() {
         use crate::guest_behavior::BehaviorSimulation;
@@ -636,4 +777,291 @@ mod tests {
                 .is_empty()
         );
     }
+}
+
+#[cfg(test)]
+mod coaster_access_tests {
+    use super::*;
+    use crate::track::{PieceId, TrackState, catalog};
+    use crate::world::{Path, PathKind, Surface};
+
+    #[test]
+    fn raised_station_paths_clear_complete_circuit_and_adjacent_lift() {
+        use crate::track::clearance::check_clearance;
+        use crate::track::{Heading, hybrid_model};
+        use crate::world::{Brush, TerrainCommand};
+        use PieceId::*;
+        let catalog = catalog();
+        let mut state = TrackState {
+            x: 482,
+            y: 498,
+            z: 6,
+            heading: Heading::North,
+            ..TrackState::origin()
+        };
+        let mut pieces = Vec::new();
+        for id in [
+            Station,
+            LiftLevelToGentleUp,
+            Lift,
+            Lift,
+            Lift,
+            Lift,
+            Lift,
+            LiftGentleUpToLevel,
+            LiftFlat,
+            Straight,
+            Straight,
+            TurnLargeEntry,
+            TurnLargeExit,
+            LevelToGentleDown,
+            GentleDown,
+            GentleDown,
+            GentleDown,
+            GentleDown,
+            GentleDown,
+            GentleDownToLevel,
+            Loop,
+            TurnLargeEntry,
+            TurnLargeExit,
+        ] {
+            let piece = catalog
+                .iter()
+                .find(|piece| piece.id == id)
+                .unwrap()
+                .at(state)
+                .unwrap();
+            state = piece.exit;
+            pieces.push(piece);
+        }
+        let (queue, exit) = station_positions(&pieces[0]).unwrap();
+        let mut world = World::new(
+            512,
+            512,
+            Surface {
+                corners: [8; 4],
+                water: None,
+            },
+        );
+        for (y, height) in [
+            (255, 8),
+            (254, 8),
+            (253, 9),
+            (252, 10),
+            (251, 11),
+            (250, 12),
+        ] {
+            for x in [238, 244] {
+                world
+                    .apply_terrain(TerrainCommand::Flatten {
+                        area: Brush { x, y, size: 1 },
+                        height,
+                    })
+                    .unwrap();
+            }
+        }
+        for (position, kind) in [(queue, PathKind::Queue), (exit, PathKind::Normal)] {
+            world
+                .apply_terrain(TerrainCommand::Flatten {
+                    area: Brush {
+                        x: position.x,
+                        y: position.y,
+                        size: 1,
+                    },
+                    height: position.height,
+                })
+                .unwrap();
+            world.build_path_route(position, position, kind, 0).unwrap();
+        }
+        for piece in &pieces {
+            assert_eq!(
+                check_clearance(&world, piece, &hybrid_model().train, &[], &[]),
+                Ok(()),
+                "piece {:?}, queue {queue:?}, exit {exit:?}",
+                piece.id
+            );
+        }
+    }
+
+    #[test]
+    fn raised_station_paths_clear_track_for_all_headings() {
+        use crate::track::clearance::check_clearance;
+        use crate::track::{Heading, hybrid_model};
+        use crate::world::{Brush, TerrainCommand};
+        for heading in [
+            Heading::East,
+            Heading::NorthEast,
+            Heading::North,
+            Heading::NorthWest,
+            Heading::West,
+            Heading::SouthWest,
+            Heading::South,
+            Heading::SouthEast,
+        ] {
+            for (x, y) in [(60, 60), (60, 61), (61, 60), (61, 61)] {
+                let mut world = World::new(
+                    64,
+                    64,
+                    Surface {
+                        corners: [0; 4],
+                        water: None,
+                    },
+                );
+                let station = catalog()
+                    .into_iter()
+                    .find(|piece| piece.id == PieceId::Station)
+                    .unwrap()
+                    .at(TrackState {
+                        x,
+                        y,
+                        z: 6,
+                        heading,
+                        ..TrackState::origin()
+                    })
+                    .unwrap();
+                let (queue, exit) = station_positions(&station).unwrap();
+                for (position, kind) in [(queue, PathKind::Queue), (exit, PathKind::Normal)] {
+                    world
+                        .apply_terrain(TerrainCommand::Flatten {
+                            area: Brush {
+                                x: position.x,
+                                y: position.y,
+                                size: 1,
+                            },
+                            height: position.height,
+                        })
+                        .unwrap();
+                    world.build_path_route(position, position, kind, 0).unwrap();
+                }
+                assert_eq!(
+                    check_clearance(&world, &station, &hybrid_model().train, &[], &[]),
+                    Ok(()),
+                    "heading {heading:?} at ({x}, {y}): {queue:?}, {exit:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn station_access_uses_nearby_queue_and_exit_at_track_height() {
+        let mut world = World::new(
+            10,
+            5,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let queue = Position {
+            x: 3,
+            y: 0,
+            height: 0,
+        };
+        let exit = Position {
+            x: 3,
+            y: 4,
+            height: 0,
+        };
+        world.place_path(Path {
+            position: exit,
+            slope: None,
+        });
+        world
+            .build_path_route(queue, queue, PathKind::Queue, 0)
+            .unwrap();
+        let station = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::Station)
+            .unwrap()
+            .at(TrackState {
+                x: 4,
+                y: 4,
+                ..TrackState::origin()
+            })
+            .unwrap();
+        assert_eq!(station_access(&world, &station), Some((queue, exit)));
+    }
+}
+
+/// Returns the guest-facing station when both queue and exit paths are present.
+pub fn coaster_facility(
+    world: &World,
+    construction: &crate::track::construction::Construction,
+    id: u32,
+    price: u16,
+) -> Option<Facility> {
+    if !construction.is_closed() {
+        return None;
+    }
+    let station = construction
+        .pieces()
+        .iter()
+        .find(|piece| piece.id == crate::track::PieceId::Station)?;
+    let (position, exit) = station_access(world, station)?;
+    let model = construction.model();
+    Some(Facility {
+        place: KnownPlace {
+            id,
+            position,
+            kind: PlaceKind::Ride,
+            minimum_height_cm: u8::try_from(model.minimum_height_cm)
+                .expect("coaster height limit exceeds guest height representation"),
+            intensity: 50,
+            ride_type: 2,
+            theme: 0,
+            price,
+        },
+        capacity: usize::from(model.train.cars)
+            * usize::from(model.train.rows_per_car)
+            * usize::from(model.train.seats_per_row),
+        duration_ticks: 1,
+        exit_position: Some(exit),
+    })
+}
+
+/// Fixed queue and exit tiles on opposite sides of the station, near its entry.
+pub fn station_positions(station: &crate::track::Piece) -> Option<(Position, Position)> {
+    let start = station.entry.position();
+    let end = station.exit.position();
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return None;
+    }
+    let access_x = start.x + dx / 4.0;
+    let access_y = start.y + dy / 4.0;
+    let position = |side: f64| -> Option<Position> {
+        let x = ((access_x - side * dy / length * 8.0) / 4.0).floor();
+        let y = ((access_y + side * dx / length * 8.0) / 4.0).floor();
+        if x < 0.0
+            || y < 0.0
+            || x > f64::from(u16::MAX)
+            || y > f64::from(u16::MAX)
+            || start.z < f64::from(i16::MIN)
+            || start.z > f64::from(i16::MAX)
+        {
+            return None;
+        }
+        Some(Position {
+            x: x as u16,
+            y: y as u16,
+            height: start.z as i16,
+        })
+    };
+    let queue = position(-1.0)?;
+    let exit = position(1.0)?;
+    (queue != exit).then_some((queue, exit))
+}
+
+fn station_access(world: &World, station: &crate::track::Piece) -> Option<(Position, Position)> {
+    use crate::world::PathKind;
+    let (queue, exit) = station_positions(station)?;
+    for (position, kind) in [(queue, PathKind::Queue), (exit, PathKind::Normal)] {
+        let path = world.path(position)?;
+        if path.slope.is_some() || world.path_metadata(position)?.kind != kind {
+            return None;
+        }
+    }
+    Some((queue, exit))
 }

@@ -24,6 +24,19 @@ test.afterAll(async () => {
 type Window = { constructionActions: unknown[]; setConstructionState(state: object): void };
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
 
+test("opens and closes a completed coaster", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await expect(page.locator("[data-station-access]")).toContainText("queue at (227, 251)");
+  await expect(page.locator("[data-station-access]")).toContainText("exit path at (227, 253)");
+  const open = page.getByRole("button", { name: "Open coaster" });
+  await expect(open).toBeDisabled();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ canTest: true }));
+  await open.click();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ isOpen: true }));
+  await page.getByRole("button", { name: "Close coaster" }).click();
+  expect(await recorded(page)).toEqual([{ type: "construction-set-open", open: true }, { type: "construction-set-open", open: false }]);
+});
+
 test("construction controls dispatch actions with the keyboard and reflect worker validity", async ({ page }) => {
   await page.goto(fixtureUrl);
   await page.getByRole("button", { name: "Place station" }).focus();

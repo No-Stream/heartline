@@ -1,5 +1,6 @@
 import type { ConstructionAction } from "../construction-protocol";
 import type { PieceStep } from "../construction-choices";
+import type { LandscapingSelection } from "../landscaping-tool";
 
 export interface ScreenPoint {
   readonly x: number;
@@ -22,6 +23,10 @@ export type InputAction =
   | { readonly type: "piece-step"; readonly attribute: PieceStep; readonly step: -1 | 1 }
   | { readonly type: "piece-group"; readonly group: string }
   | { readonly type: "delete-mode-toggle" }
+  | { readonly type: "landscaping-activate"; readonly selection: LandscapingSelection }
+  | { readonly type: "landscaping-cancel" }
+  | { readonly type: "underground-view-toggle" }
+  | { readonly type: "underground-view-level"; readonly level: number }
   /** Leave station placement and delete mode. */
   | { readonly type: "builder-cancel" }
   | ConstructionAction;

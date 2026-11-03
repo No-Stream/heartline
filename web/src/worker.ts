@@ -3,6 +3,7 @@ import init, { WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_w
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
 import type { ConstructionAction, ConstructionPiece, PieceShape } from "./construction-protocol";
+import type { TerrainEditCommand } from "./landscaping-tool";
 
 type GuestDetailAction =
   | { readonly type: "guest-detail-request"; readonly guestId: string }
@@ -17,7 +18,7 @@ type PathAction =
   | { readonly type: "path-preview"; readonly requestId?: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
-type WorkerAction = SetSurfaceMessage | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
+type WorkerAction = SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
 const testMode = (self as unknown as { name?: string }).name === "theme-park-test";
@@ -50,9 +51,10 @@ function wake(): void {
   const appearances = simulation.guest_appearances();
   const trainPoses = simulation.coaster_train_poses();
   const constructionTrainPoses = simulation.construction_train_poses();
+  const constructionRiders = simulation.construction_riders();
   workerScope.postMessage(
-    { type: "snapshot", tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses },
-    [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer],
+    { type: "snapshot", tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, constructionRiders },
+    [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, constructionRiders.buffer],
   );
   const message = simulation.construction_message();
   if (message !== lastConstructionMessage) sendConstruction();
@@ -90,7 +92,7 @@ function sendConstruction(): void {
     }) : [],
     canAppend: !!selectedChoice && !selectedChoice[6], canClose: simulation.construction_can_close(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as unknown,
-    canTest: simulation.construction_can_test(), message: lastConstructionMessage || selectedChoice?.[6] || "",
+    canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.[6] || "",
     previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports,
   }, [previewRails.buffer, previewTies.buffer, previewSupports.buffer, placedRails.buffer, placedTies.buffer, placedSupports.buffer]);
 }
@@ -168,8 +170,24 @@ workerScope.addEventListener("message", (event) => {
       return;
     }
     if (action.type === "facility-place") {
-      const placed = simulation.place_facility(action.kind, action.x, action.y, action.rotation);
+      const placed = action.height === undefined
+        ? simulation.place_facility(action.kind, action.x, action.y, action.rotation)
+        : simulation.place_facility_at(action.kind, action.x, action.y, action.rotation, action.height);
       sendFacilities(placed ? "Facility placed." : simulation.facility_message(), placed);
+      return;
+    }
+    if (action.type === "terrain-edit") {
+      const values = [action.x, action.y, action.size, action.corner, action.steps, action.height, action.bottom, action.top];
+      if (!values.every(Number.isInteger) || action.x < 0 || action.y < 0 || action.x > 65535 || action.y > 65535 ||
+          action.size < 1 || action.size > 9 || action.corner < 0 || action.corner > 3 ||
+          values.slice(4).some((value) => value < -32768 || value > 32767)) throw new RangeError("Invalid terrain edit");
+      const success = simulation.terrain_apply(action.command, Int32Array.from(values));
+      if (success) {
+        sendWorld();
+        if (simulation.construction_active()) sendConstruction();
+      }
+      const invalidatedPaths = simulation.terrain_invalidated_paths();
+      workerScope.postMessage({ type: "terrain-result", success, message: simulation.terrain_message(), invalidatedPaths }, [invalidatedPaths.buffer]);
       return;
     }
     if (action.type === "guest-detail-request") {
@@ -237,6 +255,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-undo": simulation.construction_undo(); break;
         case "construction-delete": simulation.construction_delete(action.id); break;
         case "construction-close": simulation.construction_close(); break;
+        case "construction-set-open": simulation.construction_set_open(action.open); break;
         case "construction-test": simulation.construction_test(); break;
         case "construction-delete-mode": return;
       }

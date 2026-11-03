@@ -96,12 +96,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
           <button type="button" class="builder__action" data-undo>Undo last piece ${hint("undo")}</button>
           <button type="button" class="builder__action" data-close>Close circuit ${hint("close")}</button>
           <button type="button" class="builder__action" data-test>Test coaster ${hint("test")}</button>
+          <button type="button" class="builder__action" data-open>Open coaster</button>
         </div>
         <label class="builder__toggle"><input type="checkbox" data-delete-mode> Delete track by clicking it ${hint("deleteMode")}</label>
       </section>
       <section class="builder__section" aria-label="Circuit">
         <p class="builder__stamp" data-stamp hidden>Circuit complete</p>
         <p class="builder__test-hint" data-test-hint></p>
+        <p class="builder__test-hint" data-station-access></p>
         <section aria-label="Coaster testing" data-testing></section>
       </section>
       <section class="builder__section" aria-label="Launch positions" data-launches hidden>
@@ -138,6 +140,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const undo = element<HTMLButtonElement>("[data-undo]");
   const close = element<HTMLButtonElement>("[data-close]");
   const test = element<HTMLButtonElement>("[data-test]");
+  const open = element<HTMLButtonElement>("[data-open]");
   const deleteMode = element<HTMLInputElement>("[data-delete-mode]");
   const message = element("[data-message]");
   const track = element<HTMLOListElement>("[data-track]");
@@ -179,6 +182,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   undo.addEventListener("click", () => dispatch({ type: "construction-undo" }));
   close.addEventListener("click", () => dispatch({ type: "construction-close" }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
+  open.addEventListener("click", () => dispatch({ type: "construction-set-open", open: !state?.isOpen }));
   deleteMode.addEventListener("change", () => dispatch({ type: "construction-delete-mode", enabled: deleteMode.checked }));
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
     element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => { if (state) select(steppedPiece(state.pieces, shapes, state.selected, attribute, step)); });
@@ -334,6 +338,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       undo.disabled = next.track.length === 0;
       close.disabled = !next.canClose;
       test.disabled = !next.canTest;
+      open.disabled = !next.canTest && !next.isOpen;
+      open.textContent = next.isOpen ? "Close coaster" : "Open coaster";
+      const access = next.stationPositions;
+      if (access.length !== 0 && access.length !== 6) throw new Error("Invalid station access positions");
+      element("[data-station-access]").textContent = access.length ? `Connect a queue at (${access[0]}, ${access[1]}) and a normal exit path at (${access[3]}, ${access[4]}), both at terrain height ${access[2]}. Connect the queue to the park's normal paths.` : "";
       element("[data-test-hint]").textContent = !next.canTest && !next.testingReport ? "Complete the circuit and make it longer than the train to test your coaster." : "";
       message.textContent = next.message;
     },

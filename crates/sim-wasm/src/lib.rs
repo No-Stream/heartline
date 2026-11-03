@@ -3,13 +3,16 @@ mod guest_benchmark;
 use std::collections::HashMap;
 
 use theme_park_sim::demo_world::demo_world;
-use theme_park_sim::facilities::{FacilityKind, ParkFacilities};
-use theme_park_sim::guest_behavior::RidePhase;
+use theme_park_sim::facilities::{
+    FacilityKind, ParkFacilities, coaster_facility, station_positions,
+};
+use theme_park_sim::guest_behavior::{Facility, RidePhase};
 use theme_park_sim::guests::{AgeGroup, GuestId};
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{
-    Circuit, PhysicsConfig, TestRun, TestRunRecorder, Train, demo_circuit,
+    Circuit, CoasterRun, PhysicsConfig, TestRun, TestRunRecorder, Train, demo_circuit,
 };
+use theme_park_sim::track::clearance::{ClearanceCollision, check_clearance};
 use theme_park_sim::track::construction::{Construction, track_support_obstacles};
 use theme_park_sim::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, SupportError, SupportObstacle, SupportSegment,
@@ -20,7 +23,8 @@ use theme_park_sim::track::{
     Vec3, catalog, hybrid_model, multi_launch_model,
 };
 use theme_park_sim::world::{
-    Direction, PathBuildError, PathKind, PathPreviewTile, Position, Surface, World,
+    Brush, Corner, Direction, PathBuildError, PathKind, PathPreviewTile, Position, Surface,
+    TerrainCommand, TerrainEditError, World,
 };
 use wasm_bindgen::prelude::*;
 
@@ -38,6 +42,8 @@ pub struct WasmSimulation {
     facilities: ParkFacilities,
     facility_message: String,
     path_message: String,
+    terrain_message: String,
+    terrain_invalidated_paths: Vec<Position>,
     circuit: Circuit,
     train: Train,
     train_configuration: TrainConfiguration,
@@ -47,6 +53,10 @@ pub struct WasmSimulation {
     selected: Option<PieceId>,
     construction_message: String,
     construction_train: Option<(Circuit, Train)>,
+    coaster_open: bool,
+    coaster_run: Option<(Circuit, CoasterRun)>,
+    coaster_riders: Vec<GuestId>,
+    coaster_facility: Option<Facility>,
     recovered_station: Option<Piece>,
     support_render_cache: HashMap<usize, SupportRenderCache>,
     construction_slow_steps: u32,
@@ -60,6 +70,8 @@ enum ConstructionModel {
     Hybrid,
     MultiLaunch,
 }
+
+const COASTER_PLACE_ID: u32 = u32::MAX;
 
 #[wasm_bindgen]
 impl WasmSimulation {
@@ -142,6 +154,8 @@ impl WasmSimulation {
             facilities,
             facility_message: String::new(),
             path_message: String::new(),
+            terrain_message: String::new(),
+            terrain_invalidated_paths: Vec::new(),
             circuit,
             train,
             train_configuration,
@@ -151,6 +165,10 @@ impl WasmSimulation {
             selected: None,
             construction_message: String::new(),
             construction_train: None,
+            coaster_open: false,
+            coaster_run: None,
+            coaster_riders: Vec::new(),
+            coaster_facility: None,
             recovered_station: None,
             support_render_cache: HashMap::new(),
             construction_slow_steps: 0,
@@ -330,7 +348,261 @@ impl WasmSimulation {
         self.world.state_hash()
     }
 
+    pub fn terrain_apply(&mut self, name: &str, parameters: Vec<i32>) -> bool {
+        self.terrain_invalidated_paths.clear();
+        let TerrainParameters {
+            x,
+            y,
+            size,
+            corner,
+            steps,
+            height,
+            bottom,
+            top,
+        } = match parse_terrain_parameters(parameters) {
+            Ok(parameters) => parameters,
+            Err(message) => {
+                self.terrain_message = message.into();
+                return false;
+            }
+        };
+        let area = Brush { x, y, size };
+        let terrain_command = match name {
+            "raise_corner" | "lower_corner" => {
+                let Some(corner) = parse_corner(corner) else {
+                    self.terrain_message = "Unknown terrain corner".into();
+                    return false;
+                };
+                if name == "raise_corner" {
+                    TerrainCommand::RaiseCorner {
+                        x,
+                        y,
+                        corner,
+                        steps,
+                    }
+                } else {
+                    TerrainCommand::LowerCorner {
+                        x,
+                        y,
+                        corner,
+                        steps,
+                    }
+                }
+            }
+            "raise_tiles" => TerrainCommand::RaiseTiles { area, steps },
+            "lower_tiles" => TerrainCommand::LowerTiles { area, steps },
+            "flatten" => TerrainCommand::Flatten { area, height },
+            "smooth" => TerrainCommand::Smooth { area },
+            "set_water" => TerrainCommand::SetWater {
+                area,
+                level: Some(height),
+            },
+            "clear_water" => TerrainCommand::SetWater { area, level: None },
+            "raise_water" => TerrainCommand::RaiseWater { area, steps },
+            "lower_water" => TerrainCommand::LowerWater { area, steps },
+            "carve" => TerrainCommand::Carve { area, bottom, top },
+            "fill" => TerrainCommand::Fill { area, bottom, top },
+            _ => {
+                self.terrain_message = "Unknown terrain command".into();
+                return false;
+            }
+        };
+        if let Err(error) = self.world.terrain_edit_tiles(&terrain_command) {
+            self.terrain_message = terrain_edit_error(error).into();
+            return false;
+        }
+
+        let mut candidate = self.world.clone();
+        let candidate_result = match candidate.apply_terrain(terrain_command) {
+            Ok(result) => result,
+            Err(error) => {
+                self.terrain_message = terrain_edit_error(error).into();
+                return false;
+            }
+        };
+        if candidate_result.changed_tiles.iter().any(|tile| {
+            self.facilities.buildings().iter().any(|building| {
+                let (width, depth) = building.kind.footprint(building.direction);
+                tile.x >= building.position.x
+                    && u32::from(tile.x) < u32::from(building.position.x) + u32::from(width)
+                    && tile.y >= building.position.y
+                    && u32::from(tile.y) < u32::from(building.position.y) + u32::from(depth)
+            })
+        }) {
+            self.terrain_message = "Cannot edit terrain beneath a building or ride".into();
+            return false;
+        }
+        if self.terrain_hits_track(&candidate) {
+            return false;
+        }
+
+        let result = self
+            .world
+            .apply_terrain(terrain_command)
+            .expect("validated terrain command remains valid");
+        assert_eq!(result, candidate_result, "terrain preflight result changed");
+        self.terrain_invalidated_paths = result.invalidated_paths;
+        self.support_render_cache.clear();
+        self.terrain_message = "Terrain updated".into();
+        true
+    }
+
+    pub fn terrain_message(&self) -> String {
+        self.terrain_message.clone()
+    }
+
+    /// Invalidated paths from the most recent terrain edit: x, y, height triples.
+    pub fn terrain_invalidated_paths(&self) -> Vec<i32> {
+        self.terrain_invalidated_paths
+            .iter()
+            .flat_map(|position| {
+                [
+                    i32::from(position.x),
+                    i32::from(position.y),
+                    i32::from(position.height),
+                ]
+            })
+            .collect()
+    }
+
+    fn terrain_hits_track(&mut self, candidate: &World) -> bool {
+        let clearance_worsened = |piece: &Piece, train: &TrainConfiguration| {
+            !matches!(
+                check_clearance(&self.world, piece, train, &[], &[]),
+                Err(ClearanceCollision::Terrain)
+            ) && matches!(
+                check_clearance(candidate, piece, train, &[], &[]),
+                Err(ClearanceCollision::Terrain)
+            )
+        };
+        if self
+            .circuit
+            .pieces()
+            .iter()
+            .any(|piece| clearance_worsened(piece, &self.train_configuration))
+        {
+            self.terrain_message = "Terrain edit would collide with coaster track".into();
+            return true;
+        }
+        if try_render_supports(self.circuit.pieces(), &self.world).is_ok()
+            && try_render_supports(self.circuit.pieces(), candidate).is_err()
+        {
+            self.terrain_message = "Terrain edit leaves no route for coaster supports".into();
+            return true;
+        }
+        let Some(construction) = &self.construction else {
+            return false;
+        };
+        let pieces: Vec<_> = construction
+            .pieces()
+            .iter()
+            .chain(
+                construction
+                    .disconnected_segments()
+                    .iter()
+                    .flat_map(|segment| &segment.pieces),
+            )
+            .collect();
+        if pieces
+            .iter()
+            .any(|piece| clearance_worsened(piece, &construction.model().train))
+        {
+            self.terrain_message = "Terrain edit would collide with coaster track".into();
+            return true;
+        }
+        let entries: Vec<_> = construction
+            .piece_ids()
+            .iter()
+            .zip(construction.pieces())
+            .chain(
+                construction
+                    .disconnected_segments()
+                    .iter()
+                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+            )
+            .collect();
+        let facility_obstacles = self.facility_obstacles();
+        let mut original_cache = HashMap::new();
+        let mut candidate_cache = HashMap::new();
+        let original_supports = render_cached_supports(
+            &entries,
+            &self.world,
+            &construction.model().train,
+            construction.model().support_style,
+            &facility_obstacles,
+            &mut original_cache,
+        );
+        let candidate_supports = render_cached_supports(
+            &entries,
+            candidate,
+            &construction.model().train,
+            construction.model().support_style,
+            &facility_obstacles,
+            &mut candidate_cache,
+        );
+        if original_supports.is_ok() && candidate_supports.is_err() {
+            self.terrain_message = "Terrain edit leaves no route for coaster supports".into();
+            return true;
+        }
+        if self.construction_preview_valid() {
+            let preview = self.construction_preview();
+            if preview
+                .first()
+                .is_some_and(|piece| clearance_worsened(piece, &construction.model().train))
+            {
+                self.terrain_message = "Terrain edit would collide with coaster track".into();
+                return true;
+            }
+            if let Some(piece) = preview.first() {
+                let mut obstacles = facility_obstacles;
+                obstacles.extend(entries.iter().flat_map(|(_, placed)| {
+                    track_support_obstacles(
+                        std::slice::from_ref(placed),
+                        &construction.model().train,
+                    )
+                }));
+                if render_preview_supports(
+                    piece,
+                    &obstacles,
+                    &self.world,
+                    construction.model().support_style,
+                )
+                .is_ok()
+                    && render_preview_supports(
+                        piece,
+                        &obstacles,
+                        candidate,
+                        construction.model().support_style,
+                    )
+                    .is_err()
+                {
+                    self.terrain_message =
+                        "Terrain edit leaves no route for coaster supports".into();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub fn place_facility(&mut self, kind: &str, x: u16, y: u16, rotation: u8) -> bool {
+        let (width, height) = self.world.dimensions();
+        if x >= width || y >= height {
+            self.facility_message = "Outside world".into();
+            return false;
+        }
+        let surface_height = self.world.surface(x, y).corners[0];
+        self.place_facility_at(kind, x, y, rotation, surface_height)
+    }
+
+    pub fn place_facility_at(
+        &mut self,
+        kind: &str,
+        x: u16,
+        y: u16,
+        rotation: u8,
+        height: i16,
+    ) -> bool {
         let kind = match kind {
             "entrance" => FacilityKind::Entrance,
             "food_stall" => FacilityKind::Food,
@@ -354,16 +626,12 @@ impl WasmSimulation {
                 return false;
             }
         };
-        let (width, height) = self.world.dimensions();
-        if x >= width || y >= height {
+        let (width, depth) = self.world.dimensions();
+        if x >= width || y >= depth {
             self.facility_message = "Outside world".into();
             return false;
         }
-        let position = Position {
-            x,
-            y,
-            height: self.world.surface(x, y).corners[0],
-        };
+        let position = Position { x, y, height };
         let mut pieces = self.circuit.pieces().to_vec();
         if let Some(construction) = &self.construction {
             pieces.extend_from_slice(construction.pieces());
@@ -473,12 +741,71 @@ impl WasmSimulation {
         let population = self.simulation.walking().guests().len();
         self.simulation
             .set_entrance(&self.world, self.facilities.entrance(&self.world));
-        let facilities = self.facilities.guest_facilities(&self.world);
+        let mut facilities = self.facilities.guest_facilities(&self.world);
+        if self.coaster_open {
+            let access = self.construction.as_ref().and_then(|construction| {
+                coaster_facility(&self.world, construction, COASTER_PLACE_ID, 0)
+            });
+            if let Some(facility) = access {
+                self.coaster_facility = Some(facility);
+                facilities.push(facility);
+            } else {
+                self.close_live_coaster();
+            }
+        }
+        self.simulation.set_external_rides(if self.coaster_open {
+            &[COASTER_PLACE_ID]
+        } else {
+            &[]
+        });
         self.simulation
             .tick(&self.world, &facilities, 100, Some(population));
+        if self.coaster_open && self.coaster_riders.is_empty() {
+            self.coaster_riders = self.simulation.board_coaster(
+                self.coaster_facility
+                    .as_ref()
+                    .expect("open coaster has access"),
+            );
+        }
         self.physics_remainder += 200;
         while self.physics_remainder >= 30 {
             self.train.step(&self.circuit);
+            let outcome = if self.coaster_riders.is_empty() {
+                None
+            } else {
+                self.coaster_run
+                    .as_mut()
+                    .and_then(|(circuit, run)| run.step(circuit))
+            };
+            if let Some(outcome) = outcome {
+                let construction = self.construction.as_ref().expect("open coaster has track");
+                let seats_per_car = usize::from(construction.model().train.rows_per_car)
+                    * usize::from(construction.model().train.seats_per_row);
+                let ratings: Vec<_> = (0..self.coaster_riders.len())
+                    .map(|seat| {
+                        let report = &outcome.reports[seat / seats_per_car];
+                        (report.excitement, report.intensity, report.nausea)
+                    })
+                    .collect();
+                self.simulation.finish_coaster(
+                    &self.world,
+                    self.coaster_facility
+                        .as_ref()
+                        .expect("open coaster has access"),
+                    &ratings,
+                    outcome.recovered,
+                );
+                self.coaster_riders.clear();
+                let (circuit, run) = self.coaster_run.as_mut().expect("open coaster has train");
+                *run = CoasterRun::new(
+                    circuit,
+                    &construction.model().train,
+                    PhysicsConfig {
+                        lift_speed: 5.0,
+                        ..PhysicsConfig::default()
+                    },
+                );
+            }
             if self.construction_outcome.is_none() {
                 if let Some((circuit, train)) = &mut self.construction_train {
                     let was_recovered = !train.notes().is_empty();
@@ -678,6 +1005,7 @@ impl WasmSimulation {
             self.construction_message = construction_error(error);
             return;
         }
+        self.close_live_coaster();
         self.construction = Some(construction);
         self.selected = None;
         self.select_compatible_piece();
@@ -807,6 +1135,92 @@ impl WasmSimulation {
                 })
         })
     }
+    pub fn construction_is_open(&self) -> bool {
+        self.coaster_open
+    }
+
+    /// Queue entrance and exit tiles as x, y, height triples.
+    pub fn construction_station_positions(&self) -> Vec<i32> {
+        self.construction
+            .as_ref()
+            .and_then(|construction| {
+                construction
+                    .pieces()
+                    .iter()
+                    .find(|piece| piece.kind == PieceKind::Station)
+            })
+            .and_then(station_positions)
+            .map_or_else(Vec::new, |(entrance, exit)| {
+                [entrance, exit]
+                    .into_iter()
+                    .flat_map(|position| {
+                        [
+                            i32::from(position.x),
+                            i32::from(position.y),
+                            i32::from(position.height),
+                        ]
+                    })
+                    .collect()
+            })
+    }
+
+    pub fn construction_set_open(&mut self, open: bool) -> bool {
+        if !open {
+            self.close_live_coaster();
+            self.construction_message.clear();
+            return true;
+        }
+        if self.coaster_open {
+            return true;
+        }
+        if open && !self.construction_can_test() {
+            self.construction_message =
+                "A complete circuit is required to open the coaster.".into();
+            return false;
+        }
+        let construction = self.construction.as_ref().expect("complete coaster exists");
+        let Some(facility) = coaster_facility(&self.world, construction, COASTER_PLACE_ID, 0)
+        else {
+            self.construction_message = "Connect a queue and an exit path to the station.".into();
+            return false;
+        };
+        let circuit = construction
+            .circuit()
+            .expect("complete circuit checked above");
+        let run = CoasterRun::new(
+            &circuit,
+            &construction.model().train,
+            PhysicsConfig {
+                lift_speed: 5.0,
+                ..PhysicsConfig::default()
+            },
+        );
+        self.coaster_run = Some((circuit, run));
+        self.coaster_facility = Some(facility);
+        self.construction_train = None;
+        self.construction_recorder = None;
+        self.construction_report = None;
+        self.coaster_open = true;
+        self.construction_message.clear();
+        true
+    }
+
+    /// Car index, seat index, and guest ID for each occupied seat.
+    pub fn construction_riders(&self) -> Vec<u32> {
+        let Some(construction) = &self.construction else {
+            return Vec::new();
+        };
+        let seats_per_car = u32::from(construction.model().train.rows_per_car)
+            * u32::from(construction.model().train.seats_per_row);
+        self.coaster_riders
+            .iter()
+            .enumerate()
+            .flat_map(|(seat, guest)| {
+                let seat = seat as u32;
+                [seat / seats_per_car, seat % seats_per_car, guest.0]
+            })
+            .collect()
+    }
     pub fn construction_message(&self) -> String {
         if self.construction_message.is_empty() {
             self.construction_outcome.clone().unwrap_or_default()
@@ -827,6 +1241,7 @@ impl WasmSimulation {
                     .map_err(construction_error)
             });
         if result.is_ok() {
+            self.close_live_coaster();
             self.construction_recorder = None;
             self.construction_report = None;
             self.construction_train = None;
@@ -854,6 +1269,7 @@ impl WasmSimulation {
             .ok_or("Construction is inactive".to_string())
             .and_then(|construction| construction.delete_from(index).map_err(construction_error));
         if result.is_ok() {
+            self.close_live_coaster();
             self.construction_recorder = None;
             self.construction_report = None;
             let construction = self.construction.as_ref().expect("successful deletion");
@@ -899,6 +1315,10 @@ impl WasmSimulation {
         self.construction_message = result.err().unwrap_or_default();
     }
     pub fn construction_test(&mut self) {
+        if self.coaster_open {
+            self.construction_message = "Close the coaster before testing it.".into();
+            return;
+        }
         if !self.construction_can_test() {
             self.construction_message = "A closed circuit longer than the train is required".into();
             return;
@@ -1043,7 +1463,15 @@ impl WasmSimulation {
         }
     }
     pub fn construction_train_poses(&self) -> Vec<f32> {
-        let Some((circuit, train)) = &self.construction_train else {
+        let live = self
+            .coaster_run
+            .as_ref()
+            .map(|(circuit, run)| (circuit, run.train()));
+        let Some((circuit, train)) = live.or(self
+            .construction_train
+            .as_ref()
+            .map(|(circuit, train)| (circuit, train)))
+        else {
             return Vec::new();
         };
         let config = &self
@@ -1055,15 +1483,22 @@ impl WasmSimulation {
         let mut result = Vec::new();
         for index in 0..usize::from(config.cars) {
             let offset = index as f64 * config.length_metres / f64::from(config.cars);
-            let sample = match &self.recovered_station {
-                Some(station) => station.sample((station.length() - offset).max(0.0)),
-                None => circuit.sample(train.distance() - offset),
+            let sample = match (&self.recovered_station, live.is_some()) {
+                (Some(station), false) => station.sample((station.length() - offset).max(0.0)),
+                _ => circuit.sample(train.distance() - offset),
             };
             result.push(index as f32);
             append_vector(&mut result, sample.position / 4.0);
             append_vector(&mut result, sample.tangent);
             append_vector(&mut result, sample.up);
-            result.push(0.0);
+            let seats_per_car =
+                usize::from(config.rows_per_car) * usize::from(config.seats_per_row);
+            let occupied = self
+                .coaster_riders
+                .len()
+                .saturating_sub(index * seats_per_car)
+                .min(seats_per_car);
+            result.push(((1_u32 << occupied) - 1) as f32);
         }
         result
     }
@@ -1073,6 +1508,28 @@ impl WasmSimulation {
 }
 
 impl WasmSimulation {
+    fn close_live_coaster(&mut self) {
+        if !self.coaster_riders.is_empty() {
+            let (_, run) = self.coaster_run.as_mut().expect("riders have a train");
+            let outcome = run.recover();
+            self.simulation.finish_coaster(
+                &self.world,
+                self.coaster_facility
+                    .as_ref()
+                    .expect("riders have a station"),
+                &[],
+                outcome.recovered,
+            );
+            self.coaster_riders.clear();
+        }
+        if let Some(facility) = &self.coaster_facility {
+            self.simulation.close_coaster(&self.world, facility);
+        }
+        self.coaster_open = false;
+        self.coaster_run = None;
+        self.coaster_facility = None;
+    }
+
     fn checked_path_preview(
         &self,
         start: Position,
@@ -1289,6 +1746,60 @@ fn path_positions(coordinates: &[i32]) -> Result<(Position, Position), &'static 
         position(*start_x, *start_y, *start_height)?,
         position(*end_x, *end_y, *end_height)?,
     ))
+}
+
+fn parse_corner(corner: u8) -> Option<Corner> {
+    match corner {
+        0 => Some(Corner::NorthWest),
+        1 => Some(Corner::NorthEast),
+        2 => Some(Corner::SouthEast),
+        3 => Some(Corner::SouthWest),
+        _ => None,
+    }
+}
+
+struct TerrainParameters {
+    x: u16,
+    y: u16,
+    size: u8,
+    corner: u8,
+    steps: i16,
+    height: i16,
+    bottom: i16,
+    top: i16,
+}
+
+fn parse_terrain_parameters(values: Vec<i32>) -> Result<TerrainParameters, &'static str> {
+    let [x, y, size, corner, steps, height, bottom, top] = values
+        .try_into()
+        .map_err(|_| "Terrain edit needs eight integer parameters")?;
+    Ok(TerrainParameters {
+        x: u16::try_from(x).map_err(|_| "Terrain coordinates are outside the supported range")?,
+        y: u16::try_from(y).map_err(|_| "Terrain coordinates are outside the supported range")?,
+        size: u8::try_from(size)
+            .map_err(|_| "Terrain brush size is outside the supported range")?,
+        corner: u8::try_from(corner)
+            .map_err(|_| "Terrain corner is outside the supported range")?,
+        steps: i16::try_from(steps)
+            .map_err(|_| "Terrain step count is outside the supported range")?,
+        height: i16::try_from(height)
+            .map_err(|_| "Terrain height is outside the supported range")?,
+        bottom: i16::try_from(bottom)
+            .map_err(|_| "Excavation bottom is outside the supported range")?,
+        top: i16::try_from(top).map_err(|_| "Excavation top is outside the supported range")?,
+    })
+}
+
+fn terrain_edit_error(error: TerrainEditError) -> &'static str {
+    match error {
+        TerrainEditError::OutsideWorld => "Terrain edit is outside the park",
+        TerrainEditError::InvalidBrushSize => "Brush size must be between 1 and 9",
+        TerrainEditError::InvalidStepCount => "Terrain change must be at least one step",
+        TerrainEditError::InvalidInterval => "Excavation interval is invalid",
+        TerrainEditError::CarveAboveTerrain => "Excavation exceeds the terrain height",
+        TerrainEditError::NoWater => "There is no water to lower in this area",
+        TerrainEditError::HeightOverflow => "Terrain height exceeds the supported range",
+    }
 }
 
 fn path_slope_code(slope: Option<Direction>) -> i32 {
@@ -1788,6 +2299,36 @@ mod construction_bridge_tests {
     use super::WasmSimulation;
 
     #[test]
+    fn coaster_cannot_open_without_a_complete_circuit() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        assert!(!simulation.construction_set_open(true));
+        simulation.construction_start(200, 200, 20, 0);
+        assert!(!simulation.construction_set_open(true));
+        assert!(!simulation.construction_is_open());
+        assert!(simulation.construction_riders().is_empty());
+    }
+
+    #[test]
+    fn coaster_requires_station_paths_before_opening() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        for piece in [
+            "TurnSmallStandalone",
+            "TurnSmallStandalone",
+            "Straight",
+            "TurnSmallStandalone",
+            "TurnSmallStandalone",
+        ] {
+            simulation.construction_select(piece);
+            simulation.construction_append();
+        }
+        assert!(simulation.construction_can_close());
+        simulation.construction_close();
+        assert!(!simulation.construction_set_open(true));
+        assert!(!simulation.construction_is_open());
+    }
+
+    #[test]
     fn model_selection_controls_new_construction_and_launch_choices() {
         let mut simulation = WasmSimulation::new(42, 0);
         simulation.construction_select("model:velocity_viper");
@@ -2143,6 +2684,99 @@ mod construction_bridge_tests {
         for _ in 0..9000 {
             simulation.tick();
             if simulation.construction_message() == "Train completed a lap." {
+                return;
+            }
+            if simulation.construction_outcome.is_some() {
+                break;
+            }
+        }
+        let (circuit, train) = simulation.construction_train.as_ref().unwrap();
+        let mut start = 0.0;
+        let mut piece = "unknown";
+        for candidate in circuit.pieces() {
+            if train.distance() < start + candidate.length() {
+                piece = candidate.name;
+                break;
+            }
+            start += candidate.length();
+        }
+        panic!(
+            "{}: distance={}, speed={}, length={}, piece={piece}",
+            simulation.construction_message(),
+            train.distance(),
+            train.speed(),
+            circuit.length()
+        );
+    }
+
+    #[test]
+    fn opening_after_a_completed_test_clears_the_report() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(100, 100, 40, 0);
+        for piece in [
+            "LiftLevelToGentleUp",
+            "Lift",
+            "Lift",
+            "Lift",
+            "Lift",
+            "Lift",
+            "LiftGentleUpToLevel",
+            "LiftFlat",
+            "Straight",
+            "Straight",
+            "TurnLargeEntry",
+            "TurnLargeExit",
+            "LevelToGentleDown",
+            "GentleDown",
+            "GentleDown",
+            "GentleDown",
+            "GentleDown",
+            "GentleDown",
+            "GentleDownToLevel",
+            "Loop",
+            "TurnLargeEntry",
+            "TurnLargeExit",
+        ] {
+            simulation.construction_select(piece);
+            simulation.construction_append();
+            assert!(
+                simulation.construction_message().is_empty(),
+                "{piece}: {}",
+                simulation.construction_message()
+            );
+        }
+        assert!(simulation.construction_can_close());
+        simulation.construction_close();
+        simulation.construction_test();
+        for _ in 0..9000 {
+            simulation.tick();
+            if simulation.construction_message() == "Train completed a lap." {
+                let station = &simulation.construction.as_ref().unwrap().pieces()[0];
+                let (queue, exit) = super::station_positions(station).unwrap();
+                for (position, kind) in [
+                    (queue, super::PathKind::Queue),
+                    (exit, super::PathKind::Normal),
+                ] {
+                    simulation.world.set_surface(
+                        position.x,
+                        position.y,
+                        super::Surface {
+                            corners: [position.height; 4],
+                            water: None,
+                        },
+                    );
+                    simulation
+                        .world
+                        .build_path_route(position, position, kind, 0)
+                        .unwrap();
+                }
+                assert!(
+                    simulation
+                        .construction_test_report_json()
+                        .contains("\"rating\"")
+                );
+                assert!(simulation.construction_set_open(true));
+                assert_eq!(simulation.construction_test_report_json(), "null");
                 return;
             }
             if simulation.construction_outcome.is_some() {
@@ -2670,5 +3304,160 @@ mod path_bridge_tests {
         assert!(simulation.path_message().contains("facility"));
         assert!(!simulation.path_build(coordinates, "normal", 0));
         assert_eq!(simulation.world.revision(), revision);
+    }
+}
+
+#[cfg(test)]
+mod terrain_bridge_tests {
+    use super::WasmSimulation;
+    use theme_park_sim::facilities::ParkFacilities;
+    use theme_park_sim::world::{Ground, Path, Position, Surface, World};
+
+    #[test]
+    fn terrain_edits_refuse_buildings_and_track_without_mutating_the_world() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        let before_building_edit = simulation.world_state_hash();
+        assert!(!simulation.terrain_apply("raise_tiles", vec![218, 246, 1, 0, 1, 0, 0, 0]));
+        assert_eq!(simulation.world_state_hash(), before_building_edit);
+        assert!(simulation.terrain_message().contains("building or ride"));
+
+        let station = simulation.circuit.pieces()[0].sample(0.0).position;
+        let track_x = (station.x / 4.0).floor() as u16;
+        let track_y = (station.y / 4.0).floor() as u16;
+        let before_track_edit = simulation.world_state_hash();
+        assert!(!simulation.terrain_apply(
+            "flatten",
+            vec![i32::from(track_x), i32::from(track_y), 1, 0, 0, 100, 0, 0,]
+        ));
+        assert_eq!(simulation.world_state_hash(), before_track_edit);
+        assert!(simulation.terrain_message().contains("coaster track"));
+    }
+
+    #[test]
+    fn terrain_wire_rejects_missing_parameters_without_mutating_the_world() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        let before = simulation.world_state_hash();
+        assert!(!simulation.terrain_apply("flatten", vec![1, 2, 3]));
+        assert_eq!(simulation.world_state_hash(), before);
+        assert!(
+            simulation
+                .terrain_message()
+                .contains("eight integer parameters")
+        );
+    }
+
+    #[test]
+    fn tunnel_fill_reports_invalidated_paths_and_guests_recover() {
+        let mut simulation = WasmSimulation::new(42, 12);
+        let tunnel_path = Position {
+            x: 221,
+            y: 250,
+            height: 5,
+        };
+        assert!(simulation.world.path(tunnel_path).is_some());
+        assert!(simulation.terrain_apply("fill", vec![221, 250, 1, 0, 0, 0, 5, 7]));
+        assert_eq!(simulation.terrain_invalidated_paths(), vec![221, 250, 5]);
+        assert!(simulation.terrain_message().contains("updated"));
+        assert!(simulation.world.path(tunnel_path).is_none());
+
+        simulation.tick();
+        assert!(
+            simulation
+                .simulation
+                .walking()
+                .guests()
+                .iter()
+                .all(|guest| guest.path.is_some())
+        );
+    }
+
+    #[test]
+    fn facility_bridge_accepts_a_shop_inside_a_carved_cavern() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        let mut world = World::new(
+            6,
+            6,
+            Surface {
+                corners: [8; 4],
+                water: None,
+            },
+        );
+        for (x, y) in [(2, 1), (2, 2), (3, 2), (2, 3), (3, 3)] {
+            world.carve(x, y, 1, 4);
+        }
+        world.place_path(Path {
+            position: Position {
+                x: 2,
+                y: 1,
+                height: 1,
+            },
+            slope: None,
+        });
+        simulation.world = world;
+        simulation.facilities = ParkFacilities::new();
+
+        assert!(simulation.place_facility_at("food_stall", 2, 2, 0, 1));
+        assert!(
+            simulation
+                .facilities_json()
+                .contains("\"x\":2,\"y\":2,\"z\":1")
+        );
+    }
+
+    #[test]
+    fn coaster_station_can_be_constructed_inside_a_carved_cavern() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        let mut world = World::new(
+            16,
+            16,
+            Surface {
+                corners: [12; 4],
+                water: None,
+            },
+        );
+        for y in 0..16 {
+            for x in 0..16 {
+                world.carve(x, y, 3, 12);
+            }
+        }
+        simulation.world = world;
+
+        simulation.construction_start(16, 16, 4, 0);
+        assert!(
+            simulation.construction_active(),
+            "{}",
+            simulation.construction_message()
+        );
+        assert_eq!(simulation.world.ground(4, 4, 8), Ground::Carved);
+        assert_eq!(simulation.construction_station_positions()[2], 8);
+    }
+
+    #[test]
+    fn terrain_edit_reroutes_constructed_track_supports() {
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.construction_start(200, 200, 20, 0);
+        simulation.construction_select("Straight");
+        simulation.construction_append();
+        let supports_before = simulation.construction_placed_supports();
+        assert!(
+            !supports_before.is_empty(),
+            "{}",
+            simulation.construction_message()
+        );
+        let first_support = supports_before.chunks_exact(7).next().unwrap();
+        let x = first_support[4].floor() as u16;
+        let y = first_support[5].floor() as u16;
+
+        assert!(simulation.terrain_apply(
+            "raise_tiles",
+            vec![i32::from(x), i32::from(y), 1, 0, 1, 0, 0, 0]
+        ));
+        let supports_after = simulation.construction_placed_supports();
+        assert!(
+            !supports_after.is_empty(),
+            "{}",
+            simulation.construction_message()
+        );
+        assert_ne!(supports_after, supports_before);
     }
 }

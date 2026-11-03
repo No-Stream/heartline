@@ -6,7 +6,7 @@ const pathHeightTolerance = 0.001;
 
 /** Resolve a renderer pick to the integer quarter-step height path commands require. */
 export function pathTileFromPick(pick: Pick | null, world: WorldView): PathTile | null {
-  if (!pick || (pick.kind !== "terrain" && pick.kind !== "path")) return null;
+  if (!pick || (pick.kind !== "terrain" && pick.kind !== "path" && pick.kind !== "carved-floor")) return null;
   const [width, height] = world.dimensions;
   if (!width || !height || world.surfaces.length !== width * height * 6 || world.paths.length % 4 !== 0) {
     throw new Error("Invalid world snapshot for path placement");
@@ -15,6 +15,9 @@ export function pathTileFromPick(pick: Pick | null, world: WorldView): PathTile 
     throw new RangeError("Invalid world pick for path placement");
   }
 
+  if (pick.kind === "carved-floor") {
+    return { x: pick.x, y: pick.y, z: Math.round(pick.height), kind: "terrain" };
+  }
   if (pick.kind === "terrain") {
     const surfaceOffset = (pick.y * width + pick.x) * 6;
     const heightSteps = Math.min(...world.surfaces.subarray(surfaceOffset, surfaceOffset + 4));

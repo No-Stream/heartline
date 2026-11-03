@@ -73,6 +73,75 @@ impl ParkGuests {
     pub fn behaviors(&self) -> &BehaviorSimulation {
         &self.behaviors
     }
+    pub fn set_external_rides(&mut self, ids: &[u32]) {
+        self.behaviors.set_external_rides(ids);
+    }
+
+    pub fn board_coaster(&mut self, facility: &Facility) -> Vec<GuestId> {
+        self.behaviors
+            .board_coaster(facility, self.walking.traits())
+    }
+
+    pub fn finish_coaster(
+        &mut self,
+        world: &World,
+        facility: &Facility,
+        ratings: &[(f64, f64, f64)],
+        recovered: bool,
+    ) {
+        let riders =
+            self.behaviors
+                .finish_coaster(facility, self.walking.traits_mut(), ratings, recovered);
+        self.walking.refresh_graph(world);
+        let reference = facility.exit_position.unwrap_or(facility.place.position);
+        let exit = world
+            .paths()
+            .filter(|path| {
+                world.path_metadata(path.position).unwrap().kind == crate::world::PathKind::Normal
+            })
+            .min_by_key(|path| {
+                let p = path.position;
+                (
+                    p.x.abs_diff(reference.x) as u32
+                        + p.y.abs_diff(reference.y) as u32
+                        + p.height.abs_diff(reference.height) as u32,
+                    p,
+                )
+            })
+            .map(|path| path.position);
+        if let Some(exit) = exit {
+            for rider in riders {
+                self.walking.place_on_path(rider, exit);
+            }
+        }
+    }
+
+    pub fn close_coaster(&mut self, world: &World, facility: &Facility) {
+        let guests = self.behaviors.close_coaster(facility.place.id);
+        self.walking.refresh_graph(world);
+        let reference = facility.exit_position.unwrap_or(facility.place.position);
+        let exit = world
+            .paths()
+            .filter(|path| {
+                world.path_metadata(path.position).unwrap().kind == crate::world::PathKind::Normal
+            })
+            .min_by_key(|path| {
+                let p = path.position;
+                (
+                    p.x.abs_diff(reference.x) as u32
+                        + p.y.abs_diff(reference.y) as u32
+                        + p.height.abs_diff(reference.height) as u32,
+                    p,
+                )
+            })
+            .map(|path| path.position);
+        if let Some(exit) = exit {
+            for guest in guests {
+                self.walking.place_on_path(guest, exit);
+            }
+        }
+    }
+
     pub fn active_count(&self) -> usize {
         self.visits.active_count()
     }
@@ -166,6 +235,38 @@ impl ParkGuests {
             .iter()
             .map(|facility| component(facility.place.position))
             .collect();
+        let queue_entrances: Vec<_> = facilities
+            .iter()
+            .flat_map(|facility| {
+                let node = self.reachable.indices[&facility.place.position];
+                self.reachable.queue_components[node]
+                    .into_iter()
+                    .flat_map(|queue| {
+                        self.reachable.queue_entrances[queue]
+                            .iter()
+                            .map(|&entrance| {
+                                (
+                                    facility.place,
+                                    self.reachable.paths[entrance].position,
+                                    self.reachable.components[entrance],
+                                )
+                            })
+                    })
+            })
+            .collect();
+        let discovery_positions: Vec<_> = self
+            .walking
+            .guests()
+            .iter()
+            .map(|guest| guest.path)
+            .collect();
+        self.behaviors.observe_queue_entrances(
+            self.walking.traits(),
+            &discovery_positions,
+            &guest_components,
+            &queue_entrances,
+            &self.leaving,
+        );
         let movements = self.behaviors.tick_with_exiting(
             self.walking.traits_mut(),
             &positions,
@@ -179,6 +280,10 @@ impl ParkGuests {
                 .members
                 .iter()
                 .any(|id| self.behaviors.guests[id.0 as usize].visit_complete())
+                && !group
+                    .members
+                    .iter()
+                    .any(|&id| self.behaviors.is_coaster_riding(id))
                 && self.walking.traits().is_active(group.members[0])
             {
                 for id in &group.members {
@@ -269,6 +374,220 @@ mod tests {
     use super::*;
     use crate::guest_behavior::{KnownPlace, PlaceKind};
     use crate::world::{Path, Surface};
+
+    #[test]
+    fn ambiguous_queue_does_not_advertise_either_ride() {
+        use crate::world::PathKind;
+        let mut world = World::new(
+            14,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let position = |x| Position { x, y: 0, height: 0 };
+        world
+            .build_path_route(position(0), position(1), PathKind::Normal, 0)
+            .unwrap();
+        world
+            .build_path_route(position(2), position(12), PathKind::Queue, 0)
+            .unwrap();
+        let ride = Facility {
+            place: KnownPlace {
+                id: 700,
+                position: position(12),
+                kind: PlaceKind::Ride,
+                minimum_height_cm: 0,
+                intensity: 50,
+                ride_type: 2,
+                theme: 0,
+                price: 0,
+            },
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: Some(position(0)),
+        };
+        let other = Facility {
+            place: KnownPlace {
+                id: 701,
+                ..ride.place
+            },
+            ..ride
+        };
+        let mut park = ParkGuests::new(31, 1, &world, position(0), 1);
+        for _ in 0..300 {
+            park.tick(&world, &[ride, other], 100, Some(1));
+        }
+        assert!(park.behaviors.guests[0].known_places().is_empty());
+    }
+
+    #[test]
+    fn arriving_guest_discovers_and_boards_coaster_at_long_queue_entrance() {
+        use crate::world::PathKind;
+        let mut world = World::new(
+            14,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let position = |x| Position { x, y: 0, height: 0 };
+        world
+            .build_path_route(position(0), position(1), PathKind::Normal, 0)
+            .unwrap();
+        world
+            .build_path_route(position(2), position(12), PathKind::Queue, 0)
+            .unwrap();
+        let facility = Facility {
+            place: KnownPlace {
+                id: 700,
+                position: position(12),
+                kind: PlaceKind::Ride,
+                minimum_height_cm: 0,
+                intensity: 50,
+                ride_type: 2,
+                theme: 0,
+                price: 0,
+            },
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: Some(position(0)),
+        };
+        let mut park = ParkGuests::new(31, 1, &world, position(0), 1);
+        park.set_external_rides(&[facility.place.id]);
+        let mut boarded = Vec::new();
+        for _ in 0..20_000 {
+            park.tick(&world, &[facility], 100, Some(1));
+            boarded = park.board_coaster(&facility);
+            if !boarded.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(
+            boarded,
+            vec![GuestId(0)],
+            "active {} position {:?} known {:?} activity {:?}",
+            park.walking.traits().is_active(GuestId(0)),
+            park.walking.guests()[0].settled_path(),
+            park.behaviors.guests[0].known_places(),
+            park.behaviors.activity_detail(GuestId(0))
+        );
+        assert!(
+            park.behaviors.guests[0]
+                .known_places()
+                .iter()
+                .any(|place| place.id == facility.place.id)
+        );
+    }
+
+    #[test]
+    fn coaster_guest_queues_rides_exits_and_waits_to_depart() {
+        coaster_guest_journey(false, false);
+    }
+
+    #[test]
+    fn coaster_edit_recovers_rider_without_a_ride_memory() {
+        coaster_guest_journey(true, false);
+    }
+
+    #[test]
+    fn coaster_rejects_guest_below_minimum_height() {
+        coaster_guest_journey(false, true);
+    }
+
+    fn coaster_guest_journey(recovered: bool, too_short: bool) {
+        use crate::world::PathKind;
+        let mut world = World::new(
+            4,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let position = |x| Position { x, y: 0, height: 0 };
+        world
+            .build_path_route(position(0), position(1), PathKind::Normal, 0)
+            .unwrap();
+        world
+            .build_path_route(position(2), position(3), PathKind::Queue, 0)
+            .unwrap();
+        let facility = Facility {
+            place: KnownPlace {
+                id: 700,
+                position: position(3),
+                kind: PlaceKind::Ride,
+                minimum_height_cm: if too_short { u8::MAX } else { 0 },
+                intensity: 50,
+                ride_type: 2,
+                theme: 0,
+                price: 0,
+            },
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: Some(position(0)),
+        };
+        let mut park = ParkGuests::new(31, 1, &world, position(0), 1);
+        park.open_with_guests(&[facility]);
+        park.set_external_rides(&[facility.place.id]);
+        let mut boarded = Vec::new();
+        for _ in 0..5000 {
+            park.tick(&world, &[facility], 100, None);
+            boarded = park.board_coaster(&facility);
+            if !boarded.is_empty() {
+                break;
+            }
+        }
+        if too_short {
+            assert!(boarded.is_empty());
+            assert_eq!(park.walking.traits().memory(GuestId(0)).len(), 0);
+            return;
+        }
+        assert_eq!(boarded, vec![GuestId(0)]);
+        assert!(park.behaviors.is_coaster_riding(GuestId(0)));
+        park.behaviors.guests[0].energy = 0;
+        for _ in 0..40 {
+            park.tick(&world, &[facility], 100, None);
+        }
+        assert!(park.walking.traits().is_active(GuestId(0)));
+        assert!(park.behaviors.is_coaster_riding(GuestId(0)));
+        let circuit = crate::physics::demo_circuit();
+        let mut run = crate::physics::CoasterRun::new(
+            &circuit,
+            &crate::track::hybrid_model().train,
+            crate::physics::PhysicsConfig {
+                lift_speed: 5.0,
+                ..Default::default()
+            },
+        );
+        let outcome = if recovered {
+            world.remove_path(position(3));
+            run.recover()
+        } else {
+            (0..200_000)
+                .find_map(|_| run.step(&circuit))
+                .expect("train finishes")
+        };
+        let report = &outcome.reports[0];
+        park.finish_coaster(
+            &world,
+            &facility,
+            &[(report.excitement, report.intensity, report.nausea)],
+            outcome.recovered,
+        );
+        if recovered {
+            park.close_coaster(&world, &facility);
+        }
+        assert_eq!(park.walking.guests()[0].settled_path(), Some(position(0)));
+        assert_eq!(
+            park.walking.traits().memory(GuestId(0)).len(),
+            usize::from(!recovered)
+        );
+        park.tick(&world, &[facility], 100, Some(0));
+        assert!(!park.walking.traits().is_active(GuestId(0)));
+    }
 
     #[test]
     fn queue_access_requires_one_owner_at_the_far_end() {

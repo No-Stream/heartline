@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildPeople, type GuestSnapshot } from "./people";
+import { buildPeople, riderAppearances, type GuestSnapshot } from "./people";
 import type { Atlas } from "./scene";
 import { CAST, personAppearance } from "../../art/generators/people.ts";
 
@@ -24,6 +24,14 @@ const snapshot = (ids: number[], records: number[], appearances: number[]): Gues
 const appearance = [1, 2, 3, 4, 1];
 
 describe("guest rendering", () => {
+  test("maps occupied seats to the same appearance as walking guests", () => {
+    const current = snapshot([9, 3], [1, 2, 0, 1, 0, 0, 0, 2, 3, 0, 1, 0, 0, 0], [...appearance, 0, 0, 0, 0, 0]);
+    const riders = riderAppearances(current, new Uint32Array([0, 2, 9, 1, 0, 3]), atlas);
+    const people = buildPeople(undefined, current, 1, 0, atlas);
+    expect(riders.get("0-2")).toEqual({ id: "guest-9", sprite: people[0].sprite });
+    expect(riders.get("1-0")).toEqual({ id: "guest-3", sprite: people[1].sprite });
+    expect(() => riderAppearances(current, new Uint32Array([0, 0, 999]), atlas)).toThrow();
+  });
   test("interpolates position, height and walking distance by stable ID", () => {
     const previous = snapshot([9, 3], [10, 20, 1, 1, 0, 0, 1, 5, 5, 0, 1, 0, 0, 0], [...appearance, ...appearance]);
     const current = snapshot([3, 9], [6, 5, 0, 0, 1, 1, 1, 12, 24, 2, -1, 0, 1, 1], [...appearance, ...appearance]);

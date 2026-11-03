@@ -26,6 +26,7 @@ export const builderShortcuts = {
   cancel: { keys: ["escape"], repeat: false, action: { type: "builder-cancel" } },
   pathBuild: { keys: ["p"], repeat: false, action: { type: "path-build-mode" } },
   pathRemove: { keys: ["r"], repeat: false, action: { type: "path-remove-mode" } },
+  undergroundView: { keys: ["u"], repeat: false, action: { type: "underground-view-toggle" } },
   ...Object.fromEntries(pieceGroups.map((group, index) => [`group-${group}`, { keys: [String(index + 1)], repeat: false, action: { type: "piece-group", group } }])),
 } as const satisfies Record<string, Shortcut>;
 

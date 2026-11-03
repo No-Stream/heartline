@@ -604,3 +604,85 @@ fn demo_has_track_crossing_with_vertical_clearance() {
         "demo has no track crossing with vertical clearance"
     );
 }
+
+#[test]
+fn coaster_run_starts_at_station_completes_and_records_forces() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let mut run = super::CoasterRun::new(
+        &circuit,
+        &configuration,
+        super::PhysicsConfig {
+            lift_speed: 5.0,
+            ..super::PhysicsConfig::default()
+        },
+    );
+    assert_eq!(
+        run.capacity(),
+        usize::from(configuration.cars)
+            * usize::from(configuration.rows_per_car)
+            * usize::from(configuration.seats_per_row)
+    );
+    assert_eq!(
+        circuit.sample(run.train().distance()).position,
+        circuit.pieces()[0]
+            .sample(circuit.pieces()[0].length() / 2.0)
+            .position
+    );
+    let mut outcome = None;
+    for _ in 0..200_000 {
+        if let Some(result) = run.step(&circuit) {
+            outcome = Some(result);
+            break;
+        }
+    }
+    let outcome = outcome.unwrap_or_else(|| {
+        panic!(
+            "train did not finish: distance={} speed={}",
+            run.train().distance(),
+            run.train().speed()
+        )
+    });
+    assert!(outcome.reports[0].completed);
+    assert!(!outcome.recovered);
+    assert!(!outcome.reports[0].samples.is_empty());
+    assert!(outcome.reports[0].intensity > 0.0);
+    assert_eq!(outcome.reports.len(), usize::from(configuration.cars));
+    assert_ne!(outcome.reports[0].intensity, outcome.reports[1].intensity);
+}
+
+#[test]
+fn coaster_run_can_recover_without_a_completed_ride() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let mut run = super::CoasterRun::new(&circuit, &configuration, super::PhysicsConfig::default());
+    let outcome = run.recover();
+    assert!(outcome.recovered);
+    assert!(!outcome.reports[0].completed);
+    assert_eq!(run.train().speed(), 0.0);
+    assert_eq!(
+        circuit.sample(run.train().distance()).position,
+        circuit.pieces()[0]
+            .sample(circuit.pieces()[0].length() / 2.0)
+            .position
+    );
+}
+
+#[test]
+fn coaster_run_recovers_a_train_that_cannot_leave_the_station() {
+    let circuit = super::demo_circuit();
+    let configuration = crate::track::hybrid_model().train;
+    let mut run = super::CoasterRun::new(
+        &circuit,
+        &configuration,
+        super::PhysicsConfig {
+            powered_sections: false,
+            ..super::PhysicsConfig::default()
+        },
+    );
+    let outcome = (0..1000)
+        .find_map(|_| run.step(&circuit))
+        .expect("stationary train is recovered");
+    assert!(outcome.recovered);
+    assert!(outcome.reports.iter().all(|report| !report.completed));
+}

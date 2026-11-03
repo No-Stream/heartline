@@ -4,7 +4,7 @@ import type { TrackStyle } from "./render/track/geometry";
 
 export type FacilityKind = "entrance" | "food_stall" | "drink_stall" | "restroom" | "carousel" | "ferris_wheel" | "souvenir_shop";
 export interface Facility { id: number; kind: FacilityKind; x: number; y: number; z: number; rotation: number; price: number; ride_state: "idle" | "running" | "unloading"; ride_progress: number }
-export type FacilityAction = { type: "facility-place"; kind: FacilityKind; x: number; y: number; rotation: number };
+export type FacilityAction = { type: "facility-place"; kind: FacilityKind; x: number; y: number; rotation: number; height?: number };
 
 export function facilitySprites(facilities: readonly Facility[], cameraRotation: number): WorldSprite[] {
   const buildings: Partial<Record<FacilityKind, string>> = { entrance: "park_gate", food_stall: "burger_stall", drink_stall: "burger_stall", restroom: "restroom", souvenir_shop: "souvenir_shop" };

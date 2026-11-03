@@ -35,7 +35,7 @@ const state: ConstructionState = {
     { id: "TurnSmallStandalone", label: "Standalone small left turn", group: "turn", heading: "North", slope: "Level", bank: "Level", refusal: "" },
     { id: "LevelToGentleUp", label: "Begin gentle climb", group: "slope", heading: "East", slope: "UpGentle", bank: "Level", refusal: "The train would collide with terrain." },
   ], selected: "Straight",
-  track: [{ id: 4, label: "Station" }, { id: 9, label: "Straight" }], canAppend: true, canClose: false, canTest: false, message: "Ready to place",
+  track: [{ id: 4, label: "Station" }, { id: 9, label: "Straight" }], canAppend: true, canClose: false, canTest: false, isOpen: false, stationPositions: [227, 251, 12, 227, 253, 12], message: "Ready to place",
   placedRails: new Float32Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
   previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array(),
 };

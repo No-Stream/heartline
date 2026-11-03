@@ -50,22 +50,25 @@
         grid-row: 1 / span 2;
         max-height: calc(100vh - 1.6rem);
         overflow-y: auto;
-        position: sticky;
-        top: 0.8rem;
+      }
+      [data-landscaping] {
+        grid-column: 2;
+        grid-row: 3;
       }
       [data-paths], [data-facilities] {
         grid-column: 2;
-        grid-row: 3;
+        grid-row: 4;
         padding: 0.6rem 1rem;
         background: #f2eadb;
         border: 1px solid color-mix(in srgb, #3a2e58 30%, transparent);
         border-radius: 3px;
       }
-      [data-paths] { grid-row: 4; }
+      [data-paths] { grid-row: 5; }
+      [data-facilities] { grid-row: 4; }
       [data-paths] h2, [data-facilities] h2 { margin: 0 0 0.4rem; font-size: 1rem; }
       @media (max-width: 1240px) {
         main { grid-template-columns: minmax(0, 800px); }
-        main > canvas, [data-construction], [data-facilities], [data-paths] { grid-column: 1; grid-row: auto; }
+        main > canvas, [data-construction], [data-landscaping], [data-facilities], [data-paths] { grid-column: 1; grid-row: auto; }
         [data-construction] { position: static; max-height: none; }
       }
     </style>
@@ -78,6 +81,7 @@
       <section aria-label="Park facilities" data-facilities></section>
       <section aria-label="Coaster construction" data-construction></section>
       <canvas aria-label="Theme park world" tabindex="0" style="touch-action: none" width="800" height="500"></canvas>
+      <section aria-label="Landscaping" data-landscaping></section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

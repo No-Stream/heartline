@@ -725,3 +725,9 @@ fn powered_lift_pieces_match_unpowered_geometry_and_are_available() {
         );
     }
 }
+
+#[test]
+fn coaster_models_have_a_minimum_rider_height() {
+    assert_eq!(super::hybrid_model().minimum_height_cm, 122);
+    assert_eq!(super::multi_launch_model().minimum_height_cm, 132);
+}

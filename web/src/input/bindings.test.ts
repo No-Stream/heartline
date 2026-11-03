@@ -62,6 +62,14 @@ describe("input bindings", () => {
     expect(actions).toEqual([{ type: "path-build-mode" }, { type: "path-remove-mode" }]);
   });
 
+  it("maps the underground view shortcut through the input action layer", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    surface.dispatchEvent(event("keydown", { key: "u", repeat: false }));
+    expect(actions).toEqual([{ type: "underground-view-toggle" }]);
+  });
+
   it("reports pointer movement and exit through the action layer", () => {
     const surface = new Surface();
     const actions: InputAction[] = [];

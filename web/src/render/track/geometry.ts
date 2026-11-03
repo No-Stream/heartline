@@ -130,7 +130,7 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
   return quads;
 }
 
-export function buildRiderQuads(poses: Float32Array, camera: Camera, viewport: Viewport, atlas: Atlas, scaleName: string): TrackQuad[] {
+export function buildRiderQuads(poses: Float32Array, camera: Camera, viewport: Viewport, atlas: Atlas, scaleName: string, occupants?: ReadonlyMap<string, { id: string; sprite: string }>): TrackQuad[] {
   if (poses.length % 11) throw new Error("Invalid train snapshot");
   const riders: TrackQuad[] = [];
   const views = ["se", "sw", "nw", "ne"] as const;
@@ -141,10 +141,13 @@ export function buildRiderQuads(poses: Float32Array, camera: Camera, viewport: V
     const cameraRight = cross(cameraDirection, up);
     const spriteRight = Math.hypot(...cameraRight) < 1e-8 ? side : normalize(cameraRight);
     const heading = Math.abs(forward[0]) >= Math.abs(forward[1]) ? (forward[0] >= 0 ? 0 : 2) : (forward[1] >= 0 ? 1 : 3);
-    for (let seat = 0; seat < 4; seat++) if ((poses[i+10] & (1 << seat)) !== 0) {
+    for (let seat = 0; seat < 4; seat++) if (occupants ? occupants.has(`${poses[i]}-${seat}`) : (poses[i+10] & (1 << seat)) !== 0) {
+      const occupant = occupants?.get(`${poses[i]}-${seat}`);
+      if (occupants && !occupant) continue;
       const anchor = add(add(add(center, scale(forward, seat < 2 ? -0.14 : 0.14)), scale(side, seat % 2 ? 0.1 : -0.1)), scale(up, 0.2));
       const view = views[(heading + camera.rotation) % 4];
-      const frame = atlas.frames[`people/${["maya", "otis", "priya", "gus"][seat]}/${view}/idle/0`];
+      const sprite = occupant?.sprite ?? `people/${["maya", "otis", "priya", "gus"][seat]}`;
+      const frame = atlas.frames[`${sprite}/${view}/idle/0`];
       const placement = frame?.placements[scaleName];
       if (!placement) throw new Error("Atlas is missing rider frame");
       const page = atlas.pages[scaleName][placement.page];
@@ -154,7 +157,7 @@ export function buildRiderQuads(poses: Float32Array, camera: Camera, viewport: V
       const points: Vec[] = [[left,top], [right,top], [right,bottom], [left,bottom]].map(([across, vertical]) => add(add(anchor, scale(spriteRight, across)), scale(up, vertical)));
       const uv = [[0,0], [1,0], [1,1], [0,1]];
       const vertices = points.map((point, index) => ({ ...projectWorld(camera, viewport, { x: point[0], y: point[1], z: point[2] }), depth: [point[0]+point[1], point[0]-point[1], -point[0]-point[1], -point[0]+point[1]][camera.rotation] + point[2], height: point[2]*4, u: (placement.x + uv[index][0]*placement.width)/page.width, v: (placement.y + uv[index][1]*placement.height)/page.height })) as TrackQuad["vertices"];
-      riders.push({ vertices, color: [1,1,1,1], kind: "rider", id: `rider-${poses[i]}-${seat}`, tileX: Math.floor(anchor[0]), tileY: Math.floor(anchor[1]), page: placement.page });
+      riders.push({ vertices, color: [1,1,1,1], kind: "rider", id: occupant?.id ?? `rider-${poses[i]}-${seat}`, tileX: Math.floor(anchor[0]), tileY: Math.floor(anchor[1]), page: placement.page });
     }
   }
   return riders;

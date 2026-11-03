@@ -29,6 +29,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     coaster_supports() { return new Float32Array(); }
     coaster_train_poses() { return new Float32Array(); }
     construction_train_poses() { return new Float32Array(); }
+    construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
   },
 }));

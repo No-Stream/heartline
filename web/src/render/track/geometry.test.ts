@@ -110,6 +110,12 @@ describe("coaster geometry", () => {
     expect(riders[0].id).toBe("rider-0-0");
     expect(riders[0].page).toBe(0);
     expect(new Set(riders[0].vertices.map((vertex) => vertex.depth)).size).toBeGreaterThan(1);
+    const actual = buildRiderQuads(poses, { centerX: 1, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, atlas, "1", new Map([["0-0", { id: "guest-42", sprite: "people/maya" }]]));
+    expect(actual[0].id).toBe("guest-42");
+    const withoutMask = new Float32Array(poses);
+    withoutMask[10] = 0;
+    expect(buildRiderQuads(withoutMask, { centerX: 1, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, atlas, "1", new Map([["0-0", { id: "guest-42", sprite: "people/maya" }]]))[0].id).toBe("guest-42");
+    expect(buildRiderQuads(poses, { centerX: 1, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, atlas, "1", new Map())).toHaveLength(0);
   });
   test("keeps a rider visible on diagonal track while banking and inversion follow the car", () => {
     const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };

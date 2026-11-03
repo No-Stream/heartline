@@ -1,5 +1,5 @@
 //! Coordinates guest activities and per-tick behavior.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub use super::decisions::{GroupSplit, GuestBehavior, split_for_ride};
 use super::details::{ActivityDetail, ActivityKind, GuestMemoryDetail};
@@ -8,6 +8,8 @@ pub use super::needs::Needs;
 pub use super::thoughts::Thought;
 use crate::guests::{AgeGroup, GuestId, GuestStore};
 use crate::world::Position;
+
+const QUEUE_ENTRANCE_VISIBILITY_TILES: u16 = 12;
 
 /// A facility's path position, service capacity, and duration in 1/30-second ticks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +38,7 @@ enum Activity {
     Walking(u32),
     Queuing(u32, u64),
     Using(u32, u32),
+    CoasterRiding(u32),
     Unloading(u32, Position),
     Waiting(u32),
 }
@@ -53,6 +56,8 @@ pub struct BehaviorSimulation {
     activities: Vec<Option<Activity>>,
     queues: BTreeMap<u32, Vec<GuestId>>,
     income: BTreeMap<u32, u64>,
+    external_rides: BTreeSet<u32>,
+    coaster_riders: BTreeMap<u32, Vec<GuestId>>,
     tick: u64,
 }
 
@@ -63,8 +68,127 @@ impl BehaviorSimulation {
             activities: vec![None; guest_count],
             queues: BTreeMap::new(),
             income: BTreeMap::new(),
+            external_rides: BTreeSet::new(),
+            coaster_riders: BTreeMap::new(),
             tick: 0,
         }
+    }
+
+    pub fn is_coaster_riding(&self, guest: GuestId) -> bool {
+        matches!(
+            self.activities[guest.0 as usize],
+            Some(Activity::CoasterRiding(_))
+        )
+    }
+
+    pub fn set_external_rides(&mut self, ids: &[u32]) {
+        self.external_rides = ids.iter().copied().collect();
+    }
+
+    /// Admit one train in queue order and charge each rider at boarding.
+    pub fn board_coaster(&mut self, facility: &Facility, guests: &GuestStore) -> Vec<GuestId> {
+        let id = facility.place.id;
+        assert!(self.external_rides.contains(&id));
+        assert!(!self.coaster_riders.contains_key(&id));
+        let queue = self.queues.entry(id).or_default();
+        let mut selected: Vec<GuestId> = Vec::new();
+        while let Some(&first) = queue.iter().find(|guest| !selected.contains(*guest)) {
+            let group = guests
+                .groups
+                .iter()
+                .find(|group| group.members.contains(&first))
+                .expect("guest has a group");
+            if group.members.iter().any(|member| matches!(self.activities[member.0 as usize], Some(Activity::Walking(place_id)) if place_id == id)) {
+                break;
+            }
+            let queued: Vec<_> = queue
+                .iter()
+                .copied()
+                .filter(|member| group.members.contains(member) && !selected.contains(member))
+                .collect();
+            if selected.len() + queued.len() > facility.capacity {
+                if selected.is_empty() && queued.len() > facility.capacity {
+                    selected.extend(queued.into_iter().take(facility.capacity));
+                }
+                break;
+            }
+            selected.extend(queued);
+        }
+        queue.retain(|guest| !selected.contains(guest));
+        let mut riders = Vec::new();
+        for guest in selected {
+            let index = guest.0 as usize;
+            if self.guests[index].money < facility.place.price {
+                self.activities[index] = None;
+                continue;
+            }
+            let queued_at = match self.activities[index] {
+                Some(Activity::Queuing(place_id, tick)) if place_id == id => tick,
+                _ => unreachable!("only queued guests are admitted"),
+            };
+            let behavior = &mut self.guests[index];
+            behavior.money -= facility.place.price;
+            behavior.lifetime_money_spent += u32::from(facility.place.price);
+            behavior.record_memory(GuestMemoryDetail::Wait {
+                place_id: id,
+                duration_ticks: self.tick.saturating_sub(queued_at),
+                tick: self.tick,
+            });
+            *self.income.entry(id).or_default() += u64::from(facility.place.price);
+            self.activities[index] = Some(Activity::CoasterRiding(id));
+            riders.push(guest);
+        }
+        if !riders.is_empty() {
+            self.coaster_riders.insert(id, riders.clone());
+        }
+        riders
+    }
+
+    /// Cancel guests approaching or waiting for a closed coaster.
+    pub fn close_coaster(&mut self, id: u32) -> Vec<GuestId> {
+        self.queues.remove(&id);
+        let mut displaced = Vec::new();
+        for (index, activity) in self.activities.iter_mut().enumerate() {
+            if matches!(*activity, Some(Activity::Walking(place) | Activity::Queuing(place, _) | Activity::Waiting(place) | Activity::Unloading(place, _)) if place == id)
+            {
+                *activity = None;
+                displaced.push(GuestId(index as u32));
+            }
+        }
+        displaced
+    }
+
+    /// Complete or recover a train. Ratings are in boarded guest order.
+    pub fn finish_coaster(
+        &mut self,
+        facility: &Facility,
+        guests: &mut GuestStore,
+        ratings: &[(f64, f64, f64)],
+        recovered: bool,
+    ) -> Vec<GuestId> {
+        let riders = self
+            .coaster_riders
+            .remove(&facility.place.id)
+            .unwrap_or_default();
+        assert!(recovered || ratings.len() == riders.len());
+        for (seat, guest) in riders.iter().copied().enumerate() {
+            let index = guest.0 as usize;
+            if !recovered {
+                let (excitement, intensity, nausea) = ratings[seat];
+                assert!(excitement.is_finite() && intensity.is_finite() && nausea.is_finite());
+                let enjoyment = (excitement
+                    - (intensity - f64::from(guests.intensity(guest))).abs()
+                    - f64::from(self.guests[index].needs.nausea))
+                .clamp(-100.0, 100.0) as i8;
+                let mut place = facility.place;
+                place.intensity = nausea.clamp(0.0, 100.0) as u8;
+                self.guests[index].complete_paid(place, self.tick, enjoyment, guests, guest);
+            }
+            self.activities[index] = facility
+                .exit_position
+                .map(|exit| Activity::Unloading(facility.place.id, exit));
+        }
+        riders
     }
 
     pub fn ride_state(&self, facility: &Facility) -> RideState {
@@ -106,7 +230,7 @@ impl BehaviorSimulation {
         let (kind, place_id) = match activity {
             Some(Activity::Walking(place_id)) => (ActivityKind::Walking, Some(place_id)),
             Some(Activity::Queuing(place_id, _)) => (ActivityKind::Queuing, Some(place_id)),
-            Some(Activity::Using(place_id, _)) => {
+            Some(Activity::Using(place_id, _) | Activity::CoasterRiding(place_id)) => {
                 let place_kind = self.guests[index]
                     .known_places()
                     .iter()
@@ -144,6 +268,40 @@ impl BehaviorSimulation {
             place_id,
         }
     }
+    pub(super) fn observe_queue_entrances(
+        &mut self,
+        guests: &GuestStore,
+        positions: &[Option<Position>],
+        guest_components: &[Option<usize>],
+        entrances: &[(KnownPlace, Position, usize)],
+        exiting: &[bool],
+    ) {
+        if entrances.is_empty() {
+            return;
+        }
+        for (index, position) in positions.iter().copied().enumerate() {
+            let guest = GuestId(index as u32);
+            if !guests.is_active(guest)
+                || exiting[index]
+                || index as u64 % 30 != (self.tick + 1) % 30
+            {
+                continue;
+            }
+            let Some(position) = position else {
+                continue;
+            };
+            for &(place, entrance, component) in entrances {
+                if guest_components[index] == Some(component)
+                    && position.x.abs_diff(entrance.x) + position.y.abs_diff(entrance.y)
+                        <= QUEUE_ENTRANCE_VISIBILITY_TILES
+                    && (position.height - entrance.height).abs() <= 2
+                {
+                    self.guests[index].observe(place);
+                }
+            }
+        }
+    }
+
     /// Returns movement commands indexed by guest ID.
     /// Call with one current path per guest and currently reachable, open facilities only.
     pub fn tick(
@@ -321,7 +479,11 @@ impl BehaviorSimulation {
                         self.activities[index] = Some(Activity::Queuing(place_id, self.tick));
                     }
                 }
-                Some(Activity::Queuing(place_id, _)) if !by_id.contains_key(&place_id) => {
+                Some(Activity::Queuing(place_id, _))
+                    if !by_id.contains_key(&place_id)
+                        || guest_components[index].is_none()
+                        || guest_components[index] != components[&place_id] =>
+                {
                     self.activities[index] = None
                 }
                 _ => {}
@@ -339,7 +501,7 @@ impl BehaviorSimulation {
                 .collect();
             for &id in &active {
                 if let Some(Activity::Waiting(place_id)) = self.activities[id.0 as usize] {
-                    let riders_remain = active.iter().any(|other| matches!(self.activities[other.0 as usize], Some(Activity::Walking(id) | Activity::Queuing(id, _) | Activity::Using(id, _) | Activity::Unloading(id, _)) if id == place_id));
+                    let riders_remain = active.iter().any(|other| matches!(self.activities[other.0 as usize], Some(Activity::Walking(id) | Activity::Queuing(id, _) | Activity::Using(id, _) | Activity::CoasterRiding(id) | Activity::Unloading(id, _)) if id == place_id));
                     if !riders_remain {
                         self.activities[id.0 as usize] = None;
                     }
@@ -419,6 +581,9 @@ impl BehaviorSimulation {
                 )
             });
             if let Some(facility) = by_id.get(&place_id) {
+                if self.external_rides.contains(&place_id) {
+                    continue;
+                }
                 let occupied = self.activities.iter().filter(|activity| matches!(activity, Some(Activity::Using(id, _)) if *id == place_id)).count();
                 let take = if facility.place.kind == PlaceKind::Ride && occupied > 0 {
                     0
@@ -489,6 +654,155 @@ mod tests {
             theme: 0,
             price: 0,
         }
+    }
+
+    #[test]
+    fn guest_explores_a_similar_unridden_ride_after_an_enjoyable_ride() {
+        let mut guests = generate_guests(31, 1);
+        let guest = GuestId(0);
+        let mut behavior = GuestBehavior::default();
+        let first = KnownPlace {
+            intensity: guests.intensity(guest),
+            ..place(1, PlaceKind::Ride)
+        };
+        let second = KnownPlace { id: 2, ..first };
+        behavior.observe(first);
+        behavior.observe(second);
+        behavior.complete(first, 0, 80, &mut guests, guest);
+        assert_eq!(behavior.choose(&guests, guest), Some(second));
+    }
+
+    #[test]
+    fn guest_can_repeat_a_ride_and_prioritizes_urgent_needs() {
+        let mut guests = generate_guests(31, 1);
+        let guest = GuestId(0);
+        let mut behavior = GuestBehavior::default();
+        let ride = KnownPlace {
+            intensity: guests.intensity(guest),
+            ..place(1, PlaceKind::Ride)
+        };
+        behavior.observe(ride);
+        behavior.complete(ride, 0, 80, &mut guests, guest);
+        assert_eq!(behavior.choose(&guests, guest), Some(ride));
+        let food = place(2, PlaceKind::Food);
+        behavior.observe(food);
+        behavior.needs.hunger = 100;
+        assert_eq!(behavior.choose(&guests, guest), Some(food));
+    }
+
+    #[test]
+    fn queue_entrance_is_visible_from_nearby_paths_only() {
+        let guests = generate_guests(31, 1);
+        let ride = place(1, PlaceKind::Ride);
+        let entrance = Position {
+            x: 12,
+            y: 0,
+            height: 0,
+        };
+        let mut simulation = BehaviorSimulation::new(1);
+        simulation.tick = 29;
+        simulation.observe_queue_entrances(
+            &guests,
+            &[Some(Position {
+                x: 0,
+                y: 0,
+                height: 0,
+            })],
+            &[Some(0)],
+            &[(ride, entrance, 0)],
+            &[false],
+        );
+        assert_eq!(simulation.guests[0].known_places(), &[ride]);
+        let mut far = BehaviorSimulation::new(1);
+        far.tick = 29;
+        far.observe_queue_entrances(
+            &guests,
+            &[Some(Position {
+                x: 0,
+                y: 0,
+                height: 0,
+            })],
+            &[Some(0)],
+            &[(ride, Position { x: 13, ..entrance }, 0)],
+            &[false],
+        );
+        assert!(far.guests[0].known_places().is_empty());
+    }
+
+    #[test]
+    fn externally_driven_coaster_boards_and_records_force_outcomes() {
+        let mut guests = generate_guests(31, 2);
+        let mut simulation = BehaviorSimulation::new(2);
+        let ride = place(1, PlaceKind::Ride);
+        let facility = Facility {
+            place: ride,
+            capacity: 2,
+            duration_ticks: 3,
+            exit_position: Some(ride.position),
+        };
+        simulation.set_external_rides(&[ride.id]);
+        for index in 0..2 {
+            simulation.guests[index].observe(ride);
+            simulation.activities[index] = Some(Activity::Queuing(ride.id, 0));
+        }
+        simulation
+            .queues
+            .insert(ride.id, vec![GuestId(0), GuestId(1)]);
+        simulation.tick(
+            &mut guests,
+            &[Some(ride.position); 2],
+            &[facility],
+            &[Some(0); 2],
+            &[Some(0)],
+        );
+        assert_eq!(
+            simulation.board_coaster(&facility, &guests),
+            vec![GuestId(0), GuestId(1)]
+        );
+        assert_eq!(
+            simulation.activity_detail(GuestId(0)).kind,
+            ActivityKind::Riding
+        );
+        simulation.finish_coaster(
+            &facility,
+            &mut guests,
+            &[(100.0, 10.0, 0.0), (10.0, 100.0, 100.0)],
+            false,
+        );
+        let first = *guests.memory(GuestId(0)).iter().last().unwrap();
+        let second = *guests.memory(GuestId(1)).iter().last().unwrap();
+        assert_ne!(first.enjoyment, second.enjoyment);
+        assert!(second.nausea > first.nausea);
+        assert_eq!(
+            simulation.activity_detail(GuestId(0)).kind,
+            ActivityKind::Walking
+        );
+    }
+
+    #[test]
+    fn group_larger_than_train_can_board_without_starving() {
+        let guests = generate_guests(31, 40);
+        let group = guests
+            .groups
+            .iter()
+            .find(|group| group.members.len() > 1)
+            .unwrap();
+        let ride = place(1, PlaceKind::Ride);
+        let facility = Facility {
+            place: ride,
+            capacity: 1,
+            duration_ticks: 3,
+            exit_position: None,
+        };
+        let mut simulation = BehaviorSimulation::new(40);
+        simulation.set_external_rides(&[ride.id]);
+        for &guest in &group.members {
+            simulation.activities[guest.0 as usize] = Some(Activity::Queuing(ride.id, 0));
+        }
+        simulation.queues.insert(ride.id, group.members.clone());
+        let riders = simulation.board_coaster(&facility, &guests);
+        assert_eq!(riders, vec![group.members[0]]);
+        assert_eq!(simulation.queues[&ride.id].len(), group.members.len() - 1);
     }
 
     #[test]

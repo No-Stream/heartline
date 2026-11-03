@@ -7,8 +7,10 @@ import type { Pick, WorldSprite } from "./render/index";
 export interface GameTest {
   ready: boolean;
   guests(): readonly WorldSprite[];
+  riders(): readonly { id: string; car: number; seat: number; x: number; y: number; z: number }[];
   facilities(): readonly Facility[];
   paths(): { x: number; y: number; z: number; slope: number; kind: number; style: number }[];
+  carvedSpans(): readonly [number, number, number, number][];
   requestGuestDetail(id: string): void;
   guestDetail(): GuestDetail | null;
   testingReport(): TestingReport | null;
@@ -17,6 +19,7 @@ export interface GameTest {
   setSurface(x: number, y: number, corners: [number, number, number, number]): void;
   project(point: WorldPoint): { x: number; y: number };
   pick(x: number, y: number): Pick | null;
+  pickSurface(x: number, y: number): Pick | null;
 }
 
 declare global {

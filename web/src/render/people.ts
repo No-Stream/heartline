@@ -99,6 +99,24 @@ function validate(snapshot: GuestSnapshot): void {
   if (snapshot.guests.length !== snapshot.guestIds.length * RECORD_SIZE || snapshot.appearances.length !== snapshot.guestIds.length * APPEARANCE_SIZE) throw new Error("Invalid guest snapshot");
 }
 
+export function riderAppearances(snapshot: GuestSnapshot, riders: Uint32Array, atlas: Atlas): Map<string, { id: string; sprite: string }> {
+  validate(snapshot);
+  if (riders.length % 3) throw new Error("Invalid rider snapshot");
+  const indices = new Map<number, number>();
+  snapshot.guestIds.forEach((id, index) => indices.set(id, index));
+  const result = new Map<string, { id: string; sprite: string }>();
+  const choices = personSprites(atlas);
+  for (let offset = 0; offset < riders.length; offset += 3) {
+    const [car, seat, id] = riders.subarray(offset, offset + 3);
+    const index = indices.get(id);
+    const key = `${car}-${seat}`;
+    if (index === undefined || seat >= 4 || result.has(key)) throw new Error("Invalid rider snapshot");
+    const appearanceOffset = index * APPEARANCE_SIZE;
+    result.set(key, { id: `guest-${id}`, sprite: choosePerson(choices, id, snapshot.appearances.subarray(appearanceOffset, appearanceOffset + APPEARANCE_SIZE)) });
+  }
+  return result;
+}
+
 export function buildPeople(previous: GuestSnapshot | undefined, current: GuestSnapshot, interpolation: number, rotation: Rotation, atlas: Atlas): WorldSprite[] {
   validate(current);
   if (previous) validate(previous);

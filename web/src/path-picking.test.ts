@@ -38,6 +38,11 @@ describe("path placement picks", () => {
     expect(pathTileFromPick(pick("terrain", 0, 4.8), world())).toEqual({ x: 0, y: 0, z: 4, kind: "terrain" });
   });
 
+  it("uses the carved floor height for an underground route", () => {
+    expect(pathTileFromPick({ kind: "carved-floor", x: 0, y: 0, height: 2 }, world()))
+      .toEqual({ x: 0, y: 0, z: 2, kind: "terrain" });
+  });
+
   it("resolves flat and sloped path picks to their stored integer base height", () => {
     const flat = world([0, 0, 4, 0]);
     expect(pathTileFromPick(pick("path", 0, 4), flat)).toEqual({ x: 0, y: 0, z: 4, kind: "path" });

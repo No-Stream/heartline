@@ -7,6 +7,10 @@ use super::needs::Needs;
 use super::thoughts::Thought;
 use crate::guests::{AgeGroup, GuestId, GuestStore, MemoryEntry, SpendingLevel};
 
+const RIDE_MEMORY_BONUS_LIMIT: i32 = 20;
+const UNRIDDEN_RIDE_BONUS: i32 = 30;
+const LAST_RIDE_PENALTY: i32 = 30;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuestBehavior {
     pub needs: Needs,
@@ -177,14 +181,39 @@ impl GuestBehavior {
                     0
                 };
                 let queue_penalty = queues.get(&place.id).copied().unwrap_or(0).min(100) as i32 * 5;
-                let memory_bonus = guests
+                let ride_memory = guests
                     .memory(guest)
                     .iter()
                     .filter(|memory| memory.ride_id == place.id)
-                    .last()
-                    .map_or(0, |memory| i32::from(memory.enjoyment));
+                    .last();
+                let memory_bonus = ride_memory.map_or(0, |memory| {
+                    i32::from(memory.enjoyment)
+                        .clamp(-RIDE_MEMORY_BONUS_LIMIT, RIDE_MEMORY_BONUS_LIMIT)
+                });
+                let novelty_bonus = if place.kind == PlaceKind::Ride
+                    && self.rides_completed > 0
+                    && ride_memory.is_none()
+                {
+                    UNRIDDEN_RIDE_BONUS
+                } else {
+                    0
+                };
+                let repeat_penalty = if place.kind == PlaceKind::Ride
+                    && guests
+                        .memory(guest)
+                        .iter()
+                        .last()
+                        .is_some_and(|memory| memory.ride_id == place.id)
+                {
+                    LAST_RIDE_PENALTY
+                } else {
+                    0
+                };
                 (
-                    score + theme_bonus + memory_bonus - price_penalty - queue_penalty,
+                    score + theme_bonus + memory_bonus + novelty_bonus
+                        - repeat_penalty
+                        - price_penalty
+                        - queue_penalty,
                     std::cmp::Reverse(place.id),
                 )
             })
