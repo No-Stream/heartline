@@ -5,7 +5,7 @@
 // palette. A theme maps each design colour into its own palette exactly once, when it is drawn,
 // so the drawings never need a per-theme colour list.
 
-export type ThemeName = "candy" | "riso" | "pen-and-wash" | "mid-century";
+export type ThemeName = "candy" | "riso" | "pen-and-wash" | "mid-century" | "print-modern";
 
 export interface LineStyle {
   /** Ink colour of all outlines and line work. */
@@ -36,6 +36,15 @@ export interface PeopleStyle {
   face: "candy" | "dots" | "none";
 }
 
+/**
+ * Optional print finish for the geometric trees: a second ink printed over the lit side, so the
+ * overlap makes a third colour, and a hand-inked key line round the silhouette and trunk.
+ */
+export interface PrintFinish {
+  overprint?: string;
+  keyLine?: boolean;
+}
+
 /** Tree drawings by kind. Colours are design colours. */
 export type TreeShape =
   | { kind: "lollipop"; crown: string; curl: string; crownRadius: number; trunkHeight: number; direction: number }
@@ -45,10 +54,10 @@ export type TreeShape =
   | { kind: "poplar"; color: string; overprint: string; height: number; width: number }
   | { kind: "scribble"; color: string; crownRadius: number; trunkHeight: number; lean: number }
   | { kind: "willowy"; color: string; height: number }
-  | { kind: "cone"; color: string; height: number; radius: number }
-  | { kind: "oval"; color: string; height: number; radius: number; trunkHeight: number }
-  | { kind: "tiers"; color: string; tiers: number; radius: number; trunkHeight: number }
-  | { kind: "cypress"; color: string; height: number; radius: number };
+  | ({ kind: "cone"; color: string; height: number; radius: number } & PrintFinish)
+  | ({ kind: "oval"; color: string; height: number; radius: number; trunkHeight: number } & PrintFinish)
+  | ({ kind: "tiers"; color: string; tiers: number; radius: number; trunkHeight: number } & PrintFinish)
+  | ({ kind: "cypress"; color: string; height: number; radius: number } & PrintFinish);
 
 export interface TreeDesign {
   id: string;

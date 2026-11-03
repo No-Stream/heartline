@@ -3,7 +3,7 @@
 import { fillPath, inkLine, type Point, smoothPath, wobble } from "./ink.ts";
 import { COLORS } from "./palette.ts";
 import type { Model } from "./solid.ts";
-import type { TreeShape } from "./theme.ts";
+import type { PrintFinish, TreeShape } from "./theme.ts";
 
 type CircleSpec = readonly [offsetX: number, offsetY: number, radius: number];
 
@@ -155,19 +155,47 @@ function drawWillowy(model: Model, shape: Extract<TreeShape, { kind: "willowy" }
   }
 }
 
-/** A flat shape split down the middle into a lit right half and a shaded left half. */
-function twoTone(model: Model, outline: readonly Point[], splitX: number, color: string): void {
-  const themed = model.color(color);
+/** The theme's colour plates are drawn with this offset against the line work. */
+function plateShift(model: Model): string {
+  const [shiftX, shiftY] = model.theme.misregistration;
+  return shiftX !== 0 || shiftY !== 0 ? ` transform="translate(${shiftX} ${shiftY})"` : "";
+}
+
+/** A closed hand-inked line round an outline, in the theme's line style. */
+function keyLine(model: Model, outline: readonly Point[], width = 1.1): string {
+  const { line } = model.theme;
+  return inkLine([...outline, outline[0], outline[1]], model.randomSource, { width: model.lineWidth(width), color: model.ink, wobble: line.wobble, overshoot: line.overshoot });
+}
+
+/**
+ * A flat shape split down the middle into a lit right half and a shaded left half. With an
+ * overprint, a second ink covers a smaller copy of the shape shifted towards the light, clipped
+ * to the shape, so the overlap prints a third colour.
+ */
+function twoTone(model: Model, outline: readonly Point[], splitX: number, finish: { color: string } & PrintFinish): void {
+  const themed = model.color(finish.color);
   const path = smoothPath(outline, true, 0.35);
   model.raw(fillPath(model.theme, path, themed));
   const xs = outline.map(([x]) => x);
   const ys = outline.map(([, y]) => y);
   const [minX, minY, maxY] = [Math.min(...xs), Math.min(...ys), Math.max(...ys)];
   const clipId = `split${Math.round(model.randomSource() * 1e9)}`;
+  const shift = plateShift(model);
   model.raw(
     `<clipPath id="${clipId}"><path d="${path}"/></clipPath>` +
-      `<rect clip-path="url(#${clipId})" x="${minX - 1}" y="${minY - 1}" width="${splitX - minX + 1}" height="${maxY - minY + 2}" fill="${model.theme.shade(themed, 0.3)}"/>`,
+      `<rect clip-path="url(#${clipId})" x="${minX - 1}" y="${minY - 1}" width="${splitX - minX + 1}" height="${maxY - minY + 2}" fill="${model.theme.shade(themed, 0.3)}"${shift}/>`,
   );
+  if (finish.overprint) {
+    const maxX = Math.max(...xs);
+    const [centerX, centerY] = [(minX + maxX) / 2, (minY + maxY) / 2];
+    const [width, height] = [maxX - minX, maxY - minY];
+    const plate = outline.map(([x, y]): Point => [centerX + (x - centerX) * 0.62 + width * 0.24, centerY + (y - centerY) * 0.72 - height * 0.08]);
+    model.raw(
+      `<g clip-path="url(#${clipId})"${shift}><g style="mix-blend-mode:multiply" opacity="0.5">` +
+        `<path d="${smoothPath(plate, true, 0.35)}" fill="${model.color(finish.overprint)}"/></g></g>`,
+    );
+  }
+  if (finish.keyLine) model.raw(keyLine(model, outline));
 }
 
 function ellipsePoints(centerX: number, centerY: number, radiusX: number, radiusY: number, count = 24): Point[] {
@@ -178,32 +206,35 @@ function ellipsePoints(centerX: number, centerY: number, radiusX: number, radius
 }
 
 /** A straight trunk as a thin flat bar, lit on the right. */
-function flatTrunk(model: Model, height: number, width: number): void {
+function flatTrunk(model: Model, height: number, width: number, finish: PrintFinish): void {
   const [bottomX, bottomY] = model.toScreen([0, 0, 0]);
   const [, topY] = model.toScreen([0, 0, height]);
   const trunk = model.color(COLORS.trunk);
   model.raw(`<rect x="${bottomX - width / 2}" y="${topY}" width="${width}" height="${bottomY - topY + 1}" rx="${width / 2}" fill="${trunk}"/>`);
   model.raw(`<rect x="${bottomX - width / 2}" y="${topY}" width="${width / 2}" height="${bottomY - topY + 1}" fill="${model.theme.shade(trunk, 0.3)}"/>`);
+  if (finish.keyLine) {
+    model.raw(`<rect x="${bottomX - width / 2}" y="${topY}" width="${width}" height="${bottomY - topY + 1}" rx="${width / 2}" fill="none" stroke="${model.ink}" stroke-width="${model.lineWidth(0.8)}"/>`);
+  }
 }
 
 function drawCone(model: Model, shape: Extract<TreeShape, { kind: "cone" }>): void {
   const { height, radius } = shape;
   model.groundEllipse(radius * 0.9, radius * 0.9, 0.24, 3, 3);
-  flatTrunk(model, 8, 3);
+  flatTrunk(model, 8, 3, shape);
   const [baseX, baseY] = model.toScreen([0, 0, 6]);
   const [apexX, apexY] = model.toScreen([0, 0, 6 + height]);
   const halfWidth = radius * Math.SQRT1_2 * 1.4;
   const arc = ellipsePoints(baseX, baseY, halfWidth, halfWidth * 0.5, 24).filter(([, y]) => y >= baseY - 0.01);
   arc.sort((first, second) => second[0] - first[0]);
-  twoTone(model, [[apexX, apexY], ...arc], apexX, shape.color);
+  twoTone(model, [[apexX, apexY], ...arc], apexX, shape);
 }
 
 function drawOval(model: Model, shape: Extract<TreeShape, { kind: "oval" }>): void {
   const { height, radius, trunkHeight } = shape;
   model.groundEllipse(radius * 0.8, radius * 0.8, 0.24, 3, 3);
-  flatTrunk(model, trunkHeight + height * 0.3, 2.6);
+  flatTrunk(model, trunkHeight + height * 0.3, 2.6, shape);
   const [centerX, centerY] = model.toScreen([0, 0, trunkHeight + height / 2]);
-  twoTone(model, ellipsePoints(centerX, centerY, radius, height / 2), centerX - radius * 0.15, shape.color);
+  twoTone(model, ellipsePoints(centerX, centerY, radius, height / 2), centerX - radius * 0.15, shape);
 }
 
 /** Flat discs stacked like the layers of a stone pine, each with a shaded underside. */
@@ -211,22 +242,28 @@ function drawTiers(model: Model, shape: Extract<TreeShape, { kind: "tiers" }>): 
   const { tiers, radius, trunkHeight } = shape;
   model.groundEllipse(radius * 0.8, radius * 0.8, 0.24, 3, 3);
   const spacing = radius * 0.62;
-  flatTrunk(model, trunkHeight + spacing * (tiers - 1), 2.6);
+  flatTrunk(model, trunkHeight + spacing * (tiers - 1), 2.6, shape);
   const themed = model.color(shape.color);
   for (let tier = 0; tier < tiers; tier++) {
     const tierRadius = radius * (1 - tier * 0.24);
     const [centerX, centerY] = model.toScreen([0, 0, trunkHeight + tier * spacing]);
-    const underside = smoothPath(ellipsePoints(centerX, centerY + tierRadius * 0.2, tierRadius, tierRadius * 0.42), true);
-    model.raw(fillPath(model.theme, underside, model.theme.shade(themed, 0.32)));
-    const top = smoothPath(ellipsePoints(centerX, centerY, tierRadius, tierRadius * 0.42), true);
-    model.raw(fillPath(model.theme, top, themed));
+    const undersideOutline = ellipsePoints(centerX, centerY + tierRadius * 0.2, tierRadius, tierRadius * 0.42);
+    model.raw(fillPath(model.theme, smoothPath(undersideOutline, true), model.theme.shade(themed, 0.32)));
+    if (shape.keyLine) model.raw(keyLine(model, undersideOutline, 1));
+    const topOutline = ellipsePoints(centerX, centerY, tierRadius, tierRadius * 0.42);
+    model.raw(fillPath(model.theme, smoothPath(topOutline, true), themed));
+    if (shape.overprint) {
+      const plate = ellipsePoints(centerX + tierRadius * 0.22, centerY - tierRadius * 0.06, tierRadius * 0.62, tierRadius * 0.26);
+      model.raw(`<g style="mix-blend-mode:multiply" opacity="0.7"${plateShift(model)}><path d="${smoothPath(plate, true)}" fill="${model.color(shape.overprint)}"/></g>`);
+    }
+    if (shape.keyLine) model.raw(keyLine(model, topOutline, 1));
   }
 }
 
 function drawCypress(model: Model, shape: Extract<TreeShape, { kind: "cypress" }>): void {
   const { height, radius } = shape;
   model.groundEllipse(radius, radius, 0.24, 3, 3);
-  flatTrunk(model, 8, 2.6);
+  flatTrunk(model, 8, 2.6, shape);
   const [baseX, baseY] = model.toScreen([0, 0, 5]);
   // A flame: round at the bottom, drawn to a fine point at the top.
   const outline: Point[] = Array.from({ length: 28 }, (_, index) => {
@@ -235,5 +272,5 @@ function drawCypress(model: Model, shape: Extract<TreeShape, { kind: "cypress" }
     const profile = Math.sin(Math.PI * up ** 0.6) * radius;
     return [baseX + Math.sin(angle) * profile, baseY - up * height];
   });
-  twoTone(model, outline, baseX, shape.color);
+  twoTone(model, outline, baseX, shape);
 }

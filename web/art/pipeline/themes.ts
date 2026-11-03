@@ -3,7 +3,8 @@
 // Usage: themes.ts [theme ...]
 // Rebuilds the drawings and atlas of each named theme (all alternative themes when none are named)
 // under web/art/themes/<theme>/, then screenshots every theme, candy included, into
-// web/art/screenshots/themes/. Candy comes from the game's own atlas, so run `make art` first.
+// web/art/screenshots/themes/, with comparison.png showing COMPARISON_THEMES side by side.
+// Candy comes from the game's own atlas, so run `make art` first.
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -11,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { chromium } from "@playwright/test";
 import { createServer } from "vite";
+import type { ThemeName } from "../generators/theme.ts";
 import { THEMES } from "../generators/themes.ts";
 
 const ART_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -18,6 +20,8 @@ const OUTPUT_DIRECTORY = join(ART_DIRECTORY, "screenshots", "themes");
 const PORT = 4182;
 const NODE_ARGUMENTS = ["--experimental-strip-types", "--disable-warning=ExperimentalWarning"];
 const ALL_THEMES = Object.keys(THEMES);
+/** The themes shown side by side in comparison.png, in reading order. */
+const COMPARISON_THEMES: readonly ThemeName[] = ["candy", "riso", "mid-century", "print-modern"];
 /** The part of the 2x scene shown side by side, in screenshot pixels: buildings, trees, the fountain and a crowd. */
 const COMPARISON_CROP = { x: 330, y: 110, width: 760, height: 500 };
 
@@ -67,9 +71,9 @@ for (const themeName of ALL_THEMES) {
   }
 }
 
-// The same crop of every theme's 2x scene in a grid, with the theme name above each.
+// The same crop of the compared themes' 2x scenes in a grid, with the theme name above each.
 const sources = Object.fromEntries(
-  ALL_THEMES.map((name) => [name, `data:image/png;base64,${readFileSync(join(OUTPUT_DIRECTORY, name, "scene_2x.png")).toString("base64")}`]),
+  COMPARISON_THEMES.map((name) => [name, `data:image/png;base64,${readFileSync(join(OUTPUT_DIRECTORY, name, "scene_2x.png")).toString("base64")}`]),
 );
 await page.setContent("<html><body style='margin:0'></body></html>");
 const comparison = await page.evaluate(
