@@ -1,9 +1,10 @@
 ---
 id: TASK-17
 title: Build the click-in guest details panel
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 04:46'
 labels:
   - guests
   - interface
