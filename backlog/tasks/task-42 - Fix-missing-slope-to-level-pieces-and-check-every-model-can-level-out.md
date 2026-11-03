@@ -1,10 +1,10 @@
 ---
 id: TASK-42
 title: Fix missing slope-to-level pieces and check every model can level out
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 16:34'
-updated_date: '2026-11-03 17:40'
+updated_date: '2026-11-03 18:12'
 labels:
   - coaster
   - bug
