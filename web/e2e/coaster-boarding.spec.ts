@@ -59,7 +59,18 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await dragWorld(page, { x: 239.5, y: 250.5, z: 3 }, { x: 238.5, y: 256.5, z: 2 });
   await expect(page.getByRole("region", { name: "Paths" }).getByRole("status")).toHaveText("Path built.");
   await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
+  await openTool(page, "Facilities");
+  const entrance = await page.evaluate(() => window.gameTest.facilities().find(({ kind }) => kind === "entrance") ?? null);
+  if (!entrance) throw new Error("The park entrance is missing");
+  const entrancePrice = page.getByRole("spinbutton", { name: `Price of entrance ${entrance.id}` });
+  await entrancePrice.fill("8");
+  await entrancePrice.press("Tab");
+  await expect.poll(() => page.evaluate((id) => window.gameTest.facilities().find(({ id: currentId }) => currentId === id)?.price, entrance.id)).toBe(8);
   await openTool(page, "Coaster");
+  const coasterPrice = page.getByRole("spinbutton", { name: "Coaster ticket price" });
+  await coasterPrice.fill("9");
+  await coasterPrice.press("Tab");
+  await expect(coasterPrice).toHaveValue("9");
   await page.getByRole("button", { name: "Open coaster" }).click();
   await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
   let riderId = "";
@@ -77,6 +88,7 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   }
   expect(queuedIds.size, "a guest should enter the queue").toBeGreaterThan(0);
   expect(riderId, "a queued guest should board the coaster").not.toBe("");
+  await expect.poll(async () => Number(await page.locator("[data-coaster-income]").textContent())).toBeGreaterThan(0);
   const riderCamera = await page.evaluate((id): Camera => {
     const rider = window.gameTest.riders().find((entry) => entry.id === id);
     if (!rider) throw new Error("Rider disappeared before selection");

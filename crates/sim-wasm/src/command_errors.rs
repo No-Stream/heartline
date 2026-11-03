@@ -120,7 +120,6 @@ fn park_error_message(error: ParkCommandError) -> &'static str {
         ParkCommandError::Facility(PlacementError::Occupied) => "Occupied",
         ParkCommandError::Facility(PlacementError::EntranceExists) => "EntranceExists",
         ParkCommandError::Facility(PlacementError::UnknownBuilding) => "UnknownBuilding",
-        ParkCommandError::Facility(PlacementError::InvalidPrice) => "InvalidPrice",
         ParkCommandError::Facility(PlacementError::MissingAccess) => "MissingAccess",
         ParkCommandError::Facility(PlacementError::QueueMustEndAtFacility) => {
             "QueueMustEndAtFacility"

@@ -84,7 +84,6 @@ pub enum PlacementError {
     Occupied,
     EntranceExists,
     UnknownBuilding,
-    InvalidPrice,
     MissingAccess,
     QueueMustEndAtFacility,
     ExitMustBeNormal,
@@ -112,6 +111,12 @@ impl ParkFacilities {
     }
     pub fn buildings(&self) -> &[Building] {
         &self.buildings
+    }
+    pub fn entrance_price(&self) -> u16 {
+        self.buildings
+            .iter()
+            .find(|building| building.kind == FacilityKind::Entrance)
+            .map_or(0, |building| building.price)
     }
 
     pub fn state_hash(&self) -> u64 {
@@ -294,9 +299,6 @@ impl ParkFacilities {
             .iter_mut()
             .find(|building| building.id == id)
             .ok_or(PlacementError::UnknownBuilding)?;
-        if building.kind == FacilityKind::Entrance && price != 0 {
-            return Err(PlacementError::InvalidPrice);
-        }
         building.price = price;
         Ok(())
     }
@@ -895,7 +897,15 @@ mod tests {
             .place(&world, FacilityKind::Entrance, position, Direction::East)
             .unwrap();
         assert_eq!(FacilityKind::Entrance.footprint(Direction::East), (4, 1));
-        assert_eq!(park.set_price(id, 1), Err(PlacementError::InvalidPrice));
+        park.set_price(id, 1).unwrap();
+        assert_eq!(
+            park.buildings()
+                .iter()
+                .find(|building| building.id == id)
+                .unwrap()
+                .price,
+            1
+        );
         assert_eq!(
             park.place(
                 &world,

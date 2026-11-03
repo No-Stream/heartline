@@ -24,6 +24,7 @@ pub struct ParkGuests {
     reachable: Graph,
     world_revision: u64,
     leaving: Vec<bool>,
+    entrance_price: u16,
 }
 
 impl ParkGuests {
@@ -48,7 +49,12 @@ impl ParkGuests {
             reachable: Graph::with_entrance(world, Some(entrance)),
             world_revision: world.revision(),
             leaving: vec![false; roster_size],
+            entrance_price: 0,
         }
+    }
+
+    pub fn set_entrance_price(&mut self, price: u16) {
+        self.entrance_price = price;
     }
 
     pub fn set_entrance(&mut self, world: &World, entrance: Option<Position>) {
@@ -66,6 +72,10 @@ impl ParkGuests {
             .iter()
             .map(|guest| u64::from(guest.lifetime_money_spent))
             .sum()
+    }
+
+    pub fn facility_income(&self, place_id: u32) -> u64 {
+        self.behaviors.facility_income(place_id)
     }
 
     pub fn walking(&self) -> &WalkingSimulation {
@@ -89,6 +99,7 @@ impl ParkGuests {
         for &leaving in &self.leaving {
             hash.write_bool(leaving);
         }
+        hash.write_u16(self.entrance_price);
         hash.finish()
     }
     pub fn behaviors(&self) -> &BehaviorSimulation {
@@ -355,6 +366,7 @@ impl ParkGuests {
                 &mut self.behaviors.guests,
                 appeal,
                 population_override,
+                self.entrance_price,
             )
         } else {
             Vec::new()
@@ -1220,6 +1232,35 @@ mod tests {
         });
         let mut park = ParkGuests::new(1, 0, &world, entrance, 1);
         assert_eq!(park.tick(&world, &[], 100, None), VisitChanges::default());
+    }
+
+    #[test]
+    fn guests_pay_the_entrance_fee_when_they_arrive() {
+        let entrance = Position {
+            x: 0,
+            y: 0,
+            height: 0,
+        };
+        let mut world = World::new(
+            1,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        world.place_path(Path {
+            position: entrance,
+            slope: None,
+        });
+        let mut park = ParkGuests::new(1, 1, &world, entrance, 1);
+        park.set_entrance_price(6);
+
+        let arrivals = park.tick(&world, &[], 100, None);
+
+        assert_eq!(arrivals.arrived, vec![GuestId(0)]);
+        assert_eq!(park.revenue(), 6);
+        assert_eq!(park.behaviors().guests[0].money, 94);
     }
 }
 

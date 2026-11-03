@@ -34,10 +34,17 @@ impl Park {
         let population = self.simulation.walking().guests().len();
         self.simulation
             .set_entrance(&self.world, self.facilities.entrance(&self.world));
+        self.simulation
+            .set_entrance_price(self.facilities.entrance_price());
         let mut facilities = self.facilities.guest_facilities(&self.world);
         if self.coaster_open {
             let access = self.construction.as_ref().and_then(|construction| {
-                coaster_facility(&self.world, construction, COASTER_PLACE_ID, 0)
+                coaster_facility(
+                    &self.world,
+                    construction,
+                    COASTER_PLACE_ID,
+                    self.coaster_price,
+                )
             });
             if let Some(facility) = access {
                 self.coaster_facility = Some(facility);
@@ -531,11 +538,55 @@ fn append_vector(result: &mut Vec<f32>, vector: Vec3) {
 #[cfg(test)]
 mod tests {
     use super::{Park, SupportRenderCache, SupportSegment, Vec3};
-    use crate::facilities::ParkFacilities;
+    use crate::facilities::{FacilityKind, ParkFacilities};
     use crate::guests::park::ParkGuests;
     use crate::physics::{PhysicsConfig, Train, demo_circuit};
     use crate::track::hybrid_model;
-    use crate::world::{PathKind, Position, Surface, World};
+    use crate::world::{Direction, Path, PathKind, Position, Surface, World};
+
+    #[test]
+    fn park_tick_charges_the_entrance_fee_and_increases_revenue() {
+        let mut world = World::new(
+            6,
+            6,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let entrance_path = Position {
+            x: 1,
+            y: 0,
+            height: 0,
+        };
+        world.place_path(Path {
+            position: entrance_path,
+            slope: None,
+        });
+        let mut facilities = ParkFacilities::new();
+        let entrance_id = facilities
+            .place(
+                &world,
+                FacilityKind::Entrance,
+                Position {
+                    x: 1,
+                    y: 1,
+                    height: 0,
+                },
+                Direction::North,
+            )
+            .unwrap();
+        facilities.set_price(entrance_id, 7).unwrap();
+        let simulation = ParkGuests::new(42, 1, &world, entrance_path, 1);
+        let circuit = demo_circuit();
+        let configuration = hybrid_model().train;
+        let train = Train::new(&circuit, &configuration, PhysicsConfig::default(), 0.0, 0.0);
+        let mut park = Park::new(world, facilities, simulation, circuit, train, configuration);
+
+        park.tick();
+
+        assert_eq!(park.simulation.revenue(), 7);
+    }
 
     #[test]
     fn proximity_inputs_keep_routed_supports_as_segments() {

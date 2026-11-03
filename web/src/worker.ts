@@ -41,6 +41,7 @@ let lastWakeup: number;
 let coasterGeometrySent = false;
 let lastConstructionMessage = "";
 let lastBlockReport = "";
+let lastConstructionEconomy = "";
 let selectedGuestId: number | undefined;
 let lastGuestDetailSentAt = 0;
 let lastFacilityRevenue = "";
@@ -68,7 +69,7 @@ function advanceBlockAnalysis(budget: number): boolean {
   return complete;
 }
 
-function wake(): void {
+function wake(forceSnapshot = false): void {
   const now = performance.now();
   const result = advanceSimulation(clock, now - lastWakeup);
   lastWakeup = now;
@@ -77,18 +78,21 @@ function wake(): void {
     for (let tick = 0; tick < result.ticksToRun; tick += 1) simulation.tick();
   }
 
-  const guestIds = simulation.guest_ids();
-  const guests = simulation.snapshot();
-  const appearances = simulation.guest_appearances();
-  const trainPoses = simulation.coaster_train_poses();
-  const constructionTrainPoses = simulation.construction_active() ? simulation.construction_train_poses() : new Float32Array();
-  const constructionRiders = simulation.construction_riders();
-  workerScope.postMessage(
-    { type: "snapshot", tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, constructionRiders },
-    [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, constructionRiders.buffer],
-  );
+  if (forceSnapshot || simulationPaused || result.ticksToRun > 0) {
+    const guestIds = simulation.guest_ids();
+    const guests = simulation.snapshot();
+    const appearances = simulation.guest_appearances();
+    const trainPoses = simulation.coaster_train_poses();
+    const constructionTrainPoses = simulation.construction_active() ? simulation.construction_train_poses() : new Float32Array();
+    const constructionRiders = simulation.construction_riders();
+    workerScope.postMessage(
+      { type: "snapshot", tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, constructionRiders },
+      [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, constructionRiders.buffer],
+    );
+  }
   const message = simulation.construction_message();
-  if (simulation.construction_active() && (message !== lastConstructionMessage || simulation.construction_block_report_json() !== lastBlockReport)) sendConstruction();
+  const constructionEconomy = `${simulation.construction_coaster_price()}:${simulation.construction_coaster_income()}`;
+  if (simulation.construction_active() && (message !== lastConstructionMessage || simulation.construction_block_report_json() !== lastBlockReport || constructionEconomy !== lastConstructionEconomy)) sendConstruction();
   if (selectedGuestId !== undefined && now - lastGuestDetailSentAt >= 500) sendGuestDetail();
   if (simulation.facilities_json() !== lastFacilitiesJson || String(simulation.facility_revenue()) !== lastFacilityRevenue) sendFacilities();
   if (simulationPaused) return;
@@ -119,6 +123,9 @@ function sendConstruction(): void {
   const placedSupports = simulation.construction_placed_supports();
   lastConstructionMessage = simulation.construction_message();
   lastBlockReport = simulation.construction_block_report_json();
+  const coasterPrice = simulation.construction_coaster_price();
+  const coasterIncome = simulation.construction_coaster_income();
+  lastConstructionEconomy = `${coasterPrice}:${coasterIncome}`;
   workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), pieces,
     selected: selected || null, track: track ? track.split("\n").map((row) => {
       const [id, label] = row.split("\t");
@@ -126,7 +133,7 @@ function sendConstruction(): void {
     }) : [],
     canAppend: !!selectedChoice && !selectedChoice[6], canClose: simulation.construction_can_close(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as unknown,
-    canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.[6] || "",
+    canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), coasterPrice, coasterIncome, stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.[6] || "",
     blockReport: JSON.parse(lastBlockReport) as unknown, trainCount: simulation.construction_train_count(),
     previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports, railDistances, blockCandidates,
   }, [previewRails.buffer, previewTies.buffer, previewSupports.buffer, placedRails.buffer, placedTies.buffer, placedSupports.buffer, railDistances.buffer, blockCandidates.buffer]);
@@ -191,7 +198,7 @@ const initialized = init().then(() => {
   workerScope.postMessage({ type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
   workerScope.postMessage({ type: "ready" });
   lastWakeup = performance.now();
-  wake();
+  wake(true);
 });
 
 workerScope.addEventListener("message", (event) => {
@@ -328,6 +335,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-delete": simulation.construction_delete(action.id); break;
         case "construction-close": simulation.construction_close(); break;
         case "construction-set-open": simulation.construction_set_open(action.open); break;
+        case "construction-set-coaster-price": simulation.construction_set_coaster_price(action.price); break;
         case "construction-test": simulation.construction_test(); break;
         case "construction-auto-blocks": simulation.construction_auto_blocks(); break;
         case "construction-apply-best-blocks": simulation.construction_apply_best_block_sections(); break;

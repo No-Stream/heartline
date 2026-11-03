@@ -12,6 +12,7 @@ export type ConstructionAction =
   | { readonly type: "construction-delete-mode"; readonly enabled: boolean }
   | { readonly type: "construction-close" }
   | { readonly type: "construction-set-open"; readonly open: boolean }
+  | { readonly type: "construction-set-coaster-price"; readonly price: number }
   | { readonly type: "construction-test" }
   | { readonly type: "construction-auto-blocks" }
   | { readonly type: "construction-apply-best-blocks" }
@@ -88,6 +89,8 @@ export interface ConstructionState {
   readonly canClose: boolean;
   readonly canTest: boolean;
   readonly isOpen: boolean;
+  readonly coasterPrice: number;
+  readonly coasterIncome: bigint;
   readonly stationPositions: readonly number[];
   readonly message: string;
   readonly blockReport: BlockReport;

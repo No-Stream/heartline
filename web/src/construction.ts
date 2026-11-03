@@ -105,12 +105,23 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       <section class="tool-panel__section builder__palette" role="radiogroup" aria-label="Next piece" data-palette></section>
       <section class="tool-panel__section" aria-label="Track actions">
         <div class="builder__actions">
+          <div class="builder__ride-controls">
+            <div class="builder__coaster-price">
+              <span class="tool-panel__label" id="coaster-price-label">Ride price</span>
+              <div class="stepper stepper--compact" role="group" aria-labelledby="coaster-price-label">
+                <button type="button" data-coaster-price-step="-1" aria-label="Lower the coaster ticket price">−</button>
+                <input type="number" data-coaster-price min="0" max="65535" step="1" value="6" aria-label="Coaster ticket price">
+                <button type="button" data-coaster-price-step="1" aria-label="Raise the coaster ticket price">+</button>
+              </div>
+            </div>
+            <button type="button" class="tool-panel__action" data-open>Open coaster</button>
+          </div>
           <button type="button" class="tool-panel__action tool-panel__action--primary" data-append>Place piece ${hint("place")}</button>
           <button type="button" class="tool-panel__action" data-undo>Undo last piece ${hint("undo")}</button>
           <button type="button" class="tool-panel__action" data-close>Close circuit ${hint("close")}</button>
           <button type="button" class="tool-panel__action" data-test>Test coaster ${hint("test")}</button>
-          <button type="button" class="tool-panel__action" data-open>Open coaster</button>
         </div>
+        <p class="builder__test-hint">Coaster income: <span data-coaster-income>0</span></p>
         <label class="builder__toggle"><input type="checkbox" data-delete-mode> Delete track by clicking it ${hint("deleteMode")}</label>
       </section>
       <section class="tool-panel__section" aria-label="Circuit">
@@ -184,6 +195,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const close = element<HTMLButtonElement>("[data-close]");
   const test = element<HTMLButtonElement>("[data-test]");
   const open = element<HTMLButtonElement>("[data-open]");
+  const coasterPrice = element<HTMLInputElement>("[data-coaster-price]");
+  const coasterIncome = element("[data-coaster-income]");
   const deleteMode = element<HTMLInputElement>("[data-delete-mode]");
   const message = element("[data-message]");
   const track = element<HTMLOListElement>("[data-track]");
@@ -265,6 +278,18 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   close.addEventListener("click", () => dispatch({ type: "construction-close" }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
   open.addEventListener("click", () => dispatch({ type: "construction-set-open", open: !state?.isOpen }));
+  const setCoasterPrice = (price: number): void => {
+    if (!Number.isInteger(price) || price < 0 || price > 65535) throw new RangeError("Invalid coaster ticket price");
+    coasterPrice.value = String(price);
+    dispatch({ type: "construction-set-coaster-price", price });
+  };
+  coasterPrice.addEventListener("change", () => {
+    if (coasterPrice.validity.valid && coasterPrice.value !== "") setCoasterPrice(Number(coasterPrice.value));
+  });
+  const coasterPriceButtons = [...container.querySelectorAll<HTMLButtonElement>("[data-coaster-price-step]")];
+  coasterPriceButtons.forEach((button) => button.addEventListener("click", () => {
+    setCoasterPrice(Number(coasterPrice.value) + Number(button.dataset.coasterPriceStep));
+  }));
   deleteMode.addEventListener("change", () => dispatch({ type: "construction-delete-mode", enabled: deleteMode.checked }));
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
     element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => { if (state) select(steppedPiece(state.pieces, shapes, state.selected, attribute, step)); });
@@ -545,6 +570,12 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       test.disabled = !next.canTest;
       open.disabled = !next.canTest && !next.isOpen;
       open.textContent = next.isOpen ? "Close coaster" : "Open coaster";
+      if (document.activeElement !== coasterPrice) coasterPrice.value = String(next.coasterPrice);
+      for (const button of coasterPriceButtons) {
+        const priceChange = Number(button.dataset.coasterPriceStep);
+        button.disabled = priceChange < 0 ? next.coasterPrice === 0 : next.coasterPrice === 65535;
+      }
+      coasterIncome.textContent = String(next.coasterIncome);
       const access = next.stationPositions;
       if (access.length !== 0 && access.length !== 6) throw new Error("Invalid station access positions");
       element("[data-station-access]").textContent = access.length ? `Connect a queue at (${access[0]}, ${access[1]}) and a normal exit path at (${access[3]}, ${access[4]}), both at terrain height ${access[2]}. Connect the queue to the park's normal paths.` : "";

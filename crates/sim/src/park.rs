@@ -37,6 +37,7 @@ pub struct Park {
     pub construction_recorder: Option<TestRunRecorder>,
     pub construction_report: Option<TestRun>,
     pub coaster_open: bool,
+    pub coaster_price: u16,
     pub coaster_operation: Option<BlockOperation>,
     pub coaster_riders: BTreeMap<u64, Vec<GuestId>>,
     pub coaster_facility: Option<Facility>,
@@ -82,6 +83,7 @@ impl Park {
             construction_recorder: None,
             construction_report: None,
             coaster_open: false,
+            coaster_price: 6,
             coaster_operation: None,
             coaster_riders: BTreeMap::new(),
             coaster_facility: None,
@@ -101,6 +103,14 @@ impl Park {
             block_throughput_cache: BTreeMap::new(),
             support_render_cache: BTreeMap::new(),
         }
+    }
+
+    pub fn set_coaster_price(&mut self, price: u16) {
+        self.coaster_price = price;
+    }
+
+    pub fn coaster_income(&self) -> u64 {
+        self.simulation.facility_income(tick::COASTER_PLACE_ID)
     }
 
     /// Stable fingerprint of all live park state, excluding rebuildable render caches.
@@ -136,6 +146,7 @@ impl Park {
             report.hash_into(hash);
         });
         hash.write_bool(self.coaster_open);
+        hash.write_u16(self.coaster_price);
         hash.write_option(self.coaster_operation.as_ref(), |hash, operation| {
             operation.hash_into(hash);
         });

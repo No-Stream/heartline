@@ -192,6 +192,18 @@ impl WasmSimulation {
         self.coaster_open
     }
 
+    pub fn construction_coaster_price(&self) -> u16 {
+        self.coaster_price
+    }
+
+    pub fn construction_coaster_income(&self) -> u64 {
+        self.coaster_income()
+    }
+
+    pub fn construction_set_coaster_price(&mut self, price: u16) {
+        self.set_coaster_price(price);
+    }
+
     /// Queue entrance and exit tiles as x, y, height triples.
     pub fn construction_station_positions(&self) -> Vec<i32> {
         self.construction

@@ -62,6 +62,7 @@ impl VisitManager {
         behaviors: &mut [GuestBehavior],
         appeal: u8,
         population_override: Option<usize>,
+        entrance_price: u16,
     ) -> Vec<GuestId> {
         self.validate_roster(guests, behaviors.len());
         assert!(appeal <= 100, "appeal must be a percentage");
@@ -77,7 +78,12 @@ impl VisitManager {
             self.next_candidate = (self.next_candidate + 1) % group_count;
             let members = &guests.groups[group_index].members;
             let group_size = members.len();
-            if guests.is_active(members[0]) || self.active_count + group_size > target {
+            if guests.is_active(members[0])
+                || self.active_count + group_size > target
+                || members
+                    .iter()
+                    .any(|id| behaviors[id.0 as usize].money < entrance_price)
+            {
                 continue;
             }
             if !admitted.is_empty() && admitted.len() + group_size > self.arrivals_per_tick {
@@ -87,6 +93,8 @@ impl VisitManager {
             for id in members {
                 guests.mark_returned(id);
                 behaviors[id.0 as usize].reset_visit();
+                behaviors[id.0 as usize].money -= entrance_price;
+                behaviors[id.0 as usize].lifetime_money_spent += u32::from(entrance_price);
                 admitted.push(id);
                 self.active_count += 1;
             }
@@ -167,14 +175,14 @@ mod tests {
     fn arrivals_follow_appeal_and_override_without_forcing_guests_out() {
         let (mut guests, mut behaviors, mut manager) = empty_park(20);
         for _ in 0..10 {
-            manager.arrive(&mut guests, &mut behaviors, 50, None);
+            manager.arrive(&mut guests, &mut behaviors, 50, None, 0);
         }
         assert_eq!(manager.active_count(), 10);
         for _ in 0..10 {
-            manager.arrive(&mut guests, &mut behaviors, 0, Some(16));
+            manager.arrive(&mut guests, &mut behaviors, 0, Some(16), 0);
         }
         assert_eq!(manager.active_count(), 16);
-        manager.arrive(&mut guests, &mut behaviors, 0, Some(0));
+        manager.arrive(&mut guests, &mut behaviors, 0, Some(0), 0);
         assert_eq!(manager.active_count(), 16);
     }
 
@@ -182,7 +190,7 @@ mod tests {
     fn visits_end_after_activities_and_return_with_memory() {
         let (mut guests, mut behaviors, mut manager) = empty_park(1);
         let id = GuestId(0);
-        manager.arrive(&mut guests, &mut behaviors, 100, None);
+        manager.arrive(&mut guests, &mut behaviors, 100, None, 0);
         guests.record_memory(
             id,
             MemoryEntry {
@@ -200,7 +208,7 @@ mod tests {
         behaviors[0].stops_completed = 3;
         manager.depart_completed(&mut guests, &behaviors);
         assert!(!guests.is_active(id));
-        manager.arrive(&mut guests, &mut behaviors, 100, None);
+        manager.arrive(&mut guests, &mut behaviors, 100, None, 0);
         assert!(guests.is_active(id));
         assert_eq!(guests.memory(id).iter().next().unwrap().ride_id, 7);
         assert_eq!(behaviors[0].rides_completed, 0);
@@ -218,7 +226,7 @@ mod tests {
             .members
             .clone();
         for _ in 0..100 {
-            manager.arrive(&mut guests, &mut behaviors, 100, None);
+            manager.arrive(&mut guests, &mut behaviors, 100, None, 0);
         }
         for &id in &family {
             assert!(guests.is_active(id));
@@ -241,13 +249,34 @@ mod tests {
             .unwrap();
         for _ in 0..12 {
             let first_admissions =
-                first_manager.arrive(&mut first, &mut first_behaviors, 100, None);
+                first_manager.arrive(&mut first, &mut first_behaviors, 100, None, 0);
             let second_admissions =
-                second_manager.arrive(&mut second, &mut second_behaviors, 100, None);
+                second_manager.arrive(&mut second, &mut second_behaviors, 100, None, 0);
             assert!(first_admissions.len() <= 3_usize.max(largest_group));
             assert_eq!(first_admissions, second_admissions);
         }
         assert_eq!(first_manager.active_count(), 12);
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn guests_without_enough_money_decline_the_entrance_fee() {
+        let (mut guests, mut behaviors, mut manager) = empty_park(1);
+        behaviors[0].money = 5;
+
+        assert!(
+            manager
+                .arrive(&mut guests, &mut behaviors, 100, None, 6)
+                .is_empty()
+        );
+        assert_eq!(behaviors[0].money, 5);
+        assert_eq!(behaviors[0].lifetime_money_spent, 0);
+
+        assert_eq!(
+            manager.arrive(&mut guests, &mut behaviors, 100, None, 5),
+            vec![GuestId(0)]
+        );
+        assert_eq!(behaviors[0].money, 95);
+        assert_eq!(behaviors[0].lifetime_money_spent, 5);
     }
 }

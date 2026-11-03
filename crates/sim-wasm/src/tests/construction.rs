@@ -28,6 +28,17 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
 use super::WasmSimulation;
 
 #[test]
+fn coaster_ticket_price_defaults_to_six_and_can_be_changed_to_zero() {
+    let mut simulation = WasmSimulation::new(42, 0);
+
+    assert_eq!(simulation.construction_coaster_price(), 6);
+    simulation.construction_set_coaster_price(0);
+
+    assert_eq!(simulation.construction_coaster_price(), 0);
+    assert_eq!(simulation.construction_coaster_income(), 0);
+}
+
+#[test]
 fn coaster_cannot_open_without_a_complete_circuit() {
     let mut simulation = WasmSimulation::new(42, 0);
     assert!(!simulation.construction_set_open(true));

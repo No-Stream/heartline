@@ -75,8 +75,12 @@ impl Park {
             return Err(BlockCommandError::CompleteCircuitRequired);
         }
         let construction = self.construction.as_ref().expect("complete coaster exists");
-        let Some(facility) = coaster_facility(&self.world, construction, COASTER_PLACE_ID, 0)
-        else {
+        let Some(facility) = coaster_facility(
+            &self.world,
+            construction,
+            COASTER_PLACE_ID,
+            self.coaster_price,
+        ) else {
             return Err(BlockCommandError::MissingStationAccess);
         };
         let circuit = construction

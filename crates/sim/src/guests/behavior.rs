@@ -1062,7 +1062,10 @@ mod tests {
     fn externally_driven_coaster_boards_and_records_force_outcomes() {
         let mut guests = generate_guests(31, 2);
         let mut simulation = BehaviorSimulation::new(2);
-        let ride = place(1, PlaceKind::Ride);
+        let ride = KnownPlace {
+            price: 6,
+            ..place(1, PlaceKind::Ride)
+        };
         let facility = Facility {
             place: ride,
             capacity: 2,
@@ -1088,6 +1091,8 @@ mod tests {
             simulation.board_coaster(&facility, &guests),
             vec![GuestId(0), GuestId(1)]
         );
+        assert_eq!(simulation.guests[0].money, 94);
+        assert_eq!(simulation.facility_income(ride.id), 12);
         assert_eq!(
             simulation.activity_detail(GuestId(0)).kind,
             ActivityKind::Riding
@@ -1198,6 +1203,29 @@ mod tests {
         );
         assert!(!simulation.is_coaster_riding(GuestId(1)));
         assert_eq!(guests.memory(GuestId(1)).len(), 1);
+    }
+
+    #[test]
+    fn zero_price_coaster_boards_riders_without_income() {
+        let guests = generate_guests(31, 1);
+        let mut simulation = BehaviorSimulation::new(1);
+        let ride = place(1, PlaceKind::Ride);
+        let facility = Facility {
+            place: ride,
+            capacity: 1,
+            duration_ticks: 3,
+            exit_position: None,
+        };
+        simulation.set_external_rides(&[ride.id]);
+        simulation.activities[0] = Some(Activity::Queuing(ride.id, 0));
+        simulation.queues.insert(ride.id, vec![GuestId(0)]);
+
+        assert_eq!(
+            simulation.board_coaster(&facility, &guests),
+            vec![GuestId(0)]
+        );
+        assert_eq!(simulation.guests[0].money, 100);
+        assert_eq!(simulation.facility_income(ride.id), 0);
     }
 
     #[test]
