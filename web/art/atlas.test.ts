@@ -4,6 +4,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { COLORS } from "./generators/palette.ts";
+import { CAST, type PersonAppearance } from "./generators/people.ts";
 import { themeNamed } from "./generators/themes.ts";
 
 interface Placement { page: number; x: number; y: number; width: number; height: number }
@@ -11,7 +12,7 @@ interface Atlas {
   scales: number[];
   themeStyle: { steel: string; wood: string; train: string; ink: string; lineWeight: number };
   pages: Record<string, { file: string; width: number; height: number }[]>;
-  sprites: Record<string, { views: Record<string, Record<string, string[]>> }>;
+  sprites: Record<string, { views: Record<string, Record<string, string[]>>; appearance?: PersonAppearance }>;
   frames: Record<string, { source: string; sourceHash: string; width: number; height: number; properties?: Record<string, string>; placements: Record<string, Placement> }>;
 }
 
@@ -123,5 +124,19 @@ describe("sprite atlas metadata", () => {
     }
     expect(spritesIn("scenery").length).toBeGreaterThanOrEqual(8);
     expect(existsSync(drawingsDirectory)).toBe(true);
+  });
+
+  test("every person sprite has complete appearance metadata", () => {
+    const people = spritesIn("people");
+    expect(people.map(([name]) => name).sort()).toEqual(CAST.map(({ id }) => `people/${id}`).sort());
+    for (const [name, sprite] of people) {
+      expect(sprite.appearance, name).toEqual({
+        ageGroup: expect.stringMatching(/^(child|adult|senior)$/),
+        skinToneGroup: expect.stringMatching(/^(light|medium|deep)$/),
+        hairGroup: expect.stringMatching(/^(curly|short|tied|covered|bob|bald)$/),
+        clothingPaletteGroup: expect.stringMatching(/^(red|orange|yellow|green|blue|purple|neutral)$/),
+        bodyShape: expect.stringMatching(/^(slender|average|broad)$/),
+      });
+    }
   });
 });

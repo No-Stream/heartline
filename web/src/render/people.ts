@@ -1,4 +1,5 @@
 import type { Rotation } from "../camera";
+import type { PersonAppearance } from "../../art/generators/people.ts";
 import type { Atlas, WorldSprite } from "./scene";
 
 export interface GuestSnapshot {
@@ -11,16 +12,70 @@ const RECORD_SIZE = 7;
 const APPEARANCE_SIZE = 5;
 const TILE_EDGE_UNITS = 32 / Math.SQRT1_2;
 const VIEWS = ["se", "sw", "nw", "ne"] as const;
-const spriteCache = new WeakMap<Atlas, string[]>();
+const SKIN_GROUPS = ["deep", "medium", "light"] as const;
+const HAIR_GROUPS = ["curly", "short", "tied", "covered", "bob", "bald"] as const;
+const CLOTHING_GROUPS = ["red", "orange", "yellow", "green", "blue", "purple", "neutral"] as const;
+const BODY_SHAPES = ["slender", "average", "broad"] as const;
+const SKIN_KEY_COUNT = 8;
+const HAIR_KEY_COUNT = 12;
+const CLOTHING_KEY_COUNT = 16;
+const BODY_KEY_COUNT = 5;
+const PERSON_METADATA_ERROR = "Atlas has invalid guest appearance metadata";
 
-function personSprites(atlas: Atlas): string[] {
+interface PersonCandidate { sprite: string; appearance: PersonAppearance }
+type PeopleAtlas = Atlas & { sprites?: Record<string, { appearance?: PersonAppearance }> };
+
+const spriteCache = new WeakMap<Atlas, PersonCandidate[]>();
+
+function personSprites(atlas: Atlas): PersonCandidate[] {
   let sprites = spriteCache.get(atlas);
   if (!sprites) {
-    sprites = [...new Set(Object.keys(atlas.frames).filter((key) => key.startsWith("people/")).map((key) => key.split("/").slice(0, 2).join("/")))].sort();
+    sprites = [...new Set(Object.keys(atlas.frames).filter((key) => key.startsWith("people/")).map((key) => key.split("/").slice(0, 2).join("/")))].sort().map((sprite) => {
+      const appearance = (atlas as PeopleAtlas).sprites?.[sprite]?.appearance;
+      if (!appearance) throw new Error(`${PERSON_METADATA_ERROR}: ${sprite}`);
+      return { sprite, appearance };
+    });
     if (!sprites.length) throw new Error("Atlas has no guest sprites");
     spriteCache.set(atlas, sprites);
   }
   return sprites;
+}
+
+function categoryForKey<T extends string>(key: number, keyCount: number, groups: readonly T[]): T {
+  return groups[Math.floor(key * groups.length / keyCount)];
+}
+
+function guestAppearanceMatches(candidate: PersonAppearance, hair: string, clothing: string, body: string): number {
+  return Number(candidate.hairGroup === hair) + Number(candidate.clothingPaletteGroup === clothing) + Number(candidate.bodyShape === body);
+}
+
+function choosePerson(candidates: readonly PersonCandidate[], guestId: number, appearance: Uint8Array): string {
+  const [skinKey, hairKey, clothingKey, bodyKey, ageKey] = appearance;
+  if (skinKey >= SKIN_KEY_COUNT || hairKey >= HAIR_KEY_COUNT || clothingKey >= CLOTHING_KEY_COUNT || bodyKey >= BODY_KEY_COUNT || ageKey > 2) {
+    throw new Error("Invalid guest appearance");
+  }
+  const ageGroup = (["child", "adult", "senior"] as const)[ageKey];
+  const ageCandidates = candidates.filter(({ appearance: person }) => person.ageGroup === ageGroup);
+  const eligible = ageGroup === "senior" && ageCandidates.length === 0
+    ? candidates.filter(({ appearance: person }) => person.ageGroup === "adult")
+    : ageCandidates;
+  if (!eligible.length) throw new Error(`Atlas has no ${ageGroup} guest sprites`);
+
+  const skin = categoryForKey(skinKey, SKIN_KEY_COUNT, SKIN_GROUPS);
+  const hair = categoryForKey(hairKey, HAIR_KEY_COUNT, HAIR_GROUPS);
+  const clothing = categoryForKey(clothingKey, CLOTHING_KEY_COUNT, CLOTHING_GROUPS);
+  const body = categoryForKey(bodyKey, BODY_KEY_COUNT, BODY_SHAPES);
+  const ranked = eligible.map((candidate) => ({
+    ...candidate,
+    skinMatch: candidate.appearance.skinToneGroup === skin,
+    otherMatches: guestAppearanceMatches(candidate.appearance, hair, clothing, body),
+  }));
+  const bestSkinMatch = ranked.some(({ skinMatch }) => skinMatch);
+  const skinRanked = ranked.filter(({ skinMatch }) => skinMatch === bestSkinMatch);
+  const bestOtherMatches = Math.max(...skinRanked.map(({ otherMatches }) => otherMatches));
+  const equallyGood = skinRanked.filter(({ otherMatches }) => otherMatches === bestOtherMatches);
+  const hash = Math.imul(guestId ^ (guestId >>> 16), 0x45d9f3b) >>> 0;
+  return equallyGood[hash % equallyGood.length].sprite;
 }
 const animationCache = new WeakMap<Atlas, Map<string, { frames: number; cycleLength: number }>>();
 
@@ -62,9 +117,8 @@ export function buildPeople(previous: GuestSnapshot | undefined, current: GuestS
       return before + (now - before) * interpolation;
     };
     const appearanceOffset = index * APPEARANCE_SIZE;
-    const [skin, hair, clothing, body, age] = current.appearances.subarray(appearanceOffset, appearanceOffset + APPEARANCE_SIZE);
-    if (age > 2) throw new Error("Invalid guest age");
-    const sprite = choices[(skin * 31 + hair * 17 + clothing * 7 + body + age * 13) % choices.length];
+    const appearance = current.appearances.subarray(appearanceOffset, appearanceOffset + APPEARANCE_SIZE);
+    const sprite = choosePerson(choices, id, appearance);
     const headingX = current.guests[offset + 3];
     const headingY = current.guests[offset + 4];
     const heading = Math.abs(headingX) >= Math.abs(headingY) ? (headingX >= 0 ? 0 : 2) : (headingY >= 0 ? 1 : 3);

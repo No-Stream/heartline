@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { buildPeople, type GuestSnapshot } from "./people";
 import type { Atlas } from "./scene";
+import { CAST, personAppearance } from "../../art/generators/people.ts";
 
 const frames: Atlas["frames"] = {};
-for (const name of ["maya", "otis", "priya", "gus", "lena", "noor", "sam", "hank", "theo", "bea", "ines", "kai"]) {
+for (const person of CAST) {
+  const name = person.id;
   for (const view of ["se", "sw", "nw", "ne"]) {
     for (const animation of ["walk", "idle"]) {
       for (let frame = 0; frame < (animation === "walk" ? 8 : 2); frame++) {
@@ -12,7 +14,12 @@ for (const name of ["maya", "otis", "priya", "gus", "lena", "noor", "sam", "hank
     }
   }
 }
-const atlas: Atlas = { pages: {}, frames };
+const atlas: Atlas & { sprites: Record<string, { appearance: ReturnType<typeof personAppearance> }> } = {
+  pages: {},
+  frames,
+  sprites: Object.fromEntries(CAST.map((person) => [`people/${person.id}`, { appearance: personAppearance(person) }])),
+};
+const ageGroupBySprite = new Map(CAST.map(({ id, ageGroup }) => [`people/${id}`, ageGroup]));
 const snapshot = (ids: number[], records: number[], appearances: number[]): GuestSnapshot => ({ guestIds: new Uint32Array(ids), guests: new Float32Array(records), appearances: new Uint8Array(appearances) });
 const appearance = [1, 2, 3, 4, 1];
 
@@ -28,11 +35,51 @@ describe("guest rendering", () => {
   test("uses idle animation, appearance and camera-relative direction", () => {
     const current = snapshot([1, 2], [1, 2, 0, 1, 0, 0, 0, 2, 3, 0, 1, 0, 0, 0], [0, 0, 0, 0, 0, 1, 2, 3, 4, 1]);
     const people = buildPeople(undefined, current, 1, 1, atlas);
-    expect(people[0]).toMatchObject({ sprite: "people/bea", view: "sw", animation: "idle", frame: 0 });
+    expect(people[0]).toMatchObject({ view: "sw", animation: "idle", frame: 0 });
+    expect(ageGroupBySprite.get(people[0].sprite)).toBe("child");
     expect(people[1].sprite).not.toBe(people[0].sprite);
   });
 
   test("rejects malformed snapshots", () => {
     expect(() => buildPeople(undefined, snapshot([1], [1], appearance), 1, 0, atlas)).toThrow();
+  });
+
+  test("uses adult designs for seniors when the atlas has no senior design", () => {
+    const withoutSenior: typeof atlas = {
+      pages: {},
+      frames: Object.fromEntries(Object.entries(atlas.frames).filter(([key]) => !key.startsWith("people/lena/"))),
+      sprites: Object.fromEntries(Object.entries(atlas.sprites).filter(([sprite]) => sprite !== "people/lena")),
+    };
+    const person = buildPeople(undefined, snapshot([30], [0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 2]), 1, 0, withoutSenior)[0];
+    expect(ageGroupBySprite.get(person.sprite)).toBe("adult");
+  });
+
+  test("keeps generated children on child designs and spreads choices deterministically", () => {
+    const count = 6000;
+    const ids = Array.from({ length: count }, (_, index) => index + 1);
+    const records = ids.flatMap((_, index) => [index, 0, 0, 1, 0, 0, 0]);
+    let seed = 0x12345678;
+    const randomByte = (max: number): number => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return Math.floor(seed / 0x1_0000_0000 * max);
+    };
+    const appearances = ids.flatMap(() => [randomByte(8), randomByte(12), randomByte(16), randomByte(5), randomByte(10) === 0 ? 2 : randomByte(4) === 0 ? 0 : 1]);
+    const generated = snapshot(ids, records, appearances);
+    const first = buildPeople(undefined, generated, 1, 0, atlas);
+    const replay = buildPeople(undefined, generated, 1, 0, atlas);
+    expect(first.map(({ sprite }) => sprite)).toEqual(replay.map(({ sprite }) => sprite));
+
+    for (let index = 0; index < count; index++) {
+      const age = appearances[index * 5 + 4];
+      if (age === 0) expect(ageGroupBySprite.get(first[index].sprite)).toBe("child");
+      if (age === 1) expect(ageGroupBySprite.get(first[index].sprite)).toBe("adult");
+      if (age === 2) expect(ageGroupBySprite.get(first[index].sprite)).toBe("senior");
+    }
+
+    const counts = new Map<string, number>();
+    for (const { sprite } of first) counts.set(sprite, (counts.get(sprite) ?? 0) + 1);
+    const usedCounts = [...counts.values()].filter((value) => value > 0);
+    expect(usedCounts.length).toBe(CAST.length);
+    expect(Math.max(...usedCounts)).toBeLessThan(Math.min(...usedCounts) * 10);
   });
 });

@@ -9,6 +9,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { CAST, personAppearance, type PersonAppearance } from "../generators/people.ts";
 import { COLORS } from "../generators/palette.ts";
 import { themeNamed } from "../generators/themes.ts";
 
@@ -108,11 +109,18 @@ function packShelves(drawings: readonly Drawing[], scale: number): { placements:
   return { placements, sizes };
 }
 
-function buildSpriteIndex(drawings: readonly Drawing[]): Record<string, { views: Record<string, Record<string, string[]>> }> {
-  const sprites: Record<string, { views: Record<string, Record<string, string[]>> }> = {};
+function buildSpriteIndex(drawings: readonly Drawing[]): Record<string, { views: Record<string, Record<string, string[]>>; appearance?: PersonAppearance }> {
+  const appearanceBySprite = new Map(CAST.map((person) => [`people/${person.id}`, personAppearance(person)]));
+  const sprites: Record<string, { views: Record<string, Record<string, string[]>>; appearance?: PersonAppearance }> = {};
   const sorted = [...drawings].sort((first, second) => first.frame - second.frame);
   for (const drawing of sorted) {
-    const views = (sprites[drawing.sprite] ??= { views: {} }).views;
+    const sprite = (sprites[drawing.sprite] ??= { views: {} });
+    if (drawing.sprite.startsWith("people/")) {
+      const appearance = appearanceBySprite.get(drawing.sprite);
+      if (!appearance) throw new Error(`${drawing.sprite}: no matching person design in CAST`);
+      sprite.appearance = appearance;
+    }
+    const views = sprite.views;
     const frames = ((views[drawing.view] ??= {})[drawing.animation] ??= []);
     if (drawing.frame !== frames.length) throw new Error(`${drawing.source}: frame ${frames.length} of this animation is missing`);
     frames.push(drawing.key);
