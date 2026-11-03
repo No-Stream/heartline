@@ -3,7 +3,7 @@ CARGO_HOME ?= $(HOME)/.cargo
 WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
 WASM_BINDGEN_VERSION := 0.2.105
 
-.PHONY: install build test lint serve e2e ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench
+.PHONY: install build test lint serve e2e ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests
 
 install:
 	npm ci
@@ -38,6 +38,12 @@ e2e: build
 
 bench:
 	$(CARGO) run --release -p theme-park-sim --features threads --example tick_bench
+
+bench-guests: wasm-bindgen
+	$(CARGO) run --release -p theme-park-sim --features threads --example guest_bench
+	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
+	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target web --out-dir web/src/wasm
+	node web/guest-bench/run.mjs
 
 bench-render:
 	node web/bench/run.mjs

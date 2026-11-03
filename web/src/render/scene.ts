@@ -2,6 +2,7 @@ import { projectWorld, unprojectGround, type Camera, type Viewport } from "../ca
 
 export interface AtlasFrame {
   width: number; height: number; anchor: { x: number; y: number };
+  properties?: Record<string, string>;
   placements: Record<string, { page: number; x: number; y: number; width: number; height: number }>;
 }
 export interface Atlas {
@@ -10,12 +11,24 @@ export interface Atlas {
 }
 export interface WorldSprite { id: string; sprite: string; x: number; y: number; height: number; view?: string; animation?: string; frame?: number }
 export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; paths: Int32Array; carved?: Int32Array; sprites?: readonly WorldSprite[] }
-export type Pick = { kind: "terrain" | "water" | "path" | "cliff"; x: number; y: number; height: number } | { kind: "sprite"; id: string; x: number; y: number; height: number };
+export type Pick = { kind: "terrain" | "water" | "path" | "cliff"; x: number; y: number; height: number } | { kind: string; id: string; x: number; y: number; height: number };
 export interface Vertex { x: number; y: number; depth: number; height: number; u: number; v: number }
-export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: Pick["kind"]; tileX: number; tileY: number; height: number; id?: string }
+export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: string; tileX: number; tileY: number; height: number; id?: string }
 export interface Scene { triangles: Triangle[] }
+export interface GeometryQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; page?: number; color: Triangle["color"]; kind: string; id: string; tileX: number; tileY: number }
 const WHITE = [1, 1, 1, 1] as const;
 const QUAD_TRIANGLES = [[0, 1, 2], [0, 2, 3]] as const;
+
+export function appendGeometry(scene: Scene, quads: readonly GeometryQuad[], viewport?: Viewport): void {
+  for (const quad of quads) {
+    if (viewport && (quad.vertices.every((vertex) => vertex.x < 0) || quad.vertices.every((vertex) => vertex.x > viewport.width) || quad.vertices.every((vertex) => vertex.y < 0) || quad.vertices.every((vertex) => vertex.y > viewport.height))) continue;
+    for (const indices of QUAD_TRIANGLES) scene.triangles.push({
+      vertices: indices.map((index) => quad.vertices[index]) as Triangle["vertices"],
+      page: quad.page ?? -1, color: quad.color, kind: quad.kind, id: quad.id,
+      tileX: quad.tileX, tileY: quad.tileY, height: Math.max(...quad.vertices.map((vertex) => vertex.height)),
+    });
+  }
+}
 
 export function terrainHeightAt(world: WorldView, x: number, y: number): number {
   const [width, height] = world.dimensions;
@@ -213,20 +226,37 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
   return { triangles };
 }
 
-export function pickScene(scene: Scene, x: number, y: number): Pick | null {
+export function pickScene(scene: Scene, x: number, y: number, rasterTolerance = 0): Pick | null {
   let selected: Triangle | undefined; let selectedDepth = -Infinity; let selectedHeight = 0;
   for (const triangle of scene.triangles) {
     const [a,b,c] = triangle.vertices;
     const denominator = (b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);
     if (denominator === 0) continue;
-    const first = ((b.y-c.y)*(x-c.x)+(c.x-b.x)*(y-c.y))/denominator;
-    const second = ((c.y-a.y)*(x-c.x)+(a.x-c.x)*(y-c.y))/denominator;
-    const third = 1-first-second;
-    if (first < 0 || second < 0 || third < 0) continue;
+    let first = ((b.y-c.y)*(x-c.x)+(c.x-b.x)*(y-c.y))/denominator;
+    let second = ((c.y-a.y)*(x-c.x)+(a.x-c.x)*(y-c.y))/denominator;
+    let third = 1-first-second;
+    if (first < 0 || second < 0 || third < 0) {
+      if (rasterTolerance <= 0) continue;
+      const vertices = [a, b, c];
+      let nearestDistance = Infinity; let nearestWeights = [0, 0, 0];
+      for (const [start, end] of [[0, 1], [1, 2], [2, 0]]) {
+        const p = vertices[start], q = vertices[end];
+        const dx = q.x - p.x, dy = q.y - p.y;
+        const lengthSquared = dx * dx + dy * dy;
+        const fraction = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, ((x - p.x) * dx + (y - p.y) * dy) / lengthSquared));
+        const distance = (x - p.x - fraction * dx) ** 2 + (y - p.y - fraction * dy) ** 2;
+        if (distance < nearestDistance) {
+          nearestDistance = distance; nearestWeights = [0, 0, 0];
+          nearestWeights[start] = 1 - fraction; nearestWeights[end] = fraction;
+        }
+      }
+      if (nearestDistance > rasterTolerance * rasterTolerance) continue;
+      [first, second, third] = nearestWeights;
+    }
     const depth = first*a.depth + second*b.depth + third*c.depth;
     if (depth >= selectedDepth) { selected = triangle; selectedDepth = depth; selectedHeight = first*a.height + second*b.height + third*c.height; }
   }
   if (!selected) return null;
-  if (selected.kind === "sprite") return { kind: "sprite", id: selected.id!, x: selected.tileX, y: selected.tileY, height: selectedHeight };
-  return { kind: selected.kind, x: selected.tileX, y: selected.tileY, height: selectedHeight };
+  if (selected.id !== undefined) return { kind: selected.kind, id: selected.id, x: selected.tileX, y: selected.tileY, height: selectedHeight };
+  return { kind: selected.kind as "terrain" | "water" | "path" | "cliff", x: selected.tileX, y: selected.tileY, height: selectedHeight };
 }

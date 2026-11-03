@@ -1,5 +1,6 @@
 import { projectWorld, type Rotation } from "../../src/camera";
 import { createWorldRenderer, type Atlas, type WorldView } from "../../src/render";
+import type { GeometryQuad } from "../../src/render/scene";
 
 interface Sample {
   pick: ReturnType<ReturnType<typeof createWorldRenderer>["pick"]>;
@@ -8,11 +9,11 @@ interface Sample {
 
 declare global {
   interface Window {
-    renderFixture: (rotation: Rotation, stacked: boolean, hideUpper: boolean) => Promise<Sample>;
+    renderFixture: (rotation: Rotation, stacked: boolean, hideUpper: boolean, extra?: "behind" | "solid" | "textured" | "thin") => Promise<Sample>;
   }
 }
 
-window.renderFixture = async (rotation, stacked, hideUpper) => {
+window.renderFixture = async (rotation, stacked, hideUpper, extra) => {
   const imageCanvas = document.createElement("canvas");
   imageCanvas.width = 48;
   imageCanvas.height = 16;
@@ -31,6 +32,7 @@ window.renderFixture = async (rotation, stacked, hideUpper) => {
     frames: {
       "ground/grass_light_0/any/static/0": frame(0),
       "ground/path_0000/any/static/0": frame(16),
+      "people/test/any/static/0": frame(0),
       "ground/cliff_left_0/any/static/0": frame(32),
       "ground/cliff_right_0/any/static/0": frame(32),
       ...Object.fromEntries(["left", "right"].flatMap((side) => [0, 1, 2].flatMap((variant) => [
@@ -53,10 +55,15 @@ window.renderFixture = async (rotation, stacked, hideUpper) => {
     dimensions: new Uint16Array(stacked ? [4, 4] : [1, 1]),
     surfaces: stacked ? new Int32Array(4 * 4 * 6) : new Int32Array([0, 0, 1, 1, 0, 0]),
     paths: new Int32Array(stacked ? paths : []),
+    sprites: extra ? [{ id: "guest", sprite: "people/test", x: 0.5, y: 0.5, height: 4 }] : [],
   };
   const camera = { centerX: stacked ? 2 : 0.5, centerY: stacked ? 2 : 0.5, zoom: 3, rotation };
-  renderer.render(world, camera);
-  const screen = projectWorld(camera, canvas, { x: stacked ? upper[0] + 0.5 : 0.5, y: stacked ? upper[1] + 0.5 : 0.5, z: stacked ? 1.125 : 0.125 });
+  const screen = projectWorld(camera, canvas, { x: stacked ? upper[0] + 0.5 : 0.5, y: stacked ? upper[1] + 0.5 : 0.5, z: stacked ? 1.125 : extra ? 1 : 0.125 });
+  renderer.render(world, camera, 0, extra ? [() => [{
+    vertices: (extra === "thin" ? [[0.516,-8], [0.696,-8], [0.696,8], [0.516,8]] : [[-8,-8], [8,-8], [8,8], [-8,8]]).map(([x, y]) => ({ x: (extra === "thin" ? Math.floor(screen.x) : screen.x) + x, y: screen.y + y, depth: extra === "behind" ? -100 : 100, height: 2, u: 0.5, v: 0.5 })) as GeometryQuad["vertices"],
+    kind: "fixture", id: "extra", tileX: 0, tileY: 0,
+    color: extra === "textured" ? [1, 1, 1, 1] : [0, 0, 1, 1], page: extra === "textured" ? 0 : undefined,
+  }]] : []);
   const gl = canvas.getContext("webgl2");
   if (!gl) throw new Error("WebGL2 is unavailable");
   const color = new Uint8Array(4);

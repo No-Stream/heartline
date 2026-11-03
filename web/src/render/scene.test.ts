@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildScene, pickScene, type Atlas, type WorldView } from "./scene";
+import { appendGeometry, buildScene, pickScene, type Atlas, type GeometryQuad, type WorldView } from "./scene";
 import type { Camera } from "../camera";
 
 const frame = { width: 72, height: 40, anchor: { x: 36, y: 20 }, placements: { "1": { page: 0, x: 0, y: 0, width: 72, height: 40 } } };
@@ -47,6 +47,33 @@ function atlasWithDistinctTerrainFrames(): { atlas: Atlas; pagesByFrame: Map<str
 }
 
 describe("world scene", () => {
+  test("extra geometry shares depth and picking with terrain", () => {
+    const scene = buildScene(world, camera, viewport, atlas);
+    const terrain = scene.triangles.find((triangle) => triangle.kind === "terrain")!;
+    const [a, b, c] = terrain.vertices;
+    const x = (a.x + b.x + c.x) / 3;
+    const y = (a.y + b.y + c.y) / 3;
+    const quad = (depth: number): GeometryQuad => ({
+      vertices: [[x-2,y-2], [x+2,y-2], [x+2,y+2], [x-2,y+2]].map(([px, py]) => ({ x: px, y: py, depth, height: 7, u: 0, v: 0 })) as GeometryQuad["vertices"],
+      kind: "fixture", id: "one", tileX: 0, tileY: 0, color: [1, 0, 0, 1],
+    });
+    appendGeometry(scene, [quad(-100)]);
+    expect(pickScene(scene, x, y)?.kind).toBe("terrain");
+    appendGeometry(scene, [quad(100)]);
+    expect(pickScene(scene, x, y)).toEqual({ kind: "fixture", id: "one", x: 0, y: 0, height: 7 });
+    const outside = quad(100);
+    outside.vertices.forEach((vertex) => { vertex.x += 1000; });
+    const before = scene.triangles.length;
+    appendGeometry(scene, [outside], viewport);
+    expect(scene.triangles).toHaveLength(before);
+  });
+  test("resolves a rasterized subpixel edge to the selected geometry", () => {
+    const vertices = [[10.516, 0], [10.696, 0], [10.696, 20], [10.516, 20]].map(([x, y]) => ({ x, y, depth: 1, height: 2, u: 0, v: 0 })) as GeometryQuad["vertices"];
+    const scene = { triangles: [] };
+    appendGeometry(scene, [{ vertices, kind: "fixture", id: "thin", tileX: 0, tileY: 0, color: [1, 1, 1, 1] }]);
+    expect(pickScene(scene, 10.5, 10)).toBeNull();
+    expect(pickScene(scene, 10.5, 10, 0.125)).toMatchObject({ kind: "fixture", id: "thin" });
+  });
   test("projects and picks each tile in every rotation", () => {
     for (const rotation of [0, 1, 2, 3] as const) {
       const scene = buildScene(world, { ...camera, rotation }, viewport, atlas);

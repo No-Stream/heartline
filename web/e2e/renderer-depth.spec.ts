@@ -27,6 +27,20 @@ test.afterAll(async () => {
 });
 
 for (const rotation of [0, 1, 2, 3] as const satisfies readonly Rotation[]) {
+  test(`extra solid and textured geometry shares guest depth and picking at rotation ${rotation}`, async ({ page }) => {
+    await page.goto(fixtureUrl);
+    const behind = await page.evaluate((viewRotation) => window.renderFixture(viewRotation, false, false, "behind"), rotation);
+    expect(behind.pick).toMatchObject({ kind: "sprite", id: "guest" });
+    expect(behind.color).toEqual([25, 163, 59, 255]);
+    const solid = await page.evaluate((viewRotation) => window.renderFixture(viewRotation, false, false, "solid"), rotation);
+    expect(solid.pick).toMatchObject({ kind: "fixture", id: "extra" });
+    expect(solid.color).toEqual([0, 0, 255, 255]);
+    const textured = await page.evaluate((viewRotation) => window.renderFixture(viewRotation, false, false, "textured"), rotation);
+    expect(textured.pick).toMatchObject({ kind: "fixture", id: "extra" });
+    expect(textured.color).toEqual([200, 45, 54, 255]);
+    const thin = await page.evaluate((viewRotation) => window.renderFixture(viewRotation, false, false, "thin"), rotation);
+    expect(thin.pick).toMatchObject({ kind: "fixture", id: "extra", height: 2 });
+  });
   test(`WebGL depth and picking on slopes at rotation ${rotation}`, async ({ page }) => {
     await page.goto(fixtureUrl);
     const terrain = await page.evaluate((viewRotation) => window.renderFixture(viewRotation, false, false), rotation);

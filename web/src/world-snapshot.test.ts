@@ -16,7 +16,14 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     world_carved() { return new Int32Array(); }
     tick() { workerMock.tick(); }
     tick_count() { return BigInt(workerMock.tick.mock.calls.length); }
-    snapshot() { return new Float32Array(); }
+    guest_ids() { return new Uint32Array([7]); }
+    snapshot() { return new Float32Array([1, 2, 3, 1, 0, 4, 1]); }
+    guest_appearances() { return new Uint8Array([1, 2, 3, 4, 0]); }
+    coaster_geometry() { return new Float32Array(); }
+    coaster_rails() { return new Float32Array([1, 2]); }
+    coaster_ties() { return new Float32Array([3]); }
+    coaster_supports() { return new Float32Array(); }
+    coaster_train_poses() { return new Float32Array(); }
     set_world_surface(x: number, y: number, corners: Int16Array, water: number | undefined) {
       return workerMock.setSurface(x, y, corners, water);
     }
@@ -74,8 +81,18 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   await Promise.resolve();
 
   expect(postMessage).toHaveBeenCalledTimes(3);
+  const [world, worldTransfer] = postMessage.mock.calls[0];
+  expect(world.coasterRails).toEqual(new Float32Array([1, 2]));
+  expect(world.coasterTies).toEqual(new Float32Array([3]));
+  expect(worldTransfer).toContain(world.coasterRails.buffer);
+  expect(worldTransfer).toContain(world.coasterTies.buffer);
   expect(workerMock.tick).not.toHaveBeenCalled();
   expect(postMessage.mock.calls[2][0]).toMatchObject({ type: "snapshot", tickCount: 0 });
+  const [snapshot, transfer] = postMessage.mock.calls[2];
+  expect(snapshot.guestIds).toEqual(new Uint32Array([7]));
+  expect(snapshot.guests).toEqual(new Float32Array([1, 2, 3, 1, 0, 4, 1]));
+  expect(snapshot.appearances).toEqual(new Uint8Array([1, 2, 3, 4, 0]));
+  expect(transfer).toEqual([snapshot.guestIds.buffer, snapshot.guests.buffer, snapshot.appearances.buffer, snapshot.trainPoses.buffer]);
   vi.advanceTimersByTime(34);
   expect(workerMock.tick).toHaveBeenCalledTimes(1);
 });

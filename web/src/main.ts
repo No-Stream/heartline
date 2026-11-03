@@ -1,9 +1,11 @@
 import { applyCameraAction, projectWorld, type Camera } from "./camera";
-import { guestViewForRotation } from "./guest-view";
 import { bindInput } from "./input/bindings";
 import type { InputAction } from "./input/actions";
 import type { GameTest } from "./game-test";
-import { createWorldRenderer, loadAtlas, terrainHeightAt, type WorldView, type WorldSprite } from "./render/index";
+import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from "./render/index";
+import { buildPeople, type GuestSnapshot } from "./render/people";
+import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle } from "./render/track/geometry";
+import { createStaticTrackCache } from "./render/track/cache";
 import type { WorldSnapshot } from "./world-snapshot";
 
 const canvas = document.querySelector<HTMLCanvasElement>("canvas");
@@ -13,18 +15,26 @@ const gameCanvas = canvas;
 const output = tickOutput;
 const viewport = { width: gameCanvas.width, height: gameCanvas.height };
 let camera: Camera = { centerX: 250, centerY: 256, zoom: 1, rotation: 0 };
-let world: WorldView | undefined;
-let previous: Float32Array = new Float32Array();
-let current: Float32Array = new Float32Array();
+type CoasterWorld = WorldView & { coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array };
+type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array };
+type CoasterSnapshot = GuestSnapshot & { trainPoses: Float32Array };
+let world: CoasterWorld | undefined;
+let previous: CoasterSnapshot | undefined;
+let current: CoasterSnapshot | undefined;
 let receivedAt = performance.now();
+const noGeometry = new Float32Array();
 const frozen = new URLSearchParams(location.search).has("test");
 const timing = new URLSearchParams(location.search).get("timing") === "work";
 const { atlas, images } = await loadAtlas(new URL("./atlas.json", document.baseURI).href);
 const renderer = createWorldRenderer(gameCanvas, atlas, images);
+const staticTrack = createStaticTrackCache(atlas);
 
+let renderedGuests: readonly WorldSprite[] = [];
 const gameTest: GameTest = {
   ready: false,
+  guests() { return renderedGuests; },
   setCamera(value) { camera = value; gameTest.ready = false; },
+  setSurface(x, y, corners) { worker.postMessage({ type: "set-surface", x, y, corners: new Int16Array(corners) }); },
   project(point) { return projectWorld(camera, viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
 };
@@ -39,33 +49,45 @@ function dispatch(action: InputAction): void {
 bindInput(gameCanvas, dispatch);
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-worker.addEventListener("message", (event: MessageEvent<WorldSnapshot | { type: "snapshot"; positions: Float32Array; tickCount: number } | { type: "ready" }>) => {
+worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" }>) => {
   const message = event.data;
   if (message.type === "world") {
-    world = message;
+    const coasterGeometry = message.coasterGeometry ?? world?.coasterGeometry;
+    const coasterRails = message.coasterRails ?? world?.coasterRails;
+    const coasterTies = message.coasterTies ?? world?.coasterTies;
+    if (!coasterGeometry || !coasterRails || !coasterTies) throw new Error("Initial coaster geometry is missing");
+    world = { ...message, coasterGeometry, coasterRails, coasterTies };
+    gameTest.ready = false;
   } else if (message.type === "snapshot") {
     previous = current;
-    if (!frozen || current.length === 0) current = message.positions;
+    if (!frozen || !current) current = message;
     receivedAt = performance.now();
     output.value = String(message.tickCount);
-    gameCanvas.dataset.agentCount = String(current.length / 2);
+    gameCanvas.dataset.agentCount = String(current?.guestIds.length ?? 0);
   }
 });
 
 function frame(now: number): void {
   if (!world) return;
-  const interpolation = frozen ? 1 : Math.min(1, (now - receivedAt) / (1000 / 30));
-  const sprites: WorldSprite[] = [];
-  for (let i = 0; i < current.length; i += 2) {
-    const x = 230 + ((previous[i] ?? current[i]) + (current[i] - (previous[i] ?? current[i])) * interpolation) * 0.3;
-    const y = 240 + ((previous[i + 1] ?? current[i + 1]) + (current[i + 1] - (previous[i + 1] ?? current[i + 1])) * interpolation) * 0.3;
-    const height = terrainHeightAt(world, x, y);
-    sprites.push({ id: `agent-${i / 2}`, sprite: "people/bea", x, y, height, view: guestViewForRotation(camera.rotation), animation: "idle", frame: 0 });
-  }
-  renderer.render({ ...world, sprites }, camera, frozen ? 0 : Math.floor(now / 250) % 4);
-  gameCanvas.dataset.drawnAgents = String(sprites.length);
-  gameTest.ready = current.length > 0;
+  if (frozen && gameTest.ready) return;
+  const interpolation = frozen ? 1 : Math.max(0, Math.min(1, (now - receivedAt) / (1000 / 30)));
+  const people = current ? buildPeople(previous, current, interpolation, camera.rotation, atlas) : [];
+  renderedGuests = people;
+  const trainPoses = current ? interpolateTrainPoses(previous?.trainPoses ?? current.trainPoses, current.trainPoses, interpolation) : new Float32Array();
+  const sprites = people;
+  const view = { ...world, sprites, trainPoses };
+  const currentWorld = world;
+  renderer.render(view, camera, frozen ? 0 : Math.floor(now / 250) % 4, [
+    (renderCamera, renderViewport, renderAtlas, scale) => [
+      ...staticTrack(currentWorld.coasterRails, currentWorld.coasterTies, currentWorld.coasterSupports, renderCamera, renderViewport),
+      ...buildTrackQuads(noGeometry, noGeometry, noGeometry, trainPoses, renderCamera, renderViewport, trackStyle(renderAtlas)),
+      ...buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale),
+    ],
+  ]);
+  gameCanvas.dataset.drawnAgents = String(people.length);
+  gameTest.ready = (current?.guestIds.length ?? 0) > 0;
 }
+
 
 if (timing) {
   const channel = new MessageChannel();

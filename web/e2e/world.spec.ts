@@ -45,7 +45,7 @@ test("picks known terrain and path points at every rotation", async ({ page }) =
     const picks = await page.evaluate(() => {
       const locations = [
         { x: 240.5, y: 254.5, z: 2 },
-        { x: 240.5, y: 256.5, z: 2 },
+        { x: 240.25, y: 256.25, z: 2 },
         { x: 250.5, y: 256.5, z: 3.375 },
       ];
       return locations.map((location) => {
@@ -62,9 +62,37 @@ test("picks known terrain and path points at every rotation", async ({ page }) =
 
     await renderCamera(220, 250, rotation);
     const entrance = await page.evaluate(() => {
-      const screen = window.gameTest.project({ x: 220.5, y: 250.5, z: 1.625 });
+      const screen = window.gameTest.project({ x: 220.25, y: 250.35, z: 1.6875 });
       return window.gameTest.pick(screen.x, screen.y);
     });
-    expect(entrance).toEqual({ kind: "path", x: 220, y: 250, height: expect.closeTo(6.5, 1) });
+    expect(entrance, `entrance at rotation ${rotation}`).toEqual({ kind: "path", x: 220, y: 250, height: expect.closeTo(6.75, 1) });
   }
+});
+
+
+test("guest appearances on paths", async ({ page }) => {
+  await page.goto("/?test=1");
+  await page.waitForFunction(() => window.gameTest?.ready);
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 219.5, centerY: 250.5, zoom: 2, rotation: 0 }));
+  await page.waitForFunction(() => window.gameTest.ready);
+  await expect(page.locator("canvas")).toHaveScreenshot("guests-on-paths.png", {
+    animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001,
+  });
+});
+
+test("a terrain edit repaints the frozen world and updates picking", async ({ page }) => {
+  await page.goto("/?test=1");
+  await page.waitForFunction(() => window.gameTest?.ready);
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 240, centerY: 254, zoom: 1, rotation: 0 }));
+  await page.waitForFunction(() => window.gameTest.ready);
+  const initial = await page.evaluate(() => {
+    const screen = window.gameTest.project({ x: 240.5, y: 254.5, z: 2 });
+    return window.gameTest.pick(screen.x, screen.y);
+  });
+  expect(initial).toMatchObject({ kind: "terrain", x: 240, y: 254, height: 8 });
+  await page.evaluate(() => window.gameTest.setSurface(240, 254, [12, 12, 12, 12]));
+  await expect.poll(() => page.evaluate(() => {
+    const screen = window.gameTest.project({ x: 240.5, y: 254.5, z: 3 });
+    return window.gameTest.pick(screen.x, screen.y);
+  })).toMatchObject({ kind: "terrain", x: 240, y: 254, height: 12 });
 });

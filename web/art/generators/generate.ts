@@ -68,11 +68,20 @@ for (const item of sceneryDesigns(theme)) {
   });
 }
 
-const tile = (body: string, description: string): string =>
-  placed(TILE_CANVAS.width, TILE_CANVAS.height, TILE_CANVAS.anchorX, TILE_CANVAS.anchorY, body, { "data-description": description });
+const tile = (body: string, description: string, coasterTheme = false): string =>
+  placed(TILE_CANVAS.width, TILE_CANVAS.height, TILE_CANVAS.anchorX, TILE_CANVAS.anchorY, body, {
+    "data-description": description,
+    ...(coasterTheme ? {
+      "data-coaster-steel": theme.color(COLORS.red),
+      "data-coaster-wood": theme.color(COLORS.wood),
+      "data-coaster-train": theme.color(COLORS.mint),
+      "data-coaster-ink": theme.line.color,
+      "data-coaster-line-weight": theme.line.weight,
+    } : {}),
+  });
 
 [0, 1, 2].forEach((variant) => {
-  writeDrawing(`ground/grass_light_${variant}/any/static_0.svg`, tile(drawGrass(theme, variant, COLORS.grass), "Light grass tile"));
+  writeDrawing(`ground/grass_light_${variant}/any/static_0.svg`, tile(drawGrass(theme, variant, COLORS.grass), "Light grass tile", variant === 0));
   writeDrawing(`ground/grass_dark_${variant}/any/static_0.svg`, tile(drawGrass(theme, variant, COLORS.grassAlternate), "Dark grass tile"));
 });
 for (let connectionBits = 0; connectionBits < 16; connectionBits++) {
