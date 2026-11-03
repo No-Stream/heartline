@@ -37,6 +37,10 @@ These conditions are implied by the spec but easy to miss. Each is an acceptance
 - A park has guests but no path to a ride, or a coaster has an unfinished circuit. Guests behave sensibly, and the player gets a friendly note (guest walking, testing overlay).
 - Browser storage is full or cleared, or a save comes from an older version. The player gets a clear message and keeps their exported file (saving and loading).
 
+## Current status
+
+See `docs/status.md` for what works, measured performance and open items.
+
 ## Order of work
 
 Tickets are grouped into four milestones. Dependencies are recorded on the tickets, so independent tickets can run in parallel.
