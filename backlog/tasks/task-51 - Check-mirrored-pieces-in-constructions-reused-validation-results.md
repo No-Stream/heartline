@@ -1,0 +1,29 @@
+---
+id: TASK-51
+title: Check mirrored pieces in construction's reused validation results
+status: To Do
+assignee: []
+created_date: '2026-11-03 16:47'
+labels:
+  - refactor
+  - coaster
+  - bug
+milestone: m-4
+dependencies: []
+documentation:
+  - docs/reviews/2026-11-03-track-physics-code.md
+priority: high
+ordinal: 51000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Track review finding 5: construction reuses an earlier choice's validation result when geometry matches, but the comparison ignores the mirrored flag, so a mirrored corkscrew or heartline roll near an asymmetric obstacle may get the wrong result. Also from the simulation review: facility placement checks clearance against the demo train's envelope instead of the player's model (harmless today because all models share one envelope).
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 A regression test with an asymmetric obstacle compares reused and individual validation for mirrored pieces, and the key includes orientation if it fails; facility placement uses the player's model envelope
+- [ ] #2 Behaviour is unchanged unless stated, and the relevant tests pass while editing, with make ci green at the end
+<!-- AC:END -->
