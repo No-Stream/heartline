@@ -66,6 +66,12 @@ describe("crest confetti", () => {
 describe("fireworks", () => {
   const bounds = parkBounds([facility("food_stall", 10, 10), facility("restroom", 30, 30)], []);
 
+  it("do not fly over an empty park, which a new park is until its first facilities arrive", () => {
+    const emptyBounds = parkBounds([], []);
+    expect(emptyBounds).toBeNull();
+    for (let tick = 0; tick < 2000; tick += 10) expect(buildFireworks(emptyBounds, night, tick, camera, viewport)).toEqual({ sparks: [], glows: [] });
+  });
+
   it("only fly at night, and are the same for the same tick", () => {
     for (let tick = 0; tick < 2000; tick += 37) expect(buildFireworks(bounds, noon, tick, camera, viewport).sparks).toEqual([]);
     const ticksWithFireworks = Array.from({ length: 200 }, (_, index) => index * 10).filter((tick) => buildFireworks(bounds, night, tick, camera, viewport).sparks.length > 0);

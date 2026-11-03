@@ -51,10 +51,11 @@ function screenQuad(centre: { x: number; y: number }, halfWidth: number, halfHei
   return { vertices, page, color: [color[0], color[1], color[2], alpha], kind, id, tileX: 0, tileY: 0, light };
 }
 
-export function parkBounds(facilities: readonly Facility[], rails: readonly Float32Array[]): ParkBounds {
+/** Returns null for a park with no facilities or track yet, such as a new park before its first facilities message. */
+export function parkBounds(facilities: readonly Facility[], rails: readonly Float32Array[]): ParkBounds | null {
   const points: [number, number, number][] = facilities.map((facility) => [facility.x + 1, facility.y + 1, facility.z / 4]);
   for (const data of rails) for (let offset = 0; offset < data.length; offset += 19 * 16) points.push([data[offset + 1], data[offset + 2], data[offset + 3]]);
-  if (!points.length) throw new Error("The park has nothing to launch fireworks over");
+  if (!points.length) return null;
   return {
     minX: Math.min(...points.map(([x]) => x)), maxX: Math.max(...points.map(([x]) => x)),
     minY: Math.min(...points.map(([, y]) => y)), maxY: Math.max(...points.map(([, y]) => y)),
@@ -174,11 +175,11 @@ function streak(from: { x: number; y: number }, to: { x: number; y: number }, wi
 }
 
 /** Fireworks over the park on dark nights: at most one shell starts in each four-second slot. Sparks are drawn additively. */
-export function buildFireworks(bounds: ParkBounds, lighting: Lighting, tick: number, camera: Camera, viewport: Viewport): { sparks: GeometryQuad[]; glows: Glow[] } {
+export function buildFireworks(bounds: ParkBounds | null, lighting: Lighting, tick: number, camera: Camera, viewport: Viewport): { sparks: GeometryQuad[]; glows: Glow[] } {
   const sparks: GeometryQuad[] = [];
   const glows: Glow[] = [];
   const darkness = Math.min(1, Math.max(0, (lighting.stars - 0.5) * 2));
-  if (darkness <= 0) return { sparks, glows };
+  if (bounds === null || darkness <= 0) return { sparks, glows };
   const zoom = camera.zoom;
   const width = Math.max(1.1, 1.5 * zoom);
   const currentSlot = Math.floor(tick / FIREWORK_SLOT_TICKS);
