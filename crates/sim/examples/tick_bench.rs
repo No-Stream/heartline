@@ -60,7 +60,7 @@ impl<E> WorkExecutor<E> {
     }
 }
 
-impl<E: Executor> Executor for WorkExecutor<E> {
+impl<E: Executor<Agent>> Executor<Agent> for WorkExecutor<E> {
     fn execute<F>(&self, agent_count: usize, process: F) -> Vec<Agent>
     where
         F: Fn(usize) -> Agent + Sync,

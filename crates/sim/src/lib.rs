@@ -1,3 +1,6 @@
+
+pub mod world;
+
 #[cfg(feature = "threads")]
 use rayon::prelude::*;
 
@@ -9,10 +12,10 @@ pub struct Agent {
     velocity_y: f32,
 }
 
-pub trait Executor {
-    fn execute<F>(&self, agent_count: usize, process: F) -> Vec<Agent>
+pub trait Executor<T> {
+    fn execute<F>(&self, agent_count: usize, process: F) -> Vec<T>
     where
-        F: Fn(usize) -> Agent + Sync;
+        F: Fn(usize) -> T + Sync;
 }
 
 pub struct SequentialExecutor {
@@ -26,10 +29,10 @@ impl SequentialExecutor {
     }
 }
 
-impl Executor for SequentialExecutor {
-    fn execute<F>(&self, agent_count: usize, process: F) -> Vec<Agent>
+impl<T> Executor<T> for SequentialExecutor {
+    fn execute<F>(&self, agent_count: usize, process: F) -> Vec<T>
     where
-        F: Fn(usize) -> Agent + Sync,
+        F: Fn(usize) -> T + Sync,
     {
         let mut output = Vec::with_capacity(agent_count);
         for start in (0..agent_count).step_by(self.partition_size) {
@@ -63,10 +66,10 @@ impl ThreadedExecutor {
 }
 
 #[cfg(feature = "threads")]
-impl Executor for ThreadedExecutor {
-    fn execute<F>(&self, agent_count: usize, process: F) -> Vec<Agent>
+impl<T: Send> Executor<T> for ThreadedExecutor {
+    fn execute<F>(&self, agent_count: usize, process: F) -> Vec<T>
     where
-        F: Fn(usize) -> Agent + Sync,
+        F: Fn(usize) -> T + Sync,
     {
         self.pool.install(|| {
             (0..agent_count)
@@ -92,6 +95,8 @@ pub struct Simulation {
     random_state: u64,
     agents: Vec<Agent>,
 }
+
+pub mod guests;
 
 impl Simulation {
     pub fn new(seed: u64, agent_count: usize) -> Self {
@@ -120,7 +125,7 @@ impl Simulation {
         self.tick_with(&SequentialExecutor::new(256));
     }
 
-    pub fn tick_with<E: Executor>(&mut self, executor: &E) {
+    pub fn tick_with<E: Executor<Agent>>(&mut self, executor: &E) {
         for phase in TICK_PHASES {
             let agents = &self.agents;
             self.agents = executor.execute(agents.len(), |index| {
