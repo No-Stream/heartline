@@ -1,10 +1,10 @@
 ---
 id: TASK-15
 title: 'Add entrance, stalls, restrooms and flat ride framework'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 05:15'
+updated_date: '2026-11-03 08:06'
 labels:
   - world
   - guests
@@ -25,7 +25,13 @@ The things guests need in a first park. Flat rides use a simple framework separa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Player can place a park entrance, food stalls, restrooms and both flat rides
-- [ ] #2 Guests use them to meet needs, spend money and enjoy rides
-- [ ] #3 Money and prices are tracked with light effect in sandbox
+- [x] #1 Player can place a park entrance, food stalls, restrooms and both flat rides
+- [x] #2 Guests use them to meet needs, spend money and enjoy rides
+- [x] #3 Money and prices are tracked with light effect in sandbox
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Entrance, stalls, restrooms, souvenir shop, carousel and ferris wheel with placement, previews, prices and revenue; the demo park uses them. Admission is free in sandbox, loading is instant, and clearance assumes 4 m buildings and 12 m rides.
+<!-- SECTION:FINAL_SUMMARY:END -->

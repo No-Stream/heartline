@@ -1,10 +1,10 @@
 ---
 id: TASK-11
 title: Add coaster testing overlay and friendly notes
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 05:46'
+updated_date: '2026-11-03 08:06'
 labels:
   - coaster
   - interface
@@ -25,7 +25,13 @@ Show g-forces, speed and airtime along the track. Problems appear as friendly no
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Overlay shows forces and speed along track
-- [ ] #2 A train that cannot finish, or an unfinished circuit, produces a friendly note
-- [ ] #3 Ride rating responds to comfort, and uncomfortable plausible designs are never blocked
+- [x] #1 Overlay shows forces and speed along track
+- [x] #2 A train that cannot finish, or an unfinished circuit, produces a friendly note
+- [x] #3 Ride rating responds to comfort, and uncomfortable plausible designs are never blocked
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Speed and g-force ribbon along the track with a legend and click-to-inspect; excitement, intensity and nausea ratings with documented formulas; friendly notes for stalls, rollbacks, strong forces and slow sections.
+<!-- SECTION:FINAL_SUMMARY:END -->
