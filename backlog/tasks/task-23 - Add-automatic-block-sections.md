@@ -1,10 +1,10 @@
 ---
 id: TASK-23
 title: Add automatic block sections
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 16:26'
+updated_date: '2026-11-03 17:34'
 labels:
   - coaster
   - interface
@@ -34,4 +34,6 @@ The owner skipped block zones in RCT1 because of the complexity. The game finds 
 
 <!-- SECTION:NOTES:BEGIN -->
 Builder UI committed in 4c805b5: automatic placement, train stepper, capacity and throughput, draggable markers. Closing waits on the same green gate.
+
+Closed 2026-11-03 after two consecutive green make ci runs; the four slow coaster browser tests pass under the full parallel suite.
 <!-- SECTION:NOTES:END -->

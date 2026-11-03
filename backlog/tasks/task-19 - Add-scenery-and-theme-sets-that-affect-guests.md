@@ -1,10 +1,10 @@
 ---
 id: TASK-19
 title: Add scenery and theme sets that affect guests
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 16:26'
+updated_date: '2026-11-03 17:34'
 labels:
   - art
   - world
@@ -35,4 +35,6 @@ Theming is a first-class building activity. Start with a few charming theme sets
 
 <!-- SECTION:NOTES:BEGIN -->
 Garden and Woodland sets, Scenery tool, guest theming responses and demo lamps committed in d65b724. Closing waits on a green full gate (four coaster browser tests time out under parallel load; fix in progress).
+
+Closed 2026-11-03 after two consecutive green make ci runs.
 <!-- SECTION:NOTES:END -->
