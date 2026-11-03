@@ -863,19 +863,36 @@ impl WasmSimulation {
             return false;
         }
         let position = Position { x, y, height };
-        let mut pieces = self.circuit.pieces().to_vec();
-        if let Some(construction) = &self.construction {
-            pieces.extend_from_slice(construction.pieces());
-            for segment in construction.disconnected_segments() {
-                pieces.extend_from_slice(&segment.pieces);
-            }
-        }
-        if facility_intersects_track(
+        let construction_pieces =
+            self.construction
+                .as_ref()
+                .map_or_else(Vec::new, |construction| {
+                    construction
+                        .pieces()
+                        .iter()
+                        .chain(
+                            construction
+                                .disconnected_segments()
+                                .iter()
+                                .flat_map(|segment| &segment.pieces),
+                        )
+                        .cloned()
+                        .collect()
+                });
+        let construction_train = self
+            .construction
+            .as_ref()
+            .map_or(&self.train_configuration, |construction| {
+                &construction.model().train
+            });
+        if facility_intersects_track_sets(
             kind,
             position,
             direction,
-            &pieces,
+            self.circuit.pieces(),
             &self.train_configuration,
+            &construction_pieces,
+            construction_train,
         ) {
             self.facility_message = "Facility intersects track or train clearance".into();
             return false;
@@ -2950,6 +2967,25 @@ fn facility_intersects_track(
                 && obstacle.max.z > min_z
                 && obstacle.min.z < min_z + height
         })
+}
+
+fn facility_intersects_track_sets(
+    kind: FacilityKind,
+    position: Position,
+    direction: Direction,
+    demo_pieces: &[Piece],
+    demo_train: &TrainConfiguration,
+    construction_pieces: &[Piece],
+    construction_train: &TrainConfiguration,
+) -> bool {
+    facility_intersects_track(kind, position, direction, demo_pieces, demo_train)
+        || facility_intersects_track(
+            kind,
+            position,
+            direction,
+            construction_pieces,
+            construction_train,
+        )
 }
 
 fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
@@ -6580,9 +6616,63 @@ mod path_bridge_tests {
 
 #[cfg(test)]
 mod terrain_bridge_tests {
-    use super::WasmSimulation;
+    use super::{WasmSimulation, facility_intersects_track, facility_intersects_track_sets};
+    use theme_park_sim::facilities::FacilityKind;
     use theme_park_sim::facilities::ParkFacilities;
-    use theme_park_sim::world::{Ground, Path, Position, Surface, World};
+    use theme_park_sim::track::{catalog, hybrid_model};
+    use theme_park_sim::world::{Direction, Ground, Path, Position, Surface, World};
+
+    #[test]
+    fn facility_clearance_uses_separate_demo_and_construction_trains() {
+        let demo_train = hybrid_model().train;
+        let mut construction_train = hybrid_model().train;
+        construction_train.width_metres = 100.0;
+        let construction_piece = catalog()
+            .into_iter()
+            .find(|piece| piece.id == theme_park_sim::track::PieceId::Straight)
+            .expect("catalog contains straight track");
+        let demo_pieces = [construction_piece.clone()];
+        let construction_pieces = [construction_piece];
+
+        let position = (0..30)
+            .flat_map(|x| (0..30).map(move |y| (x, y)))
+            .map(|(x, y)| Position { x, y, height: 0 })
+            .find(|position| {
+                !facility_intersects_track(
+                    FacilityKind::Food,
+                    *position,
+                    Direction::North,
+                    &construction_pieces,
+                    &demo_train,
+                ) && facility_intersects_track(
+                    FacilityKind::Food,
+                    *position,
+                    Direction::North,
+                    &construction_pieces,
+                    &construction_train,
+                )
+            })
+            .expect("wide train has additional facility conflicts");
+
+        assert!(facility_intersects_track_sets(
+            FacilityKind::Food,
+            position,
+            Direction::North,
+            &[],
+            &demo_train,
+            &construction_pieces,
+            &construction_train,
+        ));
+        assert!(!facility_intersects_track_sets(
+            FacilityKind::Food,
+            position,
+            Direction::North,
+            &demo_pieces,
+            &demo_train,
+            &[],
+            &construction_train,
+        ));
+    }
 
     #[test]
     fn terrain_edits_refuse_buildings_and_track_without_mutating_the_world() {
