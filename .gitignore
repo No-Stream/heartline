@@ -1,2 +1,8 @@
 .superpowers/
 .playwright-mcp/
+target/
+node_modules/
+web/dist/
+web/src/wasm/
+playwright-report/
+test-results/

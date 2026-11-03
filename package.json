@@ -1,0 +1,21 @@
+{
+  "name": "theme-park-sim-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run web/src",
+    "typecheck": "tsc --noEmit",
+    "dev": "vite --config web/vite.config.ts",
+    "build": "vite --config web/vite.config.ts build",
+    "preview": "vite --config web/vite.config.ts preview",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
+  }
+}

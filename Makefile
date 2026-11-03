@@ -1,0 +1,36 @@
+CARGO := $(HOME)/.cargo/bin/cargo
+CARGO_HOME ?= $(HOME)/.cargo
+WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
+WASM_BINDGEN_VERSION := 0.2.105
+
+.PHONY: install build test lint serve e2e ci wasm-bindgen
+
+install:
+	npm ci
+
+build: wasm-bindgen
+	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
+	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target web --out-dir web/src/wasm
+	npm run build
+
+# The CLI version must match the wasm-bindgen crate version in Cargo.lock.
+wasm-bindgen:
+	@if ! "$(WASM_BINDGEN)" --version 2>/dev/null | grep -qxF "wasm-bindgen $(WASM_BINDGEN_VERSION)"; then $(CARGO) install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked --force; fi
+
+test:
+	$(CARGO) test --workspace
+	npm test
+
+lint:
+	$(CARGO) fmt --all -- --check
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	npm run typecheck
+
+serve:
+	npm run dev -- --host 127.0.0.1
+
+e2e: build
+	npm run e2e
+
+# The same checks as .github/workflows/ci.yaml, except the secret scan and dependency audit.
+ci: install build lint test e2e
