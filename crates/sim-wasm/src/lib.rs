@@ -975,7 +975,7 @@ impl WasmSimulation {
                 })
                 .collect();
             self.train.take_readings();
-            if self.coaster_open && !self.block_layout_change_waiting_for_trains() {
+            if self.coaster_open && !self.block_layout_change_pending() {
                 while let Some(train_id) = {
                     let operation = self
                         .coaster_operation
@@ -1618,7 +1618,14 @@ impl WasmSimulation {
                     .map(usize::to_string)
                     .collect::<Vec<_>>()
                     .join(",");
+                let powered_hold_pieces = layout.powered_hold_pieces(index);
+                let powered_hold_piece_indices = powered_hold_pieces
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let editable = !brake_pieces.is_empty();
+                let powered_hold = !powered_hold_pieces.is_empty();
                 let editable_index = layout
                     .boundaries()
                     .iter()
@@ -1628,22 +1635,30 @@ impl WasmSimulation {
                         !layout.brake_pieces(*previous_index).is_empty()
                     })
                     .count();
-                let (reason, piece_indices, track_kind) = if editable {
+                let (reason, track_kind) = if editable {
                     (
                         "Placed on a level brake run long enough to hold a train.",
-                        format!("[{brake_piece_indices}]"),
                         "blockBrake",
+                    )
+                } else if powered_hold {
+                    (
+                        "Fixed powered hold at the start of lift or launch track.",
+                        kind_for_boundary(layout.circuit(), *boundary),
                     )
                 } else {
                     (
-                        "Fixed pass-through boundary after station, lift, or launch hardware.",
-                        String::from("[]"),
+                        "Fixed pass-through boundary with no stopping mechanism.",
                         kind_for_boundary(layout.circuit(), *boundary),
                     )
                 };
                 format!(
-                    "{{\"boundaryMetres\":{boundary},\"brakeStartMetres\":{},\"brakePieceIndices\":{piece_indices},\"editable\":{editable},\"editableIndex\":{},\"reason\":{},\"trackKind\":{}}}",
+                    "{{\"boundaryMetres\":{boundary},\"brakeStartMetres\":{},\"brakePieceIndices\":{brake_piece_indices},\"poweredHoldStartMetres\":{},\"poweredHoldPieceIndices\":[{powered_hold_piece_indices}],\"editable\":{editable},\"editableIndex\":{},\"reason\":{},\"trackKind\":{}}}",
                     if editable {
+                        layout.brake_start(index).to_string()
+                    } else {
+                        "null".into()
+                    },
+                    if powered_hold {
                         layout.brake_start(index).to_string()
                     } else {
                         "null".into()
@@ -1664,7 +1679,8 @@ impl WasmSimulation {
         let mut notes = vec![
             "Trains wait at a block brake while the next section is occupied.",
             "The hourly estimate averages three dispatch intervals after the first refill and excludes station loading time.",
-            "Fixed pass-through boundaries at stations, lifts, and launches cannot be moved or removed.",
+            "Lift and launch controls can hold a train at the start of powered track.",
+            "Fixed station and powered-hardware boundaries cannot be moved or removed.",
         ];
         if self.block_placement_search.is_some() {
             notes.push(
@@ -1677,8 +1693,8 @@ impl WasmSimulation {
                 notes.push("The requested block edit is being validated; the installed layout remains in use.");
             }
         }
-        if self.block_layout_change_waiting_for_trains() {
-            notes.push("New dispatches are paused until the current trains return.");
+        if self.block_layout_change_pending() {
+            notes.push("New dispatches are paused until the updated block layout is installed.");
         }
         if self.block_placement_search.is_none()
             && self.block_manual_search.is_none()
@@ -2215,10 +2231,7 @@ impl WasmSimulation {
             .is_some_and(|operation| operation.trains().next().is_some())
     }
 
-    fn block_layout_change_waiting_for_trains(&self) -> bool {
-        if !self.coaster_has_active_trains() {
-            return false;
-        }
+    fn block_layout_change_pending(&self) -> bool {
         if let Some(Ok(layout)) = self
             .block_manual_search
             .as_ref()
@@ -2912,11 +2925,24 @@ fn editable_block_boundaries(layout: &BlockLayout) -> Vec<f64> {
 fn block_layout_fingerprint(layout: &BlockLayout) -> Vec<u64> {
     let mut fingerprint = vec![layout.capacity() as u64];
     for (index, boundary) in layout.boundaries().iter().enumerate() {
-        let pieces = layout.brake_pieces(index);
-        fingerprint.push(boundary.to_bits());
-        fingerprint.push(pieces.len() as u64);
-        fingerprint.extend(pieces.iter().map(|piece| *piece as u64));
+        fingerprint.extend(block_boundary_fingerprint(
+            *boundary,
+            layout.brake_pieces(index),
+            layout.powered_hold_pieces(index),
+        ));
     }
+    fingerprint
+}
+
+fn block_boundary_fingerprint(
+    boundary: f64,
+    brake_pieces: &[usize],
+    powered_hold_pieces: &[usize],
+) -> Vec<u64> {
+    let mut fingerprint = vec![boundary.to_bits(), brake_pieces.len() as u64];
+    fingerprint.extend(brake_pieces.iter().map(|piece| *piece as u64));
+    fingerprint.push(powered_hold_pieces.len() as u64);
+    fingerprint.extend(powered_hold_pieces.iter().map(|piece| *piece as u64));
     fingerprint
 }
 
@@ -3143,25 +3169,9 @@ fn theoretical_hourly_riders(layout: &BlockLayout) -> Result<f64, &'static str> 
 }
 
 fn block_layout_suggestions(layout: &BlockLayout) -> Vec<String> {
-    let editable_boundaries = editable_block_boundaries(layout);
-    if editable_boundaries.len() < 3 {
-        return vec![format!(
-            "This layout supports up to {} train(s). Try another separate level brake run at least one train long, then check whether the validated capacity changes.",
-            layout.capacity()
-        )];
-    }
-    let circuit_length = layout.circuit().length();
-    let largest_gap = editable_boundaries
-        .windows(2)
-        .map(|pair| pair[1] - pair[0])
-        .chain(std::iter::once(
-            circuit_length - editable_boundaries[editable_boundaries.len() - 1]
-                + editable_boundaries[0],
-        ))
-        .max_by(f64::total_cmp)
-        .expect("three editable boundaries have a gap");
     vec![format!(
-        "The largest gap between editable brake runs is {largest_gap:.1} m. Try moving or adding a brake there and check whether the validated dispatch estimate changes."
+        "This layout supports up to {} train(s). Run automatic placement to check whether another set of brake positions can safely increase capacity.",
+        layout.capacity()
     )]
 }
 
@@ -3174,7 +3184,7 @@ mod world_tests {
     use theme_park_sim::facilities::{FacilityKind, ParkFacilities};
     use theme_park_sim::guests::GuestId;
     use theme_park_sim::park_guests::ParkGuests;
-    use theme_park_sim::physics::Circuit;
+    use theme_park_sim::physics::{Circuit, demo_circuit};
     use theme_park_sim::track::supports::generate_supports;
     use theme_park_sim::track::{PieceId, TrackState, catalog, hybrid_model};
     use theme_park_sim::world::{Direction, PathKind, World};
@@ -3213,6 +3223,23 @@ mod world_tests {
         Circuit::new(pieces).unwrap()
     }
 
+    fn unpowered_block_test_circuit() -> Circuit {
+        let mut pieces = block_test_circuit().pieces().to_vec();
+        for piece in &mut pieces {
+            if piece.kind == super::PieceKind::Lift {
+                piece.kind = super::PieceKind::Track;
+            }
+        }
+        Circuit::new(pieces).unwrap()
+    }
+
+    fn unpowered_block_physics_config() -> super::PhysicsConfig {
+        super::PhysicsConfig {
+            rolling_resistance: 0.001,
+            ..block_physics_config()
+        }
+    }
+
     fn block_test_boundaries(circuit: &Circuit) -> Vec<f64> {
         [2, 6, 10, 13]
             .into_iter()
@@ -3223,6 +3250,42 @@ mod world_tests {
                     .sum()
             })
             .collect()
+    }
+
+    fn block_powered_test_circuit() -> Circuit {
+        let pieces_catalog = catalog();
+        let mut state = TrackState::origin();
+        let mut pieces = Vec::new();
+        for id in [
+            PieceId::Station,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::LiftFlat,
+            PieceId::LiftFlat,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::TurnLargeEntry,
+            PieceId::TurnLargeExit,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::LiftFlat,
+            PieceId::LiftFlat,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::TurnLargeEntry,
+            PieceId::TurnLargeExit,
+        ] {
+            let piece = pieces_catalog
+                .iter()
+                .find(|piece| piece.id == id)
+                .unwrap()
+                .at(state)
+                .unwrap();
+            state = piece.exit;
+            pieces.push(piece);
+        }
+        Circuit::new(pieces).unwrap()
     }
 
     fn report_number(report: &str, key: &str) -> f64 {
@@ -3803,6 +3866,66 @@ mod world_tests {
     }
 
     #[test]
+    fn block_suggestion_does_not_point_across_a_loop_without_a_candidate() {
+        let circuit = demo_circuit();
+        let mut train = hybrid_model().train;
+        train.length_metres = 5.0;
+        let runs = theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres);
+        let loop_index = circuit
+            .pieces()
+            .iter()
+            .position(|piece| piece.id == PieceId::Loop)
+            .expect("demo circuit contains a loop");
+        let loop_start: f64 = circuit.pieces()[..loop_index]
+            .iter()
+            .map(|piece| piece.length())
+            .sum();
+        let loop_end = loop_start + circuit.pieces()[loop_index].length();
+        let candidate_boundaries: Vec<_> = runs.iter().map(|run| run.boundary_metres).fold(
+            Vec::new(),
+            |mut boundaries, boundary| {
+                if boundaries.last() != Some(&boundary) {
+                    boundaries.push(boundary);
+                }
+                boundaries
+            },
+        );
+        let before_loop = candidate_boundaries
+            .iter()
+            .copied()
+            .filter(|boundary| *boundary <= loop_start)
+            .max_by(f64::total_cmp)
+            .expect("brake candidate before loop");
+        let after_loop = candidate_boundaries
+            .iter()
+            .copied()
+            .filter(|boundary| *boundary >= loop_end)
+            .min_by(f64::total_cmp)
+            .expect("brake candidate after loop");
+        assert!(runs.iter().all(|run| {
+            run.boundary_metres <= before_loop || run.boundary_metres >= after_loop
+        }));
+        assert!(loop_start >= before_loop && loop_end <= after_loop);
+
+        let validated_circuit = block_test_circuit();
+        let validated_train = hybrid_model().train;
+        let boundaries = block_test_boundaries(&validated_circuit);
+        let layout = BlockLayout::new(
+            &validated_circuit,
+            &validated_train,
+            block_physics_config(),
+            boundaries[..3].to_vec(),
+        )
+        .expect("known three-brake layout validates");
+        assert_eq!(editable_block_boundaries(&layout).len(), 3);
+
+        let suggestions = super::block_layout_suggestions(&layout).join(" ");
+        assert!(suggestions.contains("automatic placement"), "{suggestions}");
+        assert!(!suggestions.contains("largest gap"), "{suggestions}");
+        assert!(!suggestions.contains("brake there"), "{suggestions}");
+    }
+
+    #[test]
     fn throughput_cache_distinguishes_different_brake_runs_at_the_same_boundary() {
         let mut pieces = super::demo_circuit().pieces().to_vec();
         pieces
@@ -3848,6 +3971,77 @@ mod world_tests {
             }
         }
         panic!("expected two validated brake lengths at the same boundary");
+    }
+
+    #[test]
+    fn block_report_distinguishes_native_powered_holds_from_pass_through_boundaries() {
+        let circuit = block_powered_test_circuit();
+        let train = hybrid_model().train;
+        let layout = BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new())
+            .expect("powered lift layout validates");
+        let powered_index = layout
+            .boundaries()
+            .iter()
+            .enumerate()
+            .find_map(|(index, _)| (!layout.powered_hold_pieces(index).is_empty()).then_some(index))
+            .expect("layout has a native powered hold");
+        assert!(layout.brake_pieces(powered_index).is_empty());
+
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation.install_block_layout(layout.clone(), false);
+        let report = simulation.construction_block_report_json();
+        let held_piece = layout.powered_hold_pieces(powered_index)[0];
+        assert!(
+            report.contains(&format!("\"poweredHoldPieceIndices\":[{held_piece}]")),
+            "{report}"
+        );
+        assert!(
+            report.contains("Fixed powered hold at the start of lift or launch track."),
+            "{report}"
+        );
+        assert!(report.contains("Fixed pass-through boundary"), "{report}");
+    }
+
+    #[test]
+    fn installing_a_native_hold_layout_does_not_adopt_a_legacy_throughput_cache_entry() {
+        let circuit = block_powered_test_circuit();
+        let train = hybrid_model().train;
+        let layout = BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new())
+            .expect("powered lift layout validates");
+        assert!(
+            layout
+                .boundaries()
+                .iter()
+                .enumerate()
+                .any(|(index, _)| { !layout.powered_hold_pieces(index).is_empty() })
+        );
+
+        let mut legacy_fingerprint = vec![layout.capacity() as u64];
+        for (index, boundary) in layout.boundaries().iter().enumerate() {
+            let brake_pieces = layout.brake_pieces(index);
+            legacy_fingerprint.push(boundary.to_bits());
+            legacy_fingerprint.push(brake_pieces.len() as u64);
+            legacy_fingerprint.extend(brake_pieces.iter().map(|piece| *piece as u64));
+        }
+        let mut simulation = WasmSimulation::new(42, 0);
+        simulation
+            .block_throughput_cache
+            .insert(legacy_fingerprint, (1_234.0, String::new()));
+
+        simulation.install_block_layout(layout, false);
+
+        assert!(
+            simulation.block_throughput_estimator.is_some(),
+            "native hold identity must prevent adopting the old cache entry"
+        );
+    }
+
+    #[test]
+    fn block_boundary_fingerprint_includes_native_hold_piece_identity() {
+        assert_ne!(
+            super::block_boundary_fingerprint(80.0, &[], &[3]),
+            super::block_boundary_fingerprint(80.0, &[], &[4])
+        );
     }
 
     #[test]
@@ -3954,11 +4148,11 @@ mod world_tests {
         simulation.block_baseline_validation = true;
         for _ in 0..10 {
             simulation.construction_advance_block_analysis(1_000);
-            if simulation.block_layout_change_waiting_for_trains() {
+            if simulation.block_layout_change_pending() {
                 break;
             }
         }
-        assert!(simulation.block_layout_change_waiting_for_trains());
+        assert!(simulation.block_layout_change_pending());
         assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 1);
         assert!(
             simulation
@@ -4006,7 +4200,7 @@ mod world_tests {
     }
 
     #[test]
-    fn completing_baseline_validation_preserves_a_running_train() {
+    fn baseline_validation_waits_to_adopt_powered_holds_until_the_train_completes() {
         let circuit = block_test_circuit();
         let train = hybrid_model().train;
         let config = block_physics_config();
@@ -4021,10 +4215,54 @@ mod world_tests {
             Some(super::BlockManualSearch::new(circuit, train, config, Vec::new()).unwrap());
         for _ in 0..1_000 {
             simulation.construction_advance_block_analysis(1_000);
-            if simulation.block_manual_search.is_none() {
+            if simulation
+                .block_manual_search
+                .as_ref()
+                .and_then(super::BlockManualSearch::result)
+                .is_some()
+            {
                 break;
             }
         }
+        assert!(simulation.block_layout_change_pending());
+        assert!(
+            !simulation
+                .block_layout
+                .as_ref()
+                .unwrap()
+                .capacity_search_complete()
+        );
+        let validated_layout = simulation
+            .block_manual_search
+            .as_ref()
+            .and_then(super::BlockManualSearch::result)
+            .and_then(|result| result.as_ref().ok())
+            .expect("baseline validation found native powered holds");
+        assert!(validated_layout.capacity_search_complete());
+        assert_eq!(
+            simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            vec![train_id]
+        );
+        let outcome = (0..120_000)
+            .find_map(|_| {
+                simulation
+                    .coaster_operation
+                    .as_mut()
+                    .unwrap()
+                    .step(&[])
+                    .into_iter()
+                    .next()
+            })
+            .expect("running baseline train completes before adoption")
+            .1;
+        assert!(!outcome.recovered);
+        simulation.construction_advance_block_analysis(0);
         assert!(simulation.block_manual_search.is_none());
         assert!(
             simulation
@@ -4040,7 +4278,7 @@ mod world_tests {
             .trains()
             .map(|(id, _)| id)
             .collect();
-        assert_eq!(trains, vec![train_id]);
+        assert!(trains.is_empty());
     }
 
     #[test]
@@ -4059,9 +4297,9 @@ mod world_tests {
 
     #[test]
     fn throughput_uses_sustained_dispatches_after_the_initial_fill() {
-        let circuit = block_test_circuit();
+        let circuit = unpowered_block_test_circuit();
         let train = hybrid_model().train;
-        let physics = block_physics_config();
+        let physics = unpowered_block_physics_config();
         let layout =
             BlockLayout::new(&circuit, &train, physics, block_test_boundaries(&circuit)).unwrap();
         assert_eq!(layout.capacity(), 3);
@@ -4104,9 +4342,9 @@ mod world_tests {
 
     #[test]
     fn block_report_uses_simulated_dispatch_spacing_for_one_two_and_three_trains() {
-        let circuit = block_test_circuit();
+        let circuit = unpowered_block_test_circuit();
         let train = hybrid_model().train;
-        let physics = block_physics_config();
+        let physics = unpowered_block_physics_config();
         let brake_boundaries = block_test_boundaries(&circuit);
 
         let mut hourly_throughputs = Vec::new();
@@ -4242,9 +4480,7 @@ mod world_tests {
         simulation.construction_close();
         apply_automatic_blocks_after_finding(&mut simulation, 3);
         assert!(editable_block_boundaries(simulation.block_layout.as_ref().unwrap()).len() >= 3);
-        let (circuit, _) = simulation.construction_circuit_and_train().unwrap();
-        let boundaries = block_test_boundaries(&circuit);
-        assert!(simulation.construction_set_block_sections(boundaries[..3].to_vec()));
+        assert!(simulation.construction_set_block_sections(Vec::new()));
         finish_manual_block_validation(&mut simulation);
         assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 2);
         assert_eq!(simulation.construction_train_count(), 1);
@@ -4366,10 +4602,40 @@ mod world_tests {
             .flatten()
             .copied()
             .collect();
+        let rider_train_ids: Vec<_> = simulation.coaster_riders.keys().copied().collect();
         let completed_before: Vec<_> = riders
             .iter()
             .map(|rider| simulation.simulation.behaviors().guests[rider.0 as usize].rides_completed)
             .collect();
+        let circuit = simulation.block_layout.as_ref().unwrap().circuit();
+        let station_index = circuit
+            .pieces()
+            .iter()
+            .position(|piece| piece.kind == super::PieceKind::Station)
+            .unwrap();
+        let station_distance: f64 = circuit.pieces()[..station_index]
+            .iter()
+            .map(|piece| piece.length())
+            .sum::<f64>()
+            + circuit.pieces()[station_index].length() / 2.0;
+        let circuit_length = circuit.length();
+        let mut train_history = vec![(
+            0,
+            simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .map(|(id, train)| {
+                    (
+                        id,
+                        train.distance(),
+                        train.speed(),
+                        simulation.coaster_riders.get(&id).map_or(0, Vec::len),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )];
         assert_eq!(simulation.block_layout.as_ref().unwrap().capacity(), 2);
         assert!(simulation.construction_auto_blocks());
         for _ in 0..10_000 {
@@ -4394,13 +4660,87 @@ mod world_tests {
                 .iter()
                 .all(|&rider| simulation.simulation.behaviors().is_coaster_riding(rider))
         );
-        for _ in 0..10_000 {
+        let mut saw_empty_dispatch_pause = false;
+        for tick in 1..=10_000 {
             simulation.tick();
+            let active_train_ids: Vec<_> = simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .map(|(id, _)| id)
+                .collect();
+            assert!(
+                simulation.block_layout.as_ref().unwrap().capacity() > 2
+                    || active_train_ids
+                        .iter()
+                        .all(|train_id| rider_train_ids.contains(train_id)),
+                "a replacement train dispatched before the pending block layout was installed: active={active_train_ids:?}, original={rider_train_ids:?}"
+            );
+            if active_train_ids.is_empty()
+                && simulation.block_layout.as_ref().unwrap().capacity() == 2
+                && simulation
+                    .block_placement_search
+                    .as_ref()
+                    .is_some_and(|search| search.best().capacity() > 2)
+            {
+                assert!(simulation.block_layout_change_pending());
+                saw_empty_dispatch_pause = true;
+            }
+            if tick % 1_000 == 0 {
+                train_history.push((
+                    tick,
+                    simulation
+                        .coaster_operation
+                        .as_ref()
+                        .unwrap()
+                        .trains()
+                        .map(|(id, train)| {
+                            (
+                                id,
+                                train.distance(),
+                                train.speed(),
+                                simulation.coaster_riders.get(&id).map_or(0, Vec::len),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                ));
+            }
             if simulation.block_layout.as_ref().unwrap().capacity() > 2 {
                 break;
             }
         }
-        assert!(simulation.block_layout.as_ref().unwrap().capacity() > 2);
+        assert!(
+            simulation.block_layout.as_ref().unwrap().capacity() > 2,
+            "old capacity={}, open={}, waiting={}, circuit length={}, station distance={}, history={:?}, active={:?}, riders={:?}, search={:?}",
+            simulation.block_layout.as_ref().unwrap().capacity(),
+            simulation.coaster_open,
+            simulation.block_layout_change_pending(),
+            circuit_length,
+            station_distance,
+            train_history,
+            simulation
+                .coaster_operation
+                .as_ref()
+                .unwrap()
+                .trains()
+                .map(|(id, train)| (id, train.distance(), train.speed()))
+                .collect::<Vec<_>>(),
+            simulation
+                .coaster_riders
+                .iter()
+                .map(|(id, guests)| (*id, guests.len()))
+                .collect::<Vec<_>>(),
+            simulation.block_placement_search.as_ref().map(|search| (
+                search.best().capacity(),
+                search.work_completed(),
+                search.is_complete()
+            ))
+        );
+        assert!(
+            saw_empty_dispatch_pause,
+            "fixture did not exercise the empty substep window before layout installation"
+        );
         assert!(
             simulation.block_placement_search.is_some(),
             "search should continue toward the maximum"

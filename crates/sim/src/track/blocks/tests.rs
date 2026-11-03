@@ -12,7 +12,10 @@ fn capacity_verification_waits_for_two_distinct_peak_cohorts_to_finish() {
     cohorts.complete(3);
     cohorts.observe_active(&[1, 4]);
     cohorts.complete(1);
-    assert!(!cohorts.verified(), "one train must not stand in for a second cohort");
+    assert!(
+        !cohorts.verified(),
+        "one train must not stand in for a second cohort"
+    );
 
     cohorts.observe_active(&[4, 5]);
     cohorts.complete(4);
@@ -47,17 +50,31 @@ fn capacity_verification_observes_two_real_train_cohorts() {
         PieceId::TurnLargeEntry,
         PieceId::TurnLargeExit,
     ] {
-        let piece = catalog.iter().find(|piece| piece.id == id).unwrap().at(state).unwrap();
+        let piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
         state = piece.exit;
         pieces.push(piece);
     }
     let circuit = Circuit::new(pieces).unwrap();
     let boundaries = [2, 6, 10, 13]
         .into_iter()
-        .map(|end| circuit.pieces()[..end].iter().map(|piece| piece.length()).sum())
+        .map(|end| {
+            circuit.pieces()[..end]
+                .iter()
+                .map(|piece| piece.length())
+                .sum()
+        })
         .collect();
-    let config = PhysicsConfig { lift_speed: 5.0, ..Default::default() };
-    let layout = super::BlockLayout::new(&circuit, &hybrid_model().train, config, boundaries).unwrap();
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..Default::default()
+    };
+    let layout =
+        super::BlockLayout::new(&circuit, &hybrid_model().train, config, boundaries).unwrap();
     assert!(layout.capacity() >= 2);
     let mut operation = BlockOperation::new_without_reports(layout.clone());
     let mut cohorts = super::SustainedCohorts::new(layout.capacity());
@@ -67,7 +84,8 @@ fn capacity_verification_observes_two_real_train_cohorts() {
             operation.dispatch();
         }
         let active: Vec<_> = operation.trains().map(|(id, _)| id).collect();
-        if cohorts.remaining.is_empty() && !cohorts.verified() && active.len() == layout.capacity() {
+        if cohorts.remaining.is_empty() && !cohorts.verified() && active.len() == layout.capacity()
+        {
             captured_cohorts.push(active.clone());
         }
         cohorts.observe_active(&active);
@@ -82,7 +100,11 @@ fn capacity_verification_observes_two_real_train_cohorts() {
     }
     assert!(cohorts.verified());
     assert_eq!(captured_cohorts.len(), 2);
-    assert!(captured_cohorts[0].iter().all(|id| !captured_cohorts[1].contains(id)));
+    assert!(
+        captured_cohorts[0]
+            .iter()
+            .all(|id| !captured_cohorts[1].contains(id))
+    );
 }
 
 #[test]

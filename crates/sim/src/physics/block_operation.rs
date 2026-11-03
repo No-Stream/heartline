@@ -94,7 +94,7 @@ impl BlockOperation {
         let mut required = Vec::new();
         let mut first_brake_found = false;
         for _ in 0..count {
-            if !self.layout.brake_pieces(section).is_empty() {
+            if !self.layout.hold_pieces(section).is_empty() {
                 if first_brake_found {
                     break;
                 }
@@ -112,7 +112,7 @@ impl BlockOperation {
     fn approach_to_first_brake(&self, distance: f64) -> Vec<usize> {
         let mut approach = Vec::new();
         for section in self.required_ahead(distance) {
-            if !self.layout.brake_pieces(section).is_empty() {
+            if !self.layout.hold_pieces(section).is_empty() {
                 break;
             }
             approach.push(section);
@@ -139,12 +139,12 @@ impl BlockOperation {
                 let Some(next) = required
                     .iter()
                     .copied()
-                    .find(|&section| !self.layout.brake_pieces(section).is_empty())
+                    .find(|&section| !self.layout.hold_pieces(section).is_empty())
                 else {
                     return false;
                 };
                 self.layout
-                    .brake_pieces(next)
+                    .hold_pieces(next)
                     .contains(&self.circuit.piece_index(distance))
                     && self.layout.should_hold(next, distance)
                     && self.trains.iter().enumerate().any(|(other_index, other)| {
@@ -207,11 +207,11 @@ impl BlockOperation {
             let next = required
                 .iter()
                 .copied()
-                .find(|&section| !self.layout.brake_pieces(section).is_empty())
+                .find(|&section| !self.layout.hold_pieces(section).is_empty())
                 .unwrap_or(*required.last().expect("a circuit has at least one section"));
             let approaching_brake = self
                 .layout
-                .brake_pieces(next)
+                .hold_pieces(next)
                 .contains(&circuit.piece_index(distance));
             let desired = if approaching_brake {
                 required
@@ -241,7 +241,7 @@ impl BlockOperation {
             self.trains[index].reserved = reserved;
             let hold = !available && self.layout.should_hold(next, distance);
             let mut probe = self.trains[index].run.train().clone();
-            probe.step_block_brake_without_readings(circuit, self.layout.brake_pieces(next), hold);
+            probe.step_block_brake_without_readings(circuit, self.layout.hold_pieces(next), hold);
             let backwards =
                 probe.distance() < distance || probe.speed() < 0.0 || !probe.notes().is_empty();
             let swept_end = probe.distance().max(distance);
@@ -321,7 +321,7 @@ impl BlockOperation {
             let outcome = self.trains[index].run.step_with_block_brake(
                 circuit,
                 &nearby,
-                self.layout.brake_pieces(next),
+                self.layout.hold_pieces(next),
                 hold,
             );
             if let Some(outcome) = outcome {
@@ -347,7 +347,7 @@ mod tests {
     use super::*;
     use crate::track::{PieceId, TrackState, catalog, hybrid_model};
 
-    fn test_circuit() -> Circuit {
+    pub(super) fn test_circuit() -> Circuit {
         let catalog = catalog();
         let mut state = TrackState::origin();
         let mut pieces = Vec::new();
@@ -447,10 +447,18 @@ mod tests {
 
     #[test]
     fn single_train_layout_completes_a_circuit() {
-        let circuit = test_circuit();
+        let mut pieces = test_circuit().pieces().to_vec();
+        for piece in &mut pieces {
+            if piece.kind == PieceKind::Lift {
+                piece.kind = PieceKind::Track;
+            }
+        }
+        let circuit = Circuit::new(pieces).unwrap();
         let configuration = hybrid_model().train;
         let config = PhysicsConfig {
             lift_speed: 5.0,
+            rolling_resistance: 0.001,
+            drag_coefficient: 0.5,
             ..Default::default()
         };
         let boundaries = validated_brake_boundaries(&circuit)[..2].to_vec();
@@ -500,7 +508,7 @@ mod tests {
         let mut maximum_active = 0;
         operation.panic_on_interlock = true;
         for _ in 0..120_000 {
-            while operation.can_dispatch() {
+            while operation.trains().count() < 3 && operation.can_dispatch() {
                 operation.dispatch();
             }
             maximum_active = maximum_active.max(operation.trains().count());
@@ -543,7 +551,7 @@ mod tests {
         let mut maximum = 0;
         let mut completed = 0;
         for _ in 0..120_000 {
-            while operation.can_dispatch() {
+            while operation.trains().count() < 3 && operation.can_dispatch() {
                 operation.dispatch();
             }
             maximum = maximum.max(operation.trains.len());

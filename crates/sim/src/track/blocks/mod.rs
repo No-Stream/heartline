@@ -268,6 +268,47 @@ pub fn brake_runs(circuit: &Circuit, train_length: f64) -> Vec<BrakeRun> {
     runs
 }
 
+/// Native lift and launch controls can hold a train as it enters the powered
+/// section. The first piece is the stopping zone; the section boundary is at
+/// the end of the complete contiguous powered run.
+fn powered_holds(circuit: &Circuit) -> Vec<BrakeRun> {
+    let pieces = circuit.pieces();
+    let mut starts = Vec::with_capacity(pieces.len());
+    let mut distance = 0.0;
+    for piece in pieces {
+        starts.push(distance);
+        distance += piece.length();
+    }
+    let mut holds = Vec::new();
+    for start in 0..pieces.len() {
+        let kind = pieces[start].kind;
+        let previous = (start + pieces.len() - 1) % pieces.len();
+        if !matches!(kind, PieceKind::Lift | PieceKind::Launch) || pieces[previous].kind == kind {
+            continue;
+        }
+        let mut end = start;
+        while (end + 1) % pieces.len() != start && pieces[(end + 1) % pieces.len()].kind == kind {
+            end = (end + 1) % pieces.len();
+        }
+        holds.push(BrakeRun {
+            start_metres: starts[start],
+            boundary_metres: (starts[end] + pieces[end].length()).rem_euclid(circuit.length()),
+            length_metres: pieces[start].length(),
+            piece_indices: vec![start].into(),
+        });
+    }
+    holds
+}
+
+fn is_powered_hold(circuit: &Circuit, run: &BrakeRun) -> bool {
+    run.piece_indices.first().is_some_and(|&index| {
+        matches!(
+            circuit.pieces()[index].kind,
+            PieceKind::Lift | PieceKind::Launch
+        )
+    })
+}
+
 fn maximum_nonoverlapping_runs(candidates: &[&BrakeRun]) -> usize {
     // Runs sharing an end are nested, so their shortest member can always
     // replace a longer one when computing a geometry-only upper bound.
@@ -375,6 +416,24 @@ impl BlockManualSearch {
                 return Err("boundary must end an eligible brake run long enough for the train");
             }
             choices.push(matching);
+        }
+        for powered in powered_holds(&circuit) {
+            if validate_brake_forces(&circuit, config, std::slice::from_ref(&powered)).is_err() {
+                continue;
+            }
+            if boundaries
+                .iter()
+                .any(|boundary| (*boundary - powered.boundary_metres).abs() < 1e-7)
+            {
+                continue;
+            }
+            let pass_through = BrakeRun {
+                start_metres: powered.boundary_metres,
+                boundary_metres: powered.boundary_metres,
+                length_metres: 0.0,
+                piece_indices: Vec::new().into(),
+            };
+            choices.push(vec![powered, pass_through]);
         }
         let active: Option<PlacementFuture> = if choices.is_empty() {
             let layout = BlockLayout::assemble_runs(&circuit, &train, config, Vec::new())?;
@@ -510,7 +569,11 @@ impl BlockPlacementSearch {
             && config.braking_acceleration > 0.0
             && config.brake_speed > 0.0
         {
-            brake_runs(&circuit, train.length_metres)
+            let mut candidates = brake_runs(&circuit, train.length_metres);
+            candidates.extend(powered_holds(&circuit));
+            candidates
+                .sort_by(|left, right| left.boundary_metres.total_cmp(&right.boundary_metres));
+            candidates
         } else {
             Vec::new()
         };
@@ -816,6 +879,7 @@ impl BlockLayout {
         }
         if layout.runs.iter().any(|run| !run.piece_indices.is_empty()) {
             layout.validate_traversal(&circuit, &train, config).await?;
+            layout.validate_unblocked_lap().await?;
         }
         if layout.capacity > 1 {
             let (capacity, complete) = layout.measure_capacity().await?;
@@ -823,6 +887,23 @@ impl BlockLayout {
             layout.capacity_search_complete = complete;
         }
         Ok(layout)
+    }
+
+    async fn validate_unblocked_lap(&self) -> Result<(), &'static str> {
+        const MAXIMUM_SECONDS: f64 = 600.0;
+        let mut operation = BlockOperation::new_without_reports(self.clone());
+        operation.dispatch();
+        for _ in 0..(MAXIMUM_SECONDS / TIME_STEP) as usize {
+            yield_step().await;
+            if let Some((_, outcome)) = operation.step(&[]).into_iter().next() {
+                return if outcome.recovered {
+                    Err("A train cannot complete the circuit without being recovered.")
+                } else {
+                    Ok(())
+                };
+            }
+        }
+        Err("The train could not complete an unblocked circuit within 600 seconds.")
     }
 
     async fn verify_single_train(mut layout: Self) -> Result<Self, &'static str> {
@@ -856,7 +937,11 @@ impl BlockLayout {
                 piece.kind,
                 PieceKind::Station | PieceKind::Lift | PieceKind::Launch | PieceKind::Brakes
             ) && piece.kind != next.kind)
-                || (piece.kind != PieceKind::Station && next.kind == PieceKind::Station)
+                || (piece.kind != next.kind
+                    && matches!(
+                        next.kind,
+                        PieceKind::Station | PieceKind::Lift | PieceKind::Launch
+                    ))
             {
                 let boundary = distance.rem_euclid(circuit.length());
                 if !runs
@@ -873,6 +958,12 @@ impl BlockLayout {
             }
         }
         runs.sort_by(|a, b| a.boundary_metres.total_cmp(&b.boundary_metres));
+        if runs
+            .windows(2)
+            .any(|pair| (pair[0].boundary_metres - pair[1].boundary_metres).abs() < 1e-7)
+        {
+            return Err("block boundaries cannot overlap");
+        }
         let boundaries = runs.iter().map(|run| run.boundary_metres).collect();
         for (index, run) in runs.iter().enumerate() {
             if runs[index + 1..]
@@ -924,6 +1015,21 @@ impl BlockLayout {
         &self.boundaries
     }
     pub fn brake_pieces(&self, index: usize) -> &[usize] {
+        if is_powered_hold(&self.circuit, &self.runs[index]) {
+            &[]
+        } else {
+            &self.runs[index].piece_indices
+        }
+    }
+    /// Powered track that can stop a train at the start of this section.
+    pub fn powered_hold_pieces(&self, index: usize) -> &[usize] {
+        if is_powered_hold(&self.circuit, &self.runs[index]) {
+            &self.runs[index].piece_indices
+        } else {
+            &[]
+        }
+    }
+    pub(crate) fn hold_pieces(&self, index: usize) -> &[usize] {
         &self.runs[index].piece_indices
     }
     pub fn brake_start(&self, index: usize) -> f64 {
@@ -932,7 +1038,12 @@ impl BlockLayout {
     pub fn should_hold(&self, index: usize, head_distance: f64) -> bool {
         let distance =
             (head_distance - self.runs[index].start_metres).rem_euclid(self.circuit_length);
-        distance >= self.train_length && distance < self.runs[index].length_metres
+        let minimum_distance = if is_powered_hold(&self.circuit, &self.runs[index]) {
+            0.0
+        } else {
+            self.train_length
+        };
+        distance >= minimum_distance && distance < self.runs[index].length_metres
     }
     pub fn capacity(&self) -> usize {
         self.capacity
@@ -1081,7 +1192,12 @@ impl BlockLayout {
         let mut reached_target = false;
         for _ in 0..(300.0 / TIME_STEP) as usize {
             let distance = train.distance();
-            let holding = distance >= target_start + configuration.length_metres;
+            let holding_distance = if is_powered_hold(circuit, target) {
+                0.0
+            } else {
+                configuration.length_metres
+            };
+            let holding = distance >= target_start + holding_distance;
             let position = distance.rem_euclid(circuit.length());
             let section = self
                 .boundaries
@@ -1105,7 +1221,9 @@ impl BlockLayout {
                 return Err("train cannot safely reach and stop on the next block brake");
             }
             if holding && train.speed() == 0.0 {
-                if train.distance() - target_start < configuration.length_metres {
+                if !is_powered_hold(circuit, target)
+                    && train.distance() - target_start < configuration.length_metres
+                {
                     return Err("train stops before it fits on the block brake");
                 }
                 reached_target = true;

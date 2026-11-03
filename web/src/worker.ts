@@ -22,7 +22,10 @@ type PathAction =
 type WorkerAction = SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
-const testMode = (self as unknown as { name?: string }).name === "theme-park-test";
+const workerName = (self as unknown as { name?: string }).name ?? "";
+const testMode = workerName === "theme-park-test" || workerName.startsWith("theme-park-test:");
+const testGuestCount = workerName.startsWith("theme-park-test:") ? Number(workerName.slice("theme-park-test:".length)) : 12;
+if (!Number.isInteger(testGuestCount) || testGuestCount < 1 || testGuestCount > 500) throw new RangeError("Invalid test guest count");
 const workerScope = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
   addEventListener(type: "message", listener: (event: MessageEvent<WorkerAction>) => void): void;
@@ -150,7 +153,7 @@ function pathRouteCoordinates(start: PathPosition, end: PathPosition): Int32Arra
 }
 
 const initialized = init().then(() => {
-  simulation = new WasmSimulation(2026n, 12);
+  simulation = new WasmSimulation(2026n, testGuestCount);
   sendWorld();
   sendFacilities();
   sendScenery();

@@ -3,7 +3,7 @@ import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
 import type { CameraAction, InputAction } from "./input/actions";
-import type { GameTest } from "./game-test";
+import { constructionRiderPositions, type GameTest } from "./game-test";
 import { createWorldRenderer, loadAtlas, type AtmospherePass, type WorldView, type WorldSprite } from "./render/index";
 import { advanceDayPhase, DAY_LENGTH_TICKS, lightingAt, NOON, START_PHASE, sunAt } from "./render/daylight";
 import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst } from "./render/effects";
@@ -58,6 +58,7 @@ let current: CoasterSnapshot | undefined;
 let receivedAt = performance.now();
 const noGeometry = new Float32Array();
 const frozen = new URLSearchParams(location.search).has("test");
+const testAgents = frozen ? new URLSearchParams(location.search).get("agents") : null;
 const timing = new URLSearchParams(location.search).get("timing") === "work";
 const { atlas, images } = await loadAtlas(new URL("./atlas.json", document.baseURI).href);
 const renderer = createWorldRenderer(gameCanvas, atlas, images);
@@ -269,16 +270,7 @@ const gameTest: GameTest = {
   ready: false,
   guests() { return renderedGuests; },
   riders() {
-    const riders = current?.constructionRiders ?? new Uint32Array();
-    const result: { id: string; car: number; seat: number; x: number; y: number; z: number }[] = [];
-    for (let offset = 0; offset < riders.length; offset += 3) {
-      const car = riders[offset];
-      const poseOffset = car * 11;
-      const poses = current!.constructionTrainPoses;
-      if (poses[poseOffset] !== car) throw new Error("Missing rider car pose");
-      result.push({ car, seat: riders[offset + 1], id: `guest-${riders[offset + 2]}`, x: poses[poseOffset + 1], y: poses[poseOffset + 2], z: poses[poseOffset + 3] });
-    }
-    return result;
+    return current ? constructionRiderPositions(current.constructionTrainPoses, current.constructionRiders) : [];
   },
   facilities() { return facilities; },
   paths() {
@@ -479,7 +471,7 @@ bindInput(gameCanvas, dispatch, () => pathTool.state().mode === "build" || lands
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), {
   type: "module",
-  name: frozen ? "theme-park-test" : "theme-park",
+  name: frozen ? `theme-park-test${testAgents === null ? "" : `:${testAgents}`}` : "theme-park",
 });
 worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | ConstructionState | ({ type: "snapshot"; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
   const message = event.data;

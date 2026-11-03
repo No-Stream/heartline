@@ -28,7 +28,7 @@ test("automatic block sections can be inspected, moved, refused, and rendered", 
   await expect(editableRows).not.toHaveCount(0);
   await expect(blockPanel.locator('[data-train-count]')).toBeVisible();
 
-  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 0.55, rotation: 0 }));
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 58, centerY: 54, zoom: 0.45, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   const canvas = page.locator("canvas");
   await page.mouse.move(0, 0);
@@ -41,7 +41,7 @@ test("automatic block sections can be inspected, moved, refused, and rendered", 
   const installedBoundary = await boundary.inputValue();
   const marker = await findBlockMarker(page, Number(editableIndex));
   await clickCanvas(page, marker);
-  await boundary.fill("0");
+  await boundary.fill("0.123456");
   await editableRow.locator(`[data-block-move="${editableIndex}"]`).click();
   await expect(blockPanel.locator("[data-block-message]")).toContainText(/Choose a listed level brake run/);
   await expect(boundary).toHaveValue(installedBoundary);
@@ -70,7 +70,7 @@ test("automatic block sections can be inspected, moved, refused, and rendered", 
 
 test("two requested block trains move visibly without overlapping", async ({ page }) => {
   test.setTimeout(300_000);
-  await buildBlockCircuit(page, 241, 249, 4, "north", boardingCircuitPieces);
+  await buildBlockCircuit(page, 241, 249, 4, "north", boardingCircuitPieces, 48);
 
   const blockPanel = page.getByRole("region", { name: "Block sections" });
   await page.getByRole("button", { name: "Add block sections" }).click();
@@ -120,6 +120,11 @@ test("two requested block trains move visibly without overlapping", async ({ pag
       expect(distanceBetween(firstCar, secondCar), "cars from separate trains must keep a visible gap").toBeGreaterThan(0.5);
     }
   }
+  const cameraCenter = carPositions.reduce((center, car) => ({ x: center.x + car.x, y: center.y + car.y }), { x: 0, y: 0 });
+  cameraCenter.x /= carPositions.length;
+  cameraCenter.y /= carPositions.length;
+  await page.evaluate((center) => window.gameTest.setCamera({ centerX: center.x, centerY: center.y, zoom: 0.45, rotation: 0 }), cameraCenter);
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   const visibleTrainIds = await findVisibleTrainIds(page, carPositions);
   expect(visibleTrainIds).toEqual(expect.arrayContaining(movingTrains.map(({ id }) => id)));
 });
@@ -143,13 +148,14 @@ async function buildBlockCircuit(
   height: number,
   orientation: "east" | "north" = "east",
   pieces: readonly string[] = blockCircuitPieces,
+  agentCount = 12,
 ): Promise<void> {
   const pageErrors: string[] = [];
   const failedResources: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("response", (response) => { if (response.status() >= 400) failedResources.push(`${response.status()} ${response.url()}`); });
   page.on("requestfailed", (request) => failedResources.push(`${request.failure()?.errorText ?? "request failed"} ${request.url()}`));
-  await page.goto("/?test=1");
+  await page.goto(agentCount === 12 ? "/?test=1" : `/?test=1&agents=${agentCount}`);
   await page.waitForTimeout(1_000);
   if (pageErrors.length > 0) throw new Error(`Browser startup errors: ${pageErrors.join(" | ")}`);
   if (failedResources.length > 0) throw new Error(`Game assets failed to load: ${failedResources.join(" | ")}`);

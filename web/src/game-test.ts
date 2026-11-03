@@ -5,6 +5,19 @@ import type { Camera, WorldPoint } from "./camera";
 import type { Pick, WorldSprite } from "./render/index";
 import type { CrestBurst } from "./render/effects";
 
+export function constructionRiderPositions(poses: Float32Array, riders: Uint32Array): { id: string; car: number; seat: number; x: number; y: number; z: number }[] {
+  const poseOffsets = new Map<number, number>();
+  for (let offset = 0; offset < poses.length; offset += 11) poseOffsets.set(poses[offset], offset);
+  const result: { id: string; car: number; seat: number; x: number; y: number; z: number }[] = [];
+  for (let offset = 0; offset < riders.length; offset += 3) {
+    const car = riders[offset];
+    const poseOffset = poseOffsets.get(car);
+    if (poseOffset === undefined) throw new Error("Missing rider car pose");
+    result.push({ car, seat: riders[offset + 1], id: `guest-${riders[offset + 2]}`, x: poses[poseOffset + 1], y: poses[poseOffset + 2], z: poses[poseOffset + 3] });
+  }
+  return result;
+}
+
 export interface GameTest {
   ready: boolean;
   guests(): readonly WorldSprite[];

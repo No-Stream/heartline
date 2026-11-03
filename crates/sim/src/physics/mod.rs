@@ -405,7 +405,11 @@ impl Train {
         let brake_can_hold = on_block_brake
             && hold
             && self.config.braking_acceleration >= initial_gravity.abs().max(downhill.abs());
-        if on_block_brake {
+        let native_powered_hold = matches!(
+            circuit.pieces[index].kind,
+            PieceKind::Lift | PieceKind::Launch
+        );
+        if on_block_brake && (hold || !native_powered_hold) {
             let target = if hold { 0.0 } else { self.config.brake_speed };
             if next_speed > target {
                 next_speed =
