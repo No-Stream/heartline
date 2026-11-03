@@ -1,10 +1,10 @@
 ---
 id: TASK-34
 title: Widen the guest cast and fix glasses in print-modern
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 05:41'
-updated_date: '2026-11-03 05:46'
+updated_date: '2026-11-03 05:56'
 labels:
   - art
 milestone: m-1
@@ -21,7 +21,13 @@ Skin tone is matched first, and there is only one deep-skinned adult design (Han
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 At least two more adult designs, including a second deep-skinned adult, so no design takes more than about twice its fair share in the sprite matching test
-- [ ] #2 Glasses show for Lena and Otis in print-modern
-- [ ] #3 Earl reads as older at game size
+- [x] #1 At least two more adult designs, including a second deep-skinned adult, so no design takes more than about twice its fair share in the sprite matching test
+- [x] #2 Glasses show for Lena and Otis in print-modern
+- [x] #3 Earl reads as older at game size
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Ada and Kofi added; the largest adult share in the 6,000-guest test fell from 3.05x to 1.53x fair. Glasses show in every theme. Earl has a full silver crop. Left: Gus's moustache only draws in candy.
+<!-- SECTION:FINAL_SUMMARY:END -->
