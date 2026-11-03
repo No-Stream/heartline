@@ -575,6 +575,7 @@ worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | Co
     if (!frozen || !current || current.guestIds.length === 0 || advanceTicksComplete) current = message;
     receivedAt = performance.now();
     if (!frozen) observeTick(message);
+    else if (advanceTicksComplete) observeCrests(message);
     output.value = String(message.tickCount);
     gameCanvas.dataset.agentCount = String(current?.guestIds.length ?? 0);
   }
@@ -583,6 +584,10 @@ worker.addEventListener("message", (event: MessageEvent<CoasterWorldMessage | Co
 function observeTick(snapshot: CoasterSnapshot): void {
   if (dayTick !== undefined) dayPhase = advanceDayPhase(dayPhase, Math.max(0, snapshot.tickCount - dayTick), daySpeed);
   dayTick = snapshot.tickCount;
+  observeCrests(snapshot);
+}
+
+function observeCrests(snapshot: CoasterSnapshot): void {
   const demo = detectCrest(demoCrests, snapshot.trainPoses, snapshot.tickCount);
   const built = detectCrest(constructionCrests, snapshot.constructionTrainPoses, snapshot.tickCount);
   demoCrests = demo.tracker; constructionCrests = built.tracker;

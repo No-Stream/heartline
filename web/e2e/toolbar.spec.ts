@@ -89,7 +89,7 @@ test.describe("tool switching", () => {
     await expect(page.locator("canvas")).toHaveAttribute("data-station-preview", "");
   });
 
-  test("toolbar selection activates each tool's default map action", async ({ page }) => {
+  test("toolbar selection activates each tool's default map action @fast", async ({ page }) => {
     test.setTimeout(120_000);
     await startGame(page);
     await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));

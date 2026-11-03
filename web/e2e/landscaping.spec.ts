@@ -6,7 +6,7 @@ test.use({
   launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
 });
 
-test("sculpts a hill, carves a tunnel and builds an underground path", async ({ page }) => {
+test("sculpts a hill, carves a tunnel and builds an underground path @slow", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);

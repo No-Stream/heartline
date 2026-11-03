@@ -12,6 +12,8 @@ Guests are individuals with correlated traits, groups and relationships, needs, 
 
 ## Performance so far
 
+Run `make check` for the fast tier: it builds the game, runs representative Rust unit tests, application and art Vitest tests, TypeScript typechecking, and Playwright tests tagged `@fast`. Run `make e2e-slow` for the longer Playwright flows tagged `@slow`; `make ci` still runs the complete Rust, art, browser and lint suites. The fast tier assumes dependencies and the Rust/WebAssembly toolchain are already installed.
+
 On the owner's RTX 5090, the renderer drew 10,000 animated people with terrain and track in about 2.6 ms of GPU work per frame. In the browser worker on one thread, 10,000 guests take about 7 ms per simulation tick; natively on 4 threads, about 2 ms, with identical results at any thread count. The full-scale performance check with a realistic large park on real hardware has not been done yet (ticket TASK-26).
 
 ## Known gaps and open items
@@ -20,7 +22,6 @@ On the owner's RTX 5090, the renderer drew 10,000 animated people with terrain a
 - The owner asked for a dark interface for OLED screens (TASK-44) and broader, more realistic coaster vocabularies with unique signatures and manufacturer styles (TASK-43; direction recorded in section 3 of the design doc).
 - Owner review is still pending for the night effects in a dense park, and the owner's decision on Woody's shirt (keep the lift hill and loop, or one bold loop).
 - Four coaster browser tests time out when the whole suite runs in parallel; a root-cause fix is in progress. The scenery and block sections tickets close once the gate is green.
-- The full gate takes about 7 minutes; triage into fast and slow tiers is TASK-41, with a per-test plan in the rendering, art and tests review.
 - Four code organisation reviews are in `docs/reviews/`, turned into refactor tickets TASK-50 to TASK-61 in the Code health milestone. The biggest are moving the park tick and cross-object rules out of the WebAssembly bridge into a `Park` type (TASK-54), a typed worker protocol (TASK-57), and restructuring `main.ts` around a shared tool interface (TASK-58).
 - Not started: saving and loading, the full-scale performance check, public deployment, sound, scenarios, touch input and a desktop wrapper.
 - Simplifications worth knowing: sandbox admission is free and ride loading is instant; building and ride clearance assume heights of 4 m and 12 m; automatic block placement searches generated brake positions within a budget, and throughput excludes loading time.

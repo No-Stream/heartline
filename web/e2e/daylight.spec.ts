@@ -65,7 +65,7 @@ test.describe("day and night", () => {
     expect((after.phase - before.phase) * 43_200).toBeCloseTo(after.tick - before.tick, -1);
   });
 
-  test("the Watch tool can scrub the day and change its speed", async ({ page }) => {
+  test("the Watch tool can scrub the day and change its speed @fast", async ({ page }) => {
     await startPaused(page);
     const scrub = page.getByRole("slider", { name: "Set the time of day" });
     await scrub.fill("1290");
@@ -82,14 +82,19 @@ test.describe("day and night", () => {
     await expect(scrub).toBeVisible();
   });
 
-  test("the demo coaster throws confetti once per lap, at the top of its lift hill", async ({ page }) => {
-    test.setTimeout(240_000);
-    await page.goto("/");
-    await page.waitForFunction(() => window.gameTest, null, { timeout: 30_000 });
-    // A lap takes about 80 seconds and the first crest comes about 30 seconds in.
-    await expect.poll(() => page.evaluate(() => window.gameTest.crestBursts().length), { timeout: 200_000, intervals: [1000] }).toBeGreaterThan(0);
-    const [burst] = await page.evaluate(() => window.gameTest.crestBursts());
-    expect(burst.z).toBeGreaterThan(12);
-    expect(await page.evaluate(() => window.gameTest.crestBursts().length)).toBe(1);
+  test("the demo coaster throws confetti once per lap, at the top of its lift hill @fast", async ({ page }) => {
+    test.setTimeout(30_000);
+    await startPaused(page);
+    for (let advancedTicks = 0; advancedTicks < 30_000; advancedTicks += 100) {
+      if (await page.evaluate(() => window.gameTest.crestBursts().length) >= 2) break;
+      await page.evaluate(() => window.gameTest.advanceTicks(100));
+    }
+    const bursts = await page.evaluate(() => window.gameTest.crestBursts());
+    expect(bursts).toHaveLength(2);
+    expect(bursts[0].z).toBeGreaterThan(12);
+    expect(bursts[1].z).toBeGreaterThan(12);
+    const ticksBetweenBursts = bursts[1].tick - bursts[0].tick;
+    expect(ticksBetweenBursts).toBeGreaterThan(1_000);
+    expect(ticksBetweenBursts).toBeLessThan(10_000);
   });
 });

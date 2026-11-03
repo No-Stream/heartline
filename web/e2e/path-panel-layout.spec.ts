@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { canvasToPage, clickCanvas, moveOverCanvas, openTool } from "./game-page";
 
-test("the path status does not move the canvas during a drag", async ({ page }) => {
+test("the path status does not move the canvas during a drag @slow", async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
@@ -34,7 +34,7 @@ test("the path status does not move the canvas during a drag", async ({ page }) 
   );
 });
 
-test("toolbar path drags preview and place reciprocal normal path edges at every rotation and zoom", async ({ page }) => {
+test("toolbar path drags preview and place reciprocal normal path edges at every rotation and zoom @slow", async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);

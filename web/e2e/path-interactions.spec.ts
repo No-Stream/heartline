@@ -6,7 +6,7 @@ test.use({
   launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
 });
 
-test("single-click placement works and a refused queue preview explains the obstruction", async ({ page }) => {
+test("single-click placement works and a refused queue preview explains the obstruction @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Paths");

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { createServer } from "vite";
+import { waitForGalleryRender, waitForRenderedCameraState } from "./render-readiness.ts";
 
 const ART_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT_DIRECTORY = join(ART_DIRECTORY, "screenshots");
@@ -19,26 +20,26 @@ page.on("pageerror", (error) => problems.push(error.message));
 page.on("console", (message) => { if (message.type() === "error") problems.push(message.text()); });
 await page.goto(`http://127.0.0.1:${PORT}/demo.html`);
 await page.waitForSelector("html[data-ready=true]");
-await page.waitForTimeout(1500);
 
 const scene = page.locator("#scene");
-const shoot = async (name: string): Promise<void> => {
-  await page.waitForTimeout(500);
+const shoot = async (name: string, rotation: number, zoom: number): Promise<void> => {
+  await waitForRenderedCameraState(page, rotation, zoom);
   await scene.screenshot({ path: join(OUTPUT_DIRECTORY, `${name}.png`) });
 };
-for (const rotation of [0, 90, 180, 270]) {
-  await shoot(`scene_rotation_${rotation}`);
+for (const rotation of [0, 1, 2, 3]) {
+  await shoot(`scene_rotation_${rotation * 90}`, rotation, 1);
   await page.click("#rotate-right");
 }
 for (const zoom of [0.5, 2]) {
   await page.click(`[data-zoom="${zoom}"]`);
-  await shoot(`scene_zoom_${zoom}x`);
+  await shoot(`scene_zoom_${zoom}x`, 0, zoom);
 }
 await page.click('[data-zoom="1"]');
+await waitForRenderedCameraState(page, 0, 1);
 await page.locator("#stats").waitFor();
 for (const category of ["people", "buildings", "scenery", "ground", "sky"]) {
   await page.click(`[data-category="${category}"]`);
-  await page.waitForTimeout(300);
+  await waitForGalleryRender(page, category);
   await page.locator("#gallery").screenshot({ path: join(OUTPUT_DIRECTORY, `gallery_${category}.png`) });
 }
 const stats = await page.locator("#stats").textContent();

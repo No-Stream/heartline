@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("built game draws agents and advances simulation ticks", async ({ page }) => {
+test("built game draws agents and advances simulation ticks @fast", async ({ page }) => {
   await page.goto("/?test=1");
   const canvas = page.locator("canvas");
   await expect(canvas).toBeVisible();

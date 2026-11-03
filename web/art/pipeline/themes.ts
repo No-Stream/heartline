@@ -14,6 +14,7 @@ import { chromium } from "@playwright/test";
 import { createServer } from "vite";
 import type { ThemeName } from "../generators/theme.ts";
 import { THEMES } from "../generators/themes.ts";
+import { waitForGalleryRender, waitForRenderedCameraState } from "./render-readiness.ts";
 
 const ART_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT_DIRECTORY = join(ART_DIRECTORY, "screenshots", "themes");
@@ -55,18 +56,18 @@ for (const themeName of ALL_THEMES) {
   mkdirSync(themeOutput, { recursive: true });
   await page.goto(`http://127.0.0.1:${PORT}/demo.html?theme=${themeName}`);
   await page.waitForSelector("html[data-ready=true]");
-  await page.waitForTimeout(2000);
+  await waitForRenderedCameraState(page, 0, 1);
   const scene = page.locator("#scene");
   await scene.screenshot({ path: join(themeOutput, "scene_1x.png") });
   await page.click('[data-zoom="2"]');
-  await page.waitForTimeout(600);
+  await waitForRenderedCameraState(page, 0, 2);
   await scene.screenshot({ path: join(themeOutput, "scene_2x.png") });
   await page.click('[data-category="people"]');
-  await page.waitForTimeout(400);
+  await waitForGalleryRender(page, "people");
   await page.locator("#gallery").screenshot({ path: join(themeOutput, "people.png") });
   for (const category of ["buildings", "scenery"]) {
     await page.click(`[data-category="${category}"]`);
-    await page.waitForTimeout(400);
+    await waitForGalleryRender(page, category);
     await page.locator("#gallery").screenshot({ path: join(themeOutput, `${category}.png`) });
   }
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { clickCanvas, moveOverCanvas, openTool } from "./game-page";
 
-test("builds and runs a wooden twister", async ({ page }) => {
+test("builds and runs a wooden twister @slow", async ({ page }) => {
   test.setTimeout(240_000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));

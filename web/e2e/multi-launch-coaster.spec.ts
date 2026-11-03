@@ -3,7 +3,7 @@ import { clickCanvas, moveOverCanvas, openTool } from "./game-page";
 
 test.use({ launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] } });
 
-test("builds and runs the Velocity Viper with two short launches", async ({ page }) => {
+test("builds and runs the Velocity Viper with two short launches @slow", async ({ page }) => {
   test.setTimeout(240_000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));

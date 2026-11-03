@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { canvasSize, clickCanvas, moveOverCanvas, openTool } from "./game-page";
 
-test("builds a closed coaster and runs a train around it", async ({ page }) => {
+test("builds a closed coaster and runs a train around it @slow", async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
@@ -122,7 +122,7 @@ test("builds a closed coaster and runs a train around it", async ({ page }) => {
   await expect(page.getByLabel("Track overlay")).toBeDisabled();
 });
 
-test("shows and places visible slope-to-level choices on Velocity Viper", async ({ page }) => {
+test("shows and places visible slope-to-level choices on Velocity Viper @slow", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");

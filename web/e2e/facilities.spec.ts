@@ -8,7 +8,7 @@ test.use({
   launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
 });
 
-test("places a food stall through the UI and guests visit it", async ({ page }) => {
+test("places a food stall through the UI and guests visit it @slow", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
@@ -146,7 +146,7 @@ test("places a food stall through the UI and guests visit it", async ({ page }) 
 });
 
 for (const rotation of [0, 2] as const) {
-  test(`demo park screenshot at rotation ${rotation}`, async ({ page }) => {
+  test(`demo park screenshot at rotation ${rotation}${rotation === 0 ? " @fast" : ""}`, async ({ page }) => {
     await page.goto("/?test=1");
     await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
     const flatRideStates = await page.evaluate(() => window.gameTest.facilities()

@@ -24,18 +24,17 @@ window.renderGuestFixture = async () => {
   const camera = { centerX: 231, centerY: 256.5, zoom: 1.5, rotation: 0 as const };
   renderer.render({ ...captureWorldSnapshot(simulation).message, sprites: guests }, camera);
   renderer.waitForGpu();
-  const visible = new Set<string>();
-  for (let y = 0; y < canvas.height; y += 8) for (let x = 0; x < canvas.width; x += 8) {
-    const pick = renderer.pick(x, y);
-    if (pick?.kind === "sprite" && pick.id.startsWith("guest-")) visible.add(pick.id);
-  }
   return guests.filter((guest) => {
-    if (!visible.has(guest.id)) return false;
     const frame = atlas.frames[`${guest.sprite}/${guest.view}/${guest.animation}/${guest.frame}`];
     if (!frame) throw new Error(`Missing guest frame for ${guest.id}`);
     const anchor = projectWorld(camera, canvas, { x: guest.x, y: guest.y, z: guest.height / 4 });
     const left = anchor.x - frame.anchor.x * camera.zoom;
     const top = anchor.y - frame.anchor.y * camera.zoom;
-    return left >= 0 && top >= 0 && left + frame.width * camera.zoom <= canvas.width && top + frame.height * camera.zoom <= canvas.height;
+    if (left < 0 || top < 0 || left + frame.width * camera.zoom > canvas.width || top + frame.height * camera.zoom > canvas.height) return false;
+    const visibleAt = [0.3, 0.5, 0.7].some((verticalFraction) => {
+      const pick = renderer.pick(anchor.x, anchor.y - frame.anchor.y * camera.zoom * verticalFraction);
+      return pick?.kind === "sprite" && pick.id === guest.id;
+    });
+    return visibleAt;
   }).map((guest) => guest.id);
 };

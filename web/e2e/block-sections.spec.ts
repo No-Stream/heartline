@@ -12,7 +12,7 @@ const boardingCircuitPieces = [
   "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "TurnLargeEntry", "TurnLargeExit",
 ];
 
-test("automatic block sections can be inspected, moved, refused, and rendered", async ({ page }) => {
+test("automatic block sections can be inspected, moved, refused, and rendered @slow", async ({ page }) => {
   test.setTimeout(300_000);
   await buildBlockCircuit(page, 50, 50, 20);
 
@@ -68,7 +68,7 @@ test("automatic block sections can be inspected, moved, refused, and rendered", 
   await expect(report).toHaveAttribute("data-placement-status", "manual");
 });
 
-test("two requested block trains move visibly without overlapping", async ({ page }) => {
+test("two requested block trains move visibly without overlapping @slow", async ({ page }) => {
   test.setTimeout(300_000);
   await buildBlockCircuit(page, 241, 249, 4, "north", boardingCircuitPieces, 48);
 
@@ -156,15 +156,9 @@ async function buildBlockCircuit(
   page.on("response", (response) => { if (response.status() >= 400) failedResources.push(`${response.status()} ${response.url()}`); });
   page.on("requestfailed", (request) => failedResources.push(`${request.failure()?.errorText ?? "request failed"} ${request.url()}`));
   await page.goto(agentCount === 12 ? "/?test=1&manualBlockAnalysis=1" : `/?test=1&manualBlockAnalysis=1&agents=${agentCount}`);
-  await page.waitForTimeout(1_000);
-  if (pageErrors.length > 0) throw new Error(`Browser startup errors: ${pageErrors.join(" | ")}`);
-  if (failedResources.length > 0) throw new Error(`Game assets failed to load: ${failedResources.join(" | ")}`);
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    if (await page.evaluate(() => window.gameTest?.ready ?? false)) break;
-    if (pageErrors.length > 0 || failedResources.length > 0) break;
-    await page.waitForTimeout(100);
-  }
-  if (!(await page.evaluate(() => window.gameTest?.ready ?? false))) {
+  try {
+    await page.waitForFunction(() => window.gameTest?.ready ?? false, null, { timeout: 30_000 });
+  } catch (error) {
     const startupState = await page.evaluate(() => ({
       href: location.href,
       readyState: document.readyState,
@@ -172,8 +166,10 @@ async function buildBlockCircuit(
       scripts: Array.from(document.scripts, (script) => script.src),
       resources: performance.getEntriesByType("resource").map(({ name }) => name),
     }));
-    throw new Error(`Browser did not become ready: ${JSON.stringify({ startupState, pageErrors, failedResources })}`);
+    throw new Error(`Browser did not become ready: ${JSON.stringify({ startupState, pageErrors, failedResources })}`, { cause: error });
   }
+  if (pageErrors.length > 0) throw new Error(`Browser startup errors: ${pageErrors.join(" | ")}`);
+  if (failedResources.length > 0) throw new Error(`Game assets failed to load: ${failedResources.join(" | ")}`);
   await openTool(page, "Coaster");
   await page.evaluate(({ x, y }) => window.gameTest.setCamera({ centerX: x, centerY: y, zoom: 1, rotation: 0 }), { x, y });
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);

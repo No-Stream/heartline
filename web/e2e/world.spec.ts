@@ -1,9 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { build, preview } from "vite";
 import type { GameTest } from "../src/game-test";
 
@@ -34,7 +32,7 @@ for (const rotation of [0, 1, 2, 3] as const) {
   });
 }
 
-test("picks known terrain and path points at every rotation", async ({ page }) => {
+test("picks known terrain and path points at every rotation @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await page.waitForFunction(() => window.gameTest?.ready);
 
@@ -76,13 +74,11 @@ test("picks known terrain and path points at every rotation", async ({ page }) =
 });
 
 
-test("guest appearances on paths", async ({ page }) => {
+test("guest appearances on paths @slow", async ({ page }) => {
   test.setTimeout(90_000);
   const fixtureDir = await mkdtemp(join(tmpdir(), "guests-e2e-"));
   try {
-    const atlasDir = join(fixtureDir, "atlas");
-    await promisify(execFile)(process.execPath, ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", resolve("web/art/pipeline/build-atlas.ts"), resolve("web/art/drawings"), atlasDir]);
-    const config = { configFile: false as const, root: "web", publicDir: atlasDir, build: { outDir: join(fixtureDir, "dist"), rollupOptions: { input: resolve("web/e2e/fixtures/guests.html") } } };
+    const config = { configFile: false as const, root: "web", publicDir: resolve("web/dist"), build: { outDir: join(fixtureDir, "dist"), rollupOptions: { input: resolve("web/e2e/fixtures/guests.html") } } };
     await build(config);
     const server = await preview({ ...config, preview: { host: "127.0.0.1", port: 0 } });
     try {

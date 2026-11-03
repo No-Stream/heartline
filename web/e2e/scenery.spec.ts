@@ -3,7 +3,7 @@ import { clickCanvas, openTool } from "./game-page";
 
 test.use({ deviceScaleFactor: 1, launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] } });
 
-test("places and removes scenery from both theme sets", async ({ page }) => {
+test("places and removes scenery from both theme sets @slow", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Scenery");

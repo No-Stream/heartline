@@ -3,7 +3,7 @@ CARGO_HOME ?= $(HOME)/.cargo
 WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
 WASM_BINDGEN_VERSION := 0.2.105
 
-.PHONY: install build test lint serve e2e ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests
+.PHONY: install build check test lint serve e2e e2e-slow ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests
 
 install:
 	npm ci
@@ -18,6 +18,13 @@ wasm-bindgen:
 	@if ! "$(WASM_BINDGEN)" --version 2>/dev/null | grep -qxF "wasm-bindgen $(WASM_BINDGEN_VERSION)"; then $(CARGO) install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked --force; fi
 
 # The sprite atlas is generated from web/art/drawings/ and not committed.
+check: build
+	$(CARGO) test -p theme-park-sim --lib -- world::tests guests::behavior::tests guests::path_food_rebuild_tests physics::tests track::construction::tests facilities::tests
+	npm test
+	npm run test:art
+	npm run typecheck
+	PLAYWRIGHT_PORT=$${PLAYWRIGHT_PORT:-4271} npm run e2e -- --grep @fast
+
 test: art
 	$(CARGO) test --workspace
 	$(CARGO) test -p theme-park-sim --features threads
@@ -35,6 +42,9 @@ serve:
 
 e2e: build
 	npm run e2e
+
+e2e-slow: build
+	npm run e2e -- --grep @slow
 
 bench:
 	$(CARGO) run --release -p theme-park-sim --features threads --example tick_bench

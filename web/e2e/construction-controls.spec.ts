@@ -24,7 +24,7 @@ test.afterAll(async () => {
 type Window = { constructionActions: unknown[]; setConstructionState(state: object): void };
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
 
-test("offers the wooden twister in the model chooser", async ({ page }) => {
+test("offers the wooden twister in the model chooser @fast", async ({ page }) => {
   await page.goto(fixtureUrl);
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ active: false }));
   const model = page.getByRole("combobox", { name: "Coaster model" });

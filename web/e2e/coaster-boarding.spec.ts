@@ -3,7 +3,7 @@ import type { Camera } from "../src/camera";
 import { canvasToPage, clickCanvas, openTool } from "./game-page";
 
 test.use({ actionTimeout: 10_000 });
-test("guests ride a player-built coaster and can be selected", async ({ page }) => {
+test("guests ride a player-built coaster and can be selected @slow", async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
