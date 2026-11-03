@@ -338,11 +338,14 @@ Rust and TypeScript:
 - **Brittle hashes.** Hash checkpoints change on every intentional simulation change. That is why they are advisory unless a session sets `strict`.
 - **Software WebGL timing.** Software WebGL frame timing is irregular. The smoothness thresholds normalise by frame time and need tuning against the real fix.
 
-## Open questions for the owner
+## Owner decisions (2026-11-03)
 
-- Which models get curved lifts and 60° lifts? The table above is a proposal. Should Velocity Viper get a chain lift at all?
-- Should the chain lift be a toggle, as proposed, or separate lift tiles as today?
-- What should a coaster ticket cost by default, and should players set it now?
-- Should players get a game-speed control (×1, ×2, ×4)? Without one, journeys use a test-only `?speed`.
+- **Chain lift:** a toggle, as proposed.
+- **Lift rules:** the proposed model table stands. Timber Tumbler gets curved lifts up to 60°. Velocity Viper gets chain lifts too, curved and up to 60°. Briar Blitz gets curved lifts up to 45°. All three get climbing and descending turns.
+- **Paying:** support both ways to charge, each adjustable by the player. Guests can pay at the park gate (an entrance fee, which `ParkFacilities::set_price` currently refuses for the entrance) and per ride (a coaster ticket price). Work item 4 covers both. A park may use either or both, and the journeys check that income rises under each setting.
+- **Game speed:** a real player control (×1, ×2, ×4, and a faster test setting if needed) in the Watch bar. Journeys use the same control rather than a test-only `?speed`. Work item 2 builds it.
+
+## Still open
+
 - When you got stuck on the lift, were you trying to turn, and at what station height? This confirms the diagnosis.
 - Should "new park, entrance only" become a real start option, or stay test-only?
