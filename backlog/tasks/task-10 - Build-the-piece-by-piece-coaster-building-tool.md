@@ -1,10 +1,10 @@
 ---
 id: TASK-10
 title: Build the piece-by-piece coaster building tool
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-03 05:15'
+updated_date: '2026-11-03 17:07'
 labels:
   - coaster
   - interface
@@ -30,7 +30,7 @@ The heart of the game: placing pieces one at a time should feel delightful. Clea
 - [x] #2 Only pieces valid for the model and current track end are offered
 - [x] #3 Swept-shape clearance allows tight near-misses and refuses real collisions; a support conflict reroutes, and a piece is refused only when no route exists
 - [x] #4 Deleting track with a train on it recovers the train and riders cleanly
-- [ ] #5 Owner has tried it and judged that building feels good
+- [x] #5 Owner has tried it and judged that building feels good
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -38,3 +38,9 @@ The heart of the game: placing pieces one at a time should feel delightful. Clea
 <!-- SECTION:NOTES:BEGIN -->
 Builder fixes committed in 14b38a9; choices refresh in 37 ms on a 150-piece circuit. Waiting for the owner to try it (last criterion).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Owner tried the builder on 2026-11-03 and found it very cool overall; their minor issues are TASK-42, TASK-43 and TASK-45.
+<!-- SECTION:FINAL_SUMMARY:END -->

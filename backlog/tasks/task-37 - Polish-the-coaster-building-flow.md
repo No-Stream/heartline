@@ -4,7 +4,7 @@ title: Polish the coaster building flow
 status: In Progress
 assignee: []
 created_date: '2026-11-03 06:15'
-updated_date: '2026-11-03 07:32'
+updated_date: '2026-11-03 17:07'
 labels:
   - coaster
   - interface
@@ -33,5 +33,5 @@ Make building coasters feel delightful before and after the owner's first try: s
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Polish committed in 7549274. Waiting for owner feedback from their first try (last criterion). Found and dispatched: no right turns in the catalog, and banked turns leaning outward.
+Owner tried it on 2026-11-03. Their feedback is filed as TASK-42 (level-out on Velocity Viper), TASK-43 (broader vocabularies) and TASK-45 (tools opening without a second click); the last criterion closes when those land.
 <!-- SECTION:NOTES:END -->
