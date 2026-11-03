@@ -4,7 +4,7 @@ title: Polish the coaster building flow
 status: In Progress
 assignee: []
 created_date: '2026-11-03 06:15'
-updated_date: '2026-11-03 06:26'
+updated_date: '2026-11-03 07:32'
 labels:
   - coaster
   - interface
@@ -23,9 +23,15 @@ Make building coasters feel delightful before and after the owner's first try: s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Station height and piece options use steppers instead of long dropdowns
-- [ ] #2 Panel styled to print-modern with piece icons drawn from the piece curves
-- [ ] #3 Keyboard shortcuts cover the whole build loop and are listed in the panel
-- [ ] #4 The camera follows the open track end while building
+- [x] #1 Station height and piece options use steppers instead of long dropdowns
+- [x] #2 Panel styled to print-modern with piece icons drawn from the piece curves
+- [x] #3 Keyboard shortcuts cover the whole build loop and are listed in the panel
+- [x] #4 The camera follows the open track end while building
 - [ ] #5 Owner feedback from the first try is applied
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Polish committed in 7549274. Waiting for owner feedback from their first try (last criterion). Found and dispatched: no right turns in the catalog, and banked turns leaning outward.
+<!-- SECTION:NOTES:END -->
