@@ -1,6 +1,6 @@
 # Theme park sim: design
 
-Date: 2026-11-02. Status: draft for owner approval.
+Date: 2026-11-02. Status: reviewed by the owner, whose changes are included.
 
 Each decision below is labeled **Owner** (the owner said it) or **Designer's call** (proposed during design and open to rejection). Sections 11 and 12 list what is left to the builder and what is unverified.
 
@@ -60,6 +60,8 @@ Clearance is checked against the real swept shape of the train around the curve,
 
 Launch with three models that have very different building feel, using real traits as the source of limits (**Owner** named these three, **Designer's call** to start with them). The builder should verify the details of each model against real rides when writing the data.
 
+In the game, manufacturers and models never use real names, for trademark reasons. They get playful names that hint at their real inspiration, in the way the GTA series names its vehicles, such as "Rocky Road Construction" for RMC (**Owner**). The table below uses real names only as design references.
+
 | Model | Real-world basis | What makes it distinct |
 |---|---|---|
 | Steel-track hybrid | RMC I-Box: all-steel box track that can be built on a wooden structure (Steel Vengeance has a chain lift, 4 inversions and 24-rider trains) | Extreme banking and inversions, and the steep drops associated with the type |
@@ -100,7 +102,7 @@ Guest numbers follow how appealing the park is, and sandbox also has a slider to
 
 ### Walking and crowds
 
-Paths stay on the tile grid, and wide plazas are adjacent path tiles (**Designer's call**). Queues are built by the player from path pieces, as in RCT2 (**Owner**). Guests avoid each other only loosely, enough to look like a crowd without the cost of full collision avoidance for 10,000 guests on one thread (**Designer's call**). The guest benchmark must include this avoidance, so it measures the real workload.
+Paths stay on the tile grid, and wide plazas are adjacent path tiles (**Designer's call**). Queues are built by the player from path pieces, as in RCT2 (**Owner**). Guests avoid each other only loosely, enough to look like a crowd without the cost of full collision avoidance for 10,000 guests (**Designer's call**). The guest benchmark must include this avoidance, so it measures the real workload.
 
 Guest simulation should stay understandable. Exact trait distributions and need rates are for the builder to tune. The bar is that clicking any guest finds something coherent and often entertaining, and that park-wide crowd behavior responds visibly to how the park is built.
 
@@ -134,7 +136,9 @@ All of this section is **Designer's call**, except that it is a web app first an
 
 **Simulation.** The simulation is Rust compiled to WebAssembly and runs in a dedicated web worker at a fixed tick rate. It is deterministic given a seed and input sequence, which supports testing and replay. Guest data is stored in compact arrays. Walking runs for every guest every tick, expensive decisions are spread across ticks, and crowds share pathfinding data such as flow fields. No guest is ever simplified or faked to save time.
 
-**Threads.** The first version uses one simulation thread, which needs no special browser headers and stays on stable Rust. Multi-threaded Rust in WebAssembly still requires pinned nightly Rust, rebuilding the standard library and cross-origin isolation headers (COOP and COEP), and GitHub Pages cannot set those headers without a service-worker workaround. Threads are added only if measurements show that one thread cannot meet the targets. SIMD via `simd128` can be used where it helps.
+**Threads.** The simulation is designed for multiple threads from the start, because one thread may not scale to the park sizes we want (**Owner**). Each tick is made of explicit phases that read shared state and write to per-partition output, and results merge in a fixed order, so the outcome is identical at any thread count (**Designer's call**). The simulation also builds as native Rust, where it runs on two or more threads as proof that the design works. A test checks that one-thread and multi-thread runs of the same seed and inputs give identical state, and the benchmarks report how speed changes with thread count.
+
+The browser build starts on one thread (**Owner**), which needs no special headers and stays on stable Rust. Multi-threaded Rust in WebAssembly still requires pinned nightly Rust, rebuilding the standard library and cross-origin isolation headers (COOP and COEP), and GitHub Pages cannot set those headers without a service-worker workaround. Threads move to the browser when benchmarks show the game needs them or the toolchain becomes easier, and this should not require restructuring the simulation. If that happens, hosting should use Cloudflare Pages or Netlify. SIMD via `simd128` can be used where it helps.
 
 **Rendering.** The renderer runs on the main thread and draws from state snapshots transferred by the worker, interpolating between ticks. It must work on both WebGPU and WebGL2. WebGPU support is still incomplete on Linux (Chrome covers only some GPUs by default) and in Firefox on Linux (Nightly only as of May 2026), so WebGL2 is a required path and not a nice-to-have. PixiJS v8 is the leading option because it supports both backends and reports about 100,000 moving sprites at roughly 15 ms CPU and 2 ms GPU per frame on Bunnymark. That benchmark does not cover animated, depth-sorted isometric scenes, so the builder must benchmark PixiJS against a thin custom instanced renderer on a realistic scene before committing.
 
@@ -170,7 +174,6 @@ Left to the builder: the piece catalog, tick rate, trait distributions, the exac
 ## 12. Open items and unverified facts
 
 - **Audio.** Audio has not been discussed. The designer's assumption is that sound matters to delight, and that simple generated or freely licensed sound can follow the core game.
-- **Real names.** Real manufacturer and ride names such as RMC, Intamin and GCI may be trademarks. As a free hobby project this is low risk, but publicly released in-game names should probably be descriptive or lightly fictional, with the real inspirations acknowledged. The owner has not decided this.
 - **WebGPU status.** The WebGPU details above come from a status page last edited around May 2026. Firefox on Linux may have shipped since. Check again before implementation.
 - **COOP and COEP headers.** Header behavior has not been tested on any host. It matters only if threads are added.
 - **Renderer numbers.** The PixiJS numbers are the project's own published benchmark, which does not state which renderer backend it used.
