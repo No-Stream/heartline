@@ -28,6 +28,11 @@ const coasterModels = {
     manufacturer: "Impulse Engineering",
     description: "Multi-launch steel track and columns with short, standard, and long launch sections.",
   },
+  "model:wooden_twister": {
+    name: "Briar Blitz",
+    manufacturer: "Great Coaster Workshop",
+    description: "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains.",
+  },
 } as const;
 const stationHeight = { minimum: 4, maximum: 100, step: 2, initial: 12 };
 const steppers: readonly { attribute: StepAttribute; label: string; previous: string; next: string; keys: readonly [keyof typeof builderShortcuts, keyof typeof builderShortcuts] }[] = [
@@ -56,6 +61,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <select data-model>
           <option value="model:hybrid">${coasterModels["model:hybrid"].name} · ${coasterModels["model:hybrid"].manufacturer}</option>
           <option value="model:velocity_viper">${coasterModels["model:velocity_viper"].name} · ${coasterModels["model:velocity_viper"].manufacturer}</option>
+          <option value="model:wooden_twister">${coasterModels["model:wooden_twister"].name} · ${coasterModels["model:wooden_twister"].manufacturer}</option>
         </select>
       </label>
       <p class="builder__hint" data-model-description>${coasterModels["model:hybrid"].description}</p>

@@ -11,9 +11,11 @@ const normalize = (a: Vec): Vec => { const length = Math.hypot(...a); if (length
 const vector = (data: Float32Array, offset: number): Vec => [data[offset], data[offset+1], data[offset+2]];
 const color = (hex: string): Triangle["color"] => [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255, 1];
 const shade = (base: Triangle["color"], amount: number): Triangle["color"] => [base[0] * amount, base[1] * amount, base[2] * amount, base[3]];
-function geometryId(encoded: number): { id: number; steel: boolean } {
+function geometryId(encoded: number): { id: number; steel: boolean; woodenTrack: boolean } {
   if (!Number.isInteger(encoded)) throw new Error("Invalid track geometry ID");
-  return encoded < 0 ? { id: -encoded - 1, steel: true } : { id: encoded, steel: false };
+  if (encoded < 0) return { id: -encoded - 1, steel: true, woodenTrack: false };
+  if (encoded >= 1_000_000) return { id: encoded - 1_000_000, steel: false, woodenTrack: true };
+  return { id: encoded, steel: false, woodenTrack: false };
 }
 export function trackStyle(atlas: Atlas): TrackStyle {
   const { themeStyle } = atlas;
@@ -95,7 +97,11 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
     const start = vector(rails, i+1), end = vector(rails, i+10);
     const sideStart = normalize(vector(rails, i+4)), sideEnd = normalize(vector(rails, i+13));
     const upStart = normalize(vector(rails, i+7)), upEnd = normalize(vector(rails, i+16));
-    if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, steel);
+    if (id.woodenTrack) {
+      beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.055, "track", `track-${id.id}`, wood, true);
+      beam(add(start, scale(upStart, 0.065)), add(end, scale(upEnd, 0.065)), sideStart, sideEnd, upStart, upEnd, 0.01, "track", `track-${id.id}`, steel, true);
+    }
+    else if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, steel);
     else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, steel, true);
   }
   for (let i = 0; i < ties.length; i += 13) {

@@ -25,6 +25,31 @@ fn start() -> TrackState {
 }
 
 #[test]
+fn wooden_twister_validates_every_dense_support_anchor() {
+    let mut construction = Construction::new(start(), crate::track::wooden_twister_model());
+    construction
+        .append(PieceId::Straight, &world(), &[])
+        .unwrap();
+    let cache = construction.validation_cache.borrow();
+    let supports = cache.as_ref().unwrap().supports[0]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    let piece = &construction.pieces()[0];
+    let count = (piece.length() / 4.0).ceil() as usize;
+    assert_eq!(supports.len(), count);
+    for (index, support) in supports.iter().enumerate() {
+        assert_eq!(
+            support.anchor,
+            piece
+                .sample(piece.length() * (index as f64 + 0.5) / count as f64)
+                .position
+        );
+    }
+}
+
+#[test]
 fn choices_report_model_and_connector_rejections() {
     let mut model = hybrid_model();
     model.allowed_pieces = vec![PieceId::Straight, PieceId::GentleUp];
@@ -291,6 +316,17 @@ fn append_revalidates_existing_supports() {
         Err(ConstructionError::NoSupportRoute)
     ));
     assert_eq!(construction.pieces().len(), 1);
+}
+
+#[test]
+fn wooden_inversion_is_rejected_even_if_added_to_allowed_ids() {
+    let mut model = crate::track::wooden_twister_model();
+    model.allowed_pieces.push(PieceId::Loop);
+    let mut construction = Construction::new(start(), model);
+    assert_eq!(
+        construction.append(PieceId::Loop, &world(), &[]),
+        Err(ConstructionError::ModelForbidden)
+    );
 }
 
 #[test]

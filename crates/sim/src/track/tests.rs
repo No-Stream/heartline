@@ -1,6 +1,122 @@
 use super::*;
 
 #[test]
+fn wooden_twister_offers_only_steel_structure_inversions() {
+    let model = wooden_twister_model();
+    assert_eq!(model.lift_types, vec![LiftType::Chain]);
+    assert!(model.launch_types.is_empty());
+    assert_eq!(model.track_material, Material::Wood);
+    assert_eq!(model.support_style, SupportStyle::DenseWoodenLattice);
+    assert_eq!(
+        (
+            model.train.cars,
+            model.train.rows_per_car,
+            model.train.seats_per_row
+        ),
+        (12, 1, 2)
+    );
+    let choices = model.available_pieces(TrackState::origin());
+    assert!(!choices.iter().any(|piece| piece.id == PieceId::Loop));
+    let steel_loop = choices
+        .iter()
+        .find(|piece| piece.id == PieceId::SteelLoop)
+        .unwrap();
+    assert_eq!(steel_loop.structure_material, Some(Material::Steel));
+    assert_eq!(
+        model.support_style_for_piece(steel_loop),
+        SupportStyle::SteelColumns
+    );
+    for id in [
+        PieceId::TwisterFanLeft,
+        PieceId::TwisterFanRight,
+        PieceId::AirtimeHill,
+    ] {
+        assert!(choices.iter().any(|piece| piece.id == id), "{id:?}");
+    }
+    for name in [model.name, model.manufacturer, model.description] {
+        for real_name in [
+            "GCI",
+            "Great Coasters International",
+            "Mystic Timbers",
+            "Millennium Flyer",
+            "Son of Beast",
+        ] {
+            assert!(!name.to_lowercase().contains(&real_name.to_lowercase()));
+        }
+    }
+}
+
+#[test]
+fn wooden_twister_has_tighter_mirrored_turns_within_radius_limit() {
+    let model = wooden_twister_model();
+    let choices = model.available_pieces(TrackState::origin());
+    let left = choices
+        .iter()
+        .find(|piece| piece.id == PieceId::TightTwisterLeft)
+        .unwrap();
+    let right = choices
+        .iter()
+        .find(|piece| piece.id == PieceId::TightTwisterRight)
+        .unwrap();
+    assert!(
+        left.exit.x
+            < catalog()
+                .iter()
+                .find(|piece| piece.id == PieceId::TurnSmallStandalone)
+                .unwrap()
+                .exit
+                .x
+    );
+    for piece in [left, right] {
+        assert!(1.0 / piece.maximum_curvature() >= model.minimum_radius_metres);
+    }
+    for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let a = left.sample(left.length() * fraction);
+        let b = right.sample(right.length() * fraction);
+        near_vec(
+            b.position,
+            Vec3::new(a.position.x, -a.position.y, a.position.z),
+        );
+    }
+}
+
+#[test]
+fn wooden_twister_banked_helixes_have_mirrored_geometry() {
+    let model = wooden_twister_model();
+    let pieces = catalog();
+    let left = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::TwisterHelixLeft)
+        .unwrap();
+    let right = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::TwisterHelixRight)
+        .unwrap();
+    assert!(
+        model
+            .available_pieces(left.entry)
+            .iter()
+            .any(|piece| piece.id == left.id)
+    );
+    assert!(
+        model
+            .available_pieces(right.entry)
+            .iter()
+            .any(|piece| piece.id == right.id)
+    );
+    assert!(left.exit.z < left.entry.z);
+    for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let a = left.sample(left.length() * fraction);
+        let b = right.sample(right.length() * fraction);
+        near_vec(
+            b.position,
+            Vec3::new(a.position.x, -a.position.y, a.position.z),
+        );
+        near_vec(b.up, Vec3::new(a.up.x, -a.up.y, a.up.z));
+    }
+}
+
+#[test]
 fn multi_launch_model_offers_powered_straights_and_terrain_transitions() {
     let model = multi_launch_model();
     assert_eq!(model.launch_types, vec![LaunchType::LinearMotor]);
@@ -81,6 +197,7 @@ fn every_turn_and_offset_has_a_mirrored_catalog_piece() {
                     && candidate.entry.y == -piece.entry.y
                     && candidate.exit.x == piece.exit.x
                     && candidate.exit.y == -piece.exit.y
+                    && candidate.exit.z == piece.exit.z
                     && candidate.exit.heading.index() == (-piece.exit.heading.index()).rem_euclid(8)
                     && (candidate.entry.curvature_vector().y + piece.entry.curvature_vector().y)
                         .abs()

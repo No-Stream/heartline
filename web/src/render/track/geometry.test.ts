@@ -6,6 +6,15 @@ const rail = [1, 1, 2, 1, 0, 1, 0, 0, 0, 1, 3, 2, 2, 0, 1, 0, 0, 0, 1];
 const tie = [1, 1, 1.8, 1, 1, 2.2, 1, 0, 0, 1, 1, 0, 0];
 
 describe("coaster geometry", () => {
+  test("renders wooden rails with laminated wood and steel running strips", () => {
+    const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
+    const style = { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 };
+    const woodenRail = new Float32Array([1_000_001, ...rail.slice(1)]);
+    const quads = buildTrackQuads(woodenRail, new Float32Array(), new Float32Array(), new Float32Array(), camera, { width: 400, height: 300 }, style);
+    expect(quads.every((quad) => quad.id === "track-1")).toBe(true);
+    expect(quads.some((quad) => quad.color[0] === 170 / 255 && quad.color[1] === 102 / 255)).toBe(true);
+    expect(quads.some((quad) => quad.color[0] === 1 && quad.color[1] === 0)).toBe(true);
+  });
   test("renders signed steel geometry as tubes and restores the original picking IDs", () => {
     const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
     const style = { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 };

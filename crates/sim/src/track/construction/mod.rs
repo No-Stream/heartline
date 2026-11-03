@@ -4,11 +4,12 @@ use crate::track::clearance::{
     check_reverse_track_clearance,
 };
 use crate::track::supports::{
-    SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle, generate_supports,
-    support_intersects_obstacle,
+    SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle,
+    generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterModel, Piece, PieceId, Shape, TrackState, TrainConfiguration, Vec3, catalog,
+    CoasterModel, Piece, PieceId, Shape, SupportStyle, TrackState, TrainConfiguration, Vec3,
+    catalog,
 };
 use crate::world::World;
 use std::cell::RefCell;
@@ -192,11 +193,7 @@ impl Construction {
     }
 
     fn model_placeable(&self, template: &Piece) -> Result<Piece, ConstructionError> {
-        if !self.model.allowed_pieces.contains(&template.id)
-            || template
-                .inversion
-                .is_some_and(|inversion| !self.model.allowed_inversions.contains(&inversion))
-        {
+        if !self.model.allows_piece(template) {
             return Err(ConstructionError::ModelForbidden);
         }
         let piece = template
@@ -317,6 +314,13 @@ impl Construction {
             track_support_obstacles(std::slice::from_ref(piece), &self.model.train);
         let mut validated_supports = Vec::with_capacity(all_pieces.len());
         for (index, supported_piece) in all_pieces.iter().enumerate() {
+            let route_supports = if self.model.support_style_for_piece(supported_piece)
+                == SupportStyle::DenseWoodenLattice
+            {
+                generate_dense_supports
+            } else {
+                generate_supports
+            };
             if index < cache.existing.len() && cache.supports[index].is_none() {
                 let mut bounds = obstacles.to_vec();
                 let region = support_search_region(supported_piece);
@@ -330,7 +334,7 @@ impl Construction {
                         );
                     }
                 }
-                cache.supports[index] = Some(generate_supports(supported_piece, world, &bounds));
+                cache.supports[index] = Some(route_supports(supported_piece, world, &bounds));
             }
             if let Some(Some(Ok(supports))) = cache.supports.get(index) {
                 if !supports.iter().any(|support| {
@@ -371,7 +375,7 @@ impl Construction {
                         .filter(|bounds| region.overlaps(bounds)),
                 );
             }
-            let supports = generate_supports(supported_piece, world, &support_obstacles)
+            let supports = route_supports(supported_piece, world, &support_obstacles)
                 .map_err(construction_support_error)?;
             validated_supports.push(supports);
         }
@@ -588,21 +592,23 @@ impl SupportSearchRegion {
 }
 
 fn support_search_region(piece: &Piece) -> SupportSearchRegion {
-    let count = (piece.length() / 8.0).ceil() as usize;
     let mut region = SupportSearchRegion {
         min_x: f64::INFINITY,
         max_x: f64::NEG_INFINITY,
         min_y: f64::INFINITY,
         max_y: f64::NEG_INFINITY,
     };
-    for index in 0..count {
-        let anchor = piece
-            .sample(piece.length() * (index as f64 + 0.5) / count as f64)
-            .position;
-        region.min_x = region.min_x.min(anchor.x - SUPPORT_INFLUENCE_RADIUS_METRES);
-        region.max_x = region.max_x.max(anchor.x + SUPPORT_INFLUENCE_RADIUS_METRES);
-        region.min_y = region.min_y.min(anchor.y - SUPPORT_INFLUENCE_RADIUS_METRES);
-        region.max_y = region.max_y.max(anchor.y + SUPPORT_INFLUENCE_RADIUS_METRES);
+    for spacing in [4.0, 8.0] {
+        let count = (piece.length() / spacing).ceil() as usize;
+        for index in 0..count {
+            let anchor = piece
+                .sample(piece.length() * (index as f64 + 0.5) / count as f64)
+                .position;
+            region.min_x = region.min_x.min(anchor.x - SUPPORT_INFLUENCE_RADIUS_METRES);
+            region.max_x = region.max_x.max(anchor.x + SUPPORT_INFLUENCE_RADIUS_METRES);
+            region.min_y = region.min_y.min(anchor.y - SUPPORT_INFLUENCE_RADIUS_METRES);
+            region.max_y = region.max_y.max(anchor.y + SUPPORT_INFLUENCE_RADIUS_METRES);
+        }
     }
     region
 }

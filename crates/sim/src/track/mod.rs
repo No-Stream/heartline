@@ -255,6 +255,14 @@ pub enum PieceId {
     LaunchLong,
     TerrainRise,
     TerrainFall,
+    SteelLoop,
+    TwisterFanLeft,
+    TwisterFanRight,
+    TwisterHelixLeft,
+    TwisterHelixRight,
+    AirtimeHill,
+    TightTwisterLeft,
+    TightTwisterRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -273,6 +281,7 @@ pub enum Inversion {
 #[derive(Clone, Copy, Debug)]
 enum Shape {
     Plain,
+    AirtimeHill,
     Loop,
     Corkscrew,
     Heartline,
@@ -283,6 +292,7 @@ pub struct Piece {
     pub name: &'static str,
     pub kind: PieceKind,
     pub inversion: Option<Inversion>,
+    pub structure_material: Option<Material>,
     pub entry: TrackState,
     pub exit: TrackState,
     shape: Shape,
@@ -404,6 +414,15 @@ impl Piece {
             + a1 * ddq1
             + correction0 * ddf
             + correction1 * ddg;
+        if matches!(self.shape, Shape::AirtimeHill) {
+            let height = 3.0;
+            let bump = 64.0 * (t3 - 3.0 * t4 + 3.0 * t5 - t5 * t);
+            let derivative = 64.0 * (3.0 * t2 - 12.0 * t3 + 15.0 * t4 - 6.0 * t5);
+            let second = 64.0 * (6.0 * t - 36.0 * t2 + 60.0 * t3 - 30.0 * t4);
+            p.z += height * bump;
+            d.z += height * derivative;
+            dd.z += height * second;
+        }
         if matches!(
             self.shape,
             Shape::Loop | Shape::Corkscrew | Shape::Heartline
@@ -984,6 +1003,7 @@ pub fn catalog() -> Vec<Piece> {
                     name,
                     kind,
                     inversion,
+                    structure_material: None,
                     entry,
                     exit,
                     shape,
@@ -1191,7 +1211,51 @@ pub fn catalog() -> Vec<Piece> {
         piece.rebuild_arc();
         pieces.push(piece);
     }
+    for (base, id, name) in [
+        (Loop, SteelLoop, "Steel-structure loop"),
+        (TurnSmallStandalone, TwisterFanLeft, "Left fan turn"),
+        (TurnSmallStandalone, TightTwisterLeft, "Tight left turn"),
+        (
+            BankedTurnStandalone,
+            TwisterHelixLeft,
+            "Descending left banked helix",
+        ),
+        (Straight, AirtimeHill, "Small airtime hill"),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == base)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        match id {
+            SteelLoop => piece.structure_material = Some(Material::Steel),
+            TwisterFanLeft => piece.exit.bank = Left,
+            TightTwisterLeft => {
+                piece.exit.x = 6;
+                piece.exit.y = 6;
+                piece.tangent_scale *= 0.75;
+            }
+            TwisterHelixLeft => piece.exit.z = -4,
+            AirtimeHill => {
+                piece.exit.x = 16;
+                piece.tangent_scale = 32.0;
+                piece.shape = Shape::AirtimeHill;
+            }
+            _ => unreachable!(),
+        }
+        piece.rebuild_arc();
+        pieces.push(piece);
+    }
     for (source, id, name) in [
+        (TwisterFanLeft, TwisterFanRight, "Right fan turn"),
+        (TightTwisterLeft, TightTwisterRight, "Tight right turn"),
+        (
+            TwisterHelixLeft,
+            TwisterHelixRight,
+            "Descending right banked helix",
+        ),
         (
             TurnSmallEntry,
             TurnSmallRightEntry,
@@ -1301,12 +1365,22 @@ pub enum LaunchType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupportStyle {
     WoodenLattice,
+    DenseWoodenLattice,
     SteelColumns,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Material {
     Steel,
     Wood,
+}
+impl SupportStyle {
+    pub fn for_piece(self, piece: &Piece) -> Self {
+        match piece.structure_material {
+            Some(Material::Steel) => Self::SteelColumns,
+            Some(Material::Wood) => Self::WoodenLattice,
+            None => self,
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub struct TrainConfiguration {
@@ -1340,18 +1414,121 @@ pub struct CoasterModel {
     pub structure_material: Material,
 }
 impl CoasterModel {
+    pub fn allows_piece(&self, piece: &Piece) -> bool {
+        self.allowed_pieces.contains(&piece.id)
+            && piece.inversion.is_none_or(|inversion| {
+                self.allowed_inversions.contains(&inversion)
+                    && (self.track_material != Material::Wood
+                        || piece.structure_material.unwrap_or(self.structure_material)
+                            == Material::Steel)
+            })
+    }
+    pub fn support_style_for_piece(&self, piece: &Piece) -> SupportStyle {
+        self.support_style.for_piece(piece)
+    }
     pub fn available_pieces(&self, end: TrackState) -> Vec<Piece> {
         catalog()
             .into_iter()
-            .filter(|piece| {
-                self.allowed_pieces.contains(&piece.id)
-                    && piece
-                        .inversion
-                        .is_none_or(|inversion| self.allowed_inversions.contains(&inversion))
-            })
+            .filter(|piece| self.allows_piece(piece))
             .filter_map(|piece| piece.at(end))
             .filter(|piece| piece.maximum_curvature() <= 1.0 / self.minimum_radius_metres)
             .collect()
+    }
+}
+pub fn wooden_twister_model() -> CoasterModel {
+    CoasterModel {
+        manufacturer: "Great Coaster Workshop",
+        name: "Briar Blitz",
+        description: "An articulated wooden twister with a chain lift and dense timber structure. The steel-structure loop is a plausible extension.",
+        allowed_pieces: {
+            use PieceId::*;
+            vec![
+                Straight,
+                GentleUp,
+                GentleDown,
+                SteepUp,
+                SteepDown,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                GentleToSteepUp,
+                SteepToGentleUp,
+                LevelToGentleDown,
+                GentleDownToLevel,
+                GentleToSteepDown,
+                SteepToGentleDown,
+                TurnSmallEntry,
+                TurnSmall,
+                TurnSmallExit,
+                TurnSmallStandalone,
+                TurnSmallRightEntry,
+                TurnSmallRight,
+                TurnSmallRightExit,
+                TurnSmallRightStandalone,
+                TurnLargeEntry,
+                TurnLarge,
+                TurnLargeExit,
+                TurnLargeStandalone,
+                TurnLargeRightEntry,
+                TurnLargeRight,
+                TurnLargeRightExit,
+                TurnLargeRightStandalone,
+                BankLeft,
+                UnbankLeft,
+                BankRight,
+                UnbankRight,
+                BankedTurnEntry,
+                BankedTurn,
+                BankedTurnExit,
+                BankedTurnStandalone,
+                SmallRightBankedTurnEntry,
+                SmallRightBankedTurn,
+                SmallRightBankedTurnExit,
+                SmallRightBankedTurnStandalone,
+                LargeLeftBankedTurnEntry,
+                LargeLeftBankedTurn,
+                LargeLeftBankedTurnExit,
+                LargeLeftBankedTurnStandalone,
+                LargeRightBankedTurnEntry,
+                LargeRightBankedTurn,
+                LargeRightBankedTurnExit,
+                LargeRightBankedTurnStandalone,
+                OffsetLeft,
+                OffsetRight,
+                Lift,
+                LiftFlat,
+                LiftLevelToGentleUp,
+                LiftGentleUpToLevel,
+                Brakes,
+                Station,
+                TerrainRise,
+                TerrainFall,
+                SteelLoop,
+                TwisterFanLeft,
+                TwisterFanRight,
+                TwisterHelixLeft,
+                TwisterHelixRight,
+                AirtimeHill,
+                TightTwisterLeft,
+                TightTwisterRight,
+            ]
+        },
+        minimum_radius_metres: 8.0,
+        minimum_height_cm: 122,
+        allowed_inversions: vec![Inversion::VerticalLoop],
+        lift_types: vec![LiftType::Chain],
+        launch_types: vec![],
+        support_style: SupportStyle::DenseWoodenLattice,
+        train: TrainConfiguration {
+            cars: 12,
+            rows_per_car: 1,
+            seats_per_row: 2,
+            length_metres: 18.0,
+            width_metres: 2.0,
+            height_metres: 2.5,
+            launch: None,
+        },
+        track_material: Material::Wood,
+        structure_material: Material::Wood,
     }
 }
 pub fn hybrid_model() -> CoasterModel {

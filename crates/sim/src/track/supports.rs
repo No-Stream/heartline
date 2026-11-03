@@ -66,6 +66,15 @@ pub fn generate_supports(
     generate_supports_on_structures(piece, world, obstacles, &[])
 }
 
+/// Routes closely spaced supports for a wooden twister coaster.
+pub fn generate_dense_supports(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+) -> Result<Vec<Support>, SupportError> {
+    generate_supports_at_spacing(piece, world, obstacles, &[], 4.0)
+}
+
 /// Generate routed steel columns and their horizontal connections to the track.
 pub fn generate_steel_columns(
     piece: &Piece,
@@ -98,6 +107,16 @@ pub fn generate_supports_on_structures(
     obstacles: &[SupportObstacle],
     structures: &[SupportObstacle],
 ) -> Result<Vec<Support>, SupportError> {
+    generate_supports_at_spacing(piece, world, obstacles, structures, 8.0)
+}
+
+fn generate_supports_at_spacing(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+    structures: &[SupportObstacle],
+    spacing: f64,
+) -> Result<Vec<Support>, SupportError> {
     for obstacle in obstacles.iter().chain(structures) {
         assert!(
             obstacle.min.x < obstacle.max.x
@@ -122,7 +141,7 @@ pub fn generate_supports_on_structures(
         })
         .collect();
     let tunnels: Vec<_> = world.carved_spans().collect();
-    let count = (piece.length() / 8.0).ceil() as usize;
+    let count = (piece.length() / spacing).ceil() as usize;
     let mut supports = Vec::with_capacity(count);
     for index in 0..count {
         let anchor = piece
@@ -344,7 +363,25 @@ pub fn generate_wooden_lattice(
     world: &World,
     obstacles: &[SupportObstacle],
 ) -> Result<Vec<SupportSegment>, SupportError> {
-    let supports = generate_supports(piece, world, obstacles)?;
+    generate_wooden_lattice_at_spacing(piece, world, obstacles, 8.0)
+}
+
+/// Generate closely spaced wooden frames for a wooden twister coaster.
+pub fn generate_dense_wooden_lattice(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+) -> Result<Vec<SupportSegment>, SupportError> {
+    generate_wooden_lattice_at_spacing(piece, world, obstacles, 4.0)
+}
+
+fn generate_wooden_lattice_at_spacing(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+    spacing: f64,
+) -> Result<Vec<SupportSegment>, SupportError> {
+    let supports = generate_supports_at_spacing(piece, world, obstacles, &[], spacing)?;
     let mut occupied = obstacles.to_vec();
     occupied.extend(world.paths().map(|path| SupportObstacle {
         min: Vec3::new(
@@ -674,6 +711,33 @@ mod tests {
                 water: None,
             },
         )
+    }
+
+    #[test]
+    fn dense_lattice_follows_the_curve_and_clears_crossing_track() {
+        let piece = piece();
+        let world = world();
+        let obstacle = SupportObstacle {
+            min: Vec3::new(18.0, 15.0, 1.0),
+            max: Vec3::new(20.0, 17.0, 3.0),
+        };
+        let dense = generate_dense_wooden_lattice(&piece, &world, &[obstacle]).unwrap();
+        let standard = generate_wooden_lattice(&piece, &world, &[obstacle]).unwrap();
+        assert!(dense.len() > standard.len());
+        for segment in &dense {
+            assert!(!intersects(
+                segment.start,
+                segment.end,
+                &expanded(&obstacle, BEAM_CLEARANCE, BEAM_CLEARANCE),
+            ));
+        }
+        for index in 0..(piece.length() / 4.0).ceil() as usize {
+            let count = (piece.length() / 4.0).ceil() as usize;
+            let anchor = piece
+                .sample(piece.length() * (index as f64 + 0.5) / count as f64)
+                .position;
+            assert!(dense.iter().any(|segment| segment.end == anchor));
+        }
     }
 
     #[test]
