@@ -1,0 +1,659 @@
+<h2>Playful, upbeat, and moving</h2>
+<p class="subtitle">Guests are now small people who walk the paths in singles, couples and families, and stop now and then. Rider speech bubbles are gone. Click a guest to open their details below the park.</p>
+<div class="mockup">
+  <canvas id="art-playful" style="width:100%;display:block;border-radius:6px;cursor:pointer"></canvas>
+  <div style="display:flex;align-items:center;gap:12px;padding:10px 14px"><span class="label">Time of day</span><input id="day-slider" type="range" min="0" max="100" value="20" style="flex:1"></div>
+  <div id="guest-panel" style="padding:12px 14px;border-top:1px solid #ddd;min-height:92px;font-size:14px;line-height:1.5"><em>Click a guest to see what they are thinking.</em></div>
+</div>
+<script>
+(() => {
+  const guestNames = ['Maya', 'Otis', 'Priya', 'Gus', 'Lena', 'Theo', 'Noor', 'Bea', 'Sam', 'Ines'];
+  const guestThoughts = ['That loop was AMAZING. Again!', 'Holding out for the wooden one.', 'My tummy is doing a small loop of its own.', 'Where did my kid go? Oh, there.', 'I would pay anything for a churro.', 'Too scared. Going to watch from here.', 'This park knows I love tunnels.', 'Third time on the red one today!'];
+  const LOGICAL_WIDTH = 800, LOGICAL_HEIGHT = 540, TILE = 25, GRID = 16;
+  const ORIGIN_X = 400, ORIGIN_Y = 95, HEIGHT_SCALE = 21;
+
+  const seededRandom = seed => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let warpAmount = 10, time = 0, boilRandom = seededRandom(1);
+  const pathRoute = [[.5, 15.5], [11.5, 15.5], [11.5, 6.5], [5.5, 6.5], [5.5, 9.5]];
+  const routeLength = pathRoute.slice(1).reduce((total, point, index) => total + Math.hypot(point[0] - pathRoute[index][0], point[1] - pathRoute[index][1]), 0);
+  const routePosition = distance => {
+    let remaining = distance;
+    for (let index = 0; index < pathRoute.length - 1; index++) {
+      const [startX, startY] = pathRoute[index], [endX, endY] = pathRoute[index + 1];
+      const length = Math.hypot(endX - startX, endY - startY);
+      if (remaining <= length || index === pathRoute.length - 2) {
+        const directionX = (endX - startX) / length, directionY = (endY - startY) / length;
+        return { x: startX + directionX * remaining, y: startY + directionY * remaining, directionX, directionY };
+      }
+      remaining -= length;
+    }
+  };
+  const groups = [];
+  let selectedGuest = null;
+  const guests = [], steelTrains = [{ position: 56 }, { position: 230 }], woodenTrains = [{ position: 40 }];
+  const project = (x, y, z) => {
+    const flatX = ORIGIN_X + (x - y) * TILE, flatY = ORIGIN_Y + (x + y) * TILE / 2 - z * HEIGHT_SCALE;
+    return [flatX + warpAmount * Math.sin(flatY * .028 + flatX * .009), flatY + warpAmount * .7 * Math.sin(flatX * .021 + 1.3)];
+  };
+  const rawHeight = (x, y) =>
+    3.1 * Math.exp(-((x - 3.5) ** 2 + (y - 3) ** 2) / 9) + 0.9 * Math.exp(-((x - 9) ** 2 + (y - 13) ** 2) / 12)
+    - 1.0 * Math.exp(-((x - 13) ** 2 + (y - 3) ** 2) / 5);
+  const cornerHeight = (x, y) => Math.round(rawHeight(x, y) * 2) / 2;
+
+  const isPath = (i, j) => j === 15 || (i === 11 && j >= 6) || (j === 6 && i >= 5 && i <= 11) || (i === 5 && j >= 6 && j <= 9);
+  const isWater = (i, j) => rawHeight(i + .5, j + .5) < -0.32;
+
+  function catmullLoop(points, samplesPerSegment) {
+    const result = [], count = points.length;
+    for (let s = 0; s < count; s++) {
+      const [p0, p1, p2, p3] = [points[(s + count - 1) % count], points[s], points[(s + 1) % count], points[(s + 2) % count]];
+      for (let k = 0; k < samplesPerSegment; k++) {
+        const t = k / samplesPerSegment;
+        result.push([0, 1, 2].map(axis => 0.5 * (2 * p1[axis] + (p2[axis] - p0[axis]) * t
+          + (2 * p0[axis] - 5 * p1[axis] + 4 * p2[axis] - p3[axis]) * t * t
+          + (3 * p1[axis] - p0[axis] - 3 * p2[axis] + p3[axis]) * t * t * t)));
+      }
+    }
+    return result;
+  }
+
+  const normalize = v => { const n = Math.hypot(...v); return v.map(c => c / n); };
+  const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+
+  function withFrames(samples) {
+    let up = [0, 0, 1];
+    return samples.map((point, index) => {
+      const next = samples[(index + 1) % samples.length];
+      const tangent = normalize(next.map((c, axis) => c - point[axis]));
+      const side = normalize(cross(tangent, up));
+      up = normalize(cross(side, tangent));
+      return { point, side, up };
+    });
+  }
+
+  const steelTrack = withFrames(catmullLoop([
+    [1.5,14,1.2],[5,14,1.4],[8.5,14,2],[11.5,14,2.6],[14.4,12.2,6.6],[14.5,8.5,6.4],[13,5.6,1.8],[10.5,4.2,.8],
+    [8.6,4,.9],[7,4,2],[6.5,4.1,3.6],[7.3,4.2,4.5],[8.1,4.3,3.6],[7.6,4.4,2],[6,4.5,.9],[4.2,4.7,.6],
+    [2.5,5,.5],[1.4,7,.7],[1.7,9.5,2.2],[4,10.6,4.2],[6.8,9.6,4.1],[7.2,12,2.2],[3.8,12.6,1.7],[1.1,13.2,1.3]
+  ], 14));
+  const woodenTrack = withFrames(catmullLoop([
+    [7,7.4,1.1],[9.2,7.2,2],[12.6,7.5,4.2],[13.3,9.8,3.6],[11.7,11.4,1],[9.2,11.2,2.6],[8.4,9.2,1.2],[6.8,9.3,.8]
+  ], 16));
+
+  function buildScene(palette, style) {
+    let random = seededRandom(4242);
+    const objects = [];
+    const addObject = (depth, draw) => objects.push({ depth, draw });
+    const drawPolygon = (ctx, corners, fill, outline = style.outline) => {
+      ctx.beginPath();
+      corners.forEach(([sx, sy], index) => index ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy));
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+      if (outline) {
+        ctx.strokeStyle = outline; ctx.lineWidth = style.outlineWidth; ctx.stroke();
+        if (style.sketchy) {
+          ctx.save(); ctx.translate(boilRandom() * 1.2 - .6, boilRandom() * 1.2 - .6); ctx.globalAlpha = .45; ctx.lineWidth = style.outlineWidth * .6; ctx.stroke(); ctx.restore();
+        }
+      }
+      else { ctx.strokeStyle = fill; ctx.lineWidth = .6; ctx.stroke(); }
+    };
+    const shade = (hex, amount) => {
+      const value = parseInt(hex.slice(1), 16);
+      const channel = shift => Math.max(0, Math.min(255, Math.round(((value >> shift) & 255) * amount)));
+      return `rgb(${channel(16)},${channel(8)},${channel(0)})`;
+    };
+
+    const drawHatch = (ctx, corners, spacing) => {
+      ctx.save(); ctx.beginPath();
+      corners.forEach(([sx, sy], index) => index ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy));
+      ctx.closePath(); ctx.clip();
+      const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+      const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+      ctx.strokeStyle = style.outline; ctx.lineWidth = .55; ctx.beginPath();
+      for (let offset = minX - (maxY - minY); offset < maxX; offset += spacing) { ctx.moveTo(offset, minY); ctx.lineTo(offset + (maxY - minY), maxY); }
+      ctx.stroke(); ctx.restore();
+    };
+
+    function drawTerrain(ctx) {
+      const edge = -2;
+      for (let k = 0; k < GRID; k++) {
+        const rightTop = [project(GRID, k, cornerHeight(GRID, k)), project(GRID, k + 1, cornerHeight(GRID, k + 1)), project(GRID, k + 1, edge), project(GRID, k, edge)];
+        const leftTop = [project(k, GRID, cornerHeight(k, GRID)), project(k + 1, GRID, cornerHeight(k + 1, GRID)), project(k + 1, GRID, edge), project(k, GRID, edge)];
+        drawPolygon(ctx, rightTop, shade(palette.earth, .8));
+        drawPolygon(ctx, leftTop, shade(palette.earth, 1));
+        if (style.hatch) { drawHatch(ctx, rightTop, 4); drawHatch(ctx, leftTop, 7); }
+      }
+      for (let sum = 0; sum <= 2 * GRID - 2; sum++) for (let i = 0; i < GRID; i++) {
+        const j = sum - i;
+        if (j < 0 || j >= GRID) continue;
+        const [a, b, c, d] = [cornerHeight(i, j), cornerHeight(i + 1, j), cornerHeight(i + 1, j + 1), cornerHeight(i, j + 1)];
+        const water = isWater(i, j), path = isPath(i, j);
+        const corners = water
+          ? [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]].map(([x, y]) => project(x, y, -.5))
+          : [project(i, j, a), project(i + 1, j, b), project(i + 1, j + 1, c), project(i, j + 1, d)];
+        const light = 1 + ((d + a) - (b + c)) * .1 + ((a + b) - (c + d)) * .05 + (random() - .5) * style.tileNoise;
+        const base = water ? palette.water : path ? palette.path : (i + j) % 2 ? palette.grass : palette.grassAlternate;
+        const outline = style.terrainOutline === false ? null : style.outline && (path || water || a !== c || b !== d) ? style.outline : (style.tileGrid ? style.tileGrid : null);
+        drawPolygon(ctx, corners, shade(base, light), outline);
+        if (style.hatch && light < .94 && !water) drawHatch(ctx, corners, 5);
+        if (water) {
+          ctx.strokeStyle = palette.waterHighlight; ctx.lineWidth = 1; ctx.beginPath();
+          const [cx, cy] = project(i + .5, j + .5, -.5);
+          if (style.wavePattern) {
+            ctx.beginPath();
+            [-7, 0, 7].forEach(dx => [5, 3].forEach(radius => { ctx.moveTo(cx + dx + radius, cy); ctx.arc(cx + dx, cy, radius, 0, Math.PI, true); }));
+          } else { const drift = Math.sin(time * 1.6 + i * 1.7 + j) * 4; ctx.moveTo(cx - 6 + drift, cy); ctx.lineTo(cx + 3 + drift, cy); }
+          ctx.stroke();
+        }
+      }
+    }
+
+    function groundShadow(ctx, x, y, radius) {
+      const [sx, sy] = project(x + .12 * radius, y - .12 * radius, Math.max(rawHeight(x, y), -.5));
+      ctx.save();
+      ctx.fillStyle = palette.shadow;
+      if (style.softShadow) ctx.filter = 'blur(2.5px)';
+      ctx.beginPath(); ctx.ellipse(sx + radius * 4, sy + radius, radius * TILE * .55, radius * TILE * .26, 0, 0, 7); ctx.fill();
+      ctx.restore();
+    }
+
+    function addTrack(frames, colors, kind) {
+      frames.forEach((frame, index) => {
+        const next = frames[(index + 1) % frames.length];
+        const [x, y, z] = frame.point;
+        const ground = rawHeight(x, y);
+        const hidden = z < ground - .05;
+        const nextHidden = next.point[2] < rawHeight(next.point[0], next.point[1]) - .05;
+        if (hidden !== nextHidden) addObject(x + y + .4, ctx => {
+          const [sx, sy] = project(x, y, ground + .25);
+          drawPolygon(ctx, [[sx - 12, sy + 6], [sx - 12, sy - 7], [sx - 6, sy - 13], [sx + 6, sy - 13], [sx + 12, sy - 7], [sx + 12, sy + 6]], palette.rock);
+          drawPolygon(ctx, [[sx - 8, sy + 6], [sx - 8, sy - 5], [sx - 4, sy - 9], [sx + 4, sy - 9], [sx + 8, sy - 5], [sx + 8, sy + 6]], palette.tunnel, null);
+        });
+        if (hidden) return;
+        const supportEvery = kind === 'wood' ? 5 : 9;
+        if (index % supportEvery === 0 && z > ground + .25) addObject(x + y - .02, ctx => {
+          groundShadow(ctx, x, y, .14);
+          const [topX, topY] = project(x, y, z - .05), [baseX, baseY] = project(x, y, ground);
+          if (kind === 'wood') {
+            const off = project(x + frame.side[0] * .45, y + frame.side[1] * .45, 0)[0] - project(x, y, 0)[0];
+            ctx.strokeStyle = colors.support; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(topX - off, topY); ctx.lineTo(baseX - off * 1.5, baseY);
+            ctx.moveTo(topX + off, topY); ctx.lineTo(baseX + off * 1.5, baseY);
+            const rows = Math.ceil((baseY - topY) / 10);
+            for (let row = 0; row < rows; row++) {
+              const ratio = row / rows, nextRatio = (row + 1) / rows;
+              const yA = topY + (baseY - topY) * ratio, yB = topY + (baseY - topY) * nextRatio;
+              const widthA = off * (1 + ratio * .5), widthB = off * (1 + nextRatio * .5);
+              const middleA = topX + (baseX - topX) * ratio, middleB = topX + (baseX - topX) * nextRatio;
+              ctx.moveTo(middleA - widthA, yA); ctx.lineTo(middleB + widthB, yB);
+              ctx.moveTo(middleA + widthA, yA); ctx.lineTo(middleB - widthB, yB);
+            }
+            ctx.stroke();
+          } else {
+            if (style.outline) { ctx.strokeStyle = style.outline; ctx.lineWidth = 4.4; ctx.beginPath(); ctx.moveTo(topX, topY); ctx.lineTo(baseX, baseY); ctx.stroke(); }
+            ctx.strokeStyle = colors.support; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(topX, topY); ctx.lineTo(baseX, baseY); ctx.stroke();
+          }
+        });
+        addObject(x + y + z * .02, ctx => {
+          const offset = (frame_, sign) => frame_.point.map((c, axis) => c + frame_.side[axis] * sign * .16);
+          const [aL, bL, aR, bR] = [offset(frame, 1), offset(next, 1), offset(frame, -1), offset(next, -1)].map(p => project(...p));
+          const drawRail = (from, to, width, color) => {
+            ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(...from); ctx.lineTo(...to); ctx.stroke();
+          };
+          if (index % 2 === 0) drawRail(aL, aR, 1.3, colors.tie);
+          if (style.outline) { drawRail(aL, bL, 3.4, style.outline); drawRail(aR, bR, 3.4, style.outline); }
+          drawRail(aL, bL, 2.1, colors.rail);
+          drawRail(aR, bR, 2.1, colors.rail);
+          if (style.glow && index % 4 === 0) style.lights.push({ at: aL, color: colors.rail, radius: 7 });
+        });
+      });
+    }
+
+    function addTrain(frames, train, carColor) {
+      for (let car = 0; car < 5; car++) {
+        const currentFrame = () => frames[(((Math.floor(train.position) - car * 3) % frames.length) + frames.length) % frames.length];
+        addObject(() => { const [x, y, z] = currentFrame().point; return x + y + z * .02 + .03; }, ctx => {
+          const frame = currentFrame();
+          if (frame.point[2] < rawHeight(frame.point[0], frame.point[1]) - .05) return;
+          const [sx, sy] = project(...frame.point.map((c, axis) => c + frame.up[axis] * .16));
+          drawPolygon(ctx, [[sx - 7, sy + 1], [sx, sy + 5], [sx + 7, sy + 1], [sx + 7, sy - 3], [sx, sy + 1], [sx - 7, sy - 3]], carColor);
+          [-2.6, 2.6].forEach(seat => {
+            ctx.strokeStyle = style.outline; ctx.lineWidth = .9;
+            const wave = Math.sin(time * 9 + car + seat) * 1.2;
+            ctx.beginPath(); ctx.moveTo(sx + seat - 1, sy - 3); ctx.lineTo(sx + seat - 2.2 + wave, sy - 8); ctx.moveTo(sx + seat + 1, sy - 3); ctx.lineTo(sx + seat + 2.2 + wave, sy - 8); ctx.stroke();
+            ctx.fillStyle = palette.shirts[(car + (seat > 0 ? 1 : 0)) % palette.shirts.length];
+            ctx.beginPath(); ctx.arc(sx + seat, sy - 3.4, 2.2, 0, 7); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sx + seat, sy - 3.8, .95, 0, 7); ctx.fill();
+          });
+        });
+      }
+    }
+
+    const addTree = (x, y, scale) => addObject(x + y, ctx => {
+      groundShadow(ctx, x, y, .42 * scale);
+      const [sx, sy] = project(x, y, rawHeight(x, y));
+      drawPolygon(ctx, [[sx - 1.6, sy], [sx + 1.6, sy], [sx + 1.6, sy - 10 * scale], [sx - 1.6, sy - 10 * scale]], palette.trunk);
+      if (style.lollipopTrees) {
+        const radius = (9 + random() * 4) * scale, crownY = sy - 18 * scale;
+        const crownX = sx + Math.sin(time * 1.4 + x * 3) * 1.4 * scale;
+        ctx.strokeStyle = style.outline; ctx.lineWidth = style.outlineWidth;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(sx + 5 * scale, sy - 10 * scale, crownX, crownY); ctx.stroke();
+        ctx.fillStyle = shade(palette.treeColors[Math.floor(random() * palette.treeColors.length)], .95 + random() * .2);
+        ctx.beginPath(); ctx.arc(crownX, crownY, radius, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = style.curlColor; ctx.lineWidth = 1; ctx.beginPath();
+        for (let turn = 0; turn < 26; turn++) {
+          const angle = turn * .55 + time * .5, spiral = radius * .72 * turn / 26;
+          ctx.lineTo(crownX + Math.cos(angle) * spiral, crownY + Math.sin(angle) * spiral);
+        }
+        ctx.stroke();
+      } else if (random() < .35) {
+        [[12, 16, 0, .78], [9.5, 13, 8, .95], [6.5, 10, 15, 1.15]].forEach(([width, height, lift, light]) => {
+          const base = sy - 7 * scale - lift * scale;
+          drawPolygon(ctx, [[sx - width * scale, base], [sx, base - height * scale], [sx + width * scale, base]], shade(palette.pine, light));
+        });
+      } else {
+        [[0, -17, 10.5, .78], [-4, -20, 7.5, .95], [3.5, -23, 7, 1.05], [-.5, -26, 5.8, 1.2]].forEach(([dx, dy, radius, light]) => {
+          ctx.fillStyle = shade(palette.leaves, light);
+          ctx.beginPath(); ctx.arc(sx + dx * scale, sy + dy * scale, radius * scale, 0, 7); ctx.fill();
+          if (style.outline) { ctx.strokeStyle = style.outline; ctx.lineWidth = style.outlineWidth; ctx.stroke(); }
+        });
+      }
+    });
+
+    const addPerson = (group, memberIndex, role, relation) => {
+      const isChild = role === 'child';
+      const guest = {
+        group, phase: random() * 7, role, relation, isChild,
+        name: guestNames[Math.floor(random() * guestNames.length)],
+        thought: guestThoughts[Math.floor(random() * guestThoughts.length)],
+        shirt: palette.shirts[Math.floor(random() * palette.shirts.length)],
+        hair: ['#2a1b42', '#6d4632', '#c98a3c', '#b5543a', '#d8d2c8'][Math.floor(random() * 5)],
+        trousers: ['#2a1b42', '#3f5f9f', '#6d4632', '#3a7a6a'][Math.floor(random() * 4)],
+        skin: ['#ffd9b0', '#e8b284', '#b97f55', '#7c5238'][Math.floor(random() * 4)],
+        hasHat: random() < .2,
+        intensity: random(), themeCare: random(), spending: random(), nausea: random() * .4,
+        favoriteRide: ['steel looper', 'wooden coaster', 'ferris wheel'][Math.floor(random() * 3)],
+        alongOffset: -memberIndex * .34,
+        sideOffset: group.side + (memberIndex % 2 ? .17 : -.05),
+      };
+      guests.push(guest);
+      const position = () => {
+        const distance = Math.max(0, Math.min(routeLength, group.distance + guest.alongOffset * group.direction));
+        const along = routePosition(distance);
+        return { x: along.x - along.directionY * guest.sideOffset, y: along.y + along.directionX * guest.sideOffset, along };
+      };
+      addObject(() => { const { x, y } = position(); return x + y; }, ctx => {
+        const { x, y, along } = position();
+        const [sx, sy] = project(x, y, rawHeight(x, y));
+        const screenDirectionX = (along.directionX - along.directionY) * group.direction;
+        const screenDirectionY = (along.directionX + along.directionY) * group.direction;
+        const facingAway = screenDirectionY < 0;
+        const moving = group.pause <= 0;
+        const stride = moving ? Math.sin(time * 9 + guest.phase) : 0;
+        const idle = moving ? 0 : Math.sin(time * 1.6 + guest.phase) * .4;
+        const bodyScale = isChild ? 1.05 : 1.45;
+        guest.screenX = sx; guest.screenY = sy - 9 * bodyScale;
+        const outline = style.outline;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.fillStyle = 'rgba(70,40,90,.25)'; ctx.beginPath(); ctx.ellipse(.6, 0, 3.8 * bodyScale / 1.45, 1.4, 0, 0, 7); ctx.fill();
+        if (selectedGuest === guest) { ctx.strokeStyle = '#ffc531'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(0, 0, 8, 4, 0, 0, 7); ctx.stroke(); }
+        ctx.scale(bodyScale, bodyScale);
+        if (screenDirectionX < 0) ctx.scale(-1, 1);
+        ctx.lineCap = 'round';
+        const limb = (fromX, fromY, toX, toY, color, width) => {
+          ctx.strokeStyle = outline; ctx.lineWidth = width + 1; ctx.beginPath(); ctx.moveTo(fromX, fromY); ctx.lineTo(toX, toY); ctx.stroke();
+          ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(fromX, fromY); ctx.lineTo(toX, toY); ctx.stroke();
+        };
+        limb(-.5, -3.6, -.5 - stride * 1.6, 0, guest.trousers, 1.3);
+        limb(.5, -3.6, .5 + stride * 1.6, 0, guest.trousers, 1.3);
+        limb(-.7, -6.6, -.9 + stride * 1.4, -3.9 + idle, guest.skin, .9);
+        ctx.fillStyle = guest.shirt; ctx.strokeStyle = outline; ctx.lineWidth = .7;
+        ctx.beginPath(); ctx.roundRect(-1.7, -7.4, 3.4, 4.2, 1.1); ctx.fill(); ctx.stroke();
+        limb(.7, -6.6, .9 - stride * 1.4, -3.9 - idle, guest.skin, .9);
+        const headLift = moving ? Math.abs(stride) * .22 : 0;
+        ctx.fillStyle = guest.skin; ctx.lineWidth = .7;
+        ctx.beginPath(); ctx.arc(.15, -9 - headLift, 1.9, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = guest.hasHat ? guest.shirt : guest.hair;
+        ctx.beginPath();
+        if (facingAway) ctx.arc(.15, -9 - headLift, 1.9, 0, 7);
+        else ctx.arc(.15, -9.4 - headLift, 1.8, Math.PI * 1.02, Math.PI * 1.98);
+        ctx.fill(); ctx.stroke();
+        if (guest.hasHat) { ctx.beginPath(); ctx.moveTo(-.9, -10.2 - headLift); ctx.lineTo(3, -10.2 - headLift); ctx.stroke(); }
+        if (!facingAway) { ctx.fillStyle = outline; ctx.beginPath(); ctx.arc(.5, -8.9 - headLift, .28, 0, 7); ctx.arc(1.4, -8.9 - headLift, .28, 0, 7); ctx.fill(); }
+        ctx.restore();
+      });
+    };
+
+    const addGroup = () => {
+      const roll = random();
+      const members = roll < .3 ? [['visitor', 'on their own']] : roll < .6 ? [['partner', 'with their spouse'], ['partner', 'with their spouse']]
+        : roll < .85 ? [['parent', 'with their child'], ['child', 'with their parent']] : [['parent', 'with their family'], ['child', 'with their parent'], ['child', 'with their parent'], ['parent', 'with their family']];
+      const group = { distance: random() * routeLength, direction: random() < .5 ? 1 : -1, speed: .5 + random() * .35, pause: 0, nextPause: 2 + random() * 8, side: (random() - .5) * .42 };
+      groups.push(group);
+      members.forEach(([role, relation], memberIndex) => addPerson(group, memberIndex, role, relation));
+    };
+
+    function addBox(x, y, width, depth, height, wallColor, roofColor, striped) {
+      addObject(x + y + width / 2 + depth / 2, ctx => {
+        groundShadow(ctx, x + width / 2, y + depth / 2, 1.1);
+        const base = rawHeight(x, y);
+        const corner = (cx, cy, cz) => project(x + cx, y + cy, base + cz);
+        drawPolygon(ctx, [corner(width, 0, 0), corner(width, depth, 0), corner(width, depth, height), corner(width, 0, height)], shade(wallColor, .75));
+        drawPolygon(ctx, [corner(0, depth, 0), corner(width, depth, 0), corner(width, depth, height), corner(0, depth, height)], shade(wallColor, 1));
+        const stripes = striped ? 5 : 1;
+        for (let n = 0; n < stripes; n++) {
+          const from = width * n / stripes, to = width * (n + 1) / stripes;
+          drawPolygon(ctx, [corner(from, -.12, height), corner(to, -.12, height), corner(to, depth + .12, height), corner(from, depth + .12, height)].map(([px, py], idx) => idx < 2 ? [px, py - 13] : [px, py + 3]), striped && n % 2 === 0 ? palette.awningWhite : roofColor);
+        }
+        const [doorX, doorY] = corner(width * .5, depth, height * .55);
+        ctx.fillStyle = palette.tunnel; ctx.fillRect(doorX - 5, doorY, 10, 8);
+        if (style.glow) style.lights.push({ at: [doorX, doorY + 4], color: '#ffc36a', radius: 34 });
+      });
+    }
+
+    function addFerrisWheel(x, y) {
+      addObject(x + y + 1.5, ctx => {
+        groundShadow(ctx, x, y, 1.3);
+        const [baseX, baseY] = project(x, y, rawHeight(x, y));
+        const hubX = baseX, hubY = baseY - 62;
+        ctx.strokeStyle = palette.frame; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(baseX - 18, baseY + 4); ctx.lineTo(hubX, hubY); ctx.lineTo(baseX + 18, baseY - 4); ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(hubX, hubY, 30, 48, 0, 0, 7); ctx.stroke();
+        for (let spoke = 0; spoke < 10; spoke++) {
+          const angle = spoke / 10 * Math.PI * 2 + time * .22;
+          const cabinX = hubX + Math.cos(angle) * 30, cabinY = hubY + Math.sin(angle) * 48;
+          ctx.strokeStyle = palette.frame; ctx.beginPath(); ctx.moveTo(hubX, hubY); ctx.lineTo(cabinX, cabinY); ctx.stroke();
+          drawPolygon(ctx, [[cabinX - 4, cabinY], [cabinX + 4, cabinY], [cabinX + 3, cabinY + 7], [cabinX - 3, cabinY + 7]], palette.shirts[spoke % palette.shirts.length]);
+          if (style.glow) style.lights.push({ at: [cabinX, cabinY], color: '#ffe0a0', radius: 11 });
+        }
+      });
+    }
+
+    function addLamp(x, y) {
+      addObject(x + y, ctx => {
+        const [sx, sy] = project(x, y, rawHeight(x, y));
+        ctx.strokeStyle = palette.frame; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, sy - 16); ctx.stroke();
+        ctx.fillStyle = palette.lamp; ctx.beginPath(); ctx.arc(sx, sy - 17, 2, 0, 7); ctx.fill();
+        if (style.glow) style.lights.push({ at: [sx, sy - 17], color: '#ffc36a', radius: 42 });
+      });
+    }
+
+    addTrack(steelTrack, palette.steel, 'steel');
+    addTrack(woodenTrack, palette.wood, 'wood');
+    addTrain(steelTrack, steelTrains[0], palette.steel.car);
+    addTrain(steelTrack, steelTrains[1], palette.steel.car);
+    addTrain(woodenTrack, woodenTrains[0], palette.wood.car);
+    addBox(6, 7, 1.7, 1.5, 1.3, palette.stallWall, palette.awning, true);
+    addBox(12.4, 13.4, 1.8, 1.3, 1.5, palette.buildingWall, palette.roof, false);
+    addFerrisWheel(14.2, 1.1);
+
+    for (let n = 0; n < 34; n++) {
+      const x = random() * GRID, y = random() * GRID;
+      const tileI = Math.floor(x), tileJ = Math.floor(y);
+      const nearWood = x > 6 && x < 14 && y > 6.6 && y < 12;
+      if (!isPath(tileI, tileJ) && !isWater(tileI, tileJ) && !nearWood && rawHeight(x, y) > -.2) addTree(x, y, .75 + random() * .6);
+    }
+    for (let groupIndex = 0; groupIndex < 30; groupIndex++) addGroup();
+    [[11.9, 8.1], [11.9, 11.1], [4.1, 14.8], [8.1, 14.8], [13.1, 14.9], [6.3, 5.8], [10, 5.8]].forEach(([x, y]) => addLamp(x, y));
+
+    return ctx => {
+      random = seededRandom(777);
+      drawTerrain(ctx);
+      objects.map(object => [typeof object.depth === 'function' ? object.depth() : object.depth, object])
+        .sort((first, second) => first[0] - second[0]).forEach(([, object]) => object.draw(ctx));
+    };
+  }
+
+  function makeCanvas(width, height) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    return canvas;
+  }
+
+  function renderBase(palette, style, resolutionScale) {
+    style.lights = [];
+    const canvas = makeCanvas(LOGICAL_WIDTH * resolutionScale, LOGICAL_HEIGHT * resolutionScale);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(resolutionScale, resolutionScale);
+    const sky = ctx.createLinearGradient(0, 0, 0, LOGICAL_HEIGHT);
+    sky.addColorStop(0, palette.skyTop); sky.addColorStop(1, palette.skyBottom);
+    if (palette.skyMiddle) sky.addColorStop(.5, palette.skyMiddle);
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    if (style.backdrop) style.backdrop(ctx);
+    buildScene(palette, style)(ctx);
+    return canvas;
+  }
+
+  const shirtColors = ['#d9483b', '#3f7fd1', '#e8b93a', '#3fa66b', '#b35ac4', '#f08a3c', '#eeeeee'];
+  const daylight = {
+    skyTop: '#a8d6ea', skyBottom: '#dff0e8', grass: '#6faa4d', grassAlternate: '#689f48', path: '#c4b08c', earth: '#8a6443', rock: '#7c7468',
+    water: '#3f92c2', waterHighlight: '#a9dcf2', shadow: 'rgba(30,40,40,.28)', tunnel: '#1d1b22', trunk: '#6a4a30', leaves: '#3f8a45', pine: '#2c6b4a',
+    skin: '#eec39a', trousers: '#39445c', shirts: shirtColors, frame: '#4b5461', lamp: '#fff2c2', stallWall: '#e8d2a8', awning: '#d9483b', awningWhite: '#f6efe1',
+    buildingWall: '#b98f6a', roof: '#40688f',
+    steel: { rail: '#e0473f', tie: '#7c2b2a', support: '#2f6fc0', car: '#f2c230' },
+    wood: { rail: '#6d6a68', tie: '#7a5a3a', support: '#b08a58', car: '#2d8f6f' },
+  };
+
+
+  const palette = {
+    skyTop: '#59c8e6', skyMiddle: '#a7e6dd', skyBottom: '#ffe6a8',
+    grass: '#a6dc6c', grassAlternate: '#9dd664', path: '#fff0c7', earth: '#e8a06f', rock: '#a892c9', water: '#57cfe6', waterHighlight: '#ffffff',
+    shadow: 'rgba(80,50,120,.22)', tunnel: '#2a1b42', trunk: '#6d4632', leaves: '#5fc27a', pine: '#2fa58d', treeColors: ['#5fc27a', '#39b6a0', '#f6c344', '#ff8fa8'],
+    skin: '#ffd9b0', trousers: '#2a1b42', shirts: ['#ff5d5d', '#3f8cff', '#ffc531', '#2ec98a', '#b86bff', '#ff8a3c', '#ffffff'],
+    frame: '#2a1b42', lamp: '#fff2c2', stallWall: '#ffe9bd', awning: '#ff5d5d', awningWhite: '#fffaf0', buildingWall: '#ffb36b', roof: '#6a5cff',
+    steel: { rail: '#ff4d6d', tie: '#2a1b42', support: '#3f8cff', car: '#ffc531' },
+    wood: { rail: '#7b5a48', tie: '#2a1b42', support: '#d99b5c', car: '#2ec98a' },
+  };
+  const ink = '#2a1b42';
+
+  const target = document.getElementById('art-playful');
+  const ctx = target.getContext('2d');
+  target.width = LOGICAL_WIDTH * 1.5; target.height = LOGICAL_HEIGHT * 1.5;
+  const style = { outline: ink, outlineWidth: 1.2, tileNoise: .05, hatch: true, sketchy: true, tileGrid: 'rgba(42,27,66,.1)', blobGuests: true, lollipopTrees: true, curlColor: 'rgba(42,27,66,.45)', glow: true, lights: [] };
+  const drawParkScene = buildScene(palette, style);
+
+  const washLayer = makeCanvas(target.width, target.height);
+  {
+    const washContext = washLayer.getContext('2d'), random = seededRandom(31);
+    washContext.fillStyle = '#fff'; washContext.fillRect(0, 0, washLayer.width, washLayer.height);
+    for (let wash = 0; wash < 70; wash++) {
+      const x = random() * washLayer.width, y = random() * washLayer.height, radius = 60 + random() * 150;
+      const tint = ['255,226,190', '205,240,240', '250,220,235'][wash % 3];
+      const blot = washContext.createRadialGradient(x, y, radius * .4, x, y, radius);
+      blot.addColorStop(0, `rgba(${tint},.2)`); blot.addColorStop(1, `rgba(${tint},0)`);
+      washContext.fillStyle = blot; washContext.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+    for (let grain = 0; grain < 22000; grain++) {
+      washContext.fillStyle = `rgba(120,95,130,${random() * .1})`;
+      washContext.fillRect(random() * washLayer.width, random() * washLayer.height, 1.6, 1.6);
+    }
+  }
+  const bloomLayer = makeCanvas(target.width / 4, target.height / 4), bloomContext = bloomLayer.getContext('2d');
+
+  const stars = Array.from({ length: 70 }, (_, index) => [(index * 197.3) % LOGICAL_WIDTH, (index * 73.1) % 230, index]);
+  const particles = [];
+  const fillCircle = (x, y, radius, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, radius, 0, 7); ctx.fill(); };
+  const confettiColors = ['#ff5d5d', '#ffc531', '#2ec98a', '#3f8cff', '#b86bff', '#ffffff'];
+  const burst = (x, y, count, speed, colors, gravity, life) => {
+    for (let n = 0; n < count; n++) {
+      const angle = Math.random() * 7, velocity = speed * (.35 + Math.random() * .65);
+      particles.push({ x, y, vx: Math.cos(angle) * velocity, vy: Math.sin(angle) * velocity, gravity, age: 0, life: life * (.6 + Math.random() * .5), color: colors[n % colors.length], spin: Math.random() * 7 });
+    }
+  };
+
+  function drawBackdrop(dayProgress, night) {
+    stars.forEach(([x, y, index]) => {
+      const twinkle = .5 + .5 * Math.sin(time * 2.5 + index);
+      if (night > .35) fillCircle(x, y, 1.1 + twinkle, `rgba(255,255,255,${Math.min(1, (night - .35) * 2.5) * (.4 + .6 * twinkle)})`);
+    });
+    const sunX = 150 + dayProgress * 470, sunY = 95 + dayProgress * dayProgress * 310;
+    ctx.save(); ctx.translate(sunX, sunY); ctx.rotate(time * .08);
+    ctx.strokeStyle = '#ffd34f'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+    for (let ray = 0; ray < 14; ray++) {
+      ctx.rotate(Math.PI * 2 / 14);
+      ctx.beginPath(); ctx.moveTo(62, 0); ctx.lineTo(ray % 2 ? 82 : 94, 0); ctx.stroke();
+    }
+    ctx.restore();
+    fillCircle(sunX, sunY, 50, '#ffe066');
+    ctx.strokeStyle = ink; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sunX, sunY, 50, 0, 7); ctx.stroke();
+    fillCircle(680, 300 - Math.max(0, night - .4) * 420, 34, '#fff7d6');
+
+    [['#b7ecc4', 390, 26, .011, .25], ['#8fdcae', 425, 36, .017, .55]].forEach(([color, base, amplitude, frequency, parallax]) => {
+      ctx.fillStyle = color; ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, LOGICAL_HEIGHT);
+      for (let x = 0; x <= LOGICAL_WIDTH; x += 8) ctx.lineTo(x, base + Math.sin((x + time * parallax) * frequency) * amplitude);
+      ctx.lineTo(LOGICAL_WIDTH, LOGICAL_HEIGHT); ctx.closePath(); ctx.fill(); ctx.stroke();
+    });
+    [[52, 335, 110, '#ff8fa8'], [118, 365, 72, '#ffc531'], [742, 335, 125, '#39b6a0'], [690, 375, 60, '#b86bff']].forEach(([x, y, height, color], index) => {
+      const topX = x + 6 + Math.sin(time + index) * 3, topY = y - height;
+      ctx.strokeStyle = ink; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(x, y + 90); ctx.bezierCurveTo(x + 10, y, x - 14, y - height * .5, topX, topY); ctx.stroke();
+      fillCircle(topX, topY, 11, color); ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.lineWidth = .9; ctx.beginPath();
+      for (let turn = 0; turn < 18; turn++) ctx.lineTo(topX + Math.cos(turn * .6 + time) * turn * .45, topY + Math.sin(turn * .6 + time) * turn * .45);
+      ctx.stroke();
+    });
+    [[0, 70, 1.15], [260, 120, .7], [530, 55, .9]].forEach(([offset, y, scale]) => {
+      const x = ((offset + time * 7 * scale) % (LOGICAL_WIDTH + 200)) - 100;
+      ctx.fillStyle = '#fffdf5'; ctx.strokeStyle = ink; ctx.lineWidth = 1.1; ctx.beginPath();
+      [[-26, 3, 14], [-9, -6, 19], [12, -3, 16], [29, 4, 11]].forEach(([dx, dy, radius]) => { ctx.moveTo(x + (dx + radius) * scale, y + dy * scale); ctx.arc(x + dx * scale, y + dy * scale, radius * scale, 0, 7); });
+      ctx.stroke(); ctx.fill();
+    });
+  }
+
+  function advanceTrains(frames, trains, speedScale, deltaSeconds) {
+    const highestPoint = Math.max(...frames.map(frame => frame.point[2])) + .35;
+    trains.forEach(train => {
+      const count = frames.length, frame = frames[((Math.floor(train.position) % count) + count) % count];
+      const speed = speedScale * Math.sqrt(highestPoint - frame.point[2]);
+      const previous = train.position;
+      train.position += speed * deltaSeconds;
+      const [x, y, z] = frame.point;
+      const [sx, sy] = project(x, y, z);
+      if (speed > speedScale * 2.2 && z > rawHeight(x, y) && Math.random() < .5) particles.push({ x: sx, y: sy, vx: (Math.random() - .5) * 18, vy: Math.random() * 12, gravity: 40, age: 0, life: .45, color: Math.random() < .5 ? '#ffc531' : '#ff8a3c', spin: 0 });
+      const crestIndex = frames.findIndex(candidate => candidate.point[2] === Math.max(...frames.map(other => other.point[2])));
+      if (Math.floor(previous) % count <= crestIndex && Math.floor(train.position) % count > crestIndex) {
+        burst(sx, sy - 10, 40, 95, confettiColors, 110, 1.5);
+      }
+    });
+  }
+
+  function updateAndDrawEffects(deltaSeconds) {
+    for (let index = particles.length - 1; index >= 0; index--) {
+      const particle = particles[index];
+      particle.age += deltaSeconds;
+      if (particle.age > particle.life) { particles.splice(index, 1); continue; }
+      particle.vy += particle.gravity * deltaSeconds;
+      particle.x += particle.vx * deltaSeconds; particle.y += particle.vy * deltaSeconds;
+      ctx.save(); ctx.globalAlpha = 1 - (particle.age / particle.life) ** 3;
+      ctx.translate(particle.x, particle.y); ctx.rotate(particle.spin + particle.age * 7);
+      ctx.fillStyle = particle.color; ctx.fillRect(-2, -1.2, 4, 2.4);
+      ctx.restore();
+    }
+  }
+
+  const colorStops = [[0, [255, 255, 255]], [.5, [255, 196, 150]], [.75, [176, 130, 190]], [1, [66, 62, 128]]];
+  const tintForDay = progress => {
+    const upper = colorStops.findIndex(([stop]) => stop >= progress);
+    if (upper <= 0) return colorStops[0][1];
+    const [lowStop, lowColor] = colorStops[upper - 1], [highStop, highColor] = colorStops[upper];
+    const blend = (progress - lowStop) / (highStop - lowStop);
+    return lowColor.map((channel, index) => Math.round(channel + (highColor[index] - channel) * blend));
+  };
+
+  const slider = document.getElementById('day-slider');
+  let followClock = true, previousTimestamp = performance.now(), nextFirework = 0, frameCount = 0, measureStart = previousTimestamp;
+  slider.addEventListener('input', () => { followClock = false; });
+  slider.addEventListener('click', event => event.stopPropagation());
+  target.addEventListener('click', event => {
+    event.stopPropagation();
+    const bounds = target.getBoundingClientRect();
+    const clickX = (event.clientX - bounds.left) / bounds.width * LOGICAL_WIDTH, clickY = (event.clientY - bounds.top) / bounds.height * LOGICAL_HEIGHT;
+    const nearest = guests.map(guest => [Math.hypot(guest.screenX - clickX, guest.screenY - clickY), guest]).sort((first, second) => first[0] - second[0])[0];
+    if (nearest && nearest[0] < 20) {
+      selectedGuest = nearest[1];
+      const percent = value => `${Math.round(value * 100)}%`;
+      document.getElementById('guest-panel').innerHTML = `<strong>${selectedGuest.name}</strong> (${selectedGuest.role}, ${selectedGuest.relation})<br>
+        <em>"${selectedGuest.thought}"</em><br>
+        Likes intensity: ${percent(selectedGuest.intensity)} · Cares about theming: ${percent(selectedGuest.themeCare)} · Spending: ${percent(selectedGuest.spending)} · Nausea: ${percent(selectedGuest.nausea)} · Favorite ride: ${selectedGuest.favoriteRide}`;
+    } else burst(clickX, clickY, 50, 120, confettiColors, 130, 1.6);
+  });
+
+  function updateGroups(deltaSeconds) {
+    groups.forEach(group => {
+      if (group.pause > 0) { group.pause -= deltaSeconds; return; }
+      group.nextPause -= deltaSeconds;
+      if (group.nextPause <= 0) { group.pause = 1 + Math.random() * 5; group.nextPause = 3 + Math.random() * 12; if (Math.random() < .25) group.direction *= -1; }
+      group.distance += group.speed * group.direction * deltaSeconds;
+      if (group.distance < .3 || group.distance > routeLength - .3) { group.distance = Math.max(.3, Math.min(routeLength - .3, group.distance)); group.direction *= -1; }
+    });
+  }
+
+  function renderFrame(timestamp) {
+    const deltaSeconds = Math.min(.05, (timestamp - previousTimestamp) / 1000);
+    previousTimestamp = timestamp;
+    time += deltaSeconds;
+    if (followClock) slider.value = (Math.sin(time * .1 - 1.2) * .5 + .5) * 100;
+    const dayProgress = slider.value / 100, night = Math.max(0, (dayProgress - .5) * 2);
+    boilRandom = seededRandom(1 + Math.floor(time * 7) % 3);
+    style.lights = [];
+    updateGroups(deltaSeconds);
+    advanceTrains(steelTrack, steelTrains, 17, deltaSeconds);
+    advanceTrains(woodenTrack, woodenTrains, 12, deltaSeconds);
+
+    ctx.setTransform(1.5, 0, 0, 1.5, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    const sky = ctx.createLinearGradient(0, 0, 0, LOGICAL_HEIGHT);
+    sky.addColorStop(0, palette.skyTop); sky.addColorStop(.5, palette.skyMiddle); sky.addColorStop(1, palette.skyBottom);
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    drawBackdrop(dayProgress, night);
+    drawParkScene(ctx);
+
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(washLayer, 0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    [[.1, 1.5], [.55, 1.1], [.85, 1.7]].forEach(([offset, size]) => {
+      const x = ((offset * 1000 + time * 13) % 1100) - 150, y = 180 + offset * 240, radius = 110 * size;
+      const shadow = ctx.createRadialGradient(x, y, radius * .2, x, y, radius);
+      shadow.addColorStop(0, 'rgba(175,160,215,.5)'); shadow.addColorStop(1, 'rgba(175,160,215,0)');
+      ctx.fillStyle = shadow; ctx.save(); ctx.translate(0, y * .45); ctx.scale(1, .55); ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2); ctx.restore();
+    });
+    const [red, green, blue] = tintForDay(dayProgress);
+    ctx.fillStyle = `rgb(${red},${green},${blue})`; ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+    ctx.globalCompositeOperation = 'lighter';
+    if (night > .08) style.lights.forEach(({ at: [x, y], color, radius }) => {
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      const alpha = Math.round(Math.min(1, night * 1.4) * 170).toString(16).padStart(2, '0');
+      glow.addColorStop(0, color + alpha); glow.addColorStop(1, color + '00');
+      ctx.fillStyle = glow; ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    });
+    ctx.globalCompositeOperation = 'source-over';
+
+    if (night > .6 && time > nextFirework) {
+      nextFirework = time + .7 + Math.random() * 1.3;
+      burst(90 + Math.random() * 620, 50 + Math.random() * 130, 70, 150, [confettiColors[Math.floor(Math.random() * 5)], '#ffffff'], 45, 1.5);
+    }
+    updateAndDrawEffects(deltaSeconds);
+
+    bloomContext.globalCompositeOperation = 'copy';
+    bloomContext.filter = 'blur(4px) brightness(1.1)';
+    bloomContext.drawImage(target, 0, 0, bloomLayer.width, bloomLayer.height);
+    bloomContext.filter = 'none';
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = .14 + night * .4;
+    ctx.drawImage(bloomLayer, 0, 0, target.width, target.height);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+
+    frameCount++;
+    if (timestamp - measureStart > 2000) { window.__parkFramesPerSecond = frameCount / ((timestamp - measureStart) / 1000); frameCount = 0; measureStart = timestamp; }
+    requestAnimationFrame(renderFrame);
+  }
+  requestAnimationFrame(renderFrame);
+})();
+</script>

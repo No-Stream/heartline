@@ -1,0 +1,161 @@
+# Theme park sim: design
+
+Date: 2026-11-02. Status: draft for owner approval.
+
+Each decision below is labeled **Owner** (the owner said it) or **Designer's call** (proposed during design and open to rejection). Sections 11 and 12 list what is left to the builder and what is unverified.
+
+## 1. Intent
+
+This is a free, for-fun theme park and roller coaster game in the spirit of RollerCoaster Tycoon 2 (RCT2). It keeps the 2D isometric look and piece-by-piece coaster building, and it simulates every guest as an individual. The owner enjoys open-ended creative play: coming up with a coaster concept, stacking coasters so they interact, finding fun layouts and threading track underground. Delight is the main goal, and realism in physics and guest behavior serves that delight.
+
+Later 3D park builders lost two things the owner valued in RCT2. Their fully free spline editors gave so much flexibility that building became less delightful than snapping pieces together, and their 3D art lost RCT2's charm. RCT2 also has limits worth lifting, including too few coaster types, too few track pieces and too little flexibility. This game aims for the balance between those: a bigger vocabulary of pieces, each coaster model feeling like its real counterpart, and a stylized art direction that uses modern effects freely.
+
+There is no plan to make money, and the owner does not want to pay a hosting bill. Success means the game is delightful to build in, runs with a large and realistically sized park, and anyone can play it by opening a link.
+
+## 2. Goals, non-goals and anti-goals
+
+Goals (**Owner** unless noted):
+
+- Piece-based coaster construction on a grid, with many more pieces than RCT2.
+- Many coaster models, each based on a real one, with limits inspired by that real coaster.
+- Realistic coaster physics, kept subordinate to fun.
+- Every guest modeled individually, with traits, needs and relationships, and thoughts readable by clicking on them.
+- Flexible terrain, tunnels, underground sections and theming.
+- At least RCT2-sized parks with thousands of guests, and preferably larger.
+- Pure sandbox first, with scenarios added later.
+- A whimsical, upbeat stylized look with flashy effects and a day-night cycle.
+- Coasters that interact with each other in ways riders notice, such as near-misses and dueling (**Designer's call**, from the owner's enjoyment of stacking coasters).
+
+Non-goals for the first versions (**Designer's call** unless noted):
+
+- Multiplayer, accounts, servers or cloud saves.
+- Mobile support. The owner finds it interesting but harder than mouse and keyboard. It is out of scope for now, but input code must not assume a mouse, so touch can be added later.
+- A native desktop app. A desktop wrapper is possible later if the web version proves limiting (**Owner**: acceptable if it easily supports Windows, Linux and macOS).
+- Mod support.
+
+Anti-goals (**Owner**), which would make the game a failure even if it worked technically:
+
+- Punishing the player. There are no crashes, and no worrying about disasters.
+- Maintenance chores, including ride breakdowns.
+- A fully free spline editor as the building experience.
+- Generic realistic 3D art, or a melancholy mood. The World of Goo reference is about playful whimsy and should not be directly imitated.
+- Fussy manual block zone setup.
+- Offering track that is not physically plausible. See section 4.
+
+## 3. Coaster construction
+
+The player builds with pieces snapped to a grid, one at a time, with the same rhythm as RCT2 (**Owner**). Pieces are more varied than RCT2's: more turn radii, bank angles and slope steps, half-tile offsets, and signature elements per model (the detailed list is **Designer's call**, and the catalog is the builder's to grow).
+
+Internally, track is more flexible than the pieces shown to the player (**Owner**). Each piece is defined by a continuous 3D curve plus a roll profile, with its entry and exit states on a grid of allowed positions, headings, slopes and banks. Physics, rendering and support generation all use the curve and never rely on hand-made per-piece art (**Designer's call**). This means new pieces are data, and hidden flexibility can be exposed later without changing the simulation.
+
+Each model's limits are a data definition: allowed pieces, minimum radii, inversion rules, lift or launch types, supports, train configurations and materials (**Designer's call**). A piece is offered only when it is plausible for that model, so the game never needs a warning label. For example, a purely wooden vertical loop is not offered, but a wooden coaster with a steel-structure loop is, in the spirit of Son of Beast (**Owner**).
+
+Pieces that are real but beyond what a model's real-world examples do should appear as normal choices, and the model card can note them as "probably physically possible" in its description (**Owner** for the principle, **Designer's call** for the wording and placement).
+
+Supports generate automatically from the curve and terrain, and they are styled by model (**Designer's call**). The player can route track through tunnels, along cliffs and over other rides (**Owner**).
+
+### Initial coaster models
+
+Launch with three models that have very different building feel, using real traits as the source of limits (**Owner** named these three, **Designer's call** to start with them). The builder should verify the details of each model against real rides when writing the data.
+
+| Model | Real-world basis | What makes it distinct |
+|---|---|---|
+| Steel-track hybrid | RMC I-Box: all-steel box track that can be built on a wooden structure (Steel Vengeance has a chain lift, 4 inversions and 24-rider trains) | Extreme banking and inversions, and the steep drops associated with the type |
+| Multi-launch steel | Intamin LSM launch coasters: Taron (2 launches, 117 km/h, no inversions, 16 riders per train) and VelociCoaster (2 launches, 113 km/h, 4 inversions, 24 riders per train) | Launches can be placed mid-course, and terrain hugging suits them |
+| Wooden twister | GCI: wooden structure and articulated Millennium Flyer trains. Mystic Timbers is a chain-lift example with no inversions | Tight, twisting layouts through dense structure. Steel-structure inversions are allowed as a plausible extension |
+
+## 4. Physics and feedback
+
+Trains are simulated along the track curve using real forces at a fixed time step: gravity, rolling and air drag, lifts, launches and brakes (**Designer's call**, within **Owner**'s realistic but fun-first rule). The simulation records g-forces, speed and airtime along the track. The player sees these in testing as a friendly overlay along the track, and riders feel them through the guest simulation.
+
+Failures are never disasters (**Owner**). Trains do not crash. A train that would not reach the next section shows up in testing as a friendly note, and a train that stalls in play simply rolls back and is recovered without penalty (rollback handling is **Designer's call**). Forces that would be brutal in real life show up as low rider comfort and ride ratings, and this may include more nausea (**Designer's call**).
+
+Physics is advisory. Ride ratings and guest enjoyment reward good design, but the game never blocks a plausible build because it would be uncomfortable (**Designer's call**).
+
+Rides interact through the shared world. Tracked proximity events (near-misses, headchoppers, dueling sections, tunnels and terrain hugging) feed the ride rating and the riders' memories (**Designer's call**).
+
+## 5. Block sections and operations
+
+Block sections are automatic (**Owner** wanted them delightful and not fussy, the design below is **Designer's call**). The game finds suitable positions, places blocks when the player asks and shows how many trains the layout can run. Experts can move blocks by hand. Trains that would otherwise collide wait, so a poor block layout costs only capacity.
+
+No maintenance or breakdowns exist (**Owner**). Staff are out of scope for the first version. If they appear later they should add flavor and must not become a chore (**Designer's call**).
+
+## 6. Guests
+
+Every guest is an individual whose full state exists at all times (**Owner** for individual modeling, **Designer's call** for the structure). Statistical models generate each guest's traits at spawn, including taste for intensity, favorite ride types, how much they care about theming, spending level and preferred themes (**Owner**). Guests have the usual needs, such as hunger, thirst, restrooms and nausea, and relationships such as parent and child or spouses (**Owner**).
+
+Groups walk and decide together. A family might split because a child is too short for a coaster (**Designer's call**). Guests choose rides using what they have personally seen, experienced and heard from their group, with no access to a global list of rides (**Designer's call**). They keep memories of rides, which feed their thoughts and opinions.
+
+Thoughts are visible only when the player clicks a guest, in a details panel. Speech bubbles do not appear in the park (**Owner**). Guests walk and mill around like people, and do not hop (**Owner**). The panel shows the guest's name, relationships, thoughts, traits, needs and memories (**Designer's call** for the exact contents).
+
+Guest simulation should stay understandable. Exact trait distributions and need rates are for the builder to tune. The bar is that clicking any guest finds something coherent and often entertaining, and that park-wide crowd behavior responds visibly to how the park is built.
+
+## 7. World and theming
+
+The world is an isometric grid with sculpted terrain, water, paths, scenery and buildings (**Owner**). Terrain supports hills, cliffs, tunnels and caverns, and the player can build underground (**Owner**). An underground view mode is needed so buried work remains visible and editable (**Designer's call**). Four rotated camera views and smooth zoom are expected, as in RCT2 plus modern zoom (**Designer's call**).
+
+Theming is a first-class building activity with sets of scenery and building pieces (**Owner**). The first theme sets are for the builder to choose, and they should be few and charming. Guests' theme preferences and theming sensitivity connect scenery to enjoyment.
+
+## 8. Progression
+
+The game starts as pure sandbox, with scenarios added later (**Owner**). Sandbox has no money pressure, so guest spending can start as simulated behavior with light economic effect (**Designer's call**). The simulation should still track money and prices, because scenarios will need them.
+
+## 9. Art direction
+
+The look is 2D isometric and stylized, whimsical and upbeat (**Owner**). It sits between the "wonky storybook" and "odd little world" mockups, which means hand-inked outlines, slightly bent geometry and playful shapes, and has no melancholy. People look like small people. The reference is `docs/mockups/art-playful-v2.html`, which the owner reacted to positively. It shows mood and is not a final art standard or a code base. Open it through a local web server, as it was written as a fragment for the brainstorming page.
+
+Details from that mockup that the builder should carry forward (**Designer's call** except where noted): deep plum ink, candy colors, curly lollipop trees, faint line shimmer as in hand-drawn animation, and paper grain. The owner specifically enjoyed the day-night cycle and effects, so those are required: moving sun, lamps and ride lights, fireworks, and particle effects such as confetti at a coaster's crest (**Owner**).
+
+Modern techniques are welcome, since the look need not be limited by what isometric games did 20 years ago (**Owner**). Effects must not make dense parks hard to read (**Designer's call**).
+
+Art is produced mainly by code. Track, supports and structures are generated from their curves, and scenery, people and buildings come from procedural drawing code rendered into cached sprite textures (**Designer's call**). This is the project's biggest risk. The builder must prove it on people and buildings early, because hand-authored art is not available to the project. If code-drawn characters and buildings cannot hold up, the owner needs to hear about it quickly.
+
+## 10. Technical architecture
+
+All of this section is **Designer's call**, except that it is a web app first and needs no paid hosting (**Owner**). Rust was discussed with the owner, who is happy with it.
+
+**Hosting.** The game is static files, run entirely on the player's machine, with no backend. Saves live in browser storage, and players can export them to a file. Cloudflare Pages and Netlify are free and can set custom headers, which matters only if threads are added later (see below).
+
+**Simulation.** The simulation is Rust compiled to WebAssembly and runs in a dedicated web worker at a fixed tick rate. It is deterministic given a seed and input sequence, which supports testing and replay. Guest data is stored in compact arrays. Walking runs for every guest every tick, expensive decisions are spread across ticks, and crowds share pathfinding data such as flow fields. No guest is ever simplified or faked to save time.
+
+**Threads.** The first version uses one simulation thread, which needs no special browser headers and stays on stable Rust. Multi-threaded Rust in WebAssembly still requires pinned nightly Rust, rebuilding the standard library and cross-origin isolation headers (COOP and COEP), and GitHub Pages cannot set those headers without a service-worker workaround. Threads are added only if measurements show that one thread cannot meet the targets. SIMD via `simd128` can be used where it helps.
+
+**Rendering.** The renderer runs on the main thread and draws from state snapshots transferred by the worker, interpolating between ticks. It must work on both WebGPU and WebGL2. WebGPU support is still incomplete on Linux (Chrome covers only some GPUs by default) and in Firefox on Linux (Nightly only as of May 2026), so WebGL2 is a required path and not a nice-to-have. PixiJS v8 is the leading option because it supports both backends and reports about 100,000 moving sprites at roughly 15 ms CPU and 2 ms GPU per frame on Bunnymark. That benchmark does not cover animated, depth-sorted isometric scenes, so the builder must benchmark PixiJS against a thin custom instanced renderer on a realistic scene before committing.
+
+**Depth sorting.** Isometric depth sorting with long overlapping track is hard and easy to get subtly wrong. The sketch mockups draw back to front using a simple depth key and show visible errors. The renderer needs a real solution, likely writing depth values into a depth buffer per sprite, and this should be part of the early renderer benchmark.
+
+**Frontend.** TypeScript handles the renderer and game interface. It talks to the worker through a small typed message protocol. The interface's visual design should match the art direction.
+
+**Testing.** Development follows test-driven practice. Physics has tests against energy conservation and known ride values, the simulation has deterministic replay tests and performance benchmarks with thousands of guests, and piece definitions have automated checks that entries and exits connect. End-to-end browser tests build a small coaster and check that a train completes a circuit. Screenshot tests catch rendering regressions.
+
+**Performance targets.**
+
+- 10,000 guests with smooth play (60 frames per second on the owner's desktop GPU, and at least 30 on a mid-range laptop).
+- Largest map at least 512 by 512 tiles, which is four times the area of RCT2's 256 by 256 limit. OpenRCT2 goes to 999 usable tiles, which is a reference point and not a requirement.
+- RCT2's total limit was 10,000 entities shared between guests and vehicles, so this target goes well beyond RCT2 guest counts in practice.
+
+These numbers are starting targets. They should be tested from the first prototype and revised with the owner if evidence says so.
+
+## 11. Suggested order of work
+
+The builder owns the plan, but the riskiest things should be proved first:
+
+1. Toolchain and walking skeleton: Rust to WebAssembly in a worker, renderer on screen and a deployable static build.
+2. Rendering and art proof: renderer benchmark with depth sorting, plus code-drawn people and buildings the owner can judge.
+3. Coaster core: track pieces as data, physics, building tools for one model and a train completing a circuit.
+4. Guest core: thousands of walking guests on paths with needs, decisions, groups and a click-in panel, benchmarked at scale.
+5. World: terrain, tunnels, underground view, scenery and day-night cycle.
+6. The other two coaster models, automatic block sections and proximity events.
+7. Save and load, public deployment and polish.
+8. Later: scenarios, more models, money pressure in scenarios, then possibly a desktop wrapper and touch input.
+
+Left to the builder: the piece catalog, tick rate, trait distributions, the exact guest panel layout, theme set choices, sound (see section 12) and code structure.
+
+## 12. Open items and unverified facts
+
+- **Audio.** Audio has not been discussed. The designer's assumption is that sound matters to delight, and that simple generated or freely licensed sound can follow the core game.
+- **Real names.** Real manufacturer and ride names such as RMC, Intamin and GCI may be trademarks. As a free hobby project this is low risk, but publicly released in-game names should probably be descriptive or lightly fictional, with the real inspirations acknowledged. The owner has not decided this.
+- **WebGPU status.** The WebGPU details above come from a status page last edited around May 2026. Firefox on Linux may have shipped since. Check again before implementation.
+- **COOP and COEP headers.** Header behavior has not been tested on any host. It matters only if threads are added.
+- **Renderer numbers.** The PixiJS numbers are the project's own published benchmark, which does not state which renderer backend it used.
+- **GCI norms.** General GCI lift and inversion norms were not confirmed beyond specific rides. Check them when writing model data.
