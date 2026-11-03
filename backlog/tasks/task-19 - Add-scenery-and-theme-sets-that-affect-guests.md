@@ -1,9 +1,10 @@
 ---
 id: TASK-19
 title: Add scenery and theme sets that affect guests
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-03 14:47'
 labels:
   - art
   - world
