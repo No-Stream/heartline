@@ -5,7 +5,7 @@ export type ToolName = "Watch" | "Coaster" | "Paths" | "Landscape" | "Facilities
 /** Open a tool from the toolbar, which shows its panel and switches the input mode. */
 export async function openTool(page: Page, tool: ToolName): Promise<void> {
   const button = page.getByRole("toolbar", { name: "Tools" }).getByRole("button", { name: tool, exact: true });
-  await button.click();
+  if (await button.getAttribute("aria-pressed") !== "true") await button.click();
   await expect(button).toHaveAttribute("aria-pressed", "true");
 }
 

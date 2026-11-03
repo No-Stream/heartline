@@ -1,4 +1,7 @@
 # Timber Tumbler: existing lift and drop circuit, station at (100, 100, 40), heading east.
+# PENDING journey target: curved chain lift to 60°, crest, drop, climbing/banked turns, airtime hill.
+# Keep the target pending until the Rust reader supports chain directives and the new track pieces;
+# it skips these # comments, so this note leaves the executable closure circuit below intact.
 [Timber Tumbler]
 LiftLevelToGentleUp
 Lift
