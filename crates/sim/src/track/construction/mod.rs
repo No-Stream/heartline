@@ -565,6 +565,7 @@ fn same_geometry(first: &Piece, second: &Piece) -> bool {
                 | (Shape::Heartline, Shape::Heartline)
         )
         && first.tangent_scale == second.tangent_scale
+        && first.mirrored == second.mirrored
         && first.arc_lengths == second.arc_lengths
 }
 

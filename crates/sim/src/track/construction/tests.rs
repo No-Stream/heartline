@@ -642,6 +642,61 @@ fn choices_match_individual_validation_for_reconnecting_candidates() {
 }
 
 #[test]
+fn mirrored_inversion_choices_match_individual_validation_near_asymmetric_obstacles() {
+    use PieceId::{Corkscrew, CorkscrewRight, HeartlineRoll, HeartlineRollRight};
+
+    let world = world();
+    let construction = Construction::new(start(), hybrid_model());
+    for (left, right) in [
+        (Corkscrew, CorkscrewRight),
+        (HeartlineRoll, HeartlineRollRight),
+    ] {
+        let piece = construction
+            .model_placeable(templates().iter().find(|piece| piece.id == left).unwrap())
+            .unwrap();
+        let obstacle = (1..20)
+            .flat_map(|step| {
+                let sample = piece.sample(piece.length() * f64::from(step) / 20.0);
+                [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
+                    .into_iter()
+                    .map(move |offset| {
+                        let centre = sample.position + Vec3::new(0.0, offset, 0.0);
+                        SupportObstacle {
+                            min: centre - Vec3::new(0.1, 0.1, 0.1),
+                            max: centre + Vec3::new(0.1, 0.1, 0.1),
+                        }
+                    })
+            })
+            .find(|obstacle| {
+                let results = (
+                    construction.validate(left, &world, &[*obstacle]),
+                    construction.validate(right, &world, &[*obstacle]),
+                );
+                matches!(
+                    results,
+                    (
+                        Ok(()),
+                        Err(ConstructionError::Clearance(ClearanceCollision::Scenery))
+                    ) | (
+                        Err(ConstructionError::Clearance(ClearanceCollision::Scenery)),
+                        Ok(())
+                    )
+                )
+            })
+            .expect("an asymmetric obstacle distinguishes both hands");
+        for choice in construction.choices(&world, &[obstacle]) {
+            assert_eq!(
+                choice.result,
+                construction.validate(choice.id, &world, &[obstacle]),
+                "{:?} with obstacle for {:?}",
+                choice.id,
+                left
+            );
+        }
+    }
+}
+
+#[test]
 fn elevated_crossing_rejects_rail_through_existing_train_space() {
     use PieceId::*;
     let world = world();
