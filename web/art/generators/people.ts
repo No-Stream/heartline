@@ -687,6 +687,7 @@ export function drawPerson(design: PersonDesign, { facing, animation, frame }: P
 
   const face =
     (facingViewer ? drawFace(person, theme, headBall, leftIsNear ? 1 : -1, animation === "idle" && frame === 1) : "") +
+    (facingViewer && person.moustache && theme.people.face !== "candy" ? drawSharedMoustache(person, theme, headBall, leftIsNear ? 1 : -1) : "") +
     (person.glassesStrap ? drawStrappedGlasses(person, theme, headBall, leftIsNear ? 1 : -1, facingViewer) : "") +
     (facingViewer && (person.framedGlasses || (person.glasses && theme.people.face !== "candy")) ? drawFramedLenses(person, theme, headBall, leftIsNear ? 1 : -1) : "");
 
@@ -774,7 +775,7 @@ function drawFace(
   parts.push(
     `<path d="M${formatPoint(smileStart)}Q${formatPoint(smileMiddle)} ${formatPoint(smileEnd)}" fill="none" stroke="${smileColor}" stroke-width="0.75" stroke-linecap="round"/>`,
   );
-  if (person.moustache) {
+  if (person.moustache && theme.people.face === "candy") {
     const moustacheLeft = onHead(0.82, 0.42, -0.34);
     const moustacheMiddle = onHead(0.9, 0, -0.14);
     const moustacheRight = onHead(0.82, -0.42, -0.34);
@@ -794,6 +795,26 @@ function drawFace(
     }
   }
   return parts.join("");
+}
+
+/** Moustaches for the simplified faces and the faceless mid-century silhouettes. */
+function drawSharedMoustache(
+  person: PersonDesign,
+  theme: Theme,
+  headBall: (forward: number, left: number, up: number, radiusFactor: number) => Ball,
+  nearSide: number,
+): string {
+  if (!person.moustache) throw new Error(`${person.id} has no moustache`);
+  const onHead = (forward: number, left: number, up: number): Point => project(onFace(headBall, nearSide, forward, left, up));
+  const halfWidth = theme.people.face === "dots" ? 0.52 : 0.48;
+  const moustacheLeft = onHead(0.82, halfWidth, -0.3);
+  const moustacheMiddle = onHead(0.91, 0, -0.12);
+  const moustacheRight = onHead(0.82, -halfWidth, -0.3);
+  const moustacheBottom = onHead(0.82, 0, -0.58);
+  const path = `M${formatPoint(moustacheLeft)}Q${formatPoint(moustacheMiddle)} ${formatPoint(moustacheRight)}Q${formatPoint(moustacheBottom)} ${formatPoint(moustacheLeft)}Z`;
+  const fill = theme.color(person.moustache);
+  if (theme.people.face === "none") return `<path d="${path}" fill="${fill}"/>`;
+  return `<path d="${path}" fill="${fill}" stroke="${theme.line.color}" stroke-width="${formatNumber(theme.people.outline * 1.1)}" stroke-linejoin="round"/>`;
 }
 
 /** Face features are cheated towards the camera, as a character artist would: at a true three-quarter
