@@ -276,3 +276,20 @@ fn paths_cannot_overlap_the_same_occupied_space() {
         slope: None,
     });
 }
+
+#[test]
+fn carved_span_iteration_is_canonical_and_reflects_edits() {
+    let mut world = World::new(3, 2, flat_surface(8));
+    world.carve(2, 1, 1, 3);
+    world.carve(0, 0, 4, 6);
+    world.carve(0, 0, 1, 3);
+    assert_eq!(
+        world.carved_spans().collect::<Vec<_>>(),
+        vec![(0, 0, 1, 3), (0, 0, 4, 6), (2, 1, 1, 3)]
+    );
+    world.fill(0, 0, 2, 5);
+    assert_eq!(
+        world.carved_spans().collect::<Vec<_>>(),
+        vec![(0, 0, 1, 2), (0, 0, 5, 6), (2, 1, 1, 3)]
+    );
+}

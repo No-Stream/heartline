@@ -8,7 +8,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 install:
 	npm ci
 
-build: wasm-bindgen
+build: wasm-bindgen art
 	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
 	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target web --out-dir web/src/wasm
 	npm run build

@@ -1,0 +1,67 @@
+import { projectWorld, type Rotation } from "../../src/camera";
+import { createWorldRenderer, type Atlas, type WorldView } from "../../src/render";
+
+interface Sample {
+  pick: ReturnType<ReturnType<typeof createWorldRenderer>["pick"]>;
+  color: number[];
+}
+
+declare global {
+  interface Window {
+    renderFixture: (rotation: Rotation, stacked: boolean, hideUpper: boolean) => Promise<Sample>;
+  }
+}
+
+window.renderFixture = async (rotation, stacked, hideUpper) => {
+  const imageCanvas = document.createElement("canvas");
+  imageCanvas.width = 48;
+  imageCanvas.height = 16;
+  const context = imageCanvas.getContext("2d");
+  if (!context) throw new Error("Canvas 2D is unavailable");
+  for (const [index, color] of ["#19a33b", "#c82d36", "#745120"].entries()) {
+    context.fillStyle = color;
+    context.fillRect(index * 16, 0, 16, 16);
+  }
+  const image = new Image();
+  image.src = imageCanvas.toDataURL();
+  await image.decode();
+  const frame = (x: number) => ({ width: 16, height: 16, anchor: { x: 8, y: 8 }, placements: { "1": { page: 0, x, y: 0, width: 16, height: 16 } } });
+  const atlas: Atlas = {
+    pages: { "1": [{ file: "synthetic.png", width: 48, height: 16 }] },
+    frames: {
+      "ground/grass_light_0/any/static/0": frame(0),
+      "ground/path_0000/any/static/0": frame(16),
+      "ground/cliff_left_0/any/static/0": frame(32),
+      "ground/cliff_right_0/any/static/0": frame(32),
+      ...Object.fromEntries(["left", "right"].flatMap((side) => [0, 1, 2].flatMap((variant) => [
+        [`ground/cliff_${side}_${variant}/any/static/0`, frame(32)],
+        [`ground/cliff_step_${side}_${variant}/any/static/0`, frame(32)],
+      ]))),
+    },
+  };
+  const canvas = document.createElement("canvas");
+  canvas.width = 400;
+  canvas.height = 400;
+  document.body.append(canvas);
+  const renderer = createWorldRenderer(canvas, atlas, { "1": [image] });
+  const upper = [[2, 2], [2, 1], [1, 1], [1, 2]][rotation];
+  const lower = [[1, 1], [1, 2], [2, 2], [2, 1]][rotation];
+  const upperPath = [...upper, 4, 1];
+  const lowerPath = [...lower, 0, 0];
+  const paths = hideUpper ? lowerPath : [...lowerPath, ...upperPath];
+  const world: WorldView = {
+    dimensions: new Uint16Array(stacked ? [4, 4] : [1, 1]),
+    surfaces: stacked ? new Int32Array(4 * 4 * 6) : new Int32Array([0, 0, 1, 1, 0, 0]),
+    paths: new Int32Array(stacked ? paths : []),
+  };
+  const camera = { centerX: stacked ? 2 : 0.5, centerY: stacked ? 2 : 0.5, zoom: 3, rotation };
+  renderer.render(world, camera);
+  const screen = projectWorld(camera, canvas, { x: stacked ? upper[0] + 0.5 : 0.5, y: stacked ? upper[1] + 0.5 : 0.5, z: stacked ? 1.125 : 0.125 });
+  const gl = canvas.getContext("webgl2");
+  if (!gl) throw new Error("WebGL2 is unavailable");
+  const color = new Uint8Array(4);
+  gl.readPixels(Math.floor(screen.x), canvas.height - 1 - Math.floor(screen.y), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, color);
+  const pick = renderer.pick(screen.x, screen.y);
+  canvas.remove();
+  return { pick, color: [...color] };
+};

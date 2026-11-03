@@ -300,6 +300,27 @@ impl World {
             .flat_map(|column| column.paths.iter().copied())
     }
 
+    /// Iterates over excavations in row-major column and ascending height order.
+    /// Each interval is half-open: [bottom, top).
+    pub fn carved_spans(&self) -> impl Iterator<Item = (u16, u16, i16, i16)> + '_ {
+        let width = usize::from(self.width);
+        self.columns
+            .iter()
+            .enumerate()
+            .flat_map(move |(index, column)| {
+                column.iter().flat_map(move |column| {
+                    column.carved.iter().map(move |span| {
+                        (
+                            (index % width) as u16,
+                            (index / width) as u16,
+                            span.bottom,
+                            span.top,
+                        )
+                    })
+                })
+            })
+    }
+
     pub fn remove_path(&mut self, position: Position) -> Vec<Position> {
         let index = self.index(position.x, position.y);
         let Some(column) = &mut self.columns[index] else {
