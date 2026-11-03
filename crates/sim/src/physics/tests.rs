@@ -1112,22 +1112,22 @@ fn climbing_small_turn_vertical_g_matches_straight_climb() {
         .find(|piece| piece.id == PieceId::GentleUp)
         .unwrap();
     let baseline = rider_g(straight, straight.length() / 2.0, 15.0, 0.0).vertical;
-    for piece in pieces.iter().filter(|piece| {
-        piece.id == PieceId::TurnSmallStandalone
-            && piece.entry.slope == crate::track::Slope::UpGentle
-    }) {
-        for index in 0..=100 {
-            let vertical =
-                rider_g(piece, piece.length() * f64::from(index) / 100.0, 15.0, 0.0).vertical;
-            assert!(
-                (vertical - baseline).abs() <= 0.2,
-                "{}: {vertical} vs {baseline}",
-                piece.name
-            );
-        }
-        return;
+    let piece = pieces
+        .iter()
+        .find(|piece| {
+            piece.id == PieceId::TurnSmallStandalone
+                && piece.entry.slope == crate::track::Slope::UpGentle
+        })
+        .expect("missing climbing small turn");
+    for index in 0..=100 {
+        let vertical =
+            rider_g(piece, piece.length() * f64::from(index) / 100.0, 15.0, 0.0).vertical;
+        assert!(
+            (vertical - baseline).abs() <= 0.2,
+            "{}: {vertical} vs {baseline}",
+            piece.name
+        );
     }
-    panic!("missing climbing small turn");
 }
 
 #[test]

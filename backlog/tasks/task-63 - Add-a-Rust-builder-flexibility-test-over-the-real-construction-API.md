@@ -1,10 +1,10 @@
 ---
 id: TASK-63
 title: Add a Rust builder flexibility test over the real construction API
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 20:05'
-updated_date: '2026-11-03 20:53'
+updated_date: '2026-11-03 23:22'
 labels:
   - test
   - coaster
@@ -39,4 +39,8 @@ A* now retains shared validated ancestor pieces and queues lightweight piece IDs
 Closure search diagnostics now distinguish a found route, an exhausted frontier, and the 20,000-expansion budget ending with pending nodes; four focused closure tests pass in 1.71 s debug. A position-only sampling optimization was evaluated and removed after a one-seed release walk-only diagnostic measured 6.96 s baseline versus 6.98 s optimized. No change to the known continuation and closure counterexamples or the fast-gate limitation.
 
 Current worktree update: while the walk and undo audit was in progress, the uncommitted walk/closure draft, the placement optimization, and the uncommitted panic fix and regressions were removed by concurrent work. TASK-78 was separately committed for the construction panic. The prior measurements above describe those former drafts, not current files. The tracked Timber Tumbler boundary and self-obstruction tests pass (2 tests, 0.16 s); the committed connector selection passes (1 passed, 4 previously ignored capability tests, 1.33 s). The walk matrix and A* are currently absent, and the Makefile export has no effect on them until they are implemented. An attempted audit strengthening refused append and undo was not verified because the draft disappeared.
+
+2026-11-03 follow-up: Added seeded real-API walks, cache replay, refusal/undo coverage, and bounded A* closure search. The fast walk-only matrix passed in 3.30 s debug; with one closure attempt per model it exceeded 60 s and was stopped. The full release matrix exceeded 4 minutes 40 seconds and was stopped before completion. The integrated test fails the requested universal closure assertion: Timber Tumbler at (32,128,z=2), 4 m, seed 0 has a 12-piece prefix whose 27 compatible choices all fail Clearance(OutsideWorld). Focused regressions also cover a terrain-blocked 12-piece prefix and self-obstruction with working undo. The arbitrary-prefix closure requirement is therefore false, and TASK-63 remains incomplete: revise closure acceptance for physically blocked prefixes and optimize the search before using it in the fast gate. The current make check and make test wiring invokes the unfinished integrated test and must not be treated as passing.
+
+Lead decision 2026-11-03: dropped the plan's 'every random 12-piece prefix must close' check. It is false (prefixes near the map edge or boxed in by terrain legitimately cannot close) and it made the walks take over 60 s in debug and over 4.7 min in release. Closure is instead proven for the named circuits players and journeys build (crates/sim/tests/player_circuits.rs). The seeded walks remain: at every step a piece is placeable or every refusal has a reason and undo works, and cached choices match a fresh rebuild. One test per model; fast tier 1.1 s in debug, full matrix (FLEXIBILITY_WALKS) 49 s in release in make test.
 <!-- SECTION:NOTES:END -->

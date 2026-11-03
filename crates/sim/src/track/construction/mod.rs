@@ -22,6 +22,8 @@ mod tests;
 
 #[cfg(test)]
 mod flexibility_tests;
+#[cfg(test)]
+mod walk_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstructionError {

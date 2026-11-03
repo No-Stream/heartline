@@ -19,16 +19,16 @@ wasm-bindgen:
 
 # The sprite atlas is generated from web/art/drawings/ and not committed.
 check: build
-	$(CARGO) test -p theme-park-sim --lib -- world::tests guests::behavior::tests guests::path_food_rebuild_tests physics::tests track::construction::tests track::construction::flexibility_tests facilities::tests --skip block_operation_keeps_trains_separate_and_completes_runs
+	$(CARGO) test -p theme-park-sim --lib -- world::tests guests::behavior::tests guests::path_food_rebuild_tests physics::tests track::construction::tests track::construction::flexibility_tests track::construction::walk_tests facilities::tests --skip block_operation_keeps_trains_separate_and_completes_runs
 	npm test
 	npm run test:art
 	npm run typecheck
 	PLAYWRIGHT_PORT=$${PLAYWRIGHT_PORT:-4271} npm run e2e -- --grep @fast
 
-test: export FLEXIBILITY_WALKS = 256
 test: art
-	$(CARGO) test --workspace
-	$(CARGO) test -p theme-park-sim --features threads
+	$(CARGO) test --workspace -- --skip track::construction::walk_tests::seeded_
+	$(CARGO) test -p theme-park-sim --features threads -- --skip track::construction::walk_tests::seeded_
+	FLEXIBILITY_WALKS=256 $(CARGO) test --release -p theme-park-sim --lib track::construction::walk_tests::seeded_
 	npm test
 	npm run test:art
 
