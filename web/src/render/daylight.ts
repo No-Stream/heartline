@@ -1,3 +1,5 @@
+import type { Theme } from "../theme";
+
 /** Time of day, the sun and the print-style colour grade that follows them. A phase of 0 is midnight and 0.5 is noon. */
 export type Rgb = readonly [number, number, number];
 
@@ -102,6 +104,31 @@ export function lightingAt(phase: number): Lighting {
     phase,
     multiply: color("multiply"), shadowInk: color("shadowInk"), highlightInk: color("highlightInk"), inkAmount: value("inkAmount"),
     skyTop: color("skyTop"), skyHorizon: color("skyHorizon"), lightsOn: value("lightsOn"), stars: value("stars"), shadowStrength: value("shadowStrength"),
+  };
+}
+
+/**
+ * The stock the park is printed on, which fills the view below the horizon. Its paper matches the interface's `--paper`
+ * token. Dark stock pulls the sky and the graded paper back towards itself by `darkening`, and thins the clouds, so no
+ * large bright areas surround the park at any hour.
+ */
+export interface Backdrop {
+  readonly paper: Rgb;
+  readonly darkening: number;
+  readonly cloudOpacity: number;
+}
+
+export const BACKDROPS: Record<Theme, Backdrop> = {
+  light: { paper: hexColor("#f2eadb"), darkening: 0, cloudOpacity: 0.85 },
+  dark: { paper: hexColor("#0b0a10"), darkening: 0.85, cloudOpacity: 0.3 },
+};
+
+/** The sky and the paper below the horizon at this time of day, on the backdrop's stock. The park's own grade is unchanged. */
+export function printOnBackdrop(lighting: Lighting, backdrop: Backdrop): { lighting: Lighting; paper: Rgb } {
+  const darken = (color: Rgb): Rgb => mixRgb(color, backdrop.paper, backdrop.darkening);
+  return {
+    lighting: { ...lighting, skyTop: darken(lighting.skyTop), skyHorizon: darken(lighting.skyHorizon) },
+    paper: darken(gradeColor(backdrop.paper, lighting)),
   };
 }
 

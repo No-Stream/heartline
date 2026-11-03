@@ -5,7 +5,8 @@
   gap: 0.25rem;
   min-width: 0;
 }
-.toolbar__tool {
+.toolbar__tool,
+.theme-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -21,8 +22,8 @@
   text-transform: lowercase;
   cursor: pointer;
 }
-.toolbar__tool:hover { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
-.toolbar__tool:focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
+.toolbar__tool:hover, .theme-toggle:hover { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
+.toolbar__tool:focus-visible, .theme-toggle:focus-visible { outline: 2px solid var(--slate); outline-offset: 2px; }
 .toolbar__tool[aria-pressed="true"] {
   color: var(--paper);
   background: var(--ink);
@@ -48,6 +49,13 @@
 .toolbar__icon-line { stroke: currentColor; stroke-width: 1.4; }
 .toolbar__tool[aria-pressed="true"] .toolbar__icon-plate { stroke: color-mix(in srgb, var(--plate) 70%, var(--ink)); }
 
+/* The interface switch: a half-inked disc, a tab of its own rather than a tool, so it never takes the open tool's plate. */
+.theme-toggle { flex: none; padding: 0 0.3rem; }
+.theme-toggle .theme-toggle__ink { fill: currentColor; }
+
+@media (max-width: 1160px) {
+  .toolbar__tool span { display: none; }
+}
 @media (max-width: 760px) {
-  .toolbar__tool span, .toolbar__tool kbd { display: none; }
+  .toolbar__tool kbd { display: none; }
 }

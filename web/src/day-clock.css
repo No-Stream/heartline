@@ -36,7 +36,7 @@
 }
 .day-clock__speed:hover { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
 
-@media (max-width: 1180px) {
+@media (max-width: 1250px) {
   .day-clock__scrub { display: none; }
 }
 @media (max-width: 760px) {

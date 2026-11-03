@@ -1,11 +1,10 @@
 import type { Camera, Viewport } from "../camera";
-import { gradeColor, GRADE_GLSL, hexColor, lightingAt, NOON, type Lighting } from "./daylight";
+import { gradeColor, GRADE_GLSL, lightingAt, NOON, type Lighting, type Rgb } from "./daylight";
 import type { Glow } from "./effects";
 import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, SHAPE_PAGES, UNDERGROUND_CONTENT_DEPTH_BIAS, UNPICKABLE_KINDS, type Atlas, type GeometryQuad, type Pick, type Scene, type Triangle, type Vertex, type WorldView } from "./scene";
 export type { Atlas, GeometryQuad, Pick, WorldSprite, WorldView } from "./scene";
 export { terrainHeightAt } from "./scene";
 export { clipGeometryAboveLevel } from "./scene";
-const PAPER = hexColor("#f2eadb");
 const NOON_LIGHTING = lightingAt(NOON);
 
 export async function loadAtlas(url: string): Promise<{ atlas: Atlas; images: Record<string, HTMLImageElement[]> }> {
@@ -37,6 +36,8 @@ export interface Atmosphere {
   lighting: Lighting;
   /** Where the sky gives way to paper below the park, in canvas pixels from the top. */
   horizonY: number;
+  /** The paper below the horizon, already graded for the time of day. */
+  paper: Rgb;
   /** Sun, moon and clouds, behind the world. */
   sky: readonly GeometryQuad[];
   /** Ground shadows, over terrain and paths and under everything standing on them. */
@@ -284,12 +285,12 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
     drawGlows();
     gl!.blendFuncSeparate(gl!.SRC_ALPHA, gl!.ONE_MINUS_SRC_ALPHA, gl!.ONE, gl!.ONE_MINUS_SRC_ALPHA);
   }
-  function drawSky({ lighting, horizonY }: Atmosphere): void {
+  function drawSky({ lighting, horizonY, paper }: Atmosphere): void {
     gl!.disable(gl!.BLEND);
     gl!.useProgram(skyProgram); gl!.bindVertexArray(emptyVao);
     gl!.uniform2f(uniform(skyProgram, "resolution"), canvas.width, canvas.height); gl!.uniform1f(uniform(skyProgram, "horizonY"), horizonY);
     gl!.uniform3fv(uniform(skyProgram, "skyTop"), lighting.skyTop); gl!.uniform3fv(uniform(skyProgram, "skyHorizon"), lighting.skyHorizon);
-    gl!.uniform3fv(uniform(skyProgram, "paperVoid"), gradeColor(PAPER, lighting)); gl!.uniform1f(uniform(skyProgram, "stars"), lighting.stars);
+    gl!.uniform3fv(uniform(skyProgram, "paperVoid"), paper); gl!.uniform1f(uniform(skyProgram, "stars"), lighting.stars);
     gl!.drawArrays(gl!.TRIANGLES, 0, 3);
     gl!.enable(gl!.BLEND);
   }

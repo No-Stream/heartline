@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Camera, Viewport } from "../camera";
 import type { Facility } from "../facilities";
 import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst, type CrestTracker } from "./effects";
-import { lightingAt, sunAt } from "./daylight";
+import { BACKDROPS, lightingAt, sunAt } from "./daylight";
 import type { Atlas } from "./scene";
 
 const camera: Camera = { centerX: 20, centerY: 20, zoom: 1, rotation: 0 };
@@ -128,14 +128,19 @@ describe("sun shadows", () => {
 
 describe("sky", () => {
   it("shows the sun by day and the moon and no sun at night", () => {
-    const day = buildSky(noon, 0.5, 700, camera, viewport, atlas, "1");
+    const day = buildSky(noon, BACKDROPS.light, 0.5, 700, camera, viewport, atlas, "1");
     expect(day.some((quad) => quad.id === "sun")).toBe(true);
-    const nightSky = buildSky(night, 0.95, 700, camera, viewport, atlas, "1");
+    const nightSky = buildSky(night, BACKDROPS.light, 0.95, 700, camera, viewport, atlas, "1");
     expect(nightSky.some((quad) => quad.id === "sun")).toBe(false);
     expect(nightSky.some((quad) => quad.id === "moon")).toBe(true);
   });
 
+  it("thins the clouds on dark stock", () => {
+    const cloudOpacity = (sky: ReturnType<typeof buildSky>): number => sky.find((quad) => quad.id === "cloud")!.color[3];
+    expect(cloudOpacity(buildSky(noon, BACKDROPS.dark, 0.5, 700, camera, viewport, atlas, "1"))).toBeLessThan(cloudOpacity(buildSky(noon, BACKDROPS.light, 0.5, 700, camera, viewport, atlas, "1")));
+  });
+
   it("is left out when the park fills the view", () => {
-    expect(buildSky(noon, 0.5, -50, camera, viewport, atlas, "1")).toEqual([]);
+    expect(buildSky(noon, BACKDROPS.light, 0.5, -50, camera, viewport, atlas, "1")).toEqual([]);
   });
 });

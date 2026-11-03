@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceDayPhase, DAY_LENGTH_TICKS, formatClock, gradeColor, hexColor, lightingAt, sunAt } from "./daylight";
+import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, formatClock, gradeColor, hexColor, lightingAt, printOnBackdrop, sunAt } from "./daylight";
 
 const luminance = ([red, green, blue]: readonly number[]): number => 0.299 * red + 0.587 * green + 0.114 * blue;
 const paper = hexColor("#f2eadb");
@@ -87,5 +87,25 @@ describe("colour grade", () => {
       const after = gradeColor(grass, lightingAt((step + 1) / 400 % 1));
       expect(Math.max(...before.map((channel, index) => Math.abs(channel - after[index])))).toBeLessThan(0.04);
     }
+  });
+});
+
+describe("backdrop", () => {
+  it("leaves the light sky and paper exactly as the day grades them", () => {
+    for (const phase of [0, 0.3, 0.5, 0.76]) {
+      expect(printOnBackdrop(lightingAt(phase), BACKDROPS.light)).toEqual({ lighting: lightingAt(phase), paper: gradeColor(paper, lightingAt(phase)) });
+    }
+  });
+
+  it("prints a dark sky and page on dark stock at every hour, keeps the sky lighter by day, and leaves the park's grade alone", () => {
+    for (let step = 0; step < 48; step++) {
+      const lighting = lightingAt(step / 48);
+      const dark = printOnBackdrop(lighting, BACKDROPS.dark);
+      expect(Math.max(luminance(dark.lighting.skyTop), luminance(dark.lighting.skyHorizon))).toBeLessThan(0.2);
+      expect(luminance(dark.paper)).toBeLessThan(0.06);
+      expect({ ...dark.lighting, skyTop: lighting.skyTop, skyHorizon: lighting.skyHorizon }).toEqual(lighting);
+    }
+    const skyTop = (phase: number): number => luminance(printOnBackdrop(lightingAt(phase), BACKDROPS.dark).lighting.skyTop);
+    expect(skyTop(0.5)).toBeGreaterThan(skyTop(0));
   });
 });

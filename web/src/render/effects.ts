@@ -4,7 +4,7 @@
  */
 import { projectWorld, type Camera, type Viewport } from "../camera";
 import { carouselPoint, facilityBuildings, facilityFootprint, ferrisWheelPoint, rideAngle, type Facility } from "../facilities";
-import { hexColor, type Lighting, type Rgb, type Sun } from "./daylight";
+import { hexColor, type Backdrop, type Lighting, type Rgb, type Sun } from "./daylight";
 import { SHAPE_PAGES, type Atlas, type GeometryQuad, type Vertex, type WorldSprite } from "./scene";
 
 /** A soft additive light, in canvas pixels, drawn into the low-resolution glow layer. */
@@ -290,7 +290,7 @@ function atlasQuad(atlas: Atlas, scale: string, key: string, centre: { x: number
  * The sun, moon and clouds in the sky beyond the park. `horizonY` is where the sky meets the paper below, in canvas pixels;
  * everything here sits behind the world, so it only shows past the park's far edges.
  */
-export function buildSky(lighting: Lighting, phase: number, horizonY: number, camera: Camera, viewport: Viewport, atlas: Atlas, scale: string): GeometryQuad[] {
+export function buildSky(lighting: Lighting, backdrop: Backdrop, phase: number, horizonY: number, camera: Camera, viewport: Viewport, atlas: Atlas, scale: string): GeometryQuad[] {
   const skyBottom = Math.min(horizonY, viewport.height);
   if (skyBottom < viewport.height * 0.1) return [];
   const quads: GeometryQuad[] = [];
@@ -312,7 +312,7 @@ export function buildSky(lighting: Lighting, phase: number, horizonY: number, ca
   const clouds = [["sky/cloud_big", 0.08, 0.6, 0.2], ["sky/cloud_small", 0.45, 0.35, 0.32], ["sky/cloud_big", 0.72, 0.45, 0.42]] as const;
   for (const [sprite, offset, size, level] of clouds) {
     const x = ((offset + phase * 3) % 1.3) * (width + height * 0.6) - height * 0.3;
-    quads.push(atlasQuad(atlas, scale, `${sprite}/any/static/0`, { x, y: skyBottom * level }, height * 0.22 * size, 0.85, "cloud", 0));
+    quads.push(atlasQuad(atlas, scale, `${sprite}/any/static/0`, { x, y: skyBottom * level }, height * 0.22 * size, backdrop.cloudOpacity, "cloud", 0));
   }
   return quads;
 }

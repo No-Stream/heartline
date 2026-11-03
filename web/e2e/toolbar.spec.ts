@@ -147,6 +147,24 @@ test.describe("tool switching", () => {
     await expect(deleteMode).toBeChecked();
   });
 
+  test("fits the game bar without overlap at common window widths, with the day clock's controls showing", async ({ page }) => {
+    await startGame(page);
+    // A long-running park's tick count, so the readout is as wide as it gets in an evening's play.
+    await page.getByTestId("tick-count").evaluate((output) => { output.textContent = "1234567"; });
+    for (const width of [800, 1000, 1100, 1180, 1280, 1366, 1440, 1536, 1600, 1920]) {
+      await page.setViewportSize({ width, height: 600 });
+      const boxes = await page.locator(".game-bar > *").evaluateAll((items) => items
+        .map((item) => ({ box: item.getBoundingClientRect(), contentWidth: item.scrollWidth }))
+        .filter(({ box }) => box.width > 0)
+        // The toolbar may shrink below its buttons, so its content width counts rather than its own box.
+        .map(({ box, contentWidth }) => ({ left: box.left, right: Math.max(box.right, box.left + contentWidth) })));
+      for (const [index, box] of boxes.entries()) {
+        expect(box.left, `item ${index} at ${width}px`).toBeGreaterThanOrEqual(index === 0 ? 0 : boxes[index - 1].right);
+        expect(box.right, `item ${index} at ${width}px`).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
   test("resizes the world with the window", async ({ page }) => {
     await startGame(page);
     await page.setViewportSize({ width: 1000, height: 600 });

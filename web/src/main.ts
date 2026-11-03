@@ -8,7 +8,7 @@ import type { CameraAction, InputAction } from "./input/actions";
 import { constructionRiderPositions, validateBlockAnalysisBudget, type GameTest } from "./game-test";
 import { blockLayoutChanged } from "./block-analysis-progress";
 import { createWorldRenderer, loadAtlas, type AtmospherePass, type WorldView, type WorldSprite } from "./render/index";
-import { advanceDayPhase, DAY_LENGTH_TICKS, lightingAt, NOON, START_PHASE, sunAt } from "./render/daylight";
+import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, lightingAt, NOON, printOnBackdrop, START_PHASE, sunAt } from "./render/daylight";
 import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
 import { buildPeople, riderAppearances, type GuestSnapshot } from "./render/people";
@@ -34,7 +34,12 @@ import { createLandscapingPanel } from "./landscaping-panel";
 import { buildSceneryGhostQuads, createSceneryTool, scenerySprites, type Scenery } from "./scenery-tool";
 import { createSceneryPanel } from "./scenery-panel";
 import { createToolbar, type Tool } from "./toolbar";
+import { createThemeToggle } from "./theme";
 
+const themeToggleContainer = document.querySelector<HTMLElement>("[data-theme-toggle]");
+if (!themeToggleContainer) throw new Error("Theme toggle is missing");
+// Created before the atlas loads, so a stored choice applies as early as possible.
+const themeToggle = createThemeToggle(themeToggleContainer, () => { gameTest.ready = false; });
 const canvas = document.querySelector<HTMLCanvasElement>("canvas");
 const tickOutput = document.querySelector<HTMLOutputElement>("[data-testid='tick-count']");
 if (!canvas || !tickOutput) throw new Error("Game page elements are missing");
@@ -611,7 +616,8 @@ function frame(now: number): void {
   dayClock.update(dayPhase);
   // Test mode holds the simulation still, so effects there are timed from the time of day alone.
   const effectTick = frozen ? Math.round(dayPhase * DAY_LENGTH_TICKS) : (current?.tickCount ?? 0) + interpolation;
-  const lighting = lightingAt(dayPhase);
+  const backdrop = BACKDROPS[themeToggle.theme()];
+  const { lighting, paper } = printOnBackdrop(lightingAt(dayPhase), backdrop);
   const sun = sunAt(dayPhase);
   const phase = dayPhase;
   const atmosphere: AtmospherePass = (renderCamera, renderViewport, renderAtlas, scale) => {
@@ -620,8 +626,8 @@ function frame(now: number): void {
     const fireworks = buildFireworks(parkBounds(facilities, rails), lighting, effectTick, renderCamera, renderViewport);
     const horizonY = projectWorld(renderCamera, renderViewport, { x: currentWorld.dimensions[0] / 2, y: currentWorld.dimensions[1] / 2, z: 0 }).y;
     return {
-      lighting, horizonY,
-      sky: buildSky(lighting, phase, horizonY, renderCamera, renderViewport, renderAtlas, scale),
+      lighting, horizonY, paper,
+      sky: buildSky(lighting, backdrop, phase, horizonY, renderCamera, renderViewport, renderAtlas, scale),
       decals: buildShadows(facilities, lighting, sun, renderCamera, renderViewport),
       lights: lights.bulbs,
       overlay: buildConfetti(crestBursts, effectTick, renderCamera, renderViewport),

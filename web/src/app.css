@@ -59,9 +59,11 @@ main {
   scrollbar-color: var(--ink-faint) var(--transparent);
 }
 .game-dock[hidden] { display: none; }
-/* Room for the day clock: the tick readout keeps its number but drops its label on narrower windows. */
-@media (max-width: 1300px) { .game-bar__tick-label { display: none; } }
-@media (max-width: 1060px) { .game-bar h1, .game-bar p { display: none; } }
+/* Room for the day clock and the theme toggle while watching: the bar drops the tick label, then the title, then the tick
+   readout as the window narrows. The day clock and the toolbar drop their own extras in between. */
+@media (max-width: 1520px) { .game-bar__tick-label { display: none; } }
+@media (max-width: 1420px) { .game-bar h1 { display: none; } }
+@media (max-width: 1060px) { .game-bar p { display: none; } }
 @media (max-width: 760px) {
   main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 44px minmax(0, 1fr) auto; }
   .game-bar h1, .game-bar p { display: none; }

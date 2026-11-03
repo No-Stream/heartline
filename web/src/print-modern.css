@@ -1,20 +1,22 @@
 /* Print-modern: paper, a plum key line, small caps, and four flat inks laid slightly out of register.
+   The dark variant prints the same inks on deep ink stock: cream type and lines, brighter teal, coral and slate.
    The tokens and the pieces every tool panel shares live here; each panel keeps only its own layout. */
 :root {
-  --paper: #f2eadb;
-  --paper-deep: #e8dcc6;
-  --page: #e9e0cf;
-  --canvas-paper: #fff;
-  --ink: #3a2e58;
+  color-scheme: light dark;
+  --paper: light-dark(#f2eadb, #0b0a10);
+  --paper-deep: light-dark(#e8dcc6, #16131d);
+  --page: light-dark(#e9e0cf, #000);
+  --canvas-paper: light-dark(#fff, #000);
+  --ink: light-dark(#3a2e58, #ece3d1);
   --ink-soft: color-mix(in srgb, var(--ink) 62%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink) 22%, var(--paper));
-  --teal: #227571;
-  --coral: #dc5c3e;
+  --teal: light-dark(#227571, #3fa39b);
+  --coral: light-dark(#dc5c3e, #f0714f);
   --mustard: #e9ab38;
-  --slate: #3f61a6;
+  --slate: light-dark(#3f61a6, #7d98dc);
   --wood: #d88440;
   --train: #9fbbb1;
-  --guest-paper: #fbf5e9;
+  --guest-paper: light-dark(#fbf5e9, #13111a);
   --guest-ink: var(--ink);
   --guest-wood: var(--wood);
   --guest-steel: var(--coral);
@@ -25,6 +27,9 @@
   --heading-font: "Futura", "Avenir Next", "Century Gothic", "Trebuchet MS", system-ui, sans-serif;
   --body-font: Georgia, "Times New Roman", serif;
 }
+/* The theme toggle sets data-theme; before it runs, and while the viewer has not chosen, the system preference decides. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 .tool-panel {
   box-sizing: border-box;
@@ -102,7 +107,6 @@
   width: 100%;
   min-height: 2rem;
   padding: 0.25rem 0.4rem;
-  color-scheme: light;
 }
 .tool-panel button:hover:not(:disabled),
 .tool-panel select:hover:not(:disabled) { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
