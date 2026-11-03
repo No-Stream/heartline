@@ -24,14 +24,148 @@ fn oval() -> Circuit {
         Station,
         LevelToGentleUp,
         GentleUpToLevel,
-        TurnLarge,
-        TurnLarge,
+        TurnLargeEntry,
+        TurnLargeExit,
         Straight,
         LevelToGentleDown,
         GentleDownToLevel,
-        TurnLarge,
-        TurnLarge,
+        TurnLargeEntry,
+        TurnLargeExit,
     ])
+}
+
+#[test]
+fn circuit_sampling_handles_wrapped_zero_and_exact_piece_joins() {
+    let circuit = oval();
+    let origin = circuit.sample(0.0);
+    let just_before_zero = circuit.sample(-f64::EPSILON);
+    let at_circuit_end = circuit.sample(circuit.length());
+    assert_eq!(just_before_zero.position, origin.position);
+    assert_eq!(just_before_zero.tangent, origin.tangent);
+    assert_eq!(just_before_zero.up, origin.up);
+    assert_eq!(just_before_zero.curvature, origin.curvature);
+    assert_eq!(at_circuit_end.position, origin.position);
+    assert_eq!(at_circuit_end.tangent, origin.tangent);
+
+    for piece_index in 0..circuit.pieces.len() {
+        let next_piece = (piece_index + 1) % circuit.pieces.len();
+        let join = circuit.starts[piece_index] + circuit.pieces[piece_index].length();
+        let actual = circuit.sample(join);
+        let expected = circuit.pieces[next_piece].sample(0.0);
+        assert_eq!(
+            actual.position, expected.position,
+            "join after piece {piece_index}"
+        );
+        assert_eq!(
+            actual.tangent, expected.tangent,
+            "join after piece {piece_index}"
+        );
+        assert_eq!(actual.up, expected.up, "join after piece {piece_index}");
+        assert_eq!(
+            actual.curvature, expected.curvature,
+            "join after piece {piece_index}"
+        );
+    }
+}
+
+#[test]
+fn three_consecutive_large_turns_keep_lateral_g_at_piece_joins() {
+    use PieceId::*;
+
+    let circuit = circuit(&[
+        TurnLargeEntry,
+        TurnLarge,
+        TurnLarge,
+        TurnLarge,
+        TurnLargeExit,
+        TurnLargeEntry,
+        TurnLarge,
+        TurnLargeExit,
+        Station,
+        TurnLargeEntry,
+        TurnLargeExit,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ]);
+    let config = PhysicsConfig {
+        rolling_resistance: 0.0,
+        drag_coefficient: 0.0,
+        powered_sections: false,
+        ..PhysicsConfig::default()
+    };
+    let mut train_configuration = hybrid_model().train;
+    train_configuration.cars = 1;
+    train_configuration.length_metres = 2.0;
+    let first_turn_end = circuit.starts[1];
+    let final_join = circuit.starts[5];
+    let mut train = Train::new(
+        &circuit,
+        &train_configuration,
+        config,
+        first_turn_end - 1.0,
+        20.0,
+    );
+    while train.distance() < final_join + 1.0 {
+        train.step(&circuit);
+    }
+
+    let mid_turn = rider_g(
+        &circuit.pieces[2],
+        circuit.pieces[2].length() / 2.0,
+        20.0,
+        0.0,
+    )
+    .lateral;
+    assert!(mid_turn > 0.5, "mid-turn lateral g={mid_turn}");
+    for piece_index in 1..=4 {
+        let join = circuit.starts[piece_index];
+        let incoming = rider_g(
+            &circuit.pieces[piece_index - 1],
+            circuit.pieces[piece_index - 1].length(),
+            20.0,
+            0.0,
+        )
+        .lateral;
+        let outgoing = rider_g(&circuit.pieces[piece_index], 0.0, 20.0, 0.0).lateral;
+        let before = train
+            .readings()
+            .iter()
+            .flatten()
+            .filter(|reading| reading.distance < join)
+            .max_by(|left, right| left.distance.total_cmp(&right.distance))
+            .unwrap();
+        let after = train
+            .readings()
+            .iter()
+            .flatten()
+            .filter(|reading| reading.distance >= join)
+            .min_by(|left, right| left.distance.total_cmp(&right.distance))
+            .unwrap();
+
+        assert!(join - before.distance < 0.11, "{before:?} around {join}");
+        assert!(after.distance - join < 0.11, "{after:?} around {join}");
+        assert!(incoming > 0.2, "incoming g={incoming} at join {join}");
+        assert!(outgoing > 0.2, "outgoing g={outgoing} at join {join}");
+        assert!(
+            (incoming - outgoing).abs() < 0.05,
+            "incoming g={incoming} versus outgoing g={outgoing} at join {join}"
+        );
+        assert!(
+            (incoming - mid_turn).abs() < 0.1 && (outgoing - mid_turn).abs() < 0.1,
+            "join g {incoming}/{outgoing} differs from mid-turn g={mid_turn}"
+        );
+        assert!(
+            (before.g.lateral - mid_turn).abs() < 0.1 && (after.g.lateral - mid_turn).abs() < 0.1,
+            "sampled join g {}/{}, mid-turn g={mid_turn}",
+            before.g.lateral,
+            after.g.lateral
+        );
+        assert!(
+            (before.g.lateral - after.g.lateral).abs() < 0.15,
+            "{before:?} versus {after:?} at join {join}"
+        );
+    }
 }
 
 #[test]

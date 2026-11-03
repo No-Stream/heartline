@@ -8,9 +8,83 @@ fn near_vec(a: Vec3, b: Vec3) {
     near(a.y, b.y);
     near(a.z, b.z);
 }
+fn near_vec_with_tolerance(a: Vec3, b: Vec3, tolerance: f64) {
+    assert!((a.x - b.x).abs() < tolerance, "{a:?} != {b:?}");
+    assert!((a.y - b.y).abs() < tolerance, "{a:?} != {b:?}");
+    assert!((a.z - b.z).abs() < tolerance, "{a:?} != {b:?}");
+}
 fn near_angle(a: f64, b: f64) {
     near((a - b).sin(), 0.0);
     near((a - b).cos(), 1.0);
+}
+
+fn assert_curvature_continuous_at_join(first: &Piece, second: &Piece) {
+    let join_distance = 0.05;
+    let incoming = first.sample(first.length());
+    let outgoing = second.sample(0.0);
+    near_vec(incoming.position, outgoing.position);
+    near_vec(incoming.tangent, outgoing.tangent);
+    near_vec(incoming.up, outgoing.up);
+    near_angle(incoming.roll, outgoing.roll);
+    near(incoming.curvature, outgoing.curvature);
+    assert!(
+        incoming.curvature > 1e-6,
+        "join curvature should be nonzero"
+    );
+
+    let incoming_curvature_vector =
+        (incoming.tangent - first.sample(first.length() - join_distance).tangent) / join_distance;
+    let outgoing_curvature_vector =
+        (second.sample(join_distance).tangent - outgoing.tangent) / join_distance;
+    near_vec_with_tolerance(incoming_curvature_vector, outgoing_curvature_vector, 1e-2);
+}
+
+fn place_curvature_sequence(ids: &[PieceId], initial_state: TrackState) -> Vec<Piece> {
+    let templates = catalog();
+    let mut end = initial_state;
+    let mut pieces = Vec::with_capacity(ids.len());
+
+    for id in ids {
+        let template = templates
+            .iter()
+            .find(|piece| piece.id == *id)
+            .unwrap_or_else(|| panic!("missing piece {id:?}"));
+        let piece = template
+            .at(end)
+            .unwrap_or_else(|| panic!("{id:?} rejected compatible state {end:?}"));
+        end = piece.exit;
+        pieces.push(piece);
+    }
+
+    pieces
+}
+
+fn assert_curvature_sequence(pieces: &[Piece]) -> TrackState {
+    for pair in pieces.windows(2) {
+        assert_curvature_continuous_at_join(&pair[0], &pair[1]);
+    }
+    pieces.last().expect("nonempty piece sequence").exit
+}
+
+fn assert_vertical_curvature_sign(pieces: &[Piece], expected_sign: f64) {
+    let mut total_tangent_z_change = 0.0;
+    for piece in pieces {
+        let mut previous_tangent_z = piece.sample(0.0).tangent.z;
+        for index in 1..=100 {
+            let distance = piece.length() * (f64::from(index) / 100.0);
+            let tangent_z = piece.sample(distance).tangent.z;
+            let tangent_z_change = tangent_z - previous_tangent_z;
+            assert!(
+                tangent_z_change * expected_sign >= -1e-4,
+                "{} {:?} has vertical curvature change {tangent_z_change} with the wrong sign at distance {distance}",
+                piece.name,
+                piece.entry.heading
+            );
+            total_tangent_z_change += tangent_z_change;
+            previous_tangent_z = tangent_z;
+        }
+    }
+    assert!(total_tangent_z_change * expected_sign > 1e-3);
 }
 
 #[test]
@@ -35,23 +109,147 @@ fn all_pieces_match_their_end_states_and_have_regular_curves() {
 }
 
 #[test]
-fn joined_pieces_have_matching_tangents_and_roll() {
-    for first in catalog() {
-        for second in catalog().into_iter().filter(|p| {
-            p.entry.heading == first.exit.heading
-                && p.entry.slope == first.exit.slope
-                && p.entry.bank == first.exit.bank
-        }) {
-            let joined = second.at(first.exit).unwrap();
-            assert_eq!(joined.entry, first.exit);
+fn joined_pieces_have_matching_position_tangent_roll_and_curvature() {
+    let templates = catalog();
+    for first in &templates {
+        for template in &templates {
+            let Some(second) = template.at(first.exit) else {
+                continue;
+            };
+            assert_eq!(second.entry, first.exit);
             let a = first.sample(first.length());
-            let b = joined.sample(0.0);
+            let b = second.sample(0.0);
             near_vec(a.position, b.position);
             near_vec(a.tangent, b.tangent);
             near_angle(a.roll, b.roll);
             near_vec(a.up, b.up);
+            near(a.curvature, b.curvature);
         }
     }
+}
+
+#[test]
+fn large_turn_segments_match_curvature_vectors_at_rotated_joins() {
+    let templates = catalog();
+    let find_template = |id| {
+        templates
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap_or_else(|| panic!("missing piece {id:?}"))
+    };
+    let entry_template = find_template(PieceId::TurnLargeEntry);
+    let turn_ids = [
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLarge,
+        PieceId::TurnLargeExit,
+    ];
+
+    for heading in [
+        Heading::East,
+        Heading::NorthEast,
+        Heading::North,
+        Heading::NorthWest,
+        Heading::West,
+        Heading::SouthWest,
+        Heading::South,
+        Heading::SouthEast,
+    ] {
+        let initial_state = TrackState {
+            x: 3,
+            y: -7,
+            z: 2,
+            heading,
+            slope: entry_template.entry.slope,
+            bank: entry_template.entry.bank,
+            ..TrackState::origin()
+        };
+        let pieces = place_curvature_sequence(&turn_ids, initial_state);
+        assert_curvature_sequence(&pieces);
+    }
+}
+
+#[test]
+fn vertical_curve_segments_match_curvature_vectors_at_rotated_joins() {
+    let templates = catalog();
+    let find_template = |id| {
+        templates
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap_or_else(|| panic!("missing piece {id:?}"))
+    };
+    let upward_entry = find_template(PieceId::VerticalUpEntry);
+    let downward_entry = find_template(PieceId::VerticalDownEntry);
+
+    for heading in [
+        Heading::East,
+        Heading::NorthEast,
+        Heading::North,
+        Heading::NorthWest,
+        Heading::West,
+        Heading::SouthWest,
+        Heading::South,
+        Heading::SouthEast,
+    ] {
+        let upward_pieces = place_curvature_sequence(
+            &[
+                PieceId::VerticalUpEntry,
+                PieceId::VerticalUpContinue,
+                PieceId::VerticalUpExit,
+            ],
+            TrackState {
+                x: 3,
+                y: -7,
+                z: 2,
+                heading,
+                ..upward_entry.entry
+            },
+        );
+        let upward_end = assert_curvature_sequence(&upward_pieces);
+        assert_eq!(upward_end.vertical_curvature, VerticalCurvature::Straight);
+        assert_vertical_curvature_sign(&upward_pieces, 1.0);
+
+        let downward_pieces = place_curvature_sequence(
+            &[
+                PieceId::VerticalDownEntry,
+                PieceId::VerticalDownContinue,
+                PieceId::VerticalDownExit,
+            ],
+            TrackState {
+                x: 3,
+                y: -7,
+                z: 2,
+                heading,
+                ..downward_entry.entry
+            },
+        );
+        let downward_end = assert_curvature_sequence(&downward_pieces);
+        assert_eq!(downward_end.vertical_curvature, VerticalCurvature::Straight);
+        assert_vertical_curvature_sign(&downward_pieces, -1.0);
+    }
+}
+
+#[test]
+fn pieces_reject_states_with_incompatible_slope_or_bank() {
+    let straight = catalog()
+        .into_iter()
+        .find(|piece| piece.id == PieceId::Straight)
+        .unwrap();
+    assert!(
+        straight
+            .at(TrackState {
+                slope: Slope::UpGentle,
+                ..TrackState::origin()
+            })
+            .is_none()
+    );
+    assert!(
+        straight
+            .at(TrackState {
+                bank: Bank::Left,
+                ..TrackState::origin()
+            })
+            .is_none()
+    );
 }
 
 #[test]
@@ -78,13 +276,20 @@ fn model_filters_pieces_by_allowed_ids_and_entry_state() {
 fn four_turns_make_a_closed_circuit() {
     let mut end = TrackState::origin();
     for _ in 0..4 {
-        let piece = catalog()
-            .into_iter()
-            .find(|piece| piece.id == PieceId::TurnSmall)
-            .unwrap()
-            .at(end)
-            .unwrap();
-        end = piece.exit;
+        for id in [
+            PieceId::TurnSmallEntry,
+            PieceId::TurnSmall,
+            PieceId::TurnSmall,
+            PieceId::TurnSmallExit,
+        ] {
+            let piece = catalog()
+                .into_iter()
+                .find(|piece| piece.id == id)
+                .unwrap()
+                .at(end)
+                .unwrap();
+            end = piece.exit;
+        }
     }
     assert_eq!(end, TrackState::origin());
 }
@@ -222,5 +427,147 @@ fn inversions_turn_over_and_are_regular_in_every_heading() {
                 near_angle(previous_roll, std::f64::consts::TAU);
             }
         }
+    }
+}
+
+#[test]
+fn model_offers_connected_turns_for_each_radius_and_bank() {
+    use Bank::{Left, Level, Right};
+    use PieceId::*;
+
+    let model = hybrid_model();
+    for (bank, radius, ids) in [
+        (Level, 16.0, [TurnSmallEntry, TurnSmall, TurnSmallExit]),
+        (Level, 32.0, [TurnLargeEntry, TurnLarge, TurnLargeExit]),
+        (Left, 16.0, [BankedTurnEntry, BankedTurn, BankedTurnExit]),
+        (
+            Left,
+            32.0,
+            [
+                LargeLeftBankedTurnEntry,
+                LargeLeftBankedTurn,
+                LargeLeftBankedTurnExit,
+            ],
+        ),
+        (
+            Right,
+            16.0,
+            [
+                SmallRightBankedTurnEntry,
+                SmallRightBankedTurn,
+                SmallRightBankedTurnExit,
+            ],
+        ),
+        (
+            Right,
+            32.0,
+            [
+                LargeRightBankedTurnEntry,
+                LargeRightBankedTurn,
+                LargeRightBankedTurnExit,
+            ],
+        ),
+    ] {
+        let mut state = TrackState {
+            bank,
+            ..TrackState::origin()
+        };
+        let mut placed = Vec::new();
+        for id in ids {
+            let piece = model
+                .available_pieces(state)
+                .into_iter()
+                .find(|piece| piece.id == id)
+                .unwrap_or_else(|| panic!("model did not offer {id:?} at {state:?}"));
+            assert_eq!(piece.entry, state);
+            assert_eq!(piece.exit.bank, bank);
+            state = piece.exit;
+            placed.push(piece);
+        }
+        assert_eq!(state.horizontal_curvature, HorizontalCurvature::Straight);
+        let curvature = placed[1].sample(placed[1].length() / 2.0).curvature;
+        assert!((curvature - 1.0 / radius).abs() < 1e-4);
+        assert_curvature_sequence(&placed);
+    }
+}
+
+#[test]
+fn model_offers_right_bank_and_level_transition() {
+    let model = hybrid_model();
+    let bank = model
+        .available_pieces(TrackState::origin())
+        .into_iter()
+        .find(|piece| piece.id == PieceId::BankRight)
+        .expect("right bank should be available from level track");
+    assert_eq!(bank.exit.bank, Bank::Right);
+    let unbank = model
+        .available_pieces(bank.exit)
+        .into_iter()
+        .find(|piece| piece.id == PieceId::UnbankRight)
+        .expect("level track should be available from right bank");
+    assert_eq!(unbank.exit.bank, Bank::Level);
+}
+
+#[test]
+fn curvature_rate_approaches_zero_at_representative_joins() {
+    use PieceId::*;
+    for ids in [
+        [Straight, Straight, Straight],
+        [TurnSmallEntry, TurnSmall, TurnSmallExit],
+        [VerticalUpEntry, VerticalUpContinue, VerticalUpExit],
+        [Straight, Loop, Straight],
+    ] {
+        let pieces = place_curvature_sequence(&ids, TrackState::origin());
+        for pair in pieces.windows(2) {
+            let distance = 0.01;
+            let incoming_end = pair[0].sample(pair[0].length()).curvature;
+            let incoming_before = pair[0].sample(pair[0].length() - distance).curvature;
+            let outgoing_start = pair[1].sample(0.0).curvature;
+            let outgoing_after = pair[1].sample(distance).curvature;
+            let incoming_rate = (incoming_end - incoming_before) / distance;
+            let outgoing_rate = (outgoing_after - outgoing_start) / distance;
+            assert!(
+                incoming_rate.abs() < 1e-3,
+                "{:?} incoming rate {incoming_rate}",
+                pair[0].id
+            );
+            assert!(
+                outgoing_rate.abs() < 1e-3,
+                "{:?} outgoing rate {outgoing_rate}",
+                pair[1].id
+            );
+        }
+    }
+}
+
+#[test]
+fn standalone_turns_connect_straight_curvature_at_both_ends() {
+    use PieceId::*;
+    let model = hybrid_model();
+    for (bank, id) in [
+        (Bank::Level, TurnSmallStandalone),
+        (Bank::Level, TurnLargeStandalone),
+        (Bank::Left, BankedTurnStandalone),
+        (Bank::Left, LargeLeftBankedTurnStandalone),
+        (Bank::Right, SmallRightBankedTurnStandalone),
+        (Bank::Right, LargeRightBankedTurnStandalone),
+    ] {
+        let start = TrackState {
+            bank,
+            ..TrackState::origin()
+        };
+        let piece = model
+            .available_pieces(start)
+            .into_iter()
+            .find(|piece| piece.id == id)
+            .unwrap_or_else(|| panic!("model did not offer {id:?}"));
+        assert_eq!(piece.exit.heading, Heading::North);
+        assert_eq!(piece.exit.bank, bank);
+        assert_eq!(
+            piece.exit.horizontal_curvature,
+            HorizontalCurvature::Straight
+        );
+        near(piece.sample(0.0).curvature, 0.0);
+        near(piece.sample(piece.length()).curvature, 0.0);
     }
 }

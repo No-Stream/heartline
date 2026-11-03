@@ -45,8 +45,16 @@ impl Circuit {
     }
     fn locate(&self, distance: f64) -> (usize, f64) {
         let distance = distance.rem_euclid(self.length);
+        let distance = if distance == self.length {
+            0.0
+        } else {
+            distance
+        };
         let index = self.starts.partition_point(|start| *start <= distance) - 1;
-        (index, distance - self.starts[index])
+        (
+            index,
+            (distance - self.starts[index]).min(self.pieces[index].length()),
+        )
     }
     pub fn sample(&self, distance: f64) -> TrackSample {
         let (index, local) = self.locate(distance);

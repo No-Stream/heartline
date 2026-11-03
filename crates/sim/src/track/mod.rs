@@ -1,6 +1,8 @@
 //! Track geometry uses metres; grid coordinates are half tiles (two metres).
 //! X and Y are horizontal, Z is up, and headings turn counterclockwise from X.
 //! Positive bank rotates the up vector towards the left of travel.
+//! Seventh-degree Hermite curves constrain endpoint curvature and its rate as well as position
+//! and tangent, preserving exact grid endpoints and smooth forces at compatible connectors.
 use std::f64::consts::{FRAC_PI_4, TAU};
 use std::ops::{Add, Div, Mul, Sub};
 
@@ -90,18 +92,22 @@ impl Heading {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slope {
     DownSteep,
+    DownModerate,
     DownGentle,
     Level,
     UpGentle,
+    UpModerate,
     UpSteep,
 }
 impl Slope {
     fn gradient(self) -> f64 {
         match self {
             Self::DownSteep => -1.0,
+            Self::DownModerate => -0.75,
             Self::DownGentle => -0.5,
             Self::Level => 0.0,
             Self::UpGentle => 0.5,
+            Self::UpModerate => 0.75,
             Self::UpSteep => 1.0,
         }
     }
@@ -122,6 +128,18 @@ impl Bank {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HorizontalCurvature {
+    Straight,
+    LeftSmall,
+    LeftLarge,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerticalCurvature {
+    Straight,
+    Up,
+    Down,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TrackState {
     pub x: i32,
     pub y: i32,
@@ -129,6 +147,8 @@ pub struct TrackState {
     pub heading: Heading,
     pub slope: Slope,
     pub bank: Bank,
+    pub horizontal_curvature: HorizontalCurvature,
+    pub vertical_curvature: VerticalCurvature,
 }
 impl TrackState {
     pub const fn origin() -> Self {
@@ -139,6 +159,8 @@ impl TrackState {
             heading: Heading::East,
             slope: Slope::Level,
             bank: Bank::Level,
+            horizontal_curvature: HorizontalCurvature::Straight,
+            vertical_curvature: VerticalCurvature::Straight,
         }
     }
     pub fn position(self) -> Vec3 {
@@ -168,10 +190,39 @@ pub enum PieceId {
     GentleDownToLevel,
     GentleToSteepDown,
     SteepToGentleDown,
+    TurnSmallEntry,
     TurnSmall,
+    TurnSmallExit,
+    TurnLargeEntry,
     TurnLarge,
+    TurnLargeExit,
+    BankedTurnEntry,
+    BankedTurnExit,
+    TurnSmallStandalone,
+    TurnLargeStandalone,
+    BankedTurnStandalone,
+    LargeLeftBankedTurnStandalone,
+    SmallRightBankedTurnStandalone,
+    LargeRightBankedTurnStandalone,
+    LargeLeftBankedTurnEntry,
+    LargeLeftBankedTurn,
+    LargeLeftBankedTurnExit,
+    SmallRightBankedTurnEntry,
+    SmallRightBankedTurn,
+    SmallRightBankedTurnExit,
+    LargeRightBankedTurnEntry,
+    LargeRightBankedTurn,
+    LargeRightBankedTurnExit,
+    VerticalUpEntry,
+    VerticalUpContinue,
+    VerticalUpExit,
+    VerticalDownEntry,
+    VerticalDownContinue,
+    VerticalDownExit,
     BankLeft,
     UnbankLeft,
+    BankRight,
+    UnbankRight,
     BankedTurn,
     OffsetLeft,
     OffsetRight,
@@ -224,6 +275,30 @@ pub struct TrackSample {
     pub roll: f64,
 }
 const ARC_STEPS: usize = 1024;
+impl TrackState {
+    fn curvature_vector(self) -> Vec3 {
+        let tangent = self.tangent();
+        let angle = f64::from(self.heading.index()) * FRAC_PI_4;
+        let left = Vec3::new(-angle.sin(), angle.cos(), 0.0);
+        let up = tangent.cross(left);
+        let scale = if self.heading.index() % 2 == 0 {
+            1.0
+        } else {
+            std::f64::consts::SQRT_2
+        };
+        let horizontal = match self.horizontal_curvature {
+            HorizontalCurvature::Straight => 0.0,
+            HorizontalCurvature::LeftSmall => 1.0 / 16.0,
+            HorizontalCurvature::LeftLarge => 1.0 / 32.0,
+        };
+        let vertical = match self.vertical_curvature {
+            VerticalCurvature::Straight => 0.0,
+            VerticalCurvature::Up => 1.0 / 80.0,
+            VerticalCurvature::Down => -1.0 / 80.0,
+        };
+        (left * horizontal + up * vertical) / scale
+    }
+}
 fn smooth(t: f64) -> (f64, f64, f64) {
     (
         t * t * t * (10.0 + t * (-15.0 + 6.0 * t)),
@@ -248,23 +323,74 @@ impl Piece {
         let delta = self.exit.position() - p0;
         let v0 = self.entry.tangent() * self.tangent_scale;
         let v1 = self.exit.tangent() * self.tangent_scale;
-        let mut p = p0 + delta * s + v0 * h0 + v1 * h1;
-        let mut d = delta * ds + v0 * dh0 + v1 * dh1;
-        let mut dd = delta * dds + v0 * ddh0 + v1 * ddh1;
+        let a0 = self.entry.curvature_vector() * self.tangent_scale.powi(2);
+        let a1 = self.exit.curvature_vector() * self.tangent_scale.powi(2);
+        let q0 = (t2 - 3.0 * t3 + 3.0 * t4 - t5) / 2.0;
+        let q1 = (t3 - 2.0 * t4 + t5) / 2.0;
+        let dq0 = (2.0 * t - 9.0 * t2 + 12.0 * t3 - 5.0 * t4) / 2.0;
+        let dq1 = (3.0 * t2 - 8.0 * t3 + 5.0 * t4) / 2.0;
+        let ddq0 = (2.0 - 18.0 * t + 36.0 * t2 - 20.0 * t3) / 2.0;
+        let ddq1 = (6.0 * t - 24.0 * t2 + 20.0 * t3) / 2.0;
+        let j0 = delta * 60.0 - v0 * 36.0 - v1 * 24.0 - a0 * 9.0 + a1 * 3.0;
+        let j1 = delta * 60.0 - v0 * 24.0 - v1 * 36.0 - a0 * 3.0 + a1 * 9.0;
+        let desired_j0 = v0
+            * (-self.tangent_scale.powi(2)
+                * self
+                    .entry
+                    .curvature_vector()
+                    .dot(self.entry.curvature_vector()));
+        let desired_j1 = v1
+            * (-self.tangent_scale.powi(2)
+                * self
+                    .exit
+                    .curvature_vector()
+                    .dot(self.exit.curvature_vector()));
+        let correction0 = (desired_j0 - j0) / 6.0;
+        let correction1 = (j1 - desired_j1) / 6.0 - correction0;
+        let t6 = t5 * t;
+        let t7 = t6 * t;
+        let f = t3 - 3.0 * t4 + 3.0 * t5 - t6;
+        let g = t4 - 3.0 * t5 + 3.0 * t6 - t7;
+        let df = 3.0 * t2 - 12.0 * t3 + 15.0 * t4 - 6.0 * t5;
+        let dg = 4.0 * t3 - 15.0 * t4 + 18.0 * t5 - 7.0 * t6;
+        let ddf = 6.0 * t - 36.0 * t2 + 60.0 * t3 - 30.0 * t4;
+        let ddg = 12.0 * t2 - 60.0 * t3 + 90.0 * t4 - 42.0 * t5;
+        let mut p = p0
+            + delta * s
+            + v0 * h0
+            + v1 * h1
+            + a0 * q0
+            + a1 * q1
+            + correction0 * f
+            + correction1 * g;
+        let mut d = delta * ds
+            + v0 * dh0
+            + v1 * dh1
+            + a0 * dq0
+            + a1 * dq1
+            + correction0 * df
+            + correction1 * dg;
+        let mut dd = delta * dds
+            + v0 * ddh0
+            + v1 * ddh1
+            + a0 * ddq0
+            + a1 * ddq1
+            + correction0 * ddf
+            + correction1 * ddg;
         if matches!(
             self.shape,
             Shape::Loop | Shape::Corkscrew | Shape::Heartline
         ) {
-            let angle = TAU * s;
-            let da = TAU * ds;
-            let dda = TAU * dds;
+            let angle = TAU * (35.0 * t4 - 84.0 * t5 + 70.0 * t6 - 20.0 * t7);
+            let da = TAU * (140.0 * t3 - 420.0 * t4 + 420.0 * t5 - 140.0 * t6);
+            let dda = TAU * (420.0 * t2 - 1680.0 * t3 + 2100.0 * t4 - 840.0 * t5);
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let left = Vec3::new(-forward.y, forward.x, 0.0);
             let vertical = Vec3::new(0.0, 0.0, 1.0);
             let (a, b, radius) = if matches!(self.shape, Shape::Loop) {
                 (forward, vertical, 16.0)
             } else if matches!(self.shape, Shape::Corkscrew) {
-                (left, vertical, 2.0)
+                (left, vertical, 1.5)
             } else {
                 (left * -1.0, vertical, 1.0)
             };
@@ -355,7 +481,11 @@ impl Piece {
         }
     }
     pub fn at(&self, state: TrackState) -> Option<Self> {
-        if state.slope != self.entry.slope || state.bank != self.entry.bank {
+        if state.slope != self.entry.slope
+            || state.bank != self.entry.bank
+            || state.horizontal_curvature != self.entry.horizontal_curvature
+            || state.vertical_curvature != self.entry.vertical_curvature
+        {
             return None;
         }
         let rotation = (state.heading.index() - self.entry.heading.index()).rem_euclid(8);
@@ -376,10 +506,18 @@ impl Piece {
         piece.exit = TrackState {
             x: state.x + x,
             y: state.y + y,
-            z: state.z + self.exit.z - self.entry.z,
+            z: state.z
+                + if rotation % 2 == 0 {
+                    self.exit.z - self.entry.z
+                } else {
+                    (f64::from(self.exit.z - self.entry.z) * std::f64::consts::SQRT_2).round()
+                        as i32
+                },
             heading: Heading::from_index(self.exit.heading.index() + rotation),
             slope: self.exit.slope,
             bank: self.exit.bank,
+            horizontal_curvature: self.exit.horizontal_curvature,
+            vertical_curvature: self.exit.vertical_curvature,
         };
         piece.entry = state;
         if rotation % 2 != 0 {
@@ -393,10 +531,10 @@ impl Piece {
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
 pub fn catalog() -> Vec<Piece> {
-    use Bank::{Left, Level as FlatBank};
+    use Bank::{Left, Level as FlatBank, Right};
     use Heading::{East, North};
     use PieceId::*;
-    use Slope::{DownGentle, DownSteep, Level, UpGentle, UpSteep};
+    use Slope::{DownGentle, DownModerate, DownSteep, Level, UpGentle, UpModerate, UpSteep};
     let definitions = [
         (
             Straight,
@@ -620,6 +758,71 @@ pub fn catalog() -> Vec<Piece> {
             Shape::Plain,
         ),
         (
+            BankRight,
+            "Bank right",
+            8,
+            0,
+            0,
+            East,
+            Level,
+            Level,
+            FlatBank,
+            Right,
+            Shape::Plain,
+        ),
+        (
+            UnbankRight,
+            "Level from right bank",
+            8,
+            0,
+            0,
+            East,
+            Level,
+            Level,
+            Right,
+            FlatBank,
+            Shape::Plain,
+        ),
+        (
+            LargeLeftBankedTurn,
+            "Large left-banked turn",
+            16,
+            16,
+            0,
+            North,
+            Level,
+            Level,
+            Left,
+            Left,
+            Shape::Plain,
+        ),
+        (
+            SmallRightBankedTurn,
+            "Small right-banked turn",
+            8,
+            8,
+            0,
+            North,
+            Level,
+            Level,
+            Right,
+            Right,
+            Shape::Plain,
+        ),
+        (
+            LargeRightBankedTurn,
+            "Large right-banked turn",
+            16,
+            16,
+            0,
+            North,
+            Level,
+            Level,
+            Right,
+            Right,
+            Shape::Plain,
+        ),
+        (
             BankedTurn,
             "Banked left turn",
             8,
@@ -737,7 +940,7 @@ pub fn catalog() -> Vec<Piece> {
             Shape::Plain,
         ),
     ];
-    definitions
+    let mut pieces: Vec<Piece> = definitions
         .into_iter()
         .map(
             |(
@@ -765,6 +968,8 @@ pub fn catalog() -> Vec<Piece> {
                     heading,
                     slope: exit_slope,
                     bank: exit_bank,
+                    horizontal_curvature: HorizontalCurvature::Straight,
+                    vertical_curvature: VerticalCurvature::Straight,
                 };
                 let distance = (exit.position() - entry.position()).length();
                 let scale = if heading == North {
@@ -796,7 +1001,181 @@ pub fn catalog() -> Vec<Piece> {
                 piece
             },
         )
-        .collect()
+        .collect();
+    for (
+        base,
+        entry_id,
+        exit_id,
+        standalone_id,
+        curvature,
+        entry_name,
+        exit_name,
+        standalone_name,
+    ) in [
+        (
+            TurnSmall,
+            TurnSmallEntry,
+            TurnSmallExit,
+            TurnSmallStandalone,
+            HorizontalCurvature::LeftSmall,
+            "Begin small left turn",
+            "End small left turn",
+            "Standalone small left turn",
+        ),
+        (
+            TurnLarge,
+            TurnLargeEntry,
+            TurnLargeExit,
+            TurnLargeStandalone,
+            HorizontalCurvature::LeftLarge,
+            "Begin large left turn",
+            "End large left turn",
+            "Standalone large left turn",
+        ),
+        (
+            BankedTurn,
+            BankedTurnEntry,
+            BankedTurnExit,
+            BankedTurnStandalone,
+            HorizontalCurvature::LeftSmall,
+            "Begin banked left turn",
+            "End banked left turn",
+            "Standalone small left-banked turn",
+        ),
+        (
+            LargeLeftBankedTurn,
+            LargeLeftBankedTurnEntry,
+            LargeLeftBankedTurnExit,
+            LargeLeftBankedTurnStandalone,
+            HorizontalCurvature::LeftLarge,
+            "Begin large left-banked turn",
+            "End large left-banked turn",
+            "Standalone large left-banked turn",
+        ),
+        (
+            SmallRightBankedTurn,
+            SmallRightBankedTurnEntry,
+            SmallRightBankedTurnExit,
+            SmallRightBankedTurnStandalone,
+            HorizontalCurvature::LeftSmall,
+            "Begin small right-banked turn",
+            "End small right-banked turn",
+            "Standalone small right-banked turn",
+        ),
+        (
+            LargeRightBankedTurn,
+            LargeRightBankedTurnEntry,
+            LargeRightBankedTurnExit,
+            LargeRightBankedTurnStandalone,
+            HorizontalCurvature::LeftLarge,
+            "Begin large right-banked turn",
+            "End large right-banked turn",
+            "Standalone large right-banked turn",
+        ),
+    ] {
+        let index = pieces.iter().position(|piece| piece.id == base).unwrap();
+        let mut standalone = pieces[index].clone();
+        standalone.id = standalone_id;
+        standalone.name = standalone_name;
+        pieces.push(standalone);
+        let mut entry = pieces[index].clone();
+        entry.id = entry_id;
+        entry.name = entry_name;
+        entry.exit.horizontal_curvature = curvature;
+        entry.rebuild_arc();
+        let mut exit = pieces[index].clone();
+        exit.id = exit_id;
+        exit.name = exit_name;
+        exit.entry.horizontal_curvature = curvature;
+        exit.rebuild_arc();
+        pieces[index].entry.horizontal_curvature = curvature;
+        pieces[index].exit.horizontal_curvature = curvature;
+        pieces[index].tangent_scale = match curvature {
+            HorizontalCurvature::LeftSmall => 16.0 * std::f64::consts::FRAC_PI_2,
+            HorizontalCurvature::LeftLarge => 32.0 * std::f64::consts::FRAC_PI_2,
+            HorizontalCurvature::Straight => unreachable!(),
+        };
+        pieces[index].rebuild_arc();
+        pieces.push(entry);
+        pieces.push(exit);
+    }
+    for (base, id, name, entry_curvature, exit_curvature) in [
+        (
+            LevelToGentleUp,
+            VerticalUpEntry,
+            "Begin upward curve",
+            VerticalCurvature::Straight,
+            VerticalCurvature::Up,
+        ),
+        (
+            GentleToSteepUp,
+            VerticalUpContinue,
+            "Continue upward curve",
+            VerticalCurvature::Up,
+            VerticalCurvature::Up,
+        ),
+        (
+            GentleToSteepUp,
+            VerticalUpExit,
+            "End upward curve",
+            VerticalCurvature::Up,
+            VerticalCurvature::Straight,
+        ),
+        (
+            LevelToGentleDown,
+            VerticalDownEntry,
+            "Begin downward curve",
+            VerticalCurvature::Straight,
+            VerticalCurvature::Down,
+        ),
+        (
+            GentleToSteepDown,
+            VerticalDownContinue,
+            "Continue downward curve",
+            VerticalCurvature::Down,
+            VerticalCurvature::Down,
+        ),
+        (
+            GentleToSteepDown,
+            VerticalDownExit,
+            "End downward curve",
+            VerticalCurvature::Down,
+            VerticalCurvature::Straight,
+        ),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == base)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        piece.entry.vertical_curvature = entry_curvature;
+        piece.exit.vertical_curvature = exit_curvature;
+        match id {
+            VerticalUpContinue => {
+                piece.exit.slope = UpModerate;
+                piece.exit.z = 5;
+            }
+            VerticalUpExit => {
+                piece.entry.slope = UpModerate;
+                piece.exit.z = 7;
+            }
+            VerticalDownContinue => {
+                piece.exit.slope = DownModerate;
+                piece.exit.z = -5;
+            }
+            VerticalDownExit => {
+                piece.entry.slope = DownModerate;
+                piece.exit.z = -7;
+            }
+            _ => {}
+        }
+        piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+        piece.rebuild_arc();
+        pieces.push(piece);
+    }
+    pieces
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
