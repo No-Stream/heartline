@@ -1,9 +1,10 @@
 ---
 id: TASK-31
 title: Keep curvature continuous between track pieces
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 02:43'
+updated_date: '2026-11-03 02:56'
 labels:
   - coaster
   - simulation
@@ -22,7 +23,13 @@ Physics found that each piece starts and ends at zero curvature, so lateral forc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Consecutive pieces in the same turn keep continuous curvature, and the connection state carries what is needed for that
-- [ ] #2 A physics test on back-to-back turns shows no lateral g dip at joins
-- [ ] #3 Straight-to-turn transitions still ease in smoothly
+- [x] #1 Consecutive pieces in the same turn keep continuous curvature, and the connection state carries what is needed for that
+- [x] #2 A physics test on back-to-back turns shows no lateral g dip at joins
+- [x] #3 Straight-to-turn transitions still ease in smoothly
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Connector state carries horizontal and vertical curvature; seventh-degree Hermite pieces for entry, continuation and exit. Lateral g at joins on back-to-back turns at 20 m/s went from 0.0001 g to 1.274 g, against 1.270 g mid-turn.
+<!-- SECTION:FINAL_SUMMARY:END -->
