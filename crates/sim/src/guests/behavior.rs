@@ -2,6 +2,7 @@
 use std::collections::BTreeMap;
 
 pub use super::decisions::{GroupSplit, GuestBehavior, split_for_ride};
+use super::details::{ActivityDetail, ActivityKind, GuestMemoryDetail};
 pub use super::knowledge::{KnownPlace, PlaceKind};
 pub use super::needs::Needs;
 pub use super::thoughts::Thought;
@@ -19,7 +20,7 @@ pub struct Facility {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Activity {
     Walking(u32),
-    Queuing(u32),
+    Queuing(u32, u64),
     Using(u32, u32),
     Waiting(u32),
 }
@@ -46,6 +47,45 @@ impl BehaviorSimulation {
             activities: vec![None; guest_count],
             queues: BTreeMap::new(),
             tick: 0,
+        }
+    }
+
+    pub fn activity_detail(&self, guest: GuestId) -> ActivityDetail {
+        let index = guest.0 as usize;
+        let activity = self.activities[index];
+        let (kind, place_id) = match activity {
+            Some(Activity::Walking(place_id)) => (ActivityKind::Walking, Some(place_id)),
+            Some(Activity::Queuing(place_id, _)) => (ActivityKind::Queuing, Some(place_id)),
+            Some(Activity::Using(place_id, _)) => {
+                let place_kind = self.guests[index]
+                    .known_places()
+                    .iter()
+                    .find(|place| place.id == place_id)
+                    .map(|place| place.kind);
+                let kind = match place_kind {
+                    Some(PlaceKind::Ride) => ActivityKind::Riding,
+                    Some(PlaceKind::Food) => ActivityKind::Eating,
+                    Some(PlaceKind::Drink) => ActivityKind::Drinking,
+                    Some(PlaceKind::Restroom) => ActivityKind::Restroom,
+                    Some(PlaceKind::Bench) => ActivityKind::Resting,
+                    None => ActivityKind::Walking,
+                };
+                (kind, Some(place_id))
+            }
+            Some(Activity::Waiting(place_id)) => (ActivityKind::Waiting, Some(place_id)),
+            None => (ActivityKind::Wandering, None),
+        };
+        let destination = place_id.and_then(|place_id| {
+            self.guests[index]
+                .known_places()
+                .iter()
+                .find(|place| place.id == place_id)
+                .map(|place| place.position)
+        });
+        ActivityDetail {
+            kind,
+            destination,
+            place_id,
         }
     }
     /// Returns movement commands indexed by guest ID.
@@ -203,9 +243,9 @@ impl BehaviorSimulation {
                     if positions[index] == Some(by_id[&place_id].place.position) =>
                 {
                     self.queues.entry(place_id).or_default().push(id);
-                    self.activities[index] = Some(Activity::Queuing(place_id));
+                    self.activities[index] = Some(Activity::Queuing(place_id, self.tick));
                 }
-                Some(Activity::Queuing(place_id)) if !by_id.contains_key(&place_id) => {
+                Some(Activity::Queuing(place_id, _)) if !by_id.contains_key(&place_id) => {
                     self.activities[index] = None
                 }
                 _ => {}
@@ -223,7 +263,7 @@ impl BehaviorSimulation {
                 .collect();
             for &id in &active {
                 if let Some(Activity::Waiting(place_id)) = self.activities[id.0 as usize] {
-                    let riders_remain = active.iter().any(|other| matches!(self.activities[other.0 as usize], Some(Activity::Walking(id) | Activity::Queuing(id) | Activity::Using(id, _)) if id == place_id));
+                    let riders_remain = active.iter().any(|other| matches!(self.activities[other.0 as usize], Some(Activity::Walking(id) | Activity::Queuing(id, _) | Activity::Using(id, _)) if id == place_id));
                     if !riders_remain {
                         self.activities[id.0 as usize] = None;
                     }
@@ -291,11 +331,25 @@ impl BehaviorSimulation {
             }
         }
         for (&place_id, queue) in &mut self.queues {
-            queue.retain(|id| self.activities[id.0 as usize] == Some(Activity::Queuing(place_id)));
+            queue.retain(|id| {
+                matches!(
+                    self.activities[id.0 as usize],
+                    Some(Activity::Queuing(activity_place_id, _)) if activity_place_id == place_id
+                )
+            });
             if let Some(facility) = by_id.get(&place_id) {
                 let occupied = self.activities.iter().filter(|activity| matches!(activity, Some(Activity::Using(id, _)) if *id == place_id)).count();
                 let take = facility.capacity.saturating_sub(occupied).min(queue.len());
                 for id in queue.drain(..take) {
+                    let queued_at = match self.activities[id.0 as usize] {
+                        Some(Activity::Queuing(_, queued_at)) => queued_at,
+                        _ => unreachable!("only queued guests are admitted"),
+                    };
+                    self.guests[id.0 as usize].record_memory(GuestMemoryDetail::Wait {
+                        place_id,
+                        duration_ticks: self.tick.saturating_sub(queued_at),
+                        tick: self.tick,
+                    });
                     self.activities[id.0 as usize] =
                         Some(Activity::Using(place_id, facility.duration_ticks));
                 }

@@ -15,8 +15,8 @@ pub struct VisitChanges {
 }
 
 pub struct ParkGuests {
-    walking: WalkingSimulation,
-    behaviors: BehaviorSimulation,
+    pub(super) walking: WalkingSimulation,
+    pub(super) behaviors: BehaviorSimulation,
     visits: VisitManager,
     entrance: Position,
     reachable: Graph,

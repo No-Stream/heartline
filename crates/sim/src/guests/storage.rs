@@ -14,6 +14,7 @@ pub use super::traits::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuestStore {
+    pub(super) seed: u64,
     pub(super) ids: Vec<GuestId>,
     active: Vec<bool>,
     group_indices: Vec<u32>,
@@ -32,8 +33,9 @@ pub struct GuestStore {
 }
 
 impl GuestStore {
-    pub(super) fn with_capacity(capacity: usize) -> Self {
+    pub(super) fn with_capacity(seed: u64, capacity: usize) -> Self {
         Self {
+            seed,
             ids: Vec::with_capacity(capacity),
             active: Vec::with_capacity(capacity),
             group_indices: Vec::with_capacity(capacity),
@@ -122,7 +124,7 @@ impl GuestStore {
         id
     }
 
-    fn index(&self, id: GuestId) -> usize {
+    pub(super) fn index(&self, id: GuestId) -> usize {
         let index = id.0 as usize;
         assert_eq!(self.ids[index], id, "unknown guest id");
         index

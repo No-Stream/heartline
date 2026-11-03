@@ -1,0 +1,190 @@
+[data-testid="guest-panel"] {
+  --guest-paper: #fbf5e9;
+  --guest-ink: #352b4f;
+  --guest-wood: #d88440;
+  --guest-steel: #dc5c3e;
+  --guest-train: #9fbbb1;
+  position: fixed;
+  z-index: 20;
+  box-sizing: border-box;
+  width: min(19rem, calc(100vw - 1rem));
+  max-height: 82vh;
+  overflow: auto;
+  padding: 0.85rem 1rem 1rem;
+  color: var(--guest-ink);
+  background: var(--guest-paper);
+  border: 1px solid color-mix(in srgb, var(--guest-ink) 36%, transparent);
+  border-radius: 0.2rem;
+  box-shadow: 0 0.45rem 1.4rem color-mix(in srgb, var(--guest-ink) 18%, transparent);
+  font: 0.88rem/1.35 Georgia, "Times New Roman", serif;
+}
+
+[data-testid="guest-panel"][hidden] {
+  display: none;
+}
+
+.guest-panel__header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 0.25rem 0.75rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--guest-ink) 24%, transparent);
+}
+
+.guest-panel__eyebrow,
+.guest-panel__section h3 {
+  margin: 0;
+  font: 600 0.67rem/1.3 system-ui, sans-serif;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.guest-panel__eyebrow {
+  grid-column: 1;
+  color: color-mix(in srgb, var(--guest-ink) 72%, var(--guest-wood));
+}
+
+.guest-panel__header h2 {
+  grid-column: 1;
+  margin: 0;
+  font: 600 1.45rem/1.05 Georgia, "Times New Roman", serif;
+}
+
+.guest-panel__close {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid color-mix(in srgb, var(--guest-ink) 32%, transparent);
+  border-radius: 50%;
+  color: var(--guest-ink);
+  background: transparent;
+  font: 1.1rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.guest-panel__close:hover,
+.guest-panel__member:hover {
+  background: color-mix(in srgb, var(--guest-wood) 14%, var(--guest-paper));
+}
+
+.guest-panel__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.8rem;
+  margin: 0.55rem 0 0;
+  font-size: 0.78rem;
+}
+
+.guest-panel__section {
+  margin-top: 0.7rem;
+}
+
+.guest-panel__section h3 {
+  margin-bottom: 0.35rem;
+  color: color-mix(in srgb, var(--guest-ink) 75%, var(--guest-steel));
+}
+
+.guest-panel__group,
+.guest-panel__traits,
+.guest-panel__memories {
+  display: grid;
+  gap: 0.22rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guest-panel__member {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.18rem 0.3rem;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--guest-ink) 14%, transparent);
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.guest-panel__member[aria-current="true"] {
+  font-weight: 700;
+}
+
+.guest-panel__member small {
+  color: color-mix(in srgb, var(--guest-ink) 68%, var(--guest-steel));
+}
+
+.guest-panel__activity {
+  margin: 0;
+  font-weight: 600;
+}
+
+.guest-panel__destination {
+  margin: 0.1rem 0 0;
+  color: color-mix(in srgb, var(--guest-ink) 72%, var(--guest-wood));
+  font-size: 0.78rem;
+}
+
+.guest-panel__needs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.38rem 0.75rem;
+}
+
+.guest-panel__need {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.18rem 0.35rem;
+  align-items: center;
+  font-size: 0.76rem;
+}
+
+.guest-panel__need progress {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 0.35rem;
+  appearance: none;
+  border: 0;
+  background: color-mix(in srgb, var(--guest-ink) 12%, var(--guest-paper));
+}
+
+.guest-panel__need progress::-webkit-progress-bar {
+  background: color-mix(in srgb, var(--guest-ink) 12%, var(--guest-paper));
+}
+
+.guest-panel__need progress::-webkit-progress-value {
+  background: var(--guest-steel);
+}
+
+.guest-panel__need progress::-moz-progress-bar {
+  background: var(--guest-steel);
+}
+
+.guest-panel__thought {
+  margin: 0;
+  padding: 0.45rem 0.55rem;
+  background: color-mix(in srgb, var(--guest-train) 24%, var(--guest-paper));
+  border-left: 2px solid var(--guest-wood);
+  font-style: italic;
+}
+
+.guest-panel__traits,
+.guest-panel__memories {
+  font-size: 0.79rem;
+}
+
+.guest-panel__memories li {
+  padding-left: 0.65rem;
+  border-left: 1px solid color-mix(in srgb, var(--guest-ink) 24%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-testid="guest-panel"] {
+    transition: left 110ms ease-out, top 110ms ease-out;
+  }
+}

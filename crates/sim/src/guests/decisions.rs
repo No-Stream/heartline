@@ -1,6 +1,7 @@
 //! Guest knowledge, needs, and activity choices.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
+use super::details::GuestMemoryDetail;
 use super::knowledge::{KnownPlace, PlaceKind};
 use super::needs::Needs;
 use super::thoughts::Thought;
@@ -14,9 +15,12 @@ pub struct GuestBehavior {
     pub energy: u16,
     pub happiness: u16,
     pub money: u16,
+    pub lifetime_money_spent: u32,
+    pub visit_number: u32,
     pub thought: Thought,
     pub cannot_afford_activity: bool,
     pub(super) known_places: Vec<KnownPlace>,
+    recent_memories: VecDeque<GuestMemoryDetail>,
     pub(super) elapsed_ticks: u64,
 }
 
@@ -29,9 +33,12 @@ impl Default for GuestBehavior {
             energy: 100,
             happiness: 80,
             money: 100,
+            lifetime_money_spent: 0,
+            visit_number: 0,
             thought: Thought::Exploring,
             cannot_afford_activity: false,
             known_places: Vec::new(),
+            recent_memories: VecDeque::with_capacity(8),
             elapsed_ticks: 0,
         }
     }
@@ -40,6 +47,15 @@ impl Default for GuestBehavior {
 impl GuestBehavior {
     pub fn known_places(&self) -> &[KnownPlace] {
         &self.known_places
+    }
+    pub fn recent_memories(&self) -> &VecDeque<GuestMemoryDetail> {
+        &self.recent_memories
+    }
+    pub(super) fn record_memory(&mut self, memory: GuestMemoryDetail) {
+        if self.recent_memories.len() == 8 {
+            self.recent_memories.pop_front();
+        }
+        self.recent_memories.push_back(memory);
     }
     pub fn observe(&mut self, place: KnownPlace) {
         if let Some(known) = self
@@ -172,7 +188,9 @@ impl GuestBehavior {
         guests: &mut GuestStore,
         guest: GuestId,
     ) {
+        let money_before = self.money;
         self.money = self.money.saturating_sub(place.price);
+        self.lifetime_money_spent += u32::from(money_before - self.money);
         match place.kind {
             PlaceKind::Ride => {
                 self.happiness = self.happiness.saturating_add(5).min(100);
@@ -200,6 +218,10 @@ impl GuestBehavior {
             PlaceKind::Food => {
                 self.needs.hunger = 0;
                 self.stops_completed = self.stops_completed.saturating_add(1);
+                self.record_memory(GuestMemoryDetail::Food {
+                    place_id: place.id,
+                    tick,
+                });
             }
             PlaceKind::Drink => {
                 self.needs.thirst = 0;
@@ -229,6 +251,7 @@ impl GuestBehavior {
         self.energy = 100;
         self.happiness = 80;
         self.money = 100;
+        self.visit_number = self.visit_number.saturating_add(1);
         self.thought = Thought::Exploring;
         self.cannot_afford_activity = false;
     }

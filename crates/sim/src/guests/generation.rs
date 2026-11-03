@@ -5,7 +5,7 @@ use super::traits::{AgeGroup, GroupKind};
 
 pub fn generate_guests(seed: u64, guest_count: usize) -> GuestStore {
     let mut random = Random::new(seed);
-    let mut store = GuestStore::with_capacity(guest_count);
+    let mut store = GuestStore::with_capacity(seed, guest_count);
     while store.ids.len() < guest_count {
         let remaining = guest_count - store.ids.len();
         let group_roll = random.range(100);

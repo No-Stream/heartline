@@ -6,6 +6,7 @@
 
 pub mod behavior;
 pub mod decisions;
+pub mod details;
 pub mod generation;
 pub mod groups;
 pub mod knowledge;
@@ -20,6 +21,7 @@ pub mod visits;
 pub mod walking;
 
 pub use behavior::*;
+pub use details::*;
 pub use storage::*;
 
 #[cfg(test)]
