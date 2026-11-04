@@ -1,5 +1,64 @@
 use super::command_errors::record_command_result;
 use super::*;
+use serde::Serialize;
+use ts_rs::TS;
+
+#[derive(Serialize, TS)]
+pub(crate) struct SceneryReport {
+    id: String,
+    kind: SceneryReportKind,
+    x: u16,
+    y: u16,
+    z: i16,
+    rotation: u8,
+    quarter: u8,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SceneryReportKind {
+    TreeOval,
+    BushFlowering,
+    FlowerBed,
+    Bench,
+    Lamp,
+    Fountain,
+    Planter,
+    TreeCone,
+    TreeConeOchre,
+    TreeCypress,
+    TreeCypressShort,
+    TreeOvalCoral,
+    TreeTiers,
+    Fence,
+    Signpost,
+    Bin,
+    BalloonCart,
+}
+
+impl From<SceneryKind> for SceneryReportKind {
+    fn from(kind: SceneryKind) -> Self {
+        match kind {
+            SceneryKind::TreeOval => Self::TreeOval,
+            SceneryKind::BushFlowering => Self::BushFlowering,
+            SceneryKind::FlowerBed => Self::FlowerBed,
+            SceneryKind::Bench => Self::Bench,
+            SceneryKind::Lamp => Self::Lamp,
+            SceneryKind::Fountain => Self::Fountain,
+            SceneryKind::Planter => Self::Planter,
+            SceneryKind::TreeCone => Self::TreeCone,
+            SceneryKind::TreeConeOchre => Self::TreeConeOchre,
+            SceneryKind::TreeCypress => Self::TreeCypress,
+            SceneryKind::TreeCypressShort => Self::TreeCypressShort,
+            SceneryKind::TreeOvalCoral => Self::TreeOvalCoral,
+            SceneryKind::TreeTiers => Self::TreeTiers,
+            SceneryKind::Fence => Self::Fence,
+            SceneryKind::Signpost => Self::Signpost,
+            SceneryKind::Bin => Self::Bin,
+            SceneryKind::BalloonCart => Self::BalloonCart,
+        }
+    }
+}
 
 #[wasm_bindgen]
 impl WasmSimulation {
@@ -82,11 +141,19 @@ impl WasmSimulation {
     }
 
     pub fn scenery_json(&self) -> String {
-        let items = self.world.scenery().map(|item| format!(
-            "{{\"id\":\"{}\",\"kind\":\"{}\",\"x\":{},\"y\":{},\"z\":{},\"rotation\":{},\"quarter\":{}}}",
-            scenery_id(item), scenery_kind_name(item.kind), item.position.x, item.position.y,
-            item.position.height, item.rotation, item.quarter
-        )).collect::<Vec<_>>().join(",");
-        format!("[{items}]")
+        let items: Vec<SceneryReport> = self
+            .world
+            .scenery()
+            .map(|item| SceneryReport {
+                id: scenery_id(item),
+                kind: item.kind.into(),
+                x: item.position.x,
+                y: item.position.y,
+                z: item.position.height,
+                rotation: item.rotation,
+                quarter: item.quarter,
+            })
+            .collect();
+        serde_json::to_string(&items).expect("scenery reports serialize")
     }
 }

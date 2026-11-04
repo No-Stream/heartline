@@ -1,3 +1,4 @@
+import { BRIDGE_LAYOUTS } from "../../bridge-layouts";
 import { projectWorld, type Camera, type Viewport } from "../../camera";
 import { COASTER_COLORS, RUNNING_RAIL_HEX, type CoasterColorScheme } from "../../coaster-colors";
 import type { Atlas, Triangle, Vertex } from "../scene";
@@ -57,7 +58,7 @@ function sectionColorsForRails(rails: Float32Array, boundariesMetres: readonly n
   const railColors: Triangle["color"][] = [];
   let previousEndMetres = 0;
   for (let offset = 0; offset < rails.length; offset += 38) {
-    const distanceOffset = offset / 19;
+    const distanceOffset = offset / BRIDGE_LAYOUTS.RAIL.length;
     const startMetres = railDistancesMetres[distanceOffset];
     const endMetres = railDistancesMetres[distanceOffset + 1];
     if (rails[offset] !== rails[offset + 19] || !Number.isFinite(startMetres) || !Number.isFinite(endMetres) || startMetres !== previousEndMetres || endMetres <= startMetres) {
@@ -76,7 +77,7 @@ function sectionColorsForRails(rails: Float32Array, boundariesMetres: readonly n
 export function interpolateTrainPoses(previous: Float32Array, current: Float32Array, interpolation: number): Float32Array {
   if (current.length % 11 || previous.length % 11 || interpolation < 0 || interpolation > 1) throw new Error("Invalid train snapshot");
   const result = new Float32Array(current);
-  for (let i = 0; i < current.length; i += 11) {
+  for (let i = 0; i < current.length; i += BRIDGE_LAYOUTS.TRAIN_POSE.length) {
     if (previous[i] !== current[i]) continue;
     for (let j = 1; j < 10; j++) result[i+j] = previous[i+j] + (current[i+j] - previous[i+j]) * interpolation;
     const side = normalize(vector(result, i+4));
@@ -189,12 +190,12 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
   const sectionColors = sectionBoundariesMetres?.length ? sectionColorsForRails(rails, sectionBoundariesMetres, railDistancesMetres!) : undefined;
   const { quads, beam, solidBeam, tube } = createQuadBuilder(camera, viewport, style.ink, style.lineWeight);
   const track = color(style.track); const supportColor = color(style.supports); const runningRail = color(RUNNING_RAIL_HEX);
-  for (let i = 0; i < rails.length; i += 19) {
+  for (let i = 0; i < rails.length; i += BRIDGE_LAYOUTS.RAIL.length) {
     const id = geometryId(rails[i]);
     const start = vector(rails, i+1), end = vector(rails, i+10);
     const sideStart = normalize(vector(rails, i+4)), sideEnd = normalize(vector(rails, i+13));
     const upStart = normalize(vector(rails, i+7)), upEnd = normalize(vector(rails, i+16));
-    const sectionColor = sectionColors?.[i / 19];
+    const sectionColor = sectionColors?.[i / BRIDGE_LAYOUTS.RAIL.length];
     if (id.woodenTrack) {
       beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.055, "track", `track-${id.id}`, sectionColor ?? track, true);
       beam(add(start, scale(upStart, 0.065)), add(end, scale(upEnd, 0.065)), sideStart, sideEnd, upStart, upEnd, 0.01, "track", `track-${id.id}`, runningRail, true);
@@ -202,14 +203,14 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
     else if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? track);
     else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? track, true);
   }
-  for (let i = 0; i < ties.length; i += 13) {
+  for (let i = 0; i < ties.length; i += BRIDGE_LAYOUTS.TIE.length) {
     const id = geometryId(ties[i]);
     const up = normalize(vector(ties, i+7)), tangent = normalize(vector(ties, i+10));
     const start = vector(ties, i+1), end = vector(ties, i+4);
     if (id.steel) tube(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, track);
     else beam(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, track);
   }
-  for (let i = 0; i < supports.length; i += 7) {
+  for (let i = 0; i < supports.length; i += BRIDGE_LAYOUTS.SUPPORT.length) {
     const id = geometryId(supports[i]);
     const start = vector(supports, i+1), end = vector(supports, i+4);
     const direction = normalize(add(end, scale(start, -1)));

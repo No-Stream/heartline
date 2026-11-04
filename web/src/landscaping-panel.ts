@@ -2,7 +2,7 @@ import "./print-modern.css";
 import "./landscaping-panel.css";
 import type { InputAction } from "./input/actions";
 import { LANDSCAPING_TOOLS, type LandscapingSelection, type LandscapingTool } from "./landscaping-tool";
-import { displayToMetres, formatLength, metresToDisplay, unitLabel, type Units } from "./units";
+import { displayToMetres, formatLength, metresToInput, unitLabel, type Units } from "./units";
 
 const TOOL_LABELS: Record<LandscapingTool, string> = {
   raise_corner: "Raise corner",
@@ -72,7 +72,7 @@ export function createLandscapingPanel(
   let undergroundEnabled = false;
   let units: Units = "metric";
   const heightInputs = [height, bottom, top];
-  const displayHeight = (value: number): string => String(Number(metresToDisplay(value, units).toFixed(2)));
+  const displayHeight = (value: number): string => String(metresToInput(value, units));
   const readHeight = (input: HTMLInputElement, label: string): number => {
     const value = displayToMetres(Number(input.value), units);
     if (!Number.isFinite(value)) throw new RangeError(`${label} must be a number.`);
@@ -135,13 +135,13 @@ export function createLandscapingPanel(
 
   return {
     setUnits(value): void {
-      const values = heightInputs.map((input) => displayToMetres(Number(input.value), units));
+      const values = heightInputs.map((input) => Math.round(displayToMetres(Number(input.value), units)));
       units = value;
       heightInputs.forEach((input, index) => {
         input.value = displayHeight(values[index]);
         input.min = displayHeight(-32768);
         input.max = displayHeight(32767);
-        input.step = "any";
+        input.step = units === "imperial" ? "1" : "any";
         input.closest("label")!.querySelector("span")!.textContent = `${["Flatten height", "Carve bottom", "Carve ceiling"][index]} (${unitLabel(units)})`;
       });
       updateLevelOutput();

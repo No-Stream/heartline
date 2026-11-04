@@ -76,6 +76,13 @@ describe("construction steppers", () => {
     expect(steppedPiece(pieces, shapes, "Straight", "slope", -1)).toBe("LevelToGentleDown");
   });
 
+  it("offers inverted exits after upright bank states", () => {
+    const invertedPieces = [piece("Straight", "straight"), piece("HalfRoll", "inversion", "Level", "Inverted")];
+    const invertedShapes = new Map(invertedPieces.map(({ id }) => [id, shape(id, 0)]));
+    expect(stepperOptions(invertedPieces, invertedShapes, "Straight", "bank")).toEqual({ values: ["Level", "Inverted"], index: 0 });
+    expect(steppedPiece(invertedPieces, invertedShapes, "Straight", "bank", 1)).toBe("HalfRoll");
+  });
+
   it("orders 60-degree slope states outside the 45-degree slopes and labels every slope with its angle", () => {
     const sixtyDegreePieces = [
       piece("DownSixty", "slope", "DownSixty"),

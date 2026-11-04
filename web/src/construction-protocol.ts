@@ -29,62 +29,17 @@ export type ConstructionAction =
 /** A coaster panel choice before the main thread translates it to the bridge's model selection. */
 export type ConstructionPanelAction = { readonly type: "construction-set-model"; readonly model: CoasterModelKey };
 
-export interface BlockSection {
-  readonly boundaryMetres: number;
-  readonly brakeStartMetres: number | null;
-  readonly brakePieceIndices: readonly number[];
-  readonly editable: boolean;
-  readonly editableIndex: number | null;
-  readonly reason: string;
-  readonly trackKind: string;
-}
+import type { BlockReport } from "./generated/BlockReport";
+import type { PieceShapeReport as PieceShape } from "./generated/PieceShapeReport";
+export type { BlockReport, PieceShape };
+export type { BlockSectionReport as BlockSection } from "./generated/BlockSectionReport";
 
-export interface BlockReport {
-  readonly sections: readonly BlockSection[];
-  readonly trainCapacity: number;
-  readonly capacitySearchComplete: boolean | null;
-  readonly theoreticalHourlyRiders: number | null;
-  readonly throughputStatus: string;
-  readonly placementStatus: string;
-  readonly placementSearchComplete: boolean | null;
-  readonly reasons: readonly string[];
-  readonly notes: readonly string[];
-  readonly suggestions: readonly string[];
-}
-
-export interface ConstructionPiece {
-  readonly id: string;
-  readonly label: string;
-  readonly group: string;
-  readonly heading: string;
-  readonly slope: string;
-  readonly bank: string;
-  /** Why the worker refuses this piece at the open end, or empty when it can be placed. */
-  readonly refusal: string;
-}
-
-export interface ConstructionElement {
-  readonly id: string;
-  readonly name: string;
-  readonly pieceId: string;
-  readonly slope: string;
-  readonly kind: string;
-}
-
-/** A catalog piece's centreline in metres, entering at the origin along +x, with the track's up vector at each point. */
-export interface PieceShape {
-  readonly id: string;
-  readonly name: string;
-  /** Track, Lift, Brakes or Station. */
-  readonly kind: string;
-  /** Heading change in eighth turns; positive turns left. */
-  readonly turn: number;
-  readonly entrySlope: string;
-  readonly exitSlope: string;
-  readonly entryBank: string;
-  readonly exitBank: string;
-  readonly points: readonly (readonly [number, number, number, number, number, number])[];
-}
+export type { ConstructionPieceWire as ConstructionPiece } from "./generated/ConstructionPieceWire";
+export type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
+export type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
+import type { ConstructionPieceWire as ConstructionPiece } from "./generated/ConstructionPieceWire";
+import type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
+import type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
 
 export interface PieceShapesMessage {
   readonly type: "piece-shapes";
@@ -103,15 +58,7 @@ export interface ConstructionState {
   readonly pieces: readonly ConstructionPiece[];
   readonly elements: readonly ConstructionElement[];
   readonly selected: string | null;
-  readonly track: readonly {
-    readonly id: number;
-    /** Piece id used to find its icon geometry. */
-    readonly label: string;
-    readonly name: string;
-    readonly group: string;
-    readonly slope: string;
-    readonly kind: string;
-  }[];
+  readonly track: readonly ConstructionTrack[];
   readonly canAppend: boolean;
   readonly canClose: boolean;
   readonly finishPreview: boolean;

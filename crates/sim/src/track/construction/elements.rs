@@ -40,6 +40,51 @@ impl Construction {
         }
         let mut choices = Vec::new();
         choices.extend(self.slope_elements(world, obstacles));
+        for (id, name, pieces) in [
+            (
+                "immelmann-left",
+                "Left Immelmann (not heartlined)",
+                [PieceId::HalfLoopUp, PieceId::HalfCorkscrewLeftDown],
+            ),
+            (
+                "immelmann-right",
+                "Right Immelmann (not heartlined)",
+                [PieceId::HalfLoopUp, PieceId::HalfCorkscrewRightDown],
+            ),
+            (
+                "dive-loop-left",
+                "Left dive loop (not heartlined)",
+                [PieceId::HalfCorkscrewLeftUp, PieceId::HalfLoopDown],
+            ),
+            (
+                "dive-loop-right",
+                "Right dive loop (not heartlined)",
+                [PieceId::HalfCorkscrewRightUp, PieceId::HalfLoopDown],
+            ),
+        ] {
+            if let Some(choice) = self.element_choice(id, name, pieces.to_vec(), world, obstacles) {
+                choices.push(choice);
+            }
+        }
+        for (id, name, down, up) in [
+            (
+                "sea-serpent-left",
+                "Left sea serpent (not heartlined)",
+                PieceId::HalfCorkscrewLeftDown,
+                PieceId::HalfCorkscrewRightUp,
+            ),
+            (
+                "sea-serpent-right",
+                "Right sea serpent (not heartlined)",
+                PieceId::HalfCorkscrewRightDown,
+                PieceId::HalfCorkscrewLeftUp,
+            ),
+        ] {
+            let pieces = vec![PieceId::HalfLoopUp, down, up, PieceId::HalfLoopDown];
+            if let Some(choice) = self.element_choice(id, name, pieces, world, obstacles) {
+                choices.push(choice);
+            }
+        }
         for (id, names, bank, turn, unbank) in [
             (
                 "small-left-banked-turn",
@@ -205,6 +250,10 @@ impl Construction {
             GentleUpToLevel,
             GentleToSteepUp,
             SteepToGentleUp,
+            LevelToSixtyUp,
+            SixtyUpToLevel,
+            LevelToSixtyDown,
+            SixtyDownToLevel,
             SteepToSixtyUp,
             SixtyToSteepUp,
             LevelToGentleDown,

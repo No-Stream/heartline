@@ -1,4 +1,4 @@
-use crate::track::{Piece, Shape, Vec3};
+use crate::track::{Piece, Vec3};
 use crate::world::World;
 use std::sync::OnceLock;
 
@@ -31,7 +31,7 @@ pub enum SupportError {
 const BEAM_CLEARANCE: f64 = 0.18 * std::f64::consts::SQRT_2;
 const FOOTER_HALF_WIDTH: f64 = 0.4;
 const FOOTER_HEIGHT: f64 = 0.2;
-const LOOP_RAIL_HALF_SPACING: f64 = 1.0;
+const TRACK_RAIL_HALF_SPACING: f64 = 1.0;
 const SUPPORT_SEARCH_RADIUS_METRES: i32 = 32;
 /// Maximum distance at which world changes can affect generated support geometry.
 pub const SUPPORT_INFLUENCE_RADIUS_METRES: f64 =
@@ -163,7 +163,7 @@ fn route_supports(
         max: bounds.max,
     }));
     let tunnels: Vec<_> = world.carved_spans().collect();
-    let loop_track_segments = matches!(piece.shape, Shape::Loop).then(|| {
+    let inversion_track_segments = piece.inversion.is_some().then(|| {
         let steps = (piece.length() / 0.25).ceil() as usize;
         (0..steps)
             .flat_map(|index| {
@@ -173,7 +173,7 @@ fn route_supports(
                 let end = piece.sample(end_distance);
                 let start_lateral = start.up.cross(start.tangent).unit();
                 let end_lateral = end.up.cross(end.tangent).unit();
-                [-LOOP_RAIL_HALF_SPACING, 0.0, LOOP_RAIL_HALF_SPACING].map(|offset| {
+                [-TRACK_RAIL_HALF_SPACING, 0.0, TRACK_RAIL_HALF_SPACING].map(|offset| {
                     (
                         start_distance,
                         end_distance,
@@ -189,9 +189,8 @@ fn route_supports(
     for index in 0..count {
         let anchor_distance = piece.length() * (index as f64 + 0.5) / count as f64;
         let sample = piece.sample(anchor_distance);
-        if matches!(piece.shape, Shape::Loop) && (sample.up.z < 0.0 || sample.tangent.z.abs() > 0.8)
-        {
-            // Columns under the inverted and near-vertical sections would cross the loop track.
+        if piece.inversion.is_some() && (sample.up.z < 0.0 || sample.tangent.z.abs() > 0.8) {
+            // Columns beneath inverted or near-vertical track would cross the ride structure.
             continue;
         }
         let anchor = sample.position;
@@ -287,8 +286,8 @@ fn route_supports(
                 continue;
             }
             let support = Support { anchor, footing };
-            if loop_track_segments.as_ref().is_some_and(|segments| {
-                !support_clears_loop_track(&support, anchor_distance, segments)
+            if inversion_track_segments.as_ref().is_some_and(|segments| {
+                !support_clears_inversion_track(&support, anchor_distance, segments)
             }) {
                 continue;
             }
@@ -296,7 +295,7 @@ fn route_supports(
             break;
         }
         let Some(selected) = selected else {
-            if loop_track_segments.is_some() {
+            if inversion_track_segments.is_some() {
                 continue;
             }
             return Err(SupportError::NoRoute);
@@ -306,7 +305,7 @@ fn route_supports(
     Ok(supports)
 }
 
-fn support_clears_loop_track(
+fn support_clears_inversion_track(
     support: &Support,
     anchor_distance: f64,
     track_segments: &[(f64, f64, Vec3, Vec3)],
@@ -650,7 +649,7 @@ fn framed_support_segments(
     supports: Vec<(Support, Vec3)>,
     shape: &FrameShape,
 ) -> Vec<SupportSegment> {
-    if matches!(piece.shape, Shape::Loop) {
+    if piece.inversion.is_some() {
         return steel_column_segments(supports.into_iter().map(|(support, _)| support).collect());
     }
     let mut occupied = obstacles.to_vec();
@@ -1239,6 +1238,68 @@ mod tests {
                         &format!("{piece_id:?}, {heading:?}, {style}, {spacing} m spacing"),
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn inversion_supports_skip_inverted_sections_and_clear_the_track() {
+        let world = World::new(
+            64,
+            64,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let model = hybrid_model();
+        for template in catalog()
+            .into_iter()
+            .filter(|piece| piece.inversion.is_some())
+        {
+            let piece = template
+                .at(TrackState {
+                    x: 32,
+                    y: 32,
+                    z: 32,
+                    ..template.entry
+                })
+                .unwrap();
+            for (style, spacing) in [("steel", 8.0), ("wooden", 8.0), ("dense wooden", 4.0)] {
+                let segments = match style {
+                    "steel" => generate_steel_columns(&piece, &world, &[]).unwrap(),
+                    "wooden" => generate_wooden_lattice(&piece, &world, &[]).unwrap(),
+                    "dense wooden" => generate_dense_wooden_lattice(&piece, &world, &[]).unwrap(),
+                    _ => unreachable!(),
+                };
+                let supports =
+                    generate_supports_at_spacing(&piece, &world, &[], &[], spacing).unwrap();
+                assert!(
+                    !supports.is_empty(),
+                    "{:?}, {style}: no routed supports remain",
+                    piece.id
+                );
+                let count = (piece.length() / spacing).ceil() as usize;
+                for support in &supports {
+                    let anchor_distance = (0..count)
+                        .map(|index| piece.length() * (index as f64 + 0.5) / count as f64)
+                        .find(|&distance| piece.sample(distance).position == support.anchor)
+                        .expect("each support anchor is sampled from its piece");
+                    let sample = piece.sample(anchor_distance);
+                    assert!(
+                        sample.up.z >= 0.0 && sample.tangent.z.abs() <= 0.8,
+                        "{:?}, {style}: support {support:?} is beneath an inverted or near-vertical section",
+                        piece.id
+                    );
+                }
+                assert_support_segments_clear_of_track(
+                    &piece,
+                    &supports,
+                    &segments,
+                    spacing,
+                    model.train.width_metres / 2.0,
+                    &format!("{:?}, {style}, {spacing} m spacing", piece.id),
+                );
             }
         }
     }

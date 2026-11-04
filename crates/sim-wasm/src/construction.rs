@@ -1,4 +1,54 @@
 use super::*;
+use serde::Serialize;
+use theme_park_sim::track::Bank;
+use ts_rs::TS;
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionPieceWire {
+    id: &'static str,
+    label: &'static str,
+    group: &'static str,
+    heading: &'static str,
+    slope: &'static str,
+    bank: &'static str,
+    refusal: String,
+}
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionElementWire {
+    id: String,
+    name: &'static str,
+    piece_id: &'static str,
+    slope: &'static str,
+    kind: &'static str,
+}
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionTrackWire {
+    id: usize,
+    label: &'static str,
+    name: &'static str,
+    group: &'static str,
+    slope: &'static str,
+    kind: &'static str,
+}
+
+#[derive(Serialize, TS)]
+pub struct ConstructionColorsWire {
+    track: &'static str,
+    supports: &'static str,
+    trains: &'static str,
+}
+
+pub(crate) fn colors_json(colors: Option<CoasterColors>) -> String {
+    let colors = colors.map(|colors| ConstructionColorsWire {
+        track: colors.track.name(),
+        supports: colors.supports.name(),
+        trains: colors.trains.name(),
+    });
+    serde_json::to_string(&colors).expect("coaster colors serialize")
+}
 
 fn element_representative(element: &ElementChoice) -> &Piece {
     element
@@ -97,23 +147,24 @@ impl WasmSimulation {
         }
     }
 
-    /// The coaster's track, supports and train colours as palette names separated by tabs; empty without a coaster.
+    /// The coaster's track, supports and train colours, or null without a coaster.
     pub fn construction_colors(&self) -> String {
-        self.construction
-            .as_ref()
-            .map_or_else(String::new, |construction| construction.colors().names())
+        colors_json(
+            self.construction
+                .as_ref()
+                .map(|construction| construction.colors()),
+        )
     }
 
-    /// The coaster's train layout (see `train_layout`); empty without a coaster.
+    /// The coaster's train layout, or null without a coaster.
     pub fn construction_train_layout(&self) -> String {
-        self.construction
-            .as_ref()
-            .map_or_else(String::new, |construction| {
-                train_layout(
-                    train_model_key(construction.model()),
-                    &construction.model().train,
-                )
-            })
+        let layout = self.construction.as_ref().map(|construction| {
+            train_layout(
+                train_model_key(construction.model()),
+                &construction.model().train,
+            )
+        });
+        serde_json::to_string(&layout).expect("serialize train layout")
     }
 
     /// Repaints the coaster. Names outside the palette leave it unchanged and explain why in the construction message.
@@ -172,7 +223,7 @@ impl WasmSimulation {
         }
         self.selected = catalog()
             .into_iter()
-            .find(|piece| format!("{:?}", piece.id) == id)
+            .find(|piece| wire_pieceid(piece.id) == id)
             .map(|piece| piece.id);
         self.construction_message = if self.selected.is_some() {
             String::new()
@@ -191,87 +242,88 @@ impl WasmSimulation {
             return format!("element:{element_id}");
         }
         self.selected
-            .map(|id| format!("{id:?}"))
+            .map(|id| wire_pieceid(id).to_owned())
             .unwrap_or_default()
     }
 
     pub fn construction_choices(&self) -> String {
-        let Some(construction) = &self.construction else {
-            return String::new();
-        };
-        construction
-            .available_choices(&self.world, &self.facility_obstacles())
-            .into_iter()
-            .map(|(piece, choice)| {
-                let reason = choice
-                    .result
-                    .err()
-                    .map(construction_error)
-                    .unwrap_or_default();
-                format!(
-                    "{:?}\t{}\t{}\t{:?}\t{:?}\t{:?}\t{}",
-                    piece.id,
-                    piece.name,
-                    piece_group(&piece),
-                    piece.exit.heading,
-                    piece.exit.slope,
-                    piece.exit.bank,
-                    reason
-                )
+        let choices: Vec<_> = self
+            .construction
+            .as_ref()
+            .map(|construction| {
+                construction
+                    .available_choices(&self.world, &self.facility_obstacles())
+                    .into_iter()
+                    .map(|(piece, choice)| ConstructionPieceWire {
+                        id: wire_pieceid(piece.id),
+                        label: piece.name,
+                        group: piece_group(&piece),
+                        heading: wire_heading(piece.exit.heading),
+                        slope: wire_slope(piece.exit.slope),
+                        bank: wire_bank(piece.exit.bank),
+                        refusal: choice
+                            .result
+                            .err()
+                            .map(construction_error)
+                            .unwrap_or_default(),
+                    })
+                    .collect()
             })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .unwrap_or_default();
+        serde_json::to_string(&choices).expect("construction choices serialize")
     }
 
     pub fn construction_elements(&self) -> String {
-        let Some(construction) = &self.construction else {
-            return String::new();
-        };
-        let obstacles = self.facility_obstacles();
-        construction
-            .element_choices(&self.world, &obstacles)
-            .into_iter()
-            .map(|element| {
-                let representative = element_representative(&element);
-                format!(
-                    "element:{}\t{}\t{:?}\t{:?}\t{:?}",
-                    element.id,
-                    element.name,
-                    representative.id,
-                    representative.exit.slope,
-                    representative.kind
-                )
+        let elements: Vec<_> = self
+            .construction
+            .as_ref()
+            .map(|construction| {
+                construction
+                    .element_choices(&self.world, &self.facility_obstacles())
+                    .into_iter()
+                    .map(|element| {
+                        let representative = element_representative(&element);
+                        ConstructionElementWire {
+                            id: format!("element:{}", element.id),
+                            name: element.name,
+                            piece_id: wire_pieceid(representative.id),
+                            slope: wire_slope(representative.exit.slope),
+                            kind: wire_piecekind(representative.kind),
+                        }
+                    })
+                    .collect()
             })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .unwrap_or_default();
+        serde_json::to_string(&elements).expect("construction elements serialize")
     }
 
     pub fn construction_track(&self) -> String {
-        let Some(construction) = &self.construction else {
-            return String::new();
-        };
-        construction
-            .piece_ids()
-            .iter()
-            .zip(construction.pieces())
-            .chain(
+        let track: Vec<_> = self
+            .construction
+            .as_ref()
+            .map(|construction| {
                 construction
-                    .disconnected_segments()
+                    .piece_ids()
                     .iter()
-                    .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
-            )
-            .map(|(id, piece)| {
-                format!(
-                    "{id}\t{:?}\t{}\t{}\t{:?}\t{:?}",
-                    piece.id,
-                    piece.name,
-                    piece_group(piece),
-                    piece.exit.slope,
-                    piece.kind
-                )
+                    .zip(construction.pieces())
+                    .chain(
+                        construction
+                            .disconnected_segments()
+                            .iter()
+                            .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+                    )
+                    .map(|(id, piece)| ConstructionTrackWire {
+                        id: *id,
+                        label: wire_pieceid(piece.id),
+                        name: piece.name,
+                        group: piece_group(piece),
+                        slope: wire_slope(piece.exit.slope),
+                        kind: wire_piecekind(piece.kind),
+                    })
+                    .collect()
             })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .unwrap_or_default();
+        serde_json::to_string(&track).expect("construction track serializes")
     }
 
     pub fn construction_can_append(&self) -> bool {
@@ -723,43 +775,70 @@ impl WasmSimulation {
             .as_ref()
             .expect("report requires train")
             .0;
-        let samples = report.samples.iter().map(|sample| {
-            let position = circuit.sample(sample.distance).position / 4.0;
-            format!("{{\"distance\":{},\"x\":{},\"y\":{},\"z\":{},\"speed\":{},\"verticalG\":{},\"lateralG\":{},\"longitudinalG\":{},\"airtime\":{}}}", sample.distance, position.x, position.y, position.z, sample.speed, sample.vertical_g, sample.lateral_g, sample.longitudinal_g, sample.airtime)
-        }).collect::<Vec<_>>().join(",");
-        let notes = report
-            .notes
+        let samples = report
+            .samples
             .iter()
-            .map(|note| json_string(note))
-            .collect::<Vec<_>>()
-            .join(",");
-        let events = report.proximity_events.iter().map(|event| {
-            let kind = match event.kind {
-                ProximityKind::NearMiss => "nearMiss",
-                ProximityKind::Headchopper => "headchopper",
-                ProximityKind::Dueling => "dueling",
-                ProximityKind::Tunnel => "tunnel",
-                ProximityKind::TerrainHugging => "terrainHugging",
-            };
-            format!("{{\"kind\":\"{kind}\",\"pieceIndex\":{},\"distance\":{},\"x\":{},\"y\":{},\"z\":{},\"strength\":{}}}", event.piece_index, event.distance, event.position.x / 4.0, event.position.y / 4.0, event.position.z / 4.0, event.strength)
-        }).collect::<Vec<_>>().join(",");
-        format!(
-            "{{\"samples\":[{samples}],\"notes\":[{notes}],\"proximityEvents\":[{events}],\"rating\":{{\"excitement\":{},\"intensity\":{},\"nausea\":{}}}}}",
-            report.excitement, report.intensity, report.nausea
-        )
+            .map(|sample| {
+                let position = circuit.sample(sample.distance).position / 4.0;
+                crate::reports::TestingSample {
+                    distance: sample.distance,
+                    x: position.x,
+                    y: position.y,
+                    z: position.z,
+                    speed: sample.speed,
+                    vertical_g: sample.vertical_g,
+                    lateral_g: sample.lateral_g,
+                    longitudinal_g: sample.longitudinal_g,
+                    airtime: sample.airtime,
+                }
+            })
+            .collect();
+        let proximity_events = report
+            .proximity_events
+            .iter()
+            .map(|event| {
+                let kind = match event.kind {
+                    ProximityKind::NearMiss => "nearMiss",
+                    ProximityKind::Headchopper => "headchopper",
+                    ProximityKind::Dueling => "dueling",
+                    ProximityKind::Tunnel => "tunnel",
+                    ProximityKind::TerrainHugging => "terrainHugging",
+                };
+                crate::reports::ProximityEventReport {
+                    kind: kind.to_owned(),
+                    piece_index: event.piece_index,
+                    distance: event.distance,
+                    x: event.position.x / 4.0,
+                    y: event.position.y / 4.0,
+                    z: event.position.z / 4.0,
+                    strength: event.strength,
+                }
+            })
+            .collect();
+        serde_json::to_string(&crate::reports::TestingReport {
+            samples,
+            notes: report.notes.clone(),
+            proximity_events,
+            rating: crate::reports::TestingRating {
+                excitement: report.excitement,
+                intensity: report.intensity,
+                nausea: report.nausea,
+            },
+        })
+        .expect("serialize testing report")
     }
 
     pub fn construction_rails(&self) -> Vec<f32> {
         self.encode_construction_geometry(
             render_rails(&self.construction_preview(), &self.world),
-            19,
+            layouts::RAIL.len(),
         )
     }
 
     pub fn construction_ties(&self) -> Vec<f32> {
         self.encode_construction_geometry(
             render_ties(&self.construction_preview(), &self.world),
-            13,
+            layouts::TIE.len(),
         )
     }
 
@@ -768,7 +847,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_placed_rails(&self) -> Vec<f32> {
-        self.construction_render(render_rails, 19)
+        self.construction_render(render_rails, layouts::RAIL.len())
     }
 
     pub fn construction_rail_distances(&self) -> Vec<f32> {
@@ -797,7 +876,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_placed_ties(&self) -> Vec<f32> {
-        self.construction_render(render_ties, 13)
+        self.construction_render(render_ties, layouts::TIE.len())
     }
 
     pub fn construction_placed_supports(&self) -> Vec<f32> {
@@ -926,6 +1005,169 @@ impl WasmSimulation {
         ) {
             self.park.construction_message.clear();
         }
+    }
+}
+
+pub(crate) fn wire_pieceid(value: PieceId) -> &'static str {
+    match value {
+        PieceId::Straight => "Straight",
+        PieceId::GentleUp => "GentleUp",
+        PieceId::GentleDown => "GentleDown",
+        PieceId::SteepUp => "SteepUp",
+        PieceId::SteepDown => "SteepDown",
+        PieceId::SteepToSixtyUp => "SteepToSixtyUp",
+        PieceId::SixtyUp => "SixtyUp",
+        PieceId::SixtyToSteepUp => "SixtyToSteepUp",
+        PieceId::SteepToSixtyDown => "SteepToSixtyDown",
+        PieceId::SixtyDown => "SixtyDown",
+        PieceId::SixtyToSteepDown => "SixtyToSteepDown",
+        PieceId::LevelToGentleUp => "LevelToGentleUp",
+        PieceId::GentleUpToLevel => "GentleUpToLevel",
+        PieceId::GentleToSteepUp => "GentleToSteepUp",
+        PieceId::SteepToGentleUp => "SteepToGentleUp",
+        PieceId::LevelToGentleDown => "LevelToGentleDown",
+        PieceId::GentleDownToLevel => "GentleDownToLevel",
+        PieceId::GentleToSteepDown => "GentleToSteepDown",
+        PieceId::SteepToGentleDown => "SteepToGentleDown",
+        PieceId::TurnSmallEntry => "TurnSmallEntry",
+        PieceId::TurnSmall => "TurnSmall",
+        PieceId::TurnSmallExit => "TurnSmallExit",
+        PieceId::TurnLargeEntry => "TurnLargeEntry",
+        PieceId::TurnLarge => "TurnLarge",
+        PieceId::TurnLargeExit => "TurnLargeExit",
+        PieceId::BankedTurnEntry => "BankedTurnEntry",
+        PieceId::BankedTurnExit => "BankedTurnExit",
+        PieceId::TurnSmallStandalone => "TurnSmallStandalone",
+        PieceId::TurnLargeStandalone => "TurnLargeStandalone",
+        PieceId::BankedTurnStandalone => "BankedTurnStandalone",
+        PieceId::LargeLeftBankedTurnStandalone => "LargeLeftBankedTurnStandalone",
+        PieceId::SmallRightBankedTurnStandalone => "SmallRightBankedTurnStandalone",
+        PieceId::LargeRightBankedTurnStandalone => "LargeRightBankedTurnStandalone",
+        PieceId::LargeLeftBankedTurnEntry => "LargeLeftBankedTurnEntry",
+        PieceId::LargeLeftBankedTurn => "LargeLeftBankedTurn",
+        PieceId::LargeLeftBankedTurnExit => "LargeLeftBankedTurnExit",
+        PieceId::SmallRightBankedTurnEntry => "SmallRightBankedTurnEntry",
+        PieceId::SmallRightBankedTurn => "SmallRightBankedTurn",
+        PieceId::SmallRightBankedTurnExit => "SmallRightBankedTurnExit",
+        PieceId::LargeRightBankedTurnEntry => "LargeRightBankedTurnEntry",
+        PieceId::LargeRightBankedTurn => "LargeRightBankedTurn",
+        PieceId::LargeRightBankedTurnExit => "LargeRightBankedTurnExit",
+        PieceId::VerticalUpEntry => "VerticalUpEntry",
+        PieceId::VerticalUpContinue => "VerticalUpContinue",
+        PieceId::VerticalUpExit => "VerticalUpExit",
+        PieceId::VerticalDownEntry => "VerticalDownEntry",
+        PieceId::VerticalDownContinue => "VerticalDownContinue",
+        PieceId::VerticalDownExit => "VerticalDownExit",
+        PieceId::BankLeft => "BankLeft",
+        PieceId::UnbankLeft => "UnbankLeft",
+        PieceId::BankRight => "BankRight",
+        PieceId::UnbankRight => "UnbankRight",
+        PieceId::BankedTurn => "BankedTurn",
+        PieceId::OffsetLeft => "OffsetLeft",
+        PieceId::OffsetRight => "OffsetRight",
+        PieceId::Loop => "Loop",
+        PieceId::Corkscrew => "Corkscrew",
+        PieceId::HeartlineRoll => "HeartlineRoll",
+        PieceId::Brakes => "Brakes",
+        PieceId::Station => "Station",
+        PieceId::TurnSmallRightEntry => "TurnSmallRightEntry",
+        PieceId::TurnSmallRight => "TurnSmallRight",
+        PieceId::TurnSmallRightExit => "TurnSmallRightExit",
+        PieceId::TurnSmallRightStandalone => "TurnSmallRightStandalone",
+        PieceId::TurnLargeRightEntry => "TurnLargeRightEntry",
+        PieceId::TurnLargeRight => "TurnLargeRight",
+        PieceId::TurnLargeRightExit => "TurnLargeRightExit",
+        PieceId::TurnLargeRightStandalone => "TurnLargeRightStandalone",
+        PieceId::CorkscrewRight => "CorkscrewRight",
+        PieceId::HeartlineRollRight => "HeartlineRollRight",
+        PieceId::LaunchShort => "LaunchShort",
+        PieceId::Launch => "Launch",
+        PieceId::LaunchLong => "LaunchLong",
+        PieceId::TerrainRise => "TerrainRise",
+        PieceId::TerrainFall => "TerrainFall",
+        PieceId::SteelLoop => "SteelLoop",
+        PieceId::TwisterFanLeft => "TwisterFanLeft",
+        PieceId::TwisterFanRight => "TwisterFanRight",
+        PieceId::TwisterHelixLeft => "TwisterHelixLeft",
+        PieceId::TwisterHelixRight => "TwisterHelixRight",
+        PieceId::AirtimeHill => "AirtimeHill",
+        PieceId::TightTwisterLeft => "TightTwisterLeft",
+        PieceId::TightTwisterRight => "TightTwisterRight",
+        PieceId::HybridOverbankLeft => "HybridOverbankLeft",
+        PieceId::HybridOverbankRight => "HybridOverbankRight",
+        PieceId::HalfTileStraight => "HalfTileStraight",
+        PieceId::FullOffsetLeft => "FullOffsetLeft",
+        PieceId::FullOffsetRight => "FullOffsetRight",
+        PieceId::OneTileStraight => "OneTileStraight",
+        PieceId::OneTileGentleUp => "OneTileGentleUp",
+        PieceId::OneTileGentleDown => "OneTileGentleDown",
+        PieceId::ShortRise => "ShortRise",
+        PieceId::ShortFall => "ShortFall",
+        PieceId::LoopRight => "LoopRight",
+        PieceId::SteelLoopRight => "SteelLoopRight",
+        PieceId::HalfLoopUp => "HalfLoopUp",
+        PieceId::HalfLoopDown => "HalfLoopDown",
+        PieceId::HalfCorkscrewLeftUp => "HalfCorkscrewLeftUp",
+        PieceId::HalfCorkscrewRightUp => "HalfCorkscrewRightUp",
+        PieceId::HalfCorkscrewLeftDown => "HalfCorkscrewLeftDown",
+        PieceId::HalfCorkscrewRightDown => "HalfCorkscrewRightDown",
+        PieceId::TopHat => "TopHat",
+        PieceId::LevelToSixtyUp => "LevelToSixtyUp",
+        PieceId::SixtyUpToLevel => "SixtyUpToLevel",
+        PieceId::LevelToSixtyDown => "LevelToSixtyDown",
+        PieceId::SixtyDownToLevel => "SixtyDownToLevel",
+        PieceId::BankedDropLeft => "BankedDropLeft",
+        PieceId::BankedDropRight => "BankedDropRight",
+        PieceId::TwistedDropLeft => "TwistedDropLeft",
+        PieceId::TwistedDropRight => "TwistedDropRight",
+        PieceId::BarrelDropLeft => "BarrelDropLeft",
+        PieceId::BarrelDropRight => "BarrelDropRight",
+    }
+}
+
+fn wire_heading(value: Heading) -> &'static str {
+    match value {
+        Heading::East => "East",
+        Heading::NorthEast => "NorthEast",
+        Heading::North => "North",
+        Heading::NorthWest => "NorthWest",
+        Heading::West => "West",
+        Heading::SouthWest => "SouthWest",
+        Heading::South => "South",
+        Heading::SouthEast => "SouthEast",
+    }
+}
+
+pub(crate) fn wire_slope(value: Slope) -> &'static str {
+    match value {
+        Slope::DownSteep => "DownSteep",
+        Slope::DownSixty => "DownSixty",
+        Slope::DownModerate => "DownModerate",
+        Slope::DownGentle => "DownGentle",
+        Slope::Level => "Level",
+        Slope::UpGentle => "UpGentle",
+        Slope::UpModerate => "UpModerate",
+        Slope::UpSteep => "UpSteep",
+        Slope::UpSixty => "UpSixty",
+    }
+}
+
+pub(crate) fn wire_bank(value: Bank) -> &'static str {
+    match value {
+        Bank::Right => "Right",
+        Bank::Level => "Level",
+        Bank::Left => "Left",
+        Bank::Inverted => "Inverted",
+    }
+}
+
+pub(crate) fn wire_piecekind(value: PieceKind) -> &'static str {
+    match value {
+        PieceKind::Track => "Track",
+        PieceKind::Lift => "Lift",
+        PieceKind::Launch => "Launch",
+        PieceKind::Brakes => "Brakes",
+        PieceKind::Station => "Station",
     }
 }
 

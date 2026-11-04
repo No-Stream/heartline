@@ -1171,7 +1171,11 @@ fn sixty_degree_slope_transitions_stay_below_four_vertical_g() {
     for piece in pieces.iter().filter(|piece| {
         matches!(
             piece.id,
-            PieceId::SteepToSixtyUp
+            PieceId::LevelToSixtyUp
+                | PieceId::SixtyUpToLevel
+                | PieceId::LevelToSixtyDown
+                | PieceId::SixtyDownToLevel
+                | PieceId::SteepToSixtyUp
                 | PieceId::SixtyToSteepUp
                 | PieceId::SteepToSixtyDown
                 | PieceId::SixtyToSteepDown
@@ -1194,5 +1198,154 @@ fn sixty_degree_slope_transitions_stay_below_four_vertical_g() {
             "{}: {peak_vertical_g:.3} g",
             piece.name
         );
+    }
+}
+
+#[test]
+fn banked_drops_complete_physics_laps_with_finite_forces() {
+    use crate::track::multi_launch_model;
+    use PieceId::*;
+    for (model, bank, drop, unbank, first_turn, second_turn) in [
+        (
+            wooden_twister_model(),
+            BankLeft,
+            BankedDropLeft,
+            Some(UnbankLeft),
+            TurnLargeEntry,
+            TurnLargeExit,
+        ),
+        (
+            wooden_twister_model(),
+            BankRight,
+            BankedDropRight,
+            Some(UnbankRight),
+            TurnLargeRightEntry,
+            TurnLargeRightExit,
+        ),
+        (
+            hybrid_model(),
+            BankLeft,
+            BankedDropLeft,
+            Some(UnbankLeft),
+            TurnLargeEntry,
+            TurnLargeExit,
+        ),
+        (
+            hybrid_model(),
+            BankRight,
+            BankedDropRight,
+            Some(UnbankRight),
+            TurnLargeRightEntry,
+            TurnLargeRightExit,
+        ),
+        (
+            multi_launch_model(),
+            BankLeft,
+            BankedDropLeft,
+            Some(UnbankLeft),
+            TurnLargeEntry,
+            TurnLargeExit,
+        ),
+        (
+            multi_launch_model(),
+            BankRight,
+            BankedDropRight,
+            Some(UnbankRight),
+            TurnLargeRightEntry,
+            TurnLargeRightExit,
+        ),
+        (
+            hybrid_model(),
+            BankLeft,
+            TwistedDropLeft,
+            None,
+            TurnLargeEntry,
+            TurnLargeExit,
+        ),
+        (
+            hybrid_model(),
+            BankRight,
+            TwistedDropRight,
+            None,
+            TurnLargeRightEntry,
+            TurnLargeRightExit,
+        ),
+        (
+            hybrid_model(),
+            BankLeft,
+            BarrelDropLeft,
+            None,
+            TurnLargeEntry,
+            TurnLargeExit,
+        ),
+        (
+            hybrid_model(),
+            BankRight,
+            BarrelDropRight,
+            None,
+            TurnLargeRightEntry,
+            TurnLargeRightExit,
+        ),
+    ] {
+        let mut ids = vec![Station, LevelToGentleUp];
+        if unbank.is_some() {
+            ids.push(GentleUp);
+        }
+        ids.extend([GentleUpToLevel, first_turn, second_turn, bank, drop]);
+        if let Some(unbank) = unbank {
+            ids.push(unbank);
+        }
+        ids.push(GentleDownToLevel);
+        ids.extend([first_turn, second_turn]);
+        let mut state = TrackState::origin();
+        let mut pieces = Vec::new();
+        for id in ids {
+            let piece = model
+                .available_pieces(state)
+                .into_iter()
+                .find(|piece| piece.id == id)
+                .unwrap_or_else(|| panic!("{} cannot place {id:?} at {state:?}", model.name));
+            state = piece.exit;
+            pieces.push(piece);
+        }
+        let circuit =
+            Circuit::new(pieces).unwrap_or_else(|error| panic!("{drop:?} end {state:?}: {error}"));
+        let config = PhysicsConfig {
+            rolling_resistance: 0.0,
+            drag_coefficient: 0.0,
+            powered_sections: false,
+            ..PhysicsConfig::default()
+        };
+        let mut train_config = model.train;
+        train_config.cars = 1;
+        let mut train = Train::new(&circuit, &train_config, config, 0.0, 20.0);
+        for _ in 0..100_000 {
+            train.step(&circuit);
+            if train.distance() >= circuit.length() {
+                break;
+            }
+        }
+        assert!(
+            train.distance() >= circuit.length(),
+            "{drop:?}: {} of {}",
+            train.distance(),
+            circuit.length()
+        );
+        let piece = circuit
+            .pieces()
+            .iter()
+            .find(|piece| piece.id == drop)
+            .unwrap();
+        for step in 0..=100 {
+            let forces = rider_g(piece, piece.length() * f64::from(step) / 100.0, 20.0, 0.0);
+            assert!(
+                forces.vertical.is_finite() && forces.vertical.abs() < 6.0,
+                "{drop:?}: {forces:?}"
+            );
+            assert!(
+                forces.lateral.is_finite() && forces.lateral.abs() < 6.0,
+                "{drop:?}: {forces:?}"
+            );
+        }
     }
 }

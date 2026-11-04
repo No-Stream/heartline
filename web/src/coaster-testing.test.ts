@@ -88,7 +88,7 @@ describe("coaster testing overlay", () => {
     expect(formatTestingNote(
       "The train could not finish the circuit after travelling 12.0 m. Add a lift or launch, or shorten the circuit.",
       "imperial",
-    )).toBe("The train could not finish the circuit after travelling 39.4 ft. Add a lift or launch, or shorten the circuit.");
+    )).toBe("The train could not finish the circuit after travelling 39 ft. Add a lift or launch, or shorten the circuit.");
     expect(formatTestingNote(
       "Riders spend at least 8 m in a row under high forces. Add gentler sections between intense elements.",
       "metric",
@@ -96,6 +96,6 @@ describe("coaster testing overlay", () => {
     expect(formatTestingNote(
       "This layout has at least 100 m in a row below 8 m/s. A taller first drop or a faster section could make it feel livelier.",
       "imperial",
-    )).toBe("This layout has at least 328.1 ft in a row below 17.9 mph. A taller first drop or a faster section could make it feel livelier.");
+    )).toBe("This layout has at least 328 ft in a row below 17.9 mph. A taller first drop or a faster section could make it feel livelier.");
   });
 });
