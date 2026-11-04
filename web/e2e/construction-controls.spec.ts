@@ -96,6 +96,33 @@ test("construction controls dispatch actions with the keyboard and reflect worke
   await expect(page.getByRole("status")).toHaveText("Track collides");
 });
 
+test("finish controls explain missing connections and confirm or cancel a preview @fast", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const finish = page.getByRole("button", { name: "Finish coaster" });
+  const reason = page.locator("[data-finish-reason]");
+  await expect(finish).toBeDisabled();
+  await expect(reason).toHaveText("Build more track to reach a connection.");
+
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ canFinish: true, finishReason: "" }));
+  await expect(finish).toBeEnabled();
+  await finish.click();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: true }));
+  await expect(page.getByRole("button", { name: "Confirm coaster finish" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel finish preview" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel finish preview" }).click();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: false }));
+  await finish.click();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: true }));
+  await page.getByRole("button", { name: "Confirm coaster finish" }).click();
+
+  expect(await recorded(page)).toEqual([
+    { type: "construction-finish-preview" },
+    { type: "construction-finish-cancel" },
+    { type: "construction-finish-preview" },
+    { type: "construction-finish-confirm" },
+  ]);
+});
+
 test("station height stepper stays within its range in two-metre steps", async ({ page }) => {
   await page.goto(fixtureUrl);
   const height = page.getByLabel("Station height above ground (metres)");

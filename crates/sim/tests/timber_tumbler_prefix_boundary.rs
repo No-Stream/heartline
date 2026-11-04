@@ -67,25 +67,42 @@ fn station_backed_prefix_refusals_are_world_bounds_at_four_and_twelve_metres() {
     ];
 
     for z in [2, 6] {
-        let at_recorded_start = construction_with_prefix(&world, 50, 50, z, &prefix);
+        let mut at_recorded_start = construction_with_prefix(&world, 50, 50, z, &prefix);
         assert_eq!(
             (at_recorded_start.end().x, at_recorded_start.end().y),
             (250, 2)
         );
+        at_recorded_start
+            .append(PieceId::HalfTileStraight, &world, &[])
+            .unwrap();
         let edge_choices = at_recorded_start.available_choices(&world, &[]);
         assert!(!edge_choices.is_empty());
-        assert!(edge_choices.iter().all(|(_, choice)| {
-            choice.result
-                == Err(ConstructionError::Clearance(
-                    ClearanceCollision::OutsideWorld,
-                ))
-        }));
+        assert!(
+            edge_choices.iter().all(|(_, choice)| {
+                choice.result
+                    == Err(ConstructionError::Clearance(
+                        ClearanceCollision::OutsideWorld,
+                    ))
+            }),
+            "unexpected edge choices: {:?}",
+            edge_choices
+                .iter()
+                .filter(|(_, choice)| choice.result
+                    != Err(ConstructionError::Clearance(
+                        ClearanceCollision::OutsideWorld
+                    )))
+                .map(|(_, choice)| choice)
+                .collect::<Vec<_>>()
+        );
 
-        let translated_inward = construction_with_prefix(&world, 16, 64, z, &prefix);
+        let mut translated_inward = construction_with_prefix(&world, 16, 64, z, &prefix);
         assert_eq!(
             (translated_inward.end().x, translated_inward.end().y),
             (216, 16)
         );
+        translated_inward
+            .append(PieceId::HalfTileStraight, &world, &[])
+            .unwrap();
         assert!(
             translated_inward
                 .available_choices(&world, &[])
@@ -108,10 +125,22 @@ fn a_random_walk_can_trap_its_endpoint_against_existing_track() {
         (PieceId::TurnLargeRightExit, false),
         (PieceId::OffsetLeft, false),
     ];
-    let construction = construction_with_prefix(&world, 50, 50, 2, &prefix);
+    let mut construction = construction_with_prefix(&world, 50, 50, 2, &prefix);
+    construction
+        .append(PieceId::OneTileStraight, &world, &[])
+        .unwrap();
     let choices = construction.available_choices(&world, &[]);
     assert!(!choices.is_empty());
-    assert!(choices.iter().all(|(_, choice)| {
-        choice.result == Err(ConstructionError::Clearance(ClearanceCollision::Track))
-    }));
+    assert!(
+        choices.iter().all(|(_, choice)| {
+            choice.result == Err(ConstructionError::Clearance(ClearanceCollision::Track))
+        }),
+        "unexpected choices: {:?}",
+        choices
+            .iter()
+            .filter(|(_, choice)| choice.result
+                != Err(ConstructionError::Clearance(ClearanceCollision::Track)))
+            .map(|(_, choice)| choice)
+            .collect::<Vec<_>>()
+    );
 }

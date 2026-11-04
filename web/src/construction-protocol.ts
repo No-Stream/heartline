@@ -12,6 +12,9 @@ export type ConstructionAction =
   | { readonly type: "construction-delete"; readonly id: number }
   | { readonly type: "construction-delete-mode"; readonly enabled: boolean }
   | { readonly type: "construction-close" }
+  | { readonly type: "construction-finish-preview" }
+  | { readonly type: "construction-finish-confirm" }
+  | { readonly type: "construction-finish-cancel" }
   | { readonly type: "construction-set-open"; readonly open: boolean }
   | { readonly type: "construction-set-coaster-price"; readonly price: number }
   | { readonly type: "construction-test" }
@@ -96,6 +99,9 @@ export interface ConstructionState {
   }[];
   readonly canAppend: boolean;
   readonly canClose: boolean;
+  readonly finishPreview: boolean;
+  readonly canFinish: boolean;
+  readonly finishReason: string;
   readonly canTest: boolean;
   readonly isOpen: boolean;
   readonly coasterPrice: number;
