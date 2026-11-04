@@ -107,7 +107,7 @@ const rideColors = [LIGHT_INK.mustard, LIGHT_INK.coral, LIGHT_INK.paper, LIGHT_I
 /** A soft disc of light on the ground, as a lamp throws it, drawn into the pool layer that relights the world. */
 function groundPool(camera: Camera, viewport: Viewport, x: number, y: number, z: number, radius: number, color: Rgb, intensity: number, id: string): GeometryQuad {
   const vertices = ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([across, down]) => ({ ...project(camera, viewport, x + across * radius, y + down * radius, z), u: (across + 1) / 2, v: (down + 1) / 2 })) as GeometryQuad["vertices"];
-  return { vertices, page: SHAPE_PAGES.softDisc, color: [color[0], color[1], color[2], intensity], kind: "pool", id, tileX: Math.floor(x), tileY: Math.floor(y), light: 1 };
+  return { vertices, page: SHAPE_PAGES.lightPool, color: [color[0], color[1], color[2], intensity], kind: "pool", id, tileX: Math.floor(x), tileY: Math.floor(y), light: 1 };
 }
 
 export interface NightLights {

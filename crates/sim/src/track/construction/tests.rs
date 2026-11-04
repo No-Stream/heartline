@@ -1650,3 +1650,166 @@ fn direct_sixty_degree_transitions_are_available_and_complete_a_lap() {
         );
     }
 }
+
+#[test]
+fn completion_finds_known_connections_across_models_and_rotations() {
+    use PieceId::*;
+    let world = World::new(
+        256,
+        256,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let cases: &[(&str, &[PieceId], &[PieceId])] = &[
+        (
+            "turns",
+            &[Station, TurnSmallStandalone, TurnSmallStandalone, Straight],
+            &[TurnSmallStandalone, TurnSmallStandalone],
+        ),
+        (
+            "one turn",
+            &[
+                Station,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                Straight,
+                TurnSmallStandalone,
+            ],
+            &[TurnSmallStandalone],
+        ),
+        (
+            "full tile offset",
+            &[
+                Station,
+                Straight,
+                Straight,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                FullOffsetLeft,
+            ],
+            &[FullOffsetRight, TurnSmallStandalone, TurnSmallStandalone],
+        ),
+        (
+            "two tile offset",
+            &[
+                Station,
+                Straight,
+                Straight,
+                Straight,
+                Straight,
+                Straight,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                FullOffsetLeft,
+                FullOffsetLeft,
+            ],
+            &[
+                FullOffsetRight,
+                FullOffsetRight,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+            ],
+        ),
+        (
+            "offset",
+            &[
+                Station,
+                Straight,
+                Straight,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                OffsetLeft,
+            ],
+            &[OffsetRight, TurnSmallStandalone, TurnSmallStandalone],
+        ),
+        (
+            "slope",
+            &[
+                Station,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                Straight,
+                LevelToGentleDown,
+            ],
+            &[GentleDownToLevel, TurnSmallStandalone, TurnSmallStandalone],
+        ),
+    ];
+    for (model_index, model) in [
+        hybrid_model(),
+        crate::track::multi_launch_model(),
+        crate::track::wooden_twister_model(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (heading_index, heading) in [
+            Heading::East,
+            Heading::NorthEast,
+            Heading::North,
+            Heading::NorthWest,
+            Heading::West,
+            Heading::SouthWest,
+            Heading::South,
+            Heading::SouthEast,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for (case_index, (case, prefix, witness)) in cases
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index == (model_index + heading_index) % cases.len())
+            {
+                let initial = TrackState {
+                    x: 125 + case_index as i32,
+                    y: 130 - case_index as i32,
+                    z: 15 + case_index as i32 * 5,
+                    heading,
+                    ..start()
+                };
+                let mut construction = Construction::new(initial, model.clone());
+                for &piece in *prefix {
+                    construction
+                        .append(piece, &world, &[])
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{} {heading:?} {case}: prefix {piece:?}: {error:?}",
+                                model.name
+                            )
+                        });
+                }
+                let mut expected = construction.copy_for_completion();
+                for &piece in *witness {
+                    expected.append(piece, &world, &[]).unwrap_or_else(|error| {
+                        panic!(
+                            "{} {heading:?} {case}: witness {piece:?}: {error:?}",
+                            model.name
+                        )
+                    });
+                }
+                expected.close().unwrap_or_else(|error| {
+                    panic!(
+                        "{} {heading:?} {case}: witness close: {error:?}",
+                        model.name
+                    )
+                });
+                let completion = construction
+                    .find_completion(&world, &[])
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{} {heading:?} {case}: search failed despite valid witness",
+                            model.name
+                        )
+                    });
+                construction
+                    .apply_completion(&completion, &world, &[])
+                    .unwrap();
+                assert!(construction.is_closed());
+            }
+        }
+    }
+}

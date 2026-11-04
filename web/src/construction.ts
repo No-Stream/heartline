@@ -52,6 +52,13 @@ const steppers: readonly { attribute: StepAttribute; label: string; previous: st
   { attribute: "slope", label: "Slope", previous: "Slope down", next: "Slope up", keys: ["slopeDown", "slopeUp"] },
   { attribute: "bank", label: "Bank", previous: "Bank left", next: "Bank right", keys: ["bankLeft", "bankRight"] },
 ];
+/** Building comes first; colours and running the ride are settings the player visits when they want them. */
+const builderTabs = [
+  { id: "build", label: "Build" },
+  { id: "colours", label: "Colours" },
+  { id: "operate", label: "Operate" },
+] as const;
+type BuilderTab = (typeof builderTabs)[number]["id"];
 const hint = (name: keyof typeof builderShortcuts): string => `<kbd>${keyHint(builderShortcuts[name])}</kbd>`;
 function sampledLength(shape: PieceShape): number {
   let length = 0;
@@ -93,128 +100,144 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     </div>
     <p role="status" class="tool-panel__status" data-message></p>
     <div data-editor hidden>
-      <p class="tool-panel__section builder__ready" data-ready hidden>The track meets the station. Close the circuit with ${hint("close")}</p>
-      <section class="tool-panel__section builder__next" aria-label="Chosen piece" data-next>
-        <figure class="tool-panel__preview" data-preview><div class="tool-panel__preview-icons" data-preview-icons></div>
-          <figcaption><span class="tool-panel__label tool-panel__preview-group" data-preview-group></span><span class="tool-panel__preview-name" data-preview-name></span></figcaption></figure>
-        <div class="builder__steppers" data-steppers>${steppers.map(({ attribute, label, previous, next, keys }) => `
-          <div class="stepper" role="group" aria-label="Next piece ${attribute}">
-            <span class="tool-panel__label">${label}</span>
-            <button type="button" data-stepper="${attribute}--1" aria-label="${previous}">−</button>
-            <span class="stepper__value" data-stepper-value="${attribute}"></span>
-            <button type="button" data-stepper="${attribute}-1" aria-label="${next}">+</button>
-            <span class="stepper__keys">${hint(keys[0])}${hint(keys[1])}</span>
-          </div>`).join("")}
-        </div>
-      </section>
-      <div class="tool-panel__section builder__chain" data-chain-section>
-        <button type="button" class="builder__chain-toggle" data-chain-toggle aria-pressed="false" aria-label="Chain lift" aria-keyshortcuts="${keyHint(builderShortcuts.chain)}" aria-describedby="chain-lift-hint">
-          <svg class="builder__chain-links" viewBox="0 0 30 14" width="30" height="14" aria-hidden="true"><rect class="builder__chain-plate" x="2.6" y="3.4" width="14" height="8" rx="4"/><rect class="builder__chain-plate" x="13.6" y="3.4" width="14" height="8" rx="4"/><rect class="builder__chain-line" x="1.5" y="2.5" width="14" height="8" rx="4"/><rect class="builder__chain-line" x="12.5" y="2.5" width="14" height="8" rx="4"/></svg>
-          <span class="builder__chain-name">Chain lift</span>
-          <span class="builder__chain-state" data-chain-state aria-hidden="true">Off</span>
-          ${hint("chain")}
-        </button>
-        <p class="builder__chain-hint" id="chain-lift-hint" data-chain-hint></p>
+      <div class="builder__tabs" role="tablist" aria-label="Coaster builder sections" data-builder-tabs>${builderTabs.map(({ id, label }, index) => `
+        <button type="button" role="tab" id="builder-tab-${id}" aria-controls="builder-tabpanel-${id}" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}" data-builder-tab="${id}">${label}</button>`).join("")}
       </div>
-      <section class="tool-panel__section" aria-label="Track elements"><h3>Track elements</h3><div class="builder__elements" data-elements></div></section>
-      <section class="tool-panel__section builder__colors" aria-label="Coaster colours">
-        <h3>Colours</h3>${COASTER_PARTS.map((part) => `
-        <div class="builder__color-row" role="radiogroup" aria-label="${coasterPartNames[part]} colour" data-coaster-color-part="${part}">
-          <span class="tool-panel__label">${coasterPartNames[part]}</span>
-          <div class="builder__swatches">${COASTER_COLOR_NAMES.map((name) => `<button type="button" role="radio" aria-checked="false" class="builder__swatch" data-coaster-color="${name}" aria-label="${COASTER_COLORS[name].label}" title="${COASTER_COLORS[name].label}" style="--swatch: ${COASTER_COLORS[name].hex}"></button>`).join("")}</div>
-        </div>`).join("")}
-      </section>
-      <section class="tool-panel__section" aria-label="Track actions">
-        <div class="builder__actions">
-          <div class="builder__ride-controls">
-            <div class="builder__coaster-price">
-              <span class="tool-panel__label" id="coaster-price-label">Ride price</span>
-              <div class="stepper stepper--compact" role="group" aria-labelledby="coaster-price-label">
-                <button type="button" data-coaster-price-step="-1" aria-label="Lower the coaster ticket price">−</button>
-                <input type="number" data-coaster-price min="0" max="65535" step="1" value="6" aria-label="Coaster ticket price">
-                <button type="button" data-coaster-price-step="1" aria-label="Raise the coaster ticket price">+</button>
+      <div class="builder__tabpanel" role="tabpanel" id="builder-tabpanel-build" aria-labelledby="builder-tab-build" data-builder-tabpanel="build">
+        <p class="tool-panel__section builder__ready" data-ready hidden>The track meets the station. Close the circuit with ${hint("close")}</p>
+        <section class="tool-panel__section builder__next" aria-label="Chosen piece" data-next>
+          <figure class="tool-panel__preview" data-preview><div class="tool-panel__preview-icons" data-preview-icons></div>
+            <figcaption><span class="tool-panel__label tool-panel__preview-group" data-preview-group></span><span class="tool-panel__preview-name" data-preview-name></span></figcaption></figure>
+          <div class="builder__steppers" data-steppers>${steppers.map(({ attribute, label, previous, next, keys }) => `
+            <div class="stepper" role="group" aria-label="Next piece ${attribute}">
+              <span class="tool-panel__label">${label}</span>
+              <button type="button" data-stepper="${attribute}--1" aria-label="${previous}">−</button>
+              <span class="stepper__value" data-stepper-value="${attribute}"></span>
+              <button type="button" data-stepper="${attribute}-1" aria-label="${next}">+</button>
+              <span class="stepper__keys">${hint(keys[0])}${hint(keys[1])}</span>
+            </div>`).join("")}
+          </div>
+        </section>
+        <div class="tool-panel__section builder__chain" data-chain-section>
+          <button type="button" class="builder__chain-toggle" data-chain-toggle aria-pressed="false" aria-label="Chain lift" aria-keyshortcuts="${keyHint(builderShortcuts.chain)}" aria-describedby="chain-lift-hint">
+            <svg class="builder__chain-links" viewBox="0 0 30 14" width="30" height="14" aria-hidden="true"><rect class="builder__chain-plate" x="2.6" y="3.4" width="14" height="8" rx="4"/><rect class="builder__chain-plate" x="13.6" y="3.4" width="14" height="8" rx="4"/><rect class="builder__chain-line" x="1.5" y="2.5" width="14" height="8" rx="4"/><rect class="builder__chain-line" x="12.5" y="2.5" width="14" height="8" rx="4"/></svg>
+            <span class="builder__chain-name">Chain lift</span>
+            <span class="builder__chain-state" data-chain-state aria-hidden="true">Off</span>
+            ${hint("chain")}
+          </button>
+          <p class="builder__chain-hint" id="chain-lift-hint" data-chain-hint></p>
+        </div>
+        <section class="tool-panel__section builder__place" aria-label="Place track">
+          <div class="builder__place-actions">
+            <button type="button" class="tool-panel__action tool-panel__action--primary" data-append>Place piece ${hint("place")}</button>
+            <button type="button" class="tool-panel__action" data-undo>Undo last piece ${hint("undo")}</button>
+          </div>
+          <p class="builder__test-hint" data-panel-track-height></p>
+          <p class="builder__test-hint" data-panel-station-height></p>
+        </section>
+        <section class="tool-panel__section builder__choices" aria-label="Piece choices" data-choices>
+          <h3>Track elements</h3>
+          <p class="tool-panel__hint">Common shapes, ready to place.</p>
+          <div class="builder__elements" data-elements></div>
+          <h3>All pieces</h3>
+          <p class="tool-panel__hint">Every single piece, for fine control.</p>
+          <div class="builder__palette" role="radiogroup" aria-label="Next piece" data-palette></div>
+        </section>
+        <section class="tool-panel__section builder__finish" aria-label="Finish and test">
+          <h3>Finish and test</h3>
+          <div class="builder__actions">
+            <button type="button" class="tool-panel__action" data-close>Close circuit ${hint("close")}</button>
+            <div class="builder__finish-flow">
+              <button type="button" class="tool-panel__action" data-finish aria-describedby="finish-reason">Finish coaster</button>
+              <p class="builder__finish-reason" id="finish-reason" data-finish-reason aria-live="polite"></p>
+              <div class="builder__finish-confirmation" data-finish-confirmation hidden>
+                <p>Review the highlighted connection, then confirm to add it and close the circuit.</p>
+                <button type="button" class="tool-panel__action tool-panel__action--primary" data-finish-confirm>Confirm coaster finish</button>
+                <button type="button" class="tool-panel__action" data-finish-cancel>Cancel finish preview</button>
               </div>
             </div>
+            <button type="button" class="tool-panel__action" data-test>Test coaster ${hint("test")}</button>
             <button type="button" class="tool-panel__action" data-open>Open coaster</button>
           </div>
-          <button type="button" class="tool-panel__action tool-panel__action--primary" data-append>Place piece ${hint("place")}</button>
-          <button type="button" class="tool-panel__action" data-undo>Undo last piece ${hint("undo")}</button>
-          <button type="button" class="tool-panel__action" data-close>Close circuit ${hint("close")}</button>
-          <div class="builder__finish-flow">
-            <button type="button" class="tool-panel__action" data-finish aria-describedby="finish-reason">Finish coaster</button>
-            <p class="builder__finish-reason" id="finish-reason" data-finish-reason aria-live="polite"></p>
-            <div class="builder__finish-confirmation" data-finish-confirmation hidden>
-              <p>Review the highlighted connection, then confirm to add it and close the circuit.</p>
-              <button type="button" class="tool-panel__action tool-panel__action--primary" data-finish-confirm>Confirm coaster finish</button>
-              <button type="button" class="tool-panel__action" data-finish-cancel>Cancel finish preview</button>
+          <p class="builder__stamp" data-stamp hidden>Circuit complete</p>
+          <p class="builder__test-hint" data-test-hint></p>
+          <p class="builder__test-hint" data-station-access></p>
+          <section aria-label="Coaster testing" data-testing></section>
+        </section>
+        <section class="tool-panel__section" aria-label="Launch positions" data-launches hidden>
+          <h3>Launch positions</h3>
+          <ol data-launch-list></ol>
+        </section>
+        <section class="tool-panel__section" aria-label="Placed track">
+          <div class="builder__track-head"><h3>Track pieces</h3><span class="builder__track-count" data-track-count></span></div>
+          <ol class="builder__track" data-track></ol>
+          <label class="builder__toggle"><input type="checkbox" data-delete-mode> Delete track by clicking it ${hint("deleteMode")}</label>
+        </section>
+        <details class="tool-panel__section builder__keys"><summary>All keys</summary><dl>
+          <dt>${hint("turnLeft")} ${hint("turnRight")}</dt><dd>Turn left or right</dd>
+          <dt>${hint("slopeDown")} ${hint("slopeUp")}</dt><dd>Slope down or up</dd>
+          <dt>${hint("bankLeft")} ${hint("bankRight")}</dt><dd>Bank left or right</dd>
+          <dt>${hint("previousPiece")} ${hint("nextPiece")}</dt><dd>Previous or next piece</dd>
+          <dt><kbd>1</kbd>–<kbd>6</kbd></dt><dd>Jump to a group of pieces</dd>
+          <dt>${hint("place")} <kbd>B</kbd></dt><dd>Place the piece</dd>
+          <dt>${hint("chain")}</dt><dd>Turn the chain lift on or off</dd>
+          <dt>${hint("undo")}</dt><dd>Undo the last piece</dd>
+          <dt>${hint("deleteMode")}</dt><dd>Delete track by clicking it</dd>
+          <dt>${hint("close")} ${hint("test")}</dt><dd>Close the circuit, then test it</dd>
+          <dt>${hint("cancel")}</dt><dd>Stop placing the station or deleting</dd>
+          <dt><kbd>Q</kbd> <kbd>E</kbd></dt><dd>Rotate the view; arrows pan</dd>
+        </dl></details>
+      </div>
+      <div class="builder__tabpanel" role="tabpanel" id="builder-tabpanel-colours" aria-labelledby="builder-tab-colours" data-builder-tabpanel="colours" hidden>
+        <section class="tool-panel__section builder__colors" aria-label="Coaster colours">${COASTER_PARTS.map((part) => `
+          <div class="builder__color-row" role="radiogroup" aria-label="${coasterPartNames[part]} colour" data-coaster-color-part="${part}">
+            <span class="tool-panel__label">${coasterPartNames[part]}</span>
+            <div class="builder__swatches">${COASTER_COLOR_NAMES.map((name) => `<button type="button" role="radio" aria-checked="false" class="builder__swatch" data-coaster-color="${name}" aria-label="${COASTER_COLORS[name].label}" title="${COASTER_COLORS[name].label}" style="--swatch: ${COASTER_COLORS[name].hex}"></button>`).join("")}</div>
+          </div>`).join("")}
+        </section>
+      </div>
+      <div class="builder__tabpanel" role="tabpanel" id="builder-tabpanel-operate" aria-labelledby="builder-tab-operate" data-builder-tabpanel="operate" hidden>
+        <section class="tool-panel__section builder__coaster-price" aria-label="Ride price">
+          <span class="tool-panel__label" id="coaster-price-label">Ride price</span>
+          <div class="stepper stepper--compact" role="group" aria-labelledby="coaster-price-label">
+            <button type="button" data-coaster-price-step="-1" aria-label="Lower the coaster ticket price">−</button>
+            <input type="number" data-coaster-price min="0" max="65535" step="1" value="6" aria-label="Coaster ticket price">
+            <button type="button" data-coaster-price-step="1" aria-label="Raise the coaster ticket price">+</button>
+          </div>
+          <p class="builder__test-hint">Coaster income: <span data-coaster-income>0</span></p>
+        </section>
+        <section class="tool-panel__section builder__blocks" aria-label="Block sections" data-block-panel>
+          <div class="builder__block-heading">
+            <h3>Block sections</h3>
+            <div class="builder__block-heading-actions">
+              <button type="button" class="tool-panel__action" data-auto-blocks>Add block sections</button>
+              <button type="button" class="tool-panel__action" data-apply-best-blocks hidden>Use current layout</button>
             </div>
           </div>
-          <button type="button" class="tool-panel__action" data-test>Test coaster ${hint("test")}</button>
-        </div>
-        <p class="builder__test-hint">Coaster income: <span data-coaster-income>0</span></p>
-        <label class="builder__toggle"><input type="checkbox" data-delete-mode> Delete track by clicking it ${hint("deleteMode")}</label>
-      </section>
-      <section class="tool-panel__section" aria-label="Individual pieces"><h3>Individual pieces</h3><p class="tool-panel__hint">Choose individual pieces for fine control.</p><div class="builder__palette" role="radiogroup" aria-label="Next piece" data-palette></div></section>
-      <section class="tool-panel__section" aria-label="Circuit">
-        <p class="builder__test-hint" data-panel-track-height></p>
-        <p class="builder__test-hint" data-panel-station-height></p>
-        <p class="builder__stamp" data-stamp hidden>Circuit complete</p>
-        <p class="builder__test-hint" data-test-hint></p>
-        <p class="builder__test-hint" data-station-access></p>
-        <section aria-label="Coaster testing" data-testing></section>
-      </section>
-      <section class="tool-panel__section builder__blocks" aria-label="Block sections" data-block-panel>
-        <div class="builder__block-heading">
-          <h3>Block sections</h3>
-          <div class="builder__block-heading-actions">
-            <button type="button" class="tool-panel__action" data-auto-blocks>Add block sections</button>
-            <button type="button" class="tool-panel__action" data-apply-best-blocks hidden>Use current layout</button>
+          <div class="builder__train-count">
+            <span class="tool-panel__label" id="train-count-label">Trains to run</span>
+            <div class="stepper stepper--compact" role="group" aria-labelledby="train-count-label">
+              <button type="button" data-train-count-step="-1" aria-label="Run one fewer train">−</button>
+              <span class="stepper__value" data-train-count aria-live="polite"></span>
+              <button type="button" data-train-count-step="1" aria-label="Run one more train">+</button>
+            </div>
           </div>
-        </div>
-        <div class="builder__train-count">
-          <span class="tool-panel__label" id="train-count-label">Trains to run</span>
-          <div class="stepper stepper--compact" role="group" aria-labelledby="train-count-label">
-            <button type="button" data-train-count-step="-1" aria-label="Run one fewer train">−</button>
-            <span class="stepper__value" data-train-count aria-live="polite"></span>
-            <button type="button" data-train-count-step="1" aria-label="Run one more train">+</button>
+          <p class="builder__block-status" aria-live="polite" data-block-report></p>
+          <p class="builder__block-capacity" data-block-capacity></p>
+          <p class="builder__block-throughput" data-block-throughput></p>
+          <p class="builder__block-message" aria-live="polite" data-block-message hidden></p>
+          <ol class="builder__block-list" data-block-sections></ol>
+          <datalist id="block-boundary-options" data-block-boundary-options></datalist>
+          <p class="tool-panel__hint">Choose an available listed brake boundary. The game keeps the current layout until an edit validates.</p>
+          <div class="builder__block-add" data-block-add-controls hidden>
+            <label><span class="tool-panel__label" data-block-add-label>New boundary (m)</span><input type="number" min="0" step="any" data-block-add-boundary list="block-boundary-options"></label>
+            <button type="button" class="tool-panel__action" data-block-add>Add block</button>
           </div>
-        </div>
-        <p class="builder__block-status" aria-live="polite" data-block-report></p>
-        <p class="builder__block-capacity" data-block-capacity></p>
-        <p class="builder__block-throughput" data-block-throughput></p>
-        <p class="builder__block-message" aria-live="polite" data-block-message hidden></p>
-        <ol class="builder__block-list" data-block-sections></ol>
-        <datalist id="block-boundary-options" data-block-boundary-options></datalist>
-        <p class="tool-panel__hint">Choose an available listed brake boundary. The game keeps the current layout until an edit validates.</p>
-        <div class="builder__block-add" data-block-add-controls hidden>
-          <label><span class="tool-panel__label" data-block-add-label>New boundary (m)</span><input type="number" min="0" step="any" data-block-add-boundary list="block-boundary-options"></label>
-          <button type="button" class="tool-panel__action" data-block-add>Add block</button>
-        </div>
-        <ul class="builder__block-notes" data-block-notes></ul>
-        <ul class="builder__block-suggestions" data-block-suggestions></ul>
-      </section>
-      <section class="tool-panel__section" aria-label="Launch positions" data-launches hidden>
-        <h3>Launch positions</h3>
-        <ol data-launch-list></ol>
-      </section>
-      <section class="tool-panel__section" aria-label="Placed track">
-        <div class="builder__track-head"><h3>Track pieces</h3><span class="builder__track-count" data-track-count></span></div>
-        <ol class="builder__track" data-track></ol>
-      </section>
-      <details class="tool-panel__section builder__keys"><summary>All keys</summary><dl>
-        <dt>${hint("turnLeft")} ${hint("turnRight")}</dt><dd>Turn left or right</dd>
-        <dt>${hint("slopeDown")} ${hint("slopeUp")}</dt><dd>Slope down or up</dd>
-        <dt>${hint("bankLeft")} ${hint("bankRight")}</dt><dd>Bank left or right</dd>
-        <dt>${hint("previousPiece")} ${hint("nextPiece")}</dt><dd>Previous or next piece</dd>
-        <dt><kbd>1</kbd>–<kbd>6</kbd></dt><dd>Jump to a group of pieces</dd>
-        <dt>${hint("place")} <kbd>B</kbd></dt><dd>Place the piece</dd>
-        <dt>${hint("chain")}</dt><dd>Turn the chain lift on or off</dd>
-        <dt>${hint("undo")}</dt><dd>Undo the last piece</dd>
-        <dt>${hint("deleteMode")}</dt><dd>Delete track by clicking it</dd>
-        <dt>${hint("close")} ${hint("test")}</dt><dd>Close the circuit, then test it</dd>
-        <dt>${hint("cancel")}</dt><dd>Stop placing the station or deleting</dd>
-        <dt><kbd>Q</kbd> <kbd>E</kbd></dt><dd>Rotate the view; arrows pan</dd>
-      </dl></details>
+          <ul class="builder__block-notes" data-block-notes></ul>
+          <ul class="builder__block-suggestions" data-block-suggestions></ul>
+        </section>
+        <p class="tool-panel__section tool-panel__hint" data-block-panel-hint>Trains and block sections can be set once the circuit is complete and long enough to test.</p>
+      </div>
     </div>`;
   const element = <T extends HTMLElement>(selector: string): T => {
     const found = container.querySelector<T>(selector);
@@ -266,6 +289,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const addBlock = element<HTMLButtonElement>("[data-block-add]");
   const blockNotes = element<HTMLUListElement>("[data-block-notes]");
   const blockSuggestions = element<HTMLUListElement>("[data-block-suggestions]");
+  const blockPanelHint = element("[data-block-panel-hint]");
+  const choices = element("[data-choices]");
+  const tabList = element("[data-builder-tabs]");
+  const tabs = builderTabs.map(({ id }) => ({ id, tab: element<HTMLButtonElement>(`[data-builder-tab="${id}"]`), panel: element(`[data-builder-tabpanel="${id}"]`) }));
   let shapes = new Map<string, PieceShape>();
   let state: ConstructionState | undefined;
   let paletteKey = "";
@@ -283,6 +310,26 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     return shape;
   };
   const select = (piece: string | undefined): void => { if (piece && piece !== state?.selected) dispatch({ type: "construction-select", piece }); };
+  const showTab = (shown: BuilderTab, focus: boolean): void => {
+    for (const { id, tab, panel } of tabs) {
+      tab.setAttribute("aria-selected", String(id === shown));
+      tab.tabIndex = id === shown ? 0 : -1;
+      panel.hidden = id !== shown;
+      if (id === shown && focus) tab.focus();
+    }
+  };
+  showTab("build", false);
+  tabList.addEventListener("click", (event) => {
+    const tab = (event.target as Element).closest<HTMLElement>("[data-builder-tab]");
+    if (tab) showTab(tab.dataset.builderTab as BuilderTab, false);
+  });
+  tabList.addEventListener("keydown", (event) => {
+    const current = tabs.findIndex(({ tab }) => tab.getAttribute("aria-selected") === "true");
+    const target = ({ ArrowLeft: current - 1, ArrowRight: current + 1, Home: 0, End: tabs.length - 1 } as Record<string, number | undefined>)[event.key];
+    if (target === undefined) return;
+    event.preventDefault();
+    showTab(tabs[(target + tabs.length) % tabs.length].id, true);
+  });
   autoBlocks.addEventListener("click", () => dispatch({ type: "construction-auto-blocks" }));
   applyBestBlocks.addEventListener("click", () => {
     if (state?.blockReport.placementStatus !== "searching") return;
@@ -658,13 +705,17 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         throw new Error(`Unknown editable block section ${index}`);
       }
       selectedBlock = index;
+      // A block marker picked in the world opens the settings that edit it.
+      if (index !== null) showTab("operate", false);
       if (state) renderBlockPanel(state);
     },
     update(next) {
       const previous = state;
       state = next;
       editor.hidden = !next.active;
+      if (next.active && !previous?.active) showTab("build", false);
       blockPanel.hidden = !next.active || (!next.canTest && next.blockReport.sections.length === 0);
+      blockPanelHint.hidden = !blockPanel.hidden;
       modelSelect.disabled = next.active;
       container.dataset.selected = next.selected ?? "";
       container.dataset.chain = String(next.chain);
@@ -684,7 +735,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       stamp.hidden = !closed;
       element("[data-ready]").hidden = !next.canClose;
       element("[data-next]").hidden = closed || next.canClose;
-      palette.hidden = closed;
+      choices.hidden = closed;
       chainSection.hidden = closed;
       close.classList.toggle("tool-panel__action--primary", next.canClose);
       finish.classList.toggle("tool-panel__action--primary", next.canFinish && !next.canClose);

@@ -3,6 +3,16 @@ import type { Theme } from "../theme";
 /** Time of day, the sun and the print-style colour grade that follows them. A phase of 0 is midnight and 0.5 is noon. */
 export type Rgb = readonly [number, number, number];
 
+export const POOL_FALLOFF_DECAY = 5;
+export const POOL_FALLOFF_RIM_START = 0.82;
+
+export function radialPoolFalloff(radius: number): number {
+  const clampedRadius = Math.min(1, Math.max(0, radius));
+  const rimPosition = Math.min(1, Math.max(0, (clampedRadius - POOL_FALLOFF_RIM_START) / (1 - POOL_FALLOFF_RIM_START)));
+  const rimFade = 1 - rimPosition * rimPosition * (3 - 2 * rimPosition);
+  return Math.exp(-POOL_FALLOFF_DECAY * clampedRadius * clampedRadius) * rimFade;
+}
+
 /** One full day takes 24 real minutes at the simulation's 30 ticks per second. */
 export const DAY_LENGTH_TICKS = 24 * 60 * 30;
 /** A new park opens mid-morning. */
@@ -154,25 +164,20 @@ export const GRADE_GLSL = `
     return mix(graded, color, light * gradeLightsOn);
   }`;
 
-const POOL_RIM_EDGE = 0.12;
-const POOL_CORE_EDGE = 0.42;
-const POOL_BAND_SOFTNESS = 0.05;
-const POOL_RIM_LEVEL = 0.5;
-
 /**
  * Lamp light falling on a surface at night. `pool` is the summed light from the pool layer: its hue tints the light and
- * its strength is printed in two flat bands, a bright core and a dimmer rim, like a screen-printed spot of colour. A lit
- * surface shows its own colour in the lamp's tint and never comes out darker than the night grade around it.
+ * its strength controls a continuous falloff. A lit surface shows its own colour in the lamp's tint and never comes out
+ * darker than the night grade around it.
  */
 export function lightInPool(graded: Rgb, color: Rgb, pool: Rgb): Rgb {
   const strength = Math.max(pool[0], pool[1], pool[2]);
   if (strength <= 0) return graded;
-  const band = (edge: number): number => {
-    const t = Math.min(1, Math.max(0, (strength - edge) / POOL_BAND_SOFTNESS));
-    return t * t * (3 - 2 * t);
-  };
-  const level = POOL_RIM_LEVEL * band(POOL_RIM_EDGE) + (1 - POOL_RIM_LEVEL) * band(POOL_CORE_EDGE);
-  return [0, 1, 2].map((channel) => Math.max(graded[channel], color[channel] * pool[channel] / strength * level)) as unknown as Rgb;
+  const smoothStrength = Math.min(1, Math.max(0, (strength - 0.08) / (0.65 - 0.08)));
+  const level = (smoothStrength * smoothStrength * (3 - 2 * smoothStrength)) ** 1.35;
+  return [0, 1, 2].map((channel) => {
+    const warmSurface = color[channel] * pool[channel] / strength;
+    return Math.max(graded[channel], graded[channel] + (warmSurface - graded[channel]) * level);
+  }) as unknown as Rgb;
 }
 
 /** `lightInPool` in GLSL, for the world shader. */
@@ -180,7 +185,7 @@ export const POOL_GLSL = `
   vec3 lightInPool(vec3 graded, vec3 color, vec3 pool) {
     float strength = max(pool.r, max(pool.g, pool.b));
     if (strength <= 0.0) return graded;
-    float level = ${POOL_RIM_LEVEL.toFixed(3)} * smoothstep(${POOL_RIM_EDGE.toFixed(3)}, ${(POOL_RIM_EDGE + POOL_BAND_SOFTNESS).toFixed(3)}, strength)
-      + ${(1 - POOL_RIM_LEVEL).toFixed(3)} * smoothstep(${POOL_CORE_EDGE.toFixed(3)}, ${(POOL_CORE_EDGE + POOL_BAND_SOFTNESS).toFixed(3)}, strength);
-    return max(graded, color * pool / strength * level);
+    float smoothStrength = smoothstep(0.08, 0.65, strength);
+    float level = pow(smoothStrength, 1.35);
+    return max(graded, mix(graded, color * pool / strength, level));
   }`;

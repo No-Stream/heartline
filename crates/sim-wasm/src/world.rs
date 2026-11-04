@@ -130,6 +130,7 @@ impl WasmSimulation {
             construction_completion_available: None,
             construction_completion_search: None,
             construction_completion_checked: false,
+            construction_completion_unavailable_reason: None,
             construction_preview_supports_cache: Vec::new(),
             construction_placed_supports_cache: Vec::new(),
             recovered_station: None,
