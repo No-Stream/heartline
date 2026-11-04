@@ -1,9 +1,10 @@
 ---
 id: TASK-106
 title: Reorganise the coaster builder panel
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-04 17:00'
+updated_date: '2026-11-04 18:12'
 labels: []
 dependencies: []
 priority: high
@@ -18,7 +19,7 @@ Owner playtest 2026-11-04: the split between track elements, the piece chooser, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One clear build flow with piece choice in one place
-- [ ] #2 Colours, price and options moved out of the build flow
-- [ ] #3 Specs and journeys updated without weakening checks
+- [x] #1 One clear build flow with piece choice in one place
+- [x] #2 Colours, price and options moved out of the build flow
+- [x] #3 Specs and journeys updated without weakening checks
 <!-- AC:END -->
