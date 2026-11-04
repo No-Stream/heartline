@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-11-04 10:29'
-updated_date: '2026-11-04 12:21'
+updated_date: '2026-11-04 12:35'
 labels:
   - coaster
   - construction
@@ -31,4 +31,6 @@ Follow-up to TASK-89 (00c93be). (1) Models define minimum curve radii but no for
 2026-11-04: second attempt (task-mw2216w2-uo13uq) stopped after 8 minutes without redesigning geometry; it left an uncommitted same-piece support clearance check. Claude Fable is writing a design plan at docs/superpowers/plans/2026-11-04-force-limited-inversions.md in the inversion-forces worktree (entry speeds, limits, curve families, grid snapping, force checks, work breakdown); implementation follows from it.
 
 2026-11-04: Fable's plan committed on branch inversion-forces (874af14). Implementation job task-mw235gmd-2tmaf0 (Terra, medium) following its twelve work items; stops after the half-loop milestone if the method does not hold.
+
+2026-11-04: implementation stopped at the half-loop milestone (36f093e on branch): a half loop rated for 31.3 m/s needs a 46 m rise with a 0.86 m/s entry window, and a full loop closed 7 m high. Fable is revising the plan (loop sizes per entry-speed band, mirrored climbing half for closure, top-of-loop g target).
 <!-- SECTION:NOTES:END -->
