@@ -72,14 +72,26 @@ fn station_backed_prefix_refusals_are_world_bounds_at_four_and_twelve_metres() {
             (at_recorded_start.end().x, at_recorded_start.end().y),
             (250, 2)
         );
+        // Half a tile from the map edge, only the half-tile straight still fits; everything else leaves the world.
         let edge_choices = at_recorded_start.available_choices(&world, &[]);
         assert!(!edge_choices.is_empty());
-        assert!(edge_choices.iter().all(|(_, choice)| {
-            choice.result
-                == Err(ConstructionError::Clearance(
-                    ClearanceCollision::OutsideWorld,
-                ))
-        }));
+        for (piece, choice) in &edge_choices {
+            if piece.id == PieceId::HalfTileStraight {
+                assert!(
+                    choice.result.is_ok(),
+                    "the half-tile straight should fit before the map edge"
+                );
+            } else {
+                assert_eq!(
+                    choice.result,
+                    Err(ConstructionError::Clearance(
+                        ClearanceCollision::OutsideWorld
+                    )),
+                    "{:?}",
+                    piece.id
+                );
+            }
+        }
 
         let translated_inward = construction_with_prefix(&world, 16, 64, z, &prefix);
         assert_eq!(
@@ -96,7 +108,7 @@ fn station_backed_prefix_refusals_are_world_bounds_at_four_and_twelve_metres() {
 }
 
 #[test]
-fn a_random_walk_can_trap_its_endpoint_against_existing_track() {
+fn only_short_straights_fit_between_a_walk_endpoint_and_existing_track() {
     let world = flat_world();
     let prefix = [
         (PieceId::HeartlineRoll, false),
@@ -109,9 +121,26 @@ fn a_random_walk_can_trap_its_endpoint_against_existing_track() {
         (PieceId::OffsetLeft, false),
     ];
     let construction = construction_with_prefix(&world, 50, 50, 2, &prefix);
+    // Only the short straights fit before the existing track; every other piece collides with it.
     let choices = construction.available_choices(&world, &[]);
     assert!(!choices.is_empty());
-    assert!(choices.iter().all(|(_, choice)| {
-        choice.result == Err(ConstructionError::Clearance(ClearanceCollision::Track))
-    }));
+    for (piece, choice) in &choices {
+        if matches!(
+            piece.id,
+            PieceId::HalfTileStraight | PieceId::OneTileStraight
+        ) {
+            assert!(
+                choice.result.is_ok(),
+                "{:?} should fit before the existing track",
+                piece.id
+            );
+        } else {
+            assert_eq!(
+                choice.result,
+                Err(ConstructionError::Clearance(ClearanceCollision::Track)),
+                "{:?}",
+                piece.id
+            );
+        }
+    }
 }
