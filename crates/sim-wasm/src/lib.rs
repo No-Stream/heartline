@@ -33,7 +33,7 @@ use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlaceme
 use theme_park_sim::track::clearance::ClearanceBox;
 use theme_park_sim::track::construction::{
     Completion, CompletionSearch, CompletionSearchProgress, Construction, ElementChoice,
-    track_support_obstacles,
+    PieceChoice, track_support_obstacles,
 };
 use theme_park_sim::track::proximity::ProximityKind;
 #[cfg(test)]
@@ -43,8 +43,8 @@ use theme_park_sim::track::supports::{
     generate_steel_columns, generate_wooden_lattice,
 };
 use theme_park_sim::track::{
-    CoasterColors, Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle, TrackSample,
-    TrackState, TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model,
+    CoasterColors, CoasterModel, Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle,
+    TrackSample, TrackState, TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model,
     wooden_twister_model,
 };
 use theme_park_sim::world::{
@@ -103,6 +103,35 @@ enum ConstructionModel {
     WoodenTwister,
 }
 
+fn same_track_orientation(first: TrackState, second: TrackState) -> bool {
+    first.heading == second.heading
+        && first.slope == second.slope
+        && first.bank == second.bank
+        && first.horizontal_curvature == second.horizontal_curvature
+        && first.vertical_curvature == second.vertical_curvature
+}
+
+fn default_construction_piece(
+    available: &[(Piece, PieceChoice)],
+    connector: TrackState,
+) -> Option<PieceId> {
+    let mut first_valid = None;
+    for (piece, choice) in available {
+        if choice.result.is_err() {
+            continue;
+        }
+        first_valid.get_or_insert(piece.id);
+        if piece.inversion.is_none()
+            && matches!(piece.kind, PieceKind::Track | PieceKind::Lift)
+            && same_track_orientation(piece.entry, connector)
+            && same_track_orientation(piece.exit, connector)
+        {
+            return Some(piece.id);
+        }
+    }
+    first_valid
+}
+
 #[cfg(test)]
 use theme_park_sim::park::block_analysis::block_physics_config;
 #[cfg(test)]
@@ -158,10 +187,7 @@ impl WasmSimulation {
         {
             return;
         }
-        self.selected = available
-            .into_iter()
-            .find(|(_, choice)| choice.result.is_ok())
-            .map(|(piece, _)| piece.id);
+        self.selected = default_construction_piece(&available, construction.end());
     }
     fn construction_render(
         &self,
@@ -494,6 +520,46 @@ fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
     append_vector(result, sample.position / 4.0);
     append_vector(result, sample.up.cross(sample.tangent));
     append_vector(result, sample.up);
+}
+
+/// The renderer's key for a coaster model's trains; the same keys name the models in `construction_select`.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+enum TrainModelKey {
+    Hybrid,
+    VelocityViper,
+    WoodenTwister,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct TrainLayoutReport {
+    model: TrainModelKey,
+    cars_per_train: u8,
+    rows_per_car: u8,
+    seats_per_row: u8,
+    length_metres: f64,
+}
+
+fn train_model_key(model: &CoasterModel) -> TrainModelKey {
+    [
+        (TrainModelKey::Hybrid, hybrid_model()),
+        (TrainModelKey::VelocityViper, multi_launch_model()),
+        (TrainModelKey::WoodenTwister, wooden_twister_model()),
+    ]
+    .into_iter()
+    .find_map(|(key, known)| (known.name == model.name).then_some(key))
+    .unwrap_or_else(|| panic!("no train look for coaster model {}", model.name))
+}
+
+fn train_layout(model: TrainModelKey, train: &TrainConfiguration) -> TrainLayoutReport {
+    TrainLayoutReport {
+        model,
+        cars_per_train: train.cars,
+        rows_per_car: train.rows_per_car,
+        seats_per_row: train.seats_per_row,
+        length_metres: train.length_metres,
+    }
 }
 
 fn editable_block_boundaries(layout: &BlockLayout) -> Vec<f64> {

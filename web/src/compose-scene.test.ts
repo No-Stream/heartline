@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Atlas } from "./render/scene";
 import type { Facility } from "./facilities";
 import type { Scenery } from "./scenery-tool";
+import type { CoasterSnapshot } from "./protocol";
 
 const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
 const viewport = { width: 400, height: 300 };
@@ -20,6 +21,7 @@ const world: SceneWorld = {
   coasterTies: new Float32Array(),
   coasterSupports: new Float32Array(),
   coasterColors: null,
+  coasterTrain: null,
 };
 
 const facility: Facility = {
@@ -75,6 +77,16 @@ function sceneInput(overrides: Partial<ComposeSceneInput> = {}): ComposeSceneInp
 }
 
 describe("composeScene", () => {
+  it("uses the world's train layout to render the model and its riders", () => {
+    const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };
+    const riderAtlas: Atlas = { ...atlas, pages: { "1": [{ file: "test.png", width: 40, height: 60 }] }, frames: Object.fromEntries(["maya", "otis", "priya", "gus"].map((name) => [`people/${name}/se/idle/0`, frame])), sprites: Object.fromEntries(["maya", "otis", "priya", "gus"].map((name) => [`people/${name}`, { appearance: { skinToneGroup: "deep", hairGroup: "curly", clothingPaletteGroup: "red", bodyShape: "slender", ageGroup: "child" } }])) } as Atlas;
+    const snapshot: CoasterSnapshot = { tickCount: 0, guestIds: new Uint32Array(), guests: new Float32Array(), appearances: new Uint8Array(), trainPoses: new Float32Array([0, 1, 2, 3, 1, 0, 0, 0, 0, 1, 15]), constructionTrainPoses: new Float32Array(), constructionRiders: new Uint32Array() };
+    const layout = { model: "wooden_twister" as const, carsPerTrain: 12, rowsPerCar: 1, seatsPerRow: 2, lengthMetres: 18 };
+    const scene = composeScene(sceneInput({ atlas: riderAtlas, current: snapshot, world: { ...world, coasterTrain: layout, coasterColors: { track: "teal", supports: "cream", trains: "plum" } } }));
+    const quads = scene.geometryPasses[5](camera, viewport, riderAtlas, "1");
+    expect(quads.some((quad) => quad.id === "train-0")).toBe(true);
+    expect(quads.filter((quad) => quad.id.startsWith("rider-")).map((quad) => quad.id)).toEqual(["rider-0-0", "rider-0-1"]);
+  });
   it("assembles base world data, sprite layers and renderer passes from explicit frame state", () => {
     const scene = composeScene(sceneInput());
 

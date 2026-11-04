@@ -5,7 +5,9 @@ import { buildFacilityGeometry, facilitySprites, type Facility } from "./facilit
 import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, parkBounds, type CrestBurst } from "./render/effects";
 import { BACKDROPS, DAY_LENGTH_TICKS, lightingAt, printOnBackdrop, sunAt } from "./render/daylight";
 import { buildPeople, riderAppearances } from "./render/people";
-import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle, type TrackQuad } from "./render/track/geometry";
+import { buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle, type TrackQuad } from "./render/track/geometry";
+import { buildRiderQuads, buildTrainQuads } from "./render/track/trains";
+import type { TrainLayout } from "./train-layout";
 import { buildGhostQuads } from "./render/track/ghost";
 import { buildBlockBoundaryQuads } from "./render/track/blocks";
 import { buildSelectionRing } from "./guest-panel/selection-ring";
@@ -25,6 +27,7 @@ export interface SceneWorld extends WorldView {
   readonly coasterTies: Float32Array;
   readonly coasterSupports: Float32Array;
   readonly coasterColors: CoasterColorScheme | null;
+  readonly coasterTrain: TrainLayout | null;
 }
 
 export interface RenderedRiderBounds {
@@ -144,15 +147,15 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
     (camera, viewport, atlas, scale) => [
       ...(input.world.coasterColors ? input.staticTrack(input.world.coasterRails, input.world.coasterTies, input.world.coasterSupports, input.world.coasterColors, camera, viewport) : []),
       ...(input.construction?.colors ? (input.activeTool === "coaster" && input.construction.blockReport.sections.length
-        ? buildTrackQuads(input.construction.placedRails, input.construction.placedTies, input.construction.placedSupports, noGeometry, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors), input.construction.blockReport.sections.map((section) => section.boundaryMetres), input.construction.railDistances)
+        ? buildTrackQuads(input.construction.placedRails, input.construction.placedTies, input.construction.placedSupports, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors), input.construction.blockReport.sections.map((section) => section.boundaryMetres), input.construction.railDistances)
         : input.builtTrack(input.construction.placedRails, input.construction.placedTies, input.construction.placedSupports, input.construction.colors, camera, viewport)).map((quad) => ({ ...quad, id: `construction-${quad.id}` })) : []),
       ...(input.construction && input.activeTool === "coaster" ? buildBlockBoundaryQuads(input.construction.placedRails, input.construction.railDistances, input.construction.blockReport.sections, camera, viewport, trackStyle(atlas)) : []),
       ...buildGhostQuads(input.stationGhost(), noGeometry, noGeometry, true, camera, viewport, trackStyle(atlas)).map((quad) => ({ ...quad, color: [0.25, 0.55, 0.85, 0.55] as const })),
       ...(input.construction ? buildGhostQuads(input.construction.previewRails, input.construction.previewTies, input.construction.previewSupports, input.construction.canAppend, camera, viewport, trackStyle(atlas)) : []),
-      ...(input.world.coasterColors ? buildTrackQuads(noGeometry, noGeometry, noGeometry, trainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.world.coasterColors)) : []),
-      ...(input.construction?.colors ? buildTrackQuads(noGeometry, noGeometry, noGeometry, constructionTrainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors)) : []),
-      ...buildRiderQuads(trainPoses, camera, viewport, atlas, scale),
-      ...buildRiderQuads(constructionTrainPoses, camera, viewport, atlas, scale, occupants).map((quad) => {
+      ...(input.world.coasterColors && input.world.coasterTrain ? buildTrainQuads(trainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.world.coasterColors), input.world.coasterTrain) : []),
+      ...(input.construction?.colors && input.construction.trainLayout ? buildTrainQuads(constructionTrainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors), input.construction.trainLayout) : []),
+      ...(input.world.coasterTrain ? buildRiderQuads(trainPoses, camera, viewport, atlas, scale, input.world.coasterTrain) : []),
+      ...(input.construction?.trainLayout ? buildRiderQuads(constructionTrainPoses, camera, viewport, atlas, scale, input.construction.trainLayout, occupants) : []).map((quad) => {
         riders.push({
           id: quad.id,
           left: Math.min(...quad.vertices.map((vertex) => vertex.x)),

@@ -19,9 +19,9 @@ import { advanceDayPhase, NOON, START_PHASE } from "./render/daylight";
 import { CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
 import { trackStyle } from "./render/track/geometry";
+import type { TrainLayout } from "./train-layout";
 import type { CoasterColorScheme } from "./coaster-colors";
 import { createStaticTrackCache } from "./render/track/cache";
-import type { WorldSnapshot } from "./world-snapshot";
 import { RenderClock } from "./render-clock";
 import { createConstructionPanel } from "./construction";
 import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
@@ -55,6 +55,7 @@ const renderRevision = createRenderRevision();
 const inputLog: RecordedInput[] = [];
 let sessionExportRequest = 0;
 const pendingSessionExports = new Map<number, RecordedInput[]>();
+const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group", "delete-mode-toggle", "chain-toggle"]);
 
 const themeToggleContainer = document.querySelector<HTMLElement>("[data-theme-toggle]");
 if (!themeToggleContainer) throw new Error("Theme toggle is missing");
@@ -77,8 +78,8 @@ function moveCamera(action: CameraAction): void {
     : action.type === "zoom" ? { ...action, anchor: { x: action.anchor.x / pixelRatio, y: action.anchor.y / pixelRatio } } : action;
   camera = applyCameraAction(camera, cssViewport(), cssAction);
 }
-/** `coasterColors` is the demo coaster's paint, or null in a park without one. */
-type CoasterWorld = WorldView & { pathMetadata: Int32Array; coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array; coasterColors: CoasterColorScheme | null };
+/** Demo coaster geometry, paint, and train, when present. */
+type CoasterWorld = WorldView & { pathMetadata: Int32Array; coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array; coasterColors: CoasterColorScheme | null; coasterTrain: TrainLayout | null };
 let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
@@ -333,7 +334,6 @@ gameCanvas.addEventListener("webglcontextrestored", () => { renderRevision.inval
 toolbar.setActive(activeTool);
 fitCanvas(false);
 
-const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group", "delete-mode-toggle", "chain-toggle"]);
 function handleCoasterPointer(action: InputAction): boolean {
   if (action.type === "select") {
     const block = blockAt(action.position);
@@ -597,8 +597,9 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     const coasterRails = message.coasterRails ?? world?.coasterRails;
     const coasterTies = message.coasterTies ?? world?.coasterTies;
     const coasterColors = message.coasterColors !== undefined ? message.coasterColors : world?.coasterColors;
-    if (!coasterGeometry || !coasterRails || !coasterTies || coasterColors === undefined) throw new Error("Initial coaster geometry is missing");
-    world = { ...message, coasterGeometry, coasterRails, coasterTies, coasterColors };
+    const coasterTrain = message.coasterTrain !== undefined ? message.coasterTrain : world?.coasterTrain;
+    if (!coasterGeometry || !coasterRails || !coasterTies || coasterColors === undefined || coasterTrain === undefined) throw new Error("Initial coaster geometry is missing");
+    world = { ...message, coasterGeometry, coasterRails, coasterTies, coasterColors, coasterTrain };
     testingPanel.setWorld(world);
     landscapingTool.setDimensions(world.dimensions[0], world.dimensions[1]);
     renderRevision.invalidate();
