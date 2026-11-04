@@ -374,22 +374,16 @@ impl WasmSimulation {
                             .then(|| {
                                 piece.launch_target_speed.or_else(|| {
                                     construction
-                                        .model()
-                                        .train
-                                        .launch
-                                        .map(|launch| launch.target_speed)
+                                        .launch_speed_bounds(*id)
+                                        .map(|bounds| bounds.minimum)
                                 })
                             })
                             .flatten(),
                         launch_minimum_speed: construction
-                            .model()
-                            .launch_speed_bounds
-                            .filter(|_| piece.kind == PieceKind::Launch)
+                            .launch_speed_bounds(*id)
                             .map(|bounds| bounds.minimum),
                         launch_maximum_speed: construction
-                            .model()
-                            .launch_speed_bounds
-                            .filter(|_| piece.kind == PieceKind::Launch)
+                            .launch_speed_bounds(*id)
                             .map(|bounds| bounds.maximum),
                     })
                     .collect()

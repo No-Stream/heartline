@@ -9,8 +9,9 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterColors, CoasterModel, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState,
-    TrainConfiguration, Vec3, catalog,
+    CoasterColors, CoasterModel, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape,
+    SupportStyle, TrackState, TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
 use std::cell::RefCell;
@@ -295,16 +296,6 @@ impl Construction {
         id: usize,
         target_speed: f64,
     ) -> Result<(), ConstructionError> {
-        let bounds = self
-            .model
-            .launch_speed_bounds
-            .ok_or(ConstructionError::ModelForbidden)?;
-        if !target_speed.is_finite()
-            || target_speed < bounds.minimum
-            || target_speed > bounds.maximum
-        {
-            return Err(ConstructionError::InvalidLaunchIntensity);
-        }
         let index = self
             .ids
             .iter()
@@ -313,18 +304,62 @@ impl Construction {
         if self.pieces[index].kind != PieceKind::Launch {
             return Err(ConstructionError::ModelForbidden);
         }
-        let default_speed = self
-            .model
-            .train
-            .launch
-            .expect("launch models have default launch parameters")
-            .target_speed;
+        let bounds = self.launch_speed_bounds(id).expect("launch bounds exist");
+        if !target_speed.is_finite()
+            || target_speed < bounds.minimum
+            || target_speed > bounds.maximum
+        {
+            return Err(ConstructionError::InvalidLaunchIntensity);
+        }
+        let default_speed = bounds.minimum;
         self.pieces[index].launch_target_speed =
             (target_speed != default_speed).then_some(target_speed);
         *self.validation_cache.get_mut() = None;
         *self.choices_cache.get_mut() = None;
         *self.element_choices_cache.get_mut() = None;
         Ok(())
+    }
+
+    pub fn launch_speed_bounds(&self, id: usize) -> Option<LaunchSpeedBounds> {
+        let index = self.ids.iter().position(|piece_id| *piece_id == id)?;
+        let piece = &self.pieces[index];
+        if piece.kind != PieceKind::Launch {
+            return None;
+        }
+        let entry_speed = self.predicted_speed_at(index);
+        let maximum = (entry_speed.powi(2)
+            + 2.0 * LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED * piece.length())
+        .sqrt()
+        .min(LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+        Some(LaunchSpeedBounds {
+            minimum: (entry_speed + 3.0).min(maximum),
+            maximum,
+        })
+    }
+
+    fn predicted_speed_at(&self, piece_index: usize) -> f64 {
+        let mut speed: f64 = 0.0;
+        let mut previous_height = self.start.position().z;
+        for piece in &self.pieces[..piece_index] {
+            speed = (speed.powi(2) - 2.0 * 9.81 * (piece.exit.position().z - previous_height))
+                .max(0.0)
+                .sqrt();
+            match piece.kind {
+                PieceKind::Launch => {
+                    let maximum = (speed.powi(2)
+                        + 2.0 * LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED * piece.length())
+                    .sqrt()
+                    .min(LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+                    speed = piece
+                        .launch_target_speed
+                        .unwrap_or((speed + 3.0).min(maximum));
+                }
+                PieceKind::Lift => speed = 3.0,
+                _ => {}
+            }
+            previous_height = piece.exit.position().z;
+        }
+        speed
     }
 
     fn validate_piece(
@@ -669,7 +704,16 @@ impl Construction {
         if !self.closed {
             return Err(ConstructionError::NotClosed);
         }
-        Circuit::new(self.pieces.clone()).map_err(|_| ConstructionError::InvalidCircuit)
+        let mut pieces = self.pieces.clone();
+        for (index, piece) in pieces.iter_mut().enumerate() {
+            if piece.kind == PieceKind::Launch && piece.launch_target_speed.is_none() {
+                let bounds = self
+                    .launch_speed_bounds(self.ids[index])
+                    .expect("launch bounds exist");
+                piece.launch_target_speed = Some(bounds.minimum);
+            }
+        }
+        Circuit::new(pieces).map_err(|_| ConstructionError::InvalidCircuit)
     }
 }
 

@@ -198,7 +198,7 @@ fn constructed_launches_accelerate_twice_during_a_complete_lap() {
 }
 
 #[test]
-fn launch_acceleration_comes_from_the_model() {
+fn launch_acceleration_never_exceeds_the_technology_limit() {
     use PieceId::*;
     let circuit = circuit(&[
         Station,
@@ -210,17 +210,20 @@ fn launch_acceleration_comes_from_the_model() {
         TurnLargeEntry,
         TurnLargeExit,
     ]);
-    let mut model = crate::track::multi_launch_model();
-    model.train.launch.as_mut().unwrap().acceleration = 1.0;
+    let mut train_configuration = crate::track::multi_launch_model().train;
+    train_configuration.launch.as_mut().unwrap().target_speed =
+        crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND;
     let mut train = Train::new(
         &circuit,
-        &model.train,
+        &train_configuration,
         PhysicsConfig::default(),
         circuit.starts[1] + 1.0,
         2.0,
     );
+    let initial_speed = train.speed();
     train.step(&circuit);
-    assert!((train.speed() - (2.0 + TIME_STEP)).abs() < 1e-9);
+    let launch_acceleration = (train.speed() - initial_speed) / TIME_STEP;
+    assert!(launch_acceleration <= crate::track::LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED);
 }
 
 #[test]

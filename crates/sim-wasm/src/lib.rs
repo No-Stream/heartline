@@ -401,7 +401,7 @@ fn construction_error(error: theme_park_sim::track::construction::ConstructionEr
         ConstructionError::NoSupportRoute => "Supports cannot be placed here.",
         ConstructionError::InvalidIndex => "That track piece does not exist.",
         ConstructionError::InvalidLaunchIntensity => {
-            "Launch speed must be within this coaster model's limits."
+            "Launch speed must be within the limits for this launch section."
         }
         ConstructionError::NotClosed => "Close the circuit first.",
         ConstructionError::InvalidCircuit => "The track must connect back to its station.",

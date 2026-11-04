@@ -35,24 +35,34 @@ test("raises a slow Velocity Viper launch through the builder and completes the 
     page.getByLabel("Launch 2 target (km/h)"),
     page.getByLabel("Launch 5 target (km/h)"),
   ];
-  for (const input of launchTargets) {
-    await input.fill("0");
+  const launchLimits = await Promise.all(launchTargets.map(async (input) => ({
+    minimum: Number(await input.getAttribute("min")),
+    maximum: Number(await input.getAttribute("max")),
+  })));
+  expect(launchLimits[0].minimum).toBeGreaterThan(0);
+  expect(launchLimits[0].maximum).toBeGreaterThan(launchLimits[0].minimum);
+  expect(launchLimits[1].maximum).toBeGreaterThan(launchLimits[1].minimum);
+  for (const [index, input] of launchTargets.entries()) {
+    await input.fill(String(launchLimits[index].minimum));
     await input.press("Tab");
   }
   await page.getByRole("button", { name: "Close circuit" }).click();
   await page.getByRole("button", { name: "Test coaster" }).click();
   await page.evaluate(() => window.gameTest.advanceTicks(10_000));
   await expect.poll(() => page.getByRole("region", { name: "Coaster construction" }).getByRole("status").textContent())
-    .toMatch(/rolled back|could not finish|stopped before completing/i);
+    .toBe("Train completed a lap.");
+  const initialLaunchSpeeds = await page.getByRole("list", { name: "Launch exit speeds" }).locator("li").allTextContents();
+  const initialFirstLaunchSpeed = Number(initialLaunchSpeeds[0].match(/exit speed: ([\d.]+)/)?.[1]);
 
   for (const input of launchTargets) {
-    await input.fill("209");
+    await input.fill("50");
     await input.press("Tab");
   }
   await page.getByRole("button", { name: "Test coaster" }).click();
   await page.evaluate(() => window.gameTest.advanceTicks(10_000));
   await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status"))
     .toHaveText("Train completed a lap.", { timeout: 150_000 });
-  await expect(page.getByText(/Launch 2 exit speed:/)).toBeVisible();
-  await expect(page.getByText(/Launch 5 exit speed:/)).toBeVisible();
+  const increasedLaunchSpeeds = await page.getByRole("list", { name: "Launch exit speeds" }).locator("li").allTextContents();
+  const increasedFirstLaunchSpeed = Number(increasedLaunchSpeeds[0].match(/exit speed: ([\d.]+)/)?.[1]);
+  expect(increasedFirstLaunchSpeed).toBeGreaterThan(initialFirstLaunchSpeed);
 });

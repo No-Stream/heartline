@@ -376,18 +376,18 @@ fn launch_intensity_changes_hash_and_replays_to_the_same_track_state() {
 
     let mut simulation = built_viper();
     let before = simulation.state_hash();
-    assert!(simulation.construction_set_launch_intensity(1, 58.1));
+    assert!(simulation.construction_set_launch_intensity(1, 12.0));
     assert_ne!(simulation.state_hash(), before);
     assert!(
         simulation
             .construction_track()
-            .contains("\"launchTargetSpeed\":58.1")
+            .contains("\"launchTargetSpeed\":12.0")
     );
     let replay_hash = simulation.state_hash();
-    assert!(!simulation.construction_set_launch_intensity(1, 58.2));
+    assert!(!simulation.construction_set_launch_intensity(1, 15.4));
 
     let mut replay = built_viper();
-    assert!(replay.construction_set_launch_intensity(1, 58.1));
+    assert!(replay.construction_set_launch_intensity(1, 12.0));
     assert_eq!(replay.state_hash(), replay_hash);
 }
 

@@ -50,4 +50,11 @@ describe("unit conversions", () => {
     expect(speedUnitLabel("imperial")).toBe("mph");
     expect(speedUnitLabel("metric")).toBe("km/h");
   });
+
+  it("converts nonzero launch speed bounds for both unit systems", () => {
+    expect(metresPerSecondToDisplay(3, "metric")).toBeCloseTo(10.8);
+    expect(metresPerSecondToDisplay(3, "imperial")).toBeCloseTo(6.7108);
+    expect(metresPerSecondToDisplay(240 / 3.6, "metric")).toBeCloseTo(240);
+    expect(metresPerSecondToDisplay(240 / 3.6, "imperial")).toBeCloseTo(149.129);
+  });
 });
