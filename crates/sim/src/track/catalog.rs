@@ -432,7 +432,7 @@ pub fn catalog() -> Vec<Piece> {
         (
             Loop,
             "Vertical loop (not heartlined)",
-            32,
+            56,
             2,
             0,
             East,
@@ -471,9 +471,9 @@ pub fn catalog() -> Vec<Piece> {
         (
             HalfLoopUp,
             "Half loop up (not heartlined)",
-            16,
+            20,
             0,
-            16,
+            17,
             West,
             Level,
             Level,
@@ -484,9 +484,9 @@ pub fn catalog() -> Vec<Piece> {
         (
             HalfLoopDown,
             "Half loop down (not heartlined)",
-            -16,
+            20,
             0,
-            -16,
+            -17,
             West,
             Level,
             Level,
@@ -549,7 +549,7 @@ pub fn catalog() -> Vec<Piece> {
         (
             TopHat,
             "Top hat",
-            64,
+            88,
             0,
             0,
             East,

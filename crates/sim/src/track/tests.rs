@@ -1460,7 +1460,7 @@ fn barrel_drops_make_a_full_roll_and_mirror() {
 }
 
 #[test]
-fn barrel_drop_inverted_sections_have_grounded_supports() {
+fn barrel_drop_supports_stay_outside_inverted_sections() {
     use crate::track::supports::generate_supports;
     use crate::world::{Surface, World};
     let world = World::new(
@@ -1491,7 +1491,20 @@ fn barrel_drop_inverted_sections_have_grounded_supports() {
                     < 8.0
                     && support.footing.z < support.anchor.z
             }),
-            "{id:?}"
+            "{id:?}: nearby grounded support is still required"
         );
+        let count = (piece.length() / 8.0).ceil() as usize;
+        for support in supports {
+            let distance = (0..count)
+                .map(|index| piece.length() * (index as f64 + 0.5) / count as f64)
+                .find(|&distance| piece.sample(distance).position == support.anchor)
+                .expect("support anchors come from piece samples");
+            let sample = piece.sample(distance);
+            assert!(sample.up.z >= 0.0, "{id:?}: {support:?} at {distance} m");
+            assert!(
+                sample.tangent.z.abs() <= 0.8,
+                "{id:?}: {support:?} at {distance} m is near vertical"
+            );
+        }
     }
 }

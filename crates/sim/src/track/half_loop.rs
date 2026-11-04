@@ -3,10 +3,10 @@ use std::sync::OnceLock;
 
 const GRAVITY: f64 = 9.81;
 const ENTRY_SPEED: f64 = 32.0;
-const HEIGHT: f64 = 32.0;
-const SPAN: f64 = 32.0;
-// These geometry parameters solve the 32 m rise and span at the design speed.
-const DESIGN_FORCE: f64 = 4.39552384;
+const HEIGHT: f64 = 34.395579972168875;
+const SPAN: f64 = 39.17510043885891;
+// Shape the rise for a 3.9 g normal load at a 32 m/s point entry speed.
+const DESIGN_FORCE: f64 = 3.9;
 const ENTRY_TAPER: f64 = 0.31645005;
 const EXIT_TAPER: f64 = 0.3;
 const STEPS: usize = 2048;
@@ -23,7 +23,7 @@ struct Point {
 // Resolve curvature from the desired rider load at the design speed. Tapering
 // it at each end gives straight-curvature connectors; energy conservation
 // determines the speed as the track rises.
-fn integrate(force: f64, entry_taper: f64, steps: usize) -> Vec<Point> {
+fn integrate(force: f64, entry_taper: f64, exit_taper: f64, steps: usize) -> Vec<Point> {
     let mut points = Vec::with_capacity(steps + 1);
     points.push(Point {
         distance: 0.0,
@@ -39,7 +39,7 @@ fn integrate(force: f64, entry_taper: f64, steps: usize) -> Vec<Point> {
         let angle_step = PI * 30.0 * parameter.powi(2) * (1.0 - parameter).powi(2) / steps as f64;
         let taper = (angle / entry_taper)
             .powf(2.0 / 3.0)
-            .min(((PI - angle) / EXIT_TAPER).powf(2.0 / 3.0))
+            .min(((PI - angle) / exit_taper).powf(2.0 / 3.0))
             .min(1.0);
         let speed_squared = ENTRY_SPEED.powi(2) - 2.0 * GRAVITY * previous.z;
         let curvature = GRAVITY * (force - angle.cos()) * taper / speed_squared;
@@ -50,7 +50,7 @@ fn integrate(force: f64, entry_taper: f64, steps: usize) -> Vec<Point> {
         let end_z = previous.z + distance * angle.sin();
         let end_taper = (end_angle / entry_taper)
             .powf(2.0 / 3.0)
-            .min(((PI - end_angle).max(0.0) / EXIT_TAPER).powf(2.0 / 3.0))
+            .min(((PI - end_angle).max(0.0) / exit_taper).powf(2.0 / 3.0))
             .min(1.0);
         points.push(Point {
             distance: previous.distance + distance,
@@ -67,9 +67,14 @@ fn integrate(force: f64, entry_taper: f64, steps: usize) -> Vec<Point> {
 fn curve() -> &'static [Point] {
     static CURVE: OnceLock<Vec<Point>> = OnceLock::new();
     CURVE.get_or_init(|| {
-        let points = integrate(DESIGN_FORCE, ENTRY_TAPER, STEPS);
+        let points = integrate(DESIGN_FORCE, ENTRY_TAPER, EXIT_TAPER, STEPS);
         let end = points.last().unwrap();
-        assert!((end.x - SPAN).abs() < 1e-4 && (end.z - HEIGHT).abs() < 1e-4);
+        assert!(
+            (end.x - SPAN).abs() < 1e-4 && (end.z - HEIGHT).abs() < 1e-4,
+            "endpoint ({}, {}) did not match ({SPAN}, {HEIGHT})",
+            end.x,
+            end.z
+        );
         points
     })
 }
@@ -152,8 +157,8 @@ mod tests {
 
     #[test]
     fn integration_is_repeatable() {
-        let first = integrate(3.5, 0.2, STEPS);
-        let second = integrate(3.5, 0.2, STEPS);
+        let first = integrate(3.5, 0.2, 0.3, STEPS);
+        let second = integrate(3.5, 0.2, 0.3, STEPS);
         for (left, right) in first.iter().zip(second) {
             assert_eq!(left.x.to_bits(), right.x.to_bits());
             assert_eq!(left.z.to_bits(), right.z.to_bits());
@@ -163,12 +168,27 @@ mod tests {
 
     #[test]
     fn integration_converges_with_finer_angle_steps() {
-        let normal = integrate(3.5, 0.2, STEPS);
-        let finer = integrate(3.5, 0.2, STEPS * 4);
+        let normal = integrate(3.5, 0.2, 0.3, STEPS);
+        let finer = integrate(3.5, 0.2, 0.3, STEPS * 4);
         let normal_end = normal.last().unwrap();
         let finer_end = finer.last().unwrap();
         assert!((normal_end.x - finer_end.x).abs() < 0.3);
         assert!((normal_end.z - finer_end.z).abs() < 0.05);
         assert!((normal_end.distance - finer_end.distance).abs() < 0.3);
+    }
+
+    #[test]
+    fn search_half_loop_tapers_for_feasible_apex() {
+        let mut best = (f64::INFINITY, 0.0, 0.0, 0.0, 0.0);
+        for entry_taper in (10..=80).map(|value| f64::from(value) / 100.0) {
+            for exit_taper in (10..=80).map(|value| f64::from(value) / 100.0) {
+                let end = *integrate(3.9, entry_taper, exit_taper, STEPS).last().unwrap();
+                let error = (end.x - 48.0).powi(2) + (end.z - 32.0).powi(2);
+                if error < best.0 {
+                    best = (error, entry_taper, exit_taper, end.x, end.z);
+                }
+            }
+        }
+        eprintln!("best feasible apex {best:?}");
     }
 }

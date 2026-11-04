@@ -168,6 +168,7 @@ fn generate_supports_at_spacing(
             })
             .collect::<Vec<_>>()
     });
+    let inverted_track_segments = inverted_track_rail_segments(piece);
     let count = (piece.length() / spacing).ceil() as usize;
     let mut supports = Vec::with_capacity(count);
     for index in 0..count {
@@ -272,6 +273,8 @@ fn generate_supports_at_spacing(
             let support = Support { anchor, footing };
             if inversion_track_segments.as_ref().is_some_and(|segments| {
                 !support_clears_inversion_track(&support, anchor_distance, segments)
+            }) || inverted_track_segments.as_ref().is_some_and(|segments| {
+                !support_clears_inverted_track_projection(&support, segments)
             }) {
                 continue;
             }
@@ -310,6 +313,62 @@ fn support_clears_inversion_track(
                 segment_distance(*support_start, *support_end, *start, *end) > BEAM_CLEARANCE
             })
         })
+}
+
+fn support_clears_inverted_track_projection(
+    support: &Support,
+    inverted_track_segments: &[(Vec3, Vec3)],
+) -> bool {
+    let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
+    let support_segments = [(support.footing, top), (top, support.anchor)];
+    inverted_track_segments
+        .iter()
+        .all(|(track_start, track_end)| {
+            support_segments.iter().all(|(support_start, support_end)| {
+                segment_distance_xy(*support_start, *support_end, *track_start, *track_end)
+                    > BEAM_CLEARANCE
+            })
+        })
+}
+
+fn inverted_track_rail_segments(piece: &Piece) -> Option<Vec<(Vec3, Vec3)>> {
+    piece.inversion.map(|_| {
+        let steps = (piece.length() / 0.25).ceil() as usize;
+        (0..steps)
+            .filter_map(|index| {
+                let start_distance = piece.length() * index as f64 / steps as f64;
+                let end_distance = piece.length() * (index + 1) as f64 / steps as f64;
+                let start = piece.sample(start_distance);
+                let end = piece.sample(end_distance);
+                let middle = piece.sample((start_distance + end_distance) / 2.0);
+                (middle.up.z < 0.0).then_some((start, end))
+            })
+            .flat_map(|(start, end)| {
+                let start_lateral = start.up.cross(start.tangent).unit();
+                let end_lateral = end.up.cross(end.tangent).unit();
+                [-TRACK_RAIL_HALF_SPACING, 0.0, TRACK_RAIL_HALF_SPACING].map(|offset| {
+                    (
+                        start.position + start_lateral * offset,
+                        end.position + end_lateral * offset,
+                    )
+                })
+            })
+            .collect()
+    })
+}
+
+fn segment_distance_xy(
+    first_start: Vec3,
+    first_end: Vec3,
+    second_start: Vec3,
+    second_end: Vec3,
+) -> f64 {
+    segment_distance(
+        Vec3::new(first_start.x, first_start.y, 0.0),
+        Vec3::new(first_end.x, first_end.y, 0.0),
+        Vec3::new(second_start.x, second_start.y, 0.0),
+        Vec3::new(second_end.x, second_end.y, 0.0),
+    )
 }
 
 fn segment_distance(
@@ -1072,6 +1131,7 @@ mod tests {
                 };
                 let supports =
                     generate_supports_at_spacing(&piece, &world, &[], &[], spacing).unwrap();
+                let inverted_segments = inverted_track_rail_segments(&piece).unwrap();
                 assert!(
                     !supports.is_empty(),
                     "{:?}, {style}: no routed supports remain",
@@ -1087,6 +1147,11 @@ mod tests {
                     assert!(
                         sample.up.z >= 0.0 && sample.tangent.z.abs() <= 0.8,
                         "{:?}, {style}: support {support:?} is beneath an inverted or near-vertical section",
+                        piece.id
+                    );
+                    assert!(
+                        support_clears_inverted_track_projection(support, &inverted_segments),
+                        "{:?}, {style}: support {support:?} passes beneath inverted track",
                         piece.id
                     );
                 }

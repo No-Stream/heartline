@@ -399,18 +399,6 @@ fn smooth(t: f64) -> (f64, f64, f64) {
         60.0 * t * (1.0 - t) * (1.0 - 2.0 * t),
     )
 }
-fn top_hat_integrals(t: f64) -> (f64, f64) {
-    const STEPS: usize = 32;
-    let mut horizontal = 0.0;
-    let mut vertical = 0.0;
-    for index in 0..STEPS {
-        let u = t * (index as f64 + 0.5) / STEPS as f64;
-        let angle = std::f64::consts::FRAC_PI_2 * u * u * (3.0 - 2.0 * u);
-        horizontal += angle.cos();
-        vertical += angle.sin();
-    }
-    (horizontal * t / STEPS as f64, vertical * t / STEPS as f64)
-}
 impl Piece {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_u8(self.id as u8);
@@ -458,69 +446,38 @@ impl Piece {
                 forward * (second[0] * horizontal_scale) + up * (second[1] * vertical_scale),
             );
         }
+        if matches!(self.shape, Shape::Loop) {
+            let (position, first, second) = super::vertical_loop::sample(t);
+            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+            let left = Vec3::new(-forward.y, forward.x, 0.0);
+            let up = Vec3::new(0.0, 0.0, 1.0);
+            let side_displacement = (self.exit.position() - self.entry.position()).dot(left);
+            let smooth = t.powi(3) * (10.0 + t * (-15.0 + 6.0 * t));
+            let smooth_first = 30.0 * t.powi(2) * (1.0 - t).powi(2);
+            let smooth_second = 60.0 * t * (1.0 - t) * (1.0 - 2.0 * t);
+            let origin = self.entry.position();
+            return (
+                origin
+                    + forward * position[0]
+                    + left * (side_displacement * smooth)
+                    + up * position[1],
+                forward * first[0] + left * (side_displacement * smooth_first) + up * first[1],
+                forward * second[0] + left * (side_displacement * smooth_second) + up * second[1],
+            );
+        }
         if matches!(self.shape, Shape::TopHat) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-            let vertical = Vec3::new(0.0, 0.0, 1.0);
-            let diagonal_scale = if self.entry.heading.index() % 2 == 0 {
-                1.0
-            } else {
-                std::f64::consts::SQRT_2
-            };
-            let radius = 20.0 * diagonal_scale;
+            let (position, first, second) = super::vertical_top_hat::sample(t);
+            let endpoint = super::vertical_top_hat::endpoint();
             let span = (self.exit.position() - self.entry.position()).dot(forward);
-            let plateau = span - 4.0 * radius;
-            let segment = ((t * 5.0) as usize).min(4);
-            let u = t * 5.0 - segment as f64;
-            let (integral_horizontal, integral_vertical) = top_hat_integrals(u);
-            let scale = radius / top_hat_integrals(1.0).0;
-            let angle = std::f64::consts::FRAC_PI_2 * u * u * (3.0 - 2.0 * u);
-            let angle_derivative = std::f64::consts::FRAC_PI_2 * 6.0 * u * (1.0 - u);
-            let (x, z, dx, dz, ddx, ddz) = match segment {
-                0 => (
-                    scale * integral_horizontal,
-                    scale * integral_vertical,
-                    scale * angle.cos(),
-                    scale * angle.sin(),
-                    -scale * angle.sin() * angle_derivative,
-                    scale * angle.cos() * angle_derivative,
-                ),
-                1 => (
-                    radius + scale * integral_vertical,
-                    radius + scale * integral_horizontal,
-                    scale * angle.sin(),
-                    scale * angle.cos(),
-                    scale * angle.cos() * angle_derivative,
-                    -scale * angle.sin() * angle_derivative,
-                ),
-                2 => (
-                    2.0 * radius + plateau * u,
-                    2.0 * radius,
-                    plateau,
-                    0.0,
-                    0.0,
-                    0.0,
-                ),
-                3 => (
-                    2.0 * radius + plateau + scale * integral_horizontal,
-                    2.0 * radius - scale * integral_vertical,
-                    scale * angle.cos(),
-                    -scale * angle.sin(),
-                    -scale * angle.sin() * angle_derivative,
-                    -scale * angle.cos() * angle_derivative,
-                ),
-                _ => (
-                    3.0 * radius + plateau + scale * integral_vertical,
-                    radius - scale * integral_horizontal,
-                    scale * angle.sin(),
-                    -scale * angle.cos(),
-                    scale * angle.cos() * angle_derivative,
-                    scale * angle.sin() * angle_derivative,
-                ),
-            };
+            let horizontal_scale = span / endpoint[0];
+            let vertical = Vec3::new(0.0, 0.0, 1.0);
             return (
-                self.entry.position() + forward * x + vertical * z,
-                (forward * dx + vertical * dz) * 5.0,
-                (forward * ddx + vertical * ddz) * 25.0,
+                self.entry.position()
+                    + forward * (position[0] * horizontal_scale)
+                    + vertical * position[1],
+                forward * (first[0] * horizontal_scale) + vertical * first[1],
+                forward * (second[0] * horizontal_scale) + vertical * second[1],
             );
         }
         let (s, ds, dds) = smooth(t);

@@ -9,6 +9,8 @@ pub mod curves;
 mod half_loop;
 pub mod models;
 pub mod supports;
+mod vertical_loop;
+mod vertical_top_hat;
 
 pub use catalog::catalog;
 pub use colors::{CoasterColor, CoasterColors};

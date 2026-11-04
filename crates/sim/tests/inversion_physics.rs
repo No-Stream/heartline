@@ -27,22 +27,29 @@ fn circuit_with_elements(elements: &[PieceId]) -> (Circuit, f64, f64) {
 
     // Find a return path using level track, keeping the element sequence intact.
     let mut queue = VecDeque::from([(state, Vec::<PieceId>::new())]);
-    let mut visited = HashSet::new();
+    let mut visited = HashSet::from([format!("{state:?}")]);
     let return_path = loop {
         let (current, path) = queue.pop_front().expect("no return path");
         if current == start {
             break path;
         }
-        if path.len() >= 80 || !visited.insert(format!("{current:?}")) {
+        if path.len() >= 80 {
             continue;
         }
         for id in [
             PieceId::Straight,
             PieceId::TurnSmallStandalone,
             PieceId::TurnSmallRightStandalone,
+            PieceId::TurnLargeStandalone,
+            PieceId::TurnLargeRightStandalone,
+            PieceId::OffsetLeft,
+            PieceId::OffsetRight,
         ] {
             let piece = template(id).at(current).unwrap();
             if piece.exit.x.abs() > 300 || piece.exit.y.abs() > 300 {
+                continue;
+            }
+            if !visited.insert(format!("{:?}", piece.exit)) {
                 continue;
             }
             let mut next = path.clone();
@@ -96,15 +103,25 @@ fn trains_cross_half_loops_within_model_force_limits() {
             let mut observed = [false; 2];
             let mut minimum_vertical = f64::INFINITY;
             let mut maximum_vertical = f64::NEG_INFINITY;
+            let mut minimum_vertical_location = (f64::NAN, usize::MAX);
+            let mut maximum_vertical_location = (f64::NAN, usize::MAX);
+            let mut maximum_vertical_speed = f64::NAN;
             let mut maximum_lateral: f64 = 0.0;
             for _ in 0..100_000 {
                 train.step(&circuit);
-                for car in train.take_readings().into_iter().flatten() {
+                for (car_index, car) in train.take_readings().into_iter().flatten().enumerate() {
                     for (index, range) in half_loop_ranges.iter().enumerate() {
                         if range.contains(&car.distance) {
                             observed[index] = true;
-                            minimum_vertical = minimum_vertical.min(car.g.vertical);
-                            maximum_vertical = maximum_vertical.max(car.g.vertical);
+                            if car.g.vertical < minimum_vertical {
+                                minimum_vertical = car.g.vertical;
+                                minimum_vertical_location = (car.distance, car_index);
+                            }
+                            if car.g.vertical > maximum_vertical {
+                                maximum_vertical = car.g.vertical;
+                                maximum_vertical_location = (car.distance, car_index);
+                                maximum_vertical_speed = car.speed;
+                            }
                             maximum_lateral = maximum_lateral.max(car.g.lateral.abs());
                         }
                     }
@@ -123,10 +140,232 @@ fn trains_cross_half_loops_within_model_force_limits() {
                 minimum_vertical >= limits.minimum_vertical_g
                     && maximum_vertical <= limits.maximum_vertical_g
                     && maximum_lateral <= limits.maximum_lateral_g,
-                "{} at {entry_speed} m/s: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}",
+                "{} at {entry_speed} m/s: vertical {minimum_vertical} at {minimum_vertical_location:?}..{maximum_vertical} at {maximum_vertical_location:?} at {maximum_vertical_speed} m/s, lateral {maximum_lateral}, ranges {half_loop_ranges:?}",
                 model.name
             );
         }
+    }
+}
+
+#[test]
+fn all_constructible_half_inversion_combinations_stay_within_force_limits() {
+    struct ElementForces {
+        id: PieceId,
+        minimum_vertical: f64,
+        maximum_vertical: f64,
+        maximum_lateral: f64,
+        maximum_longitudinal: f64,
+        cars_seen: Vec<bool>,
+        minimum_entry_speed: f64,
+        maximum_entry_speed: f64,
+    }
+    use PieceId::*;
+    let combinations = [
+        [
+            HalfLoopUp,
+            HalfCorkscrewLeftDown,
+            HalfCorkscrewLeftUp,
+            HalfLoopDown,
+        ],
+        [
+            HalfLoopUp,
+            HalfCorkscrewRightDown,
+            HalfCorkscrewRightUp,
+            HalfLoopDown,
+        ],
+        [
+            HalfLoopUp,
+            RavenRollLeftDown,
+            RavenRollRightUp,
+            HalfLoopDown,
+        ],
+        [
+            HalfLoopUp,
+            RavenRollRightDown,
+            RavenRollLeftUp,
+            HalfLoopDown,
+        ],
+        [
+            HalfCorkscrewLeftUp,
+            HalfLoopDown,
+            HalfLoopUp,
+            HalfCorkscrewLeftDown,
+        ],
+        [
+            HalfCorkscrewRightUp,
+            HalfLoopDown,
+            HalfLoopUp,
+            HalfCorkscrewRightDown,
+        ],
+    ];
+    let mut failures = Vec::new();
+    for elements in combinations {
+        let (circuit, element_start, element_end) = circuit_with_elements(&elements);
+        let element_ranges: Vec<_> = circuit
+            .pieces()
+            .iter()
+            .scan(0.0, |distance, piece| {
+                let start = *distance;
+                *distance += piece.length();
+                Some((piece, start..*distance))
+            })
+            .filter(|(piece, _)| piece.inversion.is_some())
+            .map(|(piece, range)| (piece.id, range))
+            .collect();
+        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()] {
+            if elements.iter().any(|id| {
+                let piece = catalog().into_iter().find(|piece| piece.id == *id).unwrap();
+                !model.allows_piece(&piece)
+            }) {
+                continue;
+            }
+            for initial_element_speed in [27.0, 30.0, 32.0] {
+                let mut train = Train::new(
+                    &circuit,
+                    &model.train,
+                    unpowered(),
+                    element_start,
+                    initial_element_speed,
+                );
+                let mut element_forces: Vec<_> = element_ranges
+                    .iter()
+                    .map(|(id, _)| ElementForces {
+                        id: *id,
+                        minimum_vertical: f64::INFINITY,
+                        maximum_vertical: f64::NEG_INFINITY,
+                        maximum_lateral: 0.0,
+                        maximum_longitudinal: 0.0,
+                        cars_seen: vec![false; usize::from(model.train.cars)],
+                        minimum_entry_speed: f64::INFINITY,
+                        maximum_entry_speed: f64::NEG_INFINITY,
+                    })
+                    .collect();
+                let mut cleared = false;
+                let mut rolled_back = false;
+                for _ in 0..100_000 {
+                    train.step(&circuit);
+                    for frame in train.take_readings() {
+                        for (car_index, reading) in frame.into_iter().enumerate() {
+                            if let Some(range_index) = element_ranges
+                                .iter()
+                                .position(|(_, range)| range.contains(&reading.distance))
+                            {
+                                let forces = &mut element_forces[range_index];
+                                if !forces.cars_seen[car_index] {
+                                    forces.minimum_entry_speed =
+                                        forces.minimum_entry_speed.min(reading.speed);
+                                    forces.maximum_entry_speed =
+                                        forces.maximum_entry_speed.max(reading.speed);
+                                    forces.cars_seen[car_index] = true;
+                                }
+                                forces.minimum_vertical =
+                                    forces.minimum_vertical.min(reading.g.vertical);
+                                forces.maximum_vertical =
+                                    forces.maximum_vertical.max(reading.g.vertical);
+                                forces.maximum_lateral =
+                                    forces.maximum_lateral.max(reading.g.lateral.abs());
+                                forces.maximum_longitudinal = forces
+                                    .maximum_longitudinal
+                                    .max(reading.g.longitudinal.abs());
+                            }
+                        }
+                    }
+                    if train.distance() >= element_end + model.train.length_metres {
+                        cleared = true;
+                        break;
+                    }
+                    rolled_back = !train.notes().is_empty();
+                    if rolled_back {
+                        break;
+                    }
+                }
+                let limits = model.comfortable_force_limits;
+                for forces in element_forces {
+                    let all_cars_seen = forces.cars_seen.iter().all(|seen| *seen);
+                    let within_limits = forces.minimum_vertical >= limits.minimum_vertical_g
+                        && forces.maximum_vertical <= limits.maximum_vertical_g
+                        && forces.maximum_lateral <= limits.maximum_lateral_g
+                        && forces.maximum_longitudinal <= limits.maximum_longitudinal_g;
+                    if !all_cars_seen || !cleared || rolled_back || !within_limits {
+                        failures.push(format!(
+                            "{:?} {} starting at {initial_element_speed} m/s: observed entry speed {:.2}..{:.2} m/s, vertical {:.2}..{:.2}, lateral {:.2}, longitudinal {:.2}, cars {}/{}, cleared {cleared}, rollback {rolled_back}; limits {limits:?}",
+                            forces.id,
+                            model.name,
+                            forces.minimum_entry_speed,
+                            forces.maximum_entry_speed,
+                            forces.minimum_vertical,
+                            forces.maximum_vertical,
+                            forces.maximum_lateral,
+                            forces.maximum_longitudinal,
+                            forces.cars_seen.iter().filter(|seen| **seen).count(),
+                            forces.cars_seen.len()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn full_train_crosses_vertical_loop_within_force_limits() {
+    use PieceId::*;
+    for (model, piece_id, entry_speed) in [
+        (wooden_twister_model(), SteelLoop, 29.0),
+        (hybrid_model(), Loop, 29.0),
+        (multi_launch_model(), Loop, 31.3),
+    ] {
+        let (circuit, element_start, element_end) = circuit_with_elements(&[piece_id]);
+        let config = PhysicsConfig {
+            powered_sections: false,
+            ..PhysicsConfig::default()
+        };
+        // A 43 m drop gives about 29.0 m/s before train and aerodynamic losses.
+        let mut train = Train::new(&circuit, &model.train, config, element_start, entry_speed);
+        let mut cars_seen = vec![false; usize::from(model.train.cars)];
+        let mut minimum_vertical = f64::INFINITY;
+        let mut maximum_vertical = f64::NEG_INFINITY;
+        let mut maximum_lateral: f64 = 0.0;
+        let mut maximum_longitudinal: f64 = 0.0;
+        let mut cleared = false;
+        for _ in 0..100_000 {
+            train.step(&circuit);
+            for frame in train.take_readings() {
+                for (car_index, reading) in frame.into_iter().enumerate() {
+                    if (element_start..element_end).contains(&reading.distance) {
+                        cars_seen[car_index] = true;
+                        minimum_vertical = minimum_vertical.min(reading.g.vertical);
+                        maximum_vertical = maximum_vertical.max(reading.g.vertical);
+                        maximum_lateral = maximum_lateral.max(reading.g.lateral.abs());
+                        maximum_longitudinal =
+                            maximum_longitudinal.max(reading.g.longitudinal.abs());
+                    }
+                }
+            }
+            if train.distance() >= element_end + model.train.length_metres {
+                cleared = true;
+                break;
+            }
+            assert!(
+                train.notes().is_empty(),
+                "train rolled back through the loop"
+            );
+        }
+        assert!(
+            cars_seen.iter().all(|seen| *seen),
+            "not every car crossed the loop"
+        );
+        assert!(cleared, "{} did not clear the full loop", model.name);
+        let limits = model.comfortable_force_limits;
+        assert!(
+            minimum_vertical >= limits.minimum_vertical_g
+                && maximum_vertical <= limits.maximum_vertical_g
+                && maximum_lateral <= limits.maximum_lateral_g
+                && maximum_longitudinal <= limits.maximum_longitudinal_g,
+            "{} at {entry_speed} m/s: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}, longitudinal {maximum_longitudinal}; limits {limits:?}",
+            model.name
+        );
     }
 }
 
