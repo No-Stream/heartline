@@ -26,8 +26,16 @@ export interface WorldRenderer {
   render(world: WorldView, camera: Camera, waterFrame?: number, geometryPasses?: readonly GeometryPass[], atmospherePass?: AtmospherePass): void;
   isContextAvailable(): boolean;
   pick(x: number, y: number): Pick | null;
+  /** Picks a row-major rectangle in backing-store pixels. Pixels outside the canvas are null. */
+  pickRegion(x: number, y: number, width: number, height: number): (Pick | null)[];
   pickSurface(x: number, y: number): Pick | null;
   waitForGpu(): void;
+}
+
+function validatePickRegion(x: number, y: number, width: number, height: number): void {
+  if (![x, y, width, height].every(Number.isSafeInteger) || width < 1 || height < 1 || width * height > 1_000_000) {
+    throw new RangeError("Invalid picking region");
+  }
 }
 
 export type GeometryPass = (camera: Camera, viewport: Viewport, atlas: Atlas, scale: string) => readonly GeometryQuad[];
@@ -198,6 +206,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
   let atmosphere: Atmosphere | undefined;
   let depthMinimum = 0; let depthSpan = 2;
   let pickWidth = 0; let pickHeight = 0;
+  let pickingDirty = true;
   let glowWidth = 0; let glowHeight = 0;
   let pixelRatio = 1;
   function prepare(): void {
@@ -239,6 +248,17 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
     gl!.disable(gl!.BLEND); gl!.enable(gl!.DEPTH_TEST); gl!.depthMask(true);
     useWorldProgram(true, false, false);
     drawBatches(groundBatches); drawBatches(standingBatches);
+  }
+  function resolvePick(pixel: Uint8Array, offset: number, x: number, y: number): Pick | null {
+    const id = pixel[offset] + pixel[offset + 1] * 256 + pixel[offset + 2] * 65536;
+    if (!id) return null;
+    return pickScene({ triangles: scene.triangles.slice((id - 1) * 2, id * 2) }, x + 0.5, y + 0.5, 0.125);
+  }
+  function ensurePicking(): void {
+    if (pickingDirty) {
+      drawPicking();
+      pickingDirty = false;
+    }
   }
   function drawGlows(): void {
     if (!glowBatches.length) return;
@@ -330,15 +350,34 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
         gl!.framebufferRenderbuffer(gl!.FRAMEBUFFER, gl!.DEPTH_ATTACHMENT, gl!.RENDERBUFFER, depthBuffer);
         if (gl!.checkFramebufferStatus(gl!.FRAMEBUFFER) !== gl!.FRAMEBUFFER_COMPLETE) throw new Error("Picking framebuffer is incomplete");
       }
-      draw(); drawPicking(); gl!.bindFramebuffer(gl!.FRAMEBUFFER, null);
+      draw();
+      pickingDirty = true;
     },
     isContextAvailable() { return !gl!.isContextLost(); },
     pick(x, y) {
       if (x < 0 || y < 0 || x >= pickWidth || y >= pickHeight) return null;
+      ensurePicking();
       const pixel = new Uint8Array(4); gl!.bindFramebuffer(gl!.FRAMEBUFFER, framebuffer);
       gl!.readPixels(Math.floor(x), pickHeight - 1 - Math.floor(y), 1, 1, gl!.RGBA, gl!.UNSIGNED_BYTE, pixel); gl!.bindFramebuffer(gl!.FRAMEBUFFER, null);
-      const id = pixel[0] + pixel[1] * 256 + pixel[2] * 65536; if (!id) return null;
-      return pickScene({ triangles: scene.triangles.slice((id - 1) * 2, id * 2) }, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125);
+      return resolvePick(pixel, 0, Math.floor(x), Math.floor(y));
+    },
+    pickRegion(x, y, width, height) {
+      validatePickRegion(x, y, width, height);
+      const result: (Pick | null)[] = Array(width * height).fill(null);
+      const left = Math.max(0, x); const top = Math.max(0, y);
+      const right = Math.min(pickWidth, x + width); const bottom = Math.min(pickHeight, y + height);
+      if (left >= right || top >= bottom) return result;
+      const clippedWidth = right - left; const clippedHeight = bottom - top;
+      const pixels = new Uint8Array(clippedWidth * clippedHeight * 4);
+      ensurePicking();
+      gl!.bindFramebuffer(gl!.FRAMEBUFFER, framebuffer);
+      gl!.readPixels(left, pickHeight - bottom, clippedWidth, clippedHeight, gl!.RGBA, gl!.UNSIGNED_BYTE, pixels);
+      gl!.bindFramebuffer(gl!.FRAMEBUFFER, null);
+      for (let row = 0; row < clippedHeight; row++) for (let column = 0; column < clippedWidth; column++) {
+        const pixelOffset = ((clippedHeight - 1 - row) * clippedWidth + column) * 4;
+        result[(top - y + row) * width + left - x + column] = resolvePick(pixels, pixelOffset, left + column, top + row);
+      }
+      return result;
     },
     pickSurface(x, y) { return pickScene(surfaceScene, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125); },
     waitForGpu() { gl!.readPixels(0, 0, 1, 1, gl!.RGBA, gl!.UNSIGNED_BYTE, new Uint8Array(4)); },
@@ -363,6 +402,11 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
     },
     isContextAvailable() { return !contextLost && renderer.isContextAvailable(); },
     pick(x, y) { return contextLost ? null : renderer.pick(x, y); },
+    pickRegion(x, y, width, height) {
+      if (!contextLost) return renderer.pickRegion(x, y, width, height);
+      validatePickRegion(x, y, width, height);
+      return Array(width * height).fill(null);
+    },
     pickSurface(x, y) { return renderer.pickSurface(x, y); },
     waitForGpu() { if (!contextLost) renderer.waitForGpu(); },
   };

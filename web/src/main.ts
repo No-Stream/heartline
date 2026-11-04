@@ -357,6 +357,7 @@ const gameTest: GameTest = {
   setSurface(x, y, corners) { worker.postMessage({ type: "set-surface", x, y, corners: new Int16Array(corners) }); },
   project(point) { return projectWorld(screenCamera(), viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
+  pickRegion(x, y, width, height) { return renderer.pickRegion(x, y, width, height); },
   pickSurface(x, y) { return renderer.pickSurface(x, y); },
   setTimeOfDay,
   timeOfDay() { return dayPhase; },
@@ -690,7 +691,7 @@ function observeCrests(snapshot: CoasterSnapshot): void {
 }
 
 function frame(now: number): void {
-  if (!world) return;
+  if (!world || replayInProgress) return;
   if (frozen && gameTest.ready) return;
   const renderFrame = frozen ? undefined : renderClock.frame(now);
   const renderPrevious = frozen ? previous : renderFrame?.previous;

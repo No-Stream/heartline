@@ -65,3 +65,28 @@ for (const rotation of [0, 1, 2, 3] as const satisfies readonly Rotation[]) {
     expect(lower.color).toEqual([200, 45, 54, 255]);
   });
 }
+
+test("picking is drawn on demand and refreshed after scene and canvas changes", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const result = await page.evaluate(() => window.renderFixture(0, false, false, "solid"));
+  const [afterRender, afterPick, afterRepeatedPick, afterUpdatedRender, afterUpdatedPick, afterResizedRender, afterResizedPick] = result.pickingPasses;
+  expect(afterRender).toBe(0);
+  expect(afterPick).toBeGreaterThan(afterRender);
+  expect(afterRepeatedPick).toBe(afterPick);
+  expect(afterUpdatedRender).toBe(afterPick);
+  expect(afterUpdatedPick).toBeGreaterThan(afterUpdatedRender);
+  expect(afterResizedRender).toBe(afterUpdatedPick);
+  expect(afterResizedPick).toBeGreaterThan(afterResizedRender);
+  expect(result.pick).toMatchObject({ kind: "fixture", id: "extra" });
+  expect(result.updatedPick).toMatchObject({ kind: "terrain", x: 0, y: 0 });
+  expect(result.resizedPick).toMatchObject({ kind: "terrain", x: 0, y: 0 });
+});
+
+test("region picking matches individual picks, including clipped pixels", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  for (const extra of ["behind", "solid", "textured", "thin"] as const) {
+    const result = await page.evaluate((kind) => window.renderFixture(0, false, false, kind, true), extra);
+    expect(result.regionMatches).toBe(true);
+    expect(result.clippedRegionMatches).toBe(true);
+  }
+});

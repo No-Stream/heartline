@@ -37,10 +37,14 @@ async function selectQueuedGuest(page: Page): Promise<string> {
         const offsets: { dx: number; dy: number }[] = [];
         for (let dy = -64; dy <= 8; dy += 2) for (let dx = -32; dx <= 32; dx += 2) offsets.push({ dx, dy });
         offsets.sort((first, second) => first.dx ** 2 + (first.dy + 12) ** 2 - second.dx ** 2 - (second.dy + 12) ** 2);
+        const regionX = Math.floor(projected.x) - 34, regionY = Math.floor(projected.y) - 66;
+        const regionWidth = 69, regionHeight = 77;
+        const picks = window.gameTest.pickRegion(regionX, regionY, regionWidth, regionHeight);
         for (const { dx, dy } of offsets) {
           const x = projected.x + dx, y = projected.y + dy;
           const matches = [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2]].every(([offsetX, offsetY]) => {
-            const pick = window.gameTest.pick(x + offsetX, y + offsetY);
+            const column = Math.floor(x + offsetX) - regionX, row = Math.floor(y + offsetY) - regionY;
+            const pick = picks[row * regionWidth + column];
             return pick && "id" in pick && pick.id === guestId;
           });
           if (matches) return { x, y };
@@ -106,16 +110,14 @@ test("Timber Tumbler operating journey @journey", async ({ page }) => {
   await setFacilityPrice(page, { id: entrance.id, name: "entrance" }, 7);
   await page.getByRole("button", { name: `Raise the price of entrance ${entrance.id}` }).click();
   await expect(page.getByRole("spinbutton", { name: `Price of entrance ${entrance.id}` })).toHaveValue("8");
-  await setGameSpeed(page, 16);
   await flattenTerrainTiles(page, [
     ...Array.from({ length: 6 }, (_, index) => 255 - index).flatMap((y, index) => [238, 244].map((x) => ({ x, y, height: Math.min(12, 8 + index) }))),
     { x: 239, y: 250, height: 12 }, { x: 243, y: 250, height: 12 },
   ]);
   phase("terrain");
+  await setGameSpeed(page, 16);
   await page.setViewportSize({ width: 1280, height: 720 });
-  await layPath(page, { x: 218, y: 256, z: 2 }, { x: 230, y: 256, z: 2 });
-  await layPath(page, { x: 230, y: 256, z: 2 }, { x: 238, y: 256, z: 2 });
-  await layPath(page, { x: 238, y: 256, z: 2 }, { x: 244, y: 256, z: 2 });
+  await layPath(page, { x: 218, y: 256, z: 2 }, { x: 244, y: 256, z: 2 });
   await layQueue(page, { x: 243, y: 250, z: 3 }, { x: 244, y: 256, z: 2 });
   await layPath(page, { x: 239, y: 250, z: 3 }, { x: 238, y: 256, z: 2 });
   phase("station access");

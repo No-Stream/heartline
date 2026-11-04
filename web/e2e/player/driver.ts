@@ -82,8 +82,11 @@ async function tilePoint(page: Page, tile: Tile, surfaceKind?: "terrain"): Promi
 async function targetTiles(page: Page, tiles: readonly Tile[], surfaceKind?: "terrain"): Promise<{ x: number; y: number }[]> {
   const centerX = tiles.reduce((sum, tile) => sum + tile.x + 0.5, 0) / tiles.length;
   const centerY = tiles.reduce((sum, tile) => sum + tile.y + 0.5, 0) / tiles.length;
+  const span = Math.max(...tiles.map((tile) => tile.x)) - Math.min(...tiles.map((tile) => tile.x))
+    + Math.max(...tiles.map((tile) => tile.y)) - Math.min(...tiles.map((tile) => tile.y));
+  const zoom = span > 16 ? 1 : 2;
   for (const rotation of [0, 1, 2, 3] as const) {
-    await page.evaluate((camera) => window.gameTest.setCamera(camera), { centerX, centerY, zoom: 2, rotation });
+    await page.evaluate((camera) => window.gameTest.setCamera(camera), { centerX, centerY, zoom, rotation });
     await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
     const points = await Promise.all(tiles.map((tile) => tilePoint(page, tile, surfaceKind)));
     if (points.every((point) => point !== null)) return points;
@@ -104,12 +107,35 @@ export async function flattenTerrainTiles(page: Page, tiles: readonly { x: numbe
   await page.getByLabel("Brush size").selectOption("1");
   const heightInput = page.getByLabel("Flatten height");
   const status = page.locator(".landscaping__status");
-  for (const tile of tiles) {
-    await heightInput.fill(String(tile.height));
-    await page.getByRole("button", { name: "Apply tool" }).click();
-    const [point] = await targetTiles(page, [{ ...tile, z: (tile.height - 1) / 4 }], "terrain");
-    await clickCanvas(page, point);
-    await expect(status, `flatten terrain tile (${tile.x}, ${tile.y}) to height ${tile.height}`).toHaveText("Terrain updated");
+  await status.evaluate((element) => {
+    element.setAttribute("data-test-updates", "0");
+    const observer = new MutationObserver(() => {
+      element.setAttribute("data-test-updates", String(Number(element.getAttribute("data-test-updates")) + 1));
+    });
+    observer.observe(element, { childList: true, characterData: true, subtree: true });
+    (element as HTMLElement & { testStatusObserver: MutationObserver }).testStatusObserver = observer;
+  });
+  try {
+    let activeHeight: number | undefined;
+    for (const tile of tiles) {
+      if (tile.height !== activeHeight) {
+        await heightInput.fill(String(tile.height));
+        await page.getByRole("button", { name: "Apply tool" }).click();
+        activeHeight = tile.height;
+      }
+      const [point] = await targetTiles(page, [{ ...tile, z: (tile.height - 1) / 4 }], "terrain");
+      const previousUpdates = Number(await status.getAttribute("data-test-updates"));
+      await clickCanvas(page, point);
+      await expect.poll(async () => Number(await status.getAttribute("data-test-updates")), {
+        message: `flatten terrain tile (${tile.x}, ${tile.y}) to height ${tile.height}`,
+      }).toBeGreaterThan(previousUpdates);
+      await expect(status).toHaveText("Terrain updated");
+    }
+  } finally {
+    await status.evaluate((element) => {
+      (element as HTMLElement & { testStatusObserver: MutationObserver }).testStatusObserver.disconnect();
+      element.removeAttribute("data-test-updates");
+    });
   }
   await page.getByRole("button", { name: "Cancel tool" }).click();
 }

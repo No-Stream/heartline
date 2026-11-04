@@ -5,15 +5,20 @@ import type { GeometryQuad } from "../../src/render/scene";
 interface Sample {
   pick: ReturnType<ReturnType<typeof createWorldRenderer>["pick"]>;
   color: number[];
+  pickingPasses: number[];
+  updatedPick: ReturnType<ReturnType<typeof createWorldRenderer>["pick"]>;
+  resizedPick: ReturnType<ReturnType<typeof createWorldRenderer>["pick"]>;
+  regionMatches: boolean;
+  clippedRegionMatches: boolean;
 }
 
 declare global {
   interface Window {
-    renderFixture: (rotation: Rotation, stacked: boolean, hideUpper: boolean, extra?: "behind" | "solid" | "textured" | "thin") => Promise<Sample>;
+    renderFixture: (rotation: Rotation, stacked: boolean, hideUpper: boolean, extra?: "behind" | "solid" | "textured" | "thin", checkRegion?: boolean) => Promise<Sample>;
   }
 }
 
-window.renderFixture = async (rotation, stacked, hideUpper, extra) => {
+window.renderFixture = async (rotation, stacked, hideUpper, extra, checkRegion = false) => {
   const imageCanvas = document.createElement("canvas");
   imageCanvas.width = 48;
   imageCanvas.height = 16;
@@ -45,6 +50,14 @@ window.renderFixture = async (rotation, stacked, hideUpper, extra) => {
   canvas.width = 400;
   canvas.height = 400;
   document.body.append(canvas);
+  const gl = canvas.getContext("webgl2");
+  if (!gl) throw new Error("WebGL2 is unavailable");
+  let pickingDraws = 0;
+  const drawArraysInstanced = gl.drawArraysInstanced.bind(gl);
+  gl.drawArraysInstanced = (...args) => {
+    if (gl.getParameter(gl.FRAMEBUFFER_BINDING)) pickingDraws++;
+    drawArraysInstanced(...args);
+  };
   const renderer = createWorldRenderer(canvas, atlas, { "1": [image] });
   const upper = [[2, 2], [2, 1], [1, 1], [1, 2]][rotation];
   const lower = [[1, 1], [1, 2], [2, 2], [2, 1]][rotation];
@@ -64,11 +77,34 @@ window.renderFixture = async (rotation, stacked, hideUpper, extra) => {
     kind: "fixture", id: "extra", tileX: 0, tileY: 0,
     color: extra === "textured" ? [1, 1, 1, 1] : [0, 0, 1, 1], page: extra === "textured" ? 0 : undefined,
   }]] : []);
-  const gl = canvas.getContext("webgl2");
-  if (!gl) throw new Error("WebGL2 is unavailable");
+  const pickingPasses = [pickingDraws];
   const color = new Uint8Array(4);
   gl.readPixels(Math.floor(screen.x), canvas.height - 1 - Math.floor(screen.y), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, color);
   const pick = renderer.pick(screen.x, screen.y);
+  const compareRegion = (x: number, y: number, width: number, height: number): boolean => {
+    const region = renderer.pickRegion(x, y, width, height);
+    return region.every((value, index) => JSON.stringify(value) === JSON.stringify(renderer.pick(x + index % width, y + Math.floor(index / width))));
+  };
+  let regionMatches = true; let clippedRegionMatches = true;
+  if (checkRegion) {
+    regionMatches = compareRegion(Math.floor(screen.x) - 10, Math.floor(screen.y) - 10, 21, 21);
+    clippedRegionMatches = compareRegion(-2, -2, 4, 4);
+  }
+  pickingPasses.push(pickingDraws);
+  renderer.pick(screen.x, screen.y);
+  pickingPasses.push(pickingDraws);
+  renderer.render({ ...world, sprites: [], paths: new Int32Array() }, camera);
+  pickingPasses.push(pickingDraws);
+  const terrainScreen = projectWorld(camera, canvas, { x: stacked ? upper[0] + 0.5 : 0.5, y: stacked ? upper[1] + 0.5 : 0.5, z: stacked ? 0 : 0.125 });
+  const updatedPick = renderer.pick(terrainScreen.x, terrainScreen.y);
+  pickingPasses.push(pickingDraws);
+  canvas.width = 500;
+  renderer.render({ ...world, sprites: [], paths: new Int32Array() }, camera);
+  pickingPasses.push(pickingDraws);
+  const resizedScreen = projectWorld(camera, canvas, { x: stacked ? upper[0] + 0.5 : 0.5, y: stacked ? upper[1] + 0.5 : 0.5, z: stacked ? 0 : 0.125 });
+  const resizedPick = renderer.pick(resizedScreen.x, resizedScreen.y);
+  if (checkRegion) regionMatches &&= compareRegion(Math.floor(resizedScreen.x) - 10, Math.floor(resizedScreen.y) - 10, 21, 21);
+  pickingPasses.push(pickingDraws);
   canvas.remove();
-  return { pick, color: [...color] };
+  return { pick, color: [...color], pickingPasses, updatedPick, resizedPick, regionMatches, clippedRegionMatches };
 };
