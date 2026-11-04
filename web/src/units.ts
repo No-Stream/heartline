@@ -34,6 +34,12 @@ export function metresPerSecondToDisplay(metresPerSecond: number, units: Units):
     : metresPerSecond * KILOMETRES_PER_HOUR_PER_METRE_PER_SECOND;
 }
 
+export function displaySpeedToMetresPerSecond(speed: number, units: Units): number {
+  return units === "imperial"
+    ? speed / MILES_PER_HOUR_PER_METRE_PER_SECOND
+    : speed / KILOMETRES_PER_HOUR_PER_METRE_PER_SECOND;
+}
+
 export function speedUnitLabel(units: Units): "mph" | "km/h" {
   return units === "imperial" ? "mph" : "km/h";
 }

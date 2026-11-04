@@ -400,6 +400,9 @@ fn construction_error(error: theme_park_sim::track::construction::ConstructionEr
         ConstructionError::ChainNotAllowed => "No chain lift on this piece",
         ConstructionError::NoSupportRoute => "Supports cannot be placed here.",
         ConstructionError::InvalidIndex => "That track piece does not exist.",
+        ConstructionError::InvalidLaunchIntensity => {
+            "Launch speed must be within the limits for this launch section."
+        }
         ConstructionError::NotClosed => "Close the circuit first.",
         ConstructionError::InvalidCircuit => "The track must connect back to its station.",
         ConstructionError::Clearance(ClearanceCollision::Terrain) => {

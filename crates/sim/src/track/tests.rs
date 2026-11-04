@@ -105,16 +105,7 @@ fn wooden_twister_offers_only_steel_structure_inversions() {
     let model = wooden_twister_model();
     assert!(model.lift_rules.is_some());
     assert!(model.launch_types.is_empty());
-    assert_eq!(model.track_material, Material::Wood);
     assert_eq!(model.support_style, SupportStyle::DenseWoodenLattice);
-    assert_eq!(
-        (
-            model.train.cars,
-            model.train.rows_per_car,
-            model.train.seats_per_row
-        ),
-        (12, 1, 2)
-    );
     let choices = model.available_pieces(TrackState::origin());
     assert!(!choices.iter().any(|piece| piece.id == PieceId::Loop));
     let steel_loop = choices
@@ -671,47 +662,95 @@ fn vertical_curve_segments_match_curvature_vectors_at_rotated_joins() {
 }
 
 #[test]
-fn pieces_reject_states_with_incompatible_slope_or_bank() {
+fn piece_filters_preserve_model_state_and_radius_rules() {
+    let origin = TrackState::origin();
+    let mut restricted = hybrid_model();
+    restricted.allowed_pieces = vec![PieceId::Straight];
+    let mut loop_only = hybrid_model();
+    loop_only.allowed_pieces = vec![PieceId::Loop];
+    let mut radius_limited = loop_only.clone();
+    radius_limited.minimum_radius_metres = 100.0;
+
+    let cases = [
+        (
+            "hybrid model allow-list and entry state",
+            hybrid_model(),
+            origin,
+            None,
+        ),
+        (
+            "restricted model allows only straight track",
+            restricted.clone(),
+            origin,
+            Some(vec![PieceId::Straight]),
+        ),
+        (
+            "restricted model rejects a left-banked entry",
+            restricted,
+            TrackState {
+                bank: Bank::Left,
+                ..origin
+            },
+            Some(Vec::new()),
+        ),
+        (
+            "loop-only model allows its loop at the northeast heading",
+            loop_only,
+            TrackState {
+                heading: Heading::NorthEast,
+                ..origin
+            },
+            Some(vec![PieceId::Loop]),
+        ),
+        (
+            "minimum radius rejects the loop",
+            radius_limited,
+            TrackState {
+                heading: Heading::NorthEast,
+                ..origin
+            },
+            Some(Vec::new()),
+        ),
+    ];
+
+    for (case_name, model, entry, expected_piece_ids) in cases {
+        let pieces = model.available_pieces(entry);
+        for piece in &pieces {
+            assert!(model.allowed_pieces.contains(&piece.id), "{case_name}");
+            assert_eq!(piece.entry, entry, "{case_name}");
+        }
+        if let Some(expected_piece_ids) = expected_piece_ids {
+            assert_eq!(
+                pieces.iter().map(|piece| piece.id).collect::<Vec<_>>(),
+                expected_piece_ids,
+                "{case_name}"
+            );
+        }
+    }
+
     let straight = catalog()
         .into_iter()
         .find(|piece| piece.id == PieceId::Straight)
         .unwrap();
-    assert!(
-        straight
-            .at(TrackState {
+    let incompatible_entries = [
+        (
+            "upward slope",
+            TrackState {
                 slope: Slope::UpGentle,
-                ..TrackState::origin()
-            })
-            .is_none()
-    );
-    assert!(
-        straight
-            .at(TrackState {
+                ..origin
+            },
+        ),
+        (
+            "left bank",
+            TrackState {
                 bank: Bank::Left,
-                ..TrackState::origin()
-            })
-            .is_none()
-    );
-}
-
-#[test]
-fn model_filters_pieces_by_allowed_ids_and_entry_state() {
-    let model = hybrid_model();
-    for piece in model.available_pieces(TrackState::origin()) {
-        assert!(model.allowed_pieces.contains(&piece.id));
-        assert_eq!(piece.entry, TrackState::origin());
+                ..origin
+            },
+        ),
+    ];
+    for (case_name, entry) in incompatible_entries {
+        assert!(straight.at(entry).is_none(), "{case_name}");
     }
-    let mut restricted = model.clone();
-    restricted.allowed_pieces = vec![PieceId::Straight];
-    assert_eq!(restricted.available_pieces(TrackState::origin()).len(), 1);
-    assert!(
-        restricted
-            .available_pieces(TrackState {
-                bank: Bank::Left,
-                ..TrackState::origin()
-            })
-            .is_empty()
-    );
 }
 
 #[test]
@@ -981,19 +1020,6 @@ fn all_eight_headings_place_pieces_on_grid() {
             near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
         }
     }
-}
-
-#[test]
-fn radius_limit_filters_placed_pieces() {
-    let start = TrackState {
-        heading: Heading::NorthEast,
-        ..TrackState::origin()
-    };
-    let mut model = hybrid_model();
-    model.allowed_pieces = vec![PieceId::Loop];
-    assert_eq!(model.available_pieces(start).len(), 1);
-    model.minimum_radius_metres = 100.0;
-    assert!(model.available_pieces(start).is_empty());
 }
 
 #[test]

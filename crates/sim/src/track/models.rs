@@ -11,6 +11,10 @@ pub struct LiftRules {
 pub enum LaunchType {
     LinearMotor,
 }
+/// Sustained launch acceleration limit for linear motor launches (1.5 g).
+pub const LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED: f64 = 1.5 * 9.81;
+/// Maximum launch speed, based on the 240 km/h record launch speed.
+pub const LAUNCH_MAX_SPEED_METRES_PER_SECOND: f64 = 240.0 / 3.6;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupportStyle {
     WoodenLattice,
@@ -60,6 +64,11 @@ impl TrainConfiguration {
 pub struct LaunchParameters {
     pub target_speed: f64,
     pub acceleration: f64,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LaunchSpeedBounds {
+    pub minimum: f64,
+    pub maximum: f64,
 }
 #[derive(Clone, Debug)]
 pub struct CoasterModel {

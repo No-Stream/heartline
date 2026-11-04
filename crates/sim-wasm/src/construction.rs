@@ -1,5 +1,6 @@
 use super::*;
 use serde::Serialize;
+use theme_park_sim::physics::{Circuit, TestRun};
 use theme_park_sim::track::Bank;
 use ts_rs::TS;
 
@@ -32,6 +33,42 @@ pub struct ConstructionTrackWire {
     group: &'static str,
     slope: &'static str,
     kind: &'static str,
+    launch_target_speed: Option<f64>,
+    launch_minimum_speed: Option<f64>,
+    launch_maximum_speed: Option<f64>,
+}
+
+fn report_launches(circuit: &Circuit, report: &TestRun) -> Vec<crate::reports::LaunchReport> {
+    let mut start_distance = 0.0;
+    circuit
+        .pieces()
+        .iter()
+        .enumerate()
+        .filter_map(|(piece_index, piece)| {
+            let end_distance = start_distance + piece.length();
+            let launch = (piece.kind == PieceKind::Launch).then(|| {
+                let exit_distance = end_distance.rem_euclid(circuit.length());
+                let sample = report
+                    .samples
+                    .iter()
+                    .min_by(|first, second| {
+                        let distance_to_exit = |distance: f64| {
+                            let difference = (distance - exit_distance).abs();
+                            difference.min(circuit.length() - difference)
+                        };
+                        distance_to_exit(first.distance)
+                            .total_cmp(&distance_to_exit(second.distance))
+                    })
+                    .expect("a completed test report has samples");
+                crate::reports::LaunchReport {
+                    piece_index,
+                    exit_speed: sample.speed,
+                }
+            });
+            start_distance = end_distance;
+            launch
+        })
+        .collect()
 }
 
 #[derive(Serialize, TS)]
@@ -145,6 +182,21 @@ impl WasmSimulation {
             self.construction_message.clear();
             self.refresh_construction_support_rendering();
         }
+    }
+
+    pub fn construction_set_launch_intensity(&mut self, id: usize, target_speed: f64) -> bool {
+        self.construction_finish_invalidate();
+        let changed = self.construction.as_mut().is_some_and(|construction| {
+            construction.set_launch_intensity(id, target_speed).is_ok()
+        });
+        if changed {
+            self.construction_recorder = None;
+            self.construction_report = None;
+            self.construction_train = None;
+            self.construction_outcome = None;
+            self.construction_message.clear();
+        }
+        changed
     }
 
     /// The coaster's track, supports and train colours, or null without a coaster.
@@ -318,6 +370,21 @@ impl WasmSimulation {
                         group: piece_group(piece),
                         slope: wire_slope(piece.exit.slope),
                         kind: wire_piecekind(piece.kind),
+                        launch_target_speed: (piece.kind == PieceKind::Launch)
+                            .then(|| {
+                                piece.launch_target_speed.or_else(|| {
+                                    construction
+                                        .launch_speed_bounds(*id)
+                                        .map(|bounds| bounds.minimum)
+                                })
+                            })
+                            .flatten(),
+                        launch_minimum_speed: construction
+                            .launch_speed_bounds(*id)
+                            .map(|bounds| bounds.minimum),
+                        launch_maximum_speed: construction
+                            .launch_speed_bounds(*id)
+                            .map(|bounds| bounds.maximum),
                     })
                     .collect()
             })
@@ -827,6 +894,7 @@ impl WasmSimulation {
             .collect();
         serde_json::to_string(&crate::reports::TestingReport {
             samples,
+            launches: report_launches(circuit, report),
             notes: report.notes.clone(),
             proximity_events,
             rating: crate::reports::TestingRating {

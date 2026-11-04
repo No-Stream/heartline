@@ -1,10 +1,10 @@
 ---
 id: TASK-28
 title: Add sound
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-04 17:23'
+updated_date: '2026-11-04 19:27'
 labels:
   - audio
 milestone: m-3

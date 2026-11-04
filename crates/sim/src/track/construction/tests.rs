@@ -124,6 +124,56 @@ fn construction_state_hash_covers_track_edits_but_ignores_validation_caches() {
 }
 
 #[test]
+fn launch_speed_limits_follow_track_length_and_are_shared_across_models() {
+    let world = world();
+    let mut hybrid = Construction::new(start(), hybrid_model());
+    hybrid.append(PieceId::LaunchShort, &world, &[]).unwrap();
+    let short_bounds = hybrid.launch_speed_bounds(0).unwrap();
+    assert!(short_bounds.minimum > 0.0);
+    assert!(short_bounds.maximum <= crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+    let mut long = Construction::new(start(), crate::track::multi_launch_model());
+    long.append(PieceId::LaunchLong, &world, &[]).unwrap();
+    let long_bounds = long.launch_speed_bounds(0).unwrap();
+    assert!(long_bounds.maximum > short_bounds.maximum);
+    assert_eq!(
+        long_bounds.maximum,
+        (2.0 * crate::track::LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED
+            * long.pieces()[0].length())
+        .sqrt()
+    );
+
+    let mut viper = Construction::new(start(), crate::track::multi_launch_model());
+    viper.append(PieceId::LaunchLong, &world, &[]).unwrap();
+    assert_eq!(viper.launch_speed_bounds(0), Some(long_bounds));
+    assert!(viper.set_launch_intensity(0, 20.0).is_ok());
+    assert!(
+        viper
+            .set_launch_intensity(0, long_bounds.maximum + 0.1)
+            .is_err()
+    );
+
+    let mut high_speed_viper = Construction::new(start(), crate::track::multi_launch_model());
+    for launch_index in 0..4 {
+        high_speed_viper
+            .append(PieceId::LaunchLong, &world, &[])
+            .unwrap();
+        let bounds = high_speed_viper.launch_speed_bounds(launch_index).unwrap();
+        if launch_index < 3 {
+            high_speed_viper
+                .set_launch_intensity(launch_index, bounds.maximum)
+                .unwrap();
+        }
+    }
+    let fourth_launch_bounds = high_speed_viper.launch_speed_bounds(3).unwrap();
+    assert!(fourth_launch_bounds.maximum > 58.1);
+    assert!(high_speed_viper.set_launch_intensity(3, 59.0).is_ok());
+
+    let original_hash = hybrid.state_hash();
+    assert!(hybrid.set_launch_intensity(0, short_bounds.maximum).is_ok());
+    assert_ne!(hybrid.state_hash(), original_hash);
+}
+
+#[test]
 fn wooden_twister_validates_every_dense_support_anchor() {
     let mut construction = Construction::new(start(), crate::track::wooden_twister_model());
     construction

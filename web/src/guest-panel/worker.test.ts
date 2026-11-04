@@ -13,6 +13,7 @@ const wasmMock = vi.hoisted(() => ({
   pathRemove: vi.fn(),
   constructionActive: vi.fn(() => false),
   setChain: vi.fn(),
+  setLaunchIntensity: vi.fn(),
   constructionSelect: vi.fn(),
   constructionAppend: vi.fn(),
   constructionUndo: vi.fn(),
@@ -93,6 +94,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_active() { return wasmMock.constructionActive(); }
     construction_chain() { return this.chain; }
     construction_set_chain(enabled: boolean) { wasmMock.setChain(enabled); this.chain = enabled; }
+    construction_set_launch_intensity(id: number, targetSpeed: number) { wasmMock.setLaunchIntensity(id, targetSpeed); return true; }
     construction_colors() { return wasmMock.constructionActive() ? this.colors : "null"; }
     construction_train_layout() { return wasmMock.constructionActive() ? JSON.stringify({ model: "velocity_viper", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }) : "null"; }
     construction_set_colors(track: string, supports: string, trains: string) { this.colors = JSON.stringify({ track, supports, trains }); }
@@ -134,6 +136,7 @@ afterEach(() => {
   wasmMock.blockReport.mockReset().mockReturnValue('{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}');
   wasmMock.constructionActive.mockReset().mockReturnValue(false);
   wasmMock.setChain.mockReset();
+  wasmMock.setLaunchIntensity.mockReset();
   wasmMock.constructionSelect.mockReset();
   wasmMock.constructionAppend.mockReset();
   wasmMock.constructionUndo.mockReset();
@@ -353,6 +356,24 @@ it("sends chain changes to the simulation and publishes the resulting state", as
   await Promise.resolve();
   expect(postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0].chain).toBe(false);
   expect(wasmMock.setChain.mock.calls).toEqual([[true], [false]]);
+});
+
+it("records launch intensity commands with their target speed for session replay", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "new", guestCount: 1, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-set-launch-intensity", id: 7, targetSpeed: 48.2 } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "export-session", requestId: 5 } } as MessageEvent);
+  await Promise.resolve();
+
+  expect(wasmMock.setLaunchIntensity.mock.calls).toEqual([[7, 48.2]]);
+  const recording = postMessage.mock.calls.find(([message]) => message.type === "session-export")?.[0].recording;
+  expect(recording.commands.at(-1)).toEqual({ tick: 0, command: { type: "construction-set-launch-intensity", id: 7, targetSpeed: 48.2 } });
 });
 
 it("publishes finish availability after track edits without invalidating it on selection", async () => {

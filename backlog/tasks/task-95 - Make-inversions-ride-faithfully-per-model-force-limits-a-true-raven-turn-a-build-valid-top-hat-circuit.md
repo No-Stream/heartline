@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-11-04 10:29'
-updated_date: '2026-11-04 14:06'
+updated_date: '2026-11-04 19:39'
 labels:
   - coaster
   - construction
@@ -35,4 +35,6 @@ Follow-up to TASK-89 (00c93be). (1) Models define minimum curve radii but no for
 2026-11-04: implementation stopped at the half-loop milestone (36f093e on branch): a half loop rated for 31.3 m/s needs a 46 m rise with a 0.86 m/s entry window, and a full loop closed 7 m high. Fable is revising the plan (loop sizes per entry-speed band, mirrored climbing half for closure, top-of-loop g target).
 
 2026-11-04: half-loop milestone met on branch (6be1f3e): 38 m rise, 3.95-3.96 g full-train peaks across the rated window 27.96-31.3 m/s, down from about 19 g. Job task-mw26x03f-9m6xa6 implements the remaining work items; TopHat untouched pending the owner's decision.
+
+2026-11-04 evening: the first implementation stopped unfinished after 4 hours. A Fable audit (plan section 'Audit and revised plan') found the 284 m heartline roll came from measuring longitudinal force along the tilted rail, the long corkscrews from a too-concentrated roll schedule and a modern-sized radius, and the slow construction from a brute-force support self-clearance check plus per-click catalog rebuilds. Work continues on branch forces-fixes (seven ordered tasks); the old inversion-forces worktree has a stray Codex thread and is no longer used.
 <!-- SECTION:NOTES:END -->

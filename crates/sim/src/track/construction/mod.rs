@@ -9,8 +9,9 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterColors, CoasterModel, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState,
-    TrainConfiguration, Vec3, catalog,
+    CoasterColors, CoasterModel, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape,
+    SupportStyle, TrackState, TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
 use std::cell::RefCell;
@@ -39,6 +40,7 @@ pub enum ConstructionError {
     AmbiguousConnection,
     NoSupportRoute,
     InvalidIndex,
+    InvalidLaunchIntensity,
     NotClosed,
     InvalidCircuit,
 }
@@ -287,6 +289,80 @@ impl Construction {
             return Err(ConstructionError::ModelForbidden);
         }
         Ok(piece)
+    }
+
+    pub fn set_launch_intensity(
+        &mut self,
+        id: usize,
+        target_speed: f64,
+    ) -> Result<(), ConstructionError> {
+        let index = self
+            .ids
+            .iter()
+            .position(|piece_id| *piece_id == id)
+            .ok_or(ConstructionError::InvalidIndex)?;
+        if self.pieces[index].kind != PieceKind::Launch {
+            return Err(ConstructionError::ModelForbidden);
+        }
+        let bounds = self.launch_speed_bounds(id).expect("launch bounds exist");
+        if !target_speed.is_finite()
+            || target_speed < bounds.minimum
+            || target_speed > bounds.maximum
+        {
+            return Err(ConstructionError::InvalidLaunchIntensity);
+        }
+        self.pieces[index].launch_target_speed = Some(target_speed);
+        *self.validation_cache.get_mut() = None;
+        *self.choices_cache.get_mut() = None;
+        *self.element_choices_cache.get_mut() = None;
+        Ok(())
+    }
+
+    pub fn launch_speed_bounds(&self, id: usize) -> Option<LaunchSpeedBounds> {
+        let index = self.ids.iter().position(|piece_id| *piece_id == id)?;
+        let piece = &self.pieces[index];
+        if piece.kind != PieceKind::Launch {
+            return None;
+        }
+        let entry_speed = self.predicted_speed_at(index);
+        let maximum = (entry_speed.powi(2)
+            + 2.0 * LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED * piece.length())
+        .sqrt()
+        .min(LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+        Some(LaunchSpeedBounds {
+            minimum: (entry_speed + 3.0).min(maximum),
+            maximum,
+        })
+    }
+
+    fn predicted_speed_at(&self, piece_index: usize) -> f64 {
+        let mut speed: f64 = 0.0;
+        let mut previous_height = self.start.position().z;
+        for piece in &self.pieces[..piece_index] {
+            speed = (speed.powi(2) - 2.0 * 9.81 * (piece.exit.position().z - previous_height))
+                .max(0.0)
+                .sqrt();
+            match piece.kind {
+                PieceKind::Launch => {
+                    if let Some(target_speed) = piece.launch_target_speed {
+                        speed = target_speed;
+                    } else {
+                        let launch = self
+                            .model
+                            .train
+                            .launch
+                            .expect("launch pieces require model launch parameters");
+                        speed = (speed.powi(2) + 2.0 * launch.acceleration * piece.length())
+                            .sqrt()
+                            .min(launch.target_speed);
+                    }
+                }
+                PieceKind::Lift => speed = 3.0,
+                _ => {}
+            }
+            previous_height = piece.exit.position().z;
+        }
+        speed
     }
 
     fn validate_piece(
