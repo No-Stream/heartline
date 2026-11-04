@@ -199,6 +199,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
       item.textContent = `Launch ${launch.pieceIndex + 1} exit speed: ${formatSpeed(launch.exitSpeed, activeUnits)}`;
       return item;
     }));
+    launchResults.hidden = launchResults.childElementCount === 0;
     let summary: RideHeightSummary | null = null;
     if (report?.samples.length) {
       if (!world) throw new Error("Ride testing report requires a world snapshot");
