@@ -1,9 +1,10 @@
 ---
 id: TASK-58
 title: Restructure main.ts around a shared tool interface
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 16:47'
+updated_date: '2026-11-04 11:17'
 labels:
   - refactor
   - interface
@@ -26,3 +27,9 @@ Browser review findings 2 to 4: main.ts is 654 lines with about 40 module-level 
 - [ ] #1 A shared tool interface with station and facility tool modules and unit tests, picking helpers in their own module, scene assembly out of frame(), panels emitting actions through dispatch, and one revision counter replacing the scattered test readiness flags
 - [ ] #2 Behaviour is unchanged unless stated, and the relevant tests pass while editing, with make ci green at the end
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-04: Codex job task-mw20vuks-5zyl2c in worktree theme-park-sim-worktrees/main-tools.
+<!-- SECTION:NOTES:END -->
