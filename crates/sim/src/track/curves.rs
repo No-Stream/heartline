@@ -116,6 +116,7 @@ pub enum Bank {
     Right,
     Level,
     Left,
+    Inverted,
 }
 impl Bank {
     pub fn radians(self) -> f64 {
@@ -123,6 +124,7 @@ impl Bank {
             Self::Right => -FRAC_PI_4,
             Self::Level => 0.0,
             Self::Left => FRAC_PI_4,
+            Self::Inverted => std::f64::consts::PI,
         }
     }
 }
@@ -284,6 +286,13 @@ pub enum PieceId {
     ShortFall,
     LoopRight,
     SteelLoopRight,
+    HalfLoopUp,
+    HalfLoopDown,
+    HalfCorkscrewLeftUp,
+    HalfCorkscrewRightUp,
+    HalfCorkscrewLeftDown,
+    HalfCorkscrewRightDown,
+    TopHat,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -299,6 +308,11 @@ pub enum Inversion {
     Corkscrew,
     HeartlineRoll,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heartlining {
+    Heartlined,
+    NotHeartlined,
+}
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Shape {
     Plain,
@@ -307,6 +321,9 @@ pub(crate) enum Shape {
     Loop,
     Corkscrew,
     Heartline,
+    HalfLoop,
+    HalfCorkscrew,
+    TopHat,
 }
 #[derive(Clone, Debug)]
 pub struct Piece {
@@ -314,6 +331,7 @@ pub struct Piece {
     pub name: &'static str,
     pub kind: PieceKind,
     pub inversion: Option<Inversion>,
+    pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
     pub entry: TrackState,
     pub exit: TrackState,
@@ -365,6 +383,18 @@ fn smooth(t: f64) -> (f64, f64, f64) {
         60.0 * t * (1.0 - t) * (1.0 - 2.0 * t),
     )
 }
+fn top_hat_integrals(t: f64) -> (f64, f64) {
+    const STEPS: usize = 32;
+    let mut horizontal = 0.0;
+    let mut vertical = 0.0;
+    for index in 0..STEPS {
+        let u = t * (index as f64 + 0.5) / STEPS as f64;
+        let angle = std::f64::consts::FRAC_PI_2 * u * u * (3.0 - 2.0 * u);
+        horizontal += angle.cos();
+        vertical += angle.sin();
+    }
+    (horizontal * t / STEPS as f64, vertical * t / STEPS as f64)
+}
 impl Piece {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_u8(self.id as u8);
@@ -372,6 +402,9 @@ impl Piece {
         hash.write_u8(self.kind as u8);
         hash.write_option(self.inversion, |hash, inversion| {
             hash.write_u8(inversion as u8);
+        });
+        hash.write_option(self.heartlining, |hash, heartlining| {
+            hash.write_u8(heartlining as u8);
         });
         hash.write_option(self.structure_material, |hash, material| {
             hash.write_u8(material as u8);
@@ -388,6 +421,71 @@ impl Piece {
     }
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
+        if matches!(self.shape, Shape::TopHat) {
+            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+            let vertical = Vec3::new(0.0, 0.0, 1.0);
+            let diagonal_scale = if self.entry.heading.index() % 2 == 0 {
+                1.0
+            } else {
+                std::f64::consts::SQRT_2
+            };
+            let radius = 20.0 * diagonal_scale;
+            let span = (self.exit.position() - self.entry.position()).dot(forward);
+            let plateau = span - 4.0 * radius;
+            let segment = ((t * 5.0) as usize).min(4);
+            let u = t * 5.0 - segment as f64;
+            let (integral_horizontal, integral_vertical) = top_hat_integrals(u);
+            let scale = radius / top_hat_integrals(1.0).0;
+            let angle = std::f64::consts::FRAC_PI_2 * u * u * (3.0 - 2.0 * u);
+            let angle_derivative = std::f64::consts::FRAC_PI_2 * 6.0 * u * (1.0 - u);
+            let (x, z, dx, dz, ddx, ddz) = match segment {
+                0 => (
+                    scale * integral_horizontal,
+                    scale * integral_vertical,
+                    scale * angle.cos(),
+                    scale * angle.sin(),
+                    -scale * angle.sin() * angle_derivative,
+                    scale * angle.cos() * angle_derivative,
+                ),
+                1 => (
+                    radius + scale * integral_vertical,
+                    radius + scale * integral_horizontal,
+                    scale * angle.sin(),
+                    scale * angle.cos(),
+                    scale * angle.cos() * angle_derivative,
+                    -scale * angle.sin() * angle_derivative,
+                ),
+                2 => (
+                    2.0 * radius + plateau * u,
+                    2.0 * radius,
+                    plateau,
+                    0.0,
+                    0.0,
+                    0.0,
+                ),
+                3 => (
+                    2.0 * radius + plateau + scale * integral_horizontal,
+                    2.0 * radius - scale * integral_vertical,
+                    scale * angle.cos(),
+                    -scale * angle.sin(),
+                    -scale * angle.sin() * angle_derivative,
+                    -scale * angle.cos() * angle_derivative,
+                ),
+                _ => (
+                    3.0 * radius + plateau + scale * integral_vertical,
+                    radius - scale * integral_horizontal,
+                    scale * angle.sin(),
+                    -scale * angle.cos(),
+                    scale * angle.cos() * angle_derivative,
+                    scale * angle.sin() * angle_derivative,
+                ),
+            };
+            return (
+                self.entry.position() + forward * x + vertical * z,
+                (forward * dx + vertical * dz) * 5.0,
+                (forward * ddx + vertical * ddz) * 25.0,
+            );
+        }
         let (s, ds, dds) = smooth(t);
         let t2 = t * t;
         let t3 = t2 * t;
@@ -466,6 +564,14 @@ impl Piece {
             d.z += height * derivative;
             dd.z += height * second;
         }
+        if matches!(self.shape, Shape::HalfCorkscrew) {
+            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+            let direction = if self.mirrored { -1.0 } else { 1.0 };
+            let lateral = Vec3::new(-forward.y, forward.x, 0.0) * (4.0 * direction);
+            p = p + lateral * (64.0 * (t3 - 3.0 * t4 + 3.0 * t5 - t6));
+            d = d + lateral * (64.0 * (3.0 * t2 - 12.0 * t3 + 15.0 * t4 - 6.0 * t5));
+            dd = dd + lateral * (64.0 * (6.0 * t - 36.0 * t2 + 60.0 * t3 - 30.0 * t4));
+        }
         if matches!(
             self.shape,
             Shape::Loop | Shape::Corkscrew | Shape::Heartline
@@ -479,7 +585,7 @@ impl Piece {
             let (a, b, radius) = if matches!(self.shape, Shape::Loop) {
                 (forward, vertical, 16.0)
             } else if matches!(self.shape, Shape::Corkscrew) {
-                (left, vertical, 1.5)
+                (left, vertical, 6.0)
             } else {
                 (left * -1.0, vertical, 1.0)
             };
@@ -551,7 +657,7 @@ impl Piece {
         let (position, velocity, acceleration) = self.raw(t);
         let tangent = velocity.unit();
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
-        let base_up = if matches!(self.shape, Shape::Loop) {
+        let base_up = if matches!(self.shape, Shape::Loop | Shape::HalfLoop | Shape::TopHat) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit()
         } else {
@@ -574,10 +680,14 @@ impl Piece {
         } else {
             0.0
         };
-        let angle = overbank
-            + self.entry.bank.radians()
-            + (self.exit.bank.radians() - self.entry.bank.radians()) * s
-            + turns;
+        let bank = if matches!(self.shape, Shape::HalfLoop) {
+            self.entry.bank.radians()
+        } else if matches!(self.shape, Shape::HalfCorkscrew) && self.mirrored {
+            -self.entry.bank.radians() - (self.exit.bank.radians() - self.entry.bank.radians()) * s
+        } else {
+            self.entry.bank.radians() + (self.exit.bank.radians() - self.entry.bank.radians()) * s
+        };
+        let angle = overbank + bank + turns;
         let left = base_up.cross(tangent).unit();
         let up = base_up * angle.cos() + left * angle.sin();
         TrackSample {
@@ -585,7 +695,12 @@ impl Piece {
             tangent,
             up,
             curvature: velocity.cross(acceleration).length() / velocity.length().powi(3),
-            roll: angle,
+            roll: angle
+                + if matches!(self.shape, Shape::HalfLoop) {
+                    std::f64::consts::PI * s
+                } else {
+                    0.0
+                },
         }
     }
     pub fn at(&self, state: TrackState) -> Option<Self> {

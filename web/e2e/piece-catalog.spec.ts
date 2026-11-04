@@ -17,6 +17,9 @@ test.beforeAll(async () => {
   const cargo = join(process.env.HOME!, ".cargo/bin/cargo");
   pieces = JSON.parse(execFileSync(cargo, ["run", "--quiet", "--release", "-p", "theme-park-sim", "--example", "piece_visual_fixture"], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })) as CatalogPiece[];
   if (!pieces.length) throw new Error("The coaster model has no pieces");
+  for (const name of ["TopHat", "HalfLoopUp", "HalfLoopDown", "HalfCorkscrewLeftUp", "HalfCorkscrewRightUp", "HalfCorkscrewLeftDown", "HalfCorkscrewRightDown"]) {
+    expect(pieces.map((piece) => piece.name)).toContain(name);
+  }
   outDir = await mkdtemp(join(tmpdir(), "piece-catalog-e2e-"));
   const config = { configFile: false as const, root: "web", publicDir: false as const, build: { outDir, rollupOptions: { input: resolve("web/e2e/fixtures/piece-catalog.html") } } };
   await build(config);

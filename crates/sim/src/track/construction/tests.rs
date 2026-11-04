@@ -1316,6 +1316,75 @@ fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
 }
 
 #[test]
+fn sea_serpent_elements_compose_half_pieces() {
+    let world = world();
+    let construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());
+    let choices = construction.element_choices(&world, &[]);
+    for (id, down, up) in [
+        (
+            "sea-serpent-left",
+            PieceId::HalfCorkscrewLeftDown,
+            PieceId::HalfCorkscrewRightUp,
+        ),
+        (
+            "sea-serpent-right",
+            PieceId::HalfCorkscrewRightDown,
+            PieceId::HalfCorkscrewLeftUp,
+        ),
+    ] {
+        let choice = choices
+            .iter()
+            .find(|choice| choice.id == id)
+            .unwrap_or_else(|| panic!("missing {id}"));
+        assert_eq!(
+            choice.pieces,
+            [PieceId::HalfLoopUp, down, up, PieceId::HalfLoopDown]
+        );
+        let roll_change =
+            |piece: &Piece| piece.sample(piece.length()).roll - piece.sample(0.0).roll;
+        assert!(roll_change(&choice.geometry[1]) * roll_change(&choice.geometry[2]) > 0.0);
+        let mut placed = construction.copy_for_completion();
+        placed.apply_element(choice, &world, &[]).unwrap();
+        assert_eq!(placed.end().bank, crate::track::Bank::Level);
+        assert_eq!(placed.end().heading, construction.end().heading);
+    }
+}
+
+#[test]
+fn named_inversion_elements_compose_half_pieces() {
+    let world = world();
+    let construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());
+    let choices = construction.element_choices(&world, &[]);
+    for (id, pieces) in [
+        (
+            "immelmann-left",
+            [PieceId::HalfLoopUp, PieceId::HalfCorkscrewLeftDown],
+        ),
+        (
+            "immelmann-right",
+            [PieceId::HalfLoopUp, PieceId::HalfCorkscrewRightDown],
+        ),
+        (
+            "dive-loop-left",
+            [PieceId::HalfCorkscrewLeftUp, PieceId::HalfLoopDown],
+        ),
+        (
+            "dive-loop-right",
+            [PieceId::HalfCorkscrewRightUp, PieceId::HalfLoopDown],
+        ),
+    ] {
+        let choice = choices
+            .iter()
+            .find(|choice| choice.id == id)
+            .unwrap_or_else(|| panic!("missing {id}"));
+        assert_eq!(choice.pieces, pieces);
+        let mut placed = construction.copy_for_completion();
+        placed.apply_element(choice, &world, &[]).unwrap();
+        assert_eq!(placed.end().bank, crate::track::Bank::Level);
+    }
+}
+
+#[test]
 fn elements_offer_complete_slopes_and_banked_turns_and_apply_atomically() {
     let world = world();
     let mut construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());

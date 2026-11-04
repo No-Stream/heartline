@@ -18,7 +18,7 @@ const steepCurveNames: Record<string, string> = {
   "Continue downward curve": "Middle of steep downward curve",
   "End downward curve": "End of steep downward curve",
 };
-const bankOrder = ["Left", "Level", "Right"];
+const bankOrder = ["Left", "Level", "Right", "Inverted"];
 
 function turnLabel(turn: number): string {
   if (turn === 0) return "Ahead";
