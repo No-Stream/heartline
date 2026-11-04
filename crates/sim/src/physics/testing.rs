@@ -1044,6 +1044,51 @@ mod tests {
     }
 
     #[test]
+    fn hybrid_launches_complete_and_produce_ride_ratings() {
+        use PieceId::*;
+
+        let circuit = circuit_from_ids(&[
+            Station,
+            Straight,
+            Straight,
+            LaunchShort,
+            LaunchShort,
+            Straight,
+            Straight,
+            TurnLargeEntry,
+            TurnLargeExit,
+            Straight,
+            Straight,
+            LaunchShort,
+            LaunchShort,
+            Straight,
+            Straight,
+            Straight,
+            TurnLargeEntry,
+            TurnLargeExit,
+        ]);
+        let mut model = hybrid_model();
+        model.train.cars = 1;
+        model.train.length_metres = 4.0;
+        let report = simulate_reference_lap(circuit, &model.train, PhysicsConfig::default(), 0.0);
+
+        assert!(report.completed, "launch ride notes={:?}", report.notes);
+        assert!(!report.samples.is_empty());
+        assert!(report.samples.iter().any(|sample| sample.speed > 4.0));
+        for rating in [report.excitement, report.intensity, report.nausea] {
+            assert!(rating.is_finite() && (0.0..=100.0).contains(&rating));
+        }
+        assert!(
+            report
+                .notes
+                .iter()
+                .all(|note| !note.contains("could not finish the circuit")),
+            "launch ride notes={:?}",
+            report.notes
+        );
+    }
+
+    #[test]
     fn simulated_stall_note_reports_the_forward_distance_before_recovery() {
         let circuit = circuit_from_ids(&[
             PieceId::Station,

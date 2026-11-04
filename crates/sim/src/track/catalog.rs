@@ -79,6 +79,58 @@ pub fn catalog() -> Vec<Piece> {
             Shape::Plain,
         ),
         (
+            LevelToSixtyUp,
+            "Begin 60-degree climb",
+            30,
+            0,
+            20,
+            East,
+            Level,
+            UpSixty,
+            FlatBank,
+            FlatBank,
+            Shape::Plain,
+        ),
+        (
+            SixtyUpToLevel,
+            "Level out from 60-degree climb",
+            30,
+            0,
+            20,
+            East,
+            UpSixty,
+            Level,
+            FlatBank,
+            FlatBank,
+            Shape::Plain,
+        ),
+        (
+            LevelToSixtyDown,
+            "Begin 60-degree descent",
+            30,
+            0,
+            -20,
+            East,
+            Level,
+            DownSixty,
+            FlatBank,
+            FlatBank,
+            Shape::Plain,
+        ),
+        (
+            SixtyDownToLevel,
+            "Level out from 60-degree descent",
+            30,
+            0,
+            -20,
+            East,
+            DownSixty,
+            Level,
+            FlatBank,
+            FlatBank,
+            Shape::Plain,
+        ),
+        (
             SteepToSixtyUp,
             "Begin 60-degree climb",
             8,
@@ -974,6 +1026,50 @@ pub fn catalog() -> Vec<Piece> {
             };
         }
         piece.mirrored = true;
+        piece.rebuild_arc();
+        pieces.push(piece);
+    }
+    for (id, name, bank, exit_bank, barrel) in [
+        (BankedDropLeft, "Left banked descent", Left, Left, false),
+        (BankedDropRight, "Right banked descent", Right, Right, false),
+        (TwistedDropLeft, "Left twisted drop", Left, FlatBank, false),
+        (
+            TwistedDropRight,
+            "Right twisted drop",
+            Right,
+            FlatBank,
+            false,
+        ),
+        (
+            BarrelDropLeft,
+            "Left barrel-roll drop (not heartlined)",
+            Left,
+            FlatBank,
+            true,
+        ),
+        (
+            BarrelDropRight,
+            "Right barrel-roll drop (not heartlined)",
+            Right,
+            FlatBank,
+            true,
+        ),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == LevelToGentleDown)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        piece.entry.bank = bank;
+        piece.exit.bank = exit_bank;
+        if barrel {
+            piece.shape = Shape::BarrelDrop;
+            piece.inversion = Some(Inversion::HeartlineRoll);
+            piece.heartlining = Some(Heartlining::NotHeartlined);
+            piece.mirrored = bank == Right;
+        }
         piece.rebuild_arc();
         pieces.push(piece);
     }

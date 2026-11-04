@@ -234,10 +234,28 @@ fn multi_launch_model_offers_powered_straights_and_terrain_transitions() {
         let piece = choices.iter().find(|piece| piece.id == id).unwrap();
         assert_eq!(piece.kind, PieceKind::Launch);
         assert!((piece.length() - length).abs() < 1e-6);
-        assert!(!hybrid_model().allowed_pieces.contains(&id));
     }
     for id in [PieceId::TerrainRise, PieceId::TerrainFall] {
         assert!(choices.iter().any(|piece| piece.id == id));
+    }
+}
+
+#[test]
+fn hybrid_model_offers_linear_motor_launches() {
+    let model = hybrid_model();
+    assert_eq!(model.launch_types, vec![LaunchType::LinearMotor]);
+    let launch = model.train.launch.expect("launch parameters");
+    assert!(launch.target_speed > 0.0);
+    assert!(launch.acceleration > 0.0);
+
+    let choices = model.available_pieces(TrackState::origin());
+    for id in [PieceId::LaunchShort, PieceId::Launch, PieceId::LaunchLong] {
+        assert!(model.allowed_pieces.contains(&id), "{id:?}");
+        let piece = choices
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap_or_else(|| panic!("{} does not offer {id:?} from level", model.name));
+        assert_eq!(piece.kind, PieceKind::Launch);
     }
 }
 
@@ -261,7 +279,7 @@ fn signature_pieces_are_exclusive_to_their_coaster_models() {
 
     for piece in [PieceId::LaunchShort, PieceId::Launch, PieceId::LaunchLong] {
         assert!(multi_launch.allowed_pieces.contains(&piece));
-        assert!(!hybrid.allowed_pieces.contains(&piece));
+        assert!(hybrid.allowed_pieces.contains(&piece));
         assert!(!wooden_twister.allowed_pieces.contains(&piece));
     }
 
@@ -770,6 +788,10 @@ fn sixty_degree_slope_templates_have_grid_aligned_geometry() {
 
     let pieces = catalog();
     let expected = [
+        (LevelToSixtyUp, Slope::Level, Slope::UpSixty),
+        (SixtyUpToLevel, Slope::UpSixty, Slope::Level),
+        (LevelToSixtyDown, Slope::Level, Slope::DownSixty),
+        (SixtyDownToLevel, Slope::DownSixty, Slope::Level),
         (SteepToSixtyUp, Slope::UpSteep, Slope::UpSixty),
         (SixtyUp, Slope::UpSixty, Slope::UpSixty),
         (SixtyToSteepUp, Slope::UpSixty, Slope::UpSteep),
@@ -815,10 +837,15 @@ fn sixty_degree_slope_templates_have_grid_aligned_geometry() {
 #[test]
 fn sixty_degree_track_is_allowed_only_by_models_with_sixty_degree_limits() {
     use PieceId::{
-        SixtyDown, SixtyToSteepDown, SixtyToSteepUp, SixtyUp, SteepToSixtyDown, SteepToSixtyUp,
+        LevelToSixtyDown, LevelToSixtyUp, SixtyDown, SixtyDownToLevel, SixtyToSteepDown,
+        SixtyToSteepUp, SixtyUp, SixtyUpToLevel, SteepToSixtyDown, SteepToSixtyUp,
     };
 
     let sixty_degree_pieces = [
+        LevelToSixtyUp,
+        SixtyUpToLevel,
+        LevelToSixtyDown,
+        SixtyDownToLevel,
         SteepToSixtyUp,
         SixtyUp,
         SixtyToSteepUp,
@@ -1347,5 +1374,106 @@ fn new_elements_have_regular_frames_in_every_heading() {
                 near(sample.up.dot(sample.tangent), 0.0);
             }
         }
+    }
+}
+
+#[test]
+fn hybrid_banked_drops_connect_and_roll_smoothly() {
+    let model = hybrid_model();
+    for (bank_piece, drop_ids) in [
+        (
+            PieceId::BankLeft,
+            [
+                PieceId::BankedDropLeft,
+                PieceId::TwistedDropLeft,
+                PieceId::BarrelDropLeft,
+            ],
+        ),
+        (
+            PieceId::BankRight,
+            [
+                PieceId::BankedDropRight,
+                PieceId::TwistedDropRight,
+                PieceId::BarrelDropRight,
+            ],
+        ),
+    ] {
+        let banked = end_state_after_allowed_pieces(&model, &[bank_piece]);
+        for id in drop_ids {
+            let piece = model
+                .available_pieces(banked)
+                .into_iter()
+                .find(|piece| piece.id == id)
+                .unwrap();
+            assert_eq!(piece.exit.slope, Slope::DownGentle);
+            if matches!(id, PieceId::BankedDropLeft | PieceId::BankedDropRight) {
+                assert_eq!(piece.exit.bank, banked.bank);
+            } else {
+                assert_eq!(piece.exit.bank, Bank::Level);
+            }
+            assert!(piece.exit.z < piece.entry.z);
+            assert!((piece.sample(0.0).roll - banked.bank.radians()).abs() < 1e-8);
+            assert!(piece.maximum_curvature() <= 1.0 / model.minimum_radius_metres);
+            assert!(!model.available_pieces(piece.exit).is_empty());
+        }
+    }
+}
+
+#[test]
+fn barrel_drops_make_a_full_roll_and_mirror() {
+    let pieces = catalog();
+    let left = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::BarrelDropLeft)
+        .unwrap();
+    let right = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::BarrelDropRight)
+        .unwrap();
+    for step in 0..=100 {
+        let fraction = f64::from(step) / 100.0;
+        let left_sample = left.sample(left.length() * fraction);
+        let right_sample = right.sample(right.length() * fraction);
+        assert!((left_sample.roll + right_sample.roll).abs() < 1e-8);
+        assert!(left_sample.tangent.z <= 1e-8);
+    }
+    assert!(left.sample(left.length() * 0.5).roll > std::f64::consts::PI);
+    assert!((left.sample(left.length()).roll - std::f64::consts::TAU).abs() < 1e-8);
+}
+
+#[test]
+fn barrel_drop_inverted_sections_have_grounded_supports() {
+    use crate::track::supports::generate_supports;
+    use crate::world::{Surface, World};
+    let world = World::new(
+        256,
+        256,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    for id in [PieceId::BarrelDropLeft, PieceId::BarrelDropRight] {
+        let template = catalog().into_iter().find(|piece| piece.id == id).unwrap();
+        let state = TrackState {
+            x: 100,
+            y: 100,
+            z: 20,
+            bank: template.entry.bank,
+            ..TrackState::origin()
+        };
+        let piece = template.at(state).unwrap();
+        let supports = generate_supports(&piece, &world, &[]).unwrap();
+        let inverted = piece.sample(piece.length() / 2.0);
+        assert!(inverted.up.z < 0.0);
+        assert!(
+            supports.iter().any(|support| {
+                (support.anchor.x - inverted.position.x)
+                    .hypot(support.anchor.y - inverted.position.y)
+                    < 8.0
+                    && support.footing.z < support.anchor.z
+            }),
+            "{id:?}"
+        );
     }
 }

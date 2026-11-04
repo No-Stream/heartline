@@ -1,7 +1,7 @@
 use crate::track::catalog::catalog;
 use crate::track::{
-    Bank, CoasterModel, HorizontalCurvature, PieceId, Slope, TrackState, VerticalCurvature,
-    hybrid_model, multi_launch_model, wooden_twister_model,
+    Bank, CoasterModel, HorizontalCurvature, LaunchType, PieceId, Slope, TrackState,
+    VerticalCurvature, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +63,7 @@ struct CapabilityExpectations {
     turns_on_gentle_slopes: bool,
     curved_chain: bool,
     maximum_lift_degrees: f64,
+    launch_types: Vec<LaunchType>,
 }
 
 fn capability_expectations() -> Vec<CapabilityExpectations> {
@@ -72,18 +73,21 @@ fn capability_expectations() -> Vec<CapabilityExpectations> {
             turns_on_gentle_slopes: true,
             curved_chain: true,
             maximum_lift_degrees: 60.0,
+            launch_types: vec![LaunchType::LinearMotor],
         },
         CapabilityExpectations {
             model: multi_launch_model(),
             turns_on_gentle_slopes: true,
             curved_chain: true,
             maximum_lift_degrees: 60.0,
+            launch_types: vec![LaunchType::LinearMotor],
         },
         CapabilityExpectations {
             model: wooden_twister_model(),
             turns_on_gentle_slopes: true,
             curved_chain: true,
             maximum_lift_degrees: 45.0,
+            launch_types: vec![],
         },
     ]
 }
@@ -122,6 +126,60 @@ fn every_model_piece_variant_has_a_reachable_entry_connector() {
         "unreachable piece variants:\n{}",
         failures.join("\n")
     );
+}
+
+#[test]
+fn launch_capabilities_match_reachable_launch_sections() {
+    let level = ConnectorState::from(TrackState::origin());
+    for expectations in capability_expectations() {
+        let model = expectations.model;
+        assert_eq!(
+            model.launch_types, expectations.launch_types,
+            "{}",
+            model.name
+        );
+        let launch_ids = [PieceId::LaunchShort, PieceId::Launch, PieceId::LaunchLong];
+        if expectations.launch_types.is_empty() {
+            assert!(
+                model.train.launch.is_none(),
+                "{} has unused launch parameters",
+                model.name
+            );
+            for id in launch_ids {
+                assert!(
+                    !model.allowed_pieces.contains(&id),
+                    "{} allows {id:?}",
+                    model.name
+                );
+            }
+            continue;
+        }
+
+        let launch = model
+            .train
+            .launch
+            .expect("launch capability requires train parameters");
+        assert!(launch.target_speed.is_finite() && launch.target_speed > 0.0);
+        assert!(launch.acceleration.is_finite() && launch.acceleration > 0.0);
+        let connectors = reachable_connectors(&model, level, false);
+        for id in launch_ids {
+            assert!(
+                model.allowed_pieces.contains(&id),
+                "{} does not allow {id:?}",
+                model.name
+            );
+            assert!(
+                connectors.iter().any(|connector| {
+                    model
+                        .available_pieces(connector.track_state())
+                        .iter()
+                        .any(|piece| piece.id == id)
+                }),
+                "{} cannot reach {id:?}",
+                model.name
+            );
+        }
+    }
 }
 
 #[test]

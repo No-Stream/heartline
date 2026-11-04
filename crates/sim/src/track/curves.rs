@@ -293,6 +293,16 @@ pub enum PieceId {
     HalfCorkscrewLeftDown,
     HalfCorkscrewRightDown,
     TopHat,
+    LevelToSixtyUp,
+    SixtyUpToLevel,
+    LevelToSixtyDown,
+    SixtyDownToLevel,
+    BankedDropLeft,
+    BankedDropRight,
+    TwistedDropLeft,
+    TwistedDropRight,
+    BarrelDropLeft,
+    BarrelDropRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -318,6 +328,7 @@ pub(crate) enum Shape {
     Plain,
     AirtimeHill,
     Overbank,
+    BarrelDrop,
     Loop,
     Corkscrew,
     Heartline,
@@ -668,7 +679,10 @@ impl Piece {
             )
         };
         let (s, _, _) = smooth(t);
-        let turns = if matches!(self.shape, Shape::Corkscrew | Shape::Heartline) {
+        let turns = if matches!(
+            self.shape,
+            Shape::Corkscrew | Shape::Heartline | Shape::BarrelDrop
+        ) {
             TAU * s * if self.mirrored { -1.0 } else { 1.0 }
         } else {
             0.0
