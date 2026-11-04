@@ -376,7 +376,16 @@ fn support_segments_detect_nearby_and_overhead_sections_without_filling_their_bo
         &hybrid_model().train,
         &[],
         &[],
-        &[nearby, overhead],
+        &[
+            OwnedSupportSegment {
+                piece_index: None,
+                segment: nearby,
+            },
+            OwnedSupportSegment {
+                piece_index: None,
+                segment: overhead,
+            },
+        ],
     )
     .events_for_run(&[]);
     assert!(
@@ -412,13 +421,98 @@ fn diagonal_support_does_not_fill_its_horizontal_bounding_rectangle() {
         &hybrid_model().train,
         &[],
         &[],
-        &[support],
+        &[OwnedSupportSegment {
+            piece_index: None,
+            segment: support,
+        }],
     )
     .events_for_run(&[]);
     assert!(
         !events
             .iter()
             .any(|event| event.kind == ProximityKind::NearMiss)
+    );
+}
+
+#[test]
+fn a_piece_does_not_report_its_own_routed_supports() {
+    use crate::track::supports::generate_steel_columns;
+    let world = World::new(
+        32,
+        32,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let mut piece = catalog()
+        .into_iter()
+        .find(|item| item.id == PieceId::Loop)
+        .unwrap()
+        .at(TrackState {
+            x: 8,
+            y: 8,
+            z: 3,
+            ..TrackState::origin()
+        })
+        .unwrap();
+    piece.exit = piece.entry;
+    piece.rebuild_arc();
+    let supports = generate_steel_columns(&piece, &world, &[]).unwrap();
+    let owned_supports: Vec<_> = supports
+        .into_iter()
+        .map(|segment| OwnedSupportSegment {
+            piece_index: Some(0),
+            segment,
+        })
+        .collect();
+    let events = scan_proximity_with_supports(
+        &world,
+        &[piece],
+        &hybrid_model().train,
+        &[],
+        &[],
+        &owned_supports,
+    )
+    .events_for_run(&[]);
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.kind == ProximityKind::NearMiss)
+    );
+}
+
+#[test]
+fn a_later_track_section_reports_a_near_miss_with_an_earlier_sections_support() {
+    let world = World::new(
+        32,
+        32,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let pieces = [straight(4, 3), straight(5, 3), straight(6, 3)];
+    let support = SupportSegment {
+        start: Vec3::new(12.0, 10.0, 6.0),
+        end: Vec3::new(14.0, 10.0, 8.0),
+    };
+    let events = scan_proximity_with_supports(
+        &world,
+        &pieces,
+        &hybrid_model().train,
+        &[],
+        &[],
+        &[OwnedSupportSegment {
+            piece_index: Some(0),
+            segment: support,
+        }],
+    )
+    .events_for_run(&[]);
+    assert!(
+        events
+            .iter()
+            .any(|event| { event.piece_index == 2 && event.kind == ProximityKind::NearMiss })
     );
 }
 

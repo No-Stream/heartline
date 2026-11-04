@@ -23,6 +23,12 @@ const DUEL_DISTANCE: f64 = 10.0;
 
 type ObstacleIndex = HashMap<(i32, i32), Vec<ClearanceBox>>;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OwnedSupportSegment {
+    pub piece_index: Option<usize>,
+    pub segment: SupportSegment,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProximityKind {
     NearMiss,
@@ -145,7 +151,7 @@ pub fn scan_proximity_with_supports(
     train: &TrainConfiguration,
     other_tracks: &[Piece],
     obstacles: &[ClearanceBox],
-    supports: &[SupportSegment],
+    supports: &[OwnedSupportSegment],
 ) -> ProximityGeometry {
     let mut index: ObstacleIndex = HashMap::new();
     let all_tracks: Vec<Piece> = pieces.iter().chain(other_tracks).cloned().collect();
@@ -185,11 +191,11 @@ pub fn scan_proximity_with_supports(
     }
     let mut support_index: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (support_index_value, support) in supports.iter().enumerate() {
-        for x in cell(support.start.x.min(support.end.x) - 0.2)
-            ..=cell(support.start.x.max(support.end.x) + 0.2)
+        for x in cell(support.segment.start.x.min(support.segment.end.x) - 0.2)
+            ..=cell(support.segment.start.x.max(support.segment.end.x) + 0.2)
         {
-            for y in cell(support.start.y.min(support.end.y) - 0.2)
-                ..=cell(support.start.y.max(support.end.y) + 0.2)
+            for y in cell(support.segment.start.y.min(support.segment.end.y) - 0.2)
+                ..=cell(support.segment.start.y.max(support.segment.end.y) + 0.2)
             {
                 support_index
                     .entry((x, y))
@@ -289,21 +295,37 @@ pub fn scan_proximity_with_supports(
                             continue;
                         }
                         let support = supports[support_id];
+                        if support.piece_index.is_some_and(|owner| {
+                            let piece_count = pieces.len();
+                            owner == piece_index
+                                || (owner + 1) % piece_count == piece_index
+                                || (piece_index + 1) % piece_count == owner
+                        }) {
+                            continue;
+                        }
                         if !oriented.intersects_segment(
-                            support.start,
-                            support.end,
+                            support.segment.start,
+                            support.segment.end,
                             NEAR_DISTANCE,
                             0.2,
-                        ) || oriented.intersects_segment(support.start, support.end, 0.0, 0.2)
-                        {
+                        ) || oriented.intersects_segment(
+                            support.segment.start,
+                            support.segment.end,
+                            0.0,
+                            0.2,
+                        ) {
                             continue;
                         }
                         let mut low = 0.0;
                         let mut high = NEAR_DISTANCE;
                         for _ in 0..8 {
                             let middle = (low + high) / 2.0;
-                            if oriented.intersects_segment(support.start, support.end, middle, 0.2)
-                            {
+                            if oriented.intersects_segment(
+                                support.segment.start,
+                                support.segment.end,
+                                middle,
+                                0.2,
+                            ) {
                                 high = middle;
                             } else {
                                 low = middle;
@@ -321,14 +343,15 @@ pub fn scan_proximity_with_supports(
                             }
                         };
                         update(0, ProximityKind::NearMiss);
-                        let delta = support.end - support.start;
+                        let delta = support.segment.end - support.segment.start;
                         let length_squared = delta.dot(delta);
                         let t = if length_squared > 0.0 {
-                            ((pos - support.start).dot(delta) / length_squared).clamp(0.0, 1.0)
+                            ((pos - support.segment.start).dot(delta) / length_squared)
+                                .clamp(0.0, 1.0)
                         } else {
                             0.0
                         };
-                        let closest = support.start + delta * t;
+                        let closest = support.segment.start + delta * t;
                         let lateral = (closest - pos).dot(sample.up.cross(sample.tangent)).abs();
                         if closest.z > pos.z + train.height_metres * 0.5
                             && lateral <= train.width_metres / 2.0 + 0.2

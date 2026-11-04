@@ -32,7 +32,10 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
             .train_configuration,
         &[],
         &[],
-        &[segment],
+        &[theme_park_sim::track::proximity::OwnedSupportSegment {
+            piece_index: None,
+            segment,
+        }],
     );
     assert_eq!(baseline.events_for_run(&[]), diagonal.events_for_run(&[]));
 }

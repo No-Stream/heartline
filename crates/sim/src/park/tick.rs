@@ -8,7 +8,7 @@ use crate::physics::CoasterOutcome;
 use crate::track::blocks::{BlockLayout, BlockManualSearch};
 use crate::track::clearance::ClearanceBox;
 use crate::track::construction::track_support_obstacles;
-use crate::track::proximity::{TrainPosition, scan_proximity_with_supports};
+use crate::track::proximity::{OwnedSupportSegment, TrainPosition, scan_proximity_with_supports};
 use crate::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, SupportError, SupportObstacle, SupportSegment,
     generate_dense_wooden_lattice, generate_steel_columns, generate_wooden_lattice,
@@ -237,16 +237,25 @@ impl Park {
             .collect()
     }
 
-    pub fn proximity_supports(&self) -> Vec<SupportSegment> {
+    pub fn proximity_supports(&self) -> Vec<OwnedSupportSegment> {
+        let piece_ids = self
+            .construction
+            .as_ref()
+            .map_or(&[][..], |construction| construction.piece_ids());
         self.support_render_cache
-            .values()
-            .flat_map(|cached| {
+            .iter()
+            .flat_map(|(id, cached)| {
+                let piece_index = piece_ids.iter().position(|piece_id| piece_id == id);
                 cached
                     .segments
                     .as_ref()
                     .expect("placed support must be routable")
                     .iter()
                     .copied()
+                    .map(move |segment| OwnedSupportSegment {
+                        piece_index,
+                        segment,
+                    })
             })
             .collect()
     }
@@ -545,7 +554,7 @@ fn append_vector(result: &mut Vec<f32>, vector: Vec3) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Park, SupportRenderCache, SupportSegment, Vec3};
+    use super::{OwnedSupportSegment, Park, SupportRenderCache, SupportSegment, Vec3};
     use crate::facilities::{FacilityKind, ParkFacilities};
     use crate::guests::park::ParkGuests;
     use crate::physics::{PhysicsConfig, Train, demo_circuit};
@@ -639,6 +648,12 @@ mod tests {
                 segments: Ok(vec![segment]),
             },
         );
-        assert_eq!(park.proximity_supports(), vec![segment]);
+        assert_eq!(
+            park.proximity_supports(),
+            vec![OwnedSupportSegment {
+                piece_index: None,
+                segment,
+            }]
+        );
     }
 }
