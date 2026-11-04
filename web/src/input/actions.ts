@@ -41,6 +41,8 @@ export type InputAction =
   | { readonly type: "testing-metric-set"; readonly metric: TestingMetric | null }
   | { readonly type: "theme-set"; readonly theme: Theme }
   | { readonly type: "units-set"; readonly units: Units }
+  | { readonly type: "sound-mute-toggle" }
+  | { readonly type: "sound-volume"; readonly volume: number }
   | { readonly type: "guest-select"; readonly guestId: string }
   | { readonly type: "guest-close" }
   | { readonly type: "landscaping-activate"; readonly selection: LandscapingSelection }
