@@ -41,7 +41,7 @@ window.trackDepthCases = async (rotation) => {
   const rail = (id: number, start: Vector, end: Vector, lateral: Vector): number[] => [id, ...start, ...lateral, 0, 0, 1, ...end, ...lateral, 0, 0, 1];
   const flat = new Int32Array(8 * 8 * 6);
   const world = (surfaces: Int32Array, paths = new Int32Array(), carved = new Int32Array()): WorldView => ({ dimensions: new Uint16Array([8, 8]), surfaces, paths, carved });
-  const render = (view: WorldView, rails: number[], flattenDepth = false): void => renderer.render(view, camera, 0, [(renderCamera, viewport) => {
+  const render = (view: WorldView, rails: number[], flattenDepth = false): void => renderer.render({ world: view, camera: camera, waterFrame: 0, geometryPasses: [(renderCamera, viewport) => {
     const quads = buildTrackQuads(new Float32Array(rails), new Float32Array(), new Float32Array(), renderCamera, viewport, style);
     if (!flattenDepth) return quads;
     const depths = new Map<string, number>();
@@ -49,7 +49,7 @@ window.trackDepthCases = async (rotation) => {
       if (!depths.has(quad.id)) depths.set(quad.id, quad.vertices[0].depth);
       return { ...quad, vertices: quad.vertices.map((vertex) => ({ ...vertex, depth: depths.get(quad.id)! })) as typeof quad.vertices };
     });
-  }]);
+  }] });
   const pick = (point: Vector): string => {
     const screen = projectWorld(camera, canvas, { x: point[0], y: point[1], z: point[2] });
     const result = renderer.pick(screen.x, screen.y);

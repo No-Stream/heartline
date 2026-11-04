@@ -1,3 +1,4 @@
+import { projectVertex } from "../projection";
 import { projectWorld, type Camera, type Viewport } from "../../camera";
 import type { ScreenPoint } from "../../input/actions";
 import type { Triangle, Vertex } from "../scene";
@@ -33,9 +34,7 @@ function normalize(vector: Vector3): Vector3 {
 }
 
 function projectedVertex(point: Vector3, camera: Camera, viewport: Viewport): Vertex {
-  const screen = projectWorld(camera, viewport, { x: point[0], y: point[1], z: point[2] });
-  const depthByRotation = [point[0] + point[1], point[0] - point[1], -point[0] - point[1], -point[0] + point[1]][camera.rotation];
-  return { ...screen, depth: depthByRotation + point[2], height: point[2] * 4, u: 0, v: 0 };
+  return projectVertex(camera, viewport, { x: point[0], y: point[1], z: point[2] });
 }
 
 function railSegments(rails: Float32Array, railDistancesMetres: Float32Array): RailSegment[] {

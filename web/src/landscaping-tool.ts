@@ -1,5 +1,6 @@
+import { projectVertex } from "./render/projection";
 import type { GeometryQuad, WorldView } from "./render/scene";
-import { projectWorld, type Camera, type Viewport } from "./camera";
+import type { Camera, Viewport } from "./camera";
 
 export const LANDSCAPING_TOOLS = [
   "raise_corner", "lower_corner", "raise_tiles", "lower_tiles", "flatten", "smooth",
@@ -292,9 +293,7 @@ const GHOST_COLORS: Record<LandscapingTool, GeometryQuad["color"]> = {
 };
 
 function vertex(x: number, y: number, height: number, camera: Camera, viewport: Viewport): GeometryQuad["vertices"][number] {
-  const projected = projectWorld(camera, viewport, { x, y, z: height / 4 });
-  const rotated = [x + y, x - y, -x - y, -x + y][camera.rotation];
-  return { ...projected, depth: rotated + height / 4, height, u: 0, v: 0 };
+  return { ...projectVertex(camera, viewport, { x, y, z: height / 4 }), height };
 }
 
 /** Builds a translucent brush footprint on the current ground, ready for a renderer geometry pass. */

@@ -1,4 +1,5 @@
-import { projectWorld, unprojectGround, type Camera, type Viewport } from "../camera";
+import { projectVertex } from "./projection";
+import { unprojectGround, type Camera, type Viewport } from "../camera";
 import { pathCornerHeights } from "./path-ghost";
 
 export interface AtlasFrame {
@@ -193,9 +194,7 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
   }
   const pathCorners = pathCornerHeights;
   const point = (x: number, y: number, heightSteps: number): Vertex => {
-    const projected = projectWorld(camera, viewport, { x, y, z: heightSteps / 4 });
-    const rotated = [x + y, x - y, -x - y, -x + y][camera.rotation];
-    return { ...projected, depth: rotated + heightSteps / 4, height: heightSteps, u: 0, v: 0 };
+    return { ...projectVertex(camera, viewport, { x, y, z: heightSteps / 4 }), height: heightSteps };
   };
   const addQuad = (corners: [Vertex, Vertex, Vertex, Vertex], kind: Triangle["kind"], x: number, y: number, color: Triangle["color"], frame?: AtlasFrame, id?: string, textureCoordinates?: number[][], heightLimit?: number, depthBias = 0): void => {
     const vertices = corners.map((corner) => ({ ...corner })) as [Vertex, Vertex, Vertex, Vertex];

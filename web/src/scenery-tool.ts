@@ -1,6 +1,7 @@
+import { projectVertex } from "./render/projection";
 import type { SceneryReport as Scenery } from "./generated/SceneryReport";
 import type { SceneryReportKind as SceneryKind } from "./generated/SceneryReportKind";
-import { projectWorld, type Camera, type Viewport } from "./camera";
+import type { Camera, Viewport } from "./camera";
 import type { GeometryQuad, WorldSprite, WorldView } from "./render/scene";
 
 export const SCENERY_SETS = {
@@ -61,8 +62,7 @@ export function buildSceneryGhostQuads(preview: SceneryPreview | null, world: Wo
   const points = [[preview.x + left, preview.y + top], [preview.x + left + size, preview.y + top], [preview.x + left + size, preview.y + top + size], [preview.x + left, preview.y + top + size]] as const;
   const vertices = points.map(([x, y]) => {
     const elevation = preview.z;
-    const projected = projectWorld(camera, viewport, { x, y, z: elevation / 4 });
-    return { ...projected, depth: [x + y, x - y, -x - y, -x + y][camera.rotation] + elevation / 4, height: elevation, u: 0, v: 0 };
+    return { ...projectVertex(camera, viewport, { x, y, z: elevation / 4 }), height: elevation };
   }) as unknown as GeometryQuad["vertices"];
   return [{ vertices, color: [0.2, 0.6, 0.45, 0.45], kind: "landscaping-preview", id: "scenery-preview", tileX: preview.x, tileY: preview.y }];
 }
