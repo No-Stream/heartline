@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { readCircuit } from "../player/circuits";
 import { fileURLToPath } from "node:url";
 import { closeCircuit, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
 
@@ -11,9 +11,7 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
     phaseStarted = Date.now();
   };
   await page.setViewportSize({ width: 800, height: 480 });
-  const circuit = readFileSync(new URL("../player/circuits.txt", import.meta.url), "utf8")
-    .split("[Timber Tumbler]")[1].split("\n").map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"));
+  const circuit = readCircuit("Timber Tumbler");
   let circuitIndex = 0;
   let chain = false;
   const placePiece = async (): Promise<void> => {
