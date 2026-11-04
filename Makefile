@@ -3,6 +3,10 @@ CARGO_HOME ?= $(HOME)/.cargo
 WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
 WASM_BINDGEN_VERSION := 0.2.105
 
+# Every recipe line runs inside the project's shared memory and CPU budget; see tools/run-in-budget.sh.
+SHELL := tools/run-in-budget.sh
+.SHELLFLAGS := bash -c
+
 .PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests
 
 install:

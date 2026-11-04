@@ -1,5 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
+if (!process.env.THEME_PARK_BROWSER_TESTS_IN_BUDGET) {
+  throw new Error("Run browser tests with `npm run e2e -- <playwright args>` (or a make target): it runs them one at a time inside the shared memory and CPU budget.");
+}
+
 const port = Number(process.env.PLAYWRIGHT_PORT ?? 4173);
 const baseURL = `http://127.0.0.1:${port}`;
 
