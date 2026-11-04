@@ -1101,6 +1101,16 @@ pub(crate) fn wire_pieceid(value: PieceId) -> &'static str {
         PieceId::HalfCorkscrewLeftDown => "HalfCorkscrewLeftDown",
         PieceId::HalfCorkscrewRightDown => "HalfCorkscrewRightDown",
         PieceId::TopHat => "TopHat",
+        PieceId::LevelToSixtyUp => "LevelToSixtyUp",
+        PieceId::SixtyUpToLevel => "SixtyUpToLevel",
+        PieceId::LevelToSixtyDown => "LevelToSixtyDown",
+        PieceId::SixtyDownToLevel => "SixtyDownToLevel",
+        PieceId::BankedDropLeft => "BankedDropLeft",
+        PieceId::BankedDropRight => "BankedDropRight",
+        PieceId::TwistedDropLeft => "TwistedDropLeft",
+        PieceId::TwistedDropRight => "TwistedDropRight",
+        PieceId::BarrelDropLeft => "BarrelDropLeft",
+        PieceId::BarrelDropRight => "BarrelDropRight",
     }
 }
 
