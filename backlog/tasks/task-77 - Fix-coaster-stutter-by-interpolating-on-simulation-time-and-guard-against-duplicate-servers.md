@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-11-03 20:05'
-updated_date: '2026-11-03 20:22'
+updated_date: '2026-11-04 00:28'
 labels:
   - rendering
   - performance
@@ -25,4 +25,6 @@ Stutter diagnosis 2026-11-03: the worker keeps 30 Hz (send interval median 29.7 
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented a buffered 30 Hz simulation-time render clock with a three-tick delay and bounded 2% rate correction; duplicate or older live snapshots are ignored. Live zero-tick wakeups no longer send snapshots; frozen mode and the initial snapshot remain intact. Added strict development port and disabled Playwright server reuse. Render-clock Vitest: 5 passed; typecheck and make build passed; focused frozen game smoke passed. Scratch measurement: before 119/442 zero-tick sends, after 0/315; the scratch script reconstructs the old interpolation, so its movement figures do not measure the new renderer. Software WebGL was heavily loaded, with median frame intervals 367 ms before and 350 ms after. No acceptance criteria were defined to tick.
+
+Owner confirmed in the 2026-11-03 playtest that the game 'seems smoother'.
 <!-- SECTION:NOTES:END -->
