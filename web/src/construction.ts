@@ -131,6 +131,15 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
           <button type="button" class="tool-panel__action tool-panel__action--primary" data-append>Place piece ${hint("place")}</button>
           <button type="button" class="tool-panel__action" data-undo>Undo last piece ${hint("undo")}</button>
           <button type="button" class="tool-panel__action" data-close>Close circuit ${hint("close")}</button>
+          <div class="builder__finish-flow">
+            <button type="button" class="tool-panel__action" data-finish aria-describedby="finish-reason">Finish coaster</button>
+            <p class="builder__finish-reason" id="finish-reason" data-finish-reason aria-live="polite"></p>
+            <div class="builder__finish-confirmation" data-finish-confirmation hidden>
+              <p>Review the highlighted connection, then confirm to add it and close the circuit.</p>
+              <button type="button" class="tool-panel__action tool-panel__action--primary" data-finish-confirm>Confirm coaster finish</button>
+              <button type="button" class="tool-panel__action" data-finish-cancel>Cancel finish preview</button>
+            </div>
+          </div>
           <button type="button" class="tool-panel__action" data-test>Test coaster ${hint("test")}</button>
         </div>
         <p class="builder__test-hint">Coaster income: <span data-coaster-income>0</span></p>
@@ -208,6 +217,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const append = element<HTMLButtonElement>("[data-append]");
   const undo = element<HTMLButtonElement>("[data-undo]");
   const close = element<HTMLButtonElement>("[data-close]");
+  const finish = element<HTMLButtonElement>("[data-finish]");
+  const finishReason = element("[data-finish-reason]");
+  const finishConfirmation = element("[data-finish-confirmation]");
+  const confirmFinish = element<HTMLButtonElement>("[data-finish-confirm]");
+  const cancelFinish = element<HTMLButtonElement>("[data-finish-cancel]");
   const test = element<HTMLButtonElement>("[data-test]");
   const open = element<HTMLButtonElement>("[data-open]");
   const coasterPrice = element<HTMLInputElement>("[data-coaster-price]");
@@ -296,6 +310,9 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   append.addEventListener("click", () => dispatch({ type: "construction-append" }));
   undo.addEventListener("click", () => dispatch({ type: "construction-undo" }));
   close.addEventListener("click", () => dispatch({ type: "construction-close" }));
+  finish.addEventListener("click", () => dispatch({ type: "construction-finish-preview" }));
+  confirmFinish.addEventListener("click", () => dispatch({ type: "construction-finish-confirm" }));
+  cancelFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cancel" }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
   open.addEventListener("click", () => dispatch({ type: "construction-set-open", open: !state?.isOpen }));
   const setCoasterPrice = (price: number): void => {
@@ -597,6 +614,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       modelSelect.disabled = next.active;
       container.dataset.selected = next.selected ?? "";
       container.dataset.chain = String(next.chain);
+      container.dataset.finishPreview = String(next.finishPreview);
       chainToggle.setAttribute("aria-pressed", String(next.chain));
       chainState.textContent = next.chain ? "On" : "Off";
       chainHint.textContent = next.chain
@@ -611,7 +629,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       palette.hidden = closed;
       chainSection.hidden = closed;
       close.classList.toggle("tool-panel__action--primary", next.canClose);
-      append.classList.toggle("tool-panel__action--primary", !next.canClose);
+      finish.classList.toggle("tool-panel__action--primary", next.canFinish && !next.canClose);
+      append.classList.toggle("tool-panel__action--primary", !next.canClose && !next.canFinish);
+      finish.hidden = closed || next.finishPreview;
+      finish.disabled = !next.canFinish;
+      finishReason.textContent = next.finishReason;
+      finishReason.hidden = closed || next.canFinish || next.finishPreview;
+      finishConfirmation.hidden = closed || !next.finishPreview;
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");
       const focusInPalette = palette.contains(document.activeElement);
       const nextPaletteKey = next.pieces.map(({ id, refusal }) => `${id}:${refusal}`).join("|");

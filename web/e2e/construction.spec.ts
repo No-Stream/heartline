@@ -58,6 +58,11 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
       await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
       await page.addStyleTag({ content: "[data-testid='tick-count'] { visibility: hidden; }" });
       await page.mouse.move(0, 0);
+      await page.evaluate(() => {
+        const dock = document.querySelector<HTMLElement>("[data-dock]");
+        if (!dock) throw new Error("Tool panel is missing");
+        dock.scrollTop = 0;
+      });
       await expect(page.locator("main")).toHaveScreenshot("construction-preview.png", { animations: "disabled" });
     }
     await page.getByRole("button", { name: "Place piece" }).click();
@@ -142,6 +147,12 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   }, overlaySize);
   await clickCanvas(page, inspectionPoint);
   await expect(page.locator("[data-inspection]")).toContainText("Vertical:");
+  await page.evaluate(() => {
+    const dock = document.querySelector<HTMLElement>("[data-dock]");
+    const testing = document.querySelector<HTMLElement>("[data-testing]");
+    if (!dock || !testing) throw new Error("Coaster testing panel is missing");
+    dock.scrollTop += testing.getBoundingClientRect().top - dock.getBoundingClientRect().top;
+  });
   await expect(page.locator("[data-testing]")).toHaveScreenshot("coaster-testing-panel.png", { animations: "disabled" });
   await expect(canvas).toHaveScreenshot("coaster-testing-overlay.png", { animations: "disabled" });
   await page.getByLabel("Track overlay").selectOption("airtime");
@@ -290,4 +301,80 @@ test("closes a compact circuit with short straights and full-tile offsets @fast"
   await closeCircuit.click();
   await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+});
+
+test("previews and confirms a lift-powered circuit finish, then completes a ride test @fast", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const track = page.locator("[data-track] li");
+  const finishCoaster = page.getByRole("button", { name: "Finish coaster" });
+  const pieces = [
+    "LevelToGentleUp",
+    "GentleUp",
+    "GentleUp",
+    "GentleUp",
+    "GentleUp",
+    "GentleUp",
+    "GentleUpToLevel",
+    "Straight",
+    "Straight",
+    "Straight",
+    "TurnLargeEntry",
+    "TurnLargeExit",
+    "LevelToGentleDown",
+    "GentleDown",
+    "GentleDown",
+    "GentleDown",
+    "GentleDown",
+    "GentleDown",
+    "GentleDownToLevel",
+    "Loop",
+    "TurnLargeEntry",
+  ];
+
+  await expect(track).toHaveCount(1);
+  await expect(finishCoaster).toBeDisabled();
+  await expect(page.locator("[data-finish-reason]")).toHaveText(/\S/);
+  for (const [index, piece] of pieces.entries()) {
+    if (index === 0 || index === 8) await page.keyboard.press("h");
+    const choice = choices.locator(`[data-piece="${piece}"]`);
+    await expect(choice).toBeVisible();
+    await choice.click();
+    await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
+    await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
+    await page.getByRole("button", { name: "Place piece" }).click();
+    await expect(track).toHaveCount(index + 2);
+  }
+
+  await expect(finishCoaster).toBeEnabled();
+  await finishCoaster.click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "true");
+  await expect(page.getByRole("button", { name: "Confirm coaster finish" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel finish preview" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel finish preview" }).click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "false");
+
+  await finishCoaster.click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "true");
+  await page.getByRole("button", { name: "Confirm coaster finish" }).click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "false");
+  await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();
+  await expect.poll(() => track.count()).toBeGreaterThan(pieces.length + 1);
+  await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+  await page.getByRole("button", { name: "Test coaster" }).click();
+  await page.evaluate(() => window.gameTest.advanceTicks(10000));
+  await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status")).toHaveText("Train completed a lap.");
 });

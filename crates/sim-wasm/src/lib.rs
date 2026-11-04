@@ -29,7 +29,9 @@ use theme_park_sim::track::blocks::ThroughputEstimator;
 use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch};
 #[cfg(test)]
 use theme_park_sim::track::clearance::ClearanceBox;
-use theme_park_sim::track::construction::{Construction, track_support_obstacles};
+use theme_park_sim::track::construction::{
+    Completion, CompletionSearch, CompletionSearchProgress, Construction, track_support_obstacles,
+};
 use theme_park_sim::track::proximity::ProximityKind;
 #[cfg(test)]
 use theme_park_sim::track::supports::SUPPORT_INFLUENCE_RADIUS_METRES;
@@ -65,6 +67,10 @@ pub struct WasmSimulation {
     terrain_invalidated_paths: Vec<Position>,
     construction_model: ConstructionModel,
     selected: Option<PieceId>,
+    construction_completion: Option<Completion>,
+    construction_completion_available: Option<Completion>,
+    construction_completion_search: Option<CompletionSearch>,
+    construction_completion_checked: bool,
     construction_preview_supports_cache: Vec<f32>,
     construction_placed_supports_cache: Vec<f32>,
     recovered_station: Option<Piece>,
@@ -199,6 +205,9 @@ impl WasmSimulation {
         geometry
     }
     fn construction_preview(&self) -> Vec<Piece> {
+        if let Some(completion) = &self.construction_completion {
+            return completion.geometry.clone();
+        }
         let Some(construction) = &self.park.construction else {
             return Vec::new();
         };

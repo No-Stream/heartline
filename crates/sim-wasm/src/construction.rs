@@ -3,6 +3,7 @@ use super::*;
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn construction_start(&mut self, x: i32, y: i32, z: i32, heading: u8) {
+        self.construction_finish_invalidate();
         let heading = match heading {
             0 => Heading::East,
             1 => Heading::NorthEast,
@@ -61,6 +62,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_set_chain(&mut self, enabled: bool) {
+        self.construction_finish_invalidate();
         if let Some(construction) = self.construction.as_mut() {
             construction.set_chain(enabled);
             self.construction_message.clear();
@@ -69,6 +71,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_select(&mut self, id: &str) {
+        self.construction_finish_invalidate();
         match id {
             "model:hybrid" => {
                 self.construction_model = ConstructionModel::Hybrid;
@@ -180,7 +183,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_preview_valid(&self) -> bool {
-        self.construction_can_append()
+        self.construction_completion.is_some() || self.construction_can_append()
     }
 
     pub fn construction_preview_reason(&self) -> String {
@@ -300,6 +303,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_append(&mut self) {
+        self.construction_finish_invalidate();
         let obstacles = self.facility_obstacles();
         let selected = self.selected;
         let world = &self.park.world;
@@ -345,6 +349,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_delete(&mut self, index: usize) {
+        self.construction_finish_invalidate();
         let result = self
             .construction
             .as_mut()
@@ -404,6 +409,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_close(&mut self) {
+        self.construction_finish_invalidate();
         let result = self
             .construction
             .as_mut()
@@ -417,6 +423,102 @@ impl WasmSimulation {
         if changed {
             self.refresh_construction_support_rendering();
         }
+    }
+
+    pub fn construction_finish_preview_active(&self) -> bool {
+        self.construction_completion.is_some()
+    }
+
+    pub fn construction_finish_invalidate(&mut self) {
+        let had_preview = self.construction_completion.is_some();
+        self.construction_completion = None;
+        self.construction_completion_available = None;
+        self.construction_completion_search = None;
+        self.construction_completion_checked = false;
+        if had_preview {
+            self.refresh_construction_support_rendering();
+        }
+    }
+
+    pub fn construction_finish_search_start(&mut self) {
+        self.construction_completion_available = None;
+        self.construction_completion_search = self
+            .construction
+            .as_ref()
+            .and_then(Construction::completion_search);
+        self.construction_completion_checked = self.construction_completion_search.is_none();
+    }
+
+    pub fn construction_finish_search_advance(&mut self) -> bool {
+        let obstacles = self.facility_obstacles();
+        let Some(search) = &mut self.construction_completion_search else {
+            return true;
+        };
+        match search.advance(&self.park.world, &obstacles) {
+            CompletionSearchProgress::Pending => false,
+            CompletionSearchProgress::Finished(completion) => {
+                self.construction_completion_available = completion;
+                self.construction_completion_search = None;
+                self.construction_completion_checked = true;
+                true
+            }
+        }
+    }
+
+    pub fn construction_can_finish(&self) -> bool {
+        self.construction_completion_available.is_some() || self.construction_completion.is_some()
+    }
+
+    pub fn construction_finish_reason(&self) -> String {
+        if self.construction_can_finish() {
+            String::new()
+        } else if self.construction_completion_checked {
+            "No nearby connection to the station was found.".into()
+        } else {
+            "Checking for a connection to the station.".into()
+        }
+    }
+
+    pub fn construction_finish_preview(&mut self) {
+        self.construction_completion = self.construction_completion_available.take();
+        self.construction_message = if self.construction_completion.is_some() {
+            "Review the connection, then confirm to finish the coaster.".into()
+        } else {
+            "No nearby connection to the station was found.".into()
+        };
+        self.refresh_construction_support_rendering();
+    }
+
+    pub fn construction_finish_cancel(&mut self) {
+        self.construction_completion_available = self.construction_completion.take();
+        self.construction_message.clear();
+        self.refresh_construction_support_rendering();
+    }
+
+    pub fn construction_finish_confirm(&mut self) {
+        let Some(completion) = self.construction_completion.take() else {
+            self.construction_message = "Preview a connection first.".into();
+            return;
+        };
+        let obstacles = self.facility_obstacles();
+        let result = self
+            .park
+            .construction
+            .as_mut()
+            .expect("completion requires construction")
+            .apply_completion(&completion, &self.park.world, &obstacles);
+        if result.is_ok() {
+            self.close_live_coaster();
+            self.clear_block_layout();
+            self.park.support_render_cache.clear();
+            self.construction_recorder = None;
+            self.construction_report = None;
+            self.construction_train = None;
+            self.construction_outcome = None;
+            self.select_compatible_piece();
+        }
+        self.construction_message = result.err().map(construction_error).unwrap_or_default();
+        self.refresh_construction_support_rendering();
     }
 
     pub fn construction_test(&mut self) {
@@ -608,9 +710,9 @@ impl WasmSimulation {
             .as_ref()
             .expect("valid preview requires construction");
         let preview = self.construction_preview();
-        let Some(piece) = preview.first() else {
+        if preview.is_empty() {
             return Ok(Vec::new());
-        };
+        }
         let mut obstacles: Vec<_> = self
             .construction_support_entries()
             .expect("valid preview requires construction")
@@ -623,13 +725,20 @@ impl WasmSimulation {
             })
             .collect();
         obstacles.extend(self.facility_obstacles());
-        render_preview_supports(
-            piece,
-            &obstacles,
-            &self.world,
-            construction.model().support_style,
-        )
-        .map(|supports| self.encode_construction_geometry(supports, 7))
+        let mut supports = Vec::new();
+        for piece in &preview {
+            supports.extend(render_preview_supports(
+                piece,
+                &obstacles,
+                &self.world,
+                construction.model().support_style,
+            )?);
+            obstacles.extend(track_support_obstacles(
+                std::slice::from_ref(piece),
+                &construction.model().train,
+            ));
+        }
+        Ok(self.encode_construction_geometry(supports, 7))
     }
 
     pub(crate) fn refresh_construction_support_rendering(&mut self) {

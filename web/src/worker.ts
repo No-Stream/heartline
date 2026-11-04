@@ -23,7 +23,7 @@ type PathAction =
   | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
 type InitAction = { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean };
-type WorkerAction = InitAction | { type: "export-session"; requestId: number } | { type: "test-resume" } | { type: "set-speed"; speed: number } | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
+type WorkerAction = InitAction | { type: "export-session"; requestId: number } | { type: "construction-finish-await" } | { type: "test-resume" } | { type: "set-speed"; speed: number } | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
 let manualBlockAnalysis = false;
@@ -137,12 +137,40 @@ function sendConstruction(): void {
       const [id, label, name, group, slope] = row.split("\t");
       return { id: Number(id), label, name, group, slope };
     }) : [],
-    canAppend: !!selectedChoice && !selectedChoice[6], canClose: simulation.construction_can_close(),
+    canAppend: simulation.construction_finish_preview_active() || (!!selectedChoice && !selectedChoice[6]), canClose: simulation.construction_can_close(),
+    finishPreview: simulation.construction_finish_preview_active(),
+    canFinish: simulation.construction_can_finish(), finishReason: simulation.construction_finish_reason(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as unknown,
     canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), coasterPrice, coasterIncome, stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.[6] || "",
     blockReport: JSON.parse(lastBlockReport) as unknown, trainCount: simulation.construction_train_count(),
     previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports, railDistances, blockCandidates,
   }, [previewRails.buffer, previewTies.buffer, previewSupports.buffer, placedRails.buffer, placedTies.buffer, placedSupports.buffer, railDistances.buffer, blockCandidates.buffer]);
+}
+
+let finishSearchGeneration = 0;
+let finishSearchPending = false;
+let finishSearchAwaited = false;
+function scheduleFinishSearch(): void {
+  const generation = ++finishSearchGeneration;
+  finishSearchPending = true;
+  setTimeout(() => {
+    if (generation !== finishSearchGeneration) return;
+    simulation.construction_finish_search_start();
+    sendConstruction();
+    const advance = (): void => {
+      if (generation !== finishSearchGeneration) return;
+      if (simulation.construction_finish_search_advance()) {
+        finishSearchPending = false;
+        sendConstruction();
+        if (finishSearchAwaited) {
+          finishSearchAwaited = false;
+          workerScope.postMessage({ type: "construction-finish-ready" });
+        }
+      }
+      else setTimeout(advance, 0);
+    };
+    advance();
+  }, 0);
 }
 
 function sendFacilities(message = "", placed = false, forced = false): void {
@@ -221,6 +249,15 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "export-session") {
       workerScope.postMessage({ type: "session-export", requestId: action.requestId, recording: recorder.snapshot(Number(simulation.tick_count())) });
       return;
+    }
+    if (action.type === "construction-finish-await") {
+      if (finishSearchPending) finishSearchAwaited = true;
+      else workerScope.postMessage({ type: "construction-finish-ready" });
+      return;
+    }
+    if (!["test-resume", "test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode", "construction-finish-preview", "construction-finish-confirm", "construction-finish-cancel"].includes(action.type)) {
+      simulation.construction_finish_invalidate();
+      scheduleFinishSearch();
     }
     if (!["test-resume", "test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode"].includes(action.type)) {
       recorder.recordCommand(Number(simulation.tick_count()), action);
@@ -372,6 +409,9 @@ workerScope.addEventListener("message", (event) => {
         case "construction-undo": simulation.construction_undo(); break;
         case "construction-delete": simulation.construction_delete(action.id); break;
         case "construction-close": simulation.construction_close(); break;
+        case "construction-finish-preview": simulation.construction_finish_preview(); break;
+        case "construction-finish-confirm": simulation.construction_finish_confirm(); scheduleFinishSearch(); break;
+        case "construction-finish-cancel": simulation.construction_finish_cancel(); break;
         case "construction-set-open": simulation.construction_set_open(action.open); break;
         case "construction-set-coaster-price": simulation.construction_set_coaster_price(action.price); break;
         case "construction-test": simulation.construction_test(); break;
@@ -385,7 +425,7 @@ workerScope.addEventListener("message", (event) => {
       }
       sendConstruction();
       scheduleBlockAnalysis();
-      if (["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-set-open"].includes(action.type)) sendWorld();
+      if (["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-finish-confirm", "construction-set-open"].includes(action.type)) sendWorld();
       return;
     }
     validateSurfaceEdit(action, simulation.world_dimensions());

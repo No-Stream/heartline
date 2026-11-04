@@ -39,7 +39,7 @@ const state: ConstructionState = {
   track: [
     { id: 4, label: "Station", name: "Station", group: "special", slope: "Level" },
     { id: 9, label: "Straight", name: "Straight", group: "straight", slope: "Level" },
-  ], canAppend: true, canClose: false, canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [227, 251, 12, 227, 253, 12], message: "Ready to place",
+  ], canAppend: true, canClose: false, finishPreview: false, canFinish: false, finishReason: "Build more track to reach a connection.", canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [227, 251, 12, 227, 253, 12], message: "Ready to place",
   blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
   trainCount: 1, placedRails: new Float32Array(), railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
   previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array(),
