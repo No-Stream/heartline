@@ -1,10 +1,10 @@
 ---
 id: TASK-87
 title: Let players choose coaster colours
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-04 05:08'
-updated_date: '2026-11-04 08:16'
+updated_date: '2026-11-04 09:44'
 labels:
   - coaster
   - art
@@ -23,4 +23,6 @@ Owner request 2026-11-03: per-coaster colours for track, supports and trains, ch
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-04: Claude Opus subagent in worktree theme-park-sim-worktrees/night-and-colours (night contrast and effects; per-coaster colours stored in the coaster state).
+
+2026-11-04: merged ac9cfc5. Night lamp pools are drawn as two hard-edged flat bands; softer edges are an easy follow-up if the owner prefers. Ties now take the track colour.
 <!-- SECTION:NOTES:END -->
