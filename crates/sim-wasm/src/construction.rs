@@ -180,7 +180,6 @@ impl WasmSimulation {
     }
 
     pub fn construction_select(&mut self, id: &str) {
-        self.construction_finish_invalidate();
         self.selected_element = None;
         match id {
             "model:hybrid" => {
@@ -650,6 +649,7 @@ impl WasmSimulation {
         self.construction_completion_available = None;
         self.construction_completion_search = None;
         self.construction_completion_checked = false;
+        self.construction_completion_unavailable_reason = None;
         if had_preview {
             self.refresh_construction_support_rendering();
         }
@@ -657,10 +657,18 @@ impl WasmSimulation {
 
     pub fn construction_finish_search_start(&mut self) {
         self.construction_completion_available = None;
-        self.construction_completion_search = self
-            .construction
-            .as_ref()
-            .and_then(Construction::completion_search);
+        let (search, reason) = self.construction.as_ref().map_or(
+            (None, Some("Place a station before finishing the coaster.")),
+            |construction| {
+                let search = construction.completion_search();
+                let reason = search
+                    .is_none()
+                    .then(|| construction_finish_unavailable_reason(construction));
+                (search, reason)
+            },
+        );
+        self.construction_completion_search = search;
+        self.construction_completion_unavailable_reason = reason;
         self.construction_completion_checked = self.construction_completion_search.is_none();
     }
 
@@ -688,7 +696,9 @@ impl WasmSimulation {
         if self.construction_can_finish() {
             String::new()
         } else if self.construction_completion_checked {
-            "No nearby connection to the station was found.".into()
+            self.construction_completion_unavailable_reason
+                .unwrap_or("No nearby connection to the station was found.")
+                .into()
         } else {
             "Checking for a connection to the station.".into()
         }
@@ -922,6 +932,22 @@ impl WasmSimulation {
             self.recovered_station.as_ref(),
         );
         result
+    }
+}
+
+fn construction_finish_unavailable_reason(construction: &Construction) -> &'static str {
+    if construction.is_closed() {
+        "The coaster circuit is already closed."
+    } else if construction
+        .pieces()
+        .first()
+        .is_none_or(|piece| piece.kind != PieceKind::Station)
+    {
+        "Place a station before finishing the coaster."
+    } else if !construction.disconnected_segments().is_empty() {
+        "Reconnect the disconnected track before finishing the coaster."
+    } else {
+        "No nearby connection to the station was found."
     }
 }
 

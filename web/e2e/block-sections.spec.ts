@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { canvasToPage, clickCanvas, clickTile, moveOverCanvas, openTool, selectUnits } from "./game-page";
+import { canvasToPage, clickCanvas, clickTile, moveOverCanvas, openTool, selectUnits, showBuilderTab } from "./game-page";
 
 const blockCircuitPieces = [
   "Straight", "Straight", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
@@ -16,6 +16,7 @@ test("automatic block sections can be inspected, moved, refused, and rendered @s
   test.setTimeout(300_000);
   await buildBlockCircuit(page, 50, 50, 20);
 
+  await showBuilderTab(page, "Operate");
   const blockPanel = page.getByRole("region", { name: "Block sections" });
   await expect(blockPanel).toBeVisible();
   await page.getByRole("button", { name: "Add block sections" }).click();
@@ -72,6 +73,7 @@ test("two requested block trains move visibly without overlapping @slow", async 
   test.setTimeout(300_000);
   await buildBlockCircuit(page, 241, 249, 4, "north", boardingCircuitPieces, 48);
 
+  await showBuilderTab(page, "Operate");
   const blockPanel = page.getByRole("region", { name: "Block sections" });
   await page.getByRole("button", { name: "Add block sections" }).click();
   await installVerifiedPlacement(page);
@@ -93,6 +95,7 @@ test("two requested block trains move visibly without overlapping @slow", async 
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await buildAccessPaths(page);
   await openTool(page, "Coaster");
+  await showBuilderTab(page, "Build");
   await page.getByRole("button", { name: "Open coaster" }).click();
   await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
 
