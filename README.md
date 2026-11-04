@@ -1,10 +1,10 @@
-# Theme Park Sim
+# Heartline
 
 A theme park builder that runs in the browser. You sculpt the land, lay paths and queues, place shops and flat rides, and build roller coasters piece by piece. Thousands of individual guests then walk the park, choose rides, queue in groups and remember how each ride felt.
 
-![The park by day](https://github.com/No-Stream/theme-park-sim/releases/download/readme-images/park-day.png)
+![The park by day](https://github.com/No-Stream/heartline/releases/download/readme-images/park-day.png)
 
-![The park at night](https://github.com/No-Stream/theme-park-sim/releases/download/readme-images/park-night.png)
+![The park at night](https://github.com/No-Stream/heartline/releases/download/readme-images/park-night.png)
 
 *Screenshots from the work-in-progress build; they will be updated as the game develops.*
 
