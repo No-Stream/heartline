@@ -157,7 +157,7 @@ impl CoasterModel {
     }
     pub fn available_pieces(&self, end: TrackState) -> Vec<Piece> {
         catalog()
-            .into_iter()
+            .iter()
             .filter(|piece| self.allows_piece(piece))
             .filter_map(|piece| piece.at(end))
             .filter(|piece| piece.maximum_curvature() <= 1.0 / self.minimum_radius_metres)

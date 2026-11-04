@@ -9,10 +9,11 @@ fn facility_clearance_uses_separate_demo_and_construction_trains() {
     let demo_train = hybrid_model().train;
     let mut construction_train = hybrid_model().train;
     construction_train.width_metres = 100.0;
-    let construction_piece = catalog()
-        .into_iter()
+    let construction_piece = (*catalog()
+        .iter()
         .find(|piece| piece.id == theme_park_sim::track::PieceId::Straight)
-        .expect("catalog contains straight track");
+        .expect("catalog contains straight track"))
+    .clone();
     let demo_pieces = [construction_piece.clone()];
     let construction_pieces = [construction_piece];
 

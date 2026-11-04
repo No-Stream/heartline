@@ -15,7 +15,6 @@ use crate::track::{
 use crate::world::World;
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::OnceLock;
 
 #[cfg(test)]
 mod tests;
@@ -866,8 +865,7 @@ pub fn track_support_obstacles(
 }
 
 fn templates() -> &'static [Piece] {
-    static CATALOG: OnceLock<Vec<Piece>> = OnceLock::new();
-    CATALOG.get_or_init(catalog)
+    catalog()
 }
 
 fn template_for(id: PieceId, end: TrackState) -> &'static Piece {

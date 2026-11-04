@@ -1,6 +1,15 @@
 use super::*;
 
 #[test]
+fn catalog_returns_the_same_static_template_slice() {
+    let first = catalog();
+    let second = catalog();
+
+    assert_eq!(first.as_ptr(), second.as_ptr());
+    assert_eq!(first.len(), second.len());
+}
+
+#[test]
 fn half_loop_has_grid_aligned_forward_displacement() {
     let pieces = catalog();
     for (id, expected_x) in [(PieceId::HalfLoopUp, 14), (PieceId::HalfLoopDown, -14)] {
@@ -646,8 +655,8 @@ fn all_pieces_match_their_end_states_and_have_regular_curves() {
 #[test]
 fn joined_pieces_have_matching_position_tangent_roll_and_curvature() {
     let templates = catalog();
-    for first in &templates {
-        for template in &templates {
+    for first in templates {
+        for template in templates {
             let Some(second) = template.at(first.exit) else {
                 continue;
             };

@@ -8,7 +8,12 @@ use super::{
 };
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
-pub fn catalog() -> Vec<Piece> {
+pub fn catalog() -> &'static [Piece] {
+    static CATALOG: LazyLock<Vec<Piece>> = LazyLock::new(build_catalog);
+    &CATALOG
+}
+
+fn build_catalog() -> Vec<Piece> {
     use Bank::{Inverted, Left, Level as FlatBank, Right};
     use Heading::{East, North, West};
     use PieceId::*;
@@ -800,6 +805,7 @@ pub fn catalog() -> Vec<Piece> {
                     mirrored: false,
                     arc_lengths: Vec::new(),
                     arc_speeds: Vec::new(),
+                    maximum_curvature: 0.0,
                 };
                 piece.rebuild_arc();
                 piece

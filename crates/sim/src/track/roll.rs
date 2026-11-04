@@ -957,6 +957,7 @@ mod tests {
             mirrored: false,
             arc_lengths: Vec::new(),
             arc_speeds: Vec::new(),
+            maximum_curvature: 0.0,
         };
         piece.rebuild_arc();
         piece

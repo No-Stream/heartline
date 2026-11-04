@@ -42,6 +42,21 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
 use super::WasmSimulation;
 
 #[test]
+fn wire_piece_names_round_trip_without_catalog_lookup() {
+    for piece in theme_park_sim::track::catalog() {
+        let wire_name = crate::construction::wire_pieceid(piece.id);
+        assert_eq!(
+            crate::construction::pieceid_from_wire(wire_name),
+            Some(piece.id)
+        );
+    }
+    assert_eq!(
+        crate::construction::pieceid_from_wire("unknown-piece"),
+        None
+    );
+}
+
+#[test]
 fn station_height_used_by_browser_can_start_construction() {
     let mut simulation = WasmSimulation::new(2026, 12, String::from("demo"));
     simulation.construction_start(100, 100, 40, 0);
