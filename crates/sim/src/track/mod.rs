@@ -17,7 +17,7 @@ pub use colors::{CoasterColor, CoasterColors};
 pub(crate) use curves::Shape;
 pub use curves::{
     Bank, Heading, Heartlining, HorizontalCurvature, Inversion, Piece, PieceId, PieceKind, Slope,
-    TrackSample, TrackState, Vec3, VerticalCurvature,
+    TrackSample, TrackState, Vec3, VerticalCurvature, HEART_HEIGHT_METRES,
 };
 pub use models::{
     CoasterModel, ComfortableForceLimits, LaunchParameters, LaunchType, LiftRules, Material,

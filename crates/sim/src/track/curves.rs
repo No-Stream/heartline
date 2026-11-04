@@ -327,7 +327,7 @@ pub enum Heartlining {
     Heartlined,
     NotHeartlined,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Shape {
     Plain,
     AirtimeHill,
@@ -340,6 +340,24 @@ pub(crate) enum Shape {
     HalfCorkscrew,
     TopHat,
     OffsetHalfRoll,
+}
+impl Shape {
+    pub(crate) fn hash_into(self, hash: &mut StateHasher) {
+        let tag = match self {
+            Self::Plain => 0,
+            Self::AirtimeHill => 1,
+            Self::Overbank => 2,
+            Self::BarrelDrop => 3,
+            Self::Loop => 4,
+            Self::Corkscrew => 5,
+            Self::Heartline => 6,
+            Self::HalfLoop => 7,
+            Self::HalfCorkscrew => 8,
+            Self::TopHat => 9,
+            Self::OffsetHalfRoll => 10,
+        };
+        hash.write_u8(tag);
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Piece {
@@ -359,12 +377,14 @@ pub struct Piece {
 #[derive(Clone, Copy, Debug)]
 pub struct TrackSample {
     pub position: Vec3,
+    pub heart: Vec3,
     pub tangent: Vec3,
     pub up: Vec3,
     pub curvature: f64,
     /// Unwrapped radians relative to the curve's unbanked frame; compare modulo 2π at joins.
     pub roll: f64,
 }
+pub const HEART_HEIGHT_METRES: f64 = 1.2;
 const ARC_STEPS: usize = 1024;
 impl TrackState {
     pub(crate) fn curvature_vector(self) -> Vec3 {
@@ -415,7 +435,7 @@ impl Piece {
         });
         self.entry.hash_into(hash);
         self.exit.hash_into(hash);
-        hash.write_u8(self.shape as u8);
+        self.shape.hash_into(hash);
         hash.write_f64(self.tangent_scale);
         hash.write_bool(self.mirrored);
         hash.write_len(self.arc_lengths.len());
@@ -691,6 +711,7 @@ impl Piece {
         let up = base_up * angle.cos() + left * angle.sin();
         TrackSample {
             position,
+            heart: position + up * HEART_HEIGHT_METRES,
             tangent,
             up,
             curvature: velocity.cross(acceleration).length() / velocity.length().powi(3),
@@ -748,5 +769,44 @@ impl Piece {
         }
         piece.rebuild_arc();
         Some(piece)
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::Shape;
+    use crate::state_hash::StateHasher;
+
+    #[test]
+    fn shape_hash_keeps_the_existing_variant_tags() {
+        let shapes = [
+            Shape::Plain,
+            Shape::AirtimeHill,
+            Shape::Overbank,
+            Shape::BarrelDrop,
+            Shape::Loop,
+            Shape::Corkscrew,
+            Shape::Heartline,
+            Shape::HalfLoop,
+            Shape::HalfCorkscrew,
+            Shape::TopHat,
+            Shape::OffsetHalfRoll,
+        ];
+
+        for (expected_tag, shape) in shapes.into_iter().enumerate() {
+            let mut actual = StateHasher::new();
+            shape.hash_into(&mut actual);
+
+            let mut expected = StateHasher::new();
+            expected.write_u8(expected_tag as u8);
+
+            assert_eq!(actual.finish(), expected.finish());
+        }
+    }
+
+    #[test]
+    fn shape_equality_distinguishes_variants() {
+        assert_eq!(Shape::Plain, Shape::Plain);
+        assert_ne!(Shape::Plain, Shape::AirtimeHill);
     }
 }

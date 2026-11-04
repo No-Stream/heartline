@@ -586,13 +586,31 @@ impl Train {
 
 fn rider_g(piece: &Piece, distance: f64, speed: f64, acceleration: f64) -> GForces {
     let sample = piece.sample(distance);
-    let delta = 0.001_f64.min(piece.length() / 2.0);
-    let before = (distance - delta).max(0.0);
-    let after = (distance + delta).min(piece.length());
-    let curvature_vector =
-        (piece.sample(after).tangent - piece.sample(before).tangent) / (after - before);
-    let force = curvature_vector * (speed * speed)
-        + sample.tangent * acceleration
+    let step = 0.02_f64.min(piece.length() / 4.0);
+    let (heart_tangent, heart_curvature) = if distance < step {
+        let next = piece.sample(distance + step).heart;
+        let next_next = piece.sample(distance + 2.0 * step).heart;
+        (
+            (sample.heart * -3.0 + next * 4.0 - next_next) / (2.0 * step),
+            (sample.heart - next * 2.0 + next_next) / step.powi(2),
+        )
+    } else if piece.length() - distance < step {
+        let previous = piece.sample(distance - step).heart;
+        let previous_previous = piece.sample(distance - 2.0 * step).heart;
+        (
+            (sample.heart * 3.0 - previous * 4.0 + previous_previous) / (2.0 * step),
+            (sample.heart - previous * 2.0 + previous_previous) / step.powi(2),
+        )
+    } else {
+        let previous = piece.sample(distance - step).heart;
+        let next = piece.sample(distance + step).heart;
+        (
+            (next - previous) / (2.0 * step),
+            (previous - sample.heart * 2.0 + next) / step.powi(2),
+        )
+    };
+    let force = heart_curvature * speed.powi(2)
+        + heart_tangent * acceleration
         + Vec3::new(0.0, 0.0, GRAVITY);
     GForces {
         vertical: force.dot(sample.up) / GRAVITY,

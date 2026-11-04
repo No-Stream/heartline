@@ -6,6 +6,71 @@ use crate::track::{PieceId, TrackState, catalog, hybrid_model};
 use crate::world::{Surface, World};
 
 #[test]
+fn straight_level_track_reads_one_vertical_g_and_no_other_forces() {
+    let piece = catalog()
+        .into_iter()
+        .find(|piece| piece.id == PieceId::Straight)
+        .unwrap();
+
+    let forces = rider_g(&piece, piece.length() / 2.0, 17.0, 0.0);
+
+    assert!((forces.vertical - 1.0).abs() < 1e-9, "{forces:?}");
+    assert!(forces.lateral.abs() < 1e-9, "{forces:?}");
+    assert!(forces.longitudinal.abs() < 1e-9, "{forces:?}");
+}
+
+#[test]
+fn level_small_turn_reads_lateral_g_from_its_sixteen_metre_radius() {
+    let piece = catalog()
+        .into_iter()
+        .find(|piece| piece.id == PieceId::TurnSmall)
+        .unwrap();
+    let speed = 20.0;
+
+    let forces = rider_g(&piece, piece.length() / 2.0, speed, 0.0);
+    let expected_lateral = speed.powi(2) / (GRAVITY * 16.0);
+
+    assert!(
+        (forces.lateral - expected_lateral).abs() <= expected_lateral * 0.02,
+        "expected {expected_lateral:.4} g, got {forces:?}"
+    );
+}
+
+#[test]
+fn climbing_gentle_track_reads_longitudinal_g_from_its_slope() {
+    let piece = catalog()
+        .into_iter()
+        .find(|piece| piece.id == PieceId::GentleUp)
+        .unwrap();
+    let distance = piece.length() / 2.0;
+    let sample = piece.sample(distance);
+    let acceleration = 2.5;
+
+    let forces = rider_g(&piece, distance, 17.0, acceleration);
+    let expected_longitudinal = acceleration / GRAVITY + sample.tangent.z;
+
+    assert!(
+        (forces.longitudinal - expected_longitudinal).abs() < 1e-6,
+        "expected {expected_longitudinal:.4} g, got {forces:?}"
+    );
+}
+
+#[test]
+fn track_sample_places_the_rider_heart_above_the_rail() {
+    let catalog = catalog();
+    for id in [PieceId::Straight, PieceId::TurnSmallStandalone, PieceId::GentleUp] {
+        let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
+        let sample = piece.sample(piece.length() / 2.0);
+
+        assert_eq!(
+            sample.heart,
+            sample.position + sample.up * crate::track::curves::HEART_HEIGHT_METRES,
+            "{id:?}"
+        );
+    }
+}
+
+#[test]
 fn half_loop_forces_across_entry_speeds() {
     let model = hybrid_model();
     for entry_speed in [26.0_f64, 28.0, 30.0, 32.0] {
@@ -503,7 +568,9 @@ fn vertical_loop_g_uses_curvature_projected_onto_rider_up() {
         let curvature_along_rider_up =
             (tangent_after - tangent_before).dot(sample.up) / (after_distance - before_distance);
         assert!(curvature_along_rider_up > 0.0);
-        let expected = sample.up.z + 20.0_f64.powi(2) * curvature_along_rider_up / GRAVITY;
+        let heart_curvature = curvature_along_rider_up
+            * (1.0 - crate::track::HEART_HEIGHT_METRES * curvature_along_rider_up);
+        let expected = sample.up.z + 20.0_f64.powi(2) * heart_curvature / GRAVITY;
         let g = rider_g(&loop_piece, distance, 20.0, 0.0);
         assert!(
             (g.vertical - expected).abs() < 0.01,

@@ -638,13 +638,7 @@ impl Construction {
 fn same_geometry(first: &Piece, second: &Piece) -> bool {
     first.entry == second.entry
         && first.exit == second.exit
-        && matches!(
-            (first.shape, second.shape),
-            (Shape::Plain, Shape::Plain)
-                | (Shape::Loop, Shape::Loop)
-                | (Shape::Corkscrew, Shape::Corkscrew)
-                | (Shape::Heartline, Shape::Heartline)
-        )
+        && first.shape == second.shape
         && first.tangent_scale == second.tangent_scale
         && first.mirrored == second.mirrored
         && first.arc_lengths == second.arc_lengths

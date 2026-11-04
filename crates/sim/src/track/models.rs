@@ -146,7 +146,7 @@ impl CoasterModel {
         };
         piece.kind == PieceKind::Track
             && piece.inversion.is_none()
-            && matches!(piece.shape, Shape::Plain)
+            && piece.shape == Shape::Plain
             && [piece.entry.slope, piece.exit.slope].iter().all(|slope| {
                 slope.gradient() >= 0.0 && slope.gradient() <= rules.max_slope.gradient()
             })
