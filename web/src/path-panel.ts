@@ -1,14 +1,13 @@
 import "./print-modern.css";
 import "./path-panel.css";
+import type { InputAction } from "./input/actions";
 
 export type PathKind = "normal" | "queue";
 export interface PathSelection { kind: PathKind; style: number }
 
 export function createPathPanel(
   container: HTMLElement,
-  build: (selection: PathSelection) => void,
-  remove: () => void,
-  cancel: () => void,
+  dispatch: (action: InputAction) => void,
 ): { message(text: string): void; activate(): void } {
   container.classList.add("tool-panel", "path-panel");
   container.innerHTML = `<header class="tool-panel__header">
@@ -29,11 +28,11 @@ export function createPathPanel(
   const style = container.querySelector<HTMLSelectElement>('[aria-label="Path style"]')!;
   const status = container.querySelector<HTMLElement>('[role="status"]')!;
   function activate(): void {
-    build({ kind: kind.value as PathKind, style: Number(style.value) });
+    dispatch({ type: "path-build-selection", selection: { kind: kind.value as PathKind, style: Number(style.value) } });
     status.textContent = "Drag between tiles to build a path.";
   }
   container.querySelector("[data-build]")!.addEventListener("click", activate);
-  container.querySelector("[data-remove]")!.addEventListener("click", () => { remove(); status.textContent = "Choose a path to remove."; });
-  container.querySelector("[data-cancel]")!.addEventListener("click", () => { cancel(); status.textContent = "Path selection cancelled."; });
+  container.querySelector("[data-remove]")!.addEventListener("click", () => { dispatch({ type: "path-remove-selection" }); status.textContent = "Choose a path to remove."; });
+  container.querySelector("[data-cancel]")!.addEventListener("click", () => { dispatch({ type: "path-cancel" }); status.textContent = "Path selection cancelled."; });
   return { message(text) { status.textContent = text; }, activate };
 }

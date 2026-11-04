@@ -7,7 +7,67 @@ interface ExportedSession {
   version: number;
   commands: { tick: number; command: { type: string } }[];
   finalTick: number;
+  inputs: { action: { type: string; selection?: { kind: string; style: number }; kind?: string; rotation?: number; units?: string } }[];
 }
+
+test("records panel actions and game controls in exported inputs", async ({ page }) => {
+  await page.goto("/?test=1&park=demo&seed=2026");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+
+  await openTool(page, "Paths");
+  await page.getByLabel("Path type").selectOption("queue");
+  await page.getByLabel("Path style").selectOption("2");
+  await page.getByRole("button", { name: "Build paths" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await openTool(page, "Facilities");
+  const entranceId = await page.evaluate(() => window.gameTest.facilities().find(({ kind }) => kind === "entrance")?.id);
+  if (entranceId === undefined) throw new Error("The demo park entrance is missing");
+  await page.getByRole("button", { name: `Raise the price of entrance ${entranceId}` }).click();
+  await page.getByRole("radio", { name: "Food stall" }).click();
+  await page.getByRole("button", { name: "Place facility" }).click();
+  await page.getByRole("button", { name: "Remove facility" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await openTool(page, "Scenery");
+  await page.getByRole("button", { name: "Bench" }).click();
+  await page.getByRole("button", { name: "Turn scenery clockwise" }).click();
+  await page.getByRole("button", { name: "Place scenery" }).click();
+  await page.getByRole("button", { name: "Remove scenery" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await openTool(page, "Watch");
+  await page.getByRole("button", { name: "Day speed" }).click();
+  await page.getByRole("button", { name: "Game speed" }).click();
+  await page.getByRole("slider", { name: "Set the time of day" }).press("End");
+  await page.getByRole("button", { name: "Units" }).click();
+  await page.getByRole("button", { name: "Dark interface" }).click();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export session", exact: true }).click();
+  const download = await downloadPromise;
+  const downloadPath = await download.path();
+  if (!downloadPath) throw new Error("Session export download has no file path");
+  const session = JSON.parse(await readFile(downloadPath, "utf8")) as ExportedSession;
+  const buildAction = session.inputs.findLast(({ action }) => action.type === "path-build-selection");
+  const facilityAction = session.inputs.findLast(({ action }) => action.type === "facility-place-mode");
+  const sceneryAction = session.inputs.findLast(({ action }) => action.type === "scenery-place-mode");
+
+  expect(buildAction?.action.selection).toEqual({ kind: "queue", style: 2 });
+  expect(facilityAction?.action).toMatchObject({ type: "facility-place-mode", kind: "food_stall", rotation: 0 });
+  expect(sceneryAction?.action).toMatchObject({ type: "scenery-place-mode", kind: "bench", rotation: 1 });
+  expect(session.inputs.map(({ action }) => action.type)).toEqual(expect.arrayContaining([
+    "path-cancel",
+    "facility-remove-mode",
+    "facility-cancel",
+    "facility-price",
+    "scenery-remove-mode",
+    "scenery-cancel",
+    "day-speed-set",
+    "game-speed-cycle",
+    "day-scrub",
+    "units-set",
+    "theme-set",
+  ]));
+  expect(session.inputs.find(({ action }) => action.type === "units-set")?.action.units).toBe("metric");
+});
 
 test("exports the UI-built command count and final simulation tick", async ({ page }) => {
   const browserErrors: string[] = [];

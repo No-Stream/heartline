@@ -1,11 +1,11 @@
 import { activityLabel, memoryLabel, relationshipLabel, thoughtLabel, traitSummary } from "./presentation";
+import type { InputAction } from "../input/actions";
 import type { GuestDetail } from "./protocol";
 import { formatLength, type Units } from "../units";
 import "./guest-panel.css";
 
 export interface GuestPanelCallbacks {
-  readonly onSelectGuestId: (guestId: string) => void;
-  readonly onClose: () => void;
+  readonly dispatch: (action: InputAction) => void;
 }
 
 export interface GuestPanelAnchor {
@@ -107,10 +107,7 @@ export function createGuestPanel(
     root.removeAttribute("data-guest-id");
     detail = undefined;
   };
-  const closeFromControl = (): void => {
-    closeWithoutNotification();
-    callbacks.onClose();
-  };
+  const closeFromControl = (): void => callbacks.dispatch({ type: "guest-close" });
   closeButton.addEventListener("click", closeFromControl);
   const onKeydown = (event: KeyboardEvent): void => {
     if (event.key === "Escape" && !root.hidden) {
@@ -151,7 +148,7 @@ export function createGuestPanel(
         button.type = "button";
         button.dataset.guestId = member.id;
         button.append(textSpan(member.name), smallText(label));
-        button.addEventListener("click", () => callbacks.onSelectGuestId(member.id));
+        button.addEventListener("click", () => callbacks.dispatch({ type: "guest-select", guestId: member.id }));
         item.append(button);
       }
       return item;
