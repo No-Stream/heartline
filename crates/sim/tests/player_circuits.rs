@@ -1,21 +1,22 @@
 use theme_park_sim::track::construction::Construction;
-use theme_park_sim::track::{PieceId, TrackState, catalog, hybrid_model};
+use theme_park_sim::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
 use theme_park_sim::world::{Surface, World};
 
 #[test]
 fn timber_tumbler_player_circuit_closes() {
     let world = World::new(
-        128,
-        128,
+        512,
+        512,
         Surface {
-            corners: [0; 4],
+            corners: [8; 4],
             water: None,
         },
     );
     let start = TrackState {
-        x: 100,
-        y: 100,
-        z: 40,
+        x: 482,
+        y: 498,
+        z: 6,
+        heading: theme_park_sim::track::Heading::North,
         ..TrackState::origin()
     };
     let mut construction = Construction::new(start, hybrid_model());
@@ -30,19 +31,23 @@ fn timber_tumbler_player_circuit_closes() {
     );
     let pieces = catalog();
     let mut count = 0;
+    let mut chain_piece_count = 0;
     for name in circuit
         .lines()
         .map(str::trim)
         .take_while(|line| !line.starts_with('['))
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
     {
-        if name == "chain on" {
-            construction.set_chain(true);
-            continue;
-        }
-        if name == "chain off" {
-            construction.set_chain(false);
-            continue;
+        match name {
+            "+chain" => {
+                construction.set_chain(true);
+                continue;
+            }
+            "-chain" => {
+                construction.set_chain(false);
+                continue;
+            }
+            _ => {}
         }
         let piece = pieces
             .iter()
@@ -51,10 +56,15 @@ fn timber_tumbler_player_circuit_closes() {
         construction
             .append(piece.id, &world, &[])
             .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        if construction.pieces().last().unwrap().kind == PieceKind::Lift {
+            chain_piece_count += 1;
+        }
         count += 1;
     }
     assert!(count > 0);
-    construction
-        .close()
-        .expect("Timber Tumbler circuit does not close");
+    assert!(chain_piece_count > 0, "circuit has no chain-lift pieces");
+    let end = construction.end();
+    construction.close().unwrap_or_else(|error| {
+        panic!("Timber Tumbler circuit does not close from {end:?}: {error:?}")
+    });
 }

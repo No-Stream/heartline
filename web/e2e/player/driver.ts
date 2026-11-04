@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 export type ToolName = "Watch" | "Coaster" | "Paths" | "Landscape" | "Facilities" | "Scenery";
 
@@ -40,40 +40,46 @@ export async function startPark(page: Page, options: { park: "new" | "demo"; see
   await page.goto(`/?park=${options.park}&seed=${options.seed}`);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Watch");
-  const speed = page.getByRole("button", { name: "Game speed" });
-  for (let attempt = 0; attempt < 5; attempt++) {
-    if ((await speed.textContent())?.trim() === `×${options.speed}`) return;
-    await speed.click();
-  }
-  throw new Error(`Game speed ${options.speed} is unavailable`);
+  await setGameSpeed(page, options.speed);
 }
 
-async function tilePoint(page: Page, tile: Tile): Promise<{ x: number; y: number } | null> {
-  return page.evaluate(({ x, y, z }) => {
+export async function setGameSpeed(page: Page, targetSpeed: GameSpeed): Promise<void> {
+  await openTool(page, "Watch");
+  const speed = page.getByRole("button", { name: "Game speed" });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if ((await speed.textContent())?.trim() === `×${targetSpeed}`) return;
+    await speed.click();
+  }
+  throw new Error(`Game speed ${targetSpeed} is unavailable`);
+}
+
+async function tilePoint(page: Page, tile: Tile, surfaceKind?: "terrain"): Promise<{ x: number; y: number } | null> {
+  return page.evaluate(({ x, y, z, surfaceKind }) => {
     const projected = window.gameTest.project({ x: x + 0.5, y: y + 0.5, z });
     const canvas = document.querySelector("canvas")!;
-    const candidates: { x: number; y: number; distance: number }[] = [];
-    for (let dy = -48; dy <= 8; dy += 2) for (let dx = -32; dx <= 32; dx += 2) {
+    const offsets: { dx: number; dy: number }[] = [];
+    for (let dy = -48; dy <= 8; dy += 2) for (let dx = -32; dx <= 32; dx += 2) offsets.push({ dx, dy });
+    offsets.sort((first, second) => first.dx ** 2 + first.dy ** 2 - second.dx ** 2 - second.dy ** 2);
+    for (const { dx, dy } of offsets) {
       const screenX = projected.x + dx, screenY = projected.y + dy;
       if (screenX < 2 || screenX >= canvas.width - 2 || screenY < 2 || screenY >= canvas.height - 2) continue;
       const matches = [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2]].every(([ox, oy]) => {
         const pick = window.gameTest.pickSurface(screenX + ox, screenY + oy);
-        return pick && (pick.kind === "terrain" || pick.kind === "path") && pick.x === x && pick.y === y;
+        return pick && (surfaceKind ? pick.kind === surfaceKind : pick.kind === "terrain" || pick.kind === "path") && pick.x === x && pick.y === y;
       });
-      if (matches) candidates.push({ x: screenX, y: screenY, distance: dx * dx + dy * dy });
+      if (matches) return { x: screenX, y: screenY };
     }
-    candidates.sort((first, second) => first.distance - second.distance);
-    return candidates[0] ?? null;
-  }, tile);
+    return null;
+  }, { ...tile, surfaceKind });
 }
 
-async function targetTiles(page: Page, tiles: readonly Tile[]): Promise<{ x: number; y: number }[]> {
+async function targetTiles(page: Page, tiles: readonly Tile[], surfaceKind?: "terrain"): Promise<{ x: number; y: number }[]> {
   const centerX = tiles.reduce((sum, tile) => sum + tile.x + 0.5, 0) / tiles.length;
   const centerY = tiles.reduce((sum, tile) => sum + tile.y + 0.5, 0) / tiles.length;
   for (const rotation of [0, 1, 2, 3] as const) {
     await page.evaluate((camera) => window.gameTest.setCamera(camera), { centerX, centerY, zoom: 2, rotation });
     await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-    const points = await Promise.all(tiles.map((tile) => tilePoint(page, tile)));
+    const points = await Promise.all(tiles.map((tile) => tilePoint(page, tile, surfaceKind)));
     if (points.every((point) => point !== null)) return points;
   }
   throw new Error(`Could not pick tiles ${JSON.stringify(tiles)} in any rotation`);
@@ -82,6 +88,101 @@ async function targetTiles(page: Page, tiles: readonly Tile[]): Promise<{ x: num
 export async function clickTile(page: Page, tile: Tile): Promise<void> {
   const [point] = await targetTiles(page, [tile]);
   await clickCanvas(page, point);
+}
+
+/** Flatten each listed tile through the Landscape controls, as a player would shape station access. */
+export async function flattenTerrainTiles(page: Page, tiles: readonly { x: number; y: number; height: number }[]): Promise<void> {
+  await openTool(page, "Landscape");
+  await page.getByRole("button", { name: "Flatten", exact: true }).click();
+  await page.getByLabel("Brush size").selectOption("1");
+  const heightInput = page.getByLabel("Flatten height");
+  const status = page.locator(".landscaping__status");
+  for (const tile of tiles) {
+    await heightInput.fill(String(tile.height));
+    await page.getByRole("button", { name: "Apply tool" }).click();
+    const [point] = await targetTiles(page, [{ ...tile, z: (tile.height - 1) / 4 }], "terrain");
+    await clickCanvas(page, point);
+    await expect(status, `flatten terrain tile (${tile.x}, ${tile.y}) to height ${tile.height}`).toHaveText("Terrain updated");
+  }
+  await page.getByRole("button", { name: "Cancel tool" }).click();
+}
+
+type FacilityPriceName = "entrance" | "food stall" | "drink stall" | "restroom" | "carousel" | "ferris wheel" | "souvenir shop";
+
+async function stepPriceTo(page: Page, options: {
+  input: Locator;
+  lower: Locator;
+  raise: Locator;
+  price: number;
+}): Promise<void> {
+  if (!Number.isInteger(options.price)) throw new RangeError("Price must be a whole number");
+  const minimum = Number(await options.input.getAttribute("min"));
+  const maximum = Number(await options.input.getAttribute("max"));
+  if (options.price < minimum || options.price > maximum) throw new RangeError(`Price must be between ${minimum} and ${maximum}`);
+  let currentPrice = Number(await options.input.inputValue());
+  if (!Number.isInteger(currentPrice)) throw new Error("Price control does not contain a whole number");
+  while (currentPrice !== options.price) {
+    const previousPrice = currentPrice;
+    await (currentPrice < options.price ? options.raise : options.lower).click();
+    currentPrice = Number(await options.input.inputValue());
+    if (!Number.isInteger(currentPrice) || (previousPrice < options.price ? currentPrice <= previousPrice : currentPrice >= previousPrice)) {
+      throw new Error(`Price stepper did not move toward ${options.price}`);
+    }
+  }
+  await expect(options.input).toHaveValue(String(options.price));
+}
+
+/** Adjust the coaster ticket price using its visible plus and minus controls. */
+export async function setCoasterTicketPrice(page: Page, price: number): Promise<void> {
+  await openTool(page, "Coaster");
+  await stepPriceTo(page, {
+    input: page.getByRole("spinbutton", { name: "Coaster ticket price" }),
+    lower: page.getByRole("button", { name: "Lower the coaster ticket price" }),
+    raise: page.getByRole("button", { name: "Raise the coaster ticket price" }),
+    price,
+  });
+}
+
+/** Adjust a facility's price using its visible plus and minus controls. */
+export async function setFacilityPrice(page: Page, facility: { id: number; name: FacilityPriceName }, price: number): Promise<void> {
+  await openTool(page, "Facilities");
+  const label = `Price of ${facility.name} ${facility.id}`;
+  await stepPriceTo(page, {
+    input: page.getByRole("spinbutton", { name: label }),
+    lower: page.getByRole("button", { name: `Lower the price of ${facility.name} ${facility.id}` }),
+    raise: page.getByRole("button", { name: `Raise the price of ${facility.name} ${facility.id}` }),
+    price,
+  });
+}
+
+/** Frame a current coaster rider, find its rendered pick target, and select it with a real canvas click. */
+export async function selectLiveRider(page: Page, riderId: string): Promise<void> {
+  for (const rotation of [0, 1, 2, 3] as const) {
+    await page.evaluate(({ id, rotation }) => {
+      const rider = window.gameTest.riders().find((entry) => entry.id === id);
+      if (!rider) throw new Error(`Rider ${id} is no longer on the coaster`);
+      window.gameTest.setCamera({ centerX: rider.x - rider.z, centerY: rider.y - rider.z, zoom: 2, rotation });
+    }, { id: riderId, rotation });
+    await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+    const point = await page.evaluate((id) => {
+      const bounds = window.gameTest.renderedRiders().find((rider) => rider.id === id);
+      if (!bounds) return null;
+      for (let y = Math.ceil(bounds.top); y < bounds.bottom; y += 2) {
+        for (let x = Math.ceil(bounds.left); x < bounds.right; x += 2) {
+          const pick = window.gameTest.pick(x, y);
+          if (pick && "id" in pick && pick.id === id) return { x, y };
+        }
+      }
+      return null;
+    }, riderId);
+    if (!point) continue;
+    await clickCanvas(page, point);
+    if (await page.getByTestId("guest-panel").getAttribute("data-guest-id") === riderId) {
+      await expect(page.locator("canvas")).toHaveAttribute("data-selection", new RegExp(`"id":"${riderId}"`));
+      return;
+    }
+  }
+  throw new Error(`Rider ${riderId} is not visible and pickable from any camera rotation`);
 }
 
 export async function dragTiles(page: Page, start: Tile, end: Tile): Promise<void> {

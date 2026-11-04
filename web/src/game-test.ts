@@ -45,6 +45,7 @@ export interface GameTest {
   snapshotArrivals(): readonly SnapshotArrivalEntry[];
   guests(): readonly WorldSprite[];
   riders(): readonly { id: string; car: number; seat: number; x: number; y: number; z: number }[];
+  renderedRiders(): readonly { id: string; left: number; right: number; top: number; bottom: number }[];
   facilities(): readonly Facility[];
   paths(): { x: number; y: number; z: number; slope: number; kind: number; style: number; edges: number }[];
   pathPreview(): readonly { x: number; y: number; edges: number }[];

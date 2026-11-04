@@ -299,12 +299,14 @@ function openTool(tool: Tool): void {
 }
 let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
+let renderedRiders: { id: string; left: number; right: number; top: number; bottom: number }[] = [];
 const gameTest: GameTest = {
   ready: false,
   tickCount() { return current?.tickCount ?? 0; },
   frameLog() { return frameLogEnabled ? frameLogEntries.map((entry) => ({ ...entry })) : []; },
   snapshotArrivals() { return frameLogEnabled ? snapshotArrivalEntries.map((entry) => ({ ...entry })) : []; },
   guests() { return renderedGuests; },
+  renderedRiders() { return renderedRiders; },
   riders() {
     return current ? constructionRiderPositions(current.constructionTrainPoses, current.constructionRiders) : [];
   },
@@ -691,6 +693,7 @@ function frame(now: number): void {
       glows: [...lights.glows, ...fireworks.glows],
     };
   };
+  renderedRiders = [];
   renderer.render(view, screenCamera(), frozen ? 0 : Math.floor(now / 250) % 4, [
     (renderCamera, renderViewport) => buildSceneryGhostQuads(sceneryTool.state().preview, view, renderCamera, renderViewport),
     (renderCamera, renderViewport) => buildLandscapingGhostQuads(landscapingTool.state().preview, view, renderCamera, renderViewport),
@@ -709,6 +712,7 @@ function frame(now: number): void {
       ...buildTrackQuads(noGeometry, noGeometry, noGeometry, constructionTrainPoses, renderCamera, renderViewport, trackStyle(renderAtlas)),
       ...buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale),
       ...buildRiderQuads(constructionTrainPoses, renderCamera, renderViewport, renderAtlas, scale, occupants).map((quad) => {
+        renderedRiders.push({ id: quad.id, left: Math.min(...quad.vertices.map((vertex) => vertex.x)), right: Math.max(...quad.vertices.map((vertex) => vertex.x)), top: Math.min(...quad.vertices.map((vertex) => vertex.y)), bottom: Math.max(...quad.vertices.map((vertex) => vertex.y)) });
         if (quad.id === selectedGuestId) {
           guestPanel.setAnchor({ x: quad.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4, y: quad.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 4 });
         }

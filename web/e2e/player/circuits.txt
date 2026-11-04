@@ -1,28 +1,45 @@
-# Timber Tumbler: existing lift and drop circuit, station at (100, 100, 40), heading east.
-# PENDING journey target: curved chain lift to 60°, crest, drop, climbing/banked turns, airtime hill.
-# The target stays pending until the new track pieces are available.
+# Timber Tumbler journey circuit, station on the new park at (241, 249, 12), heading north.
 [Timber Tumbler]
-chain on
++chain
 LevelToGentleUp
 GentleUp
-GentleUp
-GentleUp
-GentleUp
-GentleUp
+TurnSmallStandalone
+GentleToSteepUp
+SteepToSixtyUp
+SixtyUp
+SixtyToSteepUp
+SteepToGentleUp
 GentleUpToLevel
-Straight
-chain off
-Straight
-Straight
-TurnLargeEntry
-TurnLargeExit
+-chain
+LevelToGentleDown
+GentleToSteepDown
+SteepDown
+SteepToSixtyDown
+SixtyDown
+SixtyToSteepDown
+SteepToGentleDown
+GentleDownToLevel
+BankLeft
+BankedTurnStandalone
+BankedTurnStandalone
+UnbankLeft
+AirtimeHill
+LevelToGentleUp
+TurnSmallRightStandalone
+GentleUpToLevel
 LevelToGentleDown
 GentleDown
 GentleDown
-GentleDown
-GentleDown
-GentleDown
 GentleDownToLevel
-Loop
-TurnLargeEntry
-TurnLargeExit
+TurnSmallStandalone
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+TurnLargeStandalone
+Straight
+Straight
+Straight
