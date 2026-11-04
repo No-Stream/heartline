@@ -755,7 +755,7 @@ function frame(now: number): void {
   });
   renderedGuests = scene.guests;
   renderedRiders = scene.riders;
-  renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass });
+  renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none" });
   const trainPoses = scene.view.trainPoses;
   if (frameLogEnabled && renderCurrent && trainPoses.length >= 11) {
     frameLogEntries.push({
