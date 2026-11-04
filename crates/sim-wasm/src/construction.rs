@@ -156,6 +156,17 @@ impl WasmSimulation {
         )
     }
 
+    /// The coaster's train layout, or null without a coaster.
+    pub fn construction_train_layout(&self) -> String {
+        let layout = self.construction.as_ref().map(|construction| {
+            train_layout(
+                train_model_key(construction.model()),
+                &construction.model().train,
+            )
+        });
+        serde_json::to_string(&layout).expect("serialize train layout")
+    }
+
     /// Repaints the coaster. Names outside the palette leave it unchanged and explain why in the construction message.
     pub fn construction_set_colors(&mut self, track: &str, supports: &str, trains: &str) {
         let Some(colors) = CoasterColors::from_names(track, supports, trains) else {

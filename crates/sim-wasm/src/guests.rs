@@ -33,6 +33,15 @@ impl WasmSimulation {
         crate::construction::colors_json(self.demo_coaster().map(|coaster| coaster.colors))
     }
 
+    /// The demo coaster's train layout, or null without one.
+    /// The demo coaster runs Timber Tumbler trains.
+    pub fn coaster_train_layout(&self) -> String {
+        let layout = self
+            .demo_coaster()
+            .map(|coaster| train_layout(TrainModelKey::Hybrid, &coaster.train_configuration));
+        serde_json::to_string(&layout).expect("serialize train layout")
+    }
+
     pub fn coaster_rails(&self) -> Vec<f32> {
         self.demo_coaster().map_or_else(Vec::new, |coaster| {
             render_rails(coaster.circuit.pieces(), &self.world)

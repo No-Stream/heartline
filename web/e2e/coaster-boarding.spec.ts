@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Camera } from "../src/camera";
-import { canvasToPage, clickCanvas, openTool, selectUnits } from "./game-page";
+import { canvasToPage, clickCanvas, openTool, selectUnits, visibleTilePoint } from "./game-page";
 
 test.use({ actionTimeout: 10_000 });
 test("guests ride a player-built coaster and can be selected @slow", async ({ page }) => {
@@ -13,7 +13,7 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await page.getByLabel("Station height above ground (metres)").fill("4");
   await page.getByLabel("Station height above ground (metres)").press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
-  await clickWorld(page, 241.5, 249.5, 2);
+  await clickCanvas(page, await visibleTilePoint(page, { x: 241, y: 249, z: 2 }));
   await clickWorld(page, 241.5, 251.5, 2);
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");

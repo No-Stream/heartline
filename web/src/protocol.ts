@@ -7,6 +7,7 @@ import type { SetSurfaceMessage, WorldSnapshot } from "./world-snapshot";
 import type { GuestDetail } from "./guest-panel/protocol";
 import type { GuestSnapshot } from "./render/people";
 import type { CoasterColorScheme } from "./coaster-colors";
+import type { TrainLayout } from "./train-layout";
 import type { WorkerRecording } from "./session-recording";
 
 export type { PathPosition };
@@ -24,7 +25,7 @@ export type WorkerAction =
   | { type: "test-advance-block-analysis"; budget: number }
   | { type: "facility-price"; id: number; price: number };
 
-export type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array; coasterColors?: CoasterColorScheme | null };
+export type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array; coasterColors?: CoasterColorScheme | null; coasterTrain?: TrainLayout | null };
 export type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array; constructionRiders: Uint32Array };
 export type WorkerMessage =
   | { type: "session-export"; requestId: number; recording: WorkerRecording }

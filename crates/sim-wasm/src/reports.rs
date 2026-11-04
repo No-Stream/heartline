@@ -159,6 +159,7 @@ mod wire_tests {
         } else {
             std::env::temp_dir().join(format!("theme-park-report-types-{}", std::process::id()))
         };
+        crate::TrainLayoutReport::export_all_to(&output).unwrap();
         BlockReport::export_all_to(&output).unwrap();
         TestingReport::export_all_to(&output).unwrap();
         PieceShapeReport::export_all_to(&output).unwrap();

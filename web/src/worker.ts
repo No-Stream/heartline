@@ -10,6 +10,7 @@ import { validateBlockAnalysisBudget } from "./game-test";
 import { pathPreviewMessage } from "./render/path-ghost";
 import { SessionRecorder } from "./session-recording";
 import { parseCoasterColors } from "./coaster-colors";
+import { parseTrainLayout, type TrainLayout } from "./train-layout";
 
 import { sendWorkerMessage, assertNever, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition } from "./protocol";
 import type { BlockReport } from "./construction-protocol";
@@ -123,7 +124,9 @@ function sendConstruction(): void {
   const coasterIncome = simulation.construction_coaster_income();
   lastConstructionEconomy = `${coasterPrice}:${coasterIncome}`;
   const colorNames = JSON.parse(simulation.construction_colors()) as ConstructionColors | null;
-  sendWorkerMessage(workerScope, { type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, pieces, elements,
+  const layoutReport = JSON.parse(simulation.construction_train_layout()) as TrainLayout | null;
+  const trainLayout = layoutReport ? parseTrainLayout(layoutReport) : null;
+  sendWorkerMessage(workerScope, { type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     selected: selected || null, track,
     canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
@@ -182,7 +185,9 @@ function sendWorld(): void {
     const coasterTies = simulation.coaster_ties();
     const demoColors = JSON.parse(simulation.coaster_colors()) as ConstructionColors | null;
     const coasterColors = demoColors ? parseCoasterColors(demoColors) : null;
-    sendWorkerMessage(workerScope, { ...world.message, coasterGeometry, coasterRails, coasterTies, coasterSupports, coasterColors }, [...world.transfer, coasterGeometry.buffer, coasterRails.buffer, coasterTies.buffer, coasterSupports.buffer]);
+    const demoTrain = JSON.parse(simulation.coaster_train_layout()) as TrainLayout | null;
+    const coasterTrain = demoTrain ? parseTrainLayout(demoTrain) : null;
+    sendWorkerMessage(workerScope, { ...world.message, coasterGeometry, coasterRails, coasterTies, coasterSupports, coasterColors, coasterTrain }, [...world.transfer, coasterGeometry.buffer, coasterRails.buffer, coasterTies.buffer, coasterSupports.buffer]);
     coasterGeometrySent = true;
   } else {
     sendWorkerMessage(workerScope, { ...world.message, coasterSupports }, [...world.transfer, coasterSupports.buffer]);

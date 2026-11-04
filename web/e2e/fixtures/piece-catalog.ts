@@ -57,7 +57,7 @@ window.renderPieceCatalog = async (pieces, rotation) => {
     const center = unprojectGround(base, viewport, { x: (minScreenX + maxScreenX) / 2, y: (minScreenY + maxScreenY) / 2 });
     const zoom = Math.min(2, 140 / Math.max(1, maxScreenX - minScreenX), 95 / Math.max(1, maxScreenY - minScreenY));
     const camera: Camera = { ...base, centerX: center.x, centerY: center.y, zoom };
-    const quads = buildTrackQuads(rails, ties, empty, empty, camera, viewport, style);
+    const quads = buildTrackQuads(rails, ties, empty, camera, viewport, style);
     renderer.render(world, camera, 0, [() => quads]);
     const picked = quads.some((quad) => {
       const x = quad.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4;

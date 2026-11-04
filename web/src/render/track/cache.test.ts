@@ -37,7 +37,7 @@ test("caches only viewport-visible track while preserving rendered triangles and
   for (const rotation of [0, 1, 2, 3] as const) {
     const camera = { centerX: 2, centerY: 2, zoom: 1, rotation };
     const colors = { track: "coral", supports: "timber", trains: "sage" } as const;
-    const all = buildTrackQuads(rails, empty, empty, empty, camera, viewport, trackPaint(trackStyle(atlas), colors));
+    const all = buildTrackQuads(rails, empty, empty, camera, viewport, trackPaint(trackStyle(atlas), colors));
     const visible = cache(rails, empty, empty, colors, camera, viewport);
     expect(visible.length).toBeGreaterThan(0);
     expect(visible.length).toBeLessThan(all.length);
