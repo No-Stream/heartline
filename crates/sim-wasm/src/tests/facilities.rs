@@ -4,7 +4,13 @@ use super::WasmSimulation;
 fn ride_snapshots_expose_idle_cycle_state() {
     let simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let snapshot = simulation.facilities_json();
-    assert!(snapshot.contains("\"ride_state\":\"idle\",\"ride_progress\":0"));
+    let reports: Vec<serde_json::Value> = serde_json::from_str(&snapshot).unwrap();
+    assert!(!reports.is_empty());
+    assert!(
+        reports
+            .iter()
+            .all(|report| report["ride_state"] == "idle" && report["ride_progress"] == 0.0)
+    );
 }
 
 #[test]
@@ -47,4 +53,24 @@ fn placement_reports_errors_and_exports_and_removes_buildings() {
             .iter()
             .any(|building| building.id == id)
     );
+}
+
+#[test]
+fn facility_snapshot_has_structured_wire_fields() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    assert!(simulation.place_facility("carousel", 240, 254, 2));
+    let reports: Vec<serde_json::Value> =
+        serde_json::from_str(&simulation.facilities_json()).unwrap();
+    let carousel = reports
+        .iter()
+        .find(|report| report["kind"] == "carousel" && report["x"] == 240)
+        .unwrap();
+    assert_eq!(carousel["x"], 240);
+    assert_eq!(carousel["y"], 254);
+    assert_eq!(carousel["z"], 8);
+    assert_eq!(carousel["rotation"], 2);
+    assert_eq!(carousel["ride_state"], "idle");
+    assert_eq!(carousel["ride_progress"], 0.0);
+    assert!(carousel["id"].is_u64());
+    assert!(carousel["price"].is_u64());
 }

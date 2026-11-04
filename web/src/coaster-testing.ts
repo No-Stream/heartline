@@ -3,19 +3,11 @@ import { terrainHeightAt, type GeometryQuad, type Triangle, type Vertex, type Wo
 import type { TrackStyle } from "./render/track/geometry";
 import { formatLength, formatSpeed, type Units } from "./units";
 
-export interface TestingSample {
-  distance: number; x: number; y: number; z: number; speed: number;
-  verticalG: number; lateralG: number; longitudinalG: number; airtime: boolean;
-}
-export interface TestingReport {
-  samples: TestingSample[];
-  notes: string[];
-  proximityEvents: ProximityEvent[];
-  rating: { excitement: number; intensity: number; nausea: number } | null;
-}
-export interface ProximityEvent {
-  kind: string; pieceIndex: number; distance: number; x: number; y: number; z: number; strength: number;
-}
+import type { TestingSample } from "./generated/TestingSample";
+import type { TestingReport } from "./generated/TestingReport";
+import type { ProximityEventReport as ProximityEvent } from "./generated/ProximityEventReport";
+export type { TestingSample, TestingReport, ProximityEvent };
+
 export type TestingMetric = "speed" | "verticalG" | "lateralG" | "longitudinalG" | "airtime";
 const metrics: Record<TestingMetric, { label: string; low: string; high: string; value(sample: TestingSample): number }> = {
   speed: { label: "Speed", low: "", high: "", value: (sample) => sample.speed / 30 },
