@@ -311,9 +311,7 @@ impl Construction {
         {
             return Err(ConstructionError::InvalidLaunchIntensity);
         }
-        let default_speed = bounds.minimum;
-        self.pieces[index].launch_target_speed =
-            (target_speed != default_speed).then_some(target_speed);
+        self.pieces[index].launch_target_speed = Some(target_speed);
         *self.validation_cache.get_mut() = None;
         *self.choices_cache.get_mut() = None;
         *self.element_choices_cache.get_mut() = None;
@@ -346,13 +344,18 @@ impl Construction {
                 .sqrt();
             match piece.kind {
                 PieceKind::Launch => {
-                    let maximum = (speed.powi(2)
-                        + 2.0 * LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED * piece.length())
-                    .sqrt()
-                    .min(LAUNCH_MAX_SPEED_METRES_PER_SECOND);
-                    speed = piece
-                        .launch_target_speed
-                        .unwrap_or((speed + 3.0).min(maximum));
+                    if let Some(target_speed) = piece.launch_target_speed {
+                        speed = target_speed;
+                    } else {
+                        let launch = self
+                            .model
+                            .train
+                            .launch
+                            .expect("launch pieces require model launch parameters");
+                        speed = (speed.powi(2) + 2.0 * launch.acceleration * piece.length())
+                            .sqrt()
+                            .min(launch.target_speed);
+                    }
                 }
                 PieceKind::Lift => speed = 3.0,
                 _ => {}
@@ -704,16 +707,7 @@ impl Construction {
         if !self.closed {
             return Err(ConstructionError::NotClosed);
         }
-        let mut pieces = self.pieces.clone();
-        for (index, piece) in pieces.iter_mut().enumerate() {
-            if piece.kind == PieceKind::Launch && piece.launch_target_speed.is_none() {
-                let bounds = self
-                    .launch_speed_bounds(self.ids[index])
-                    .expect("launch bounds exist");
-                piece.launch_target_speed = Some(bounds.minimum);
-            }
-        }
-        Circuit::new(pieces).map_err(|_| ConstructionError::InvalidCircuit)
+        Circuit::new(self.pieces.clone()).map_err(|_| ConstructionError::InvalidCircuit)
     }
 }
 

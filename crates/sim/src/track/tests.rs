@@ -246,7 +246,7 @@ fn hybrid_model_offers_linear_motor_launches() {
     assert_eq!(model.launch_types, vec![LaunchType::LinearMotor]);
     let launch = model.train.launch.expect("launch parameters");
     assert!(launch.target_speed > 0.0);
-    assert!(launch.target_speed > 0.0);
+    assert!(launch.acceleration > 0.0);
 
     let choices = model.available_pieces(TrackState::origin());
     for id in [PieceId::LaunchShort, PieceId::Launch, PieceId::LaunchLong] {

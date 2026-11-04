@@ -198,9 +198,56 @@ fn constructed_launches_accelerate_twice_during_a_complete_lap() {
 }
 
 #[test]
-fn launch_acceleration_never_exceeds_the_technology_limit() {
+fn unchanged_launch_keeps_the_model_acceleration_and_exit_speed() {
     use PieceId::*;
     let circuit = circuit(&[
+        Station,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        Launch,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ]);
+    let model = crate::track::multi_launch_model();
+    let launch = model.train.launch.unwrap();
+    assert_eq!(launch.target_speed, 31.3);
+    assert_eq!(launch.acceleration, 5.6);
+
+    let launch_start = circuit.starts[4] + 1.0;
+    let launch_end = circuit.starts[5];
+    let mut train = Train::new(
+        &circuit,
+        &model.train,
+        PhysicsConfig::default(),
+        launch_start,
+        2.0,
+    );
+    let initial_speed = train.speed();
+    train.step(&circuit);
+    assert!(((train.speed() - initial_speed) / TIME_STEP - launch.acceleration).abs() < 1e-8);
+
+    for _ in 0..10_000 {
+        if train.distance() >= launch_end {
+            break;
+        }
+        train.step(&circuit);
+    }
+    let expected_exit_speed =
+        (2.0_f64.powi(2) + 2.0 * launch.acceleration * (launch_end - launch_start)).sqrt();
+    assert!((train.speed() - expected_exit_speed).abs() < 0.2);
+}
+
+#[test]
+fn launch_acceleration_never_exceeds_the_technology_limit() {
+    use PieceId::*;
+    let mut circuit = circuit(&[
         Station,
         Launch,
         TurnLargeEntry,
@@ -210,9 +257,8 @@ fn launch_acceleration_never_exceeds_the_technology_limit() {
         TurnLargeEntry,
         TurnLargeExit,
     ]);
-    let mut train_configuration = crate::track::multi_launch_model().train;
-    train_configuration.launch.as_mut().unwrap().target_speed =
-        crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND;
+    circuit.pieces[1].launch_target_speed = Some(crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+    let train_configuration = crate::track::multi_launch_model().train;
     let mut train = Train::new(
         &circuit,
         &train_configuration,

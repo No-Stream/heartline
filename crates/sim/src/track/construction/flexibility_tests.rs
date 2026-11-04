@@ -160,7 +160,7 @@ fn launch_capabilities_match_reachable_launch_sections() {
             .launch
             .expect("launch capability requires train parameters");
         assert!(launch.target_speed.is_finite() && launch.target_speed > 0.0);
-        assert!(launch.target_speed.is_finite() && launch.target_speed > 0.0);
+        assert!(launch.acceleration.is_finite() && launch.acceleration > 0.0);
         let connectors = reachable_connectors(&model, level, false);
         for id in launch_ids {
             assert!(

@@ -56,12 +56,14 @@ impl TrainConfiguration {
         hash.write_f64(self.height_metres);
         hash.write_option(self.launch, |hash, launch| {
             hash.write_f64(launch.target_speed);
+            hash.write_f64(launch.acceleration);
         });
     }
 }
 #[derive(Clone, Copy, Debug)]
 pub struct LaunchParameters {
     pub target_speed: f64,
+    pub acceleration: f64,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LaunchSpeedBounds {
@@ -416,7 +418,10 @@ pub fn hybrid_model() -> CoasterModel {
             length_metres: 18.0,
             width_metres: 2.0,
             height_metres: 2.5,
-            launch: Some(LaunchParameters { target_speed: 10.0 }),
+            launch: Some(LaunchParameters {
+                target_speed: 31.3,
+                acceleration: 5.6,
+            }),
         },
         track_material: Material::Steel,
         structure_material: Material::Wood,
@@ -559,7 +564,10 @@ pub fn multi_launch_model() -> CoasterModel {
             length_metres: 18.0,
             width_metres: 2.0,
             height_metres: 2.5,
-            launch: Some(LaunchParameters { target_speed: 10.0 }),
+            launch: Some(LaunchParameters {
+                target_speed: 31.3,
+                acceleration: 5.6,
+            }),
         },
         track_material: Material::Steel,
         structure_material: Material::Steel,
