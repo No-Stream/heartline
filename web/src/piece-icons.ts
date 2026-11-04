@@ -120,7 +120,13 @@ export function pieceIconSvg(shape: PieceShape, view: IconView, width: number, h
   return `<svg class="piece-icon piece-icon--${view}" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-hidden="true" focusable="false">${parts.join("")}</svg>`;
 }
 
-const bankAngle: Record<string, number> = { Left: -Math.PI / 4, Level: 0, Right: Math.PI / 4 };
+const bankAngle: Record<string, number> = { Left: -Math.PI / 4, Level: 0, Right: Math.PI / 4, Inverted: Math.PI };
+
+function bankAngleFor(bank: string): number {
+  const angle = bankAngle[bank];
+  if (angle === undefined) throw new Error(`Unknown track bank: ${bank}`);
+  return angle;
+}
 
 /** The track seen end-on in the corner: a cross tie tilted to the exit bank, with the entry bank faint behind it. */
 function bankGlyph(shape: PieceShape, width: number, height: number): string {
@@ -129,6 +135,6 @@ function bankGlyph(shape: PieceShape, width: number, height: number): string {
     const dx = Math.cos(angle) * 4.5, dy = Math.sin(angle) * 4.5;
     return `M${format(centre[0] - dx)} ${format(centre[1] - dy)}L${format(centre[0] + dx)} ${format(centre[1] + dy)}`;
   };
-  const entry = shape.entryBank === shape.exitBank ? "" : `<path class="piece-icon__bank-entry" d="${tie(bankAngle[shape.entryBank])}"/>`;
-  return `<g class="piece-icon__bank">${entry}<path class="piece-icon__bank-exit" d="${tie(bankAngle[shape.exitBank])}"/><path class="piece-icon__bank-post" d="M${format(centre[0])} ${format(centre[1])}v4"/></g>`;
+  const entry = shape.entryBank === shape.exitBank ? "" : `<path class="piece-icon__bank-entry" d="${tie(bankAngleFor(shape.entryBank))}"/>`;
+  return `<g class="piece-icon__bank">${entry}<path class="piece-icon__bank-exit" d="${tie(bankAngleFor(shape.exitBank))}"/><path class="piece-icon__bank-post" d="M${format(centre[0])} ${format(centre[1])}v4"/></g>`;
 }
