@@ -1,10 +1,10 @@
 ---
 id: TASK-89
 title: 'Add classic corkscrews, top hats and half-inversion building blocks'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-04 05:08'
-updated_date: '2026-11-04 10:03'
+updated_date: '2026-11-04 10:29'
 labels:
   - coaster
   - construction
@@ -25,4 +25,6 @@ Owner request 2026-11-03. Today the corkscrew and the heartline roll are the sam
 2026-11-03 night, owner: span the range from classic to modern inversions and categorise each as heartlined or not (an RMC-style roll feels very different from a classic Arrow corkscrew). Start the top hat on Briar Blitz.
 
 2026-11-04: Codex job task-mw1y7lns-lpiurl in worktree theme-park-sim-worktrees/inversions.
+
+2026-11-04: merged 00c93be. Gaps the agent flagged are in TASK-95.
 <!-- SECTION:NOTES:END -->
