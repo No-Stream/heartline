@@ -407,6 +407,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-start": simulation.construction_start(action.x * 2, action.y * 2, action.z / 2, action.heading * 2); break;
         case "construction-select": simulation.construction_select(action.piece); break;
         case "construction-set-chain": simulation.construction_set_chain(action.enabled); break;
+        case "construction-set-launch-intensity": simulation.construction_set_launch_intensity(action.id, action.targetSpeed); break;
         case "construction-append": simulation.construction_append(); break;
         case "construction-undo": simulation.construction_undo(); break;
         case "construction-delete": simulation.construction_delete(action.id); break;

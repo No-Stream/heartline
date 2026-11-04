@@ -124,6 +124,23 @@ fn construction_state_hash_covers_track_edits_but_ignores_validation_caches() {
 }
 
 #[test]
+fn launch_speed_limits_are_model_specific_and_intensity_changes_track_hash() {
+    let world = world();
+    let mut hybrid = Construction::new(start(), hybrid_model());
+    let viper = Construction::new(start(), crate::track::multi_launch_model());
+    assert_eq!(hybrid.model().launch_speed_bounds.unwrap().minimum, 0.0);
+    assert_eq!(hybrid.model().launch_speed_bounds.unwrap().maximum, 35.0);
+    assert_eq!(viper.model().launch_speed_bounds.unwrap().minimum, 0.0);
+    assert_eq!(viper.model().launch_speed_bounds.unwrap().maximum, 58.1);
+
+    hybrid.append(PieceId::LaunchShort, &world, &[]).unwrap();
+    let original_hash = hybrid.state_hash();
+    assert!(hybrid.set_launch_intensity(0, 35.0).is_ok());
+    assert_ne!(hybrid.state_hash(), original_hash);
+    assert!(hybrid.set_launch_intensity(0, 35.1).is_err());
+}
+
+#[test]
 fn wooden_twister_validates_every_dense_support_anchor() {
     let mut construction = Construction::new(start(), crate::track::wooden_twister_model());
     construction

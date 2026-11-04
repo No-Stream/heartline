@@ -61,6 +61,11 @@ pub struct LaunchParameters {
     pub target_speed: f64,
     pub acceleration: f64,
 }
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LaunchSpeedBounds {
+    pub minimum: f64,
+    pub maximum: f64,
+}
 #[derive(Clone, Debug)]
 pub struct CoasterModel {
     pub manufacturer: &'static str,
@@ -73,6 +78,7 @@ pub struct CoasterModel {
     pub allowed_inversions: Vec<Inversion>,
     pub lift_rules: Option<LiftRules>,
     pub launch_types: Vec<LaunchType>,
+    pub launch_speed_bounds: Option<LaunchSpeedBounds>,
     pub support_style: SupportStyle,
     pub train: TrainConfiguration,
     pub track_material: Material,
@@ -253,6 +259,7 @@ pub fn wooden_twister_model() -> CoasterModel {
             curved: true,
         }),
         launch_types: vec![],
+        launch_speed_bounds: None,
         support_style: SupportStyle::DenseWoodenLattice,
         train: TrainConfiguration {
             cars: 12,
@@ -401,6 +408,10 @@ pub fn hybrid_model() -> CoasterModel {
             curved: true,
         }),
         launch_types: vec![LaunchType::LinearMotor],
+        launch_speed_bounds: Some(LaunchSpeedBounds {
+            minimum: 0.0,
+            maximum: 35.0,
+        }),
         support_style: SupportStyle::WoodenLattice,
         train: TrainConfiguration {
             cars: 6,
@@ -547,6 +558,10 @@ pub fn multi_launch_model() -> CoasterModel {
             curved: true,
         }),
         launch_types: vec![LaunchType::LinearMotor],
+        launch_speed_bounds: Some(LaunchSpeedBounds {
+            minimum: 0.0,
+            maximum: 58.1,
+        }),
         support_style: SupportStyle::SteelColumns,
         train: TrainConfiguration {
             cars: 6,

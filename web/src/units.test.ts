@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   displayToMetres,
+  displaySpeedToMetresPerSecond,
   formatLength,
   formatSpeed,
   metresPerSecondToDisplay,
@@ -41,6 +42,8 @@ describe("unit conversions", () => {
   it("converts and formats speeds in miles or kilometres per hour", () => {
     expect(metresPerSecondToDisplay(12, "imperial")).toBeCloseTo(26.8433);
     expect(metresPerSecondToDisplay(12, "metric")).toBeCloseTo(43.2);
+    expect(displaySpeedToMetresPerSecond(26.8432355, "imperial")).toBeCloseTo(12);
+    expect(displaySpeedToMetresPerSecond(43.2, "metric")).toBeCloseTo(12);
     expect(formatSpeed(12, "imperial")).toBe("26.8 mph");
     expect(formatSpeed(12, "imperial", 3)).toBe("26.8 mph");
     expect(formatSpeed(12, "metric")).toBe("43.2 km/h");

@@ -6,7 +6,7 @@ import type { BlockReport, ConstructionElement, ConstructionPiece, ConstructionS
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
-import { displayToMetres, formatLength, metresToInput, unitLabel, type Units } from "./units";
+import { displaySpeedToMetresPerSecond, displayToMetres, formatLength, metresPerSecondToDisplay, metresToInput, speedUnitLabel, unitLabel, type Units } from "./units";
 import "./print-modern.css";
 import "./construction.css";
 
@@ -504,17 +504,40 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
 
   function renderLaunchPositions(current: ConstructionState): void {
     let distance = 0;
-    const positions: { piece: number; distance: number }[] = [];
-    current.track.forEach(({ label, slope }, index) => {
+    const positions: { piece: number; distance: number; id: number; launchTargetSpeed: number | null; launchMinimumSpeed: number | null; launchMaximumSpeed: number | null }[] = [];
+    current.track.forEach(({ label, slope, id, launchTargetSpeed, launchMinimumSpeed, launchMaximumSpeed }, index) => {
       const shape = shapeOf(label, slope);
       const length = sampledLength(shape);
-      if (shape.kind === "Launch") positions.push({ piece: index + 1, distance: distance + length / 2 });
+      if (shape.kind === "Launch") positions.push({ piece: index + 1, distance: distance + length / 2, id, launchTargetSpeed, launchMinimumSpeed, launchMaximumSpeed });
       distance += length;
     });
     launches.hidden = positions.length === 0;
-    launchList.replaceChildren(...positions.map(({ piece, distance: launchDistance }) => {
+    launchList.replaceChildren(...positions.map(({ piece, distance: launchDistance, id, launchTargetSpeed, launchMinimumSpeed, launchMaximumSpeed }) => {
       const item = document.createElement("li");
-      item.textContent = `Piece ${piece} · ${formatLength(launchDistance, units)} from station`;
+      const position = document.createElement("span");
+      position.textContent = `Piece ${piece} · ${formatLength(launchDistance, units)} from station`;
+      item.append(position);
+      if (launchTargetSpeed !== null && launchMinimumSpeed !== null && launchMaximumSpeed !== null) {
+        const group = document.createElement("div");
+        group.className = "stepper stepper--compact";
+        const label = document.createElement("label");
+        label.textContent = `Launch ${piece} target (${speedUnitLabel(units)})`;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = String(Math.ceil(metresPerSecondToDisplay(launchMinimumSpeed, units)));
+        input.max = String(Math.floor(metresPerSecondToDisplay(launchMaximumSpeed, units)));
+        input.step = "1";
+        input.value = String(Math.round(metresPerSecondToDisplay(launchTargetSpeed, units)));
+        input.setAttribute("aria-label", label.textContent);
+        input.addEventListener("change", () => {
+          if (!Number.isFinite(input.valueAsNumber)) return;
+          const speed = Math.max(Number(input.min), Math.min(Number(input.max), input.valueAsNumber));
+          dispatch({ type: "construction-set-launch-intensity", id, targetSpeed: displaySpeedToMetresPerSecond(speed, units) });
+        });
+        label.append(input);
+        group.append(label);
+        item.append(group);
+      }
       return item;
     }));
   }
@@ -752,7 +775,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       const nextElementsKey = JSON.stringify(next.elements);
       if (nextElementsKey !== elementsKey) { elementsKey = nextElementsKey; renderElements(next.elements); }
       renderSelection(next, focusInPalette);
-      const nextTrackKey = next.track.map(({ id, label, kind }) => `${id}:${label}:${kind}`).join("|");
+      const nextTrackKey = next.track.map(({ id, label, kind, launchTargetSpeed }) => `${id}:${label}:${kind}:${launchTargetSpeed}`).join("|");
       if (nextTrackKey !== trackKey) { trackKey = nextTrackKey; renderTrack(next, event === "placed"); }
       append.disabled = !next.canAppend;
       undo.disabled = next.track.length === 0;

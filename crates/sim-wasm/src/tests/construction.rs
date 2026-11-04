@@ -363,6 +363,35 @@ fn model_selection_controls_new_construction_and_launch_choices() {
 }
 
 #[test]
+fn launch_intensity_changes_hash_and_replays_to_the_same_track_state() {
+    fn built_viper() -> WasmSimulation {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+        simulation.construction_select("model:velocity_viper");
+        simulation.construction_start(200, 200, 20, 0);
+        simulation.construction_select("LaunchShort");
+        simulation.construction_append();
+        assert!(simulation.construction_message().is_empty());
+        simulation
+    }
+
+    let mut simulation = built_viper();
+    let before = simulation.state_hash();
+    assert!(simulation.construction_set_launch_intensity(1, 58.1));
+    assert_ne!(simulation.state_hash(), before);
+    assert!(
+        simulation
+            .construction_track()
+            .contains("\"launchTargetSpeed\":58.1")
+    );
+    let replay_hash = simulation.state_hash();
+    assert!(!simulation.construction_set_launch_intensity(1, 58.2));
+
+    let mut replay = built_viper();
+    assert!(replay.construction_set_launch_intensity(1, 58.1));
+    assert_eq!(replay.state_hash(), replay_hash);
+}
+
+#[test]
 fn rail_distances_follow_placed_rail_intervals_across_pieces() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(simulation.construction_rail_distances().is_empty());
@@ -496,20 +525,20 @@ fn construction_commands_validate_and_preview_without_mutating_on_failure() {
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     assert!(!simulation.construction_placed_rails().is_empty());
     simulation.construction_select("GentleUp");
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     assert!(!simulation.construction_message().is_empty());
     simulation.construction_undo();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
 }
 
@@ -525,14 +554,14 @@ fn deleting_middle_piece_preserves_and_identifies_retained_track() {
     simulation.construction_delete(1);
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":2,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":2,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     let rails = simulation.construction_placed_rails();
     assert!(rails.chunks_exact(19).any(|rail| rail[0] == 2.0));
     simulation.construction_delete(2);
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
 }
 

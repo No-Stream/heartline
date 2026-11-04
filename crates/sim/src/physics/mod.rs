@@ -457,10 +457,12 @@ impl Train {
                         let launch = self
                             .launch
                             .expect("launch parameters validated at construction");
-                        next_speed = next_speed.max(
-                            (previous_speed + launch.acceleration * TIME_STEP)
-                                .min(launch.target_speed),
-                        );
+                        let target_speed = circuit.pieces[index]
+                            .launch_target_speed
+                            .unwrap_or(launch.target_speed);
+                        let acceleration = launch.acceleration * target_speed / launch.target_speed;
+                        next_speed = next_speed
+                            .max((previous_speed + acceleration * TIME_STEP).min(target_speed));
                     }
                     PieceKind::Brakes | PieceKind::Station => {
                         let target = if circuit.pieces[index].kind == PieceKind::Brakes {

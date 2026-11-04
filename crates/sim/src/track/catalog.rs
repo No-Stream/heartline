@@ -613,6 +613,7 @@ pub fn catalog() -> Vec<Piece> {
                     id,
                     name,
                     kind,
+                    launch_target_speed: None,
                     inversion,
                     heartlining: match id {
                         Loop

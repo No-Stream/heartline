@@ -39,6 +39,7 @@ pub enum ConstructionError {
     AmbiguousConnection,
     NoSupportRoute,
     InvalidIndex,
+    InvalidLaunchIntensity,
     NotClosed,
     InvalidCircuit,
 }
@@ -287,6 +288,43 @@ impl Construction {
             return Err(ConstructionError::ModelForbidden);
         }
         Ok(piece)
+    }
+
+    pub fn set_launch_intensity(
+        &mut self,
+        id: usize,
+        target_speed: f64,
+    ) -> Result<(), ConstructionError> {
+        let bounds = self
+            .model
+            .launch_speed_bounds
+            .ok_or(ConstructionError::ModelForbidden)?;
+        if !target_speed.is_finite()
+            || target_speed < bounds.minimum
+            || target_speed > bounds.maximum
+        {
+            return Err(ConstructionError::InvalidLaunchIntensity);
+        }
+        let index = self
+            .ids
+            .iter()
+            .position(|piece_id| *piece_id == id)
+            .ok_or(ConstructionError::InvalidIndex)?;
+        if self.pieces[index].kind != PieceKind::Launch {
+            return Err(ConstructionError::ModelForbidden);
+        }
+        let default_speed = self
+            .model
+            .train
+            .launch
+            .expect("launch models have default launch parameters")
+            .target_speed;
+        self.pieces[index].launch_target_speed =
+            (target_speed != default_speed).then_some(target_speed);
+        *self.validation_cache.get_mut() = None;
+        *self.choices_cache.get_mut() = None;
+        *self.element_choices_cache.get_mut() = None;
+        Ok(())
     }
 
     fn validate_piece(
