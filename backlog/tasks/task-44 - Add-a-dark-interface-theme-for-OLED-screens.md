@@ -1,10 +1,10 @@
 ---
 id: TASK-44
 title: Add a dark interface theme for OLED screens
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 16:40'
-updated_date: '2026-11-03 19:00'
+updated_date: '2026-11-04 00:17'
 labels:
   - interface
   - art
@@ -31,4 +31,6 @@ Owner request (2026-11-03): make the UI darker; the owner and others use OLED di
 
 <!-- SECTION:NOTES:BEGIN -->
 Commit b6db8bf. Dark tokens via light-dark() in print-modern.css; theme.ts toggle in the game bar (follows prefers-color-scheme until chosen, stored in localStorage). Renderer void/sky: BACKDROPS and printOnBackdrop in render/daylight.ts, Atmosphere.paper in render/index.ts; light path is numerically identical. Game bar breakpoints widened so Watch-mode items no longer overlap (overlap already existed at 900-1100px). construction-preview baseline regenerated: only the game bar changed. Tests: web/e2e/dark-theme.spec.ts (6), bar-overlap test in toolbar.spec.ts, unit tests in daylight/effects tests. Contrast checked by eye in dark screenshots of every panel.
+
+Closed 2026-11-03: make ci at 9987c3e passed everything except the piece-catalog baselines (expected after the lift piece removal), refreshed in 8be816e.
 <!-- SECTION:NOTES:END -->

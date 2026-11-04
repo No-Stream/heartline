@@ -1,10 +1,10 @@
 ---
 id: TASK-41
 title: Triage slow tests into fast and slow tiers
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 16:26'
-updated_date: '2026-11-03 19:08'
+updated_date: '2026-11-04 00:17'
 labels:
   - infra
   - performance
@@ -51,4 +51,6 @@ The focused multi-launch browser flow passed in 14.2 s against the existing brow
 Revised make check passed in 71.43 s, including 141 Rust tests, 185 application Vitest tests, nine art tests, typechecking and eight Playwright tests. The second measurement stopped after 33.12 s because the concurrent WebAssembly refactor had eight missing refresh_construction_support_error method errors. Criterion 1 remains unchecked until a second passing timing is measured.
 
 The revised make check passed twice in 71.43 s and 61.41 s, including the art tests and the path-rebuild food-visit fixture. A concurrent WebAssembly refactor caused one intervening compile failure; both successful runs include a build. The full gate remains for the lead to run.
+
+Closed 2026-11-03: make ci at 9987c3e passed everything except the piece-catalog baselines (expected after the lift piece removal), refreshed in 8be816e.
 <!-- SECTION:NOTES:END -->
