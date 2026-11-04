@@ -108,6 +108,15 @@ describe("input bindings", () => {
     expect(actions).toEqual([{ type: "underground-view-toggle" }]);
   });
 
+  it("toggles sound mute with M once per key press", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    surface.dispatchEvent(event("keydown", { key: "m", repeat: false }));
+    surface.dispatchEvent(event("keydown", { key: "M", repeat: true }));
+    expect(actions).toEqual([{ type: "sound-mute-toggle" }]);
+  });
+
   it("reports pointer movement and exit through the action layer", () => {
     const surface = new Surface();
     const actions: InputAction[] = [];

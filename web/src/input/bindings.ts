@@ -35,6 +35,7 @@ export const builderShortcuts = {
   sessionExport: { keys: ["j"], repeat: false, action: { type: "session-export" } },
   gameSpeed: { keys: ["v"], repeat: false, action: { type: "game-speed-cycle" } },
   pause: { keys: [" "], repeat: false, action: { type: "pause-toggle" } },
+  soundMute: { keys: ["m"], repeat: false, action: { type: "sound-mute-toggle" } },
   undergroundView: { keys: ["u"], repeat: false, action: { type: "underground-view-toggle" } },
   coasterTool: { keys: ["o"], repeat: false, action: { type: "tool-select", tool: "coaster" } },
   landscapeTool: { keys: ["l"], repeat: false, action: { type: "tool-select", tool: "landscape" } },

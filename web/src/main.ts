@@ -48,6 +48,9 @@ import { replaySessionIntoWorker } from "./session-replay-worker";
 import { constructionHeights } from "./height-markers";
 import { formatLength, type Units } from "./units";
 import { createUnitsSetting } from "./units-setting";
+import { createLiveAudio, renderOffline } from "./audio/engine";
+import { soundFrame } from "./audio/mapping";
+import { createSoundSetting } from "./sound-setting";
 
 declare const __GIT_HASH__: string;
 
@@ -193,6 +196,7 @@ let activeTool: Tool = "none";
 let dayPhase = frozen ? NOON : START_PHASE;
 let daySpeed: DaySpeed = 1;
 const gamePause = createGamePauseState();
+let gameSpeed = 1;
 let dayTick: number | undefined;
 let demoCrests = createCrestTracker();
 let constructionCrests = createCrestTracker();
@@ -261,6 +265,7 @@ let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
 let renderedRiders: { id: string; left: number; right: number; top: number; bottom: number }[] = [];
 const gameTest: GameTest = {
+  audio: { state: () => audio.state(), unlock: () => audio.unlock(), activeVoices: () => audio.activeVoices(), renderOffline },
   get ready() { return renderRevision.ready(); },
   tickCount() { return current?.tickCount ?? 0; },
   frameLog() { return frameLogEnabled ? frameLogEntries.map((entry) => ({ ...entry })) : []; },
@@ -332,6 +337,10 @@ function applyUnits(units: Units): void {
 }
 const unitsSetting = createUnitsSetting(unitsContainer, dispatch);
 applyUnits(unitsSetting.units());
+const soundContainer = document.querySelector<HTMLElement>("[data-sound-setting]")!;
+const soundSetting = createSoundSetting(soundContainer, dispatch);
+const audio = createLiveAudio({ testMode: frozen, onLockChange: (locked) => soundSetting.setLocked(locked) });
+audio.setVolume(soundSetting.volume, soundSetting.muted);
 gameCanvas.addEventListener("webglcontextlost", () => { renderRevision.invalidate(); });
 gameCanvas.addEventListener("webglcontextrestored", () => { renderRevision.invalidate(); });
 toolbar.setActive(activeTool);
@@ -395,6 +404,7 @@ function dispatch(action: InputAction): void {
     sendWorkerAction(worker, { type: "export-session", requestId });
   } else if (action.type === "game-speed-cycle") {
     const speed = dayClock.cycleGameSpeed();
+    gameSpeed = speed;
     renderClock.setSpeed(speed);
     sendWorkerAction(worker, { type: "set-speed", speed });
   } else if (action.type === "pause-toggle") {
@@ -418,6 +428,12 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "units-set") {
     unitsSetting.setUnits(action.units);
     applyUnits(action.units);
+  } else if (action.type === "sound-mute-toggle") {
+    soundSetting.setMuted(!soundSetting.muted);
+    audio.setVolume(soundSetting.volume, soundSetting.muted);
+  } else if (action.type === "sound-volume") {
+    soundSetting.setVolume(action.volume);
+    audio.setVolume(soundSetting.volume, soundSetting.muted);
   } else if (action.type === "guest-select") {
     selectedGuestId = action.guestId;
     sendWorkerAction(worker, { type: "guest-detail-request", guestId: action.guestId });
@@ -760,6 +776,7 @@ function frame(now: number): void {
     renderTick: renderFrame?.tick,
     setGuestAnchor: (point) => guestPanel.setAnchor(point),
   });
+  audio.apply(soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts }));
   renderedGuests = scene.guests;
   renderedRiders = scene.riders;
   renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none" });
