@@ -37,6 +37,8 @@ import { createSceneryPanel } from "./scenery-panel";
 import { createToolbar, type Tool } from "./toolbar";
 import { createThemeToggle } from "./theme";
 import type { WorkerRecording } from "./session-recording";
+import { parseReplaySession, type ReplaySession } from "./session-replay";
+import { replaySessionIntoWorker } from "./session-replay-worker";
 
 declare const __GIT_HASH__: string;
 
@@ -74,11 +76,11 @@ let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
 const renderClock = new RenderClock<CoasterSnapshot>(30);
 const noGeometry = new Float32Array();
-const frozen = new URLSearchParams(location.search).has("test");
+let frozen = new URLSearchParams(location.search).has("test");
 const frameLogEnabled = new URLSearchParams(location.search).get("frameLog") === "1";
 const frameLogEntries: FrameLogEntry[] = [];
 const snapshotArrivalEntries: SnapshotArrivalEntry[] = [];
-const manualBlockAnalysis = frozen && new URLSearchParams(location.search).has("manualBlockAnalysis");
+let manualBlockAnalysis = frozen && new URLSearchParams(location.search).has("manualBlockAnalysis");
 const testAgents = frozen ? new URLSearchParams(location.search).get("agents") : null;
 const timing = new URLSearchParams(location.search).get("timing") === "work";
 const { atlas, images } = await loadAtlas(new URL("./atlas.json", document.baseURI).href);
@@ -338,6 +340,7 @@ const gameTest: GameTest = {
   guestDetail() { return latestGuestDetail; },
   testingReport() { return construction?.testingReport ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
+  replaySession: replayLiveSession,
   advanceTicks(count) {
     if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
     return new Promise<void>((resolve) => { advanceTicksComplete = resolve; worker.postMessage({ type: "test-advance", count }); });
@@ -541,6 +544,8 @@ bindInput(gameCanvas, dispatch, () => pathTool.state().mode === "build" || lands
 const worker = new Worker(new URL("./worker.ts", import.meta.url), {
   type: "module",
 });
+let workerReady = false;
+let replayInProgress = false;
 const params = new URLSearchParams(location.search);
 const seedText = params.get("seed") ?? "2026";
 if (!/^\d+$/.test(seedText) || BigInt(seedText) > 18446744073709551615n) throw new RangeError("Invalid seed");
@@ -551,6 +556,7 @@ if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 500) throw n
 worker.postMessage({ type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
 worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"; requestId: number; recording: WorkerRecording } | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facility-access-preview"; requestId: number; rotation: number | undefined } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
   const message = event.data;
+  if (message.type === "ready") workerReady = true;
   if (message.type === "session-export") {
     const inputs = pendingSessionExports.get(message.requestId);
     if (!inputs) throw new Error("Unknown session export request");
@@ -630,6 +636,26 @@ worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"
     gameCanvas.dataset.agentCount = String(current?.guestIds.length ?? 0);
   }
 });
+
+async function replayLiveSession(value: ReplaySession): Promise<void> {
+  const session = parseReplaySession(value);
+  if (!frozen || !manualBlockAnalysis) throw new Error("Session replay requires frozen test mode with manual block analysis");
+  if (!workerReady || gameTest.tickCount() !== 0) throw new Error("Session replay requires a ready worker at tick zero");
+  if (BigInt(session.seed) !== BigInt(seedText) || session.park !== park || session.guestCount !== guestCount) {
+    throw new Error("Session replay settings must match the initialized worker");
+  }
+  if (replayInProgress) throw new Error("A session replay is already in progress");
+  replayInProgress = true;
+  try {
+    await replaySessionIntoWorker(worker, session, { action: { type: "test-resume" }, replyType: "test-resumed" });
+    frozen = false;
+    manualBlockAnalysis = false;
+    dayTick = undefined;
+    gameTest.ready = false;
+  } finally {
+    replayInProgress = false;
+  }
+}
 
 function observeTick(snapshot: CoasterSnapshot): void {
   if (dayTick !== undefined) dayPhase = advanceDayPhase(dayPhase, Math.max(0, snapshot.tickCount - dayTick), daySpeed);

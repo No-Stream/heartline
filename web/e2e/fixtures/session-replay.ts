@@ -1,20 +1,10 @@
 import type { WorkerRecording } from "../../src/session-recording";
-import { prepareReplayCommand, type ReplayObservation, type ReplaySession } from "../../src/session-replay";
-
-interface ReplayWorkerMessage {
-  readonly type: string;
-  readonly [key: string]: unknown;
-}
+import type { ReplayObservation, ReplaySession } from "../../src/session-replay";
+import { replaySessionIntoWorker, type ReplayWorkerMessage } from "../../src/session-replay-worker";
 
 interface ReplayWorkerOutcome {
   readonly recording: WorkerRecording;
   readonly observation: ReplayObservation;
-}
-
-interface WorkerMessageWaiter {
-  readonly resolve: (message: ReplayWorkerMessage) => void;
-  readonly reject: (error: Error) => void;
-  readonly timeout: ReturnType<typeof setTimeout>;
 }
 
 declare global {
@@ -25,12 +15,10 @@ declare global {
 
 window.replayWorkerSession = async (session) => {
   const worker = new Worker(new URL("../../src/worker.ts", import.meta.url), { type: "module" });
-  const waiters = new Map<string, WorkerMessageWaiter[]>();
-  let workerError: Error | undefined;
   let awaitingConstructionCloseResult = false;
   let constructionCanClose: boolean | undefined;
   let constructionPiecesBeforeMutation: number | undefined;
-  const initialObservation: {
+  const observation: {
     constructionPieces?: number;
     chainEnabled?: boolean;
     pathTiles?: number;
@@ -39,44 +27,8 @@ window.replayWorkerSession = async (session) => {
     riders?: number;
     revenue?: string;
   } = {};
-  const observation = initialObservation;
 
-  const resolveWaiters = (type: string, message: ReplayWorkerMessage): void => {
-    const pending = waiters.get(type);
-    if (!pending) return;
-    waiters.delete(type);
-    for (const waiter of pending) {
-      clearTimeout(waiter.timeout);
-      waiter.resolve(message);
-    }
-  };
-  const rejectWaiters = (error: Error): void => {
-    for (const pending of waiters.values()) {
-      for (const waiter of pending) {
-        clearTimeout(waiter.timeout);
-        waiter.reject(error);
-      }
-    }
-    waiters.clear();
-  };
-  const waitFor = (type: string): Promise<ReplayWorkerMessage> => new Promise((resolveMessage, rejectMessage) => {
-    const timeout = setTimeout(() => {
-      const pending = waiters.get(type) ?? [];
-      waiters.set(type, pending.filter((waiter) => waiter.timeout !== timeout));
-      rejectMessage(new Error(`Timed out waiting for worker message ${type}`));
-    }, 30_000);
-    const pending = waiters.get(type) ?? [];
-    waiters.set(type, [...pending, { resolve: resolveMessage, reject: rejectMessage, timeout }]);
-  });
-
-  worker.onerror = (event) => {
-    workerError = new Error(`Replay worker error: ${event.message}`);
-    rejectWaiters(workerError);
-  };
-  worker.onmessageerror = () => {
-    workerError = new Error("Replay worker could not deserialize a message");
-    rejectWaiters(workerError);
-  };
+  // Registered before the replay's own listener, so each observation is up to date before the replay sends its next command.
   worker.onmessage = (event: MessageEvent<ReplayWorkerMessage>) => {
     const message = event.data;
     if (message.type === "world") {
@@ -103,53 +55,20 @@ window.replayWorkerSession = async (session) => {
       observation.foodStalls = facilities.filter(({ kind }) => kind === "food_stall").length;
       observation.revenue = message.revenue as string;
     }
-    resolveWaiters(message.type, message);
-  };
-
-  const postAndWait = async (action: Record<string, unknown>, replyType: string): Promise<ReplayWorkerMessage> => {
-    const reply = waitFor(replyType);
-    worker.postMessage(action);
-    return reply;
-  };
-
-  const advanceTo = async (currentTick: number, targetTick: number): Promise<number> => {
-    let tick = currentTick;
-    while (tick < targetTick) {
-      const count = Math.min(targetTick - tick, 100_000);
-      await postAndWait({ type: "test-advance", count }, "test-advanced");
-      tick += count;
-    }
-    return tick;
   };
 
   try {
-    const ready = waitFor("ready");
+    const ready = new Promise<void>((resolve) => worker.addEventListener("message", (event: MessageEvent<ReplayWorkerMessage>) => {
+      if (event.data.type === "ready") resolve();
+    }));
     worker.postMessage({ type: "init", seed: BigInt(session.seed), park: session.park, guestCount: session.guestCount, frozen: true, manualBlockAnalysis: true });
     await ready;
-
-    let tick = 0;
-    for (const { tick: commandTick, command } of session.commands) {
-      tick = await advanceTo(tick, commandTick);
-      const preparedCommand = prepareReplayCommand(command);
-      if (preparedCommand.type === "test-advance-block-analysis") {
-        await postAndWait(preparedCommand, "test-block-analysis-advanced");
-      } else if (preparedCommand.type === "construction-close") {
-        const response = waitFor("construction-state");
-        awaitingConstructionCloseResult = true;
-        worker.postMessage(preparedCommand);
-        await response;
-      } else if (["construction-start", "construction-append", "construction-undo", "construction-delete"].includes(command.type)) {
-        const response = waitFor("construction-state");
+    const exported = await replaySessionIntoWorker(worker, session, { action: { type: "export-session", requestId: 1 }, replyType: "session-export" }, (command) => {
+      if (command.type === "construction-close") awaitingConstructionCloseResult = true;
+      else if (["construction-start", "construction-append", "construction-undo", "construction-delete"].includes(command.type)) {
         constructionPiecesBeforeMutation = observation.constructionPieces ?? 0;
-        worker.postMessage(preparedCommand);
-        await response;
-      } else {
-        worker.postMessage(preparedCommand);
       }
-    }
-    await advanceTo(tick, session.finalTick);
-    const exported = await postAndWait({ type: "export-session", requestId: 1 }, "session-export");
-    if (workerError) throw workerError;
+    });
     return {
       recording: exported.recording as WorkerRecording,
       observation: { ...observation },

@@ -23,7 +23,7 @@ type PathAction =
   | { readonly type: "path-build"; readonly requestId: number; readonly start: PathPosition; readonly end: PathPosition; readonly kind: "normal" | "queue"; readonly style: number }
   | { readonly type: "path-remove"; readonly requestId: number; readonly x: number; readonly y: number; readonly z: number };
 type InitAction = { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean };
-type WorkerAction = InitAction | { type: "export-session"; requestId: number } | { type: "set-speed"; speed: number } | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
+type WorkerAction = InitAction | { type: "export-session"; requestId: number } | { type: "test-resume" } | { type: "set-speed"; speed: number } | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | GuestDetailAction | FacilityAction | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number } | { type: "facility-remove"; id: number } | { type: "test-advance"; count: number } | { type: "test-advance-block-analysis"; budget: number } | { type: "facility-price"; id: number; price: number };
 
 const tickRate = 30;
 let manualBlockAnalysis = false;
@@ -222,8 +222,19 @@ workerScope.addEventListener("message", (event) => {
       workerScope.postMessage({ type: "session-export", requestId: action.requestId, recording: recorder.snapshot(Number(simulation.tick_count())) });
       return;
     }
-    if (!["test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode"].includes(action.type)) {
+    if (!["test-resume", "test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode"].includes(action.type)) {
       recorder.recordCommand(Number(simulation.tick_count()), action);
+    }
+    if (action.type === "test-resume") {
+      if (!simulationPaused || !manualBlockAnalysis) throw new Error("Test resume requires a frozen worker with manual block analysis");
+      simulationPaused = false;
+      manualBlockAnalysis = false;
+      clock = createSimulationClock(tickRate, 4);
+      lastWakeup = performance.now();
+      workerScope.postMessage({ type: "test-resumed" });
+      wake(true);
+      scheduleBlockAnalysis();
+      return;
     }
     if (action.type === "set-speed") {
       if (!Number.isInteger(action.speed) || action.speed < 1 || action.speed > 16) throw new RangeError("Invalid game speed");
