@@ -38,6 +38,8 @@
 .day-clock__export-icon { overflow: visible; }
 .day-clock__export-icon path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .day-clock__speed:hover { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
+.day-clock__pause[aria-pressed="true"] { color: var(--paper); background: var(--coral); }
+.day-clock__paused { color: var(--coral); font: 700 0.72rem/1 var(--heading-font); }
 
 @media (max-width: 1250px) {
   .day-clock__scrub { display: none; }
