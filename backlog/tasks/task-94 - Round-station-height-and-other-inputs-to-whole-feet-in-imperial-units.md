@@ -1,10 +1,10 @@
 ---
 id: TASK-94
 title: Round station height and other inputs to whole feet in imperial units
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-04 09:44'
-updated_date: '2026-11-04 10:03'
+updated_date: '2026-11-04 10:16'
 labels:
   - interface
 dependencies: []
@@ -22,4 +22,6 @@ Seen 2026-11-04: with feet selected, the station height field shows 39.37 ft (a 
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-04: Codex job task-mw1y7lu5-ur3mxm in worktree theme-park-sim-worktrees/feet-rounding.
+
+2026-11-04: merged 6b45440.
 <!-- SECTION:NOTES:END -->
