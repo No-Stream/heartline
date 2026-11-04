@@ -8,6 +8,7 @@ import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
 import { pathPreviewMessage } from "./render/path-ghost";
 import { SessionRecorder } from "./session-recording";
+import { parseCoasterColors } from "./coaster-colors";
 
 type GuestDetailAction =
   | { readonly type: "guest-detail-request"; readonly guestId: string }
@@ -137,7 +138,8 @@ function sendConstruction(): void {
   const coasterPrice = simulation.construction_coaster_price();
   const coasterIncome = simulation.construction_coaster_income();
   lastConstructionEconomy = `${coasterPrice}:${coasterIncome}`;
-  workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), pieces, elements,
+  const colorNames = simulation.construction_colors();
+  workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, pieces, elements,
     selected: selected || null, track: track ? track.split("\n").map((row) => {
       const [id, label, name, group, slope, kind] = row.split("\t");
       return { id: Number(id), label, name, group, slope, kind };
@@ -197,7 +199,9 @@ function sendWorld(): void {
     const coasterGeometry = simulation.coaster_geometry();
     const coasterRails = simulation.coaster_rails();
     const coasterTies = simulation.coaster_ties();
-    workerScope.postMessage({ ...world.message, coasterGeometry, coasterRails, coasterTies, coasterSupports }, [...world.transfer, coasterGeometry.buffer, coasterRails.buffer, coasterTies.buffer, coasterSupports.buffer]);
+    const demoColors = simulation.coaster_colors();
+    const coasterColors = demoColors ? parseCoasterColors(demoColors) : null;
+    workerScope.postMessage({ ...world.message, coasterGeometry, coasterRails, coasterTies, coasterSupports, coasterColors }, [...world.transfer, coasterGeometry.buffer, coasterRails.buffer, coasterTies.buffer, coasterSupports.buffer]);
     coasterGeometrySent = true;
   } else {
     workerScope.postMessage({ ...world.message, coasterSupports }, [...world.transfer, coasterSupports.buffer]);
@@ -419,6 +423,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-finish-cancel": simulation.construction_finish_cancel(); break;
         case "construction-set-open": simulation.construction_set_open(action.open); break;
         case "construction-set-coaster-price": simulation.construction_set_coaster_price(action.price); break;
+        case "construction-set-colors": simulation.construction_set_colors(action.colors.track, action.colors.supports, action.colors.trains); break;
         case "construction-test": simulation.construction_test(); break;
         case "construction-auto-blocks": simulation.construction_auto_blocks(); break;
         case "construction-apply-best-blocks": simulation.construction_apply_best_block_sections(); break;

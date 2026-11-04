@@ -1,3 +1,4 @@
+import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, repaint, type CoasterPart } from "./coaster-colors";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState, steppedTrainCount } from "./block-panel-state";
 import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions, type StepAttribute } from "./construction-choices";
@@ -44,6 +45,7 @@ const coasterModels = {
     description: "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains.",
   },
 } as const;
+const coasterPartNames: Record<CoasterPart, string> = { track: "Track", supports: "Supports", trains: "Trains" };
 const stationHeight = { minimum: 4, maximum: 100, step: 2, initial: 12 };
 const steppers: readonly { attribute: StepAttribute; label: string; previous: string; next: string; keys: readonly [keyof typeof builderShortcuts, keyof typeof builderShortcuts] }[] = [
   { attribute: "turn", label: "Direction", previous: "Turn left", next: "Turn right", keys: ["turnLeft", "turnRight"] },
@@ -115,6 +117,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <p class="builder__chain-hint" id="chain-lift-hint" data-chain-hint></p>
       </div>
       <section class="tool-panel__section" aria-label="Track elements"><h3>Track elements</h3><div class="builder__elements" data-elements></div></section>
+      <section class="tool-panel__section builder__colors" aria-label="Coaster colours">
+        <h3>Colours</h3>${COASTER_PARTS.map((part) => `
+        <div class="builder__color-row" role="radiogroup" aria-label="${coasterPartNames[part]} colour" data-coaster-color-part="${part}">
+          <span class="tool-panel__label">${coasterPartNames[part]}</span>
+          <div class="builder__swatches">${COASTER_COLOR_NAMES.map((name) => `<button type="button" role="radio" aria-checked="false" class="builder__swatch" data-coaster-color="${name}" aria-label="${COASTER_COLORS[name].label}" title="${COASTER_COLORS[name].label}" style="--swatch: ${COASTER_COLORS[name].hex}"></button>`).join("")}</div>
+        </div>`).join("")}
+      </section>
       <section class="tool-panel__section" aria-label="Track actions">
         <div class="builder__actions">
           <div class="builder__ride-controls">
@@ -331,6 +340,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     setCoasterPrice(Number(coasterPrice.value) + Number(button.dataset.coasterPriceStep));
   }));
   chainToggle.addEventListener("click", () => { if (state) dispatch({ type: "construction-set-chain", enabled: !state.chain }); });
+  const colorRows = COASTER_PARTS.map((part) => ({ part, row: element(`[data-coaster-color-part="${part}"]`) }));
+  for (const { part, row } of colorRows) {
+    row.addEventListener("click", (event) => {
+      const swatch = (event.target as Element).closest<HTMLElement>("[data-coaster-color]");
+      if (swatch && state?.colors) dispatch({ type: "construction-set-colors", colors: repaint(state.colors, part, swatch.dataset.coasterColor!) });
+    });
+  }
   deleteMode.addEventListener("change", () => dispatch({ type: "construction-delete-mode", enabled: deleteMode.checked }));
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
     element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => { if (state) select(steppedPiece(state.pieces, shapes, state.selected, attribute, step)); });
@@ -653,6 +669,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       container.dataset.chain = String(next.chain);
       container.dataset.finishPreview = String(next.finishPreview);
       chainToggle.setAttribute("aria-pressed", String(next.chain));
+      for (const { part, row } of colorRows) {
+        row.dataset.selected = next.colors?.[part] ?? "";
+        for (const swatch of row.querySelectorAll<HTMLElement>("[data-coaster-color]")) swatch.setAttribute("aria-checked", String(swatch.dataset.coasterColor === next.colors?.[part]));
+      }
       chainState.textContent = next.chain ? "On" : "Off";
       chainHint.textContent = next.chain
         ? "New pieces are chain lifts. Hatched pieces cannot carry a chain."

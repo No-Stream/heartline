@@ -13,11 +13,11 @@ use crate::guests::behavior::Facility;
 use crate::guests::park::ParkGuests;
 use crate::physics::{BlockOperation, Circuit, TestRun, TestRunRecorder, Train};
 use crate::state_hash::StateHasher;
-use crate::track::TrainConfiguration;
 use crate::track::blocks::{
     BlockLayout, BlockManualSearch, BlockPlacementSearch, ThroughputEstimator,
 };
 use crate::track::construction::Construction;
+use crate::track::{CoasterColors, TrainConfiguration, hybrid_model};
 use crate::world::World;
 use std::collections::BTreeMap;
 
@@ -25,6 +25,7 @@ pub struct DemoCoaster {
     pub circuit: Circuit,
     pub train: Train,
     pub train_configuration: TrainConfiguration,
+    pub colors: CoasterColors,
 }
 
 pub struct Park {
@@ -76,6 +77,8 @@ impl Park {
             circuit,
             train,
             train_configuration,
+            // The demo coaster is a steel-box track on a wooden structure, so it wears the Timber Tumbler's colours.
+            colors: hybrid_model().default_colors,
         });
         park
     }
@@ -136,6 +139,7 @@ impl Park {
             coaster.circuit.hash_into(hash);
             coaster.train.hash_into(hash);
             coaster.train_configuration.hash_into(hash);
+            coaster.colors.hash_into(hash);
         });
         hash.write_option(self.construction.as_ref(), |hash, construction| {
             hash.write_u64(construction.state_hash());

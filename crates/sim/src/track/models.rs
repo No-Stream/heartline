@@ -1,3 +1,4 @@
+use super::colors::{CoasterColor, CoasterColors};
 use super::{Inversion, Piece, PieceId, PieceKind, Shape, Slope, TrackState, catalog};
 use crate::state_hash::StateHasher;
 
@@ -76,6 +77,8 @@ pub struct CoasterModel {
     pub train: TrainConfiguration,
     pub track_material: Material,
     pub structure_material: Material,
+    /// The colours a new coaster of this model starts with.
+    pub default_colors: CoasterColors,
 }
 impl CoasterModel {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
@@ -108,6 +111,7 @@ impl CoasterModel {
         self.train.hash_into(hash);
         hash.write_u8(self.track_material as u8);
         hash.write_u8(self.structure_material as u8);
+        self.default_colors.hash_into(hash);
     }
 
     pub fn allows_piece(&self, piece: &Piece) -> bool {
@@ -256,6 +260,11 @@ pub fn wooden_twister_model() -> CoasterModel {
         },
         track_material: Material::Wood,
         structure_material: Material::Wood,
+        default_colors: CoasterColors {
+            track: CoasterColor::Timber,
+            supports: CoasterColor::Timber,
+            trains: CoasterColor::Slate,
+        },
     }
 }
 pub fn hybrid_model() -> CoasterModel {
@@ -378,6 +387,11 @@ pub fn hybrid_model() -> CoasterModel {
         },
         track_material: Material::Steel,
         structure_material: Material::Wood,
+        default_colors: CoasterColors {
+            track: CoasterColor::Coral,
+            supports: CoasterColor::Timber,
+            trains: CoasterColor::Sage,
+        },
     }
 }
 
@@ -505,5 +519,10 @@ pub fn multi_launch_model() -> CoasterModel {
         },
         track_material: Material::Steel,
         structure_material: Material::Steel,
+        default_colors: CoasterColors {
+            track: CoasterColor::Teal,
+            supports: CoasterColor::Cream,
+            trains: CoasterColor::Coral,
+        },
     }
 }

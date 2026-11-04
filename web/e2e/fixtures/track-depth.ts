@@ -1,6 +1,6 @@
 import { projectWorld, type Rotation } from "../../src/camera";
 import { createWorldRenderer, type Atlas, type WorldView } from "../../src/render";
-import { buildTrackQuads, type TrackStyle } from "../../src/render/track/geometry";
+import { buildTrackQuads, type TrackPaint } from "../../src/render/track/geometry";
 
 declare global {
   interface Window {
@@ -9,7 +9,7 @@ declare global {
 }
 
 type Vector = [number, number, number];
-const style: TrackStyle = { steel: "#b84b62", wood: "#91593d", train: "#2e7075", ink: "#211519", lineWeight: 1 };
+const style: TrackPaint = { track: "#b84b62", supports: "#91593d", trains: "#2e7075", ink: "#211519", lineWeight: 1 };
 
 window.trackDepthCases = async (rotation) => {
   const texture = document.createElement("canvas"); texture.width = 48; texture.height = 16;

@@ -1,6 +1,12 @@
 import { projectWorld, type Camera, type Rotation, type Viewport } from "../../src/camera";
 import { createWorldRenderer, loadAtlas, type Atlas, type WorldView } from "../../src/render";
-import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle } from "../../src/render/track/geometry";
+import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle, type TrackPaint } from "../../src/render/track/geometry";
+
+/** The fixture paints its coasters in its own atlas's theme inks: track in steel, supports in wood. */
+function fixturePaint(atlas: Atlas): TrackPaint {
+  const style = trackStyle(atlas);
+  return { track: style.steel, supports: style.wood, trains: style.train, ink: style.ink, lineWeight: style.lineWeight };
+}
 
 const initializeDemoWorker = (worker: Worker, frozen = false): void => {
   worker.postMessage({ type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen, manualBlockAnalysis: false });
@@ -31,7 +37,7 @@ window.renderRiderOrientations = async () => {
   ]);
   const riders = buildRiderQuads(poses, camera, canvas, atlas, "3");
   const geometry = (view: Camera, viewport: Viewport, currentAtlas: Atlas, scale: string) => [
-    ...buildTrackQuads(new Float32Array(), new Float32Array(), new Float32Array(), poses, view, viewport, trackStyle(currentAtlas)),
+    ...buildTrackQuads(new Float32Array(), new Float32Array(), new Float32Array(), poses, view, viewport, fixturePaint(currentAtlas)),
     ...buildRiderQuads(poses, view, viewport, currentAtlas, scale),
   ];
   renderer.render(world, camera, 0, [geometry]);
@@ -135,7 +141,7 @@ window.renderTrackFixture = async (rotation) => {
   };
   const camera = { centerX: 4, centerY: 3.5, zoom: 2.5, rotation };
   renderer.render(world, camera, 0, [(renderCamera, viewport, renderAtlas, scale) => [
-    ...buildTrackQuads(world.coasterRails, world.coasterTies, world.coasterSupports, world.trainPoses, renderCamera, viewport, trackStyle(renderAtlas)),
+    ...buildTrackQuads(world.coasterRails, world.coasterTies, world.coasterSupports, world.trainPoses, renderCamera, viewport, fixturePaint(renderAtlas)),
     ...buildRiderQuads(world.trainPoses, renderCamera, viewport, renderAtlas, scale),
   ]]);
   const picks = new Set<string>();

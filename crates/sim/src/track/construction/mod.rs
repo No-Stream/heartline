@@ -9,8 +9,8 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterModel, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState, TrainConfiguration,
-    Vec3, catalog,
+    CoasterColors, CoasterModel, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState,
+    TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
 use std::cell::RefCell;
@@ -81,6 +81,7 @@ pub struct Construction {
     next_id: usize,
     closed: bool,
     chain: bool,
+    colors: CoasterColors,
     validation_cache: RefCell<Option<ValidationCache>>,
     choices_cache: RefCell<Option<ChoicesCache>>,
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
@@ -88,6 +89,7 @@ pub struct Construction {
 
 impl Construction {
     pub fn new(start: TrackState, model: CoasterModel) -> Self {
+        let colors = model.default_colors;
         Self {
             start,
             model,
@@ -97,6 +99,7 @@ impl Construction {
             next_id: 0,
             closed: false,
             chain: false,
+            colors,
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
@@ -123,6 +126,12 @@ impl Construction {
     }
     pub fn chain(&self) -> bool {
         self.chain
+    }
+    pub fn colors(&self) -> CoasterColors {
+        self.colors
+    }
+    pub fn set_colors(&mut self, colors: CoasterColors) {
+        self.colors = colors;
     }
     pub fn set_chain(&mut self, enabled: bool) {
         if self.chain != enabled {
@@ -162,6 +171,7 @@ impl Construction {
         hash.write_len(self.next_id);
         hash.write_bool(self.closed);
         hash.write_bool(self.chain);
+        self.colors.hash_into(&mut hash);
         hash.finish()
     }
 

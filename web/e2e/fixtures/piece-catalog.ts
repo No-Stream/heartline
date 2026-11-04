@@ -35,7 +35,7 @@ window.renderPieceCatalog = async (pieces, rotation) => {
   context.font = "11px sans-serif"; context.fillStyle = "#211519";
   const world: WorldView = { dimensions: new Uint16Array([1, 1]), surfaces: new Int32Array(6), paths: new Int32Array() };
   const empty = new Float32Array();
-  const style = { steel: "#ff5d5d", wood: "#c98a4c", train: "#7fe0b8", ink: "#2a1b42", lineWeight: 1 };
+  const style = { track: "#ff5d5d", supports: "#c98a4c", trains: "#7fe0b8", ink: "#2a1b42", lineWeight: 1 };
   const missing: string[] = [];
   for (const [pieceIndex, piece] of pieces.entries()) {
     const rails = new Float32Array(piece.rails);

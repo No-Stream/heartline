@@ -698,6 +698,55 @@ fn chain_mode_controls_placed_piece_and_refusals() {
 }
 
 #[test]
+fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    assert_eq!(simulation.construction_colors(), "");
+    assert_eq!(simulation.coaster_colors(), "coral\ttimber\tsage");
+    for (model, colors) in [
+        ("model:hybrid", "coral\ttimber\tsage"),
+        ("model:velocity_viper", "teal\tcream\tcoral"),
+        ("model:wooden_twister", "timber\ttimber\tslate"),
+    ] {
+        simulation.construction_select(model);
+        simulation.construction_start(100, 100, 40, 0);
+        assert_eq!(simulation.construction_colors(), colors, "{model}");
+    }
+
+    let before = simulation.state_hash();
+    simulation.construction_set_colors("plum", "cream", "mustard");
+    assert_eq!(simulation.construction_colors(), "plum\tcream\tmustard");
+    assert!(simulation.construction_message().is_empty());
+    let repainted = simulation.state_hash();
+    assert_ne!(repainted, before);
+
+    simulation.construction_set_colors("plum", "#ffffff", "mustard");
+    assert_eq!(simulation.construction_colors(), "plum\tcream\tmustard");
+    assert_eq!(simulation.construction_message(), "Unknown coaster colour");
+
+    simulation.construction_start(120, 120, 40, 0);
+    assert_eq!(simulation.construction_colors(), "timber\ttimber\tslate");
+}
+
+#[test]
+fn coaster_colours_replay_to_the_same_state() {
+    let paint = |colors: [&str; 3]| {
+        let mut simulation = WasmSimulation::new(7, 0, String::from("new"));
+        simulation.construction_start(100, 100, 40, 0);
+        simulation.construction_set_colors(colors[0], colors[1], colors[2]);
+        simulation.tick();
+        simulation.state_hash()
+    };
+    assert_eq!(
+        paint(["sky", "charcoal", "rose"]),
+        paint(["sky", "charcoal", "rose"])
+    );
+    assert_ne!(
+        paint(["sky", "charcoal", "rose"]),
+        paint(["sky", "charcoal", "walnut"])
+    );
+}
+
+#[test]
 fn lift_drop_circuit_completes_lap() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(100, 100, 40, 0);

@@ -1,9 +1,12 @@
 import { projectWorld, type Camera, type Viewport } from "../../camera";
+import { COASTER_COLORS, RUNNING_RAIL_HEX, type CoasterColorScheme } from "../../coaster-colors";
 import type { Atlas, Triangle, Vertex } from "../scene";
 
 type Vec = [number, number, number];
 export interface TrackQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; color: Triangle["color"]; kind: "track" | "support" | "train" | "rider" | "block-boundary" | "block-boundary-fixed"; id: string; tileX: number; tileY: number; page?: number }
 export interface TrackStyle { steel: string; wood: string; train: string; ink: string; lineWeight: number }
+/** The inks one coaster is drawn in: a paint for each part, and the theme's key line. */
+export interface TrackPaint { track: string; supports: string; trains: string; ink: string; lineWeight: number }
 export const BLOCK_SECTION_PALETTE = ["#38a3a5", "#e07a5f", "#d6a94f", "#7186c1", "#70a288", "#b779a8"] as const;
 const add = (a: Vec, b: Vec): Vec => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (a: Vec, n: number): Vec => [a[0] * n, a[1] * n, a[2] * n];
@@ -23,6 +26,10 @@ export function trackStyle(atlas: Atlas): TrackStyle {
   if (!themeStyle || !themeStyle.steel || !themeStyle.wood || !themeStyle.train || !themeStyle.ink) throw new Error("Atlas is missing coaster theme style");
   if (!Number.isFinite(themeStyle.lineWeight) || themeStyle.lineWeight <= 0) throw new Error("Invalid coaster line weight");
   return themeStyle;
+}
+
+export function trackPaint(style: TrackStyle, colors: CoasterColorScheme): TrackPaint {
+  return { track: COASTER_COLORS[colors.track].hex, supports: COASTER_COLORS[colors.supports].hex, trains: COASTER_COLORS[colors.trains].hex, ink: style.ink, lineWeight: style.lineWeight };
 }
 
 function sectionColorAt(distanceMetres: number, boundariesMetres: readonly number[]): Triangle["color"] {
@@ -76,7 +83,7 @@ export function interpolateTrainPoses(previous: Float32Array, current: Float32Ar
   return result;
 }
 
-export function buildTrackQuads(rails: Float32Array, ties: Float32Array, supports: Float32Array, poses: Float32Array, camera: Camera, viewport: Viewport, style: TrackStyle, sectionBoundariesMetres?: readonly number[], railDistancesMetres?: Float32Array): TrackQuad[] {
+export function buildTrackQuads(rails: Float32Array, ties: Float32Array, supports: Float32Array, poses: Float32Array, camera: Camera, viewport: Viewport, style: TrackPaint, sectionBoundariesMetres?: readonly number[], railDistancesMetres?: Float32Array): TrackQuad[] {
   if (rails.length % 19 || ties.length % 13 || supports.length % 7 || poses.length % 11) throw new Error("Invalid coaster snapshot");
   const quads: TrackQuad[] = [];
   if (sectionBoundariesMetres?.length && railDistancesMetres === undefined) throw new Error("Block-section coloring requires exact rail distances");
@@ -130,7 +137,7 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
       });
     }
   };
-  const steel = color(style.steel); const wood = color(style.wood);
+  const track = color(style.track); const supportColor = color(style.supports); const runningRail = color(RUNNING_RAIL_HEX);
   for (let i = 0; i < rails.length; i += 19) {
     const id = geometryId(rails[i]);
     const start = vector(rails, i+1), end = vector(rails, i+10);
@@ -138,18 +145,18 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
     const upStart = normalize(vector(rails, i+7)), upEnd = normalize(vector(rails, i+16));
     const sectionColor = sectionColors?.[i / 19];
     if (id.woodenTrack) {
-      beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.055, "track", `track-${id.id}`, sectionColor ?? wood, true);
-      beam(add(start, scale(upStart, 0.065)), add(end, scale(upEnd, 0.065)), sideStart, sideEnd, upStart, upEnd, 0.01, "track", `track-${id.id}`, steel, true);
+      beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.055, "track", `track-${id.id}`, sectionColor ?? track, true);
+      beam(add(start, scale(upStart, 0.065)), add(end, scale(upEnd, 0.065)), sideStart, sideEnd, upStart, upEnd, 0.01, "track", `track-${id.id}`, runningRail, true);
     }
-    else if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? steel);
-    else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? steel, true);
+    else if (id.steel) tube(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? track);
+    else beam(start, end, sideStart, sideEnd, upStart, upEnd, 0.035, "track", `track-${id.id}`, sectionColor ?? track, true);
   }
   for (let i = 0; i < ties.length; i += 13) {
     const id = geometryId(ties[i]);
     const up = normalize(vector(ties, i+7)), tangent = normalize(vector(ties, i+10));
     const start = vector(ties, i+1), end = vector(ties, i+4);
-    if (id.steel) tube(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, steel);
-    else beam(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, wood);
+    if (id.steel) tube(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, track);
+    else beam(start, end, up, up, tangent, tangent, 0.025, "track", `track-${id.id}`, track);
   }
   for (let i = 0; i < supports.length; i += 7) {
     const id = geometryId(supports[i]);
@@ -157,11 +164,10 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
     const direction = normalize(add(end, scale(start, -1)));
     const side = normalize(cross(direction, Math.abs(direction[2]) > 0.9 ? [1,0,0] : [0,0,1]));
     const up = normalize(cross(direction, side));
-    const structureColor = id.steel ? steel : wood;
-    if (id.steel) tube(start, end, side, side, up, up, 0.045, "support", `support-${id.id}`, steel);
-    else beam(start, end, side, side, up, up, 0.045, "support", `support-${id.id}`, wood);
+    if (id.steel) tube(start, end, side, side, up, up, 0.045, "support", `support-${id.id}`, supportColor);
+    else beam(start, end, side, side, up, up, 0.045, "support", `support-${id.id}`, supportColor);
     if (start[0] === end[0] && start[1] === end[1] && end[2] > start[2]) {
-      beam(start, add(start, [0, 0, 0.05]), [1, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0], 0.1, "support", `footer-${id.id}`, structureColor);
+      beam(start, add(start, [0, 0, 0.05]), [1, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0], 0.1, "support", `footer-${id.id}`, supportColor);
     }
   }
   for (let i = 0; i < poses.length; i += 11) {
@@ -171,7 +177,7 @@ export function buildTrackQuads(rails: Float32Array, ties: Float32Array, support
       const ring = (along: number): Vec[] => [[-1,-1], [1,-1], [1,1], [-1,1]].map(([s,u]) => add(add(add(centerPoint, scale(forward, along*length)), scale(side, s*width)), scale(up, u*height)));
       box([...ring(-1), ...ring(1)], kind, id, color);
     };
-    prism(add(center, scale(up, 0.12)), 0.29, 0.21, 0.12, "train", `train-${poses[i]}`, color(style.train));
+    prism(add(center, scale(up, 0.12)), 0.29, 0.21, 0.12, "train", `train-${poses[i]}`, color(style.trains));
   }
   return quads;
 }

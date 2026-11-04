@@ -3,12 +3,14 @@
 //! Positive bank rotates the up vector towards the left of travel.
 
 pub mod catalog;
+pub mod colors;
 pub mod construction;
 pub mod curves;
 pub mod models;
 pub mod supports;
 
 pub use catalog::catalog;
+pub use colors::{CoasterColor, CoasterColors};
 pub(crate) use curves::Shape;
 pub use curves::{
     Bank, Heading, HorizontalCurvature, Inversion, Piece, PieceId, PieceKind, Slope, TrackSample,

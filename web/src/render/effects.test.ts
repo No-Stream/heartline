@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Camera, Viewport } from "../camera";
+import { projectWorld, type Camera, type Viewport } from "../camera";
 import type { Facility } from "../facilities";
 import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst, type CrestTracker } from "./effects";
 import { BACKDROPS, lightingAt, sunAt } from "./daylight";
@@ -95,7 +95,7 @@ describe("night lights", () => {
   const input = { facilities: [facility("ferris_wheel"), facility("carousel", 22, 18), facility("food_stall", 18, 22)], rails: [rails(30)], sprites: [{ id: "lamp", sprite: "scenery/lamp", view: "rot0", x: 21, y: 21, height: 8 }], atlas, scale: "1" };
 
   it("are off at noon", () => {
-    expect(buildLights(input, noon, 0, camera, viewport)).toEqual({ bulbs: [], glows: [] });
+    expect(buildLights(input, noon, 0, camera, viewport)).toEqual({ bulbs: [], glows: [], pools: [] });
   });
 
   it("light the rides, the track, building windows and lamps at night", () => {
@@ -105,6 +105,21 @@ describe("night lights", () => {
     expect(glows.length).toBeGreaterThan(bulbs.length);
     const lampHead = glows.filter((glow) => glow.radius > 30);
     expect(lampHead.length).toBeGreaterThan(0);
+  });
+
+  it("throw pools of lamp light around lamps, lit stalls and flat rides, fading with the lights", () => {
+    const { pools } = buildLights(input, night, 0, camera, viewport);
+    expect(pools.map((pool) => pool.id).sort()).toEqual(["facility-light-1", "facility-light-1", "facility-light-1", "lamp-pool-lamp"]);
+    expect(pools.every((pool) => pool.kind === "pool" && pool.color[3] > 0 && pool.color[3] <= 1)).toBe(true);
+    const dusk = lightingAt(0.78);
+    expect(dusk.lightsOn).toBeGreaterThan(0.01);
+    expect(dusk.lightsOn).toBeLessThan(1);
+    const duskPools = buildLights(input, dusk, 0, camera, viewport).pools;
+    expect(duskPools[0].color[3]).toBeLessThan(pools[0].color[3]);
+    const lamp = pools.find((pool) => pool.id === "lamp-pool-lamp")!;
+    const lampCentre = projectWorld(camera, viewport, { x: 21, y: 21, z: 2 });
+    expect(lamp.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4).toBeCloseTo(lampCentre.x, 3);
+    expect(lamp.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 4).toBeCloseTo(lampCentre.y, 3);
   });
 
   it("chase along the track over time", () => {

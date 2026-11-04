@@ -2,11 +2,12 @@ import { describe, expect, test } from "vitest";
 import { projectWorld } from "../../camera";
 import { appendGeometry, pickScene, type Scene } from "../scene";
 import { buildBlockBoundaryQuads, nearestBlockBoundaryMetres, type BlockSectionBoundary } from "./blocks";
-import { buildTrackQuads, type TrackStyle } from "./geometry";
+import { buildTrackQuads, type TrackPaint, type TrackStyle } from "./geometry";
 
 const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
 const viewport = { width: 400, height: 300 };
 const style: TrackStyle = { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 };
+const paint: TrackPaint = { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 };
 
 function railSegment(startX: number, endX: number): number[] {
   const records: number[] = [];
@@ -26,7 +27,7 @@ const sections: readonly BlockSectionBoundary[] = [
 
 describe("block-section rendering", () => {
   test("colors consecutive track sections differently while preserving rail ink", () => {
-    const quads = buildTrackQuads(rails, new Float32Array(), new Float32Array(), new Float32Array(), camera, viewport, style, [0, 6], railDistances);
+    const quads = buildTrackQuads(rails, new Float32Array(), new Float32Array(), new Float32Array(), camera, viewport, paint, [0, 6], railDistances);
     const fillColors = (segmentIndex: number) => quads
       .slice(segmentIndex * 24, (segmentIndex + 1) * 24)
       .filter((quad) => quad.color[0] !== 34 / 255 || quad.color[1] !== 17 / 255 || quad.color[2] !== 51 / 255)

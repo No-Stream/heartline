@@ -97,6 +97,25 @@ impl WasmSimulation {
         }
     }
 
+    /// The coaster's track, supports and train colours as palette names separated by tabs; empty without a coaster.
+    pub fn construction_colors(&self) -> String {
+        self.construction
+            .as_ref()
+            .map_or_else(String::new, |construction| construction.colors().names())
+    }
+
+    /// Repaints the coaster. Names outside the palette leave it unchanged and explain why in the construction message.
+    pub fn construction_set_colors(&mut self, track: &str, supports: &str, trains: &str) {
+        let Some(colors) = CoasterColors::from_names(track, supports, trains) else {
+            self.construction_message = "Unknown coaster colour".into();
+            return;
+        };
+        if let Some(construction) = self.construction.as_mut() {
+            construction.set_colors(colors);
+            self.construction_message.clear();
+        }
+    }
+
     pub fn construction_select(&mut self, id: &str) {
         self.construction_finish_invalidate();
         self.selected_element = None;
