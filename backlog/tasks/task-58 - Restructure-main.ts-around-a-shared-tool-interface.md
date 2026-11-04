@@ -1,10 +1,10 @@
 ---
 id: TASK-58
 title: Restructure main.ts around a shared tool interface
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 16:47'
-updated_date: '2026-11-04 12:28'
+updated_date: '2026-11-04 12:53'
 labels:
   - refactor
   - interface
@@ -34,4 +34,6 @@ Browser review findings 2 to 4: main.ts is 654 lines with about 40 module-level 
 2026-11-04: Codex job task-mw20vuks-5zyl2c in worktree theme-park-sim-worktrees/main-tools.
 
 2026-11-04: restructure committed on branch main-tools (8531d12); Codex job task-mw23ejfr-a4pnlm is porting master's train and night scene changes into compose-scene.ts during the merge.
+
+2026-11-04: merged 30ee85a.
 <!-- SECTION:NOTES:END -->
