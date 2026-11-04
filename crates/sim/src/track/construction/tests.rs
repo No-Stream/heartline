@@ -1232,6 +1232,51 @@ fn completion_connects_an_offset_followed_by_turns() {
 }
 
 #[test]
+fn completion_uses_short_offsets_for_a_tight_station_connection() {
+    use PieceId::*;
+    let world = world();
+    let allowed_pieces = [
+        Station,
+        Straight,
+        TurnSmallStandalone,
+        ShortOffsetLeft,
+        ShortOffsetRight,
+    ];
+    let mut model = hybrid_model();
+    model.allowed_pieces = allowed_pieces.to_vec();
+    let mut construction = Construction::new(start(), model);
+    for id in [
+        Station,
+        Straight,
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        ShortOffsetLeft,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let mut without_short_offsets = construction.copy_for_completion();
+    without_short_offsets
+        .model
+        .allowed_pieces
+        .retain(|id| !matches!(id, ShortOffsetLeft | ShortOffsetRight));
+    assert!(without_short_offsets.find_completion(&world, &[]).is_none());
+    let completion = construction
+        .find_completion(&world, &[])
+        .expect("short offset connection");
+    assert!(
+        completion
+            .pieces
+            .iter()
+            .any(|id| matches!(id, ShortOffsetLeft | ShortOffsetRight))
+    );
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+    assert!(construction.is_closed());
+}
+
+#[test]
 fn completion_connects_a_sloped_approach() {
     use PieceId::*;
     let world = world();

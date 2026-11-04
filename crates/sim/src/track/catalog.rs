@@ -852,6 +852,18 @@ pub fn catalog() -> Vec<Piece> {
         (full_offset.exit.position() - full_offset.entry.position()).length();
     full_offset.rebuild_arc();
     pieces.push(full_offset);
+    let mut short_offset = pieces
+        .iter()
+        .find(|piece| piece.id == OffsetLeft)
+        .unwrap()
+        .clone();
+    short_offset.id = ShortOffsetLeft;
+    short_offset.name = "Left short half-tile offset";
+    short_offset.exit.x = 6;
+    short_offset.tangent_scale =
+        (short_offset.exit.position() - short_offset.entry.position()).length();
+    short_offset.rebuild_arc();
+    pieces.push(short_offset);
     for (base, id, name) in [
         (Loop, SteelLoop, "Steel-structure loop (not heartlined)"),
         (TurnSmallStandalone, TwisterFanLeft, "Left fan turn"),
@@ -974,6 +986,11 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (OffsetLeft, OffsetRight, "Right half-tile offset"),
         (FullOffsetLeft, FullOffsetRight, "Right full-tile offset"),
+        (
+            ShortOffsetLeft,
+            ShortOffsetRight,
+            "Right short half-tile offset",
+        ),
         (Loop, LoopRight, "Right vertical loop (not heartlined)"),
         (
             SteelLoop,

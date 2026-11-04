@@ -110,6 +110,8 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
         (super::PieceId::Launch, "special"),
         (super::PieceId::TerrainRise, "special"),
         (super::PieceId::TerrainFall, "special"),
+        (super::PieceId::ShortOffsetLeft, "straight"),
+        (super::PieceId::ShortOffsetRight, "straight"),
     ];
 
     for (id, expected_group) in expected_groups {

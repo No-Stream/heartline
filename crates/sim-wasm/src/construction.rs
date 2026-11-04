@@ -1065,6 +1065,8 @@ pub(crate) fn wire_pieceid(value: PieceId) -> &'static str {
         PieceId::BankedTurn => "BankedTurn",
         PieceId::OffsetLeft => "OffsetLeft",
         PieceId::OffsetRight => "OffsetRight",
+        PieceId::ShortOffsetLeft => "ShortOffsetLeft",
+        PieceId::ShortOffsetRight => "ShortOffsetRight",
         PieceId::Loop => "Loop",
         PieceId::Corkscrew => "Corkscrew",
         PieceId::HeartlineRoll => "HeartlineRoll",

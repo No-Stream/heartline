@@ -782,6 +782,78 @@ fn catalog_radius_meets_model_limit() {
 }
 
 #[test]
+fn short_offsets_have_grid_aligned_smooth_mirrored_geometry() {
+    let pieces = catalog();
+    let left = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::ShortOffsetLeft)
+        .expect("short left offset");
+    let right = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::ShortOffsetRight)
+        .expect("short right offset");
+
+    assert_eq!(left.exit.x, 6);
+    assert_eq!(left.exit.y, 1);
+    assert_eq!(left.exit.heading, left.entry.heading);
+    near_vec(left.sample(0.0).position, left.entry.position());
+    near_vec(left.sample(left.length()).position, left.exit.position());
+    near_vec(left.sample(0.0).tangent, left.entry.tangent());
+    near_vec(left.sample(left.length()).tangent, left.exit.tangent());
+    near(left.sample(0.0).curvature, 0.0);
+    near(left.sample(left.length()).curvature, 0.0);
+    let minimum_radius = 1.0 / left.maximum_curvature();
+    assert!(minimum_radius >= 8.0, "minimum radius {minimum_radius}");
+    assert!(
+        (minimum_radius - 9.89).abs() < 0.02,
+        "minimum radius {minimum_radius}"
+    );
+
+    for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let left_sample = left.sample(left.length() * fraction);
+        let right_sample = right.sample(right.length() * fraction);
+        near_vec(
+            right_sample.position,
+            Vec3::new(
+                left_sample.position.x,
+                -left_sample.position.y,
+                left_sample.position.z,
+            ),
+        );
+        near_vec(
+            right_sample.tangent,
+            Vec3::new(
+                left_sample.tangent.x,
+                -left_sample.tangent.y,
+                left_sample.tangent.z,
+            ),
+        );
+        near(left_sample.curvature.abs(), right_sample.curvature.abs());
+    }
+}
+
+#[test]
+fn each_coaster_model_offers_short_offsets_when_its_radius_allows_them() {
+    for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()] {
+        let available_ids = model
+            .available_pieces(TrackState::origin())
+            .into_iter()
+            .map(|piece| piece.id)
+            .collect::<Vec<_>>();
+        assert!(
+            available_ids.contains(&PieceId::ShortOffsetLeft),
+            "{}",
+            model.name
+        );
+        assert!(
+            available_ids.contains(&PieceId::ShortOffsetRight),
+            "{}",
+            model.name
+        );
+    }
+}
+
+#[test]
 fn sixty_degree_slope_templates_have_grid_aligned_geometry() {
     use crate::track::Slope;
     use PieceId::*;

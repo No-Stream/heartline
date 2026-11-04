@@ -246,6 +246,8 @@ pub enum PieceId {
     BankedTurn,
     OffsetLeft,
     OffsetRight,
+    ShortOffsetLeft,
+    ShortOffsetRight,
     Loop,
     Corkscrew,
     HeartlineRoll,
