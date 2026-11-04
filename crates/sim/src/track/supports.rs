@@ -26,7 +26,7 @@ pub enum SupportError {
     NoRoute,
 }
 
-// The renderer uses 0.045-tile half-width beams and 0.1-tile footer half-widths.
+// The renderer draws support members at most 0.045 tiles from their centre line, with 0.1-tile footer half-widths.
 // A beam's square cross section may be rotated relative to the horizontal axes.
 const BEAM_CLEARANCE: f64 = 0.18 * std::f64::consts::SQRT_2;
 const FOOTER_HALF_WIDTH: f64 = 0.4;
@@ -74,13 +74,13 @@ pub fn generate_dense_supports(
 }
 
 /// Generate routed steel columns and their horizontal connections to the track.
+/// Tall columns gain a braced partner column across the track where one fits.
 pub fn generate_steel_columns(
     piece: &Piece,
     world: &World,
     obstacles: &[SupportObstacle],
 ) -> Result<Vec<SupportSegment>, SupportError> {
-    let supports = generate_supports(piece, world, obstacles)?;
-    Ok(steel_column_segments(supports))
+    generate_framed_supports(piece, world, obstacles, &STEEL_TOWER)
 }
 
 fn steel_column_segments(supports: Vec<Support>) -> Vec<SupportSegment> {
@@ -119,6 +119,22 @@ fn generate_supports_at_spacing(
     structures: &[SupportObstacle],
     spacing: f64,
 ) -> Result<Vec<Support>, SupportError> {
+    Ok(
+        route_supports(piece, world, obstacles, structures, spacing)?
+            .into_iter()
+            .map(|(support, _)| support)
+            .collect(),
+    )
+}
+
+/// Routes supports as `generate_supports_at_spacing` does, with the track tangent at each anchor.
+fn route_supports(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+    structures: &[SupportObstacle],
+    spacing: f64,
+) -> Result<Vec<(Support, Vec3)>, SupportError> {
     for obstacle in obstacles.iter().chain(structures) {
         assert!(
             obstacle.min.x < obstacle.max.x
@@ -276,7 +292,7 @@ fn generate_supports_at_spacing(
             }) {
                 continue;
             }
-            selected = Some(support);
+            selected = Some((support, sample.tangent));
             break;
         }
         let Some(selected) = selected else {
@@ -503,7 +519,7 @@ pub fn generate_wooden_lattice(
     world: &World,
     obstacles: &[SupportObstacle],
 ) -> Result<Vec<SupportSegment>, SupportError> {
-    generate_wooden_lattice_at_spacing(piece, world, obstacles, 8.0)
+    generate_framed_supports(piece, world, obstacles, &WOODEN_BENT)
 }
 
 /// Generate closely spaced wooden frames for a wooden twister coaster.
@@ -512,18 +528,130 @@ pub fn generate_dense_wooden_lattice(
     world: &World,
     obstacles: &[SupportObstacle],
 ) -> Result<Vec<SupportSegment>, SupportError> {
-    generate_wooden_lattice_at_spacing(piece, world, obstacles, 4.0)
+    generate_framed_supports(piece, world, obstacles, &DENSE_WOODEN_BENT)
 }
 
-fn generate_wooden_lattice_at_spacing(
+/// Routes supports at the shape's spacing and builds a checked frame around each.
+fn generate_framed_supports(
     piece: &Piece,
     world: &World,
     obstacles: &[SupportObstacle],
-    spacing: f64,
+    shape: &FrameShape,
 ) -> Result<Vec<SupportSegment>, SupportError> {
-    let supports = generate_supports_at_spacing(piece, world, obstacles, &[], spacing)?;
+    let supports = route_supports(piece, world, obstacles, &[], shape.spacing)?;
+    Ok(framed_support_segments(
+        piece, world, obstacles, supports, shape,
+    ))
+}
+
+/// How diagonal members brace each storey of a support frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bracing {
+    /// Two crossing diagonals per storey, as in a timber bent.
+    Cross,
+    /// One diagonal per storey, alternating direction, as in a steel ladder tower.
+    Zigzag,
+}
+
+/// The shape of the frames built around routed supports. Lengths are in metres.
+struct FrameShape {
+    /// Distance between routed supports along the track.
+    spacing: f64,
+    /// Frames are built only under track at least this far above the footing; lower supports stay single columns.
+    minimum_height: f64,
+    /// Target height of each braced storey; ledgers separate the storeys.
+    storey_height: f64,
+    bracing: Bracing,
+    /// Leg positions to try, each a pair of offsets from the routed footing across the track (positive to its left).
+    across_track_legs: &'static [(f64, f64)],
+    /// Whether to fall back to `FALLBACK_LEG_OFFSETS` when no leg pair across the track fits.
+    fixed_leg_fallback: bool,
+}
+
+/// Timber bents straddle the track on legs either side of it; failing that, a leg stands at the routed footing.
+const WOODEN_BENT: FrameShape = FrameShape {
+    spacing: 8.0,
+    minimum_height: 0.0,
+    storey_height: 5.0,
+    bracing: Bracing::Cross,
+    across_track_legs: &[(-1.2, 1.2), (0.0, 2.0), (0.0, -2.0)],
+    fixed_leg_fallback: true,
+};
+const DENSE_WOODEN_BENT: FrameShape = FrameShape {
+    spacing: 4.0,
+    storey_height: 3.5,
+    ..WOODEN_BENT
+};
+/// Tall steel columns get a partner column and zigzag bracing; the routed column always stands.
+const STEEL_TOWER: FrameShape = FrameShape {
+    spacing: 8.0,
+    minimum_height: 10.0,
+    storey_height: 6.0,
+    bracing: Bracing::Zigzag,
+    across_track_legs: &[(0.0, 1.8), (0.0, -1.8)],
+    fixed_leg_fallback: false,
+};
+/// Fixed leg positions, in metres from the routed footing, tried when no leg pair across the track fits.
+const FALLBACK_LEG_OFFSETS: [(f64, f64); 8] = [
+    (2.0, 0.0),
+    (-2.0, 0.0),
+    (0.0, 2.0),
+    (0.0, -2.0),
+    (2.0, 2.0),
+    (-2.0, -2.0),
+    (2.0, -2.0),
+    (-2.0, 2.0),
+];
+
+/// The members of a two-legged frame from its footings up to `centre`, the top of the routed column under the track.
+fn frame_segments(
+    first: Vec3,
+    second: Vec3,
+    centre: Vec3,
+    storey_height: f64,
+    bracing: Bracing,
+) -> Vec<SupportSegment> {
+    let at = |leg: Vec3, z: f64| Vec3::new(leg.x, leg.y, z);
+    let segment = |start: Vec3, end: Vec3| SupportSegment { start, end };
+    let mut segments = vec![
+        segment(first, at(first, centre.z)),
+        segment(second, at(second, centre.z)),
+    ];
+    for leg in [first, second] {
+        if at(leg, centre.z) != centre {
+            segments.push(segment(at(leg, centre.z), centre));
+        }
+    }
+    let bottom = first.z.max(second.z) + 0.3;
+    let upper = centre.z - 0.3;
+    let storeys = ((upper - bottom) / storey_height).round().max(1.0) as usize;
+    let height = (upper - bottom) / storeys as f64;
+    for storey in 0..storeys {
+        let low = bottom + height * storey as f64;
+        let high = low + height;
+        if bracing == Bracing::Cross || storey % 2 == 0 {
+            segments.push(segment(at(first, low), at(second, high)));
+        }
+        if bracing == Bracing::Cross || storey % 2 == 1 {
+            segments.push(segment(at(second, low), at(first, high)));
+        }
+        if storey > 0 {
+            segments.push(segment(at(first, low), at(second, low)));
+        }
+    }
+    segments
+}
+
+/// Builds the checked frame for each routed support, or keeps its single column when no frame fits.
+fn framed_support_segments(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+    supports: Vec<(Support, Vec3)>,
+    shape: &FrameShape,
+) -> Vec<SupportSegment> {
     if matches!(piece.shape, Shape::Loop) {
-        return Ok(steel_column_segments(supports));
+        return steel_column_segments(supports.into_iter().map(|(support, _)| support).collect());
     }
     let mut occupied = obstacles.to_vec();
     occupied.extend(world.scenery_boxes().map(|bounds| SupportObstacle {
@@ -543,134 +671,132 @@ fn generate_wooden_lattice_at_spacing(
         ),
     }));
     let tunnels: Vec<_> = world.carved_spans().collect();
-    let mut result = Vec::new();
-    for support in supports {
-        let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
-        let mut frame = None;
-        for (dx, dy) in [
-            (2.0, 0.0),
-            (-2.0, 0.0),
-            (0.0, 2.0),
-            (0.0, -2.0),
-            (2.0, 2.0),
-            (-2.0, -2.0),
-            (2.0, -2.0),
-            (-2.0, 2.0),
-        ] {
-            let x = support.footing.x + dx;
-            let y = support.footing.y + dy;
-            let (width, height) = world.dimensions();
-            if x < 0.4
-                || y < 0.4
-                || x + 0.4 >= f64::from(width) * 4.0
-                || y + 0.4 >= f64::from(height) * 4.0
-            {
-                continue;
-            }
-            let terrain = terrain_height(world, x, y);
-            let ground = if terrain < support.anchor.z {
-                if tunnels.iter().any(|&(tx, ty, _, _)| {
-                    let west = f64::from(tx) * 4.0;
-                    let north = f64::from(ty) * 4.0;
-                    x + FOOTER_HALF_WIDTH > west
-                        && x - FOOTER_HALF_WIDTH < west + 4.0
-                        && y + FOOTER_HALF_WIDTH > north
-                        && y - FOOTER_HALF_WIDTH < north + 4.0
-                }) {
-                    continue;
-                }
-                terrain
-            } else {
-                let tile_x = (x / 4.0).floor() as u16;
-                let tile_y = (y / 4.0).floor() as u16;
-                let Some((_, _, bottom, _)) = tunnels.iter().find(|&&(tx, ty, bottom, top)| {
-                    tx == tile_x
-                        && ty == tile_y
-                        && f64::from(bottom) < support.anchor.z
-                        && f64::from(top) > support.anchor.z
-                }) else {
-                    continue;
-                };
-                let ground = f64::from(*bottom);
-                if [-FOOTER_HALF_WIDTH, FOOTER_HALF_WIDTH]
-                    .into_iter()
-                    .any(|dx| {
-                        [-FOOTER_HALF_WIDTH, FOOTER_HALF_WIDTH]
-                            .into_iter()
-                            .any(|dy| {
-                                !tunnels.iter().any(|&(tx, ty, bottom, top)| {
-                                    tx == ((x + dx) / 4.0).floor() as u16
-                                        && ty == ((y + dy) / 4.0).floor() as u16
-                                        && f64::from(bottom) <= ground
-                                        && f64::from(top) > support.anchor.z
-                                })
-                            })
-                    })
-                {
-                    continue;
-                }
-                ground
-            };
-            let other = Vec3::new(x, y, ground);
-            if top.z - support.footing.z < 0.7 || top.z - other.z < 0.7 {
-                continue;
-            }
-            let other_top = Vec3::new(x, y, top.z);
-            let first_bottom = support.footing + Vec3::new(0.0, 0.0, 0.3);
-            let other_bottom = other + Vec3::new(0.0, 0.0, 0.3);
-            let first_upper = top - Vec3::new(0.0, 0.0, 0.3);
-            let other_upper = other_top - Vec3::new(0.0, 0.0, 0.3);
-            let candidate = [
-                SupportSegment {
-                    start: support.footing,
-                    end: top,
-                },
-                SupportSegment {
-                    start: other,
-                    end: other_top,
-                },
-                SupportSegment {
-                    start: first_bottom,
-                    end: other_upper,
-                },
-                SupportSegment {
-                    start: other_bottom,
-                    end: first_upper,
-                },
-                SupportSegment {
-                    start: top,
-                    end: other_top,
-                },
-            ];
-            if candidate.iter().any(|segment| {
-                occupied.iter().any(|obstacle| {
-                    intersects(
-                        segment.start,
-                        segment.end,
-                        &expanded(obstacle, BEAM_CLEARANCE, BEAM_CLEARANCE),
-                    )
-                }) || ((segment.start.x != segment.end.x || segment.start.y != segment.end.y)
-                    && !brace_clears_terrain(world, &tunnels, segment.start, segment.end))
-            }) || occupied.iter().any(|obstacle| {
-                intersects(
-                    other,
-                    other + Vec3::new(0.0, 0.0, FOOTER_HEIGHT),
-                    &expanded(obstacle, FOOTER_HALF_WIDTH, 0.0),
-                )
-            }) {
-                continue;
-            }
-            frame = Some(candidate);
-            break;
+    // The footing of a new leg at (x, y), on terrain or a tunnel floor below the track at `track_z`.
+    let leg_footing = |x: f64, y: f64, track_z: f64| -> Option<Vec3> {
+        let (width, height) = world.dimensions();
+        if x < 0.4
+            || y < 0.4
+            || x + 0.4 >= f64::from(width) * 4.0
+            || y + 0.4 >= f64::from(height) * 4.0
+        {
+            return None;
         }
-        if let Some(frame) = frame {
-            result.extend(frame);
+        let terrain = terrain_height(world, x, y);
+        let ground = if terrain < track_z {
+            if tunnels.iter().any(|&(tx, ty, _, _)| {
+                let west = f64::from(tx) * 4.0;
+                let north = f64::from(ty) * 4.0;
+                x + FOOTER_HALF_WIDTH > west
+                    && x - FOOTER_HALF_WIDTH < west + 4.0
+                    && y + FOOTER_HALF_WIDTH > north
+                    && y - FOOTER_HALF_WIDTH < north + 4.0
+            }) {
+                return None;
+            }
+            terrain
         } else {
-            result.push(SupportSegment {
+            let tile_x = (x / 4.0).floor() as u16;
+            let tile_y = (y / 4.0).floor() as u16;
+            let (_, _, bottom, _) = tunnels.iter().find(|&&(tx, ty, bottom, top)| {
+                tx == tile_x
+                    && ty == tile_y
+                    && f64::from(bottom) < track_z
+                    && f64::from(top) > track_z
+            })?;
+            let ground = f64::from(*bottom);
+            let footer_fits = [-FOOTER_HALF_WIDTH, FOOTER_HALF_WIDTH]
+                .into_iter()
+                .all(|dx| {
+                    [-FOOTER_HALF_WIDTH, FOOTER_HALF_WIDTH]
+                        .into_iter()
+                        .all(|dy| {
+                            tunnels.iter().any(|&(tx, ty, bottom, top)| {
+                                tx == ((x + dx) / 4.0).floor() as u16
+                                    && ty == ((y + dy) / 4.0).floor() as u16
+                                    && f64::from(bottom) <= ground
+                                    && f64::from(top) > track_z
+                            })
+                        })
+                });
+            if !footer_fits {
+                return None;
+            }
+            ground
+        };
+        Some(Vec3::new(x, y, ground))
+    };
+    let footer_clear = |leg: Vec3| {
+        !occupied.iter().any(|obstacle| {
+            intersects(
+                leg,
+                leg + Vec3::new(0.0, 0.0, FOOTER_HEIGHT),
+                &expanded(obstacle, FOOTER_HALF_WIDTH, 0.0),
+            )
+        })
+    };
+    let members_clear = |segments: &[SupportSegment]| {
+        segments.iter().all(|segment| {
+            !occupied.iter().any(|obstacle| {
+                intersects(
+                    segment.start,
+                    segment.end,
+                    &expanded(obstacle, BEAM_CLEARANCE, BEAM_CLEARANCE),
+                )
+            }) && ((segment.start.x == segment.end.x && segment.start.y == segment.end.y)
+                || brace_clears_terrain(world, &tunnels, segment.start, segment.end))
+        })
+    };
+    let mut result = Vec::new();
+    for (support, tangent) in supports {
+        let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
+        let horizontal = Vec3::new(tangent.x, tangent.y, 0.0);
+        let across =
+            (horizontal.length() > 0.3).then(|| Vec3::new(-horizontal.y, horizontal.x, 0.0).unit());
+        let across_track = across.into_iter().flat_map(|across| {
+            shape
+                .across_track_legs
+                .iter()
+                .map(move |&(first, second)| (across * first, across * second))
+        });
+        let fallback = shape
+            .fixed_leg_fallback
+            .then_some(FALLBACK_LEG_OFFSETS)
+            .into_iter()
+            .flatten()
+            .map(|(dx, dy)| (Vec3::new(0.0, 0.0, 0.0), Vec3::new(dx, dy, 0.0)));
+        let frame = (top.z - support.footing.z >= shape.minimum_height)
+            .then(|| {
+                across_track
+                    .chain(fallback)
+                    .find_map(|(first_offset, second_offset)| {
+                        let leg = |offset: Vec3| {
+                            if offset == Vec3::new(0.0, 0.0, 0.0) {
+                                Some(support.footing)
+                            } else {
+                                let footing = leg_footing(
+                                    support.footing.x + offset.x,
+                                    support.footing.y + offset.y,
+                                    support.anchor.z,
+                                )?;
+                                footer_clear(footing).then_some(footing)
+                            }
+                        };
+                        let (first, second) = (leg(first_offset)?, leg(second_offset)?);
+                        if top.z - first.z < 0.7 || top.z - second.z < 0.7 {
+                            return None;
+                        }
+                        let segments =
+                            frame_segments(first, second, top, shape.storey_height, shape.bracing);
+                        members_clear(&segments).then_some(segments)
+                    })
+            })
+            .flatten();
+        result.extend(frame.unwrap_or_else(|| {
+            vec![SupportSegment {
                 start: support.footing,
                 end: top,
-            });
-        }
+            }]
+        }));
         if top != support.anchor {
             result.push(SupportSegment {
                 start: top,
@@ -678,7 +804,7 @@ fn generate_wooden_lattice_at_spacing(
             });
         }
     }
-    Ok(result)
+    result
 }
 
 fn terrain_height(world: &World, x: f64, y: f64) -> f64 {
@@ -957,6 +1083,82 @@ mod tests {
                 .position;
             assert!(dense.iter().any(|segment| segment.end == anchor));
         }
+    }
+
+    fn straight_at_height(z: i32) -> Piece {
+        catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .unwrap()
+            .at(TrackState {
+                x: 4,
+                y: 4,
+                z,
+                ..TrackState::origin()
+            })
+            .unwrap()
+    }
+
+    fn is_ledger(segment: &SupportSegment) -> bool {
+        segment.start.z == segment.end.z
+            && (segment.start.x != segment.end.x || segment.start.y != segment.end.y)
+    }
+
+    #[test]
+    fn wooden_bents_straddle_the_track_with_braced_storeys() {
+        let piece = straight_at_height(10);
+        let anchors: Vec<_> = generate_supports(&piece, &world(), &[])
+            .unwrap()
+            .into_iter()
+            .map(|support| support.anchor)
+            .collect();
+        let lattice = generate_wooden_lattice(&piece, &world(), &[]).unwrap();
+        let dense = generate_dense_wooden_lattice(&piece, &world(), &[]).unwrap();
+        for anchor in &anchors {
+            for side in [-1.2, 1.2] {
+                assert!(
+                    lattice.iter().any(|segment| segment.start
+                        == Vec3::new(anchor.x, anchor.y + side, 0.0)
+                        && segment.end == Vec3::new(anchor.x, anchor.y + side, anchor.z)),
+                    "a leg stands {side} m across the track from {anchor:?}"
+                );
+            }
+        }
+        let ledgers_per_bent = |segments: &[SupportSegment], bents: usize| {
+            segments.iter().filter(|segment| is_ledger(segment)).count() as f64 / bents as f64
+        };
+        let dense_bents = dense
+            .iter()
+            .filter(|segment| segment.start.z == 0.0 && segment.end.z > 0.0)
+            .count()
+            / 2;
+        assert!(ledgers_per_bent(&dense, dense_bents) > ledgers_per_bent(&lattice, anchors.len()));
+    }
+
+    #[test]
+    fn tall_steel_columns_gain_a_braced_partner_and_short_ones_stay_single() {
+        let short = generate_steel_columns(&straight_at_height(3), &world(), &[]).unwrap();
+        assert!(short.iter().all(|segment| segment.start.x == segment.end.x
+            && segment.start.y == segment.end.y));
+        let piece = straight_at_height(12);
+        let supports = generate_supports(&piece, &world(), &[]).unwrap();
+        let tall = generate_steel_columns(&piece, &world(), &[]).unwrap();
+        for support in &supports {
+            let partner = tall.iter().find(|segment| {
+                segment.start.z == 0.0
+                    && segment.start.x == support.footing.x
+                    && ((segment.start.y - support.footing.y).abs() - 1.8).abs() < 1e-9
+            });
+            assert!(
+                partner.is_some(),
+                "a partner column stands beside {support:?}"
+            );
+        }
+        let diagonals = tall
+            .iter()
+            .filter(|segment| segment.start.z != segment.end.z && segment.start.y != segment.end.y)
+            .count();
+        assert!(diagonals >= supports.len() * 2, "{tall:?}");
     }
 
     #[test]
@@ -1578,8 +1780,13 @@ mod tests {
             },
         ];
         let segments = generate_wooden_lattice(&piece(), &world(), &obstacles).unwrap();
-        assert_eq!(segments.len(), 6, "{segments:?}");
         assert_eq!(segments[0].start, Vec3::new(12.0, 8.0, 0.0));
+        assert!(
+            segments[1..]
+                .iter()
+                .all(|segment| segment.start.x > 15.0 && segment.end.x > 15.0),
+            "only the single column stands at the boxed-in support: {segments:?}"
+        );
         assert_eq!(segments[0].start.x, segments[0].end.x);
         assert_eq!(segments[0].start.y, segments[0].end.y);
         assert!(obstacles.iter().all(|obstacle| !intersects(

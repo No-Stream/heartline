@@ -728,6 +728,22 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
 }
 
 #[test]
+fn train_layouts_name_each_model_and_its_train_shape() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    assert_eq!(simulation.construction_train_layout(), "");
+    assert_eq!(simulation.coaster_train_layout(), "hybrid\t6\t2\t2\t18");
+    for (model, layout) in [
+        ("model:hybrid", "hybrid\t6\t2\t2\t18"),
+        ("model:velocity_viper", "velocity_viper\t6\t2\t2\t18"),
+        ("model:wooden_twister", "wooden_twister\t12\t1\t2\t18"),
+    ] {
+        simulation.construction_select(model);
+        simulation.construction_start(100, 100, 40, 0);
+        assert_eq!(simulation.construction_train_layout(), layout, "{model}");
+    }
+}
+
+#[test]
 fn coaster_colours_replay_to_the_same_state() {
     let paint = |colors: [&str; 3]| {
         let mut simulation = WasmSimulation::new(7, 0, String::from("new"));

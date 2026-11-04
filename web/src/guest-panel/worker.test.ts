@@ -45,6 +45,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     coaster_ties() { return new Float32Array(); }
     coaster_supports() { return new Float32Array(); }
     coaster_colors() { return "coral\ttimber\tsage"; }
+    coaster_train_layout() { return "hybrid\t6\t2\t2\t18"; }
     coaster_train_poses() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
@@ -65,6 +66,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_chain() { return this.chain; }
     construction_set_chain(enabled: boolean) { wasmMock.setChain(enabled); this.chain = enabled; }
     construction_colors() { return wasmMock.constructionActive() ? this.colors : ""; }
+    construction_train_layout() { return wasmMock.constructionActive() ? "velocity_viper\t6\t2\t2\t18" : ""; }
     construction_set_colors(track: string, supports: string, trains: string) { this.colors = [track, supports, trains].join("\t"); }
     construction_train_poses() { return wasmMock.constructionTrainPoses(); }
     construction_placed_rails() { return new Float32Array(); }

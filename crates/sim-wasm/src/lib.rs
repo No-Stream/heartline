@@ -41,8 +41,8 @@ use theme_park_sim::track::supports::{
     generate_steel_columns, generate_wooden_lattice,
 };
 use theme_park_sim::track::{
-    CoasterColors, Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle, TrackSample,
-    TrackState, TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model,
+    CoasterColors, CoasterModel, Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle,
+    TrackSample, TrackState, TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model,
     wooden_twister_model,
 };
 use theme_park_sim::world::{
@@ -536,6 +536,26 @@ fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
     append_vector(result, sample.position / 4.0);
     append_vector(result, sample.up.cross(sample.tangent));
     append_vector(result, sample.up);
+}
+
+/// The renderer's key for a coaster model's trains; the same keys name the models in `construction_select`.
+fn train_model_key(model: &CoasterModel) -> &'static str {
+    [
+        ("hybrid", hybrid_model()),
+        ("velocity_viper", multi_launch_model()),
+        ("wooden_twister", wooden_twister_model()),
+    ]
+    .into_iter()
+    .find_map(|(key, known)| (known.name == model.name).then_some(key))
+    .unwrap_or_else(|| panic!("no train look for coaster model {}", model.name))
+}
+
+/// Model key, cars per train, rows per car, seats per row and train length in metres, tab-separated.
+fn train_layout(model_key: &str, train: &TrainConfiguration) -> String {
+    format!(
+        "{model_key}\t{}\t{}\t{}\t{}",
+        train.cars, train.rows_per_car, train.seats_per_row, train.length_metres
+    )
 }
 
 fn editable_block_boundaries(layout: &BlockLayout) -> Vec<f64> {

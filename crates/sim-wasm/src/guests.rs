@@ -34,6 +34,14 @@ impl WasmSimulation {
             .map_or_else(String::new, |coaster| coaster.colors.names())
     }
 
+    /// The demo coaster's train layout (see `train_layout`); empty without one.
+    /// The demo coaster is a steel-box track on a wooden structure, so it runs Timber Tumbler trains.
+    pub fn coaster_train_layout(&self) -> String {
+        self.demo_coaster().map_or_else(String::new, |coaster| {
+            train_layout("hybrid", &coaster.train_configuration)
+        })
+    }
+
     pub fn coaster_rails(&self) -> Vec<f32> {
         self.demo_coaster().map_or_else(Vec::new, |coaster| {
             render_rails(coaster.circuit.pieces(), &self.world)

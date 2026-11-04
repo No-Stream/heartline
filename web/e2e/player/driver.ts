@@ -29,6 +29,20 @@ export async function clickCanvas(page: Page, point: { x: number; y: number }): 
   await page.mouse.click(target.x, target.y);
 }
 
+/** A canvas point on a ground tile that nothing, such as a coaster support, covers at the current camera. */
+export async function visibleTilePoint(page: Page, tile: Tile): Promise<{ x: number; y: number }> {
+  const point = await page.evaluate(({ x, y, z }) => {
+    for (const fx of [0.5, 0.3, 0.7, 0.15, 0.85]) for (const fy of [0.5, 0.3, 0.7, 0.15, 0.85]) {
+      const screen = window.gameTest.project({ x: x + fx, y: y + fy, z });
+      const pick = window.gameTest.pick(screen.x, screen.y);
+      if (pick?.kind === "terrain" && pick.x === x && pick.y === y) return screen;
+    }
+    return null;
+  }, tile);
+  if (!point) throw new Error(`Ground tile ${tile.x},${tile.y} is covered at every probed point`);
+  return point;
+}
+
 export async function moveOverCanvas(page: Page, point: { x: number; y: number }, options?: { steps?: number }): Promise<void> {
   const target = await canvasToPage(page, point);
   await page.mouse.move(target.x, target.y, options);

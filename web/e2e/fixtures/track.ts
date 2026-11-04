@@ -1,12 +1,17 @@
 import { projectWorld, type Camera, type Rotation, type Viewport } from "../../src/camera";
 import { createWorldRenderer, loadAtlas, type Atlas, type WorldView } from "../../src/render";
-import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackStyle, type TrackPaint } from "../../src/render/track/geometry";
+import { buildTrackQuads, interpolateTrainPoses, trackStyle, type TrackPaint } from "../../src/render/track/geometry";
+import { buildRiderQuads, buildTrainQuads } from "../../src/render/track/trains";
+import { parseTrainLayout } from "../../src/train-layout";
 
 /** The fixture paints its coasters in its own atlas's theme inks: track in steel, supports in wood. */
 function fixturePaint(atlas: Atlas): TrackPaint {
   const style = trackStyle(atlas);
   return { track: style.steel, supports: style.wood, trains: style.train, ink: style.ink, lineWeight: style.lineWeight };
 }
+
+/** The demo coaster's train, which the fixture's coasters run. */
+const demoTrain = parseTrainLayout("hybrid\t6\t2\t2\t18");
 
 const initializeDemoWorker = (worker: Worker, frozen = false): void => {
   worker.postMessage({ type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen, manualBlockAnalysis: false });
@@ -35,10 +40,10 @@ window.renderRiderOrientations = async () => {
     1, 4, 4, 1, 1, 0, 0, 0, diagonal, diagonal, 1,
     2, 6, 4, 1, 1, 0, 0, 0, 0, -1, 1,
   ]);
-  const riders = buildRiderQuads(poses, camera, canvas, atlas, "3");
+  const riders = buildRiderQuads(poses, camera, canvas, atlas, "3", demoTrain);
   const geometry = (view: Camera, viewport: Viewport, currentAtlas: Atlas, scale: string) => [
-    ...buildTrackQuads(new Float32Array(), new Float32Array(), new Float32Array(), poses, view, viewport, fixturePaint(currentAtlas)),
-    ...buildRiderQuads(poses, view, viewport, currentAtlas, scale),
+    ...buildTrainQuads(poses, view, viewport, fixturePaint(currentAtlas), demoTrain),
+    ...buildRiderQuads(poses, view, viewport, currentAtlas, scale, demoTrain),
   ];
   renderer.render(world, camera, 0, [geometry]);
   const pickRider = (rider: typeof riders[number]): boolean => {
@@ -141,8 +146,9 @@ window.renderTrackFixture = async (rotation) => {
   };
   const camera = { centerX: 4, centerY: 3.5, zoom: 2.5, rotation };
   renderer.render(world, camera, 0, [(renderCamera, viewport, renderAtlas, scale) => [
-    ...buildTrackQuads(world.coasterRails, world.coasterTies, world.coasterSupports, world.trainPoses, renderCamera, viewport, fixturePaint(renderAtlas)),
-    ...buildRiderQuads(world.trainPoses, renderCamera, viewport, renderAtlas, scale),
+    ...buildTrackQuads(world.coasterRails, world.coasterTies, world.coasterSupports, renderCamera, viewport, fixturePaint(renderAtlas)),
+    ...buildTrainQuads(world.trainPoses, renderCamera, viewport, fixturePaint(renderAtlas), demoTrain),
+    ...buildRiderQuads(world.trainPoses, renderCamera, viewport, renderAtlas, scale, demoTrain),
   ]]);
   const picks = new Set<string>();
   for (const point of [{ x: 3, y: 3.5, z: 1 }, { x: 4, y: 5, z: 2 }]) {

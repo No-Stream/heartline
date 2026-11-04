@@ -1,7 +1,6 @@
 import type { CoasterColorScheme } from "./coaster-colors";
 import type { TestingReport } from "./coaster-testing";
-
-type ConstructionModel = "hybrid" | "velocity_viper" | "wooden_twister";
+import type { CoasterModelKey, TrainLayout } from "./train-layout";
 
 /** Commands are processed in order by the simulation worker. */
 export type ConstructionAction =
@@ -28,7 +27,7 @@ export type ConstructionAction =
   | { readonly type: "construction-add-block"; readonly boundaryMetres: number };
 
 /** A coaster panel choice before the main thread translates it to the bridge's model selection. */
-export type ConstructionPanelAction = { readonly type: "construction-set-model"; readonly model: ConstructionModel };
+export type ConstructionPanelAction = { readonly type: "construction-set-model"; readonly model: CoasterModelKey };
 
 export interface BlockSection {
   readonly boundaryMetres: number;
@@ -99,6 +98,8 @@ export interface ConstructionState {
   readonly chain: boolean;
   /** The coaster's paint, or null before a station is placed. */
   readonly colors: CoasterColorScheme | null;
+  /** The coaster's train, or null before a station is placed. */
+  readonly trainLayout: TrainLayout | null;
   readonly pieces: readonly ConstructionPiece[];
   readonly elements: readonly ConstructionElement[];
   readonly selected: string | null;

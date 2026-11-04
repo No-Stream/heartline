@@ -104,6 +104,18 @@ impl WasmSimulation {
             .map_or_else(String::new, |construction| construction.colors().names())
     }
 
+    /// The coaster's train layout (see `train_layout`); empty without a coaster.
+    pub fn construction_train_layout(&self) -> String {
+        self.construction
+            .as_ref()
+            .map_or_else(String::new, |construction| {
+                train_layout(
+                    train_model_key(construction.model()),
+                    &construction.model().train,
+                )
+            })
+    }
+
     /// Repaints the coaster. Names outside the palette leave it unchanged and explain why in the construction message.
     pub fn construction_set_colors(&mut self, track: &str, supports: &str, trains: &str) {
         let Some(colors) = CoasterColors::from_names(track, supports, trains) else {

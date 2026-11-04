@@ -31,6 +31,7 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     coaster_ties() { return new Float32Array([3]); }
     coaster_supports() { return new Float32Array(); }
     coaster_colors() { return "coral\ttimber\tsage"; }
+    coaster_train_layout() { return "hybrid\t6\t2\t2\t18"; }
     coaster_train_poses() { return new Float32Array(); }
     construction_train_poses() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }

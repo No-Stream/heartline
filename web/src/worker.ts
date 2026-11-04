@@ -9,6 +9,7 @@ import { validateBlockAnalysisBudget } from "./game-test";
 import { pathPreviewMessage } from "./render/path-ghost";
 import { SessionRecorder } from "./session-recording";
 import { parseCoasterColors } from "./coaster-colors";
+import { parseTrainLayout } from "./train-layout";
 
 type GuestDetailAction =
   | { readonly type: "guest-detail-request"; readonly guestId: string }
@@ -139,7 +140,8 @@ function sendConstruction(): void {
   const coasterIncome = simulation.construction_coaster_income();
   lastConstructionEconomy = `${coasterPrice}:${coasterIncome}`;
   const colorNames = simulation.construction_colors();
-  workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, pieces, elements,
+  const trainLayout = simulation.construction_train_layout();
+  workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout: trainLayout ? parseTrainLayout(trainLayout) : null, pieces, elements,
     selected: selected || null, track: track ? track.split("\n").map((row) => {
       const [id, label, name, group, slope, kind] = row.split("\t");
       return { id: Number(id), label, name, group, slope, kind };
@@ -201,7 +203,9 @@ function sendWorld(): void {
     const coasterTies = simulation.coaster_ties();
     const demoColors = simulation.coaster_colors();
     const coasterColors = demoColors ? parseCoasterColors(demoColors) : null;
-    workerScope.postMessage({ ...world.message, coasterGeometry, coasterRails, coasterTies, coasterSupports, coasterColors }, [...world.transfer, coasterGeometry.buffer, coasterRails.buffer, coasterTies.buffer, coasterSupports.buffer]);
+    const demoTrain = simulation.coaster_train_layout();
+    const coasterTrain = demoTrain ? parseTrainLayout(demoTrain) : null;
+    workerScope.postMessage({ ...world.message, coasterGeometry, coasterRails, coasterTies, coasterSupports, coasterColors, coasterTrain }, [...world.transfer, coasterGeometry.buffer, coasterRails.buffer, coasterTies.buffer, coasterSupports.buffer]);
     coasterGeometrySent = true;
   } else {
     workerScope.postMessage({ ...world.message, coasterSupports }, [...world.transfer, coasterSupports.buffer]);
