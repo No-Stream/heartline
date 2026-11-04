@@ -19,8 +19,8 @@ main {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 0 16px;
+  gap: 1px;
+  padding: 0 6px;
   background: var(--paper);
   border-bottom: var(--key-line);
   /* Inset, so the bar never draws over the world canvas. */
@@ -87,14 +87,44 @@ main {
   scrollbar-color: var(--ink-faint) var(--transparent);
 }
 .game-dock[hidden] { display: none; }
-/* Room for the day clock and the theme toggle while watching: the bar drops the tick label, then the title, then the tick
-   readout as the window narrows. The day clock and the toolbar drop their own extras in between. */
-@media (max-width: 1520px) { .game-bar__tick-label { display: none; } }
-@media (max-width: 1420px) { .game-bar h1 { display: none; } }
-@media (max-width: 1060px) { .game-bar p { display: none; } }
-@media (max-width: 900px) { .game-bar { gap: 4px; padding-inline: 8px; } }
 @media (max-width: 760px) {
   main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 44px minmax(0, 1fr) auto; }
-  .game-bar h1, .game-bar p { display: none; }
   .game-dock { width: auto; max-height: 45vh; border-left: 0; border-top: var(--key-line); }
 }
+
+/* The fit routine advances one level at a time as the measured content needs room. */
+.game-bar[data-fit-level="1"] .toolbar__tool kbd,
+.game-bar[data-fit-level="2"] .toolbar__tool kbd,
+.game-bar[data-fit-level="3"] .toolbar__tool kbd,
+.game-bar[data-fit-level="4"] .toolbar__tool kbd,
+.game-bar[data-fit-level="5"] .toolbar__tool kbd,
+.game-bar[data-fit-level="6"] .toolbar__tool kbd,
+.game-bar[data-fit-level="8"] .toolbar__tool kbd { display: none; }
+.game-bar[data-fit-level="2"] .game-bar__tick-label,
+.game-bar[data-fit-level="3"] .game-bar__tick-label,
+.game-bar[data-fit-level="4"] .game-bar__tick-label,
+.game-bar[data-fit-level="5"] .game-bar__tick-label,
+.game-bar[data-fit-level="6"] .game-bar__tick-label,
+.game-bar[data-fit-level="7"] .game-bar__tick-label,
+.game-bar[data-fit-level="8"] .game-bar__tick-label { display: none; }
+.game-bar[data-fit-level="3"] h1,
+.game-bar[data-fit-level="4"] h1,
+.game-bar[data-fit-level="5"] h1,
+.game-bar[data-fit-level="6"] h1,
+.game-bar[data-fit-level="7"] h1,
+.game-bar[data-fit-level="8"] h1 { display: none; }
+.game-bar[data-fit-level="4"] > p,
+.game-bar[data-fit-level="5"] > p,
+.game-bar[data-fit-level="6"] > p,
+.game-bar[data-fit-level="7"] > p,
+.game-bar[data-fit-level="8"] > p { display: none; }
+.game-bar[data-fit-level="5"] .day-clock__scrub,
+.game-bar[data-fit-level="6"] .day-clock__scrub,
+.game-bar[data-fit-level="7"] .day-clock__scrub,
+.game-bar[data-fit-level="8"] .day-clock__scrub { display: none; }
+.game-bar[data-fit-level="6"] .sound-setting__volume,
+.game-bar[data-fit-level="7"] .sound-setting__volume,
+.game-bar[data-fit-level="8"] .sound-setting__volume { display: none; }
+.game-bar[data-fit-level="7"] .toolbar__tool span,
+.game-bar[data-fit-level="8"] .toolbar__tool span { display: none; }
+.game-bar[data-fit-level="7"] .toolbar__tool kbd { display: inline; }

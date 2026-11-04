@@ -18,6 +18,7 @@ import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from
 import { advanceDayPhase, NOON, START_PHASE } from "./render/daylight";
 import { CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
+import { fitGameBar } from "./game-bar-fit";
 import { trackStyle } from "./render/track/geometry";
 import type { TrainLayout } from "./train-layout";
 import type { CoasterColorScheme } from "./coaster-colors";
@@ -210,6 +211,9 @@ function setTimeOfDay(phase: number): void {
 const dayClockContainer = document.querySelector<HTMLElement>("[data-day-clock]");
 if (!dayClockContainer) throw new Error("Day clock is missing");
 const dayClock = createDayClock(dayClockContainer, dispatch);
+const gameBar = document.querySelector<HTMLElement>(".game-bar");
+if (!gameBar) throw new Error("Game bar is missing");
+fitGameBar(gameBar);
 dayClock.setPaused(gamePause.isPaused());
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
