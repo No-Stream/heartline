@@ -2,7 +2,7 @@ import { projectWorld, type Camera, type Viewport, type WorldPoint } from "./cam
 import { railPoints } from "./construction-camera";
 import type { ConstructionState } from "./construction-protocol";
 import type { GeometryQuad, Vertex } from "./render/scene";
-import { buildTrackQuads, type TrackStyle } from "./render/track/geometry";
+import { buildTrackQuads, type TrackPaint, type TrackStyle } from "./render/track/geometry";
 
 const snapDuration = 420;
 const celebrationDuration = 2200;
@@ -30,6 +30,8 @@ export function constructionEvent(previous: ConstructionState | undefined, next:
 
 /** A short ink burst where a piece clicks into place, and confetti with a glint around the circuit when it closes. */
 export function createConstructionEffects(style: TrackStyle) {
+  // Effects light up the track's shape, so it is painted in the highlight ink and keeps the theme's key line.
+  const highlightPaint: TrackPaint = { track: "#f6d77a", supports: "#f6d77a", trains: "#f6d77a", ink: style.ink, lineWeight: style.lineWeight };
   let effects: Effect[] = [];
   let seed = 1;
   const random = (): number => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
@@ -39,7 +41,7 @@ export function createConstructionEffects(style: TrackStyle) {
     const fade = 1 - progress;
     const ink = rgba(style.ink);
     const glow = 0.95 * Math.min(1, fade / 0.6);
-    const highlight = buildTrackQuads(effect.rails, effect.ties, noGeometry, noGeometry, camera, viewport, style)
+    const highlight = buildTrackQuads(effect.rails, effect.ties, noGeometry, noGeometry, camera, viewport, highlightPaint)
       .filter((quad) => quad.color.some((channel, index) => channel !== ink[index]))
       .map((quad) => raised({ ...quad, id: `effect-${quad.id}`, kind: "effect", color: rgba("#f6d77a", glow) }));
     const centre = projectWorld(camera, viewport, effect.joint);
@@ -58,7 +60,7 @@ export function createConstructionEffects(style: TrackStyle) {
 
   function celebrationQuads(effect: Extract<Effect, { kind: "celebration" }>, elapsed: number, camera: Camera, viewport: Viewport): GeometryQuad[] {
     const progress = elapsed / celebrationDuration;
-    const segments = buildTrackQuads(effect.rails, noGeometry, noGeometry, noGeometry, camera, viewport, style);
+    const segments = buildTrackQuads(effect.rails, noGeometry, noGeometry, noGeometry, camera, viewport, highlightPaint);
     const glint = Math.min(1, elapsed / 1300);
     const lit = segments.filter((_, index) => Math.abs(index / segments.length - glint) < 0.05 && glint < 1)
       .map((quad) => raised({ ...quad, id: `effect-${quad.id}`, kind: "effect", color: rgba("#f4cf6a", 0.95) }));

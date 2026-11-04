@@ -44,6 +44,22 @@
 .builder__chain-toggle[aria-pressed="true"] .builder__chain-line { stroke: var(--paper); }
 .builder__chain-hint { color: var(--ink-soft); font-size: 0.76rem; font-style: italic; }
 
+/* Coaster colours: one row of printed ink swatches per part. */
+.builder__colors { display: grid; gap: 0.35rem; }
+.builder__color-row { display: grid; grid-template-columns: 4.6rem 1fr; align-items: center; gap: 0.4rem; }
+.builder__swatches { display: flex; flex-wrap: wrap; gap: 0.2rem; }
+.builder button.builder__swatch {
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  background: var(--swatch);
+  border: 1px solid var(--ink);
+  border-radius: 1px;
+  box-shadow: 1.5px 1.5px 0 color-mix(in srgb, var(--ink) 35%, var(--transparent));
+}
+.builder button.builder__swatch:hover:not(:disabled) { background: var(--swatch); transform: translate(-1px, -1px); box-shadow: 2.5px 2.5px 0 color-mix(in srgb, var(--ink) 45%, var(--transparent)); }
+.builder button.builder__swatch[aria-checked="true"] { outline: 2px solid var(--ink); outline-offset: 2px; box-shadow: none; }
+
 /* Palette tiles */
 .builder__palette { display: grid; gap: 0.45rem; }
 .builder__group { display: grid; grid-template-columns: 4.6rem 1fr; align-items: start; gap: 0.4rem; }

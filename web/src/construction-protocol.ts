@@ -1,3 +1,4 @@
+import type { CoasterColorScheme } from "./coaster-colors";
 import type { TestingReport } from "./coaster-testing";
 
 type ConstructionModel = "hybrid" | "velocity_viper" | "wooden_twister";
@@ -17,6 +18,7 @@ export type ConstructionAction =
   | { readonly type: "construction-finish-cancel" }
   | { readonly type: "construction-set-open"; readonly open: boolean }
   | { readonly type: "construction-set-coaster-price"; readonly price: number }
+  | { readonly type: "construction-set-colors"; readonly colors: CoasterColorScheme }
   | { readonly type: "construction-test" }
   | { readonly type: "construction-auto-blocks" }
   | { readonly type: "construction-apply-best-blocks" }
@@ -87,6 +89,8 @@ export interface ConstructionState {
   readonly type: "construction-state";
   readonly active: boolean;
   readonly chain: boolean;
+  /** The coaster's paint, or null before a station is placed. */
+  readonly colors: CoasterColorScheme | null;
   readonly pieces: readonly ConstructionPiece[];
   readonly selected: string | null;
   readonly track: readonly {

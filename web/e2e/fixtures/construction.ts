@@ -30,7 +30,7 @@ panel.setShapes([
   shape("TurnSmallStandalone", "Standalone small left turn", "Track", 1), shape("LevelToGentleUp", "Begin gentle climb", "Track", 0, "UpGentle"),
 ]);
 const state: ConstructionState = {
-  type: "construction-state", active: true, chain: false,
+  type: "construction-state", active: true, chain: false, colors: { track: "coral", supports: "timber", trains: "sage" },
   pieces: [
     { id: "Straight", label: "Straight", group: "straight", heading: "East", slope: "Level", bank: "Level", refusal: "" },
     { id: "TurnSmallStandalone", label: "Standalone small left turn", group: "turn", heading: "North", slope: "Level", bank: "Level", refusal: "" },

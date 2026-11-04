@@ -28,6 +28,12 @@ impl WasmSimulation {
 
     /// Rail segments: piece index and start/end frames (position, lateral, up).
     /// Positions are in tiles; lateral and up are unit vectors.
+    /// The demo coaster's track, supports and train colours as palette names separated by tabs; empty without one.
+    pub fn coaster_colors(&self) -> String {
+        self.demo_coaster()
+            .map_or_else(String::new, |coaster| coaster.colors.names())
+    }
+
     pub fn coaster_rails(&self) -> Vec<f32> {
         self.demo_coaster().map_or_else(Vec::new, |coaster| {
             render_rails(coaster.circuit.pieces(), &self.world)

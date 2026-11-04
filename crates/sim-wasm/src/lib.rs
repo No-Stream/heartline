@@ -40,8 +40,9 @@ use theme_park_sim::track::supports::{
     generate_steel_columns, generate_wooden_lattice,
 };
 use theme_park_sim::track::{
-    Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle, TrackSample, TrackState,
-    TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
+    CoasterColors, Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle, TrackSample,
+    TrackState, TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model,
+    wooden_twister_model,
 };
 use theme_park_sim::world::{
     Brush, Corner, Direction, PathBuildError, PathKind, Position, Scenery, SceneryKind, Surface,

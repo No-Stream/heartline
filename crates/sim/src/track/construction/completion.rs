@@ -38,6 +38,7 @@ impl Construction {
             next_id: self.next_id,
             closed: self.closed,
             chain: self.chain,
+            colors: self.colors,
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
         }

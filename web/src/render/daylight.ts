@@ -71,19 +71,20 @@ interface Keyframe {
   skyTop: string; skyHorizon: string; lightsOn: number; stars: number; shadowStrength: number;
 }
 
-// The inks come from the print-modern theme: plum key line, slate, coral, mustard and paper.
-const night: Omit<Keyframe, "phase"> = { multiply: "#4f4c8c", shadowInk: "#191433", highlightInk: "#8b85ca", inkAmount: 0.55, skyTop: "#17152f", skyHorizon: "#3d3766", lightsOn: 1, stars: 1, shadowStrength: 0 };
+// The inks come from the print-modern theme: plum key line, slate, coral, mustard and paper. Night is a deep slate-blue
+// print with dark shadows, so the lamps, windows and ride lights are the brightest things in the park.
+const night: Omit<Keyframe, "phase"> = { multiply: "#2e3468", shadowInk: "#07061a", highlightInk: "#4a5292", inkAmount: 0.4, skyTop: "#0c0b22", skyHorizon: "#2a2852", lightsOn: 1, stars: 1, shadowStrength: 0 };
 const day: Omit<Keyframe, "phase"> = { multiply: "#ffffff", shadowInk: "#3a2e58", highlightInk: "#f2eadb", inkAmount: 0, skyTop: "#9fbdc4", skyHorizon: "#efe3cc", lightsOn: 0, stars: 0, shadowStrength: 0.2 };
 const keyframes: readonly Keyframe[] = [
   { phase: 0, ...night },
   { phase: 0.2, ...night },
-  { phase: 0.26, multiply: "#d9c6d8", shadowInk: "#3a2e58", highlightInk: "#f0b9b0", inkAmount: 0.25, skyTop: "#6f7fae", skyHorizon: "#f2b9a0", lightsOn: 0.45, stars: 0.1, shadowStrength: 0.06 },
+  { phase: 0.26, multiply: "#b6a3c6", shadowInk: "#2a2050", highlightInk: "#f0b9b0", inkAmount: 0.25, skyTop: "#6f7fae", skyHorizon: "#f2b9a0", lightsOn: 0.45, stars: 0.1, shadowStrength: 0.06 },
   { phase: 0.33, multiply: "#fff7ec", shadowInk: "#3a2e58", highlightInk: "#f7e2c0", inkAmount: 0.06, skyTop: "#a6c0cc", skyHorizon: "#f4dfc0", lightsOn: 0, stars: 0, shadowStrength: 0.18 },
   { phase: 0.42, ...day },
   { phase: 0.62, ...day },
   { phase: 0.7, multiply: "#fff0d6", shadowInk: "#3a2e58", highlightInk: "#f8d49c", inkAmount: 0.1, skyTop: "#9fb3c4", skyHorizon: "#f2c98a", lightsOn: 0, stars: 0, shadowStrength: 0.2 },
-  { phase: 0.76, multiply: "#f8dccb", shadowInk: "#4a3563", highlightInk: "#f0a48c", inkAmount: 0.42, skyTop: "#5b5d93", skyHorizon: "#ec9a6a", lightsOn: 0.6, stars: 0, shadowStrength: 0.08 },
-  { phase: 0.81, multiply: "#a493c4", shadowInk: "#2a2450", highlightInk: "#c49ac0", inkAmount: 0.45, skyTop: "#2f2d5c", skyHorizon: "#8c6a9a", lightsOn: 1, stars: 0.5, shadowStrength: 0 },
+  { phase: 0.76, multiply: "#ecc4b4", shadowInk: "#3a2556", highlightInk: "#f0a48c", inkAmount: 0.38, skyTop: "#5b5d93", skyHorizon: "#ec9a6a", lightsOn: 0.6, stars: 0, shadowStrength: 0.1 },
+  { phase: 0.81, multiply: "#7c6aa6", shadowInk: "#1a1238", highlightInk: "#a07cb0", inkAmount: 0.42, skyTop: "#262452", skyHorizon: "#7a5a8c", lightsOn: 1, stars: 0.5, shadowStrength: 0 },
   { phase: 0.87, ...night },
   { phase: 1, ...night },
 ];
@@ -151,4 +152,35 @@ export const GRADE_GLSL = `
     float tone = smoothstep(0.0, 1.0, clamp((dot(color, vec3(0.299, 0.587, 0.114)) - 0.05) / 0.9, 0.0, 1.0));
     vec3 graded = mix(color * gradeMultiply, mix(gradeShadowInk, gradeHighlightInk, tone), gradeInkAmount);
     return mix(graded, color, light * gradeLightsOn);
+  }`;
+
+const POOL_RIM_EDGE = 0.12;
+const POOL_CORE_EDGE = 0.42;
+const POOL_BAND_SOFTNESS = 0.05;
+const POOL_RIM_LEVEL = 0.5;
+
+/**
+ * Lamp light falling on a surface at night. `pool` is the summed light from the pool layer: its hue tints the light and
+ * its strength is printed in two flat bands, a bright core and a dimmer rim, like a screen-printed spot of colour. A lit
+ * surface shows its own colour in the lamp's tint and never comes out darker than the night grade around it.
+ */
+export function lightInPool(graded: Rgb, color: Rgb, pool: Rgb): Rgb {
+  const strength = Math.max(pool[0], pool[1], pool[2]);
+  if (strength <= 0) return graded;
+  const band = (edge: number): number => {
+    const t = Math.min(1, Math.max(0, (strength - edge) / POOL_BAND_SOFTNESS));
+    return t * t * (3 - 2 * t);
+  };
+  const level = POOL_RIM_LEVEL * band(POOL_RIM_EDGE) + (1 - POOL_RIM_LEVEL) * band(POOL_CORE_EDGE);
+  return [0, 1, 2].map((channel) => Math.max(graded[channel], color[channel] * pool[channel] / strength * level)) as unknown as Rgb;
+}
+
+/** `lightInPool` in GLSL, for the world shader. */
+export const POOL_GLSL = `
+  vec3 lightInPool(vec3 graded, vec3 color, vec3 pool) {
+    float strength = max(pool.r, max(pool.g, pool.b));
+    if (strength <= 0.0) return graded;
+    float level = ${POOL_RIM_LEVEL.toFixed(3)} * smoothstep(${POOL_RIM_EDGE.toFixed(3)}, ${(POOL_RIM_EDGE + POOL_BAND_SOFTNESS).toFixed(3)}, strength)
+      + ${(1 - POOL_RIM_LEVEL).toFixed(3)} * smoothstep(${POOL_CORE_EDGE.toFixed(3)}, ${(POOL_CORE_EDGE + POOL_BAND_SOFTNESS).toFixed(3)}, strength);
+    return max(graded, color * pool / strength * level);
   }`;

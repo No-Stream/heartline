@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, formatClock, gradeColor, hexColor, lightingAt, printOnBackdrop, sunAt } from "./daylight";
+import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, formatClock, gradeColor, hexColor, lightingAt, lightInPool, printOnBackdrop, sunAt, type Rgb } from "./daylight";
 
 const luminance = ([red, green, blue]: readonly number[]): number => 0.299 * red + 0.587 * green + 0.114 * blue;
 const paper = hexColor("#f2eadb");
@@ -64,15 +64,24 @@ describe("colour grade", () => {
     expect(luminance(gradeColor(paper, lightingAt(0.75)))).toBeGreaterThan(0.5);
   });
 
-  it("turns night into a deep blue-plum rather than black, and keeps paper above grass", () => {
+  it("turns night into a dark slate blue rather than black, and keeps paper above grass", () => {
     const night = lightingAt(0);
     const gradedGrass = gradeColor(grass, night);
     const gradedPaper = gradeColor(paper, night);
-    expect(gradedGrass[2]).toBeGreaterThan(gradedGrass[1]);
-    expect(gradedGrass[2]).toBeGreaterThan(0.2);
-    expect(luminance(gradedGrass)).toBeLessThan(luminance(grass) * 0.7);
-    expect(luminance(gradedPaper) - luminance(gradedGrass)).toBeGreaterThan(0.15);
+    expect(gradedGrass[2]).toBeGreaterThan(gradedGrass[0]);
+    expect(gradedGrass[2]).toBeGreaterThan(0.07);
+    expect(luminance(gradedGrass)).toBeLessThan(0.18);
+    expect(luminance(gradedPaper) - luminance(gradedGrass)).toBeGreaterThan(0.08);
     expect(night.lightsOn).toBe(1);
+  });
+
+  it("darkens the park steadily from noon through dusk into night", () => {
+    const grassAt = (phase: number): number => luminance(gradeColor(grass, lightingAt(phase)));
+    expect(grassAt(0.5)).toBeGreaterThan(grassAt(0.7));
+    expect(grassAt(0.7)).toBeGreaterThan(grassAt(0.76));
+    expect(grassAt(0.76)).toBeGreaterThan(grassAt(0.81));
+    expect(grassAt(0.81)).toBeGreaterThan(grassAt(0.9));
+    expect(grassAt(0.76)).toBeGreaterThan(0.3);
   });
 
   it("lets lit surfaces keep more of their colour at night", () => {
@@ -87,6 +96,36 @@ describe("colour grade", () => {
       const after = gradeColor(grass, lightingAt((step + 1) / 400 % 1));
       expect(Math.max(...before.map((channel, index) => Math.abs(channel - after[index])))).toBeLessThan(0.04);
     }
+  });
+});
+
+describe("lamp pools", () => {
+  const night = lightingAt(0);
+  const lamp: Rgb = hexColor("#ffe2ad");
+  const pool = (strength: number): Rgb => [lamp[0] * strength, lamp[1] * strength, lamp[2] * strength];
+  const path = hexColor("#fff0c7");
+
+  it("leave unlit surfaces at the night grade", () => {
+    expect(lightInPool(gradeColor(path, night), path, [0, 0, 0])).toEqual(gradeColor(path, night));
+    expect(lightInPool(gradeColor(path, night), path, pool(0.05))).toEqual(gradeColor(path, night));
+  });
+
+  it("print lamp light in two flat bands, so a lit path stands out strongly from the dark grass around it", () => {
+    const graded = gradeColor(path, night);
+    const rim = lightInPool(graded, path, pool(0.3));
+    const core = lightInPool(graded, path, pool(0.9));
+    lightInPool(graded, path, pool(0.25)).forEach((channel, index) => expect(channel).toBeCloseTo(rim[index], 9));
+    lightInPool(graded, path, pool(0.7)).forEach((channel, index) => expect(channel).toBeCloseTo(core[index], 9));
+    expect(luminance(rim)).toBeGreaterThan(luminance(graded) * 1.4);
+    expect(luminance(core)).toBeGreaterThan(luminance(rim) * 1.5);
+    expect(luminance(core)).toBeGreaterThan(5 * luminance(gradeColor(grass, night)));
+    expect(core[0]).toBeGreaterThan(core[2]);
+  });
+
+  it("never darken a surface below its grade, as at dusk when the land is still bright", () => {
+    const dusk = lightingAt(0.76);
+    const graded = gradeColor(paper, dusk);
+    lightInPool(graded, paper, pool(0.3)).forEach((channel, index) => expect(channel).toBeGreaterThanOrEqual(graded[index]));
   });
 });
 

@@ -1,5 +1,5 @@
 import type { Camera, Viewport } from "../camera";
-import { gradeColor, GRADE_GLSL, lightingAt, NOON, type Lighting, type Rgb } from "./daylight";
+import { gradeColor, GRADE_GLSL, lightingAt, NOON, POOL_GLSL, type Lighting, type Rgb } from "./daylight";
 import type { Glow } from "./effects";
 import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, SHAPE_PAGES, UNDERGROUND_CONTENT_DEPTH_BIAS, UNPICKABLE_KINDS, type Atlas, type GeometryQuad, type Pick, type Scene, type Triangle, type Vertex, type WorldView } from "./scene";
 export type { Atlas, GeometryQuad, Pick, WorldSprite, WorldView } from "./scene";
@@ -45,6 +45,8 @@ export interface Atmosphere {
   decals: readonly GeometryQuad[];
   /** Depth-tested world geometry that is never picked, such as bulbs. */
   lights: readonly GeometryQuad[];
+  /** Lamp light, in canvas pixels, that relights whatever the world draws beneath it; see `lightInPool`. */
+  pools: readonly GeometryQuad[];
   /** Confetti, blended over the world. */
   overlay: readonly GeometryQuad[];
   /** Firework sparks, added to the world. */
@@ -54,10 +56,13 @@ export interface Atmosphere {
 export type AtmospherePass = (camera: Camera, viewport: Viewport, atlas: Atlas, scale: string) => Atmosphere;
 
 /** Surfaces that stay partly lit at night, as if by path lamps, so a busy park stays readable. */
-const PATH_NIGHT_LIGHT = 0.4;
+const PATH_NIGHT_LIGHT = 0.22;
 const GUEST_NIGHT_LIGHT = 0.45;
+/** Coasters keep part of their paint at night, as if floodlit, so each coaster's colours still read after dark. */
+const COASTER_NIGHT_LIGHT: Readonly<Record<string, number>> = { track: 0.4, train: 0.55, support: 0.2 };
 const GROUND_KINDS: ReadonlySet<string> = new Set(["terrain", "cliff", "water", "path", "carved-floor", "cavern-wall"]);
 const GLOW_DOWNSCALE = 4;
+const POOL_DOWNSCALE = 2;
 /** The glow layer is printed slightly out of register with the world, in CSS pixels. */
 const GLOW_MISREGISTRATION = { x: 2, y: -1.5 };
 const FLOATS_PER_QUAD = 28;
@@ -70,7 +75,7 @@ function nightLight(triangle: Triangle): number {
   if (triangle.light !== undefined) return triangle.light;
   if (triangle.kind === "path") return PATH_NIGHT_LIGHT;
   if (triangle.kind === "rider" || triangle.id?.startsWith("guest-")) return GUEST_NIGHT_LIGHT;
-  return 0;
+  return COASTER_NIGHT_LIGHT[triangle.kind] ?? 0;
 }
 
 /** Packs quads into instance data, one batch per run of quads that share an atlas page or shape. */
@@ -132,7 +137,9 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       uv = vec2(p.w,v); id = objectId; fill = tint; lit = light;
     }`, `#version 300 es
     precision highp float; uniform sampler2D atlas; uniform bool picking; uniform bool textured; uniform int shape; uniform bool graded;
+    uniform sampler2D poolLight; uniform bool pooled; uniform vec2 resolution;
     ${GRADE_GLSL}
+    ${POOL_GLSL}
     in vec2 uv; flat in vec3 id; flat in vec4 fill; flat in float lit; out vec4 color;
     void main() {
       vec4 texel = textured ? texture(atlas,uv) * fill : fill;
@@ -141,7 +148,9 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
         texel.a *= shape == 1 ? pow(max(0.0, 1.0 - r * r), 2.0) : shape == 2 ? 1.0 - smoothstep(0.75, 1.0, r) : 1.0 - smoothstep(0.35, 1.0, r);
       }
       if (texel.a < (shape != 0 ? 0.003 : 0.05) || (picking && all(equal(id, vec3(0.0))))) discard;
-      color = picking ? vec4(id,1.0) : vec4(graded ? grade(texel.rgb, lit) : texel.rgb, texel.a);
+      vec3 printed = graded ? grade(texel.rgb, lit) : texel.rgb;
+      if (pooled) printed = lightInPool(printed, texel.rgb, texture(poolLight, gl_FragCoord.xy / resolution).rgb);
+      color = picking ? vec4(id,1.0) : vec4(printed, texel.a);
     }`);
   const fullScreenVertex = (depth: number) => `#version 300 es
     void main() { vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(corner * 2.0 - 1.0, ${depth.toFixed(1)}, 1.0); }`;
@@ -173,7 +182,8 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
   const vao = gl.createVertexArray(); const emptyVao = gl.createVertexArray(); const buffer = gl.createBuffer(); const framebuffer = gl.createFramebuffer();
   const pickTexture = gl.createTexture(); const depthBuffer = gl.createRenderbuffer();
   const glowFramebuffer = gl.createFramebuffer(); const glowTexture = gl.createTexture();
-  if (!vao || !emptyVao || !buffer || !framebuffer || !pickTexture || !depthBuffer || !glowFramebuffer || !glowTexture) throw new Error("Could not create WebGL resources");
+  const poolFramebuffer = gl.createFramebuffer(); const poolTexture = gl.createTexture();
+  if (!vao || !emptyVao || !buffer || !framebuffer || !pickTexture || !depthBuffer || !glowFramebuffer || !glowTexture || !poolFramebuffer || !poolTexture) throw new Error("Could not create WebGL resources");
   gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
   const stride = FLOATS_PER_QUAD * 4;
   for (let i = 0; i < 4; i++) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, 4, gl.FLOAT, false, stride, i * 16); gl.vertexAttribDivisor(i, 1); }
@@ -189,16 +199,18 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
     gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, gl!.RGBA, gl!.UNSIGNED_BYTE, image); return texture;
   })]));
   let activeScale = "1";
-  gl.useProgram(program); gl.uniform1i(gl.getUniformLocation(program, "atlas"), 0); gl.disable(gl.DITHER); gl.depthFunc(gl.LEQUAL);
+  gl.useProgram(program); gl.uniform1i(gl.getUniformLocation(program, "atlas"), 0); gl.uniform1i(gl.getUniformLocation(program, "poolLight"), 1);
+  gl.disable(gl.DITHER); gl.depthFunc(gl.LEQUAL);
   const uniform = (target: WebGLProgram, name: string): WebGLUniformLocation | null => gl!.getUniformLocation(target, name);
   let scene: Scene = { triangles: [] };
   let surfaceScene: Scene = { triangles: [] };
   let groundBatches: Batch[] = []; let standingBatches: Batch[] = [];
-  let skyBatches: Batch[] = []; let decalBatches: Batch[] = []; let overlayBatches: Batch[] = []; let sparkBatches: Batch[] = []; let glowBatches: Batch[] = [];
+  let skyBatches: Batch[] = []; let decalBatches: Batch[] = []; let overlayBatches: Batch[] = []; let sparkBatches: Batch[] = []; let glowBatches: Batch[] = []; let poolBatches: Batch[] = [];
   let atmosphere: Atmosphere | undefined;
   let depthMinimum = 0; let depthSpan = 2;
   let pickWidth = 0; let pickHeight = 0;
   let glowWidth = 0; let glowHeight = 0;
+  let poolWidth = 0; let poolHeight = 0;
   let pixelRatio = 1;
   function prepare(): void {
     let minimum = Infinity; let maximum = -Infinity;
@@ -226,8 +238,8 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
     }
   }
   /** Overlays are drawn flat at `overlayDepth` in clip space: 0 to sit over everything, 1 to fill only what the world left empty. */
-  function useWorldProgram(picking: boolean, overlay: boolean, graded: boolean, overlayDepth = 0): void {
-    gl!.useProgram(program); gl!.uniform1i(uniform(program, "picking"), picking ? 1 : 0);
+  function useWorldProgram(picking: boolean, overlay: boolean, graded: boolean, overlayDepth = 0, pooled = false): void {
+    gl!.useProgram(program); gl!.uniform1i(uniform(program, "picking"), picking ? 1 : 0); gl!.uniform1i(uniform(program, "pooled"), pooled ? 1 : 0);
     gl!.uniform1i(uniform(program, "overlay"), overlay ? 1 : 0); gl!.uniform1f(uniform(program, "overlayDepth"), overlayDepth); gl!.uniform1i(uniform(program, "graded"), graded ? 1 : 0);
     gl!.uniform2f(uniform(program, "resolution"), canvas.width, canvas.height);
     gl!.uniform2f(uniform(program, "depthRange"), depthMinimum, depthSpan);
@@ -239,6 +251,28 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
     gl!.disable(gl!.BLEND); gl!.enable(gl!.DEPTH_TEST); gl!.depthMask(true);
     useWorldProgram(true, false, false);
     drawBatches(groundBatches); drawBatches(standingBatches);
+  }
+  /** Renders the lamp pools into their own low-resolution layer, which the world pass then samples. Returns whether there are any. */
+  function drawPools(): boolean {
+    // Unbound first, so the layer is never sampled while it is drawn into.
+    gl!.activeTexture(gl!.TEXTURE1); gl!.bindTexture(gl!.TEXTURE_2D, null); gl!.activeTexture(gl!.TEXTURE0);
+    if (!poolBatches.length) return false;
+    const width = Math.ceil(canvas.width / POOL_DOWNSCALE); const height = Math.ceil(canvas.height / POOL_DOWNSCALE);
+    if (width !== poolWidth || height !== poolHeight) {
+      poolWidth = width; poolHeight = height;
+      gl!.bindTexture(gl!.TEXTURE_2D, poolTexture); gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR); gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MAG_FILTER, gl!.LINEAR);
+      gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE); gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE);
+      gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA8, width, height, 0, gl!.RGBA, gl!.UNSIGNED_BYTE, null);
+      gl!.bindFramebuffer(gl!.FRAMEBUFFER, poolFramebuffer); gl!.framebufferTexture2D(gl!.FRAMEBUFFER, gl!.COLOR_ATTACHMENT0, gl!.TEXTURE_2D, poolTexture, 0);
+      if (gl!.checkFramebufferStatus(gl!.FRAMEBUFFER) !== gl!.FRAMEBUFFER_COMPLETE) throw new Error("Pool framebuffer is incomplete");
+    }
+    gl!.bindFramebuffer(gl!.FRAMEBUFFER, poolFramebuffer); gl!.viewport(0, 0, width, height);
+    gl!.clearColor(0, 0, 0, 0); gl!.clear(gl!.COLOR_BUFFER_BIT);
+    gl!.disable(gl!.DEPTH_TEST); gl!.enable(gl!.BLEND); gl!.blendFunc(gl!.SRC_ALPHA, gl!.ONE);
+    useWorldProgram(false, true, false); drawBatches(poolBatches);
+    gl!.bindFramebuffer(gl!.FRAMEBUFFER, null); gl!.viewport(0, 0, canvas.width, canvas.height);
+    gl!.activeTexture(gl!.TEXTURE1); gl!.bindTexture(gl!.TEXTURE_2D, poolTexture); gl!.activeTexture(gl!.TEXTURE0);
+    return true;
   }
   function drawGlows(): void {
     if (!glowBatches.length) return;
@@ -265,12 +299,13 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
   }
   function draw(): void {
     const lighting = atmosphere?.lighting ?? NOON_LIGHTING;
+    const pooled = drawPools();
     // Tile edges are slightly translucent and have always shown a dark backdrop through them, which draws the faint grid.
     const backdrop = gradeColor([0, 0, 0], lighting);
     gl!.bindFramebuffer(gl!.FRAMEBUFFER, null);
     gl!.viewport(0, 0, canvas.width, canvas.height); gl!.clearColor(backdrop[0], backdrop[1], backdrop[2], 0); gl!.clearDepth(1); gl!.clear(gl!.COLOR_BUFFER_BIT | gl!.DEPTH_BUFFER_BIT);
     gl!.enable(gl!.BLEND); gl!.blendFuncSeparate(gl!.SRC_ALPHA, gl!.ONE_MINUS_SRC_ALPHA, gl!.ONE, gl!.ONE_MINUS_SRC_ALPHA);
-    useWorldProgram(false, false, true); setLighting(program, lighting);
+    useWorldProgram(false, false, true, 0, pooled); setLighting(program, lighting);
     gl!.enable(gl!.DEPTH_TEST);
     drawBatches(groundBatches);
     gl!.depthMask(false); drawBatches(decalBatches); gl!.depthMask(true);
@@ -315,6 +350,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       prepare();
       skyBatches = encode((atmosphere?.sky ?? []).map(fromGeometry));
       decalBatches = encode(clip(atmosphere?.decals ?? []).map(fromGeometry));
+      poolBatches = encode((atmosphere?.pools ?? []).map(fromGeometry));
       overlayBatches = encode((atmosphere?.overlay ?? []).map(fromGeometry));
       sparkBatches = encode((atmosphere?.sparks ?? []).map(fromGeometry));
       glowBatches = encode((atmosphere?.glows ?? []).map((glow) => ({
