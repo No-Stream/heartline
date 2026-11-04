@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Camera } from "../src/camera";
-import { canvasToPage, clickCanvas, openTool } from "./game-page";
+import { canvasToPage, clickCanvas, openTool, selectUnits } from "./game-page";
 
 test.use({ actionTimeout: 10_000 });
 test("guests ride a player-built coaster and can be selected @slow", async ({ page }) => {
@@ -8,6 +8,7 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 241, centerY: 252, zoom: 1.5, rotation: 0 }));
   await page.getByLabel("Station height above ground (metres)").fill("4");
   await page.getByLabel("Station height above ground (metres)").press("Tab");

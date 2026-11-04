@@ -1,2 +1,2 @@
-export { canvasSize, canvasToPage, clickCanvas, moveOverCanvas, openTool } from "./player/driver";
+export { canvasSize, canvasToPage, clickCanvas, moveOverCanvas, openTool, selectUnits } from "./player/driver";
 export type { ToolName } from "./player/driver";

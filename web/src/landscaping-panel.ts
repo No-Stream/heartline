@@ -2,6 +2,7 @@ import "./print-modern.css";
 import "./landscaping-panel.css";
 import type { InputAction } from "./input/actions";
 import { LANDSCAPING_TOOLS, type LandscapingSelection, type LandscapingTool } from "./landscaping-tool";
+import { displayToMetres, formatLength, metresToDisplay, unitLabel, type Units } from "./units";
 
 const TOOL_LABELS: Record<LandscapingTool, string> = {
   raise_corner: "Raise corner",
@@ -29,6 +30,7 @@ export function createLandscapingPanel(
   message(text: string): void;
   activate(): void;
   setUndergroundView(enabled: boolean, level?: number): void;
+  setUnits(units: Units): void;
 } {
   container.classList.add("tool-panel", "landscaping");
   const toolButtons = LANDSCAPING_TOOLS.map((tool) => `<button type="button" data-landscape-tool="${tool}" aria-pressed="${tool === "raise_tiles"}">${TOOL_LABELS[tool]}</button>`).join("");
@@ -53,7 +55,7 @@ export function createLandscapingPanel(
     <div class="tool-panel__section landscaping__underground">
       <div class="landscaping__underground-heading"><h3>Underground view</h3><button type="button" data-underground-toggle aria-pressed="false">Show underground</button></div>
       <label><span class="tool-panel__label">Cut level</span><input data-underground-level aria-label="Underground cut level" type="range" min="-32" max="128" step="1" value="8"><output data-underground-output>8</output></label>
-      <p class="tool-panel__hint">Cut away ground above this quarter-tile height.</p>
+      <p class="tool-panel__hint">Cut away ground above this height.</p>
     </div>
     <p class="tool-panel__hint landscaping__hint">Choose a tool, then drag over the park. Corner tools use the picked corner.</p>
     <p class="tool-panel__status landscaping__status" role="status" aria-live="polite"></p>`;
@@ -68,6 +70,19 @@ export function createLandscapingPanel(
   const undergroundButton = container.querySelector<HTMLButtonElement>("[data-underground-toggle]")!;
   let selectedTool: LandscapingTool = "raise_tiles";
   let undergroundEnabled = false;
+  let units: Units = "metric";
+  const heightInputs = [height, bottom, top];
+  const displayHeight = (value: number): string => String(Number(metresToDisplay(value, units).toFixed(2)));
+  const readHeight = (input: HTMLInputElement, label: string): number => {
+    const value = displayToMetres(Number(input.value), units);
+    if (!Number.isFinite(value)) throw new RangeError(`${label} must be a number.`);
+    return Math.round(value);
+  };
+  const updateLevelOutput = (): void => {
+    const text = formatLength(Number(level.value), units);
+    levelOutput.value = text;
+    levelOutput.textContent = text;
+  };
 
   for (const button of container.querySelectorAll<HTMLButtonElement>("[data-landscape-tool]")) {
     button.addEventListener("click", () => {
@@ -86,9 +101,9 @@ export function createLandscapingPanel(
       const selection: LandscapingSelection = {
         tool: selectedTool,
         size: readInteger(brush, "Brush size"),
-        height: readInteger(height, "Flatten height"),
-        bottom: readInteger(bottom, "Carve bottom"),
-        top: readInteger(top, "Carve ceiling"),
+        height: readHeight(height, "Flatten height"),
+        bottom: readHeight(bottom, "Carve bottom"),
+        top: readHeight(top, "Carve ceiling"),
       };
       if (selection.size < 1 || selection.size > 9 || selection.bottom >= selection.top) throw new RangeError("Choose a brush size from 1 to 9 and a ceiling above the carve floor.");
       dispatch({ type: "landscaping-activate", selection });
@@ -107,8 +122,7 @@ export function createLandscapingPanel(
 
   level.addEventListener("input", () => {
     const nextLevel = readInteger(level, "Underground cut level");
-    levelOutput.value = String(nextLevel);
-    levelOutput.textContent = String(nextLevel);
+    updateLevelOutput();
     dispatch({ type: "underground-view-level", level: nextLevel });
   });
 
@@ -120,6 +134,18 @@ export function createLandscapingPanel(
   });
 
   return {
+    setUnits(value): void {
+      const values = heightInputs.map((input) => displayToMetres(Number(input.value), units));
+      units = value;
+      heightInputs.forEach((input, index) => {
+        input.value = displayHeight(values[index]);
+        input.min = displayHeight(-32768);
+        input.max = displayHeight(32767);
+        input.step = "any";
+        input.closest("label")!.querySelector("span")!.textContent = `${["Flatten height", "Carve bottom", "Carve ceiling"][index]} (${unitLabel(units)})`;
+      });
+      updateLevelOutput();
+    },
     message(text: string): void { status.textContent = text; },
     activate,
     setUndergroundView(enabled: boolean, nextLevel?: number): void {
@@ -128,8 +154,7 @@ export function createLandscapingPanel(
       undergroundButton.setAttribute("aria-pressed", String(undergroundEnabled));
       if (nextLevel !== undefined) {
         level.value = String(nextLevel);
-        levelOutput.value = String(nextLevel);
-        levelOutput.textContent = String(nextLevel);
+        updateLevelOutput();
       }
     },
   };

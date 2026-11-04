@@ -2,6 +2,12 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 export type ToolName = "Watch" | "Coaster" | "Paths" | "Landscape" | "Facilities" | "Scenery";
 
+export async function selectUnits(page: Page, units: "imperial" | "metric"): Promise<void> {
+  const toggle = page.getByRole("button", { name: "Units", exact: true });
+  if ((await toggle.getAttribute("data-units")) !== units) await toggle.click();
+  await expect(toggle).toHaveAttribute("data-units", units);
+}
+
 /** Open a tool from the toolbar, which shows its panel and switches the input mode. */
 export async function openTool(page: Page, tool: ToolName): Promise<void> {
   const button = page.getByRole("toolbar", { name: "Tools" }).getByRole("button", { name: tool, exact: true });
@@ -92,6 +98,7 @@ export async function clickTile(page: Page, tile: Tile): Promise<void> {
 
 /** Flatten each listed tile through the Landscape controls, as a player would shape station access. */
 export async function flattenTerrainTiles(page: Page, tiles: readonly { x: number; y: number; height: number }[]): Promise<void> {
+  await selectUnits(page, "metric");
   await openTool(page, "Landscape");
   await page.getByRole("button", { name: "Flatten", exact: true }).click();
   await page.getByLabel("Brush size").selectOption("1");
@@ -213,6 +220,7 @@ export async function layQueue(page: Page, start: Tile, end: Tile): Promise<void
 }
 
 export async function placeStation(page: Page, options: { tile: Tile; direction: Tile; height: number; model: "hybrid" | "velocity_viper" | "wooden_twister" }): Promise<void> {
+  await selectUnits(page, "metric");
   await openTool(page, "Coaster");
   await page.getByRole("combobox", { name: "Coaster model" }).selectOption(`model:${options.model}`);
   const height = page.getByLabel("Station height above ground (metres)");

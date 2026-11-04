@@ -1,15 +1,31 @@
 import { expect, test } from "@playwright/test";
-import { canvasSize, clickCanvas, moveOverCanvas, openTool } from "./game-page";
+import { canvasSize, clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
+import { formatTestingNote } from "../src/coaster-testing";
+
+function displayedHeight(text: string, unit: "ft" | "m"): number {
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(ft|m)\b/);
+  if (!match || match[2] !== unit) throw new Error(`Expected a height in ${unit}, received: ${text}`);
+  return Number(match[1]);
+}
 
 test("builds a closed coaster and runs a train around it @slow", async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
+  const stationHeightInput = page.getByLabel("Station height above ground (metres)");
+  await expect(stationHeightInput).toHaveValue("12");
+  await page.getByRole("button", { name: "Raise the station" }).click();
+  await expect(stationHeightInput).toHaveValue("14");
+  await selectUnits(page, "imperial");
+  await expect(page.getByLabel("Station height above ground (feet)")).toHaveValue("45.93");
+  await selectUnits(page, "metric");
+  await expect(stationHeightInput).toHaveValue("14");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-  await page.getByLabel("Station height above ground (metres)").fill("72");
-  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await stationHeightInput.fill("72");
+  await stationHeightInput.press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
   const position = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 }));
   const canvas = page.locator("canvas");
@@ -66,8 +82,18 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   expect(testingReport?.samples.length ?? 0).toBeGreaterThan(1);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.length).toBeGreaterThan(0);
-  await expect(page.locator("[data-notes]")).toHaveText(notes.join(" "));
+  await expect(page.locator("[data-notes]")).toHaveText(notes.map((note) => formatTestingNote(note, "metric")).join(" "));
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  const maximumHeight = page.locator("[data-report-maximum-height]");
+  const biggestDrop = page.locator("[data-report-drop-height]");
+  const metricMaximumHeight = displayedHeight((await maximumHeight.textContent()) ?? "", "m");
+  const metricBiggestDrop = displayedHeight((await biggestDrop.textContent()) ?? "", "m");
+  await selectUnits(page, "imperial");
+  const imperialMaximumHeight = displayedHeight((await maximumHeight.textContent()) ?? "", "ft");
+  const imperialBiggestDrop = displayedHeight((await biggestDrop.textContent()) ?? "", "ft");
+  expect(metricMaximumHeight).toBeCloseTo(imperialMaximumHeight * 0.3048, 1);
+  expect(metricBiggestDrop).toBeCloseTo(imperialBiggestDrop * 0.3048, 1);
+  await selectUnits(page, "metric");
   const proximityEventCount = await page.evaluate(() => window.gameTest.testingReport()!.proximityEvents.length);
   expect(proximityEventCount).toBeGreaterThan(0);
   await expect(page.locator("[data-proximity-events]")).toContainText(`Proximity events (${proximityEventCount})`);
@@ -84,7 +110,12 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
     window.gameTest.setCamera({ centerX: (middleX + middleY) / 2, centerY: (middleY - middleX) / 2, zoom, rotation: 0 });
   }, overlaySize);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready), { timeout: 30_000 }).toBe(true);
-  await expect(page.getByText("30 m/s+")).toBeVisible();
+  const speedHigh = page.locator("[data-high]");
+  await expect(speedHigh).toHaveText("108 km/h+");
+  await selectUnits(page, "imperial");
+  await expect(speedHigh).toHaveText("67.1 mph+");
+  await selectUnits(page, "metric");
+  await expect(speedHigh).toHaveText("108 km/h+");
   const proximityInspectionPoint = await page.evaluate((size) => {
     const report = window.gameTest.testingReport();
     if (!report) throw new Error("Missing coaster test report");
@@ -127,6 +158,7 @@ test("shows and places visible slope-to-level choices on Velocity Viper @slow", 
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:velocity_viper");
   await page.getByLabel("Station height above ground (metres)").fill("72");
@@ -174,6 +206,7 @@ test("builds a descending banked turn on Briar Blitz from the visible constructi
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:wooden_twister");
   await page.getByLabel("Station height above ground (metres)").fill("72");
