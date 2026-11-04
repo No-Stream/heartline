@@ -8,6 +8,7 @@ pub struct ElementChoice {
     pub name: &'static str,
     pub pieces: Vec<PieceId>,
     pub geometry: Vec<Piece>,
+    pub would_tunnel: bool,
     construction_hash: u64,
 }
 
@@ -290,8 +291,13 @@ impl Construction {
                             && choices[*index].is_none()
                     })
                 {
-                    choices[index] =
-                        Some(self.choice_from_updated(id, name, path.clone(), &construction));
+                    choices[index] = Some(self.choice_from_updated(
+                        id,
+                        name,
+                        path.clone(),
+                        &construction,
+                        world,
+                    ));
                     remaining -= 1;
                     if remaining == 0 {
                         break;
@@ -328,7 +334,7 @@ impl Construction {
         obstacles: &[SupportObstacle],
     ) -> Option<ElementChoice> {
         let updated = self.append_sequence(&pieces, world, obstacles).ok()?;
-        Some(self.choice_from_updated(id, name, pieces, &updated))
+        Some(self.choice_from_updated(id, name, pieces, &updated, world))
     }
 
     fn choice_from_updated(
@@ -337,8 +343,9 @@ impl Construction {
         name: &'static str,
         pieces: Vec<PieceId>,
         updated: &Construction,
+        world: &World,
     ) -> ElementChoice {
-        let geometry = (self.next_id..self.next_id + pieces.len())
+        let geometry: Vec<Piece> = (self.next_id..self.next_id + pieces.len())
             .map(|id| {
                 let index = updated
                     .ids
@@ -348,13 +355,32 @@ impl Construction {
                 updated.pieces[index].clone()
             })
             .collect();
+        let would_tunnel = self
+            .tunnel_plans_for_geometry(&geometry, world)
+            .expect("validated element geometry has tunnel plans")
+            .iter()
+            .any(|plan| plan.would_tunnel());
         ElementChoice {
             id,
             name,
             pieces,
             geometry,
+            would_tunnel,
             construction_hash: self.state_hash(),
         }
+    }
+
+    pub fn element_tunnel_plans(
+        &self,
+        element: &ElementChoice,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<Vec<TunnelPlan>, ConstructionError> {
+        if self.state_hash() != element.construction_hash {
+            return Err(ConstructionError::InvalidCircuit);
+        }
+        self.append_sequence(&element.pieces, world, obstacles)?;
+        self.tunnel_plans_for_geometry(&element.geometry, world)
     }
 
     pub fn apply_element(

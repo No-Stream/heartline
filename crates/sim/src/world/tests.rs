@@ -15,6 +15,31 @@ fn position(x: u16, y: u16, height: i16) -> Position {
 }
 
 #[test]
+fn committing_a_candidate_preserves_world_identity_and_applies_its_revision() {
+    let mut world = World::new(2, 2, flat_surface(4));
+    let world_id = world.instance_id();
+    let mut candidate = world.clone();
+    let candidate_id = candidate.instance_id();
+    candidate
+        .apply_terrain(TerrainCommand::Flatten {
+            area: Brush {
+                x: 0,
+                y: 0,
+                size: 1,
+            },
+            height: 8,
+        })
+        .unwrap();
+
+    world.commit_candidate(candidate);
+
+    assert_ne!(world_id, candidate_id);
+    assert_eq!(world.instance_id(), world_id);
+    assert_eq!(world.revision(), 1);
+    assert_eq!(world.surface(0, 0).corners, [8; 4]);
+}
+
+#[test]
 fn corner_sculpting_updates_all_tiles_sharing_the_corner() {
     let mut world = World::new(2, 2, flat_surface(4));
 

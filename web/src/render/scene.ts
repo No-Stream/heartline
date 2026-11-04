@@ -23,7 +23,7 @@ export interface GeometryQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; page
 /** Untextured fills. Round shapes are drawn inside the unit square given by the vertices' u and v. */
 export const SHAPE_PAGES = { flat: -1, glow: -2, disc: -3, softDisc: -4, lightPool: -5 } as const;
 /** Drawn but never picked: lights and the dashed path preview. */
-export const UNPICKABLE_KINDS: ReadonlySet<string> = new Set(["path-preview", "light", "block-boundary-fixed"]);
+export const UNPICKABLE_KINDS: ReadonlySet<string> = new Set(["path-preview", "light", "block-boundary-fixed", "tunnel-portal"]);
 interface HeightPoint { x: number; y: number; height: number }
 const WHITE = [1, 1, 1, 1] as const;
 const QUAD_TRIANGLES = [[0, 1, 2], [0, 2, 3]] as const;
@@ -218,6 +218,34 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
       else appendPolygonTriangles(triangles, clipTriangleAtHeight(source, heightLimit, true), { page, color, kind, tileX: x, tileY: y, id });
     }
   };
+  const addTunnelPortal = (start: [number, number], end: [number, number], bottom: number, top: number, x: number, y: number): void => {
+    const portalHeight = top - bottom;
+    if (portalHeight <= 0) return;
+    const positionAlongEdge = (fraction: number): [number, number] => [
+      start[0] + (end[0] - start[0]) * fraction,
+      start[1] + (end[1] - start[1]) * fraction,
+    ];
+    const outerStart = positionAlongEdge(0.12);
+    const innerStart = positionAlongEdge(0.21);
+    const innerEnd = positionAlongEdge(0.79);
+    const outerEnd = positionAlongEdge(0.88);
+    const topBeamBottom = top - Math.min(1, portalHeight * 0.18);
+    const earth = [0.48, 0.37, 0.28, 1] as const;
+    const lintel = [0.58, 0.46, 0.35, 1] as const;
+    const portalPoint = (position: [number, number], height: number): Vertex => point(position[0], position[1], height);
+    addQuad([
+      portalPoint(outerStart, bottom), portalPoint(innerStart, bottom),
+      portalPoint(innerStart, top), portalPoint(outerStart, top),
+    ], "tunnel-portal", x, y, earth, undefined, undefined, undefined, undergroundLevel);
+    addQuad([
+      portalPoint(innerEnd, bottom), portalPoint(outerEnd, bottom),
+      portalPoint(outerEnd, top), portalPoint(innerEnd, top),
+    ], "tunnel-portal", x, y, earth, undefined, undefined, undefined, undergroundLevel);
+    addQuad([
+      portalPoint(innerStart, topBeamBottom), portalPoint(innerEnd, topBeamBottom),
+      portalPoint(innerEnd, top), portalPoint(innerStart, top),
+    ], "tunnel-portal", x, y, lintel, undefined, undefined, undefined, undergroundLevel);
+  };
   const addFlatPolygon = (polygon: readonly HeightPoint[], level: number, kind: Triangle["kind"], x: number, y: number, color: Triangle["color"], frame?: AtlasFrame, depthBias = 0): void => {
     if (polygon.length < 3) return;
     const vertices = polygon.map(({ x: worldX, y: worldY }) => {
@@ -305,12 +333,22 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
       const neighborIndex = (ny * width + nx) * 6;
       const adjacent = nx >= 0 && ny >= 0 && nx < width && ny < height ? [world.surfaces[neighborIndex + [3,0,1,2][edge]], world.surfaces[neighborIndex + [2,3,0,1][edge]]] : [0,0];
       const mapEdge = nx < 0 || ny < 0 || nx >= width || ny >= height;
+      let neighborOpening: [number, number] | undefined;
       if (!mapEdge) {
         const neighborCorners = world.surfaces.subarray(neighborIndex, neighborIndex + 4);
-        const neighborOpening = (carved.get(ny * width + nx) ?? []).find(([, top]) => neighborCorners.every((corner) => top >= corner));
+        neighborOpening = (carved.get(ny * width + nx) ?? []).find(([, top]) => neighborCorners.every((corner) => top >= corner));
         if (neighborOpening) {
           adjacent[0] = Math.min(adjacent[0], neighborOpening[0]);
           adjacent[1] = Math.min(adjacent[1], neighborOpening[0]);
+        }
+      }
+      if (opening && !mapEdge && !neighborOpening) {
+        const connectedSpan = (carved.get(ny * width + nx) ?? []).find(([neighborBottom, neighborTop]) =>
+          neighborTop > opening[0] && neighborBottom < opening[1]);
+        if (connectedSpan) {
+          const portalBottom = Math.max(opening[0], connectedSpan[0]);
+          const portalTop = Math.min(Math.min(...corners), connectedSpan[1]);
+          addTunnelPortal(positions[edge], positions[next], portalBottom, portalTop, x, y);
         }
       }
       if (!mapEdge && exposedCorners[edge] <= adjacent[0] && exposedCorners[next] <= adjacent[1]) continue;

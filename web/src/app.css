@@ -87,6 +87,8 @@ main {
   scrollbar-color: var(--ink-faint) var(--transparent);
 }
 .game-dock[hidden] { display: none; }
+.game-dock__tunnel-preview { margin: 0 1rem 0.75rem; color: var(--ink-soft); font-size: 0.8rem; }
+.game-dock__tunnel-preview[hidden] { display: none; }
 /* Room for the day clock and the theme toggle while watching: the bar drops the tick label, then the title, then the tick
    readout as the window narrows. The day clock and the toolbar drop their own extras in between. */
 @media (max-width: 1520px) { .game-bar__tick-label { display: none; } }

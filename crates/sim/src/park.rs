@@ -16,10 +16,11 @@ use crate::state_hash::StateHasher;
 use crate::track::blocks::{
     BlockLayout, BlockManualSearch, BlockPlacementSearch, ThroughputEstimator,
 };
+use crate::track::clearance::TerrainCell;
 use crate::track::construction::Construction;
 use crate::track::{CoasterColors, TrainConfiguration, hybrid_model};
 use crate::world::World;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct DemoCoaster {
     pub circuit: Circuit,
@@ -34,6 +35,9 @@ pub struct Park {
     pub simulation: ParkGuests,
     pub demo_coaster: Option<DemoCoaster>,
     pub construction: Option<Construction>,
+    pub(crate) automatic_tunnel_owners: BTreeMap<TerrainCell, BTreeSet<TunnelOwner>>,
+    pub(crate) manual_tunnel_cells: BTreeSet<TerrainCell>,
+    pub(crate) construction_tunnel_generation: u64,
     pub physics_remainder: u32,
     pub construction_train: Option<(Circuit, Train)>,
     pub construction_message: String,
@@ -63,6 +67,12 @@ pub struct Park {
     pub support_render_cache: BTreeMap<usize, tick::SupportRenderCache>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TunnelOwner {
+    generation: u64,
+    piece_id: usize,
+}
+
 impl Park {
     pub fn new(
         world: World,
@@ -90,6 +100,9 @@ impl Park {
             simulation,
             demo_coaster: None,
             construction: None,
+            automatic_tunnel_owners: BTreeMap::new(),
+            manual_tunnel_cells: BTreeSet::new(),
+            construction_tunnel_generation: 0,
             physics_remainder: 0,
             construction_train: None,
             construction_message: String::new(),
@@ -144,6 +157,24 @@ impl Park {
         hash.write_option(self.construction.as_ref(), |hash, construction| {
             hash.write_u64(construction.state_hash());
         });
+        hash.write_u64(self.construction_tunnel_generation);
+        hash.write_len(self.automatic_tunnel_owners.len());
+        for (cell, owners) in &self.automatic_tunnel_owners {
+            hash.write_u16(cell.x);
+            hash.write_u16(cell.y);
+            hash.write_i16(cell.height);
+            hash.write_len(owners.len());
+            for owner in owners {
+                hash.write_u64(owner.generation);
+                hash.write_len(owner.piece_id);
+            }
+        }
+        hash.write_len(self.manual_tunnel_cells.len());
+        for cell in &self.manual_tunnel_cells {
+            hash.write_u16(cell.x);
+            hash.write_u16(cell.y);
+            hash.write_i16(cell.height);
+        }
         hash.write_u32(self.physics_remainder);
         hash.write_option(
             self.construction_train.as_ref(),

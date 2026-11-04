@@ -36,6 +36,12 @@ pub enum Ground {
     SurfaceSlope,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CellEditError {
+    InvalidCell,
+    UnsupportedScenery,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
     pub x: u16,
@@ -146,6 +152,13 @@ impl World {
 
     pub(crate) fn instance_id(&self) -> usize {
         self.instance_id
+    }
+
+    /// Commits an edited clone while keeping this world's identity for attached simulations.
+    pub(crate) fn commit_candidate(&mut self, mut candidate: Self) {
+        assert_eq!(candidate.dimensions(), self.dimensions());
+        candidate.instance_id = self.instance_id;
+        *self = candidate;
     }
 
     pub fn revision(&self) -> u64 {
@@ -300,6 +313,70 @@ impl World {
             column.carved = remaining;
         }
         self.invalidate_paths(index)
+    }
+
+    /// Applies a batch of one-height terrain edits atomically, preserving scenery support.
+    pub fn carve_cells(
+        &mut self,
+        cells: &[(u16, u16, i16)],
+    ) -> Result<Vec<Position>, CellEditError> {
+        let mut unique_cells = cells.to_vec();
+        unique_cells.sort_unstable();
+        unique_cells.dedup();
+        let mut candidate = self.clone();
+        let scenery = std::mem::take(&mut candidate.scenery);
+        let mut invalidated_paths = Vec::new();
+        for &(x, y, bottom) in &unique_cells {
+            let top = bottom.checked_add(1).ok_or(CellEditError::InvalidCell)?;
+            if x >= self.width || y >= self.height {
+                return Err(CellEditError::InvalidCell);
+            }
+            invalidated_paths.extend(candidate.carve(x, y, bottom, top));
+        }
+        candidate.scenery = scenery;
+        if !candidate
+            .scenery
+            .values()
+            .all(|scenery| candidate.scenery_supported(*scenery))
+        {
+            return Err(CellEditError::UnsupportedScenery);
+        }
+        *self = candidate;
+        invalidated_paths.sort_unstable();
+        invalidated_paths.dedup();
+        Ok(invalidated_paths)
+    }
+
+    /// Applies a batch of one-height terrain edits atomically, preserving scenery support.
+    pub fn fill_cells(
+        &mut self,
+        cells: &[(u16, u16, i16)],
+    ) -> Result<Vec<Position>, CellEditError> {
+        let mut unique_cells = cells.to_vec();
+        unique_cells.sort_unstable();
+        unique_cells.dedup();
+        let mut candidate = self.clone();
+        let scenery = std::mem::take(&mut candidate.scenery);
+        let mut invalidated_paths = Vec::new();
+        for &(x, y, bottom) in &unique_cells {
+            let top = bottom.checked_add(1).ok_or(CellEditError::InvalidCell)?;
+            if x >= self.width || y >= self.height {
+                return Err(CellEditError::InvalidCell);
+            }
+            invalidated_paths.extend(candidate.fill(x, y, bottom, top));
+        }
+        candidate.scenery = scenery;
+        if !candidate
+            .scenery
+            .values()
+            .all(|scenery| candidate.scenery_supported(*scenery))
+        {
+            return Err(CellEditError::UnsupportedScenery);
+        }
+        *self = candidate;
+        invalidated_paths.sort_unstable();
+        invalidated_paths.dedup();
+        Ok(invalidated_paths)
     }
 
     fn path_supported(&self, index: usize, path: Path) -> bool {
