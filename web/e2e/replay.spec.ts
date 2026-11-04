@@ -21,6 +21,10 @@ interface ReplayWorkerOutcome {
 declare global {
   interface Window {
     replayWorkerSession(session: ReplaySession): Promise<ReplayWorkerOutcome>;
+    rendererDrawCalls: number;
+    replayDrawSamples: number[];
+    replayRenderingDone: boolean;
+    replayRenderingError: string | null;
   }
 }
 
@@ -40,10 +44,16 @@ test.beforeAll(async () => {
   const config = {
     configFile: false as const,
     root: "web",
-    publicDir: false as const,
+    publicDir: resolve("web/art/atlas"),
+    define: { __GIT_HASH__: JSON.stringify("replay-test") },
     build: {
       outDir: fixtureOutDir,
-      rollupOptions: { input: resolve("web/e2e/fixtures/session-replay.html") },
+      rollupOptions: {
+        input: {
+          index: resolve("web/index.html"),
+          "session-replay": resolve("web/e2e/fixtures/session-replay.html"),
+        },
+      },
     },
   };
   await build(config);
@@ -137,6 +147,67 @@ test("replays every exported session against the real worker @fast", async ({ pa
       await writeFile(path, `${JSON.stringify({ ...session, checkpoints: outcome.recording.checkpoints }, null, 2)}\n`);
     }
   }
+});
+
+test("the app pauses WebGL drawing while it replays a recorded session @fast", async ({ page }) => {
+  test.setTimeout(120_000);
+  const session = parseReplaySession(JSON.parse(await readFile(resolve("web/e2e/sessions/timber-tumbler-built.json"), "utf8")) as unknown);
+  await page.addInitScript(() => {
+    window.rendererDrawCalls = 0;
+    const prototype = WebGL2RenderingContext.prototype;
+    const drawArrays = prototype.drawArrays;
+    prototype.drawArrays = function (...args) {
+      window.rendererDrawCalls += 1;
+      return drawArrays.apply(this, args);
+    };
+    const drawArraysInstanced = prototype.drawArraysInstanced;
+    prototype.drawArraysInstanced = function (...args) {
+      window.rendererDrawCalls += 1;
+      return drawArraysInstanced.apply(this, args);
+    };
+  });
+
+  const appUrl = new URL("/index.html", fixtureUrl);
+  appUrl.search = new URLSearchParams({
+    test: "1",
+    manualBlockAnalysis: "1",
+    park: session.park,
+    seed: session.seed,
+    agents: String(session.guestCount),
+  }).toString();
+  await page.goto(appUrl.href);
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  const drawsBeforeReplay = await page.evaluate(() => window.rendererDrawCalls);
+
+  await page.evaluate((recordedSession) => {
+    window.replayDrawSamples = [];
+    window.replayRenderingDone = false;
+    window.replayRenderingError = null;
+    const sampleDrawCalls = (): void => {
+      if (window.replayRenderingDone) return;
+      window.replayDrawSamples.push(window.rendererDrawCalls);
+      requestAnimationFrame(sampleDrawCalls);
+    };
+    requestAnimationFrame(sampleDrawCalls);
+    void window.gameTest.replaySession(recordedSession).then(
+      () => { window.replayRenderingDone = true; },
+      (error: unknown) => {
+        window.replayRenderingError = error instanceof Error ? error.message : String(error);
+        window.replayRenderingDone = true;
+      },
+    );
+  }, session);
+  await expect.poll(() => page.evaluate(() => window.replayRenderingDone), { timeout: 120_000 }).toBe(true);
+
+  const replayResult = await page.evaluate(() => ({
+    drawSamples: window.replayDrawSamples,
+    error: window.replayRenderingError,
+  }));
+  expect(replayResult.error).toBeNull();
+  expect(replayResult.drawSamples.length).toBeGreaterThan(1);
+  expect(replayResult.drawSamples.every((count) => count === drawsBeforeReplay)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.rendererDrawCalls), { timeout: 10_000 }).toBeGreaterThan(drawsBeforeReplay);
+  expect(await page.evaluate(() => window.rendererDrawCalls)).toBeGreaterThan(drawsBeforeReplay);
 });
 
 test("reports the first checkpoint after a recorded command changes @fast", async ({ page }) => {

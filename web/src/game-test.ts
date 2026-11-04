@@ -62,6 +62,7 @@ export interface GameTest {
   setSurface(x: number, y: number, corners: [number, number, number, number]): void;
   project(point: WorldPoint): { x: number; y: number };
   pick(x: number, y: number): Pick | null;
+  pickRegion(x: number, y: number, width: number, height: number): (Pick | null)[];
   pickSurface(x: number, y: number): Pick | null;
   /** Sets the time of day, from 0 at midnight through 0.5 at noon. */
   setTimeOfDay(phase: number): void;

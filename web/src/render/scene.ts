@@ -115,9 +115,13 @@ export function clipGeometryAboveLevel(quads: readonly GeometryQuad[], level: nu
   }));
 }
 
+export function geometryIntersectsViewport(quad: GeometryQuad, viewport: Viewport): boolean {
+  return !(quad.vertices.every((vertex) => vertex.x < 0) || quad.vertices.every((vertex) => vertex.x > viewport.width) || quad.vertices.every((vertex) => vertex.y < 0) || quad.vertices.every((vertex) => vertex.y > viewport.height));
+}
+
 export function appendGeometry(scene: Scene, quads: readonly GeometryQuad[], viewport?: Viewport): void {
   for (const quad of quads) {
-    if (viewport && (quad.vertices.every((vertex) => vertex.x < 0) || quad.vertices.every((vertex) => vertex.x > viewport.width) || quad.vertices.every((vertex) => vertex.y < 0) || quad.vertices.every((vertex) => vertex.y > viewport.height))) continue;
+    if (viewport && !geometryIntersectsViewport(quad, viewport)) continue;
     for (const indices of QUAD_TRIANGLES) scene.triangles.push({
       vertices: indices.map((index) => quad.vertices[index]) as Triangle["vertices"],
       page: quad.page ?? SHAPE_PAGES.flat, color: quad.color, kind: quad.kind, id: quad.id, light: quad.light,
