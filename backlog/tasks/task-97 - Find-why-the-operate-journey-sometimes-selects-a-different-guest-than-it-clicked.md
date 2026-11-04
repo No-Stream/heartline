@@ -3,9 +3,10 @@ id: TASK-97
 title: >-
   Find why the operate journey sometimes selects a different guest than it
   clicked
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-04 13:55'
+updated_date: '2026-11-04 20:13'
 labels:
   - test
   - bug
