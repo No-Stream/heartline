@@ -9,6 +9,11 @@ export function metresToDisplay(metres: number, units: Units): number {
   return units === "imperial" ? metres * FEET_PER_METRE : metres;
 }
 
+export function metresToInput(metres: number, units: Units): number {
+  const value = metresToDisplay(metres, units);
+  return units === "imperial" ? Math.round(value) : value;
+}
+
 export function displayToMetres(value: number, units: Units): number {
   return units === "imperial" ? value * METRES_PER_FOOT : value;
 }
@@ -17,8 +22,9 @@ export function unitLabel(units: Units): "ft" | "m" {
   return units === "imperial" ? "ft" : "m";
 }
 
-export function formatLength(metres: number, units: Units, maximumFractionDigits = 1): string {
-  const value = new Intl.NumberFormat("en-US", { maximumFractionDigits }).format(metresToDisplay(metres, units)).replace("-", "−");
+export function formatLength(metres: number, units: Units, maximumFractionDigits?: number): string {
+  const digits = maximumFractionDigits ?? (units === "imperial" ? 0 : 1);
+  const value = new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(metresToDisplay(metres, units)).replace("-", "−");
   return `${value} ${unitLabel(units)}`;
 }
 
@@ -33,7 +39,8 @@ export function speedUnitLabel(units: Units): "mph" | "km/h" {
 }
 
 export function formatSpeed(metresPerSecond: number, units: Units, maximumFractionDigits = 1): string {
-  const value = new Intl.NumberFormat("en-US", { maximumFractionDigits })
+  const digits = units === "imperial" ? Math.min(maximumFractionDigits, 1) : maximumFractionDigits;
+  const value = new Intl.NumberFormat("en-US", { maximumFractionDigits: digits })
     .format(metresPerSecondToDisplay(metresPerSecond, units))
     .replace("-", "−");
   return `${value} ${speedUnitLabel(units)}`;

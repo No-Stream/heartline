@@ -5,6 +5,7 @@ import {
   formatSpeed,
   metresPerSecondToDisplay,
   metresToDisplay,
+  metresToInput,
   speedUnitLabel,
   unitLabel,
 } from "./units";
@@ -18,16 +19,30 @@ describe("unit conversions", () => {
   });
 
   it("formats lengths with the selected unit and requested precision", () => {
-    expect(formatLength(10, "imperial")).toBe("32.8 ft");
+    expect(formatLength(10, "imperial")).toBe("33 ft");
+    expect(formatLength(10, "imperial", 1)).toBe("32.8 ft");
     expect(formatLength(1234.567, "metric", 2)).toBe("1,234.57 m");
     expect(unitLabel("imperial")).toBe("ft");
     expect(unitLabel("metric")).toBe("m");
+  });
+
+  it("rounds imperial input displays to whole feet and returns valid station heights", () => {
+    for (let stationHeight = 4; stationHeight <= 100; stationHeight += 2) {
+      const displayedFeet = metresToInput(stationHeight, "imperial");
+      const roundTrippedHeight = Math.round(displayToMetres(displayedFeet, "imperial") / 2) * 2;
+      expect(Number.isInteger(displayedFeet)).toBe(true);
+      expect(roundTrippedHeight).toBe(stationHeight);
+    }
+
+    expect(metresToInput(12, "imperial")).toBe(39);
+    expect(metresToInput(12, "metric")).toBe(12);
   });
 
   it("converts and formats speeds in miles or kilometres per hour", () => {
     expect(metresPerSecondToDisplay(12, "imperial")).toBeCloseTo(26.8433);
     expect(metresPerSecondToDisplay(12, "metric")).toBeCloseTo(43.2);
     expect(formatSpeed(12, "imperial")).toBe("26.8 mph");
+    expect(formatSpeed(12, "imperial", 3)).toBe("26.8 mph");
     expect(formatSpeed(12, "metric")).toBe("43.2 km/h");
     expect(speedUnitLabel("imperial")).toBe("mph");
     expect(speedUnitLabel("metric")).toBe("km/h");
