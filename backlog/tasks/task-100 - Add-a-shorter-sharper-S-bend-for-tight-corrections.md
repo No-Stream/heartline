@@ -1,9 +1,10 @@
 ---
 id: TASK-100
 title: 'Add a shorter, sharper S-bend for tight corrections'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-04 16:35'
+updated_date: '2026-11-04 16:57'
 labels: []
 dependencies: []
 priority: high
@@ -18,7 +19,7 @@ Owner approved 2026-11-04. The current S-bend (offset pieces) is too long for ti
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Short S-bend left and right exist with the shorter length and pass curvature continuity checks
-- [ ] #2 Models whose minimum radius forbids it do not offer it
-- [ ] #3 Finish coaster can use it to close circuits it could not close before
+- [x] #1 Short S-bend left and right exist with the shorter length and pass curvature continuity checks
+- [x] #2 Models whose minimum radius forbids it do not offer it
+- [x] #3 Finish coaster can use it to close circuits it could not close before
 <!-- AC:END -->
