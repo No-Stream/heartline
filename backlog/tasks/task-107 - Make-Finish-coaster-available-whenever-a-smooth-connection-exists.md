@@ -1,9 +1,10 @@
 ---
 id: TASK-107
 title: Make Finish coaster available whenever a smooth connection exists
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-04 17:00'
+updated_date: '2026-11-04 17:54'
 labels: []
 dependencies: []
 priority: high
@@ -18,7 +19,13 @@ Owner playtest 2026-11-04: Finish coaster does not light up when it should. Diag
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Corpus test passes for all cases where a smooth connection exists
-- [ ] #2 Availability updates after every edit
-- [ ] #3 Journeys pass
+- [x] #1 Corpus test passes for all cases where a smooth connection exists
+- [x] #2 Availability updates after every edit
+- [x] #3 Journeys pass
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Search limits: 80 m, up to five pieces, bounded beam; slowest corpus case 3.67 s native release. Not a guarantee every smooth connection is found.
+<!-- SECTION:NOTES:END -->

@@ -259,6 +259,8 @@ fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     let before = simulation.construction_track();
     simulation.construction_finish_search_start();
     while !simulation.construction_finish_search_advance() {}
+    simulation.construction_select("Straight");
+    assert!(simulation.construction_can_finish());
     simulation.construction_finish_preview();
     assert!(
         simulation.construction_finish_preview_active(),
@@ -271,6 +273,19 @@ fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     assert!(!simulation.construction_finish_preview_active());
     assert!(simulation.construction.as_ref().unwrap().is_closed());
     assert_ne!(simulation.construction_track(), before);
+}
+
+#[test]
+fn finish_search_reports_when_the_station_is_missing() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_delete(0);
+    simulation.construction_finish_search_start();
+    assert!(simulation.construction_finish_search_advance());
+    assert_eq!(
+        simulation.construction_finish_reason(),
+        "Place a station before finishing the coaster."
+    );
 }
 
 #[test]
@@ -549,6 +564,35 @@ fn model_selection_controls_new_construction_and_launch_choices() {
 }
 
 #[test]
+fn launch_intensity_changes_hash_and_replays_to_the_same_track_state() {
+    fn built_viper() -> WasmSimulation {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+        simulation.construction_select("model:velocity_viper");
+        simulation.construction_start(200, 200, 20, 0);
+        simulation.construction_select("LaunchShort");
+        simulation.construction_append();
+        assert!(simulation.construction_message().is_empty());
+        simulation
+    }
+
+    let mut simulation = built_viper();
+    let before = simulation.state_hash();
+    assert!(simulation.construction_set_launch_intensity(1, 12.0));
+    assert_ne!(simulation.state_hash(), before);
+    assert!(
+        simulation
+            .construction_track()
+            .contains("\"launchTargetSpeed\":12.0")
+    );
+    let replay_hash = simulation.state_hash();
+    assert!(!simulation.construction_set_launch_intensity(1, 15.4));
+
+    let mut replay = built_viper();
+    assert!(replay.construction_set_launch_intensity(1, 12.0));
+    assert_eq!(replay.state_hash(), replay_hash);
+}
+
+#[test]
 fn rail_distances_follow_placed_rail_intervals_across_pieces() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(simulation.construction_rail_distances().is_empty());
@@ -682,20 +726,20 @@ fn construction_commands_validate_and_preview_without_mutating_on_failure() {
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     assert!(!simulation.construction_placed_rails().is_empty());
     simulation.construction_select("GentleUp");
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     assert!(!simulation.construction_message().is_empty());
     simulation.construction_undo();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
 }
 
@@ -711,14 +755,14 @@ fn deleting_middle_piece_preserves_and_identifies_retained_track() {
     simulation.construction_delete(1);
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":2,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":2,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     let rails = simulation.construction_placed_rails();
     assert!(rails.chunks_exact(19).any(|rail| rail[0] == 2.0));
     simulation.construction_delete(2);
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
 }
 

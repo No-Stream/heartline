@@ -1,10 +1,10 @@
 ---
 id: TASK-84
 title: Tunnel automatically when track goes below ground
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-04 00:28'
-updated_date: '2026-11-04 17:31'
+updated_date: '2026-11-04 17:40'
 labels:
   - coaster
   - world

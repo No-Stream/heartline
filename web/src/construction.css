@@ -12,17 +12,49 @@
 .builder__station .tool-panel__hint { grid-column: 1 / -1; }
 .builder__station-height { display: flex; align-items: center; gap: 0.45rem; }
 
-/* The next piece: a large drawing of the selection and the three attribute steppers. */
+/* Build, Colours and Operate: printed index tabs over the builder's three sections. */
+.builder__tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0.4rem;
+  border-bottom: var(--key-line);
+}
+.builder button[role="tab"] {
+  margin-bottom: -1px;
+  padding: 0.45rem 0.25rem 0.35rem;
+  color: var(--ink-soft);
+  background: var(--transparent);
+  border: 0;
+  border-bottom: 3px solid var(--transparent);
+  border-radius: 0;
+  font: 600 0.92rem/1.2 var(--heading-font);
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.14em;
+  text-transform: lowercase;
+}
+.builder button[role="tab"][aria-selected="true"] { color: var(--ink); border-bottom-color: var(--coral); }
+
+/* The next piece: a large drawing of the selection and the three attribute steppers, with the chain lift beneath. */
 .builder__next {
   display: grid;
   gap: 0.55rem;
+  border-bottom: 0;
+  padding-bottom: 0.3rem;
 }
 .tool-panel__preview-icons { display: flex; gap: 0.2rem; }
 .tool-panel__preview-group { color: var(--ink-soft); }
 .builder__steppers { display: grid; gap: 0.3rem; }
 
-/* The chain lift toggle heads the palette: while it is pressed every new piece is placed as a chain lift. */
-.builder__chain { display: grid; gap: 0.3rem; border-bottom: 0; padding-bottom: 0; }
+/* While the chain lift toggle is pressed every new piece is placed as a chain lift. */
+.builder__chain { display: grid; gap: 0.3rem; padding-top: 0.3rem; }
+
+/* Place and undo sit right under the chosen piece; the choices follow. */
+.builder__place { display: grid; gap: 0.3rem; }
+.builder__place-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; }
+.builder__choices { display: grid; gap: 0.35rem; }
+.builder__choices h3:not(:first-child) { margin-top: 0.6rem; }
+.builder__choices > .tool-panel__hint { margin-top: -0.3rem; }
+.builder__finish { display: grid; gap: 0.45rem; }
 .builder button.builder__chain-toggle {
   display: grid;
   grid-template-columns: auto auto 1fr auto;
@@ -139,12 +171,12 @@
 .piece-icon__bank-exit { stroke: var(--coral); stroke-width: 1.8; }
 .piece-icon__bank-post { stroke: var(--ink-soft); stroke-width: 1; }
 
-/* Actions */
+/* Finish and test: Close circuit and Finish coaster side by side, then Test and Open; the finish explanation spans the row. */
 .builder__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; }
-.builder__ride-controls { grid-column: 1 / -1; display: flex; align-items: end; gap: 0.5rem; }
-.builder__coaster-price { display: grid; gap: 0.25rem; }
-.builder__finish-flow { grid-column: 1 / -1; display: grid; gap: 0.3rem; }
-.builder__finish-flow > [data-finish] { width: 100%; }
+.builder__finish-flow { display: contents; }
+.builder__finish-reason,
+.builder__finish-confirmation { grid-column: 1 / -1; }
+.builder__coaster-price { display: grid; justify-items: start; gap: 0.3rem; }
 .builder__finish-reason { margin: 0; color: var(--ink-soft); font-size: 0.78rem; }
 .builder__finish-confirmation { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; padding: 0.45rem; background: color-mix(in srgb, var(--mustard) 18%, var(--paper)); border: var(--hairline); }
 .builder__finish-confirmation p { grid-column: 1 / -1; margin: 0; font-size: 0.8rem; }

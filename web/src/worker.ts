@@ -11,6 +11,7 @@ import { pathPreviewMessage } from "./render/path-ghost";
 import { SessionRecorder } from "./session-recording";
 import { parseCoasterColors } from "./coaster-colors";
 import { parseTrainLayout, type TrainLayout } from "./train-layout";
+import { shouldInvalidateConstructionFinishSearch } from "./construction-finish-search";
 
 import { sendWorkerMessage, assertNever, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition } from "./protocol";
 import type { BlockReport } from "./construction-protocol";
@@ -18,6 +19,7 @@ import type { TestingReport } from "./coaster-testing";
 import type { GuestDetail } from "./guest-panel/protocol";
 
 const tickRate = 30;
+const finishSearchSliceMs = 4;
 let manualBlockAnalysis = false;
 let simulationPaused = false;
 let gameSpeed = 1;
@@ -150,7 +152,12 @@ function scheduleFinishSearch(): void {
     sendConstruction();
     const advance = (): void => {
       if (generation !== finishSearchGeneration) return;
-      if (simulation.construction_finish_search_advance()) {
+      const deadline = performance.now() + finishSearchSliceMs;
+      let complete = false;
+      do {
+        complete = simulation.construction_finish_search_advance();
+      } while (!complete && performance.now() < deadline);
+      if (complete) {
         finishSearchPending = false;
         sendConstruction();
         if (finishSearchAwaited) {
@@ -250,7 +257,7 @@ workerScope.addEventListener("message", (event) => {
       else sendWorkerMessage(workerScope, { type: "construction-finish-ready" });
       return;
     }
-    if (!["test-resume", "test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode", "construction-finish-preview", "construction-finish-confirm", "construction-finish-cancel"].includes(action.type)) {
+    if (shouldInvalidateConstructionFinishSearch(action)) {
       simulation.construction_finish_invalidate();
       scheduleFinishSearch();
     }
@@ -400,6 +407,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-start": simulation.construction_start(action.x * 2, action.y * 2, action.z / 2, action.heading * 2); break;
         case "construction-select": simulation.construction_select(action.piece); break;
         case "construction-set-chain": simulation.construction_set_chain(action.enabled); break;
+        case "construction-set-launch-intensity": simulation.construction_set_launch_intensity(action.id, action.targetSpeed); break;
         case "construction-append": simulation.construction_append(); break;
         case "construction-undo": simulation.construction_undo(); break;
         case "construction-delete": simulation.construction_delete(action.id); break;

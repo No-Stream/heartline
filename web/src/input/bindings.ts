@@ -34,6 +34,7 @@ export const builderShortcuts = {
   pathRemove: { keys: ["r"], repeat: false, action: { type: "path-remove-mode" } },
   sessionExport: { keys: ["j"], repeat: false, action: { type: "session-export" } },
   gameSpeed: { keys: ["v"], repeat: false, action: { type: "game-speed-cycle" } },
+  soundMute: { keys: ["m"], repeat: false, action: { type: "sound-mute-toggle" } },
   undergroundView: { keys: ["u"], repeat: false, action: { type: "underground-view-toggle" } },
   coasterTool: { keys: ["o"], repeat: false, action: { type: "tool-select", tool: "coaster" } },
   landscapeTool: { keys: ["l"], repeat: false, action: { type: "tool-select", tool: "landscape" } },

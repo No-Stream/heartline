@@ -1,6 +1,9 @@
 //! Fixed-step train motion along placed track, in metres, seconds and kilograms.
 use crate::state_hash::StateHasher;
-use crate::track::{LaunchParameters, Piece, PieceKind, TrackSample, TrainConfiguration, Vec3};
+use crate::track::{
+    LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LaunchParameters, Piece, PieceKind,
+    TrackSample, TrainConfiguration, Vec3,
+};
 
 #[cfg(test)]
 mod tests;
@@ -296,12 +299,8 @@ impl Train {
             let launch = train
                 .launch
                 .expect("launch pieces require model launch parameters");
-            assert!(
-                launch.target_speed.is_finite()
-                    && launch.target_speed > 0.0
-                    && launch.acceleration.is_finite()
-                    && launch.acceleration > 0.0
-            );
+            assert!(launch.target_speed.is_finite() && launch.target_speed > 0.0);
+            assert!(launch.acceleration.is_finite() && launch.acceleration > 0.0);
         }
         assert!(config.car_mass_kg.is_finite() && config.car_mass_kg > 0.0);
         assert!(
@@ -448,8 +447,14 @@ impl Train {
                 acceleration,
             }) = self.controls[index]
             {
-                next_speed =
-                    next_speed.max((previous_speed + acceleration * TIME_STEP).min(target_speed));
+                let target_speed =
+                    target_speed.min(crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+                next_speed = next_speed.max(
+                    (previous_speed
+                        + acceleration.min(LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED)
+                            * TIME_STEP)
+                        .min(target_speed),
+                );
             } else {
                 match circuit.pieces[index].kind {
                     PieceKind::Lift => next_speed = self.config.lift_speed,
@@ -457,10 +462,26 @@ impl Train {
                         let launch = self
                             .launch
                             .expect("launch parameters validated at construction");
-                        next_speed = next_speed.max(
-                            (previous_speed + launch.acceleration * TIME_STEP)
-                                .min(launch.target_speed),
-                        );
+                        if let Some(target_speed) = circuit.pieces[index].launch_target_speed {
+                            let target_speed = target_speed
+                                .min(crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+                            let remaining_distance = (circuit.starts[index]
+                                + circuit.pieces[index].length()
+                                - self.distance)
+                                .max(TIME_STEP * self.speed.max(1.0));
+                            let acceleration = ((target_speed.powi(2) - previous_speed.powi(2))
+                                .max(0.0)
+                                / (2.0 * remaining_distance))
+                                .min(LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED);
+                            next_speed = next_speed.max(
+                                (previous_speed + acceleration * TIME_STEP).min(target_speed),
+                            );
+                        } else {
+                            next_speed = next_speed.max(
+                                (previous_speed + launch.acceleration * TIME_STEP)
+                                    .min(launch.target_speed),
+                            );
+                        }
                     }
                     PieceKind::Brakes | PieceKind::Station => {
                         let target = if circuit.pieces[index].kind == PieceKind::Brakes {

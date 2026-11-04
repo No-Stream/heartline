@@ -155,9 +155,17 @@ async function setPrice(options: {
   await expect(options.input).toHaveValue(String(options.price));
 }
 
+/** Show one of the coaster builder's tabs: Build for track, Colours for paint, Operate for price, trains and blocks. */
+export async function showBuilderTab(page: Page, tab: "Build" | "Colours" | "Operate"): Promise<void> {
+  const button = page.getByRole("tablist", { name: "Coaster builder sections" }).getByRole("tab", { name: tab, exact: true });
+  if (await button.getAttribute("aria-selected") !== "true") await button.click();
+  await expect(button).toHaveAttribute("aria-selected", "true");
+}
+
 /** Enter the coaster ticket price in its visible control. */
 export async function setCoasterTicketPrice(page: Page, price: number): Promise<void> {
   await openTool(page, "Coaster");
+  await showBuilderTab(page, "Operate");
   await setPrice({
     input: page.getByRole("spinbutton", { name: "Coaster ticket price" }),
     price,
@@ -286,5 +294,6 @@ export async function testRide(page: Page): Promise<void> {
 }
 
 export async function openRide(page: Page): Promise<void> {
+  await showBuilderTab(page, "Build");
   await page.getByRole("button", { name: "Open coaster" }).click();
 }

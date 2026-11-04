@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   displayToMetres,
+  displaySpeedToMetresPerSecond,
   formatLength,
   formatSpeed,
   metresPerSecondToDisplay,
@@ -41,10 +42,19 @@ describe("unit conversions", () => {
   it("converts and formats speeds in miles or kilometres per hour", () => {
     expect(metresPerSecondToDisplay(12, "imperial")).toBeCloseTo(26.8433);
     expect(metresPerSecondToDisplay(12, "metric")).toBeCloseTo(43.2);
+    expect(displaySpeedToMetresPerSecond(26.8432355, "imperial")).toBeCloseTo(12);
+    expect(displaySpeedToMetresPerSecond(43.2, "metric")).toBeCloseTo(12);
     expect(formatSpeed(12, "imperial")).toBe("26.8 mph");
     expect(formatSpeed(12, "imperial", 3)).toBe("26.8 mph");
     expect(formatSpeed(12, "metric")).toBe("43.2 km/h");
     expect(speedUnitLabel("imperial")).toBe("mph");
     expect(speedUnitLabel("metric")).toBe("km/h");
+  });
+
+  it("converts nonzero launch speed bounds for both unit systems", () => {
+    expect(metresPerSecondToDisplay(3, "metric")).toBeCloseTo(10.8);
+    expect(metresPerSecondToDisplay(3, "imperial")).toBeCloseTo(6.7108);
+    expect(metresPerSecondToDisplay(240 / 3.6, "metric")).toBeCloseTo(240);
+    expect(metresPerSecondToDisplay(240 / 3.6, "imperial")).toBeCloseTo(149.129);
   });
 });

@@ -1,7 +1,32 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { validateBlockAnalysisBudget } from "../game-test";
+import type { ConstructionState } from "../construction-protocol";
+import type { WorkerAction, WorkerMessage } from "../protocol";
 
-const wasmMock = vi.hoisted(() => ({ initialize: vi.fn(), construct: vi.fn(), tick: vi.fn(), pieceShapes: vi.fn(() => "[]"), pathPreview: vi.fn(), pathBuild: vi.fn(), pathRemove: vi.fn(), constructionActive: vi.fn(() => false), setChain: vi.fn(), constructionTrainPoses: vi.fn(() => new Float32Array()), advanceBlockAnalysis: vi.fn((_budget: number) => false), blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}') }));
+const wasmMock = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  construct: vi.fn(),
+  tick: vi.fn(),
+  pieceShapes: vi.fn(() => "[]"),
+  pathPreview: vi.fn(),
+  pathBuild: vi.fn(),
+  pathRemove: vi.fn(),
+  constructionActive: vi.fn(() => false),
+  setChain: vi.fn(),
+  setLaunchIntensity: vi.fn(),
+  constructionSelect: vi.fn(),
+  constructionAppend: vi.fn(),
+  constructionUndo: vi.fn(),
+  constructionDelete: vi.fn(),
+  constructionTrackLength: 0,
+  finishAvailable: false,
+  finishInvalidate: vi.fn(),
+  finishSearchStart: vi.fn(),
+  finishSearchAdvance: vi.fn(() => true),
+  constructionTrainPoses: vi.fn(() => new Float32Array()),
+  advanceBlockAnalysis: vi.fn((_budget: number) => false),
+  blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}'),
+}));
 
 it("rejects block analysis budgets outside the supported range", () => {
   expect(() => validateBlockAnalysisBudget(1)).not.toThrow();
@@ -53,18 +78,23 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_coaster_income() { return 0; }
     construction_block_report_json() { return wasmMock.blockReport(); }
     construction_train_count() { return 1; }
-    construction_start() { wasmMock.constructionActive.mockReturnValue(true); }
+    construction_start() { wasmMock.constructionActive.mockReturnValue(true); wasmMock.constructionTrackLength = 1; }
+    construction_select(piece: string) { wasmMock.constructionSelect(piece); }
+    construction_append() { wasmMock.constructionAppend(); wasmMock.constructionTrackLength += 1; }
+    construction_undo() { wasmMock.constructionUndo(); wasmMock.constructionTrackLength -= 1; }
+    construction_delete(id: number) { wasmMock.constructionDelete(id); wasmMock.constructionTrackLength -= 1; }
     construction_advance_block_analysis(budget: number) { return wasmMock.advanceBlockAnalysis(budget); }
     construction_choices() { return "[]"; }
     construction_elements() { return "[]"; }
     construction_selected() { return ""; }
-    construction_track() { return "[]"; }
+    construction_track() { return JSON.stringify(Array.from({ length: wasmMock.constructionTrackLength }, (_, id) => ({ id, label: "Straight", name: "Straight", group: "straight", slope: "level", kind: "track" }))); }
     construction_rails() { return new Float32Array(); }
     construction_ties() { return new Float32Array(); }
     construction_supports() { return new Float32Array(); }
     construction_active() { return wasmMock.constructionActive(); }
     construction_chain() { return this.chain; }
     construction_set_chain(enabled: boolean) { wasmMock.setChain(enabled); this.chain = enabled; }
+    construction_set_launch_intensity(id: number, targetSpeed: number) { wasmMock.setLaunchIntensity(id, targetSpeed); return true; }
     construction_colors() { return wasmMock.constructionActive() ? this.colors : "null"; }
     construction_train_layout() { return wasmMock.constructionActive() ? JSON.stringify({ model: "velocity_viper", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }) : "null"; }
     construction_set_colors(track: string, supports: string, trains: string) { this.colors = JSON.stringify({ track, supports, trains }); }
@@ -78,11 +108,11 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_test_report_json() { return "null"; }
     construction_can_test() { return false; }
     construction_finish_preview_active() { return false; }
-    construction_can_finish() { return false; }
-    construction_finish_reason() { return ""; }
-    construction_finish_search_start() {}
-    construction_finish_search_advance() { return true; }
-    construction_finish_invalidate() {}
+    construction_can_finish() { return wasmMock.finishAvailable; }
+    construction_finish_reason() { return wasmMock.finishAvailable ? "" : "Checking for a connection to the station."; }
+    construction_finish_search_start() { wasmMock.finishSearchStart(); wasmMock.finishAvailable = false; }
+    construction_finish_search_advance() { return wasmMock.finishSearchAdvance(); }
+    construction_finish_invalidate() { wasmMock.finishInvalidate(); wasmMock.finishAvailable = false; }
     construction_finish_preview() {}
     construction_finish_confirm() {}
     construction_finish_cancel() {}
@@ -106,6 +136,16 @@ afterEach(() => {
   wasmMock.blockReport.mockReset().mockReturnValue('{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}');
   wasmMock.constructionActive.mockReset().mockReturnValue(false);
   wasmMock.setChain.mockReset();
+  wasmMock.setLaunchIntensity.mockReset();
+  wasmMock.constructionSelect.mockReset();
+  wasmMock.constructionAppend.mockReset();
+  wasmMock.constructionUndo.mockReset();
+  wasmMock.constructionDelete.mockReset();
+  wasmMock.constructionTrackLength = 0;
+  wasmMock.finishAvailable = false;
+  wasmMock.finishInvalidate.mockReset();
+  wasmMock.finishSearchStart.mockReset();
+  wasmMock.finishSearchAdvance.mockReset().mockReturnValue(true);
 });
 
 it("sends block analysis progress without rebuilding construction geometry", async () => {
@@ -316,6 +356,70 @@ it("sends chain changes to the simulation and publishes the resulting state", as
   await Promise.resolve();
   expect(postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0].chain).toBe(false);
   expect(wasmMock.setChain.mock.calls).toEqual([[true], [false]]);
+});
+
+it("records launch intensity commands with their target speed for session replay", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "new", guestCount: 1, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-set-launch-intensity", id: 7, targetSpeed: 48.2 } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "export-session", requestId: 5 } } as MessageEvent);
+  await Promise.resolve();
+
+  expect(wasmMock.setLaunchIntensity.mock.calls).toEqual([[7, 48.2]]);
+  const recording = postMessage.mock.calls.find(([message]) => message.type === "session-export")?.[0].recording;
+  expect(recording.commands.at(-1)).toEqual({ tick: 0, command: { type: "construction-set-launch-intensity", id: 7, targetSpeed: 48.2 } });
+});
+
+it("publishes finish availability after track edits without invalidating it on selection", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  wasmMock.finishSearchAdvance.mockImplementation(() => {
+    wasmMock.finishAvailable = true;
+    return true;
+  });
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 0, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+
+  const dispatchAndFlush = async (action: WorkerAction): Promise<void> => {
+    onMessage({ data: action } as MessageEvent);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+  };
+  const latestConstructionState = (): ConstructionState | undefined => postMessage.mock.calls
+    .map(([message]) => message as WorkerMessage)
+    .filter((message): message is ConstructionState => message.type === "construction-state")
+    .at(-1);
+
+  await dispatchAndFlush({ type: "construction-start", x: 0, y: 0, z: 0, heading: 0 });
+  expect(latestConstructionState()?.canFinish).toBe(true);
+  expect(wasmMock.finishSearchStart).toHaveBeenCalledTimes(1);
+
+  await dispatchAndFlush({ type: "construction-select", piece: "Straight" });
+  expect(latestConstructionState()?.canFinish).toBe(true);
+  expect(wasmMock.finishInvalidate).toHaveBeenCalledTimes(1);
+  expect(wasmMock.finishSearchStart).toHaveBeenCalledTimes(1);
+
+  const trackEdits: WorkerAction[] = [
+    { type: "construction-append" },
+    { type: "construction-undo" },
+    { type: "construction-delete", id: 0 },
+  ];
+  for (const action of trackEdits) {
+    await dispatchAndFlush(action);
+    expect(latestConstructionState()?.canFinish).toBe(true);
+  }
+  expect(wasmMock.finishInvalidate).toHaveBeenCalledTimes(4);
+  expect(wasmMock.finishSearchStart).toHaveBeenCalledTimes(4);
 });
 
 it("sends coaster colours to the simulation and publishes them parsed, with the demo coaster's in the first world", async () => {

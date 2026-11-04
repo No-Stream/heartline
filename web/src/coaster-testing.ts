@@ -150,7 +150,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   inspect(index: number): void;
   inspectProximity(index: number): void;
 } {
-  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><p data-rating></p>
+  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><p data-rating></p><ul data-launch-results aria-label="Launch exit speeds"></ul>
     <p data-height-summary hidden>Maximum height above ground (sampled): <span data-report-maximum-height></span> · Biggest drop (sampled): <span data-report-drop-height></span></p>
     <label>Track overlay <select data-metric><option value="off">Off</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
     <div data-legend hidden><span data-low></span> <span data-gradient aria-hidden="true" style="display:inline-block;width:100px;height:10px"></span> <span data-high></span></div>
@@ -193,6 +193,13 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     const heightSummary = container.querySelector<HTMLElement>("[data-height-summary]")!;
     notes.textContent = report ? report.notes.map((note) => formatTestingNote(note, activeUnits)).join(" ") || "No concerns were noted during this test." : "Run a test to see the results.";
     rating.textContent = report?.rating ? `Excitement: ${number(report.rating.excitement)} · Intensity: ${number(report.rating.intensity)} · Nausea: ${number(report.rating.nausea)}` : "";
+    const launchResults = container.querySelector<HTMLElement>("[data-launch-results]")!;
+    launchResults.replaceChildren(...(report?.launches ?? []).map((launch) => {
+      const item = document.createElement("li");
+      item.textContent = `Launch ${launch.pieceIndex + 1} exit speed: ${formatSpeed(launch.exitSpeed, activeUnits)}`;
+      return item;
+    }));
+    launchResults.hidden = launchResults.childElementCount === 0;
     let summary: RideHeightSummary | null = null;
     if (report?.samples.length) {
       if (!world) throw new Error("Ride testing report requires a world snapshot");
