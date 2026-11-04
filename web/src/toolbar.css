@@ -53,8 +53,14 @@
 .theme-toggle { flex: none; padding: 0 0.3rem; }
 .theme-toggle .theme-toggle__ink { fill: currentColor; }
 
-@media (max-width: 1160px) {
+/* As the window narrows the tabs drop their key hints first, then their names. Icon-only tabs show the key hint again,
+   since there is room and the icon alone does not say which key opens the tool. */
+@media (max-width: 1699px) {
+  .toolbar__tool kbd { display: none; }
+}
+@media (max-width: 1020px) {
   .toolbar__tool span { display: none; }
+  .toolbar__tool kbd { display: inline; }
 }
 @media (max-width: 760px) {
   .toolbar__tool kbd { display: none; }

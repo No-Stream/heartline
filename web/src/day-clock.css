@@ -34,6 +34,9 @@
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
+.day-clock__speed[data-session-export] { display: inline-flex; align-items: center; justify-content: center; }
+.day-clock__export-icon { overflow: visible; }
+.day-clock__export-icon path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .day-clock__speed:hover { background: color-mix(in srgb, var(--mustard) 22%, var(--paper)); }
 
 @media (max-width: 1250px) {

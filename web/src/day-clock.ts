@@ -9,6 +9,7 @@ const MINUTES_PER_DAY = 24 * 60;
 
 const sunIcon = "M10 6.5a3.5 3.5 0 1 0 0.01 0M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M4 4l1.4 1.4M14.6 14.6L16 16M4 16l1.4-1.4M14.6 5.4L16 4";
 const moonIcon = "M13.5 3.2a7 7 0 1 0 3.3 10.4a5.6 5.6 0 0 1-3.3-10.4z";
+const exportIcon = "M10 2.5v10M6 8.5l4 4l4-4M3.5 13.5v3h13v-3";
 
 /**
  * A clock in the game bar with the time of day. While the Watch tool is open it also has a slider to move through the
@@ -23,7 +24,7 @@ export function createDayClock(container: HTMLElement, onScrub: (phase: number) 
       <input class="day-clock__scrub" type="range" min="0" max="${MINUTES_PER_DAY - 1}" step="1" aria-label="Set the time of day" title="Set the time of day" data-day-scrub>
       <button class="day-clock__speed" type="button" aria-label="Day speed" title="How fast the day passes" data-day-speed>×1</button>
       <button class="day-clock__speed" type="button" aria-label="Game speed" title="Game speed (V)" data-game-speed>×1</button>
-      <button class="day-clock__speed" type="button" title="Export session (J)" data-session-export>Export session</button>
+      <button class="day-clock__speed" type="button" aria-label="Export session" title="Export session (J)" data-session-export><svg class="day-clock__export-icon" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="${exportIcon}"/></svg></button>
     </span>`;
   const time = container.querySelector<HTMLOutputElement>("[data-day-time]")!;
   const controls = container.querySelector<HTMLElement>("[data-day-controls]")!;
