@@ -638,8 +638,9 @@ fn lift_drop_circuit_completes_lap() {
         ("GentleUp", true),
         ("GentleUpToLevel", true),
         ("Straight", true),
-        ("Straight", false),
-        ("Straight", false),
+        ("OneTileStraight", false),
+        ("OneTileStraight", false),
+        ("OffsetLeft", false),
         ("TurnLargeEntry", false),
         ("TurnLargeExit", false),
         ("LevelToGentleDown", false),
@@ -650,8 +651,12 @@ fn lift_drop_circuit_completes_lap() {
         ("GentleDown", false),
         ("GentleDownToLevel", false),
         ("Loop", false),
+        ("OffsetRight", false),
         ("TurnLargeEntry", false),
         ("TurnLargeExit", false),
+        ("Straight", false),
+        ("OneTileStraight", false),
+        ("OneTileStraight", false),
     ] {
         simulation.construction_set_chain(chain);
         simulation.construction_select(piece);
@@ -709,8 +714,9 @@ fn opening_after_a_completed_test_clears_the_report() {
         ("GentleUp", true),
         ("GentleUpToLevel", true),
         ("Straight", true),
-        ("Straight", false),
-        ("Straight", false),
+        ("OneTileStraight", false),
+        ("OneTileStraight", false),
+        ("OffsetLeft", false),
         ("TurnLargeEntry", false),
         ("TurnLargeExit", false),
         ("LevelToGentleDown", false),
@@ -721,8 +727,12 @@ fn opening_after_a_completed_test_clears_the_report() {
         ("GentleDown", false),
         ("GentleDownToLevel", false),
         ("Loop", false),
+        ("OffsetRight", false),
         ("TurnLargeEntry", false),
         ("TurnLargeExit", false),
+        ("Straight", false),
+        ("OneTileStraight", false),
+        ("OneTileStraight", false),
     ] {
         simulation.construction_set_chain(chain);
         simulation.construction_select(piece);

@@ -382,15 +382,23 @@ fn energy_conservation_and_repeatable_full_lap() {
 }
 
 #[test]
-fn vertical_loop_g_matches_local_radius() {
+fn vertical_loop_g_uses_curvature_projected_onto_rider_up() {
     let loop_piece = catalog()
         .into_iter()
         .find(|piece| piece.id == PieceId::Loop)
         .unwrap();
     for distance in [loop_piece.length() * 0.05, loop_piece.length() * 0.5] {
         let sample = loop_piece.sample(distance);
+        let delta = 0.01;
+        let before_distance = distance - delta;
+        let after_distance = distance + delta;
+        let tangent_before = loop_piece.sample(before_distance).tangent;
+        let tangent_after = loop_piece.sample(after_distance).tangent;
+        let curvature_along_rider_up =
+            (tangent_after - tangent_before).dot(sample.up) / (after_distance - before_distance);
+        assert!(curvature_along_rider_up > 0.0);
+        let expected = sample.up.z + 20.0_f64.powi(2) * curvature_along_rider_up / GRAVITY;
         let g = rider_g(&loop_piece, distance, 20.0, 0.0);
-        let expected = sample.up.z + 400.0 * sample.curvature / GRAVITY;
         assert!(
             (g.vertical - expected).abs() < 0.01,
             "{g:?} versus {expected}"

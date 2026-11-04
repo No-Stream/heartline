@@ -111,8 +111,9 @@ pub fn demo_circuit() -> Circuit {
         GentleUp,
         GentleUpToLevel,
         Straight,
-        Straight,
-        Straight,
+        OneTileStraight,
+        OneTileStraight,
+        OffsetLeft,
         TurnLargeEntry,
         TurnLargeExit,
         LevelToGentleDown,
@@ -123,8 +124,12 @@ pub fn demo_circuit() -> Circuit {
         GentleDown,
         GentleDownToLevel,
         Loop,
+        OffsetRight,
         TurnLargeEntry,
         TurnLargeExit,
+        Straight,
+        OneTileStraight,
+        OneTileStraight,
     ] {
         let mut piece = catalog
             .iter()

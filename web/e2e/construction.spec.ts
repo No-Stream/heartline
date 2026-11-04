@@ -45,9 +45,10 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   await expect(track.locator("li")).toHaveCount(1);
   const pieces = [
     "LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel",
-    "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
+    "Straight", "OneTileStraight", "OneTileStraight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit",
     "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown",
-    "GentleDownToLevel", "Loop", "TurnLargeEntry", "TurnLargeExit",
+    "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit",
+    "Straight", "OneTileStraight", "OneTileStraight",
   ];
   for (const [index, piece] of pieces.entries()) {
     if (index === 0 || index === 8) await page.keyboard.press("h");
@@ -159,7 +160,7 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   await expect(page.getByText("No airtime")).toBeVisible();
   await page.getByRole("button", { name: "Delete Begin gentle climb, piece 2" }).click();
   await expect(track.locator("li")).toHaveCount(pieces.length, { timeout: 30_000 });
-  await expect(track.locator("li").last()).toContainText("End large left turn");
+  await expect(track.locator("li").last()).toContainText("One-tile straight");
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeDisabled();
   await expect(page.getByText("Complete the circuit and make it longer than the train to test your coaster.")).toBeVisible();
   await expect(page.getByLabel("Track overlay")).toBeDisabled();
@@ -331,8 +332,9 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
     "GentleUp",
     "GentleUpToLevel",
     "Straight",
-    "Straight",
-    "Straight",
+    "OneTileStraight",
+    "OneTileStraight",
+    "OffsetLeft",
     "TurnLargeEntry",
     "TurnLargeExit",
     "LevelToGentleDown",
@@ -343,7 +345,11 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
     "GentleDown",
     "GentleDownToLevel",
     "Loop",
+    "OffsetRight",
     "TurnLargeEntry",
+    "TurnLargeExit",
+    "Straight",
+    "OneTileStraight",
   ];
 
   await expect(track).toHaveCount(1);

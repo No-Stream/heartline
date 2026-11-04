@@ -25,6 +25,47 @@ fn start() -> TrackState {
 }
 
 #[test]
+fn vertical_loops_offer_mirrored_choices_for_each_model() {
+    for (model, left_name, right_name) in [
+        (hybrid_model(), "Loop", "LoopRight"),
+        (crate::track::multi_launch_model(), "Loop", "LoopRight"),
+        (
+            crate::track::wooden_twister_model(),
+            "SteelLoop",
+            "SteelLoopRight",
+        ),
+    ] {
+        let construction = Construction::new(start(), model);
+        let choices = construction.choices(&world(), &[]);
+        let left = choices
+            .iter()
+            .find(|choice| format!("{:?}", choice.id) == left_name)
+            .unwrap();
+        let right = choices
+            .iter()
+            .find(|choice| format!("{:?}", choice.id) == right_name)
+            .unwrap();
+        let left = templates()
+            .iter()
+            .find(|piece| piece.id == left.id)
+            .unwrap();
+        let right = templates()
+            .iter()
+            .find(|piece| piece.id == right.id)
+            .unwrap();
+        assert_eq!(left.exit.y, -right.exit.y);
+        assert_ne!(left.exit.y, 0);
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let a = left.sample(left.length() * fraction);
+            let b = right.sample(right.length() * fraction);
+            assert!((a.position.x - b.position.x).abs() < 1e-6);
+            assert!((a.position.y + b.position.y).abs() < 1e-6);
+            assert!((a.position.z - b.position.z).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
 fn briar_blitz_choices_after_vertical_exit() {
     let world = world();
     let mut construction = Construction::new(
@@ -1198,7 +1239,7 @@ fn completion_connects_a_sloped_approach() {
 }
 
 #[test]
-fn completion_finishes_the_lift_powered_circuit_after_large_turn_entry() {
+fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
     use PieceId::*;
     let world = world();
     let mut construction = Construction::new(TrackState { z: 36, ..start() }, hybrid_model());
@@ -1218,8 +1259,9 @@ fn completion_finishes_the_lift_powered_circuit_after_large_turn_entry() {
     }
     construction.set_chain(false);
     for id in [
-        Straight,
-        Straight,
+        OneTileStraight,
+        OneTileStraight,
+        OffsetLeft,
         TurnLargeEntry,
         TurnLargeExit,
         LevelToGentleDown,
@@ -1230,18 +1272,22 @@ fn completion_finishes_the_lift_powered_circuit_after_large_turn_entry() {
         GentleDown,
         GentleDownToLevel,
         Loop,
+        OffsetRight,
         TurnLargeEntry,
+        TurnLargeExit,
+        Straight,
+        OneTileStraight,
     ] {
         construction.append(id, &world, &[]).unwrap();
     }
     let mut expected = construction.copy_for_completion();
-    expected.append(TurnLargeExit, &world, &[]).unwrap();
+    expected.append(OneTileStraight, &world, &[]).unwrap();
     assert_eq!(expected.end(), expected.start());
     expected.close().unwrap();
     let completion = construction
         .find_completion(&world, &[])
-        .expect("large turn exit");
-    assert_eq!(completion.pieces, [TurnLargeExit]);
+        .expect("one-tile straight");
+    assert_eq!(completion.pieces, [OneTileStraight]);
     construction
         .apply_completion(&completion, &world, &[])
         .unwrap();

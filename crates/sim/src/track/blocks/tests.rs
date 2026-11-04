@@ -2,6 +2,73 @@ use crate::physics::demo_circuit;
 use crate::track::blocks::brake_runs;
 
 #[test]
+fn automatic_search_finds_two_trains_on_loop_boarding_circuit() {
+    use crate::track::{PieceId::*, PieceKind, TrackState, catalog, hybrid_model};
+    let ids = [
+        Station,
+        LevelToGentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUpToLevel,
+        Straight,
+        Straight,
+        Straight,
+        OffsetLeft,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LevelToGentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Loop,
+        OffsetRight,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ];
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::new();
+    for id in ids {
+        let mut piece = catalog()
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        if (1..=8).contains(&pieces.len()) {
+            piece.kind = PieceKind::Lift;
+        }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let circuit = crate::physics::Circuit::new(pieces).unwrap();
+    let config = crate::physics::PhysicsConfig {
+        lift_speed: 5.0,
+        ..Default::default()
+    };
+    let mut search =
+        super::BlockPlacementSearch::new(circuit, hybrid_model().train, config).unwrap();
+    while !search.is_complete()
+        && search.best().capacity() < 2
+        && search.work_completed() < 4_000_000
+    {
+        search.advance(5_000);
+    }
+    assert!(
+        search.best().capacity() >= 2,
+        "capacity {}, candidates {}, work {}",
+        search.best().capacity(),
+        search.candidates.len(),
+        search.work_completed()
+    );
+}
+
+#[test]
 fn automatic_search_finds_two_trains_on_browser_circuit() {
     use crate::track::{PieceId, TrackState, catalog, hybrid_model};
     let ids = [
@@ -1224,7 +1291,31 @@ fn powered_sections_get_a_candidate_at_their_end() {
 
 #[test]
 fn rejects_brakes_that_cannot_stop_an_approaching_train() {
-    let circuit = demo_circuit();
+    use crate::physics::Circuit;
+    use crate::track::{PieceId, TrackState, catalog};
+
+    let mut ids = vec![PieceId::Station];
+    ids.extend([PieceId::Straight; 6]);
+    ids.extend([PieceId::TurnLargeEntry, PieceId::TurnLargeExit]);
+    ids.extend([PieceId::Straight; 7]);
+    ids.extend([PieceId::TurnLargeEntry, PieceId::TurnLargeExit]);
+    let catalog = catalog();
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::with_capacity(ids.len());
+    for (index, id) in ids.into_iter().enumerate() {
+        let mut piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        if matches!(index, 1 | 2) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let circuit = Circuit::new(pieces).unwrap();
     let train = crate::track::hybrid_model().train;
     let runs = brake_runs(&circuit, train.length_metres);
     let boundary = runs
