@@ -7,7 +7,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction generate-report-types check-report-types
+.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction generate-report-types check-report-types generate-profiles
 
 install:
 	npm ci
@@ -23,6 +23,9 @@ generate-report-types:
 
 check-report-types:
 	$(CARGO) test -p theme-park-sim-wasm --lib generated_types_are_current
+
+generate-profiles:
+	UPDATE_SOLVED_PROFILES=1 $(CARGO) test -p theme-park-sim --lib track::profile::tests::solved_profiles_are_current
 
 # The CLI version must match the wasm-bindgen crate version in Cargo.lock.
 wasm-bindgen:

@@ -79,6 +79,7 @@ fn ascent_profile() -> Vec<Point> {
             });
         }
     }
+    points.last_mut().unwrap().curvature = 0.0;
     points
 }
 
@@ -134,6 +135,7 @@ fn descent_profile(mut speed_squared: f64, descent_minimum_g: f64) -> Vec<Point>
             });
         }
     }
+    points.last_mut().unwrap().curvature = 0.0;
     points
 }
 

@@ -892,7 +892,7 @@ fn block_suggestion_does_not_point_across_a_loop_without_a_candidate() {
 
 #[test]
 fn throughput_cache_distinguishes_different_brake_runs_at_the_same_boundary() {
-    let mut pieces = super::demo_circuit().pieces().to_vec();
+    let mut pieces = block_test_circuit().pieces().to_vec();
     pieces
         .iter_mut()
         .find(|piece| piece.id == PieceId::Straight)

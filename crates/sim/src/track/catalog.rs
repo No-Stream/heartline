@@ -1,6 +1,6 @@
 use std::sync::{Arc, LazyLock};
 
-use super::profile::{ProfileSpec, SolvedProfile, snap_full_loop, snap_half_loop, snap_pull};
+use super::profile::{SolvedProfile, embedded_profile};
 use super::roll::RollGeometry;
 use super::{
     Bank, Heading, Heartlining, HorizontalCurvature, Inversion, Material, Piece, PieceId,
@@ -22,34 +22,17 @@ fn build_catalog() -> Vec<Piece> {
         UpSteep,
     };
     static HALF_LOOP: LazyLock<Arc<SolvedProfile>> =
-        LazyLock::new(|| Arc::new(snap_half_loop(&ProfileSpec::half_loop(31.3, 4.2, 1.5))));
-    static LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> = LazyLock::new(|| {
-        Arc::new(snap_full_loop(
-            &ProfileSpec::full_loop(27.5, 4.2, 1.5).named("Loop"),
-        ))
-    });
-    static LARGE_LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> = LazyLock::new(|| {
-        Arc::new(snap_full_loop(
-            &ProfileSpec::full_loop(31.3, 4.2, 1.5).named("LargeLoop"),
-        ))
-    });
-    static STEEL_LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> = LazyLock::new(|| {
-        Arc::new(snap_full_loop(
-            &ProfileSpec::full_loop(27.0, 3.7, 1.0).named("SteelLoop"),
-        ))
-    });
-    static SIXTY_PULL: LazyLock<Arc<SolvedProfile>> = LazyLock::new(|| {
-        Arc::new(snap_pull(
-            &ProfileSpec::pull(0.0, std::f64::consts::PI / 3.0, 34.0, 4.2).named("LevelToSixtyUp"),
-        ))
-    });
-    static SIXTY_CREST: LazyLock<Arc<SolvedProfile>> = LazyLock::new(|| {
-        Arc::new(snap_pull(
-            &ProfileSpec::crest(std::f64::consts::PI / 3.0, 0.0, 30.0, -1.45)
-                .with_taper_angle(0.1)
-                .named("SixtyUpToLevel"),
-        ))
-    });
+        LazyLock::new(|| Arc::new(embedded_profile("HalfLoop")));
+    static LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("Loop")));
+    static LARGE_LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("LargeLoop")));
+    static STEEL_LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("SteelLoop")));
+    static SIXTY_PULL: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("SixtyPull")));
+    static SIXTY_CREST: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("SixtyCrest")));
     static FULL_CORKSCREW: LazyLock<Arc<RollGeometry>> =
         LazyLock::new(|| Arc::new(RollGeometry::general_helix_for_connector()));
     static HALF_CORKSCREW: LazyLock<Arc<RollGeometry>> =
@@ -65,17 +48,8 @@ fn build_catalog() -> Vec<Piece> {
     });
     static BANKED_DROP: LazyLock<Arc<RollGeometry>> =
         LazyLock::new(|| Arc::new(RollGeometry::spline()));
-    static FIFTEEN_PULL: LazyLock<Arc<SolvedProfile>> = LazyLock::new(|| {
-        Arc::new(snap_pull(
-            &ProfileSpec::pull(
-                std::f64::consts::PI / 4.0,
-                std::f64::consts::PI / 3.0,
-                34.0,
-                4.2,
-            )
-            .named("SteepToSixtyUp"),
-        ))
-    });
+    static FIFTEEN_PULL: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("FifteenPull")));
     let standard_loop_exit_x = (LOOP_PROFILE.endpoint()[0] / 2.0).round() as i32;
     let definitions = [
         (

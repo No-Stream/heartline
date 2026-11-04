@@ -67,7 +67,7 @@ fn station_backed_prefix_refusals_are_world_bounds_at_four_and_twelve_metres() {
     ];
 
     for z in [2, 6] {
-        let at_recorded_start = construction_with_prefix(&world, 50, 50, z, &prefix);
+        let at_recorded_start = construction_with_prefix(&world, 54, 42, z, &prefix);
         assert_eq!(
             (at_recorded_start.end().x, at_recorded_start.end().y),
             (250, 2)
@@ -93,7 +93,7 @@ fn station_backed_prefix_refusals_are_world_bounds_at_four_and_twelve_metres() {
             }
         }
 
-        let translated_inward = construction_with_prefix(&world, 16, 64, z, &prefix);
+        let translated_inward = construction_with_prefix(&world, 20, 56, z, &prefix);
         assert_eq!(
             (translated_inward.end().x, translated_inward.end().y),
             (216, 16)

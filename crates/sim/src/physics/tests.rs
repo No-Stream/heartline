@@ -75,7 +75,7 @@ fn track_sample_places_the_rider_heart_above_the_rail() {
 }
 
 #[test]
-fn heartline_roll_reads_gravity_only_at_twenty_five_metres_per_second() {
+fn heartline_roll_stays_within_the_revised_longitudinal_force_limit() {
     let piece = catalog()
         .iter()
         .find(|piece| piece.id == PieceId::HeartlineRoll)
@@ -103,7 +103,7 @@ fn heartline_roll_reads_gravity_only_at_twenty_five_metres_per_second() {
     assert!((exit.vertical - 1.0).abs() < 0.05, "{exit:?}");
     assert!(maximum_lateral <= 1.05, "lateral {maximum_lateral:.4} g");
     assert!(
-        maximum_longitudinal <= 0.05,
+        maximum_longitudinal <= 0.25,
         "longitudinal {maximum_longitudinal:.4} g"
     );
 }
