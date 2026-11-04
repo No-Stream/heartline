@@ -37,6 +37,15 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     construction_coaster_price() { return 0; }
     construction_coaster_income() { return 0; }
     construction_active() { return false; }
+    construction_finish_preview_active() { return false; }
+    construction_can_finish() { return false; }
+    construction_finish_reason() { return ""; }
+    construction_finish_search_start() {}
+    construction_finish_search_advance() { return true; }
+    construction_finish_invalidate() {}
+    construction_finish_preview() {}
+    construction_finish_confirm() {}
+    construction_finish_cancel() {}
     set_world_surface(x: number, y: number, corners: Int16Array, water: number | undefined) {
       return workerMock.setSurface(x, y, corners, water);
     }

@@ -70,6 +70,15 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_can_close() { return false; }
     construction_test_report_json() { return "null"; }
     construction_can_test() { return false; }
+    construction_finish_preview_active() { return false; }
+    construction_can_finish() { return false; }
+    construction_finish_reason() { return ""; }
+    construction_finish_search_start() {}
+    construction_finish_search_advance() { return true; }
+    construction_finish_invalidate() {}
+    construction_finish_preview() {}
+    construction_finish_confirm() {}
+    construction_finish_cancel() {}
     construction_is_open() { return false; }
     construction_station_positions() { return new Int32Array(); }
   },
