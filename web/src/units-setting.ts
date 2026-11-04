@@ -1,4 +1,5 @@
 import "./toolbar.css";
+import type { InputAction } from "./input/actions";
 import type { Units } from "./units";
 
 const storageKey = "theme-park-sim.units";
@@ -27,7 +28,7 @@ const unitNames: Record<Units, { short: string; long: string }> = {
 };
 
 /** A small toggle in the game bar between feet and metres, remembered per viewer where browser storage allows. */
-export function createUnitsSetting(container: HTMLElement, changed: (units: Units) => void): { units(): Units } {
+export function createUnitsSetting(container: HTMLElement, dispatch: (action: InputAction) => void): { units(): Units; setUnits(units: Units): void } {
   let units: Units = storedUnits() ?? "imperial";
   container.innerHTML = `<button class="theme-toggle units-toggle" type="button" aria-label="Units" data-units></button>`;
   const button = container.querySelector<HTMLButtonElement>("[data-units]");
@@ -40,10 +41,14 @@ export function createUnitsSetting(container: HTMLElement, changed: (units: Unit
   };
   show();
   button.addEventListener("click", () => {
-    units = units === "imperial" ? "metric" : "imperial";
-    storeUnits(units);
-    show();
-    changed(units);
+    dispatch({ type: "units-set", units: units === "imperial" ? "metric" : "imperial" });
   });
-  return { units: () => units };
+  return {
+    units: () => units,
+    setUnits(next) {
+      units = next;
+      storeUnits(next);
+      show();
+    },
+  };
 }

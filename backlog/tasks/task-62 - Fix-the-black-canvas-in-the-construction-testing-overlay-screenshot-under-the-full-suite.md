@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-03 19:49'
-updated_date: '2026-11-04 10:01'
+updated_date: '2026-11-04 13:07'
 labels:
   - test
   - rendering
@@ -39,4 +39,6 @@ Focused render-persistence browser tests passed 2/2; TypeScript typecheck, web p
 2026-11-03 night: clean full make ci runs at f631a95 and b8dfac1 (two of the three needed; both under the new resource budget).
 
 2026-11-04: clean full make ci at c30aa7e (also f631a95 and b8dfac1, but gates in between failed for other reasons, so the three are not consecutive yet).
+
+2026-11-04: clean full make ci at 8ab45d4, the second consecutive clean gate after c30aa7e (no full gate ran in between).
 <!-- SECTION:NOTES:END -->

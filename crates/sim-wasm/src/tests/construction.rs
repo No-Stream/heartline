@@ -181,6 +181,56 @@ fn elements_preview_the_full_sequence_append_atomically_and_undo_together() {
 }
 
 #[test]
+fn construction_selects_the_sixty_degree_continuation_after_steep_to_sixty_transition() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_set_chain(true);
+    simulation.construction_select("element:climb-45");
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_message()
+    );
+    simulation.construction_append();
+
+    simulation.construction_select("SteepToSixtyUp");
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_message()
+    );
+    simulation.construction_append();
+
+    assert_eq!(simulation.construction_selected(), "SixtyUp");
+}
+
+#[test]
+fn construction_falls_back_to_the_first_valid_piece_without_a_straight_continuation() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_select("BankLeft");
+    simulation.construction_append();
+
+    let choices: serde_json::Value =
+        serde_json::from_str(&simulation.construction_choices()).unwrap();
+    let choices = choices.as_array().unwrap();
+    assert!(!choices.iter().any(|choice| {
+        choice["heading"] == "East"
+            && choice["slope"] == "Level"
+            && choice["bank"] == "Left"
+            && choice["refusal"].as_str().unwrap().is_empty()
+    }));
+    let first_valid = choices
+        .iter()
+        .find(|choice| choice["refusal"].as_str().unwrap().is_empty())
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+
+    assert_eq!(simulation.construction_selected(), first_valid);
+}
+
+#[test]
 fn chain_mode_marks_every_piece_in_an_element_as_a_lift() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);

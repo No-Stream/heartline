@@ -50,6 +50,19 @@ const pagePoints = [{ x: 0.05, y: 0.95 }, { x: 0.95, y: 0.95 }, { x: 0.5, y: 0.9
 const parkPoints = [{ x: 0.5, y: 0.7 }, { x: 0.5, y: 0.2 }];
 
 test.describe("dark interface", () => {
+  test("the theme toggle works while the atlas is still loading", async ({ page }) => {
+    let releaseAtlas: () => void = () => {};
+    const atlasReleased = new Promise<void>((resolve) => { releaseAtlas = resolve; });
+    await page.route("**/atlas.json", async (route) => {
+      await atlasReleased;
+      await route.continue();
+    });
+    await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+    await themeToggle(page).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    releaseAtlas();
+    await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  });
   test("stays light without a system preference", async ({ page }) => {
     await startGame(page);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");

@@ -33,7 +33,7 @@ use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlaceme
 use theme_park_sim::track::clearance::ClearanceBox;
 use theme_park_sim::track::construction::{
     Completion, CompletionSearch, CompletionSearchProgress, Construction, ElementChoice,
-    track_support_obstacles,
+    PieceChoice, track_support_obstacles,
 };
 use theme_park_sim::track::proximity::ProximityKind;
 #[cfg(test)]
@@ -103,6 +103,35 @@ enum ConstructionModel {
     WoodenTwister,
 }
 
+fn same_track_orientation(first: TrackState, second: TrackState) -> bool {
+    first.heading == second.heading
+        && first.slope == second.slope
+        && first.bank == second.bank
+        && first.horizontal_curvature == second.horizontal_curvature
+        && first.vertical_curvature == second.vertical_curvature
+}
+
+fn default_construction_piece(
+    available: &[(Piece, PieceChoice)],
+    connector: TrackState,
+) -> Option<PieceId> {
+    let mut first_valid = None;
+    for (piece, choice) in available {
+        if choice.result.is_err() {
+            continue;
+        }
+        first_valid.get_or_insert(piece.id);
+        if piece.inversion.is_none()
+            && matches!(piece.kind, PieceKind::Track | PieceKind::Lift)
+            && same_track_orientation(piece.entry, connector)
+            && same_track_orientation(piece.exit, connector)
+        {
+            return Some(piece.id);
+        }
+    }
+    first_valid
+}
+
 #[cfg(test)]
 use theme_park_sim::park::block_analysis::block_physics_config;
 #[cfg(test)]
@@ -158,10 +187,7 @@ impl WasmSimulation {
         {
             return;
         }
-        self.selected = available
-            .into_iter()
-            .find(|(_, choice)| choice.result.is_ok())
-            .map(|(piece, _)| piece.id);
+        self.selected = default_construction_piece(&available, construction.end());
     }
     fn construction_render(
         &self,

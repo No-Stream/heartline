@@ -1,9 +1,10 @@
 ---
 id: TASK-59
 title: Centralise projection and depth and split renderer stages
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-03 16:47'
+updated_date: '2026-11-04 13:09'
 labels:
   - refactor
   - rendering
@@ -26,3 +27,9 @@ Rendering review findings and browser review: the rotated projection and depth e
 - [ ] #1 One tested projection and depth function used everywhere; renderer inputs, stateful stages and resource setup are separated in small changes
 - [ ] #2 Behaviour is unchanged unless stated, and the relevant tests pass while editing, with make ci green at the end
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-04: Codex job task-mw24un3c-aiw1d5, worktree renderer-stages; must stay pixel-identical.
+<!-- SECTION:NOTES:END -->

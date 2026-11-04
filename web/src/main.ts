@@ -1,20 +1,24 @@
+import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick } from "./world-picking";
+import { createStationTool } from "./station-tool";
+import { createFacilityTool } from "./facility-tool";
+import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
+import { createRenderRevision } from "./render-revision";
+import { composeScene } from "./compose-scene";
 import { sendWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterSnapshot } from "./protocol";
 import "./print-modern.css";
 import "./app.css";
-import { buildFacilityGeometry, facilitySprites, type Facility, type FacilityKind } from "./facilities";
+import type { Facility } from "./facilities";
 import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
 import type { CameraAction, InputAction } from "./input/actions";
 import { constructionRiderPositions, validateBlockAnalysisBudget, type FrameLogEntry, type GameTest, type SnapshotArrivalEntry } from "./game-test";
 import { blockLayoutChanged } from "./block-analysis-progress";
-import { createWorldRenderer, loadAtlas, type AtmospherePass, type WorldView, type WorldSprite } from "./render/index";
-import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, lightingAt, NOON, printOnBackdrop, START_PHASE, sunAt } from "./render/daylight";
-import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst } from "./render/effects";
+import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from "./render/index";
+import { advanceDayPhase, NOON, START_PHASE } from "./render/daylight";
+import { CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
-import { buildPeople, riderAppearances } from "./render/people";
-import { buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle } from "./render/track/geometry";
-import { buildRiderQuads, buildTrainQuads } from "./render/track/trains";
+import { trackStyle } from "./render/track/geometry";
 import type { TrainLayout } from "./train-layout";
 import type { CoasterColorScheme } from "./coaster-colors";
 import { createStaticTrackCache } from "./render/track/cache";
@@ -23,19 +27,17 @@ import { createConstructionPanel } from "./construction";
 import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
 import { followTrackEnd, railPoints } from "./construction-camera";
 import { createConstructionEffects } from "./construction-effects";
-import { buildGhostQuads } from "./render/track/ghost";
-import { buildBlockBoundaryQuads, nearestBlockBoundaryMetres } from "./render/track/blocks";
+import { nearestBlockBoundaryMetres } from "./render/track/blocks";
 import { createGuestPanel } from "./guest-panel/guest-panel";
 import type { GuestDetail } from "./guest-panel/protocol";
-import { buildSelectionRing } from "./guest-panel/selection-ring";
 import { createPathTool, type PathToolMessage } from "./path-tool";
 import { createPathPanel } from "./path-panel";
 import { pathTileFromPick } from "./path-picking";
-import { buildPathGhostQuads, decodePathPreview, pathPreviewRefusalAt } from "./render/path-ghost";
-import { buildProximityMarkers, buildTestingRibbon, createTestingPanel, type TestingMetric } from "./coaster-testing";
-import { buildLandscapingGhostQuads, createLandscapingTool, type TerrainEditResult } from "./landscaping-tool";
+import { decodePathPreview, pathPreviewRefusalAt } from "./render/path-ghost";
+import { createTestingPanel, type TestingMetric } from "./coaster-testing";
+import { createLandscapingTool, type TerrainEditResult } from "./landscaping-tool";
 import { createLandscapingPanel } from "./landscaping-panel";
-import { buildSceneryGhostQuads, createSceneryTool, scenerySprites, type Scenery } from "./scenery-tool";
+import { createSceneryTool, type Scenery } from "./scenery-tool";
 import { createSceneryPanel } from "./scenery-panel";
 import { createToolbar, type Tool } from "./toolbar";
 import { createThemeToggle } from "./theme";
@@ -49,14 +51,16 @@ import { createUnitsSetting } from "./units-setting";
 declare const __GIT_HASH__: string;
 
 interface RecordedInput { action: InputAction; time: number; tick: number; viewport: Viewport; camera: Camera }
+const renderRevision = createRenderRevision();
 const inputLog: RecordedInput[] = [];
 let sessionExportRequest = 0;
 const pendingSessionExports = new Map<number, RecordedInput[]>();
+const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group", "delete-mode-toggle", "chain-toggle"]);
 
 const themeToggleContainer = document.querySelector<HTMLElement>("[data-theme-toggle]");
 if (!themeToggleContainer) throw new Error("Theme toggle is missing");
 // Created before the atlas loads, so a stored choice applies as early as possible.
-const themeToggle = createThemeToggle(themeToggleContainer, () => { gameTest.ready = false; });
+const themeToggle = createThemeToggle(themeToggleContainer, dispatch, () => { renderRevision.invalidate(); });
 const canvas = document.querySelector<HTMLCanvasElement>("canvas");
 const tickOutput = document.querySelector<HTMLOutputElement>("[data-testid='tick-count']");
 if (!canvas || !tickOutput) throw new Error("Game page elements are missing");
@@ -80,7 +84,6 @@ let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
 const renderClock = new RenderClock<CoasterSnapshot>(30);
-const noGeometry = new Float32Array();
 let frozen = new URLSearchParams(location.search).has("test");
 const frameLogEnabled = new URLSearchParams(location.search).get("frameLog") === "1";
 const frameLogEntries: FrameLogEntry[] = [];
@@ -97,48 +100,20 @@ let selectedBlock: number | null = null;
 function blockAt(position: { x: number; y: number }): number | null {
   if (activeTool !== "coaster") return null;
   const pick = renderer.pick(position.x, position.y);
-  const match = pick && "id" in pick ? /^block-boundary-(\d+)$/.exec(pick.id) : null;
-  return match ? Number(match[1]) : null;
+  return blockBoundaryIndexFromPick(pick);
 }
 function selectBlock(index: number | null): void {
   selectedBlock = index;
   panel.setSelectedBlock(index);
-  gameTest.ready = false;
+  renderRevision.invalidate();
 }
 let deleteMode = false;
-let stationPlacement = false;
-let stationHeight = 12;
-let station: { x: number; y: number; z: number; heading: number; locked: boolean } | undefined;
-const stationDirections = [[1, 0], [0, 1], [-1, 0], [0, -1]] as const;
-function updateStationPreview(position: { x: number; y: number }): void {
-  if (station?.locked) {
-    const origin = projectWorld(screenCamera(), viewport, { x: station.x + 0.5, y: station.y + 0.5, z: (station.z - stationHeight) / 4 });
-    const delta = { x: position.x - origin.x, y: position.y - origin.y };
-    if (Math.hypot(delta.x, delta.y) > 4) {
-      let best = -Infinity;
-      stationDirections.forEach(([dx, dy], index) => {
-        const end = projectWorld(screenCamera(), viewport, { x: station!.x + 0.5 + dx, y: station!.y + 0.5 + dy, z: (station!.z - stationHeight) / 4 });
-        const vx = end.x - origin.x, vy = end.y - origin.y;
-        const score = (delta.x * vx + delta.y * vy) / Math.hypot(vx, vy);
-        if (score > best) { best = score; station!.heading = index; }
-      });
-    }
-  } else {
-    const selection = renderer.pick(position.x, position.y);
-    if (selection?.kind === "terrain" || selection?.kind === "carved-floor") station = { x: selection.x, y: selection.y, z: Math.ceil(selection.height / 2) * 2 + stationHeight, heading: 0, locked: false };
-    else if (!selection || !("id" in selection) || !selection.id.startsWith("preview-")) station = undefined;
-  }
+const stationTool = createStationTool((command) => sendWorkerAction(worker, command), () => {
+  const station = stationTool.state().station;
   gameCanvas.dataset.stationPreview = station ? `${station.x},${station.y},${station.z},${station.heading}` : "";
-  gameTest.ready = false;
-}
-function stationGhost(): Float32Array {
-  if (!stationPlacement || !station) return noGeometry;
-  const [dx, dy] = stationDirections[station.heading];
-  const side = [-dy, dx, 0];
-  const z = station.z / 4;
-  return new Float32Array([-1, station.x - side[0] * 0.18, station.y - side[1] * 0.18, z, ...side, 0, 0, 1, station.x + dx * 4 - side[0] * 0.18, station.y + dy * 4 - side[1] * 0.18, z, ...side, 0, 0, 1,
-    -1, station.x + side[0] * 0.18, station.y + side[1] * 0.18, z, ...side, 0, 0, 1, station.x + dx * 4 + side[0] * 0.18, station.y + dy * 4 + side[1] * 0.18, z, ...side, 0, 0, 1]);
-}
+  renderRevision.invalidate();
+});
+const stationAdapter = stationToolAdapter(stationTool);
 const panelContainer = document.querySelector<HTMLElement>("[data-construction]");
 if (!panelContainer) throw new Error("Construction panel is missing");
 const panel = createConstructionPanel(panelContainer, dispatch);
@@ -150,39 +125,23 @@ let followedPreview = "";
 let lastFrameAt = performance.now();
 let testingMetric: TestingMetric | null = null;
 let testingReportJson = "";
-const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), (metric) => { testingMetric = metric; gameTest.ready = false; });
+const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch);
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
-const guestPanel = createGuestPanel(gameCanvas, {
-  onSelectGuestId(id) {
-    selectedGuestId = id;
-    sendWorkerAction(worker, { type: "guest-detail-request", guestId: id });
-    gameTest.ready = false;
-  },
-  onClose() {
-    selectedGuestId = undefined;
-    sendWorkerAction(worker, { type: "guest-detail-close" });
-    gameTest.ready = false;
-  },
-});
+const guestPanel = createGuestPanel(gameCanvas, { dispatch });
 
 let facilities: Facility[] = [];
 let facilityPanelSnapshot = "";
-let facilityPlacement: { kind: FacilityKind; rotation: number } | undefined;
-let facilityPreviewRequestId = 0;
-let facilityRemoval = false;
+const facilityTool = createFacilityTool((command) => sendWorkerAction(worker, command), () => {
+  const message = facilityTool.state().message;
+  if (message) facilityPanel.message(message);
+});
+const facilityAdapter = facilityToolAdapter(facilityTool);
 let advanceTicksComplete: (() => void) | undefined;
 let advanceBlockAnalysisComplete: (() => void) | undefined;
 const facilityContainer = document.querySelector<HTMLElement>("[data-facilities]");
 if (!facilityContainer) throw new Error("Facility panel is missing");
-const facilityPanel = createFacilityPanel(facilityContainer, { atlas, images }, (kind, rotation) => {
-  openTool("facilities");
-  facilityPreviewRequestId += 1;
-  facilityPlacement = { kind, rotation };
-  facilityRemoval = false;
-}, () => { openTool("facilities"); facilityRemoval = true; facilityPlacement = undefined; },
-() => { facilityPlacement = undefined; facilityRemoval = false; },
-(id, price) => sendWorkerAction(worker, { type: "facility-price", id, price }));
+const facilityPanel = createFacilityPanel(facilityContainer, { atlas, images }, dispatch);
 const pathContainer = document.querySelector<HTMLElement>("[data-paths]");
 if (!pathContainer) throw new Error("Path panel is missing");
 const pathsElement = pathContainer;
@@ -191,17 +150,10 @@ const pathTool = createPathTool((command) => sendWorkerAction(worker, command), 
   const state = pathTool.state();
   const refusal = state.preview && pathHover ? pathPreviewRefusalAt(decodePathPreview(state.preview.paths), pathHover.x, pathHover.y) : null;
   pathPanel.message(refusal ?? state.message);
-  gameTest.ready = false;
+  renderRevision.invalidate();
 });
-const pathPanel = createPathPanel(pathContainer, (selection) => {
-  openTool("paths");
-  followPoints = undefined;
-  pathTool.build(selection);
-}, () => {
-  openTool("paths");
-  followPoints = undefined;
-  pathTool.remove();
-}, () => pathTool.cancel());
+const pathAdapter = pathToolAdapter(pathTool);
+const pathPanel = createPathPanel(pathContainer, dispatch);
 pathContainer.querySelector<HTMLElement>("[data-build]")!.title = `Build paths (${keyHint(builderShortcuts.pathBuild)})`;
 pathContainer.querySelector<HTMLElement>("[data-remove]")!.title = `Remove paths (${keyHint(builderShortcuts.pathRemove)})`;
 let undergroundLevel: number | undefined;
@@ -215,18 +167,19 @@ const landscapingTool = createLandscapingTool((command) => {
     return;
   }
   sendWorkerAction(worker, command);
-}, () => { gameTest.ready = false; });
+}, () => { renderRevision.invalidate(); });
+
+const landscapingAdapter = landscapingToolAdapter(landscapingTool);
 
 let scenery: Scenery[] = [];
 const sceneryContainer = document.querySelector<HTMLElement>("[data-scenery]");
 if (!sceneryContainer) throw new Error("Scenery panel is missing");
 const sceneryTool = createSceneryTool((command) => sendWorkerAction(worker, command), () => {
   sceneryPanel.message(sceneryTool.state().message);
-  gameTest.ready = false;
+  renderRevision.invalidate();
 });
-const sceneryPanel = createSceneryPanel(sceneryContainer, { atlas, images }, (kind, rotation) => {
-  openTool("scenery"); sceneryTool.place(kind, rotation);
-}, () => { openTool("scenery"); sceneryTool.remove(); }, () => sceneryTool.cancel());
+const sceneryAdapter = sceneryToolAdapter(sceneryTool);
+const sceneryPanel = createSceneryPanel(sceneryContainer, { atlas, images }, dispatch);
 
 const dock = document.querySelector<HTMLElement>("[data-dock]");
 const toolbarContainer = document.querySelector<HTMLElement>("[data-toolbar]");
@@ -246,14 +199,11 @@ let crestBursts: CrestBurst[] = [];
 const crestHistory: CrestBurst[] = [];
 function setTimeOfDay(phase: number): void {
   dayPhase = advanceDayPhase(phase, 0, 1);
-  gameTest.ready = false;
+  renderRevision.invalidate();
 }
 const dayClockContainer = document.querySelector<HTMLElement>("[data-day-clock]");
 if (!dayClockContainer) throw new Error("Day clock is missing");
-const dayClock = createDayClock(dayClockContainer, setTimeOfDay, (speed) => { daySpeed = speed; }, (speed) => {
-  renderClock.setSpeed(speed);
-  sendWorkerAction(worker, { type: "set-speed", speed });
-}, () => dispatch({ type: "session-export" }));
+const dayClock = createDayClock(dayClockContainer, dispatch);
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
   const bounds = gameCanvas.getBoundingClientRect();
@@ -267,7 +217,7 @@ function fitCanvas(keepCorner = true): void {
   pixelRatio = width / bounds.width;
   // Keep the top-left corner of the park still, so opening a tool covers the right of the view instead of sliding it.
   if (keepCorner) camera = applyCameraAction(camera, cssViewport(), { type: "pan", dx: (previous.width - bounds.width) / 2, dy: (previous.height - bounds.height) / 2 });
-  gameTest.ready = false;
+  renderRevision.invalidate();
 }
 function watchPixelRatio(): void {
   matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener("change", () => { fitCanvas(); watchPixelRatio(); }, { once: true });
@@ -275,23 +225,23 @@ function watchPixelRatio(): void {
 new ResizeObserver(() => fitCanvas()).observe(gameCanvas);
 watchPixelRatio();
 function inputModeActive(): boolean {
-  return sceneryTool.state().mode !== "inactive" || stationPlacement || deleteMode || facilityPlacement !== undefined || facilityRemoval || pathTool.state().mode !== "inactive" || landscapingTool.state().active;
+  return sceneryTool.state().mode !== "inactive" || stationTool.state().active || deleteMode || facilityTool.state().mode !== "inactive" || pathTool.state().mode !== "inactive" || landscapingTool.state().active;
 }
 function endInputModes(): void {
-  if (sceneryTool.state().mode !== "inactive") sceneryTool.cancel();
-  if (landscapingTool.state().active) landscapingTool.cancel();
-  if (pathTool.state().mode !== "inactive") pathTool.cancel();
-  facilityPreviewRequestId += 1;
-  facilityPlacement = undefined; facilityRemoval = false;
+  if (sceneryTool.state().mode !== "inactive") sceneryAdapter.deactivate();
+  if (landscapingTool.state().active) landscapingAdapter.deactivate();
+  if (pathTool.state().mode !== "inactive") pathAdapter.deactivate();
+  facilityAdapter.deactivate();
   facilityPanel.previewDirection(undefined);
   deleteMode = false; panel.setDeleteMode(false);
-  if (stationPlacement) dispatch({ type: "station-placement", enabled: false });
+  if (stationTool.state().active) dispatch({ type: "station-placement", enabled: false });
 }
 /** Every input mode belongs to one tool, so opening another tool ends it and only the open tool's mode can be active. */
-function openTool(tool: Tool): void {
+function openTool(tool: Tool, activatePanel = true): void {
   if (tool === activeTool) return;
   endInputModes();
   activeTool = tool;
+  if (tool === "coaster") coasterAdapter.activate(undefined); else coasterAdapter.deactivate();
   toolbar.setActive(tool);
   dayClock.setControlsVisible(tool === "none");
   toolDock.hidden = tool === "none";
@@ -299,16 +249,16 @@ function openTool(tool: Tool): void {
   toolDock.scrollTop = 0;
   // Resize now rather than on the next observer callback, so the world is projected onto the new canvas size at once.
   fitCanvas();
-  if (tool === "paths") pathPanel.activate();
-  else if (tool === "landscape") landscapingPanel.activate();
-  else if (tool === "scenery") sceneryPanel.activate();
-  else if (tool === "facilities") facilityPanel.activate();
+  if (activatePanel && tool === "paths") pathPanel.activate();
+  else if (activatePanel && tool === "landscape") landscapingPanel.activate();
+  else if (activatePanel && tool === "scenery") sceneryPanel.activate();
+  else if (activatePanel && tool === "facilities") facilityPanel.activate();
 }
 let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
 let renderedRiders: { id: string; left: number; right: number; top: number; bottom: number }[] = [];
 const gameTest: GameTest = {
-  ready: false,
+  get ready() { return renderRevision.ready(); },
   tickCount() { return current?.tickCount ?? 0; },
   frameLog() { return frameLogEnabled ? frameLogEntries.map((entry) => ({ ...entry })) : []; },
   snapshotArrivals() { return frameLogEnabled ? snapshotArrivalEntries.map((entry) => ({ ...entry })) : []; },
@@ -355,7 +305,7 @@ const gameTest: GameTest = {
     validateBlockAnalysisBudget(budget);
     return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; sendWorkerAction(worker, { type: "test-advance-block-analysis", budget }); });
   },
-  setCamera(value) { camera = value; followPoints = undefined; gameTest.ready = false; },
+  setCamera(value) { camera = value; followPoints = undefined; renderRevision.invalidate(); },
   setSurface(x, y, corners) { sendWorkerAction(worker, { type: "set-surface", x, y, corners: new Int16Array(corners) }); },
   project(point) { return projectWorld(screenCamera(), viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
@@ -375,128 +325,20 @@ function applyUnits(units: Units): void {
   landscapingPanel.setUnits(units);
   guestPanel.setUnits(units);
   testingPanel.setUnits(units);
-  gameTest.ready = false;
+  renderRevision.invalidate();
 }
-const unitsSetting = createUnitsSetting(unitsContainer, applyUnits);
+const unitsSetting = createUnitsSetting(unitsContainer, dispatch);
 applyUnits(unitsSetting.units());
-gameCanvas.addEventListener("webglcontextlost", () => { gameTest.ready = false; });
-gameCanvas.addEventListener("webglcontextrestored", () => { gameTest.ready = false; });
+gameCanvas.addEventListener("webglcontextlost", () => { renderRevision.invalidate(); });
+gameCanvas.addEventListener("webglcontextrestored", () => { renderRevision.invalidate(); });
 toolbar.setActive(activeTool);
 fitCanvas(false);
 
-const coasterActions = new Set<InputAction["type"]>(["piece-step", "piece-group", "delete-mode-toggle", "chain-toggle"]);
-
-function dispatch(action: InputAction): void {
-  inputLog.push({ action: structuredClone(action), time: performance.now(), tick: current?.tickCount ?? 0, viewport: { ...viewport }, camera: { ...camera } });
-  // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
-  if (activeTool !== "coaster" && (coasterActions.has(action.type) || action.type.startsWith("construction-"))) return;
-  if (action.type === "session-export") {
-    const requestId = ++sessionExportRequest;
-    pendingSessionExports.set(requestId, inputLog.slice());
-    sendWorkerAction(worker, { type: "export-session", requestId });
-  } else if (action.type === "game-speed-cycle") {
-    dayClock.cycleGameSpeed();
-  } else if (action.type === "tool-select") {
-    openTool(action.tool);
-  } else if (action.type === "landscaping-activate") {
-    openTool("landscape");
-    followPoints = undefined;
-    landscapingTool.activate(action.selection);
-  } else if (action.type === "landscaping-cancel") {
-    landscapingTool.cancel();
-  } else if (action.type === "underground-view-toggle" || action.type === "underground-view-level") {
-    if (action.type === "underground-view-level") selectedUndergroundLevel = action.level;
-    else undergroundLevel = undergroundLevel === undefined ? selectedUndergroundLevel : undefined;
-    if (undergroundLevel !== undefined) undergroundLevel = selectedUndergroundLevel;
-    landscapingPanel.setUndergroundView(undergroundLevel !== undefined, selectedUndergroundLevel);
-    gameTest.ready = false;
-  } else if (landscapingTool.state().active && (action.type === "hover" || action.type === "select" || action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end" || action.type === "drag-cancel")) {
-    if (action.type === "drag-cancel") landscapingTool.handle(action);
-    else {
-      const pick = action.position ? renderer.pickSurface(action.position.x, action.position.y) : null;
-      let tile: { x: number; y: number; height?: number; corner: "north_west" | "north_east" | "south_east" | "south_west" } | null = null;
-      if (pick && world && action.position && (pick.kind === "terrain" || pick.kind === "carved-floor" || pick.kind === "path")) {
-        const names = ["north_west", "north_east", "south_east", "south_west"] as const;
-        const offsets = [[0, 0], [1, 0], [1, 1], [0, 1]];
-        const surfaceOffset = (pick.y * world.dimensions[0] + pick.x) * 6;
-        const distances = offsets.map(([dx, dy], index) => {
-          const height = pick.kind === "terrain" && undergroundLevel === undefined ? world!.surfaces[surfaceOffset + index] : pick.height;
-          const point = projectWorld(screenCamera(), viewport, { x: pick.x + dx, y: pick.y + dy, z: height / 4 });
-          return Math.hypot(point.x - action.position!.x, point.y - action.position!.y);
-        });
-        const corner = distances.indexOf(Math.min(...distances));
-        tile = { x: pick.x, y: pick.y, ...(undergroundLevel !== undefined ? { height: Math.round(pick.height) } : {}), corner: names[corner] };
-      }
-      landscapingTool.handle({ type: action.type, tile });
-    }
-  } else if (sceneryTool.state().mode !== "inactive" && (action.type === "hover" || action.type === "select")) {
-    const position = action.position;
-    const surface = position ? renderer.pickSurface(position.x, position.y) : null;
-    let tile = null;
-    if (surface && position && surface.kind === "terrain") {
-      const offsets = [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]];
-      const distances = offsets.map(([dx, dy]) => {
-        const point = projectWorld(screenCamera(), viewport, { x: surface.x + dx, y: surface.y + dy, z: surface.height / 4 });
-        return Math.hypot(point.x - position.x, point.y - position.y);
-      });
-      tile = { x: surface.x, y: surface.y, z: Math.round(surface.height), quarter: distances.indexOf(Math.min(...distances)) };
-    }
-    if (action.type === "hover") sceneryTool.hover(tile);
-    else {
-      const selection = renderer.pick(action.position.x, action.position.y);
-      const match = selection && "id" in selection ? /^scenery-(.+)$/.exec(selection.id) : null;
-      sceneryTool.select(tile, match ? match[1] : undefined);
-    }
-  } else if (action.type === "path-build-mode" || action.type === "path-remove-mode") {
-    openTool("paths");
-    pathsElement.querySelector<HTMLButtonElement>(action.type === "path-build-mode" ? "[data-build]" : "[data-remove]")!.click();
-  } else if (pathTool.state().mode !== "inactive" && (action.type === "hover" || action.type === "select" || action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end" || action.type === "drag-cancel")) {
-    if (action.type === "drag-cancel") pathTool.handle(action);
-    else {
-      const pick = action.position && world ? renderer.pickSurface(action.position.x, action.position.y) : null;
-      const tile = world ? pathTileFromPick(pick, world) : null;
-      pathHover = tile;
-      pathTool.handle({ type: action.type, tile });
-    }
-  } else if (action.type === "station-placement") {
-    if (action.enabled) { openTool("coaster"); deleteMode = false; panel.setDeleteMode(false); }
-    stationPlacement = action.enabled;
-    station = undefined;
-    gameCanvas.dataset.stationPreview = "";
-    gameTest.ready = false;
-  } else if (action.type === "station-height") {
-    if (station) station.z += action.height - stationHeight;
-    stationHeight = action.height;
-    gameTest.ready = false;
-  } else if (stationPlacement && action.type === "hover") {
-    if (stationPlacement && action.position) updateStationPreview(action.position);
-    else if (stationPlacement && !station?.locked) { station = undefined; gameCanvas.dataset.stationPreview = ""; gameTest.ready = false; }
-  } else if (facilityPlacement && action.type === "hover") {
-    const surface = action.position ? renderer.pickSurface(action.position.x, action.position.y) : null;
-    const requestId = ++facilityPreviewRequestId;
-    if (surface && (surface.kind === "terrain" || surface.kind === "carved-floor")) {
-      sendWorkerAction(worker, { type: "facility-access-preview", requestId, kind: facilityPlacement.kind, x: surface.x, y: surface.y, height: Math.round(surface.height), rotation: facilityPlacement.rotation });
-    } else facilityPanel.previewDirection(undefined);
-  } else if (action.type === "select" && facilityRemoval) {
-    const selection = renderer.pick(action.position.x, action.position.y);
-    const match = selection && "id" in selection ? /^facility-(\d+)$/.exec(selection.id) : null;
-    if (match) sendWorkerAction(worker, { type: "facility-remove", id: Number(match[1]) });
-    else facilityPanel.message("Choose a facility to remove.");
-  } else if (action.type === "select" && facilityPlacement) {
-    const selection = renderer.pick(action.position.x, action.position.y);
-    if (selection?.kind === "terrain" || selection?.kind === "carved-floor") {
-      const height = Math.round(selection.height);
-      sendWorkerAction(worker, { type: "facility-place", ...facilityPlacement, x: selection.x, y: selection.y, height });
-    }
-    else facilityPanel.message("Choose a flat terrain tile.");
-  } else if (action.type === "select" && stationPlacement) {
-    updateStationPreview(action.position);
-    if (station?.locked) {
-      sendWorkerAction(worker, { type: "construction-start", x: station.x, y: station.y, z: station.z, heading: station.heading });
-      stationPlacement = false;
-      station = undefined;
-      gameCanvas.dataset.stationPreview = "";
-    } else if (station) station.locked = true;
+function handleCoasterPointer(action: InputAction): boolean {
+  if (action.type === "select") {
+    const block = blockAt(action.position);
+    if (block === null) return false;
+    selectBlock(block);
   } else if (action.type === "block-marker-drag-start") {
     selectBlock(blockAt(action.position));
   } else if (action.type === "block-marker-drag-end") {
@@ -516,12 +358,173 @@ function dispatch(action: InputAction): void {
     }
   } else if (action.type === "block-marker-remove") {
     if (selectedBlock !== null) sendWorkerAction(worker, { type: "construction-remove-block", index: selectedBlock });
+  } else return false;
+  return true;
+}
+const coasterAdapter = coasterToolAdapter((action) => {
+  if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") return handleCoasterPointer(action);
+  if (action.type === "chain-toggle") {
+    if (construction?.active) sendWorkerAction(worker, { type: "construction-set-chain", enabled: !construction.chain });
+  } else if (action.type === "construction-delete-mode" || action.type === "delete-mode-toggle") {
+    deleteMode = action.type === "delete-mode-toggle" ? !deleteMode : action.enabled;
+    panel.setDeleteMode(deleteMode);
+    if (deleteMode && stationTool.state().active) dispatch({ type: "station-placement", enabled: false });
+  } else if (action.type === "piece-step" || action.type === "piece-group") {
+    panel.choose(action);
+  } else if (action.type === "construction-set-model") {
+    sendWorkerAction(worker, { type: "construction-select", piece: `model:${action.model}` });
+  } else if (isConstructionAction(action)) {
+    sendWorkerAction(worker, action);
+  } else return false;
+  return true;
+}, handleCoasterPointer);
+
+function dispatch(action: InputAction): void {
+  inputLog.push({ action: structuredClone(action), time: performance.now(), tick: current?.tickCount ?? 0, viewport: { ...viewport }, camera: { ...camera } });
+  // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
+  if (coasterActions.has(action.type) || action.type.startsWith("construction-")) {
+    coasterAdapter.key(action);
+    return;
+  }
+  if (action.type === "session-export") {
+    const requestId = ++sessionExportRequest;
+    pendingSessionExports.set(requestId, inputLog.slice());
+    sendWorkerAction(worker, { type: "export-session", requestId });
+  } else if (action.type === "game-speed-cycle") {
+    const speed = dayClock.cycleGameSpeed();
+    renderClock.setSpeed(speed);
+    sendWorkerAction(worker, { type: "set-speed", speed });
+  } else if (action.type === "tool-select") {
+    openTool(action.tool);
+  } else if (action.type === "day-scrub") {
+    setTimeOfDay(action.phase);
+  } else if (action.type === "day-speed-set") {
+    daySpeed = action.speed;
+    dayClock.setDaySpeed(action.speed);
+  } else if (action.type === "testing-metric-set") {
+    testingMetric = action.metric;
+    testingPanel.setMetric(action.metric);
+    renderRevision.invalidate();
+  } else if (action.type === "theme-set") {
+    themeToggle.setTheme(action.theme);
+    renderRevision.invalidate();
+  } else if (action.type === "units-set") {
+    unitsSetting.setUnits(action.units);
+    applyUnits(action.units);
+  } else if (action.type === "guest-select") {
+    selectedGuestId = action.guestId;
+    sendWorkerAction(worker, { type: "guest-detail-request", guestId: action.guestId });
+    renderRevision.invalidate();
+  } else if (action.type === "guest-close") {
+    selectedGuestId = undefined;
+    guestPanel.close();
+    sendWorkerAction(worker, { type: "guest-detail-close" });
+    renderRevision.invalidate();
+  } else if (action.type === "facility-place-mode") {
+    openTool("facilities", false);
+    facilityAdapter.activate({ mode: "place", kind: action.kind, rotation: action.rotation });
+  } else if (action.type === "facility-remove-mode") {
+    openTool("facilities", false);
+    facilityAdapter.activate({ mode: "remove" });
+  } else if (action.type === "facility-cancel") {
+    facilityAdapter.deactivate();
+  } else if (action.type === "facility-price") {
+    sendWorkerAction(worker, { type: "facility-price", id: action.id, price: action.price });
+  } else if (action.type === "path-build-selection") {
+    openTool("paths", false);
+    followPoints = undefined;
+    pathAdapter.activate({ mode: "build", selection: action.selection });
+  } else if (action.type === "path-remove-selection") {
+    openTool("paths", false);
+    followPoints = undefined;
+    pathAdapter.activate({ mode: "remove" });
+  } else if (action.type === "path-cancel") {
+    pathAdapter.deactivate();
+  } else if (action.type === "scenery-place-mode") {
+    openTool("scenery", false);
+    sceneryAdapter.activate({ mode: "place", kind: action.kind, rotation: action.rotation });
+  } else if (action.type === "scenery-remove-mode") {
+    openTool("scenery", false);
+    sceneryAdapter.activate({ mode: "remove" });
+  } else if (action.type === "scenery-cancel") {
+    sceneryAdapter.deactivate();
+  } else if (action.type === "landscaping-activate") {
+    openTool("landscape", false);
+    followPoints = undefined;
+    landscapingAdapter.activate(action.selection);
+  } else if (action.type === "landscaping-cancel") {
+    landscapingAdapter.deactivate();
+  } else if (action.type === "underground-view-toggle" || action.type === "underground-view-level") {
+    if (action.type === "underground-view-level") selectedUndergroundLevel = action.level;
+    else undergroundLevel = undergroundLevel === undefined ? selectedUndergroundLevel : undefined;
+    if (undergroundLevel !== undefined) undergroundLevel = selectedUndergroundLevel;
+    landscapingPanel.setUndergroundView(undergroundLevel !== undefined, selectedUndergroundLevel);
+    renderRevision.invalidate();
+  } else if (landscapingTool.state().active && (action.type === "hover" || action.type === "select" || action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end" || action.type === "drag-cancel")) {
+    if (action.type === "drag-cancel") landscapingAdapter.drag("cancel", null);
+    else {
+      const pick = action.position ? renderer.pickSurface(action.position.x, action.position.y) : null;
+      const tile = landscapingTileFromPick(pick, world, action.position, screenCamera(), viewport, undergroundLevel);
+      if (action.type === "hover") landscapingAdapter.pointerMove(tile);
+      else if (action.type === "select") landscapingAdapter.click(tile);
+      else landscapingAdapter.drag(action.type === "drag-start" ? "start" : action.type === "drag-move" ? "move" : "end", tile);
+    }
+  } else if (sceneryTool.state().mode !== "inactive" && (action.type === "hover" || action.type === "select")) {
+    const position = action.position;
+    const surface = position ? renderer.pickSurface(position.x, position.y) : null;
+    const tile = sceneryTileFromPick(surface, position, screenCamera(), viewport);
+    if (action.type === "hover") sceneryAdapter.pointerMove({ tile, id: undefined });
+    else {
+      const selection = renderer.pick(action.position.x, action.position.y);
+      sceneryAdapter.click({ tile, id: entityIdFromPick(selection, "scenery") });
+    }
+  } else if (action.type === "path-build-mode" || action.type === "path-remove-mode") {
+    openTool("paths", false);
+    pathsElement.querySelector<HTMLButtonElement>(action.type === "path-build-mode" ? "[data-build]" : "[data-remove]")!.click();
+  } else if (pathTool.state().mode !== "inactive" && (action.type === "hover" || action.type === "select" || action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end" || action.type === "drag-cancel")) {
+    if (action.type === "drag-cancel") pathAdapter.drag("cancel", null);
+    else {
+      const pick = action.position && world ? renderer.pickSurface(action.position.x, action.position.y) : null;
+      const tile = world ? pathTileFromPick(pick, world) : null;
+      pathHover = tile;
+      if (action.type === "hover") pathAdapter.pointerMove(tile);
+      else if (action.type === "select") pathAdapter.click(tile);
+      else pathAdapter.drag(action.type === "drag-start" ? "start" : action.type === "drag-move" ? "move" : "end", tile);
+    }
+  } else if (action.type === "station-placement") {
+    if (action.enabled) {
+      openTool("coaster", false); deleteMode = false; panel.setDeleteMode(false);
+      stationAdapter.activate(undefined);
+    } else stationAdapter.deactivate();
+  } else if (action.type === "station-height") {
+    stationTool.setHeight(action.height);
+  } else if (stationTool.state().active && (action.type === "hover" || action.type === "select")) {
+    const position = action.position;
+    const selection = position ? renderer.pick(position.x, position.y) : null;
+    const tile = selection?.kind === "terrain" || selection?.kind === "carved-floor" ? selection : null;
+    const preserve = !!selection && "id" in selection && selection.id.startsWith("preview-");
+    const pointer = { position, tile, preserve, project: (point: WorldPoint) => projectWorld(screenCamera(), viewport, point) };
+    if (action.type === "hover") stationAdapter.pointerMove(pointer);
+    else stationAdapter.click(pointer);
+  } else if (facilityTool.state().mode !== "inactive" && (action.type === "hover" || action.type === "select")) {
+    const position = action.position;
+    const selection = position ? (action.type === "hover" ? renderer.pickSurface(position.x, position.y) : renderer.pick(position.x, position.y)) : null;
+    const tile = selection?.kind === "terrain" || selection?.kind === "carved-floor" ? selection : null;
+    const pointer = { tile, id: facilityIdFromPick(selection) };
+    if (action.type === "hover") {
+      if (facilityTool.state().mode === "place" && !tile) facilityPanel.previewDirection(undefined);
+      facilityAdapter.pointerMove(pointer);
+    } else facilityAdapter.click(pointer);
+  } else if (action.type === "block-marker-drag-start" || action.type === "block-marker-drag-move" || action.type === "block-marker-drag-end" || action.type === "block-marker-drag-cancel") {
+    const phase = action.type === "block-marker-drag-start" ? "start" : action.type === "block-marker-drag-move" ? "move" : action.type === "block-marker-drag-end" ? "end" : "cancel";
+    coasterAdapter.drag(phase, action);
+  } else if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") {
+    coasterAdapter.key(action);
   } else if (action.type === "select") {
     const selection = renderer.pick(action.position.x, action.position.y);
     gameCanvas.dataset.selection = JSON.stringify(selection);
-    const block = blockAt(action.position);
-    if (block !== null) {
-      selectBlock(block);
+    if (coasterAdapter.click(action)) {
+      // The coaster tool selected a block marker.
     } else if (selection && "id" in selection && selection.kind === "testing") {
       if (selectedBlock !== null) selectBlock(null);
       const eventMatch = /^proximity-(\d+)$/.exec(selection.id);
@@ -534,25 +537,13 @@ function dispatch(action: InputAction): void {
     } else if (selection && "id" in selection && /^guest-\d+$/.test(selection.id)) {
       selectedGuestId = selection.id;
       sendWorkerAction(worker, { type: "guest-detail-request", guestId: selection.id });
-      gameTest.ready = false;
+      renderRevision.invalidate();
     }
-  } else if (action.type === "chain-toggle") {
-    if (construction?.active) sendWorkerAction(worker, { type: "construction-set-chain", enabled: !construction.chain });
-  } else if (action.type === "construction-delete-mode" || action.type === "delete-mode-toggle") {
-    deleteMode = action.type === "delete-mode-toggle" ? !deleteMode : action.enabled;
-    panel.setDeleteMode(deleteMode);
-    if (deleteMode && stationPlacement) dispatch({ type: "station-placement", enabled: false });
   } else if (action.type === "builder-cancel") {
     // Escape first leaves the active input mode, then closes the open tool. An open guest panel takes Escape for itself.
     if (selectedBlock !== null && activeTool === "coaster") selectBlock(null);
     else if (inputModeActive()) endInputModes();
     else if (!selectedGuestId) openTool("none");
-  } else if (action.type === "piece-step" || action.type === "piece-group") {
-    panel.choose(action);
-  } else if (action.type === "construction-set-model") {
-    sendWorkerAction(worker, { type: "construction-select", piece: `model:${action.model}` });
-  } else if (isConstructionAction(action)) {
-    sendWorkerAction(worker, action);
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
     moveCamera(action);
     if (action.type !== "rotate") followPoints = undefined;
@@ -591,11 +582,11 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     link.click();
     URL.revokeObjectURL(url);
   } else if (message.type === "facility-access-preview") {
-    if (facilityPlacement && message.requestId === facilityPreviewRequestId) facilityPanel.previewDirection(message.rotation);
+    if (facilityTool.receivePreview(message.requestId, message.rotation)) facilityPanel.previewDirection(message.rotation);
   } else if (message.type === "scenery") {
     scenery = message.scenery;
     if (message.message) sceneryTool.receive(message.message);
-    gameTest.ready = false;
+    renderRevision.invalidate();
   } else if (message.type === "terrain-result") {
     landscapingTool.receive(message);
     landscapingPanel.message(message.message);
@@ -611,7 +602,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     world = { ...message, coasterGeometry, coasterRails, coasterTies, coasterColors, coasterTrain };
     testingPanel.setWorld(world);
     landscapingTool.setDimensions(world.dimensions[0], world.dimensions[1]);
-    gameTest.ready = false;
+    renderRevision.invalidate();
   } else if (message.type === "test-advanced") {
     advanceTicksComplete?.();
     advanceTicksComplete = undefined;
@@ -626,9 +617,9 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
       facilityPanel.update(facilities, message.revenue);
       facilityPanelSnapshot = panelSnapshot;
     }
-    if (message.placed) facilityPlacement = undefined;
+    if (message.placed) facilityTool.placed();
     if (message.message) facilityPanel.message(message.message);
-    gameTest.ready = false;
+    renderRevision.invalidate();
   } else if (message.type === "piece-shapes") {
     panel.setShapes(message.shapes);
   } else if (message.type === "construction-state" || message.type === "block-analysis-progress") {
@@ -646,7 +637,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     gameCanvas.dataset.blockBoundaries = String(next.blockReport.sections.length);
     const reportJson = JSON.stringify(next.testingReport ?? null);
     if (reportJson !== testingReportJson) { testingReportJson = reportJson; testingPanel.update(next.testingReport ?? null); }
-    if (redraw) gameTest.ready = false;
+    if (redraw) renderRevision.invalidate();
   } else if (message.type === "guest-detail") {
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
@@ -680,7 +671,7 @@ async function replayLiveSession(value: ReplaySession): Promise<void> {
     frozen = false;
     manualBlockAnalysis = false;
     dayTick = undefined;
-    gameTest.ready = false;
+    renderRevision.invalidate();
   } finally {
     replayInProgress = false;
   }
@@ -727,70 +718,42 @@ function frame(now: number): void {
     heightMarkers.style.top = `${anchor.y}px`;
   }
   constructionEffects.active(now);
-  const occupants = renderCurrent ? riderAppearances(renderCurrent, renderCurrent.constructionRiders, atlas) : new Map();
-  const ridingIds = new Set([...occupants.values()].map((occupant) => occupant.id));
-  const people = renderCurrent ? buildPeople(renderPrevious, renderCurrent, interpolation, camera.rotation, atlas).filter((person) => !ridingIds.has(person.id)) : [];
-  renderedGuests = people;
-  const selectedGuest = people.find((guest) => guest.id === selectedGuestId);
-  if (selectedGuest) guestPanel.setAnchor(projectWorld(screenCamera(), viewport, { x: selectedGuest.x, y: selectedGuest.y, z: selectedGuest.height / 4 }));
-  const trainPoses = renderCurrent ? interpolateTrainPoses(renderPrevious?.trainPoses ?? renderCurrent.trainPoses, renderCurrent.trainPoses, interpolation) : new Float32Array();
-  const constructionTrainPoses = renderCurrent ? interpolateTrainPoses(renderPrevious?.constructionTrainPoses ?? renderCurrent.constructionTrainPoses, renderCurrent.constructionTrainPoses, interpolation) : noGeometry;
-  const sprites = [...facilitySprites(facilities, camera.rotation), ...scenerySprites(scenery, camera.rotation), ...people];
-  const view = { ...world, sprites, trainPoses, undergroundLevel };
-  const currentWorld = world;
   dayClock.update(dayPhase);
-  // Test mode holds the simulation still, so effects there are timed from the time of day alone.
-  const effectTick = frozen ? Math.round(dayPhase * DAY_LENGTH_TICKS) : renderFrame?.tick ?? 0;
-  const backdrop = BACKDROPS[themeToggle.theme()];
-  const { lighting, paper } = printOnBackdrop(lightingAt(dayPhase), backdrop);
-  const sun = sunAt(dayPhase);
-  const phase = dayPhase;
-  const atmosphere: AtmospherePass = (renderCamera, renderViewport, renderAtlas, scale) => {
-    const rails = construction ? [currentWorld.coasterRails, construction.placedRails] : [currentWorld.coasterRails];
-    const lights = buildLights({ facilities, rails, sprites, atlas: renderAtlas, scale }, lighting, effectTick, renderCamera, renderViewport);
-    const fireworks = buildFireworks(parkBounds(facilities, rails), lighting, effectTick, renderCamera, renderViewport);
-    const horizonY = projectWorld(renderCamera, renderViewport, { x: currentWorld.dimensions[0] / 2, y: currentWorld.dimensions[1] / 2, z: 0 }).y;
-    return {
-      lighting, horizonY, paper,
-      sky: buildSky(lighting, backdrop, phase, horizonY, renderCamera, renderViewport, renderAtlas, scale),
-      decals: buildShadows(facilities, lighting, sun, renderCamera, renderViewport),
-      lights: lights.bulbs,
-      pools: lights.pools,
-      overlay: buildConfetti(crestBursts, effectTick, renderCamera, renderViewport),
-      sparks: fireworks.sparks,
-      glows: [...lights.glows, ...fireworks.glows],
-    };
-  };
-  renderedRiders = [];
-  renderer.render(view, screenCamera(), frozen ? 0 : Math.floor(now / 250) % 4, [
-    (renderCamera, renderViewport) => buildSceneryGhostQuads(sceneryTool.state().preview, view, renderCamera, renderViewport),
-    (renderCamera, renderViewport) => buildLandscapingGhostQuads(landscapingTool.state().preview, view, renderCamera, renderViewport),
-    (renderCamera, renderViewport) => pathTool.state().preview ? buildPathGhostQuads(decodePathPreview(pathTool.state().preview!.paths), renderCamera, renderViewport) : [],
-    (renderCamera, renderViewport, renderAtlas) => buildFacilityGeometry(facilities, renderCamera, renderViewport, trackStyle(renderAtlas)),
-    (renderCamera, renderViewport, renderAtlas) => buildSelectionRing(selectedGuest, renderCamera, renderViewport, renderAtlas),
-    (renderCamera, renderViewport, renderAtlas, scale) => [
-      ...(currentWorld.coasterColors ? staticTrack(currentWorld.coasterRails, currentWorld.coasterTies, currentWorld.coasterSupports, currentWorld.coasterColors, renderCamera, renderViewport) : []),
-      ...(construction?.colors ? (activeTool === "coaster" && construction.blockReport.sections.length
-        ? buildTrackQuads(construction.placedRails, construction.placedTies, construction.placedSupports, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors), construction.blockReport.sections.map((section) => section.boundaryMetres), construction.railDistances)
-        : builtTrack(construction.placedRails, construction.placedTies, construction.placedSupports, construction.colors, renderCamera, renderViewport)).map((quad) => ({ ...quad, id: `construction-${quad.id}` })) : []),
-      ...(construction && activeTool === "coaster" ? buildBlockBoundaryQuads(construction.placedRails, construction.railDistances, construction.blockReport.sections, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
-      ...buildGhostQuads(stationGhost(), noGeometry, noGeometry, true, renderCamera, renderViewport, trackStyle(renderAtlas)).map((quad) => ({ ...quad, color: [0.25, 0.55, 0.85, 0.55] as const })),
-      ...(construction ? buildGhostQuads(construction.previewRails, construction.previewTies, construction.previewSupports, construction.canAppend, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
-      ...(currentWorld.coasterColors && currentWorld.coasterTrain ? buildTrainQuads(trainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), currentWorld.coasterColors), currentWorld.coasterTrain) : []),
-      ...(construction?.colors && construction.trainLayout ? buildTrainQuads(constructionTrainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors), construction.trainLayout) : []),
-      ...(currentWorld.coasterTrain ? buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale, currentWorld.coasterTrain) : []),
-      ...(construction?.trainLayout ? buildRiderQuads(constructionTrainPoses, renderCamera, renderViewport, renderAtlas, scale, construction.trainLayout, occupants) : []).map((quad) => {
-        renderedRiders.push({ id: quad.id, left: Math.min(...quad.vertices.map((vertex) => vertex.x)), right: Math.max(...quad.vertices.map((vertex) => vertex.x)), top: Math.min(...quad.vertices.map((vertex) => vertex.y)), bottom: Math.max(...quad.vertices.map((vertex) => vertex.y)) });
-        if (quad.id === selectedGuestId) {
-          guestPanel.setAnchor({ x: quad.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4, y: quad.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 4 });
-        }
-        return quad;
-      }),
-      ...(testingMetric && construction?.testingReport ? buildTestingRibbon(construction.testingReport.samples, testingMetric, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
-      ...(construction?.testingReport ? buildProximityMarkers(construction.testingReport.proximityEvents, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
-      ...constructionEffects.quads(now, renderCamera, renderViewport),
-    ],
-  ], atmosphere);
+  const scene = composeScene({
+    world,
+    previous: renderPrevious,
+    current: renderCurrent,
+    interpolation,
+    camera,
+    screenCamera: screenCamera(),
+    viewport,
+    atlas,
+    facilities,
+    scenery,
+    undergroundLevel,
+    construction,
+    activeTool,
+    selectedGuestId,
+    sceneryPreview: sceneryTool.state().preview,
+    landscapingPreview: landscapingTool.state().preview,
+    pathPreview: pathTool.state().preview,
+    stationGhost: () => stationTool.ghost(),
+    testingMetric,
+    constructionEffects,
+    staticTrack,
+    builtTrack,
+    now,
+    frozen,
+    dayPhase,
+    theme: themeToggle.theme(),
+    crestBursts,
+    renderTick: renderFrame?.tick,
+    setGuestAnchor: (point) => guestPanel.setAnchor(point),
+  });
+  renderedGuests = scene.guests;
+  renderedRiders = scene.riders;
+  renderer.render(scene.view, scene.camera, scene.waterFrame, scene.geometryPasses, scene.atmospherePass);
+  const trainPoses = scene.view.trainPoses;
   if (frameLogEnabled && renderCurrent && trainPoses.length >= 11) {
     frameLogEntries.push({
       now,
@@ -802,8 +765,8 @@ function frame(now: number): void {
       trainZ: trainPoses[3],
     });
   }
-  gameCanvas.dataset.drawnAgents = String(people.length);
-  gameTest.ready = renderer.isContextAvailable() && (current?.guestIds.length ?? 0) > 0;
+  gameCanvas.dataset.drawnAgents = String(scene.guests.length);
+  renderRevision.rendered(renderer.isContextAvailable() && (current?.guestIds.length ?? 0) > 0);
 }
 
 
