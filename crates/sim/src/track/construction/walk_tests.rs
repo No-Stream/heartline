@@ -221,14 +221,20 @@ fn refused_append_and_undo_restore_self_obstructed_walk() {
         PieceId::TurnLargeRight,
         PieceId::TurnLargeRightExit,
         PieceId::OffsetLeft,
+        PieceId::HalfTileStraight,
+        PieceId::HalfTileStraight,
     ]
     .map(|id| (id, false));
     let mut construction = rebuild(start, hybrid_model(), &world, &prefix, false);
+    let choices = construction.choices(&world, &[]);
     assert!(
-        construction
-            .choices(&world, &[])
+        choices.iter().all(|choice| choice.result.is_err()),
+        "valid choices: {:?}",
+        choices
             .iter()
-            .all(|choice| choice.result.is_err())
+            .filter(|choice| choice.result.is_ok())
+            .map(|choice| choice.id)
+            .collect::<Vec<_>>()
     );
     assert_refusal_and_undo(&mut construction, &world, &prefix, world_name);
 }

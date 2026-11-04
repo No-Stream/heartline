@@ -274,6 +274,14 @@ pub enum PieceId {
     TightTwisterRight,
     HybridOverbankLeft,
     HybridOverbankRight,
+    HalfTileStraight,
+    FullOffsetLeft,
+    FullOffsetRight,
+    OneTileStraight,
+    OneTileGentleUp,
+    OneTileGentleDown,
+    ShortRise,
+    ShortFall,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {

@@ -662,9 +662,19 @@ pub fn catalog() -> Vec<Piece> {
         pieces.push(piece);
     }
     for (id, name, half_tiles, height, kind) in [
+        (
+            HalfTileStraight,
+            "Half-tile straight",
+            1,
+            0,
+            PieceKind::Track,
+        ),
+        (OneTileStraight, "One-tile straight", 2, 0, PieceKind::Track),
         (LaunchShort, "Short launch", 4, 0, PieceKind::Launch),
         (Launch, "Launch", 8, 0, PieceKind::Launch),
         (LaunchLong, "Long launch", 16, 0, PieceKind::Launch),
+        (ShortRise, "Short rise", 6, 1, PieceKind::Track),
+        (ShortFall, "Short descent", 6, -1, PieceKind::Track),
         (TerrainRise, "Shallow rise", 8, 1, PieceKind::Track),
         (TerrainFall, "Shallow descent", 8, -1, PieceKind::Track),
     ] {
@@ -682,6 +692,35 @@ pub fn catalog() -> Vec<Piece> {
         piece.rebuild_arc();
         pieces.push(piece);
     }
+    for (base, id, name, height) in [
+        (GentleUp, OneTileGentleUp, "One-tile gentle climb", 1),
+        (GentleDown, OneTileGentleDown, "One-tile gentle descent", -1),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == base)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        piece.exit.x = 2;
+        piece.exit.z = height;
+        piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+        piece.rebuild_arc();
+        pieces.push(piece);
+    }
+    let mut full_offset = pieces
+        .iter()
+        .find(|piece| piece.id == OffsetLeft)
+        .unwrap()
+        .clone();
+    full_offset.id = FullOffsetLeft;
+    full_offset.name = "Left full-tile offset";
+    full_offset.exit.y = 2;
+    full_offset.tangent_scale =
+        (full_offset.exit.position() - full_offset.entry.position()).length();
+    full_offset.rebuild_arc();
+    pieces.push(full_offset);
     for (base, id, name) in [
         (Loop, SteelLoop, "Steel-structure loop"),
         (TurnSmallStandalone, TwisterFanLeft, "Left fan turn"),
@@ -803,6 +842,7 @@ pub fn catalog() -> Vec<Piece> {
             "Standalone large right-banked right turn",
         ),
         (OffsetLeft, OffsetRight, "Right half-tile offset"),
+        (FullOffsetLeft, FullOffsetRight, "Right full-tile offset"),
         (Corkscrew, CorkscrewRight, "Right corkscrew"),
         (HeartlineRoll, HeartlineRollRight, "Right heartline roll"),
     ] {

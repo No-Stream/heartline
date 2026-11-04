@@ -965,3 +965,42 @@ fn climbing_turn_choices_validate_and_append_the_matching_slope() {
         assert_eq!(construction.end().slope, slope);
     }
 }
+
+#[test]
+fn closure_with_short_straights_and_full_tile_offsets() {
+    use PieceId::*;
+    let track_world = world();
+    for model in [
+        hybrid_model(),
+        crate::track::multi_launch_model(),
+        crate::track::wooden_twister_model(),
+    ] {
+        let mut construction = Construction::new(start(), model);
+        for (index, id) in [
+            Station,
+            HalfTileStraight,
+            FullOffsetLeft,
+            TurnSmallStandalone,
+            TurnSmallStandalone,
+            Straight,
+            HalfTileStraight,
+            FullOffsetLeft,
+            TurnSmallStandalone,
+            TurnSmallStandalone,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            construction
+                .append(id, &track_world, &[])
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{} rejected {id:?} at {index}: {error:?}",
+                        construction.model().name
+                    )
+                });
+        }
+        assert_eq!(construction.end(), start(), "{}", construction.model().name);
+        construction.close().unwrap();
+    }
+}

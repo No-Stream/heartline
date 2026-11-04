@@ -208,3 +208,52 @@ test("builds a descending banked turn on Briar Blitz from the visible constructi
   await place("UnbankLeft");
   await expect(track).toHaveCount(6);
 });
+
+test("closes a compact circuit with short straights and full-tile offsets @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const track = page.locator("[data-track] li");
+  const closeCircuit = page.getByRole("button", { name: "Close circuit" });
+  const pieces = [
+    "HalfTileStraight",
+    "FullOffsetLeft",
+    "TurnSmallStandalone",
+    "TurnSmallStandalone",
+    "Straight",
+    "HalfTileStraight",
+    "FullOffsetLeft",
+    "TurnSmallStandalone",
+    "TurnSmallStandalone",
+  ];
+
+  await expect(track).toHaveCount(1);
+  await expect(closeCircuit).toBeDisabled();
+  for (const [index, piece] of pieces.entries()) {
+    const choice = choices.locator(`[data-piece="${piece}"]`);
+    await expect(choice).toBeVisible();
+    await choice.click();
+    await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
+    await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
+    await page.getByRole("button", { name: "Place piece" }).click();
+    await expect(track).toHaveCount(index + 2);
+    if (index < pieces.length - 1) await expect(closeCircuit).toBeDisabled();
+  }
+
+  await expect(track.last()).toContainText("Standalone small left turn");
+  await expect(closeCircuit).toBeEnabled();
+  await closeCircuit.click();
+  await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+});
