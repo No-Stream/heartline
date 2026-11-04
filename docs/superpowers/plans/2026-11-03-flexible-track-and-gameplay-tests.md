@@ -345,6 +345,9 @@ Rust and TypeScript:
 - **Paying:** support both ways to charge, each adjustable by the player. Guests can pay at the park gate (an entrance fee, which `ParkFacilities::set_price` currently refuses for the entrance) and per ride (a coaster ticket price). Work item 4 covers both. A park may use either or both, and the journeys check that income rises under each setting.
 - **Game speed:** a real player control (×1, ×2, ×4, and a faster test setting if needed) in the Watch bar. Journeys use the same control rather than a test-only `?speed`. Work item 2 builds it.
 - **Riders on moving trains:** players do not need to click guests riding a moving train; clicking a train selects the ride. Journeys select a rider while they queue or board and follow that guest. (Decided later on 2026-11-03.)
+- **Multi-part elements in the palette:** each element (a banked turn, a climb to 60°, and so on) is one choice that places its transition pieces automatically; the separate pieces stay available for fine control. (2026-11-03 night.)
+- **Finish coaster:** a construction option that connects the current track end to the station as smoothly as possible, when a smooth connection exists; it need not handle ends far from the station. (2026-11-03 night.)
+- **Inversions:** span the range from classic to modern, and label each as heartlined or not, since a heartline roll on a modern hybrid rides very differently from a classic Arrow corkscrew. The top hat goes on Briar Blitz first. (2026-11-03 night.)
 
 ## Still open
 
