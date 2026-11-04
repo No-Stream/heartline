@@ -31,8 +31,8 @@ fn piece_shapes_describe_every_catalog_piece_from_a_shared_entry_frame() {
         .expect("straight shape");
     assert!(straight.contains("\"turn\":0"));
     assert!(straight.starts_with("\"Straight\",\"name\":\"Straight\",\"kind\":\"Track\""));
-    assert!(straight.contains("[0.000,0.000,0.000,0.000,0.000,1.000]"));
-    assert!(straight.contains("[16.000,0.000,0.000,0.000,0.000,1.000]]"));
+    assert!(straight.contains("[0.0,0.0,0.0,0.0,0.0,1.0]"));
+    assert!(straight.contains("[16.0,0.0,0.0,0.0,0.0,1.0]]"));
     let turn = json
         .split("{\"id\":")
         .find(|shape| shape.starts_with("\"TurnSmallStandalone\""))

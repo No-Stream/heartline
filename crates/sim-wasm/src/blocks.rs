@@ -50,10 +50,22 @@ impl WasmSimulation {
 
     pub fn construction_block_report_json(&self) -> String {
         let Some(layout) = &self.block_layout else {
-            let reasons = self.block_reasons_json();
-            return format!(
-                "{{\"sections\":[],\"trainCapacity\":0,\"capacitySearchComplete\":null,\"theoreticalHourlyRiders\":null,\"throughputStatus\":\"unavailable\",\"placementStatus\":\"idle\",\"placementSearchComplete\":null,\"reasons\":{reasons},\"notes\":[],\"suggestions\":[]}}"
-            );
+            return serde_json::to_string(&crate::reports::BlockReport {
+                sections: vec![],
+                source: None,
+                train_capacity: 0,
+                capacity_search_complete: None,
+                theoretical_hourly_riders: None,
+                throughput_status: "unavailable".into(),
+                placement_status: "idle".into(),
+                placement_search_complete: None,
+                placement_work_completed: None,
+                placement_best_train_capacity: None,
+                reasons: self.block_reasons(),
+                notes: vec![],
+                suggestions: vec![],
+            })
+            .expect("serialize block report");
         };
         let sections = layout
             .boundaries()
@@ -61,17 +73,7 @@ impl WasmSimulation {
             .enumerate()
             .map(|(index, boundary)| {
                 let brake_pieces = layout.brake_pieces(index);
-                let brake_piece_indices = brake_pieces
-                    .iter()
-                    .map(usize::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",");
                 let powered_hold_pieces = layout.powered_hold_pieces(index);
-                let powered_hold_piece_indices = powered_hold_pieces
-                    .iter()
-                    .map(usize::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",");
                 let editable = !brake_pieces.is_empty();
                 let powered_hold = !powered_hold_pieces.is_empty();
                 let editable_index = layout
@@ -79,9 +81,7 @@ impl WasmSimulation {
                     .iter()
                     .enumerate()
                     .take(index)
-                    .filter(|(previous_index, _)| {
-                        !layout.brake_pieces(*previous_index).is_empty()
-                    })
+                    .filter(|(previous_index, _)| !layout.brake_pieces(*previous_index).is_empty())
                     .count();
                 let (reason, track_kind) = if editable {
                     (
@@ -99,26 +99,20 @@ impl WasmSimulation {
                         kind_for_boundary(layout.circuit(), *boundary),
                     )
                 };
-                format!(
-                    "{{\"boundaryMetres\":{boundary},\"brakeStartMetres\":{},\"brakePieceIndices\":[{brake_piece_indices}],\"poweredHoldStartMetres\":{},\"poweredHoldPieceIndices\":[{powered_hold_piece_indices}],\"editable\":{editable},\"editableIndex\":{},\"reason\":{},\"trackKind\":{}}}",
-                    if editable {
-                        layout.brake_start(index).to_string()
-                    } else {
-                        "null".into()
-                    },
-                    if powered_hold {
-                        layout.brake_start(index).to_string()
-                    } else {
-                        "null".into()
-                    },
-                    if editable { editable_index.to_string() } else { "null".into() },
-                    json_string(reason),
-                    json_string(track_kind)
-                )
+                crate::reports::BlockSectionReport {
+                    boundary_metres: *boundary,
+                    brake_start_metres: editable.then(|| layout.brake_start(index)),
+                    brake_piece_indices: brake_pieces.to_vec(),
+                    powered_hold_start_metres: powered_hold.then(|| layout.brake_start(index)),
+                    powered_hold_piece_indices: powered_hold_pieces.to_vec(),
+                    editable,
+                    editable_index: editable.then_some(editable_index),
+                    reason: reason.into(),
+                    track_kind: track_kind.into(),
+                }
             })
-            .collect::<Vec<_>>()
-            .join(",");
-        let reasons = self.block_reasons_json();
+            .collect();
+        let reasons = self.block_reasons();
         let source = if self.block_layout_is_automatic {
             "automatic"
         } else {
@@ -160,16 +154,8 @@ impl WasmSimulation {
                 notes.push("The reported train capacity is a verified lower bound; additional capacity may be possible.");
             }
         }
-        let notes = notes
-            .into_iter()
-            .map(json_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let suggestions = block_layout_suggestions(layout)
-            .iter()
-            .map(|suggestion| json_string(suggestion))
-            .collect::<Vec<_>>()
-            .join(",");
+        let notes = notes.into_iter().map(str::to_owned).collect();
+        let suggestions = block_layout_suggestions(layout);
         let throughput_status = if self.block_throughput_estimator.is_some() {
             "pending"
         } else if self.block_throughput_reason.is_empty() {
@@ -177,11 +163,7 @@ impl WasmSimulation {
         } else {
             "unavailable"
         };
-        let throughput = if throughput_status == "ready" {
-            self.block_hourly_throughput.to_string()
-        } else {
-            "null".into()
-        };
+        let throughput = (throughput_status == "ready").then_some(self.block_hourly_throughput);
         let placement_status = if self.block_placement_search.is_some() {
             "searching"
         } else if self.block_manual_search.is_some() {
@@ -193,12 +175,10 @@ impl WasmSimulation {
         } else {
             "incomplete"
         };
-        let search_complete = if matches!(placement_status, "manual" | "validating") {
-            "null"
-        } else if placement_status == "complete" {
-            "true"
-        } else {
-            "false"
+        let search_complete = match placement_status {
+            "manual" | "validating" => None,
+            "complete" => Some(true),
+            _ => Some(false),
         };
         let placement_work_completed = self
             .block_placement_search
@@ -214,14 +194,22 @@ impl WasmSimulation {
             .block_placement_search
             .as_ref()
             .map_or(layout.capacity(), |search| search.best().capacity());
-        format!(
-            "{{\"sections\":[{sections}],\"source\":{},\"trainCapacity\":{},\"capacitySearchComplete\":{},\"theoreticalHourlyRiders\":{throughput},\"throughputStatus\":{},\"placementStatus\":{},\"placementSearchComplete\":{search_complete},\"placementWorkCompleted\":{placement_work_completed},\"placementBestTrainCapacity\":{best_capacity},\"reasons\":{reasons},\"notes\":[{notes}],\"suggestions\":[{suggestions}]}}",
-            json_string(source),
-            layout.capacity(),
-            layout.capacity_search_complete(),
-            json_string(throughput_status),
-            json_string(placement_status)
-        )
+        serde_json::to_string(&crate::reports::BlockReport {
+            sections,
+            source: Some(source.into()),
+            train_capacity: layout.capacity(),
+            capacity_search_complete: Some(layout.capacity_search_complete()),
+            theoretical_hourly_riders: throughput,
+            throughput_status: throughput_status.into(),
+            placement_status: placement_status.into(),
+            placement_search_complete: search_complete,
+            placement_work_completed: Some(placement_work_completed),
+            placement_best_train_capacity: Some(best_capacity),
+            reasons,
+            notes,
+            suggestions,
+        })
+        .expect("serialize block report")
     }
 }
 

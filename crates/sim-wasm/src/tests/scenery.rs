@@ -84,3 +84,21 @@ fn demo_scenery_does_not_intersect_track_or_facilities() {
         }
     }
 }
+
+#[test]
+fn scenery_snapshot_has_structured_wire_fields() {
+    let mut simulation = WasmSimulation::new(1, 0, String::from("demo"));
+    assert!(simulation.place_scenery("bench", 210, 245, 1, 2));
+    let reports: Vec<serde_json::Value> = serde_json::from_str(&simulation.scenery_json()).unwrap();
+    let bench = reports
+        .iter()
+        .find(|report| report["id"] == "210:245:8:2")
+        .unwrap();
+    assert_eq!(
+        bench,
+        &serde_json::json!({
+            "id": "210:245:8:2", "kind": "bench", "x": 210, "y": 245,
+            "z": 8, "rotation": 1, "quarter": 2
+        })
+    );
+}

@@ -150,10 +150,12 @@ fn elements_preview_the_full_sequence_append_atomically_and_undo_together() {
     let before = simulation.construction_track();
 
     assert!(
-        simulation
-            .construction_elements()
-            .lines()
-            .any(|row| row.starts_with("element:climb-60\t"))
+        serde_json::from_str::<serde_json::Value>(&simulation.construction_elements())
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|element| element["id"] == "element:climb-60")
     );
     simulation.construction_select("element:climb-60");
 
@@ -170,8 +172,8 @@ fn elements_preview_the_full_sequence_append_atomically_and_undo_together() {
     simulation.construction_append();
     assert!(simulation.construction_message().is_empty());
     assert_eq!(
-        simulation.construction_track().lines().count(),
-        before.lines().count() + preview.len()
+        track_rows(&simulation.construction_track()).len(),
+        track_rows(&before).len() + preview.len()
     );
 
     simulation.construction_undo();
@@ -200,16 +202,15 @@ fn chain_mode_marks_every_piece_in_an_element_as_a_lift() {
 
     simulation.construction_append();
     assert_eq!(
-        simulation
-            .construction_track()
-            .lines()
+        track_rows(&simulation.construction_track())
+            .iter()
             .skip(1)
-            .map(|row| row.split('\t').nth(5).unwrap())
+            .map(|row| row["kind"].as_str().unwrap().to_owned())
             .collect::<Vec<_>>(),
         ["Lift", "Lift", "Lift"]
     );
     simulation.construction_undo();
-    assert_eq!(simulation.construction_track().lines().count(), 1);
+    assert_eq!(track_rows(&simulation.construction_track()).len(), 1);
 }
 
 #[test]
@@ -262,7 +263,11 @@ fn model_selection_controls_new_construction_and_launch_choices() {
         simulation.construction.as_ref().unwrap().model().name,
         "Velocity Viper"
     );
-    assert!(simulation.construction_choices().contains("LaunchShort\t"));
+    assert!(
+        simulation
+            .construction_choices()
+            .contains("\"id\":\"LaunchShort\"")
+    );
     simulation.construction_select("LaunchShort");
     assert!(simulation.construction_can_append());
     let construction = simulation.construction.as_ref().unwrap();
@@ -424,20 +429,20 @@ fn construction_commands_validate_and_preview_without_mutating_on_failure() {
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel\tStation\n1\tStraight\tStraight\tstraight\tLevel\tTrack"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
     );
     assert!(!simulation.construction_placed_rails().is_empty());
     simulation.construction_select("GentleUp");
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel\tStation\n1\tStraight\tStraight\tstraight\tLevel\tTrack"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
     );
     assert!(!simulation.construction_message().is_empty());
     simulation.construction_undo();
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel\tStation"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"}]"
     );
 }
 
@@ -453,14 +458,14 @@ fn deleting_middle_piece_preserves_and_identifies_retained_track() {
     simulation.construction_delete(1);
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel\tStation\n2\tStraight\tStraight\tstraight\tLevel\tTrack"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":2,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
     );
     let rails = simulation.construction_placed_rails();
     assert!(rails.chunks_exact(19).any(|rail| rail[0] == 2.0));
     simulation.construction_delete(2);
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel\tStation"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"}]"
     );
 }
 
@@ -700,12 +705,24 @@ fn chain_mode_controls_placed_piece_and_refusals() {
 #[test]
 fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    assert_eq!(simulation.construction_colors(), "");
-    assert_eq!(simulation.coaster_colors(), "coral\ttimber\tsage");
+    assert_eq!(simulation.construction_colors(), "null");
+    assert_eq!(
+        simulation.coaster_colors(),
+        "{\"track\":\"coral\",\"supports\":\"timber\",\"trains\":\"sage\"}"
+    );
     for (model, colors) in [
-        ("model:hybrid", "coral\ttimber\tsage"),
-        ("model:velocity_viper", "teal\tcream\tcoral"),
-        ("model:wooden_twister", "timber\ttimber\tslate"),
+        (
+            "model:hybrid",
+            "{\"track\":\"coral\",\"supports\":\"timber\",\"trains\":\"sage\"}",
+        ),
+        (
+            "model:velocity_viper",
+            "{\"track\":\"teal\",\"supports\":\"cream\",\"trains\":\"coral\"}",
+        ),
+        (
+            "model:wooden_twister",
+            "{\"track\":\"timber\",\"supports\":\"timber\",\"trains\":\"slate\"}",
+        ),
     ] {
         simulation.construction_select(model);
         simulation.construction_start(100, 100, 40, 0);
@@ -714,17 +731,26 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
 
     let before = simulation.state_hash();
     simulation.construction_set_colors("plum", "cream", "mustard");
-    assert_eq!(simulation.construction_colors(), "plum\tcream\tmustard");
+    assert_eq!(
+        simulation.construction_colors(),
+        "{\"track\":\"plum\",\"supports\":\"cream\",\"trains\":\"mustard\"}"
+    );
     assert!(simulation.construction_message().is_empty());
     let repainted = simulation.state_hash();
     assert_ne!(repainted, before);
 
     simulation.construction_set_colors("plum", "#ffffff", "mustard");
-    assert_eq!(simulation.construction_colors(), "plum\tcream\tmustard");
+    assert_eq!(
+        simulation.construction_colors(),
+        "{\"track\":\"plum\",\"supports\":\"cream\",\"trains\":\"mustard\"}"
+    );
     assert_eq!(simulation.construction_message(), "Unknown coaster colour");
 
     simulation.construction_start(120, 120, 40, 0);
-    assert_eq!(simulation.construction_colors(), "timber\ttimber\tslate");
+    assert_eq!(
+        simulation.construction_colors(),
+        "{\"track\":\"timber\",\"supports\":\"timber\",\"trains\":\"slate\"}"
+    );
 }
 
 #[test]
@@ -1001,4 +1027,52 @@ fn construction_closes_and_runs_physics_deterministically() {
     assert!(!simulation.construction_can_test());
     simulation.construction_delete(0);
     assert!(simulation.construction_train_poses().is_empty());
+}
+
+#[test]
+fn construction_lists_are_structured_and_preserve_selection_ids() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&simulation.construction_track()).unwrap(),
+        serde_json::json!([])
+    );
+    simulation.construction_start(200, 200, 20, 0);
+    let choices: serde_json::Value =
+        serde_json::from_str(&simulation.construction_choices()).unwrap();
+    assert!(
+        choices
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| choice["id"] == "Straight")
+    );
+    simulation.construction_select("Straight");
+    assert_eq!(simulation.construction_selected(), "Straight");
+    let track: serde_json::Value = serde_json::from_str(&simulation.construction_track()).unwrap();
+    assert_eq!(track[0]["id"], 0);
+    assert_eq!(track[0]["label"], "Station");
+    assert_eq!(track[0]["kind"], "Station");
+    let elements: serde_json::Value =
+        serde_json::from_str(&simulation.construction_elements()).unwrap();
+    assert!(
+        elements
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|element| element["id"] == "element:climb-60")
+    );
+}
+
+fn track_rows(json: &str) -> Vec<serde_json::Value> {
+    serde_json::from_str(json).unwrap()
+}
+
+#[test]
+fn catalog_selection_ids_match_recorded_session_names() {
+    for piece in super::catalog() {
+        assert_eq!(
+            crate::construction::wire_pieceid(piece.id),
+            format!("{:?}", piece.id)
+        );
+    }
 }

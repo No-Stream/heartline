@@ -1,6 +1,43 @@
 use super::command_errors::{CommandError, record_command_result};
 use super::*;
+use serde::Serialize;
 use theme_park_sim::guest_behavior::RidePhase;
+use ts_rs::TS;
+
+#[derive(Serialize, TS)]
+pub(crate) struct FacilityReport {
+    id: u32,
+    kind: FacilityReportKind,
+    x: u16,
+    y: u16,
+    z: i16,
+    rotation: u8,
+    price: u16,
+    ride_state: RideStateReport,
+    ride_progress: f32,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FacilityReportKind {
+    Entrance,
+    #[serde(rename = "food_stall")]
+    Food,
+    #[serde(rename = "drink_stall")]
+    Drink,
+    Souvenir,
+    Restroom,
+    Carousel,
+    FerrisWheel,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RideStateReport {
+    Idle,
+    Running,
+    Unloading,
+}
 
 #[wasm_bindgen]
 impl WasmSimulation {
@@ -104,25 +141,60 @@ impl WasmSimulation {
 
     pub fn facilities_json(&self) -> String {
         let guest_facilities = self.facilities.guest_facilities(&self.world);
-        let buildings = self.facilities.buildings().iter().map(|building| {
-            let kind = match building.kind {
-                FacilityKind::Entrance => "entrance", FacilityKind::Food => "food_stall",
-                FacilityKind::Drink => "drink_stall", FacilityKind::Souvenir => "souvenir", FacilityKind::Restroom => "restroom",
-                FacilityKind::Carousel => "carousel", FacilityKind::FerrisWheel => "ferris_wheel",
-            };
-            let rotation = match building.direction {
-                Direction::North => 0, Direction::East => 1, Direction::South => 2, Direction::West => 3,
-            };
-            let state = guest_facilities.iter().find(|facility| facility.place.id == building.id)
-                .filter(|_| matches!(building.kind, FacilityKind::Carousel | FacilityKind::FerrisWheel))
-                .map(|facility| self.simulation.behaviors().ride_state(facility));
-            let (ride_state, ride_progress) = match state {
-                Some(state) => (match state.phase { RidePhase::Idle => "idle", RidePhase::Running => "running", RidePhase::Unloading => "unloading" }, state.progress),
-                None => ("idle", 0.0),
-            };
-            format!("{{\"id\":{},\"kind\":\"{}\",\"x\":{},\"y\":{},\"z\":{},\"rotation\":{},\"price\":{},\"ride_state\":\"{}\",\"ride_progress\":{}}}",
-                building.id, kind, building.position.x, building.position.y, building.position.height, rotation, building.price, ride_state, ride_progress)
-        }).collect::<Vec<_>>().join(",");
-        format!("[{buildings}]")
+        let buildings: Vec<FacilityReport> = self
+            .facilities
+            .buildings()
+            .iter()
+            .map(|building| {
+                let kind = match building.kind {
+                    FacilityKind::Entrance => FacilityReportKind::Entrance,
+                    FacilityKind::Food => FacilityReportKind::Food,
+                    FacilityKind::Drink => FacilityReportKind::Drink,
+                    FacilityKind::Souvenir => FacilityReportKind::Souvenir,
+                    FacilityKind::Restroom => FacilityReportKind::Restroom,
+                    FacilityKind::Carousel => FacilityReportKind::Carousel,
+                    FacilityKind::FerrisWheel => FacilityReportKind::FerrisWheel,
+                };
+                let rotation = match building.direction {
+                    Direction::North => 0,
+                    Direction::East => 1,
+                    Direction::South => 2,
+                    Direction::West => 3,
+                };
+                let state = guest_facilities
+                    .iter()
+                    .find(|facility| facility.place.id == building.id)
+                    .filter(|_| {
+                        matches!(
+                            building.kind,
+                            FacilityKind::Carousel | FacilityKind::FerrisWheel
+                        )
+                    })
+                    .map(|facility| self.simulation.behaviors().ride_state(facility));
+                let (ride_state, ride_progress) = match state {
+                    Some(state) => (
+                        match state.phase {
+                            RidePhase::Idle => RideStateReport::Idle,
+                            RidePhase::Running => RideStateReport::Running,
+                            RidePhase::Unloading => RideStateReport::Unloading,
+                        },
+                        state.progress,
+                    ),
+                    None => (RideStateReport::Idle, 0.0),
+                };
+                FacilityReport {
+                    id: building.id,
+                    kind,
+                    x: building.position.x,
+                    y: building.position.y,
+                    z: building.position.height,
+                    rotation,
+                    price: building.price,
+                    ride_state,
+                    ride_progress,
+                }
+            })
+            .collect();
+        serde_json::to_string(&buildings).expect("facility reports serialize")
     }
 }

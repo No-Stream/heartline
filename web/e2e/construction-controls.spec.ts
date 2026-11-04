@@ -166,7 +166,7 @@ test("block boundaries display and dispatch in the selected units", async ({ pag
   await page.evaluate(() => {
     const fixture = window as unknown as Window;
     fixture.setConstructionState({ canTest: true, blockCandidates: new Float64Array([10, 20]), blockReport: {
-      sections: [{ boundaryMetres: 10, brakeStartMetres: 8, brakePieceIndices: [], editable: true, editableIndex: 0, reason: "", trackKind: "blockBrake" }],
+      sections: [{ boundaryMetres: 10, brakeStartMetres: 8, brakePieceIndices: [], poweredHoldStartMetres: null, poweredHoldPieceIndices: [], editable: true, editableIndex: 0, reason: "", trackKind: "blockBrake" }],
       trainCapacity: 2, capacitySearchComplete: true, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "manual", placementSearchComplete: true, reasons: [], notes: [], suggestions: [],
     } });
     fixture.setConstructionUnits("imperial");

@@ -28,10 +28,9 @@ impl WasmSimulation {
 
     /// Rail segments: piece index and start/end frames (position, lateral, up).
     /// Positions are in tiles; lateral and up are unit vectors.
-    /// The demo coaster's track, supports and train colours as palette names separated by tabs; empty without one.
+    /// The demo coaster's track, supports and train colours, or null without one.
     pub fn coaster_colors(&self) -> String {
-        self.demo_coaster()
-            .map_or_else(String::new, |coaster| coaster.colors.names())
+        crate::construction::colors_json(self.demo_coaster().map(|coaster| coaster.colors))
     }
 
     pub fn coaster_rails(&self) -> Vec<f32> {
@@ -115,9 +114,11 @@ impl WasmSimulation {
     }
 
     pub fn guest_detail_json(&self, id: u32) -> String {
-        self.simulation
+        let detail = self
+            .simulation
             .guest_detail(GuestId(id))
-            .map_or_else(|| "null".to_owned(), |detail| detail.to_json())
+            .map(|detail| crate::guest_report::GuestDetailReport::from(&detail));
+        serde_json::to_string(&detail).expect("guest detail serializes")
     }
 
     pub fn guest_appearances(&self) -> Vec<u8> {

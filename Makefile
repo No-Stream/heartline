@@ -7,15 +7,22 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests
+.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests generate-report-types check-report-types
 
 install:
 	npm ci
 
-build: wasm-bindgen art
+build: wasm-bindgen art check-report-types
 	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
 	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target web --out-dir web/src/wasm
 	npm run build
+
+# Regenerate the TypeScript wire types after changing a Rust report.
+generate-report-types:
+	UPDATE_REPORT_TYPES=1 $(CARGO) test -p theme-park-sim-wasm --lib generated_types_are_current
+
+check-report-types:
+	$(CARGO) test -p theme-park-sim-wasm --lib generated_types_are_current
 
 # The CLI version must match the wasm-bindgen crate version in Cargo.lock.
 wasm-bindgen:

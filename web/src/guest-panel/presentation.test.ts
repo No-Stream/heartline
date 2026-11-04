@@ -30,7 +30,7 @@ describe("guest panel phrasing", () => {
       .toBe("Waited about 3 seconds for stop 5");
     const proximityMemory = memories.find(({ memory }) => memory.kind === "proximity")?.memory;
     if (proximityMemory?.kind !== "proximity") throw new Error("Expected a proximity memory fixture");
-    expect(memoryLabel({ ...proximityMemory, eventKind: "futureEvent" })).not.toContain("futureEvent");
+    expect(memoryLabel({ ...proximityMemory, eventKind: "futureEvent" } as unknown as GuestMemory)).not.toContain("futureEvent");
     expect(memoryLabel({ kind: "scenery", theme: 99, enjoyment: 5, tick: 7 })).not.toContain("99");
   });
 

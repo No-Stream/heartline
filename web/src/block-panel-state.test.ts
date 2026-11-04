@@ -88,6 +88,8 @@ describe("block panel state", () => {
       boundaryMetres: installedBoundary,
       brakeStartMetres: 3,
       brakePieceIndices: [2, 3],
+      poweredHoldStartMetres: null,
+      poweredHoldPieceIndices: [],
       editable: true,
       editableIndex: 0,
       reason: "Placed on a level brake run long enough to hold a train.",
