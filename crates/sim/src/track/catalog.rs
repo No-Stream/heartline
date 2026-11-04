@@ -381,7 +381,7 @@ pub fn catalog() -> Vec<Piece> {
             Loop,
             "Vertical loop",
             32,
-            0,
+            2,
             0,
             East,
             Level,
@@ -843,6 +843,8 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (OffsetLeft, OffsetRight, "Right half-tile offset"),
         (FullOffsetLeft, FullOffsetRight, "Right full-tile offset"),
+        (Loop, LoopRight, "Right vertical loop"),
+        (SteelLoop, SteelLoopRight, "Right steel-structure loop"),
         (Corkscrew, CorkscrewRight, "Right corkscrew"),
         (HeartlineRoll, HeartlineRollRight, "Right heartline roll"),
     ] {

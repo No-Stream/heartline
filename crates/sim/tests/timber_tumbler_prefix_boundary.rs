@@ -67,19 +67,23 @@ fn station_backed_prefix_refusals_are_world_bounds_at_four_and_twelve_metres() {
     ];
 
     for z in [2, 6] {
-        let at_recorded_start = construction_with_prefix(&world, 50, 50, z, &prefix);
-        assert_eq!(
-            (at_recorded_start.end().x, at_recorded_start.end().y),
-            (250, 2)
-        );
-        let edge_choices = at_recorded_start.available_choices(&world, &[]);
+        let near_edge = construction_with_prefix(&world, 50, 49, z, &prefix);
+        assert_eq!((near_edge.end().x, near_edge.end().y), (250, 1));
+        let edge_choices = near_edge.available_choices(&world, &[]);
         assert!(!edge_choices.is_empty());
-        assert!(edge_choices.iter().all(|(_, choice)| {
-            choice.result
-                == Err(ConstructionError::Clearance(
-                    ClearanceCollision::OutsideWorld,
-                ))
-        }));
+        assert!(
+            edge_choices.iter().all(|(_, choice)| {
+                choice.result
+                    == Err(ConstructionError::Clearance(
+                        ClearanceCollision::OutsideWorld,
+                    ))
+            }),
+            "{:?}",
+            edge_choices
+                .iter()
+                .map(|(_, choice)| choice)
+                .collect::<Vec<_>>()
+        );
 
         let translated_inward = construction_with_prefix(&world, 16, 64, z, &prefix);
         assert_eq!(
@@ -107,11 +111,17 @@ fn a_random_walk_can_trap_its_endpoint_against_existing_track() {
         (PieceId::TurnLargeRight, false),
         (PieceId::TurnLargeRightExit, false),
         (PieceId::OffsetLeft, false),
+        (PieceId::HalfTileStraight, false),
+        (PieceId::HalfTileStraight, false),
     ];
     let construction = construction_with_prefix(&world, 50, 50, 2, &prefix);
     let choices = construction.available_choices(&world, &[]);
     assert!(!choices.is_empty());
-    assert!(choices.iter().all(|(_, choice)| {
-        choice.result == Err(ConstructionError::Clearance(ClearanceCollision::Track))
-    }));
+    assert!(
+        choices.iter().all(|(_, choice)| {
+            choice.result == Err(ConstructionError::Clearance(ClearanceCollision::Track))
+        }),
+        "{:?}",
+        choices.iter().map(|(_, choice)| choice).collect::<Vec<_>>()
+    );
 }

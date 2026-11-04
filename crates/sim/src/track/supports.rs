@@ -1,4 +1,4 @@
-use crate::track::{Piece, Vec3};
+use crate::track::{Piece, Shape, Vec3};
 use crate::world::World;
 use std::sync::OnceLock;
 
@@ -31,6 +31,7 @@ pub enum SupportError {
 const BEAM_CLEARANCE: f64 = 0.18 * std::f64::consts::SQRT_2;
 const FOOTER_HALF_WIDTH: f64 = 0.4;
 const FOOTER_HEIGHT: f64 = 0.2;
+const LOOP_RAIL_HALF_SPACING: f64 = 1.0;
 const SUPPORT_SEARCH_RADIUS_METRES: i32 = 32;
 /// Maximum distance at which world changes can affect generated support geometry.
 pub const SUPPORT_INFLUENCE_RADIUS_METRES: f64 =
@@ -79,6 +80,10 @@ pub fn generate_steel_columns(
     obstacles: &[SupportObstacle],
 ) -> Result<Vec<SupportSegment>, SupportError> {
     let supports = generate_supports(piece, world, obstacles)?;
+    Ok(steel_column_segments(supports))
+}
+
+fn steel_column_segments(supports: Vec<Support>) -> Vec<SupportSegment> {
     let mut segments = Vec::with_capacity(supports.len() * 2);
     for support in supports {
         let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
@@ -93,7 +98,7 @@ pub fn generate_steel_columns(
             });
         }
     }
-    Ok(segments)
+    segments
 }
 
 /// Like `generate_supports`, but allows columns to land on explicitly load-bearing structures.
@@ -142,12 +147,38 @@ fn generate_supports_at_spacing(
         max: bounds.max,
     }));
     let tunnels: Vec<_> = world.carved_spans().collect();
+    let loop_track_segments = matches!(piece.shape, Shape::Loop).then(|| {
+        let steps = (piece.length() / 0.25).ceil() as usize;
+        (0..steps)
+            .flat_map(|index| {
+                let start_distance = piece.length() * index as f64 / steps as f64;
+                let end_distance = piece.length() * (index + 1) as f64 / steps as f64;
+                let start = piece.sample(start_distance);
+                let end = piece.sample(end_distance);
+                let start_lateral = start.up.cross(start.tangent).unit();
+                let end_lateral = end.up.cross(end.tangent).unit();
+                [-LOOP_RAIL_HALF_SPACING, 0.0, LOOP_RAIL_HALF_SPACING].map(|offset| {
+                    (
+                        start_distance,
+                        end_distance,
+                        start.position + start_lateral * offset,
+                        end.position + end_lateral * offset,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+    });
     let count = (piece.length() / spacing).ceil() as usize;
     let mut supports = Vec::with_capacity(count);
     for index in 0..count {
-        let anchor = piece
-            .sample(piece.length() * (index as f64 + 0.5) / count as f64)
-            .position;
+        let anchor_distance = piece.length() * (index as f64 + 0.5) / count as f64;
+        let sample = piece.sample(anchor_distance);
+        if matches!(piece.shape, Shape::Loop) && (sample.up.z < 0.0 || sample.tangent.z.abs() > 0.8)
+        {
+            // Columns under the inverted and near-vertical sections would cross the loop track.
+            continue;
+        }
+        let anchor = sample.position;
         if obstacles
             .iter()
             .chain(&path_obstacles)
@@ -239,12 +270,120 @@ fn generate_supports_at_spacing(
             {
                 continue;
             }
-            selected = Some(Support { anchor, footing });
+            let support = Support { anchor, footing };
+            if loop_track_segments.as_ref().is_some_and(|segments| {
+                !support_clears_loop_track(&support, anchor_distance, segments)
+            }) {
+                continue;
+            }
+            selected = Some(support);
             break;
         }
-        supports.push(selected.ok_or(SupportError::NoRoute)?);
+        let Some(selected) = selected else {
+            if loop_track_segments.is_some() {
+                continue;
+            }
+            return Err(SupportError::NoRoute);
+        };
+        supports.push(selected);
     }
     Ok(supports)
+}
+
+fn support_clears_loop_track(
+    support: &Support,
+    anchor_distance: f64,
+    track_segments: &[(f64, f64, Vec3, Vec3)],
+) -> bool {
+    let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
+    let support_segments = if top == support.anchor {
+        [(support.footing, top), (top, top)]
+    } else {
+        [(support.footing, top), (top, support.anchor)]
+    };
+    track_segments
+        .iter()
+        .all(|(start_distance, end_distance, start, end)| {
+            if *start_distance >= anchor_distance - 1.0 && *end_distance <= anchor_distance + 1.0 {
+                return true;
+            }
+            support_segments.iter().all(|(support_start, support_end)| {
+                segment_distance(*support_start, *support_end, *start, *end) > BEAM_CLEARANCE
+            })
+        })
+}
+
+fn segment_distance(
+    first_start: Vec3,
+    first_end: Vec3,
+    second_start: Vec3,
+    second_end: Vec3,
+) -> f64 {
+    let first_direction = first_end - first_start;
+    let second_direction = second_end - second_start;
+    let between_starts = first_start - second_start;
+    let first_length_squared = first_direction.dot(first_direction);
+    let second_length_squared = second_direction.dot(second_direction);
+    let direction_dot = first_direction.dot(second_direction);
+    let first_offset = first_direction.dot(between_starts);
+    let second_offset = second_direction.dot(between_starts);
+    let denominator = first_length_squared * second_length_squared - direction_dot * direction_dot;
+
+    let mut first_numerator;
+    let mut first_denominator = denominator;
+    let mut second_numerator;
+    let mut second_denominator = denominator;
+    if denominator < 1e-12 {
+        first_numerator = 0.0;
+        first_denominator = 1.0;
+        second_numerator = second_offset;
+        second_denominator = second_length_squared;
+    } else {
+        first_numerator = direction_dot * second_offset - second_length_squared * first_offset;
+        second_numerator = first_length_squared * second_offset - direction_dot * first_offset;
+        if first_numerator < 0.0 {
+            first_numerator = 0.0;
+            second_numerator = second_offset;
+            second_denominator = second_length_squared;
+        } else if first_numerator > first_denominator {
+            first_numerator = first_denominator;
+            second_numerator = second_offset + direction_dot;
+            second_denominator = second_length_squared;
+        }
+    }
+    if second_numerator < 0.0 {
+        second_numerator = 0.0;
+        if -first_offset < 0.0 {
+            first_numerator = 0.0;
+        } else if -first_offset > first_length_squared {
+            first_numerator = first_denominator;
+        } else {
+            first_numerator = -first_offset;
+            first_denominator = first_length_squared;
+        }
+    } else if second_numerator > second_denominator {
+        second_numerator = second_denominator;
+        if -first_offset + direction_dot < 0.0 {
+            first_numerator = 0.0;
+        } else if -first_offset + direction_dot > first_length_squared {
+            first_numerator = first_denominator;
+        } else {
+            first_numerator = -first_offset + direction_dot;
+            first_denominator = first_length_squared;
+        }
+    }
+    let first_fraction = if first_numerator.abs() < 1e-12 {
+        0.0
+    } else {
+        first_numerator / first_denominator
+    };
+    let second_fraction = if second_numerator.abs() < 1e-12 {
+        0.0
+    } else {
+        second_numerator / second_denominator
+    };
+    (between_starts + first_direction * first_fraction - second_direction * second_fraction)
+        .length()
 }
 
 fn boundary_candidates<'a>(
@@ -383,6 +522,9 @@ fn generate_wooden_lattice_at_spacing(
     spacing: f64,
 ) -> Result<Vec<SupportSegment>, SupportError> {
     let supports = generate_supports_at_spacing(piece, world, obstacles, &[], spacing)?;
+    if matches!(piece.shape, Shape::Loop) {
+        return Ok(steel_column_segments(supports));
+    }
     let mut occupied = obstacles.to_vec();
     occupied.extend(world.scenery_boxes().map(|bounds| SupportObstacle {
         min: bounds.min,
@@ -689,8 +831,10 @@ fn intersects(start: Vec3, end: Vec3, bounds: &SupportObstacle) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::track::{PieceId, TrackState, catalog};
+    use crate::track::{Heading, PieceId, TrackState, catalog, hybrid_model};
     use crate::world::{Path, Position, Surface};
+
+    const SUPPORT_ATTACHMENT_NEIGHBORHOOD_METRES: f64 = 1.0;
 
     fn piece() -> Piece {
         let state = TrackState {
@@ -716,6 +860,76 @@ mod tests {
                 water: None,
             },
         )
+    }
+
+    fn assert_support_segments_clear_of_track(
+        piece: &Piece,
+        supports: &[Support],
+        segments: &[SupportSegment],
+        spacing: f64,
+        track_half_width: f64,
+        context: &str,
+    ) {
+        let support_anchors: Vec<_> = supports
+            .iter()
+            .map(|support| {
+                let count = (piece.length() / spacing).ceil() as usize;
+                let (_, distance) = (0..count)
+                    .map(|index| {
+                        let distance = piece.length() * (index as f64 + 0.5) / count as f64;
+                        (piece.sample(distance).position, distance)
+                    })
+                    .find(|(anchor, _)| *anchor == support.anchor)
+                    .expect("each support anchor is sampled from its piece");
+                (
+                    support.anchor,
+                    support.footing,
+                    Vec3::new(support.footing.x, support.footing.y, support.anchor.z),
+                    distance,
+                )
+            })
+            .collect();
+        let steps = (piece.length() / 0.25).ceil() as usize;
+        for segment in segments {
+            let nearest_attachment = support_anchors
+                .iter()
+                .map(|(anchor, footing, top, distance)| {
+                    let endpoint_distance = [segment.start, segment.end]
+                        .into_iter()
+                        .flat_map(|endpoint| {
+                            [*anchor, *footing, *top].map(|point| (endpoint - point).length())
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    (endpoint_distance, *distance)
+                })
+                .min_by(|first, second| first.0.total_cmp(&second.0));
+            let attachment_distance = nearest_attachment
+                .filter(|(endpoint_distance, _)| *endpoint_distance < 0.01)
+                .map(|(_, distance)| distance);
+            for index in 0..steps {
+                let start_distance = piece.length() * index as f64 / steps as f64;
+                let end_distance = piece.length() * (index + 1) as f64 / steps as f64;
+                if attachment_distance.is_some_and(|distance| {
+                    start_distance >= distance - SUPPORT_ATTACHMENT_NEIGHBORHOOD_METRES
+                        && end_distance <= distance + SUPPORT_ATTACHMENT_NEIGHBORHOOD_METRES
+                }) {
+                    continue;
+                }
+                let first_sample = piece.sample(start_distance);
+                let second_sample = piece.sample(end_distance);
+                let first_lateral = first_sample.up.cross(first_sample.tangent).unit();
+                let second_lateral = second_sample.up.cross(second_sample.tangent).unit();
+                for offset in [-track_half_width, 0.0, track_half_width] {
+                    let first_rail = first_sample.position + first_lateral * offset;
+                    let second_rail = second_sample.position + second_lateral * offset;
+                    assert!(
+                        segment_distance(segment.start, segment.end, first_rail, second_rail,)
+                            > BEAM_CLEARANCE,
+                        "{context}: support segment {segment:?} intersects the loop track near distance {start_distance:.2} m; attachment at {attachment_distance:?} m (nearest support point {nearest_attachment:?})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -759,6 +973,71 @@ mod tests {
                     .any(|segment| segment.start == support.footing)
             );
             assert!(segments.iter().any(|segment| segment.end == support.anchor));
+        }
+    }
+
+    #[test]
+    fn loop_supports_do_not_intersect_other_parts_of_the_track() {
+        let world = World::new(
+            32,
+            32,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let model = hybrid_model();
+        for piece_id in [
+            PieceId::Loop,
+            PieceId::SteelLoop,
+            PieceId::LoopRight,
+            PieceId::SteelLoopRight,
+        ] {
+            for heading in [
+                Heading::East,
+                Heading::NorthEast,
+                Heading::North,
+                Heading::NorthWest,
+                Heading::West,
+                Heading::SouthWest,
+                Heading::South,
+                Heading::SouthEast,
+            ] {
+                let loop_piece = catalog()
+                    .into_iter()
+                    .find(|piece| piece.id == piece_id)
+                    .unwrap()
+                    .at(TrackState {
+                        x: 32,
+                        y: 32,
+                        z: 5,
+                        heading,
+                        ..TrackState::origin()
+                    })
+                    .unwrap();
+                for (style, spacing) in [("steel", 8.0), ("wooden", 8.0), ("dense wooden", 4.0)] {
+                    let segments = match style {
+                        "steel" => generate_steel_columns(&loop_piece, &world, &[]).unwrap(),
+                        "wooden" => generate_wooden_lattice(&loop_piece, &world, &[]).unwrap(),
+                        "dense wooden" => {
+                            generate_dense_wooden_lattice(&loop_piece, &world, &[]).unwrap()
+                        }
+                        _ => unreachable!(),
+                    };
+                    assert!(!segments.is_empty(), "{piece_id:?}, {heading:?}, {style}");
+                    let supports =
+                        generate_supports_at_spacing(&loop_piece, &world, &[], &[], spacing)
+                            .unwrap();
+                    assert_support_segments_clear_of_track(
+                        &loop_piece,
+                        &supports,
+                        &segments,
+                        spacing,
+                        model.train.width_metres / 2.0,
+                        &format!("{piece_id:?}, {heading:?}, {style}, {spacing} m spacing"),
+                    );
+                }
+            }
         }
     }
 

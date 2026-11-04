@@ -8,8 +8,8 @@ const blockCircuitPieces = [
 
 const boardingCircuitPieces = [
   "LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight",
-  "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown",
-  "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "TurnLargeEntry", "TurnLargeExit",
+  "Straight", "Straight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown",
+  "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit",
 ];
 
 test("automatic block sections can be inspected, moved, refused, and rendered @slow", async ({ page }) => {

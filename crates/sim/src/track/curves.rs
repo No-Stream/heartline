@@ -282,6 +282,8 @@ pub enum PieceId {
     OneTileGentleDown,
     ShortRise,
     ShortFall,
+    LoopRight,
+    SteelLoopRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -551,7 +553,7 @@ impl Piece {
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
         let base_up = if matches!(self.shape, Shape::Loop) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-            forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)
+            (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit()
         } else {
             Vec3::new(
                 -tangent.x * tangent.z / horizontal,

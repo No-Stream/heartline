@@ -23,9 +23,10 @@ test("builds and runs a wooden twister @slow", async ({ page }) => {
   await expect(track.locator("li")).toHaveCount(1);
   const pieces = [
     "LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel",
-    "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
+    "Straight", "OneTileStraight", "OneTileStraight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit",
     "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown",
-    "GentleDownToLevel", "SteelLoop", "TurnLargeEntry", "TurnLargeExit",
+    "GentleDownToLevel", "SteelLoop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit",
+    "Straight", "OneTileStraight", "OneTileStraight",
   ];
   for (const [index, piece] of pieces.entries()) {
     if (index === 0 || index === 8) await page.keyboard.press("h");

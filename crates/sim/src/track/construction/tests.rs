@@ -25,6 +25,47 @@ fn start() -> TrackState {
 }
 
 #[test]
+fn vertical_loops_offer_mirrored_choices_for_each_model() {
+    for (model, left_name, right_name) in [
+        (hybrid_model(), "Loop", "LoopRight"),
+        (crate::track::multi_launch_model(), "Loop", "LoopRight"),
+        (
+            crate::track::wooden_twister_model(),
+            "SteelLoop",
+            "SteelLoopRight",
+        ),
+    ] {
+        let construction = Construction::new(start(), model);
+        let choices = construction.choices(&world(), &[]);
+        let left = choices
+            .iter()
+            .find(|choice| format!("{:?}", choice.id) == left_name)
+            .unwrap();
+        let right = choices
+            .iter()
+            .find(|choice| format!("{:?}", choice.id) == right_name)
+            .unwrap();
+        let left = templates()
+            .iter()
+            .find(|piece| piece.id == left.id)
+            .unwrap();
+        let right = templates()
+            .iter()
+            .find(|piece| piece.id == right.id)
+            .unwrap();
+        assert_eq!(left.exit.y, -right.exit.y);
+        assert_ne!(left.exit.y, 0);
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let a = left.sample(left.length() * fraction);
+            let b = right.sample(right.length() * fraction);
+            assert!((a.position.x - b.position.x).abs() < 1e-6);
+            assert!((a.position.y + b.position.y).abs() < 1e-6);
+            assert!((a.position.z - b.position.z).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
 fn briar_blitz_choices_after_vertical_exit() {
     let world = world();
     let mut construction = Construction::new(

@@ -1224,7 +1224,31 @@ fn powered_sections_get_a_candidate_at_their_end() {
 
 #[test]
 fn rejects_brakes_that_cannot_stop_an_approaching_train() {
-    let circuit = demo_circuit();
+    use crate::physics::Circuit;
+    use crate::track::{PieceId, TrackState, catalog};
+
+    let mut ids = vec![PieceId::Station];
+    ids.extend([PieceId::Straight; 6]);
+    ids.extend([PieceId::TurnLargeEntry, PieceId::TurnLargeExit]);
+    ids.extend([PieceId::Straight; 7]);
+    ids.extend([PieceId::TurnLargeEntry, PieceId::TurnLargeExit]);
+    let catalog = catalog();
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::with_capacity(ids.len());
+    for (index, id) in ids.into_iter().enumerate() {
+        let mut piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        if matches!(index, 1 | 2) {
+            piece.kind = crate::track::PieceKind::Lift;
+        }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let circuit = Circuit::new(pieces).unwrap();
     let train = crate::track::hybrid_model().train;
     let runs = brake_runs(&circuit, train.length_metres);
     let boundary = runs

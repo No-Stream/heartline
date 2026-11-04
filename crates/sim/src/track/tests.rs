@@ -472,7 +472,7 @@ fn all_pieces_match_their_end_states_and_have_regular_curves() {
             near(sample.up.dot(sample.tangent), 0.0);
         }
         for index in 0..=1000 {
-            let sample = piece.sample(piece.length() * f64::from(index) / 1000.0);
+            let sample = piece.sample(piece.length() * (f64::from(index) / 1000.0));
             assert!(sample.curvature.is_finite(), "{}", piece.name);
             near(sample.tangent.length(), 1.0);
             near(sample.up.length(), 1.0);
@@ -699,7 +699,7 @@ fn catalog_radius_meets_model_limit() {
         let maximum = (0..=2000)
             .map(|i| {
                 piece
-                    .sample(piece.length() * f64::from(i) / 2000.0)
+                    .sample(piece.length() * (f64::from(i) / 2000.0))
                     .curvature
             })
             .fold(0.0_f64, f64::max);
@@ -871,7 +871,7 @@ fn inversions_turn_over_and_are_regular_in_every_heading() {
                 .unwrap();
             let mut previous_roll = piece.sample(0.0).roll;
             for index in 1..=1000 {
-                let sample = piece.sample(piece.length() * f64::from(index) / 1000.0);
+                let sample = piece.sample(piece.length() * (f64::from(index) / 1000.0));
                 assert!(sample.curvature.is_finite());
                 near(sample.tangent.length(), 1.0);
                 near(sample.up.length(), 1.0);
@@ -1129,5 +1129,50 @@ fn sloped_turns_obey_model_capabilities_and_radius() {
                 .iter()
                 .all(|piece| piece.entry.heading == piece.exit.heading)
         );
+    }
+}
+
+#[test]
+fn vertical_loop_separates_entry_and_exit_and_clears_itself() {
+    for heading in [
+        Heading::East,
+        Heading::NorthEast,
+        Heading::North,
+        Heading::NorthWest,
+        Heading::West,
+        Heading::SouthWest,
+        Heading::South,
+        Heading::SouthEast,
+    ] {
+        let start = TrackState {
+            heading,
+            ..TrackState::origin()
+        };
+        let piece = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::Loop)
+            .unwrap()
+            .at(start)
+            .unwrap();
+        let forward = start.tangent();
+        let displacement = piece.exit.position() - start.position();
+        let sideways = Vec3::new(-forward.y, forward.x, 0.0);
+        assert!(displacement.dot(sideways) >= 4.0 - 1e-6, "{heading:?}");
+        let samples: Vec<_> = (0..=400)
+            .map(|index| {
+                let distance = piece.length() * (f64::from(index) / 400.0);
+                (distance, piece.sample(distance).position)
+            })
+            .collect();
+        for (index, (distance, position)) in samples.iter().enumerate() {
+            for (other_distance, other_position) in &samples[index + 1..] {
+                if other_distance - distance > 12.0 {
+                    assert!(
+                        (*other_position - *position).length() >= 2.0,
+                        "{heading:?}: {distance} and {other_distance}"
+                    );
+                }
+            }
+        }
     }
 }
