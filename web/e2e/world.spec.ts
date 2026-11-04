@@ -67,8 +67,8 @@ test("picks known terrain and path points at every rotation @fast", async ({ pag
 
     await renderCamera(219, 250, rotation);
     const entrancePath = await page.evaluate(() => {
-      // The entrance tile nothing draws over at any rotation; a demo coaster support covers (218, 251) at rotation 1.
-      const screen = window.gameTest.project({ x: 218.5, y: 250.5, z: 2 });
+      // This point on the entrance tile stays visible around the demo coaster supports at every rotation.
+      const screen = window.gameTest.project({ x: 218.5, y: 250.65, z: 2 });
       return window.gameTest.pick(screen.x, screen.y);
     });
     expect(entrancePath, `entrance path at rotation ${rotation}`).toEqual({ kind: "path", x: 218, y: 250, height: expect.closeTo(8, 1) });
