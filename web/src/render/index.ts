@@ -2,6 +2,7 @@ import type { Camera, Viewport } from "../camera";
 import { gradeColor, lightingAt, NOON, type Lighting, type Rgb } from "./daylight";
 import type { Glow } from "./effects";
 import { createRenderResources, FLOATS_PER_QUAD } from "./resources";
+import { buildGridQuads } from "./grid";
 import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, SHAPE_PAGES, UNDERGROUND_CONTENT_DEPTH_BIAS, UNPICKABLE_KINDS, type Atlas, type GeometryQuad, type Pick, type Scene, type Triangle, type Vertex, type WorldView } from "./scene";
 export type { Atlas, GeometryQuad, Pick, WorldSprite, WorldView } from "./scene";
 export { terrainHeightAt } from "./scene";
@@ -41,6 +42,8 @@ export interface RenderInput {
   /** Geometry is clipped to the underground level and participates in depth testing and picking. */
   geometryPasses?: readonly GeometryPass[];
   atmospherePass?: AtmospherePass;
+  /** Show clearer tile borders while a construction tool is active. */
+  showBuildGrid?: boolean;
 }
 
 function validatePickRegion(x: number, y: number, width: number, height: number): void {
@@ -84,7 +87,7 @@ const GLOW_DOWNSCALE = 4;
 const POOL_DOWNSCALE = 2;
 /** The glow layer is printed slightly out of register with the world, in CSS pixels. */
 const GLOW_MISREGISTRATION = { x: 2, y: -1.5 };
-const shapeCodes: Record<number, number> = { [SHAPE_PAGES.flat]: 0, [SHAPE_PAGES.glow]: 1, [SHAPE_PAGES.disc]: 2, [SHAPE_PAGES.softDisc]: 3 };
+const shapeCodes: Record<number, number> = { [SHAPE_PAGES.flat]: 0, [SHAPE_PAGES.glow]: 1, [SHAPE_PAGES.disc]: 2, [SHAPE_PAGES.softDisc]: 3, [SHAPE_PAGES.lightPool]: 4 };
 
 interface Batch { page: number; data: Float32Array; count: number }
 interface QuadSource { vertices: readonly Vertex[]; page: number; color: Triangle["color"]; light: number; pickId: number }
@@ -131,7 +134,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
   let surfaceScene: Scene = { triangles: [] };
   let facilityScene: Scene = { triangles: [] };
   let groundBatches: Batch[] = []; let standingBatches: Batch[] = [];
-  let skyBatches: Batch[] = []; let decalBatches: Batch[] = []; let overlayBatches: Batch[] = []; let sparkBatches: Batch[] = []; let glowBatches: Batch[] = []; let poolBatches: Batch[] = [];
+  let skyBatches: Batch[] = []; let decalBatches: Batch[] = []; let gridBatches: Batch[] = []; let overlayBatches: Batch[] = []; let sparkBatches: Batch[] = []; let glowBatches: Batch[] = []; let poolBatches: Batch[] = [];
   let atmosphere: Atmosphere | undefined;
   let depthMinimum = 0; let depthSpan = 2;
   let pickWidth = 0; let pickHeight = 0;
@@ -241,7 +244,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
     gl!.drawArrays(gl!.TRIANGLES, 0, 3);
   }
   /** Entry: scissor disabled, color writes enabled and, if pooled, pool texture bound on unit 1. Exit: default framebuffer with depth writes enabled. */
-  function drawWorld(lighting: Lighting, pooled: boolean): void {
+  function drawWorld(lighting: Lighting, pooled: boolean, showBuildGrid: boolean): void {
     // Tile edges are slightly translucent and have always shown a dark backdrop through them, which draws the faint grid.
     const backdrop = gradeColor([0, 0, 0], lighting);
     gl!.bindFramebuffer(gl!.FRAMEBUFFER, null);
@@ -252,6 +255,14 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
     gl!.enable(gl!.DEPTH_TEST);
     drawBatches(groundBatches);
     gl!.depthMask(false); drawBatches(decalBatches); gl!.depthMask(true);
+    if (showBuildGrid) {
+      gl!.disable(gl!.DEPTH_TEST);
+      useWorldProgram(false, true, false);
+      drawBatches(gridBatches);
+      gl!.enable(gl!.DEPTH_TEST);
+      useWorldProgram(false, false, true, 0, pooled);
+      setLighting(program, lighting);
+    }
     drawBatches(standingBatches);
   }
   /** Entry: world color and depth are in the default framebuffer; world lighting uniforms are set. Exit: default framebuffer, depth test disabled and standard alpha blending. */
@@ -269,11 +280,11 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
     drawGlows();
     gl!.blendFuncSeparate(gl!.SRC_ALPHA, gl!.ONE_MINUS_SRC_ALPHA, gl!.ONE, gl!.ONE_MINUS_SRC_ALPHA);
   }
-  function draw(): void {
+  function draw(showBuildGrid: boolean): void {
     gl!.disable(gl!.SCISSOR_TEST); gl!.disable(gl!.CULL_FACE); gl!.disable(gl!.DITHER);
     gl!.colorMask(true, true, true, true);
     const pooled = drawPools();
-    drawWorld(atmosphere?.lighting ?? NOON_LIGHTING, pooled);
+    drawWorld(atmosphere?.lighting ?? NOON_LIGHTING, pooled, showBuildGrid);
     drawAtmosphere();
   }
   function drawSky({ lighting, horizonY, paper }: Atmosphere): void {
@@ -286,7 +297,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
     gl!.enable(gl!.BLEND);
   }
   return {
-    render({ world, camera, waterFrame = 0, geometryPasses = [], atmospherePass }) {
+    render({ world, camera, waterFrame = 0, geometryPasses = [], atmospherePass, showBuildGrid = false }) {
       if (gl!.isContextLost()) return;
       if (canvas.width < 1 || canvas.height < 1) throw new Error("Canvas dimensions must be positive");
       // The camera is in backing-store pixels, so its zoom already includes the device pixel ratio.
@@ -304,6 +315,11 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       surfaceScene = { triangles: scene.triangles.filter(({ kind }) => kind === "terrain" || kind === "carved-floor" || kind === "path") };
       facilityScene = { triangles: scene.triangles.filter(({ kind, id }) => kind === "terrain" || kind === "carved-floor" || kind === "path" || kind === "facility" || (kind === "sprite" && id?.startsWith("facility-"))) };
       prepare();
+      const gridLighting = atmosphere?.lighting ?? NOON_LIGHTING;
+      const gridInk: readonly [number, number, number, number] = gridLighting.lightsOn > 0.5
+        ? [0.92, 0.83, 0.63, 0.3]
+        : [0.12, 0.08, 0.2, 0.28];
+      gridBatches = showBuildGrid ? encode(buildGridQuads(scene.triangles, gridInk).map(fromGeometry)) : [];
       skyBatches = encode((atmosphere?.sky ?? []).map(fromGeometry));
       decalBatches = encode(clip(atmosphere?.decals ?? []).map(fromGeometry));
       poolBatches = encode((atmosphere?.pools ?? []).map(fromGeometry));
@@ -323,7 +339,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
         gl!.framebufferRenderbuffer(gl!.FRAMEBUFFER, gl!.DEPTH_ATTACHMENT, gl!.RENDERBUFFER, depthBuffer);
         if (gl!.checkFramebufferStatus(gl!.FRAMEBUFFER) !== gl!.FRAMEBUFFER_COMPLETE) throw new Error("Picking framebuffer is incomplete");
       }
-      draw();
+      draw(showBuildGrid);
       pickingDirty = true;
     },
     isContextAvailable() { return !gl!.isContextLost(); },

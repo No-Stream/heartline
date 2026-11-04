@@ -1,4 +1,4 @@
-import { GRADE_GLSL, POOL_GLSL } from "./daylight";
+import { GRADE_GLSL, POOL_FALLOFF_DECAY, POOL_FALLOFF_RIM_START, POOL_GLSL } from "./daylight";
 
 export const FLOATS_PER_QUAD = 28;
 
@@ -44,7 +44,8 @@ export function createRenderResources(gl: WebGL2RenderingContext, images: Record
       vec4 texel = textured ? texture(atlas,uv) * fill : fill;
       if (shape != 0) {
         float r = length(uv * 2.0 - 1.0);
-        texel.a *= shape == 1 ? pow(max(0.0, 1.0 - r * r), 2.0) : shape == 2 ? 1.0 - smoothstep(0.75, 1.0, r) : 1.0 - smoothstep(0.35, 1.0, r);
+        float poolFalloff = exp(-${POOL_FALLOFF_DECAY.toFixed(1)} * r * r) * (1.0 - smoothstep(${POOL_FALLOFF_RIM_START.toFixed(2)}, 1.0, r));
+        texel.a *= shape == 1 ? exp(-${POOL_FALLOFF_DECAY.toFixed(1)} * r * r) : shape == 2 ? 1.0 - smoothstep(0.75, 1.0, r) : shape == 4 ? poolFalloff : 1.0 - smoothstep(0.35, 1.0, r);
       }
       if (texel.a < (shape != 0 ? 0.003 : 0.05) || (picking && all(equal(id, vec3(0.0))))) discard;
       vec3 printed = graded ? grade(texel.rgb, lit) : texel.rgb;

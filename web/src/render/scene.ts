@@ -21,7 +21,7 @@ export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; co
 export interface Scene { triangles: Triangle[] }
 export interface GeometryQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; page?: number; color: Triangle["color"]; kind: string; id: string; tileX: number; tileY: number; light?: number }
 /** Untextured fills. Round shapes are drawn inside the unit square given by the vertices' u and v. */
-export const SHAPE_PAGES = { flat: -1, glow: -2, disc: -3, softDisc: -4 } as const;
+export const SHAPE_PAGES = { flat: -1, glow: -2, disc: -3, softDisc: -4, lightPool: -5 } as const;
 /** Drawn but never picked: lights and the dashed path preview. */
 export const UNPICKABLE_KINDS: ReadonlySet<string> = new Set(["path-preview", "light", "block-boundary-fixed"]);
 interface HeightPoint { x: number; y: number; height: number }
