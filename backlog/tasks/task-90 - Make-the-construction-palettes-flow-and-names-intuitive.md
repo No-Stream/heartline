@@ -1,10 +1,10 @@
 ---
 id: TASK-90
 title: Make the construction palette's flow and names intuitive
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-04 05:08'
-updated_date: '2026-11-04 05:12'
+updated_date: '2026-11-04 07:17'
 labels:
   - coaster
   - construction
@@ -24,4 +24,6 @@ Owner playtest 2026-11-03: climbing is confusing (start the curve, place another
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-03 night, owner approved: each multi-part element is one palette choice that places its transitions automatically; separate pieces remain for fine control.
+
+2026-11-03 night: Codex job task-mw1sbatq-yb7ls7 in worktree theme-park-sim-worktrees/palette-elements (element choices, plain names, chain markers).
 <!-- SECTION:NOTES:END -->
