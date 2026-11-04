@@ -4,7 +4,7 @@ title: Add the Timber Tumbler player journey
 status: In Progress
 assignee: []
 created_date: '2026-11-03 20:05'
-updated_date: '2026-11-04 00:37'
+updated_date: '2026-11-04 02:50'
 labels:
   - test
 dependencies: []
@@ -32,4 +32,8 @@ Plan: docs/superpowers/plans/2026-11-03-flexible-track-and-gameplay-tests.md, wo
 2026-11-03: Incomplete. Added phase timings and shortened the shared circuit from 45 to 41 pieces; the Rust player circuit closure test passes, and a scratch real-physics lap completed without recovery. The browser constructed and tested the shortened circuit, but the 180 s run timed out while setting the entrance price. Its phases were setup 6.3 s, construction 67.0 s, ride test 17.6 s, terrain 27.8 s, and access paths 52.0 s. The original measured setup 12.2 s, construction 123.6 s, and ride test 18.5 s before timing out during terrain. Diagnostic runs with a temporary 360 s limit reached boarding but rider selection remains unverified: a sampled rider pick became a train click as the train moved, and subsequent bounded camera rotation attempts failed to select the rider. No game bug is established. The 180 s limit is restored. Guest panel, selected guest ride memory, and post-opening crest confetti are not verified, and there are no passing runs under three minutes. Next investigate selection by recording rider pose, rendered bounds, pick result, input event coordinates, and tick/frame at the actual click; arrange selection during stationary boarding. Reduce access path work and construction/render cost before repeating three consecutive 180 s runs. TypeScript typecheck and make build passed; no make ci was run.
 
 2026-11-03 lead: split the journey. Committed the build journey (park setup, a 41-piece circuit with curved chain lift, 60-degree section, crest, drop, banked turns and airtime hill, close, ride test with ratings and no stall): three consecutive passes at 1.6 min. The operate phase (terrain for access, queue and exit paths, entrance and ride prices, opening, queue and boarding, rider selection, ride memory, crest confetti after opening) is saved in docs/handoffs/2026-11-03-timber-tumbler-operate-phase.ts.txt. Next: make it a second journey that starts from a replayed session of the finished build (web/e2e/sessions) instead of rebuilding, and solve rider selection (the click lands on the moving train; consider whether players can click riders on moving trains at all, which may be a real usability gap).
+
+2026-11-03 night: Codex job task-mw1ib6nc-duiu3w (gpt-6.1-terra, medium) is building the operate journey from a recorded build session; brief in the lead's scratchpad (copy of the plan: test hook to replay a session into the live worker, web/e2e/sessions/timber-tumbler-built.json, a second @journey spec, riders selected while queued or boarding, never on a moving train). Owner question pending: should players be able to click riders on moving trains?
+
+2026-11-03 night: owner decided players do not need to click riders on moving trains; select riders while they queue or board.
 <!-- SECTION:NOTES:END -->

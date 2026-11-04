@@ -344,6 +344,7 @@ Rust and TypeScript:
 - **Lift rules:** the proposed model table stands. Timber Tumbler gets curved lifts up to 60°. Velocity Viper gets chain lifts too, curved and up to 60°. Briar Blitz gets curved lifts up to 45°. All three get climbing and descending turns.
 - **Paying:** support both ways to charge, each adjustable by the player. Guests can pay at the park gate (an entrance fee, which `ParkFacilities::set_price` currently refuses for the entrance) and per ride (a coaster ticket price). Work item 4 covers both. A park may use either or both, and the journeys check that income rises under each setting.
 - **Game speed:** a real player control (×1, ×2, ×4, and a faster test setting if needed) in the Watch bar. Journeys use the same control rather than a test-only `?speed`. Work item 2 builds it.
+- **Riders on moving trains:** players do not need to click guests riding a moving train; clicking a train selects the ride. Journeys select a rider while they queue or board and follow that guest. (Decided later on 2026-11-03.)
 
 ## Still open
 
