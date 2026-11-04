@@ -1,9 +1,10 @@
 ---
 id: TASK-110
 title: Fix piece icons that draw invalid SVG paths
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-04 17:59'
+updated_date: '2026-11-04 18:37'
 labels: []
 dependencies: []
 priority: medium
@@ -18,6 +19,6 @@ Found 2026-11-04 during the builder panel reorganisation: the browser console sh
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No NaN in any piece icon path
-- [ ] #2 A test checks every catalog piece icon
+- [x] #1 No NaN in any piece icon path
+- [x] #2 A test checks every catalog piece icon
 <!-- AC:END -->
