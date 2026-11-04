@@ -185,6 +185,7 @@ const dock = document.querySelector<HTMLElement>("[data-dock]");
 const toolbarContainer = document.querySelector<HTMLElement>("[data-toolbar]");
 if (!dock || !toolbarContainer) throw new Error("Tool dock or toolbar is missing");
 const toolDock = dock;
+const tunnelPreview = document.querySelector<HTMLElement>("[data-tunnel-preview]")!;
 const toolPanels: Record<Exclude<Tool, "none">, HTMLElement> = { coaster: panelContainer, paths: pathContainer, landscape: landscapingContainer, facilities: facilityContainer, scenery: sceneryContainer };
 const toolbar = createToolbar(toolbarContainer, (tool) => dispatch({ type: "tool-select", tool }));
 let activeTool: Tool = "none";
@@ -246,6 +247,7 @@ function openTool(tool: Tool, activatePanel = true): void {
   dayClock.setControlsVisible(tool === "none");
   toolDock.hidden = tool === "none";
   for (const [owner, element] of Object.entries(toolPanels)) element.hidden = owner !== tool;
+  tunnelPreview.hidden = tool !== "coaster" || tunnelPreview.textContent === "";
   toolDock.scrollTop = 0;
   // Resize now rather than on the next observer callback, so the world is projected onto the new canvas size at once.
   fitCanvas();
@@ -636,6 +638,10 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     followedPreview = previewKey;
     construction = next;
     panel.update(next);
+    const selectedWouldTunnel = next.pieces.some((piece) => piece.id === next.selected && piece.wouldTunnel)
+      || next.elements.some((element) => element.id === next.selected && element.wouldTunnel);
+    tunnelPreview.textContent = selectedWouldTunnel ? "This selection will tunnel through terrain." : "";
+    tunnelPreview.hidden = activeTool !== "coaster" || !selectedWouldTunnel;
     if (selectedBlock !== null && !next.blockReport.sections.some((section) => section.editableIndex === selectedBlock)) selectBlock(null);
     gameCanvas.dataset.blockBoundaries = String(next.blockReport.sections.length);
     const reportJson = JSON.stringify(next.testingReport ?? null);

@@ -505,6 +505,214 @@ fn collision_is_reported_and_does_not_place_a_piece() {
 }
 
 #[test]
+fn piece_choices_tunnel_through_hills_and_report_the_tunnel() {
+    let hill = World::new(
+        128,
+        128,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    let construction = Construction::new(TrackState { z: 11, ..start() }, hybrid_model());
+
+    let straight = construction
+        .choices(&hill, &[])
+        .into_iter()
+        .find(|choice| choice.id == PieceId::LevelToGentleDown)
+        .expect("descending choice exists");
+
+    assert_eq!(straight.result, Ok(()));
+    let plan = construction
+        .tunnel_plan(PieceId::LevelToGentleDown, &hill, &[])
+        .expect("tunnel is valid");
+    assert!(straight.would_tunnel, "choice={straight:?} plan={plan:?}");
+    assert!(!plan.carve_cells.is_empty());
+    assert!(
+        plan.swept_cells.iter().all(|cell| {
+            hill.ground(cell.x, cell.y, cell.height) == crate::world::Ground::Solid
+        })
+    );
+}
+
+#[test]
+fn level_track_can_rest_on_the_exact_floor_of_its_tunnel() {
+    let hill = World::new(
+        128,
+        128,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    let start = TrackState { z: 5, ..start() };
+    let piece = template_for(PieceId::Straight, start).at(start).unwrap();
+    let plan = tunnel_plan(&hill, &piece, &hybrid_model().train).unwrap();
+    assert_eq!(
+        plan.carve_cells.iter().map(|cell| cell.height).min(),
+        Some(10),
+        "the tunnel floor stays at the clearance envelope's lower boundary"
+    );
+
+    let choice = Construction::new(start, hybrid_model())
+        .choices(&hill, &[])
+        .into_iter()
+        .find(|choice| choice.id == PieceId::Straight)
+        .expect("level straight choice exists");
+
+    assert_eq!(choice.result, Ok(()), "choice={choice:?}");
+    assert!(choice.would_tunnel);
+}
+
+#[test]
+fn gentle_down_continues_as_it_enters_a_hill() {
+    fn append_with_carving(
+        construction: &mut Construction,
+        world: &mut World,
+        id: PieceId,
+    ) -> Result<(), ConstructionError> {
+        let plan = construction.tunnel_plan(id, world, &[])?;
+        let cells: Vec<_> = plan
+            .carve_cells
+            .iter()
+            .map(|cell| (cell.x, cell.y, cell.height))
+            .collect();
+        if !cells.is_empty() {
+            world.carve_cells(&cells).unwrap();
+        }
+        construction.append(id, world, &[])
+    }
+
+    let mut hill = World::new(
+        512,
+        512,
+        Surface {
+            corners: [8; 4],
+            water: None,
+        },
+    );
+    for x in 66..=74 {
+        for y in 63..=71 {
+            hill.set_surface(
+                x,
+                y,
+                Surface {
+                    corners: [20; 4],
+                    water: None,
+                },
+            );
+        }
+    }
+    let start = TrackState {
+        x: 100,
+        y: 100,
+        z: 6,
+        heading: Heading::East,
+        ..TrackState::origin()
+    };
+    let mut construction = Construction::new(start, hybrid_model());
+    append_with_carving(&mut construction, &mut hill, PieceId::Station).unwrap();
+    construction.set_chain(true);
+    for id in [
+        PieceId::LevelToGentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUpToLevel,
+        PieceId::Straight,
+    ] {
+        append_with_carving(&mut construction, &mut hill, id).unwrap();
+    }
+    construction.set_chain(false);
+    for id in [
+        PieceId::OneTileStraight,
+        PieceId::OneTileStraight,
+        PieceId::OffsetLeft,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+        PieceId::LevelToGentleDown,
+        PieceId::GentleDown,
+        PieceId::GentleDown,
+    ] {
+        append_with_carving(&mut construction, &mut hill, id).unwrap();
+    }
+
+    let choice = construction
+        .choices(&hill, &[])
+        .into_iter()
+        .find(|choice| choice.id == PieceId::GentleDown)
+        .expect("next gentle descent exists");
+    assert_eq!(
+        choice.result,
+        Ok(()),
+        "choice={choice:?}; entry={:?}",
+        construction.end()
+    );
+}
+
+#[test]
+fn tunnel_plan_refuses_water_and_paths() {
+    let construction = Construction::new(TrackState { z: 10, ..start() }, hybrid_model());
+    let water = World::new(
+        128,
+        128,
+        Surface {
+            corners: [0; 4],
+            water: Some(20),
+        },
+    );
+    assert_eq!(
+        construction.tunnel_plan(PieceId::Straight, &water, &[]),
+        Err(ConstructionError::Clearance(ClearanceCollision::Water))
+    );
+
+    let mut path_world = World::new(
+        128,
+        128,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    path_world.place_path(crate::world::Path {
+        position: crate::world::Position {
+            x: 25,
+            y: 25,
+            height: 20,
+        },
+        slope: None,
+    });
+    assert_eq!(
+        construction.tunnel_plan(PieceId::Straight, &path_world, &[]),
+        Err(ConstructionError::Clearance(ClearanceCollision::Path))
+    );
+}
+
+#[test]
+fn tunnel_plan_refuses_facility_obstacles() {
+    let hill = World::new(
+        128,
+        128,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    let construction = Construction::new(TrackState { z: 10, ..start() }, hybrid_model());
+    let facility = SupportObstacle {
+        min: Vec3::new(99.0, 98.0, 17.0),
+        max: Vec3::new(105.0, 103.0, 24.0),
+    };
+
+    assert!(matches!(
+        construction.tunnel_plan(PieceId::Straight, &hill, &[facility]),
+        Err(ConstructionError::Clearance(ClearanceCollision::Scenery))
+    ));
+}
+
+#[test]
 fn supports_route_around_existing_track_and_train_space() {
     let model = hybrid_model();
     let existing = model

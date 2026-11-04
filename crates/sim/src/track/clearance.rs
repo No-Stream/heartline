@@ -1,7 +1,7 @@
 //! Conservative sampled clearance envelopes in metres.
 use crate::track::{Piece, TrackState, TrainConfiguration, Vec3};
 use crate::world::{Ground, World};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 const SAMPLE_SPACING: f64 = 0.5;
 const TRACK_RADIUS: f64 = 0.15;
@@ -20,10 +20,33 @@ pub struct ClearanceBox {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClearanceCollision {
     Terrain,
+    TerrainDepth,
+    Water,
     Path,
     Scenery,
     Track,
     OutsideWorld,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TerrainCell {
+    pub x: u16,
+    pub y: u16,
+    pub height: i16,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TunnelPlan {
+    /// Terrain cells touched by the clearance that are solid or already carved.
+    pub swept_cells: Vec<TerrainCell>,
+    /// Solid cells the placement would remove.
+    pub carve_cells: Vec<TerrainCell>,
+}
+
+impl TunnelPlan {
+    pub fn would_tunnel(&self) -> bool {
+        !self.carve_cells.is_empty()
+    }
 }
 
 fn intersects(a: ClearanceBox, b: ClearanceBox) -> bool {
@@ -75,6 +98,104 @@ fn intersects_envelope(envelope: &OrientedEnvelope, obstacle: ClearanceBox) -> b
             .axes
             .iter()
             .any(|a| world_axes.iter().any(|b| separated(a.cross(*b))))
+}
+
+fn clip_surface_triangle_below_water(triangle: [Vec3; 3], water_level: f64) -> Vec<Vec3> {
+    let mut clipped = Vec::new();
+    for index in 0..triangle.len() {
+        let current = triangle[index];
+        let previous = triangle[(index + triangle.len() - 1) % triangle.len()];
+        let current_is_wet = current.z <= water_level;
+        let previous_is_wet = previous.z <= water_level;
+        if current_is_wet != previous_is_wet {
+            let fraction = (water_level - previous.z) / (current.z - previous.z);
+            clipped.push(previous + (current - previous) * fraction);
+        }
+        if current_is_wet {
+            clipped.push(current);
+        }
+    }
+    clipped
+}
+
+fn intersects_water_prism(
+    envelope: &OrientedEnvelope,
+    surface_polygon: &[Vec3],
+    water_level: f64,
+) -> bool {
+    if surface_polygon.len() < 3 {
+        return false;
+    }
+    let polygon_len = surface_polygon.len();
+    let mut prism_vertices = surface_polygon.to_vec();
+    prism_vertices.extend(
+        surface_polygon
+            .iter()
+            .map(|point| Vec3::new(point.x, point.y, water_level)),
+    );
+    let up = Vec3::new(0.0, 0.0, 1.0);
+    let mut axes = envelope.axes.to_vec();
+    axes.push(up);
+    axes.push(
+        (surface_polygon[1] - surface_polygon[0]).cross(surface_polygon[2] - surface_polygon[0]),
+    );
+    let mut prism_edges = Vec::with_capacity(polygon_len * 3);
+    for index in 0..polygon_len {
+        let next = (index + 1) % polygon_len;
+        let edge = surface_polygon[next] - surface_polygon[index];
+        axes.push(edge.cross(up));
+        prism_edges.push(edge);
+        prism_edges.push(prism_vertices[index + polygon_len] - prism_vertices[index]);
+    }
+    for edge in &prism_edges {
+        for envelope_axis in envelope.axes {
+            axes.push(envelope_axis.cross(*edge));
+        }
+    }
+    let envelope_center = envelope.centre;
+    axes.into_iter().all(|axis| {
+        if axis.dot(axis) <= 1e-20 {
+            return true;
+        }
+        let radius = envelope
+            .axes
+            .iter()
+            .zip(envelope.half)
+            .map(|(basis, half_extent)| basis.dot(axis).abs() * half_extent)
+            .sum::<f64>();
+        let envelope_center_projection = envelope_center.dot(axis);
+        let envelope_min = envelope_center_projection - radius;
+        let envelope_max = envelope_center_projection + radius;
+        let (water_min, water_max) = prism_vertices.iter().map(|vertex| vertex.dot(axis)).fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(minimum, maximum), projection| (minimum.min(projection), maximum.max(projection)),
+        );
+        envelope_min <= water_max && water_min <= envelope_max
+    })
+}
+
+fn water_intersects_envelope(
+    envelope: &OrientedEnvelope,
+    x: u16,
+    y: u16,
+    surface_corners: [i16; 4],
+    water_level: i16,
+) -> bool {
+    let x = f64::from(x) * 4.0;
+    let y = f64::from(y) * 4.0;
+    let corners = [
+        Vec3::new(x, y, f64::from(surface_corners[0])),
+        Vec3::new(x + 4.0, y, f64::from(surface_corners[1])),
+        Vec3::new(x + 4.0, y + 4.0, f64::from(surface_corners[2])),
+        Vec3::new(x, y + 4.0, f64::from(surface_corners[3])),
+    ];
+    [[0, 1, 2], [0, 2, 3]].into_iter().any(|triangle| {
+        let polygon = clip_surface_triangle_below_water(
+            triangle.map(|index| corners[index]),
+            f64::from(water_level),
+        );
+        intersects_water_prism(envelope, &polygon, f64::from(water_level))
+    })
 }
 
 fn envelope(
@@ -452,8 +573,12 @@ pub fn check_clearance_indexed(
             (entry_gap, exit_gap)
         });
     }
+    let mut terrain_collision = false;
     for (distance, oriented) in envelopes {
         let bounds = oriented.bounds;
+        if bounds.min.z < f64::from(i16::MIN) {
+            return Err(ClearanceCollision::TerrainDepth);
+        }
         if bounds.min.x < 0.0
             || bounds.min.y < 0.0
             || bounds.max.x > f64::from(width) * 4.0
@@ -467,6 +592,12 @@ pub fn check_clearance_indexed(
             for y in (bounds.min.y / 4.0).floor() as u16
                 ..=(bounds.max.y / 4.0).floor().min(f64::from(height - 1)) as u16
             {
+                let surface = world.surface(x, y);
+                if let Some(water_level) = surface.water {
+                    if water_intersects_envelope(&oriented, x, y, surface.corners, water_level) {
+                        return Err(ClearanceCollision::Water);
+                    }
+                }
                 let min_height = bounds.min.z.floor().max(f64::from(i16::MIN)) as i16;
                 if world.surface(x, y).corners.into_iter().max().unwrap() <= min_height {
                     continue;
@@ -490,7 +621,7 @@ pub fn check_clearance_indexed(
                             },
                         )
                     {
-                        return Err(ClearanceCollision::Terrain);
+                        terrain_collision = true;
                     }
                 }
             }
@@ -533,7 +664,76 @@ pub fn check_clearance_indexed(
             }
         }
     }
-    Ok(())
+    if terrain_collision {
+        Err(ClearanceCollision::Terrain)
+    } else {
+        Ok(())
+    }
+}
+
+/// Collects the exact terrain cells intersected by a piece's sampled clearance envelope.
+/// The result is canonical row-major, then ascending height.
+pub fn tunnel_plan(
+    world: &World,
+    piece: &Piece,
+    train: &TrainConfiguration,
+) -> Result<TunnelPlan, ClearanceCollision> {
+    let (width, height) = world.dimensions();
+    let spacing = train_sample_spacing(train);
+    let mut swept_cells = BTreeSet::new();
+    let mut carve_cells = BTreeSet::new();
+    for distance in samples(piece, spacing) {
+        let oriented = envelope(piece, distance, train, spacing);
+        let bounds = oriented.bounds;
+        if bounds.min.z < f64::from(i16::MIN) {
+            return Err(ClearanceCollision::TerrainDepth);
+        }
+        if bounds.min.x < 0.0
+            || bounds.min.y < 0.0
+            || bounds.max.x > f64::from(width) * 4.0
+            || bounds.max.y > f64::from(height) * 4.0
+        {
+            return Err(ClearanceCollision::OutsideWorld);
+        }
+        for x in (bounds.min.x / 4.0).floor() as u16
+            ..=(bounds.max.x / 4.0).floor().min(f64::from(width - 1)) as u16
+        {
+            for y in (bounds.min.y / 4.0).floor() as u16
+                ..=(bounds.max.y / 4.0).floor().min(f64::from(height - 1)) as u16
+            {
+                let minimum = bounds.min.z.floor().max(f64::from(i16::MIN)) as i16;
+                let maximum = bounds.max.z.ceil().min(f64::from(i16::MAX)) as i16;
+                for z in minimum..maximum {
+                    let cell = ClearanceBox {
+                        min: Vec3::new(f64::from(x) * 4.0, f64::from(y) * 4.0, f64::from(z)),
+                        max: Vec3::new(
+                            f64::from(x) * 4.0 + 4.0,
+                            f64::from(y) * 4.0 + 4.0,
+                            f64::from(z) + 1.0,
+                        ),
+                    };
+                    if !intersects_envelope(&oriented, cell) {
+                        continue;
+                    }
+                    let terrain_cell = TerrainCell { x, y, height: z };
+                    match world.ground(x, y, z) {
+                        Ground::Solid | Ground::SurfaceSlope => {
+                            swept_cells.insert(terrain_cell);
+                            carve_cells.insert(terrain_cell);
+                        }
+                        Ground::Carved => {
+                            swept_cells.insert(terrain_cell);
+                        }
+                        Ground::Air => {}
+                    }
+                }
+            }
+        }
+    }
+    Ok(TunnelPlan {
+        swept_cells: swept_cells.into_iter().collect(),
+        carve_cells: carve_cells.into_iter().collect(),
+    })
 }
 
 #[cfg(test)]
@@ -602,6 +802,137 @@ mod tests {
             Err(ClearanceCollision::Path)
         ));
         assert!(check_clearance(&world(0), &piece, &train, &[], &[]).is_ok());
+    }
+
+    #[test]
+    fn water_blocks_track_clearance() {
+        let piece = straight(4, 4, 10);
+        let water = World::new(
+            32,
+            32,
+            Surface {
+                corners: [0; 4],
+                water: Some(20),
+            },
+        );
+
+        assert_eq!(
+            check_clearance(&water, &piece, &hybrid_model().train, &[], &[]),
+            Err(ClearanceCollision::Water)
+        );
+    }
+
+    #[test]
+    fn sloped_water_does_not_block_a_tunnel_in_the_dry_high_side() {
+        let mut train = hybrid_model().train;
+        train.length_metres = 0.2;
+        train.width_metres = 0.2;
+        train.cars = 1;
+        let piece = straight(5, 3, 8);
+        let mut map = world(0);
+        map.set_surface(
+            1,
+            0,
+            Surface {
+                corners: [0, 0, 20, 20],
+                water: Some(10),
+            },
+        );
+        let plan = tunnel_plan(&map, &piece, &train).unwrap();
+        let mut carved = map.clone();
+        carved
+            .carve_cells(
+                &plan
+                    .carve_cells
+                    .iter()
+                    .map(|cell| (cell.x, cell.y, cell.height))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+
+        assert_eq!(check_clearance(&carved, &piece, &train, &[], &[]), Ok(()));
+    }
+
+    #[test]
+    fn track_below_minimum_terrain_depth_is_refused() {
+        let mut state = TrackState::origin();
+        state.x = 4;
+        state.y = 4;
+        state.z = i32::from(i16::MIN) - 2;
+        let piece = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .unwrap()
+            .at(state)
+            .unwrap();
+
+        assert_eq!(
+            check_clearance(&world(20), &piece, &hybrid_model().train, &[], &[]),
+            Err(ClearanceCollision::TerrainDepth)
+        );
+    }
+
+    #[test]
+    fn descending_piece_plan_contains_exact_swept_clearance_cells() {
+        let hill = world(20);
+        let mut state = TrackState::origin();
+        state.x = 4;
+        state.y = 4;
+        state.z = 14;
+        let piece = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::LevelToGentleDown)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        let train = hybrid_model().train;
+        let plan = tunnel_plan(&hill, &piece, &train).unwrap();
+        let spacing = train_sample_spacing(&train);
+        let (width, height) = hill.dimensions();
+        let mut expected = BTreeSet::new();
+        for distance in samples(&piece, spacing) {
+            let oriented = envelope(&piece, distance, &train, spacing);
+            let bounds = oriented.bounds;
+            for x in (bounds.min.x / 4.0).floor() as u16
+                ..=(bounds.max.x / 4.0).floor().min(f64::from(width - 1)) as u16
+            {
+                for y in (bounds.min.y / 4.0).floor() as u16
+                    ..=(bounds.max.y / 4.0).floor().min(f64::from(height - 1)) as u16
+                {
+                    let minimum = bounds.min.z.floor() as i16;
+                    let maximum = bounds.max.z.ceil() as i16;
+                    for z in minimum..maximum {
+                        let cell = ClearanceBox {
+                            min: Vec3::new(f64::from(x) * 4.0, f64::from(y) * 4.0, f64::from(z)),
+                            max: Vec3::new(
+                                f64::from(x) * 4.0 + 4.0,
+                                f64::from(y) * 4.0 + 4.0,
+                                f64::from(z) + 1.0,
+                            ),
+                        };
+                        if matches!(hill.ground(x, y, z), Ground::Solid | Ground::SurfaceSlope)
+                            && intersects_envelope(&oriented, cell)
+                        {
+                            expected.insert(TerrainCell { x, y, height: z });
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(plan.carve_cells, expected.into_iter().collect::<Vec<_>>());
+        assert_eq!(plan.swept_cells, plan.carve_cells);
+        let mut carved = hill.clone();
+        carved
+            .carve_cells(
+                &plan
+                    .carve_cells
+                    .iter()
+                    .map(|cell| (cell.x, cell.y, cell.height))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        assert_eq!(check_clearance(&carved, &piece, &train, &[], &[]), Ok(()));
     }
 
     #[test]

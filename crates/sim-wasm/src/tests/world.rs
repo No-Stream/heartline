@@ -6,6 +6,8 @@ use theme_park_sim::facilities::{FacilityKind, ParkFacilities};
 use theme_park_sim::guests::GuestId;
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{Circuit, TIME_STEP, demo_circuit};
+use theme_park_sim::track::clearance::ClearanceCollision;
+use theme_park_sim::track::construction::{Construction, ConstructionError};
 use theme_park_sim::track::supports::generate_supports;
 use theme_park_sim::track::{PieceId, TrackState, catalog, hybrid_model};
 use theme_park_sim::world::{Direction, PathKind, World};
@@ -45,6 +47,23 @@ fn demo_park_keeps_its_coaster_and_facilities() {
     assert!(simulation.demo_coaster().is_some());
     assert!(simulation.park.facilities.buildings().len() > 1);
     assert!(!simulation.coaster_rails().is_empty());
+}
+
+#[test]
+fn new_construction_cannot_tunnel_through_the_existing_demo_coaster() {
+    let simulation = WasmSimulation::new(17, 0, String::from("demo"));
+    let demo_coaster = simulation.demo_coaster().expect("demo coaster exists");
+    let station_entry = demo_coaster.circuit.pieces()[0].entry;
+    let construction = Construction::new(station_entry, hybrid_model());
+
+    assert_eq!(
+        construction.tunnel_plan(
+            PieceId::Station,
+            &simulation.world,
+            &simulation.facility_obstacles(),
+        ),
+        Err(ConstructionError::Clearance(ClearanceCollision::Scenery))
+    );
 }
 
 #[test]

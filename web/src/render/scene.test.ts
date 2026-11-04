@@ -405,6 +405,32 @@ describe("world scene", () => {
       expect(new Set(interiorWalls.map((triangle) => Math.min(...triangle.vertices.map((vertex) => vertex.height))))).toEqual(new Set([4, 5, 6, 7]));
     }
   });
+  test("frames the entrance where a surface opening connects to a buried tunnel", () => {
+    const surfaces = new Int32Array(3 * 3 * 6);
+    for (let index = 0; index < surfaces.length; index += 6) surfaces.set([12, 12, 12, 12, 0, 0], index);
+    surfaces.set([8, 8, 8, 8, 0, 0], (1 * 3 + 1) * 6);
+    const openingWorld: WorldView = {
+      dimensions: new Uint16Array([3, 3]), surfaces,
+      paths: new Int32Array(), carved: new Int32Array([1, 1, 4, 8, 1, 2, 4, 8]),
+    };
+    for (const rotation of [0, 1, 2, 3] as const) {
+      const portals = buildScene(openingWorld, { ...camera, rotation }, viewport, atlas).triangles
+        .filter((triangle) => triangle.kind === "tunnel-portal");
+      expect(portals).toHaveLength(6);
+      expect(portals.every((triangle) => triangle.tileX === 1 && triangle.tileY === 1)).toBe(true);
+    }
+  });
+  test("does not frame a surface opening without a connected buried tunnel", () => {
+    const surfaces = new Int32Array(3 * 3 * 6);
+    for (let index = 0; index < surfaces.length; index += 6) surfaces.set([8, 8, 8, 8, 0, 0], index);
+    const openingWorld: WorldView = {
+      dimensions: new Uint16Array([3, 3]), surfaces,
+      paths: new Int32Array(), carved: new Int32Array([1, 1, 4, 8]),
+    };
+    const portals = buildScene(openingWorld, camera, viewport, atlas).triangles
+      .filter((triangle) => triangle.kind === "tunnel-portal");
+    expect(portals).toHaveLength(0);
+  });
   test("draws cliffs from the opening floor beside lower terrain and at map edges", () => {
     const surfaces = new Int32Array(3 * 3 * 6);
     surfaces.set([8, 8, 8, 8, 0, 0], 4 * 6);
