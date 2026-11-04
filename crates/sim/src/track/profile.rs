@@ -2,6 +2,7 @@ use std::f64::consts::PI;
 
 use crate::state_hash::StateHasher;
 use crate::track::curves::HEART_HEIGHT_METRES;
+use crate::track::curves::RatedSpeeds;
 
 const GRAVITY: f64 = 9.81;
 const HEART_HEIGHT: f64 = HEART_HEIGHT_METRES;
@@ -39,6 +40,8 @@ pub(crate) struct ProfileSpec {
     maximum_entry: f64,
     fixed_speed: bool,
     mirror_apex: bool,
+    start_angle: f64,
+    name: &'static str,
 }
 
 impl ProfileSpec {
@@ -55,11 +58,27 @@ impl ProfileSpec {
             maximum_entry,
             fixed_speed: false,
             mirror_apex: false,
+            start_angle: 0.0,
+            name: "half loop",
+        }
+    }
+    pub(crate) fn pull(start_angle: f64, end_angle: f64, maximum_entry: f64, force: f64) -> Self {
+        Self {
+            segments: vec![Segment::Arc {
+                angle: end_angle - start_angle,
+                schedule: Schedule::Constant(force),
+            }],
+            maximum_entry,
+            fixed_speed: false,
+            mirror_apex: false,
+            start_angle,
+            name: "pull profile",
         }
     }
     pub(crate) fn full_loop(maximum_entry: f64, bottom: f64, top: f64) -> Self {
         Self {
             mirror_apex: true,
+            name: "full loop",
             ..Self::half_loop(maximum_entry, bottom, top)
         }
     }
@@ -73,7 +92,13 @@ impl ProfileSpec {
             maximum_entry: speed,
             fixed_speed: true,
             mirror_apex: false,
+            start_angle: 0.0,
+            name: "test arc",
         }
+    }
+    pub(crate) fn named(mut self, name: &'static str) -> Self {
+        self.name = name;
+        self
     }
 }
 
@@ -93,6 +118,27 @@ pub(crate) struct SolvedProfile {
 }
 
 impl SolvedProfile {
+    pub(crate) fn rated_speeds(
+        &self,
+        name: &str,
+        maximum_entry: f64,
+        minimum_window: f64,
+        model_radius: f64,
+    ) -> RatedSpeeds {
+        let minimum_entry = self.minimum_entry();
+        assert!(
+            maximum_entry - minimum_entry >= minimum_window,
+            "{name}: speed window is too narrow; raise the hold angle or lower the rated maximum"
+        );
+        assert!(
+            self.minimum_radius() >= model_radius + 0.5,
+            "{name}: minimum radius is too small; raise the top force or lower the rated maximum"
+        );
+        RatedSpeeds {
+            minimum_entry,
+            maximum_entry,
+        }
+    }
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_len(self.points.len());
         for p in &self.points {
@@ -192,15 +238,15 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
         distance: 0.0,
         x: 0.0,
         z: 0.0,
-        angle: 0.0,
+        angle: spec.start_angle,
         heart_curvature: 0.0,
         curvature: 0.0,
     }];
-    let mut heart_x = 0.0;
-    let mut heart_z = HEART_HEIGHT;
-    let mut angle: f64 = 0.0;
+    let mut heart_x = -HEART_HEIGHT * spec.start_angle.sin();
+    let mut heart_z = HEART_HEIGHT * spec.start_angle.cos();
+    let mut angle: f64 = spec.start_angle;
     let mut distance = 0.0;
-    for segment in &spec.segments {
+    for (segment_index, segment) in spec.segments.iter().enumerate() {
         match *segment {
             Segment::Insert(length) if length > 0.0 => {
                 assert_eq!(points.last().unwrap().curvature, 0.0);
@@ -235,12 +281,14 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                         / steps as f64;
                     let taper = ((midpoint_angle - start_angle).abs() / taper_angle)
                         .powf(2.0 / 3.0)
-                        .min(if spec.mirror_apex {
-                            1.0
-                        } else {
-                            ((start_angle + delta - midpoint_angle).abs() / taper_angle)
-                                .powf(2.0 / 3.0)
-                        })
+                        .min(
+                            if spec.mirror_apex && segment_index + 1 == spec.segments.len() {
+                                1.0
+                            } else {
+                                ((start_angle + delta - midpoint_angle).abs() / taper_angle)
+                                    .powf(2.0 / 3.0)
+                            },
+                        )
                         .min(1.0);
                     let point_speed_squared = spec.maximum_entry.powi(2)
                         - if spec.fixed_speed {
@@ -262,11 +310,13 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                     angle = start_angle + delta * smooth((index + 1) as f64 / steps as f64);
                     let end_taper = ((angle - start_angle).abs() / taper_angle)
                         .powf(2.0 / 3.0)
-                        .min(if spec.mirror_apex {
-                            1.0
-                        } else {
-                            ((start_angle + delta - angle).abs() / taper_angle).powf(2.0 / 3.0)
-                        })
+                        .min(
+                            if spec.mirror_apex && segment_index + 1 == spec.segments.len() {
+                                1.0
+                            } else {
+                                ((start_angle + delta - angle).abs() / taper_angle).powf(2.0 / 3.0)
+                            },
+                        )
                         .min(1.0);
                     let end_point_speed_squared = spec.maximum_entry.powi(2)
                         - if spec.fixed_speed {
@@ -374,13 +424,22 @@ pub(crate) fn solve(spec: &ProfileSpec) -> SolvedProfile {
             return profile;
         }
     }
-    panic!("profile did not converge; adjust the force schedule or rated speed");
+    panic!(
+        "{}: profile did not converge; adjust the force schedule or rated speed",
+        spec.name
+    );
 }
 
 pub(crate) fn snap_half_loop(spec: &ProfileSpec) -> SolvedProfile {
+    snap_half_loop_with_hold_range(spec, 100.0_f64.to_radians(), 140.0_f64.to_radians())
+}
+
+fn snap_half_loop_with_hold_range(
+    spec: &ProfileSpec,
+    mut low: f64,
+    mut high: f64,
+) -> SolvedProfile {
     let target_height = (solve(spec).endpoint()[1] / 2.0).round() * 2.0;
-    let mut low = 100.0_f64.to_radians();
-    let mut high = 140.0_f64.to_radians();
     let mut adjusted = spec.clone();
     if let Segment::Arc {
         schedule: Schedule::Loop { hold, .. },
@@ -400,10 +459,9 @@ pub(crate) fn snap_half_loop(spec: &ProfileSpec) -> SolvedProfile {
         *hold = high;
     }
     let upper_height = solve(&adjusted).endpoint()[1];
-    assert!(
-        upper_height <= target_height && target_height <= lower_height,
-        "half-loop height cannot be snapped within the hold-angle range"
-    );
+    if !(upper_height <= target_height && target_height <= lower_height) {
+        return snap_half_loop_with_vertical_insert(spec);
+    }
     for _ in 0..40 {
         let hold = (low + high) / 2.0;
         if let Segment::Arc {
@@ -437,6 +495,53 @@ pub(crate) fn snap_half_loop(spec: &ProfileSpec) -> SolvedProfile {
     result
 }
 
+fn snap_half_loop_with_vertical_insert(spec: &ProfileSpec) -> SolvedProfile {
+    let Segment::Arc { angle, schedule } = spec.segments[0] else {
+        panic!("{}: half loop requires an arc", spec.name);
+    };
+    assert!((angle - PI).abs() < 1e-12);
+    let mut adjusted = spec.clone();
+    adjusted.segments = vec![
+        Segment::Arc {
+            angle: PI / 2.0,
+            schedule,
+        },
+        Segment::Insert(0.0),
+        Segment::Arc {
+            angle: PI / 2.0,
+            schedule,
+        },
+    ];
+    let core = solve(&adjusted);
+    let target_height = (core.endpoint()[1] / 2.0).ceil() * 2.0;
+    let mut low = 0.0;
+    let mut high = 2.0;
+    adjusted.segments[1] = Segment::Insert(high);
+    while solve(&adjusted).endpoint()[1] < target_height {
+        high *= 2.0;
+        adjusted.segments[1] = Segment::Insert(high);
+    }
+    for _ in 0..40 {
+        let length = (low + high) / 2.0;
+        adjusted.segments[1] = Segment::Insert(length);
+        if solve(&adjusted).endpoint()[1] < target_height {
+            low = length;
+        } else {
+            high = length;
+        }
+    }
+    let core = solve(&adjusted);
+    let target_x = (core.endpoint()[0] / 2.0).floor() * 2.0;
+    adjusted
+        .segments
+        .push(Segment::Insert(core.endpoint()[0] - target_x));
+    let mut profile = solve(&adjusted);
+    let last = profile.points.last_mut().unwrap();
+    last.x = target_x;
+    last.z = target_height;
+    profile
+}
+
 pub(crate) fn snap_full_loop(spec: &ProfileSpec) -> SolvedProfile {
     let mut profile = solve(spec);
     let apex = *profile.points.last().unwrap();
@@ -463,6 +568,64 @@ pub(crate) fn snap_full_loop(spec: &ProfileSpec) -> SolvedProfile {
         profile.points.push(end);
     }
     profile
+}
+
+pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
+    let Segment::Arc { angle, .. } = spec.segments[0] else {
+        panic!("pull requires one arc");
+    };
+    assert_eq!(spec.segments.len(), 1);
+    let end_angle = spec.start_angle + angle;
+    let determinant = (end_angle - spec.start_angle).sin();
+    assert!(determinant > 0.0);
+    let raw = solve(spec);
+    let [raw_x, raw_z] = raw.endpoint();
+    let first_x = (raw_x / 2.0).ceil() as i32;
+    let first_z = (raw_z / 2.0).ceil() as i32;
+    for shell in 0.. {
+        let mut candidates = Vec::new();
+        for x in first_x..=first_x + shell {
+            for z in first_z..=first_z + shell {
+                if x != first_x + shell && z != first_z + shell {
+                    continue;
+                }
+                let dx = 2.0 * x as f64 - raw_x;
+                let dz = 2.0 * z as f64 - raw_z;
+                let start = (dx * end_angle.sin() - dz * end_angle.cos()) / determinant;
+                let end = (dz * spec.start_angle.cos() - dx * spec.start_angle.sin()) / determinant;
+                if start >= 0.0 && end >= 0.0 {
+                    candidates.push((dx.hypot(dz), x, z, start, end));
+                }
+            }
+        }
+        candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, x, z, mut start, mut end) in candidates {
+            let mut adjusted = spec.clone();
+            for _ in 0..20 {
+                adjusted.segments = vec![
+                    Segment::Insert(start),
+                    spec.segments[0],
+                    Segment::Insert(end),
+                ];
+                let mut profile = solve(&adjusted);
+                let [actual_x, actual_z] = profile.endpoint();
+                let dx = 2.0 * x as f64 - actual_x;
+                let dz = 2.0 * z as f64 - actual_z;
+                if dx.hypot(dz) < 1e-10 {
+                    let last = profile.points.last_mut().unwrap();
+                    last.x = 2.0 * x as f64;
+                    last.z = 2.0 * z as f64;
+                    return profile;
+                }
+                start += (dx * end_angle.sin() - dz * end_angle.cos()) / determinant;
+                end += (dz * spec.start_angle.cos() - dx * spec.start_angle.sin()) / determinant;
+                if start < 0.0 || end < 0.0 {
+                    break;
+                }
+            }
+        }
+    }
+    unreachable!()
 }
 
 #[cfg(test)]
@@ -535,6 +698,8 @@ mod tests {
             maximum_entry: 31.3,
             fixed_speed: false,
             mirror_apex: false,
+            start_angle: 0.0,
+            name: "half loop test",
         };
         let mut profile = integrate(&spec, None, 2048);
         for iteration in 0..4 {
@@ -576,6 +741,53 @@ mod tests {
 #[cfg(test)]
 mod solver_acceptance_tests {
     use super::*;
+
+    #[test]
+    fn half_loop_falls_back_to_a_vertical_insert() {
+        let spec = ProfileSpec::half_loop(31.3, 4.2, 1.5).named("fallback half loop");
+        let profile =
+            snap_half_loop_with_hold_range(&spec, 120.0_f64.to_radians(), 120.0_f64.to_radians());
+        let [x, z] = profile.endpoint();
+        eprintln!("half-loop snapping used a vertical insert; exit ({x}, {z})");
+        assert!(profile.maximum_force(31.3) <= 4.2 + 1e-6);
+        assert!((x / 2.0 - (x / 2.0).round()).abs() < 1e-9);
+        assert!((z / 2.0 - (z / 2.0).round()).abs() < 1e-9);
+        assert!(
+            profile
+                .points
+                .windows(2)
+                .any(|points| (points[0].angle - PI / 2.0).abs() < 1e-9
+                    && (points[1].angle - PI / 2.0).abs() < 1e-9)
+        );
+    }
+
+    #[test]
+    fn rated_speeds_validate_the_window_and_radius() {
+        let spec = ProfileSpec::half_loop(31.3, 4.2, 1.5);
+        let profile = snap_half_loop(&spec);
+        let speeds = profile.rated_speeds("half loop", 31.3, 1.5, 8.0);
+        assert_eq!(speeds.maximum_entry, 31.3);
+        assert!((speeds.minimum_entry - profile.minimum_entry()).abs() < 1e-12);
+    }
+
+    #[test]
+    #[should_panic(expected = "test piece: minimum radius")]
+    fn rated_speeds_reject_invalid_radius() {
+        let profile = solve(&ProfileSpec::half_loop(31.3, 4.2, 1.5));
+        profile.rated_speeds("test piece", 31.3, 1.5, 100.0);
+    }
+
+    #[test]
+    fn pull_profiles_snap_both_connector_coordinates() {
+        for start_angle in [0.0, PI / 4.0] {
+            let spec = ProfileSpec::pull(start_angle, PI / 3.0, 34.0, 4.2);
+            let profile = snap_pull(&spec);
+            for coordinate in profile.endpoint() {
+                assert!((coordinate / 2.0 - (coordinate / 2.0).round()).abs() < 1e-9);
+            }
+            assert!(profile.maximum_force(34.0) <= 4.2 + 1e-6);
+        }
+    }
 
     #[test]
     fn large_half_loop_meets_milestone_and_snaps_to_grid() {

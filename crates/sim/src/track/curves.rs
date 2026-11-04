@@ -308,6 +308,8 @@ pub enum PieceId {
     RavenRollRightUp,
     RavenRollLeftDown,
     RavenRollRightDown,
+    LargeLoop,
+    LargeLoopRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -342,7 +344,6 @@ pub(crate) enum Shape {
     AirtimeHill,
     Overbank,
     BarrelDrop,
-    Loop,
     Corkscrew,
     Heartline,
     HalfCorkscrew,
@@ -358,7 +359,6 @@ impl Shape {
             Self::AirtimeHill => 1,
             Self::Overbank => 2,
             Self::BarrelDrop => 3,
-            Self::Loop => 4,
             Self::Corkscrew => 5,
             Self::Heartline => 6,
             Self::HalfCorkscrew => 8,
@@ -473,15 +473,13 @@ impl Piece {
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
         if let Shape::Profile(profile) = &self.shape {
-            let ascending = self.exit.z > self.entry.z;
+            let ascending = self.exit.z >= self.entry.z;
             let distance = if ascending {
                 t * profile.length()
             } else {
                 (1.0 - t) * profile.length()
             };
             let (position, first, second) = profile.sample(distance);
-            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-            let up = Vec3::new(0.0, 0.0, 1.0);
             let endpoint = profile.endpoint();
             let (x, z, dx, dz, ddx, ddz) = if ascending {
                 (
@@ -492,7 +490,7 @@ impl Piece {
                     second[0],
                     second[1],
                 )
-            } else {
+            } else if self.id == PieceId::HalfLoopDown {
                 (
                     position[0] - endpoint[0],
                     position[1] - endpoint[1],
@@ -501,30 +499,30 @@ impl Piece {
                     second[0],
                     second[1],
                 )
+            } else {
+                (
+                    endpoint[0] - position[0],
+                    position[1] - endpoint[1],
+                    first[0],
+                    -first[1],
+                    -second[0],
+                    second[1],
+                )
             };
-            return (
-                self.entry.position() + forward * x + up * z,
-                (forward * dx + up * dz) * profile.length(),
-                (forward * ddx + up * ddz) * profile.length().powi(2),
-            );
-        }
-        if matches!(&self.shape, Shape::Loop) {
-            let (position, first, second) = super::vertical_loop::sample(t);
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let left = Vec3::new(-forward.y, forward.x, 0.0);
             let up = Vec3::new(0.0, 0.0, 1.0);
             let side_displacement = (self.exit.position() - self.entry.position()).dot(left);
-            let smooth = t.powi(3) * (10.0 + t * (-15.0 + 6.0 * t));
-            let smooth_first = 30.0 * t.powi(2) * (1.0 - t).powi(2);
-            let smooth_second = 60.0 * t * (1.0 - t) * (1.0 - 2.0 * t);
-            let origin = self.entry.position();
+            let (smooth, smooth_first, smooth_second) = smooth(t);
+            let scale = profile.length();
             return (
-                origin
-                    + forward * position[0]
-                    + left * (side_displacement * smooth)
-                    + up * position[1],
-                forward * first[0] + left * (side_displacement * smooth_first) + up * first[1],
-                forward * second[0] + left * (side_displacement * smooth_second) + up * second[1],
+                self.entry.position() + forward * x + left * (side_displacement * smooth) + up * z,
+                forward * (dx * scale)
+                    + left * (side_displacement * smooth_first)
+                    + up * (dz * scale),
+                forward * (ddx * scale.powi(2))
+                    + left * (side_displacement * smooth_second)
+                    + up * (ddz * scale.powi(2)),
             );
         }
         if matches!(&self.shape, Shape::TopHat) {
@@ -628,28 +626,19 @@ impl Piece {
             d = d + lateral * (64.0 * (3.0 * t2 - 12.0 * t3 + 15.0 * t4 - 6.0 * t5));
             dd = dd + lateral * (64.0 * (6.0 * t - 36.0 * t2 + 60.0 * t3 - 30.0 * t4));
         }
-        if matches!(
-            &self.shape,
-            Shape::Loop | Shape::Corkscrew | Shape::Heartline
-        ) {
+        if matches!(&self.shape, Shape::Corkscrew | Shape::Heartline) {
             let angle = TAU * (35.0 * t4 - 84.0 * t5 + 70.0 * t6 - 20.0 * t7);
             let da = TAU * (140.0 * t3 - 420.0 * t4 + 420.0 * t5 - 140.0 * t6);
             let dda = TAU * (420.0 * t2 - 1680.0 * t3 + 2100.0 * t4 - 840.0 * t5);
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let left = Vec3::new(-forward.y, forward.x, 0.0);
             let vertical = Vec3::new(0.0, 0.0, 1.0);
-            let (a, b, radius) = if matches!(&self.shape, Shape::Loop) {
-                (forward, vertical, 16.0)
-            } else if matches!(&self.shape, Shape::Corkscrew) {
+            let (a, b, radius) = if matches!(&self.shape, Shape::Corkscrew) {
                 (left, vertical, 6.0)
             } else {
                 (left * -1.0, vertical, 1.0)
             };
-            let a = if self.mirrored && !matches!(&self.shape, Shape::Loop) {
-                a * -1.0
-            } else {
-                a
-            };
+            let a = if self.mirrored { a * -1.0 } else { a };
             let radius = if self.entry.heading.index() % 2 == 0 {
                 radius
             } else {
@@ -713,7 +702,7 @@ impl Piece {
         let (position, velocity, acceleration) = self.raw(t);
         let tangent = velocity.unit();
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
-        let base_up = if matches!(&self.shape, Shape::Loop | Shape::Profile(_) | Shape::TopHat) {
+        let base_up = if matches!(&self.shape, Shape::Profile(_) | Shape::TopHat) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit()
         } else {
@@ -758,7 +747,9 @@ impl Piece {
             up,
             curvature: velocity.cross(acceleration).length() / velocity.length().powi(3),
             roll: angle
-                + if matches!(&self.shape, Shape::Profile(_)) {
+                + if matches!(&self.shape, Shape::Profile(_))
+                    && (self.entry.bank == Bank::Inverted || self.exit.bank == Bank::Inverted)
+                {
                     std::f64::consts::PI * s
                 } else {
                     0.0
@@ -828,7 +819,6 @@ mod shape_tests {
             Shape::AirtimeHill,
             Shape::Overbank,
             Shape::BarrelDrop,
-            Shape::Loop,
             Shape::Corkscrew,
             Shape::Heartline,
             Shape::HalfCorkscrew,
@@ -836,7 +826,7 @@ mod shape_tests {
             Shape::OffsetHalfRoll,
         ];
 
-        for (expected_tag, shape) in [0_u8, 1, 2, 3, 4, 5, 6, 8, 9, 10].into_iter().zip(shapes) {
+        for (expected_tag, shape) in [0_u8, 1, 2, 3, 5, 6, 8, 9, 10].into_iter().zip(shapes) {
             let mut actual = StateHasher::new();
             shape.hash_into(&mut actual);
 

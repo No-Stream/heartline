@@ -1249,8 +1249,10 @@ mod tests {
         let model = hybrid_model();
         for piece_id in [
             PieceId::Loop,
+            PieceId::LargeLoop,
             PieceId::SteelLoop,
             PieceId::LoopRight,
+            PieceId::LargeLoopRight,
             PieceId::SteelLoopRight,
         ] {
             for heading in [

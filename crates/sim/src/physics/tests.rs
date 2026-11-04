@@ -718,9 +718,26 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
             .iter()
             .any(|piece| piece.id == PieceId::Loop)
     );
-    assert_eq!(circuit.pieces()[1].kind, PieceKind::Lift);
-    assert_eq!(circuit.pieces()[7].kind, PieceKind::Lift);
-    assert_eq!(circuit.pieces()[8].kind, PieceKind::Lift);
+    assert_eq!(
+        circuit.pieces()[1..7]
+            .iter()
+            .map(|piece| piece.id)
+            .collect::<Vec<_>>(),
+        [
+            PieceId::LevelToGentleUp,
+            PieceId::GentleUp,
+            PieceId::GentleUp,
+            PieceId::GentleUp,
+            PieceId::GentleUp,
+            PieceId::GentleUpToLevel,
+        ]
+    );
+    assert!(
+        circuit.pieces()[1..7]
+            .iter()
+            .all(|piece| piece.kind == PieceKind::Lift)
+    );
+    assert_ne!(circuit.pieces()[7].kind, PieceKind::Lift);
     assert_eq!(
         circuit.pieces().last().unwrap().exit,
         circuit.pieces()[0].entry

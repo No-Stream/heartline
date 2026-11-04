@@ -20,6 +20,70 @@ fn half_loop_has_grid_aligned_forward_displacement() {
     }
 }
 
+#[test]
+fn full_loop_profiles_match_their_rated_geometry() {
+    let expected = [
+        (PieceId::Loop, 27.5, 24.7, 30.5, 128.0, 5.5),
+        (PieceId::LargeLoop, 31.3, 27.6, 37.9, 161.0, 5.5),
+        (PieceId::SteelLoop, 27.0, 25.2, 31.8, 137.0, 8.5),
+    ];
+    let pieces = catalog();
+    for (id, maximum_entry, expected_minimum, expected_rise, expected_length, radius_floor) in
+        expected
+    {
+        let piece = pieces.iter().find(|piece| piece.id == id).unwrap();
+        let rated_speeds = piece.rated_speeds.unwrap();
+        let rise = (0..=2048)
+            .map(|index| {
+                piece
+                    .sample(piece.length() * f64::from(index) / 2048.0)
+                    .position
+                    .z
+            })
+            .fold(0.0, f64::max);
+        let minimum_radius = piece.maximum_curvature().recip();
+        eprintln!(
+            "{id:?}: rise={rise:.3} m, length={:.3} m, rated entry={:.3}..{:.3} m/s, minimum rail radius={minimum_radius:.3} m, exit=({}, {}, {})",
+            piece.length(),
+            rated_speeds.minimum_entry,
+            rated_speeds.maximum_entry,
+            piece.exit.x,
+            piece.exit.y,
+            piece.exit.z
+        );
+
+        assert_eq!(rated_speeds.maximum_entry, maximum_entry, "{id:?}");
+        assert!(
+            (rated_speeds.minimum_entry - expected_minimum).abs() < 0.3,
+            "{id:?}: minimum entry {}",
+            rated_speeds.minimum_entry
+        );
+        assert!((rise / expected_rise - 1.0).abs() < 0.03, "{id:?}: {rise}");
+        assert!(
+            (piece.length() / expected_length - 1.0).abs() < 0.03,
+            "{id:?}: length {}",
+            piece.length()
+        );
+        assert!(minimum_radius >= radius_floor, "{id:?}: {minimum_radius}");
+        assert_eq!(piece.exit.z, piece.entry.z, "{id:?}");
+        assert_eq!(piece.exit.y - piece.entry.y, 2, "{id:?}");
+        assert_eq!(piece.inversion, Some(Inversion::VerticalLoop), "{id:?}");
+        assert_eq!(
+            piece.heartlining,
+            Some(Heartlining::NotHeartlined),
+            "{id:?}"
+        );
+        assert!(
+            (piece.sample(piece.length()).position - piece.exit.position()).length() < 1e-8,
+            "{id:?}: exit position"
+        );
+        assert!(
+            (piece.sample(piece.length()).tangent - piece.exit.tangent()).length() < 1e-8,
+            "{id:?}: exit tangent"
+        );
+    }
+}
+
 fn end_state_after_allowed_pieces(model: &CoasterModel, ids: &[PieceId]) -> TrackState {
     let mut state = TrackState::origin();
     for id in ids {
@@ -864,6 +928,45 @@ fn sixty_degree_slope_templates_have_grid_aligned_geometry() {
 }
 
 #[test]
+fn sixty_degree_pull_profiles_match_connectors_and_reverse() {
+    use PieceId::*;
+    let pieces = catalog();
+    let piece = |id| pieces.iter().find(|piece| piece.id == id).unwrap();
+    for (up_id, down_id) in [
+        (LevelToSixtyUp, SixtyDownToLevel),
+        (SteepToSixtyUp, SixtyToSteepDown),
+    ] {
+        let up = piece(up_id);
+        let down = piece(down_id);
+        assert!(matches!(up.shape, Shape::Profile(_)));
+        assert!(matches!(down.shape, Shape::Profile(_)));
+        assert!((up.length() - down.length()).abs() < 1e-8);
+        for item in [up, down] {
+            assert!((item.sample(0.0).position - item.entry.position()).length() < 1e-8);
+            assert!((item.sample(item.length()).position - item.exit.position()).length() < 1e-8);
+            assert!(item.rated_speeds.is_some());
+        }
+        for index in 0..=20 {
+            let fraction = index as f64 / 20.0;
+            let up_position = up.sample(up.length() * (1.0 - fraction)).position;
+            let down_position = down.sample(down.length() * fraction).position;
+            let expected_x = up.exit.position().x - up_position.x;
+            let expected_z = up_position.z - up.exit.position().z;
+            assert!((down_position.x - down.entry.position().x - expected_x).abs() < 1e-7);
+            assert!((down_position.z - down.entry.position().z - expected_z).abs() < 1e-7);
+        }
+    }
+    for id in [
+        SixtyUpToLevel,
+        LevelToSixtyDown,
+        SixtyToSteepUp,
+        SteepToSixtyDown,
+    ] {
+        assert!(piece(id).rated_speeds.is_some(), "{id:?}");
+    }
+}
+
+#[test]
 fn sixty_degree_track_is_allowed_only_by_models_with_sixty_degree_limits() {
     use PieceId::{
         LevelToSixtyDown, LevelToSixtyUp, SixtyDown, SixtyDownToLevel, SixtyToSteepDown,
@@ -925,7 +1028,12 @@ fn all_eight_headings_place_pieces_on_grid() {
         };
         let available = hybrid_model().available_pieces(start);
         assert!(!available.is_empty());
-        for id in [PieceId::Loop, PieceId::Corkscrew, PieceId::HeartlineRoll] {
+        for id in [
+            PieceId::Loop,
+            PieceId::LargeLoop,
+            PieceId::Corkscrew,
+            PieceId::HeartlineRoll,
+        ] {
             assert!(
                 available.iter().any(|piece| piece.id == id),
                 "{id:?} {heading:?}"
@@ -969,7 +1077,13 @@ fn inversions_turn_over_and_are_regular_in_every_heading() {
             heading,
             ..TrackState::origin()
         };
-        for id in [PieceId::Loop, PieceId::Corkscrew, PieceId::HeartlineRoll] {
+        for id in [
+            PieceId::Loop,
+            PieceId::LargeLoop,
+            PieceId::SteelLoop,
+            PieceId::Corkscrew,
+            PieceId::HeartlineRoll,
+        ] {
             let piece = catalog()
                 .into_iter()
                 .find(|piece| piece.id == id)
@@ -987,7 +1101,7 @@ fn inversions_turn_over_and_are_regular_in_every_heading() {
             }
             let middle = piece.sample(piece.length() / 2.0);
             assert!(middle.up.z < -0.5, "{id:?} {heading:?}");
-            if id == PieceId::Loop {
+            if matches!(id, PieceId::Loop | PieceId::LargeLoop | PieceId::SteelLoop) {
                 assert!(middle.tangent.dot(start.tangent()) < -0.5);
             } else {
                 near_angle(previous_roll, std::f64::consts::TAU);
@@ -1240,44 +1354,43 @@ fn sloped_turns_obey_model_capabilities_and_radius() {
 }
 
 #[test]
-fn vertical_loop_separates_entry_and_exit_and_clears_itself() {
-    for heading in [
-        Heading::East,
-        Heading::NorthEast,
-        Heading::North,
-        Heading::NorthWest,
-        Heading::West,
-        Heading::SouthWest,
-        Heading::South,
-        Heading::SouthEast,
-    ] {
-        let start = TrackState {
-            heading,
-            ..TrackState::origin()
-        };
-        let piece = catalog()
-            .into_iter()
-            .find(|piece| piece.id == PieceId::Loop)
-            .unwrap()
-            .at(start)
-            .unwrap();
-        let forward = start.tangent();
-        let displacement = piece.exit.position() - start.position();
-        let sideways = Vec3::new(-forward.y, forward.x, 0.0);
-        assert!(displacement.dot(sideways) >= 4.0 - 1e-6, "{heading:?}");
-        let samples: Vec<_> = (0..=400)
-            .map(|index| {
-                let distance = piece.length() * (f64::from(index) / 400.0);
-                (distance, piece.sample(distance).position)
-            })
-            .collect();
-        for (index, (distance, position)) in samples.iter().enumerate() {
-            for (other_distance, other_position) in &samples[index + 1..] {
-                if other_distance - distance > 12.0 {
-                    assert!(
-                        (*other_position - *position).length() >= 2.0,
-                        "{heading:?}: {distance} and {other_distance}"
-                    );
+fn full_loops_separate_entry_and_exit_and_clear_themselves() {
+    let pieces = catalog();
+    for id in [PieceId::Loop, PieceId::LargeLoop] {
+        let template = pieces.iter().find(|piece| piece.id == id).unwrap();
+        for heading in [
+            Heading::East,
+            Heading::NorthEast,
+            Heading::North,
+            Heading::NorthWest,
+            Heading::West,
+            Heading::SouthWest,
+            Heading::South,
+            Heading::SouthEast,
+        ] {
+            let start = TrackState {
+                heading,
+                ..TrackState::origin()
+            };
+            let piece = template.at(start).unwrap();
+            let forward = start.tangent();
+            let displacement = piece.exit.position() - start.position();
+            let sideways = Vec3::new(-forward.y, forward.x, 0.0);
+            assert!(displacement.dot(sideways) >= 4.0 - 1e-6, "{heading:?}");
+            let samples: Vec<_> = (0..=400)
+                .map(|index| {
+                    let distance = piece.length() * (f64::from(index) / 400.0);
+                    (distance, piece.sample(distance).position)
+                })
+                .collect();
+            for (index, (distance, position)) in samples.iter().enumerate() {
+                for (other_distance, other_position) in &samples[index + 1..] {
+                    if other_distance - distance > 12.0 {
+                        assert!(
+                            (*other_position - *position).length() >= 2.0,
+                            "{heading:?}: {distance} and {other_distance}"
+                        );
+                    }
                 }
             }
         }

@@ -25,26 +25,30 @@ fn start() -> TrackState {
 }
 
 #[test]
-fn vertical_loops_offer_mirrored_choices_for_each_model() {
-    for (model, left_name, right_name) in [
-        (hybrid_model(), "Loop", "LoopRight"),
-        (crate::track::multi_launch_model(), "Loop", "LoopRight"),
+fn loop_profiles_offer_mirrored_choices_for_each_model() {
+    for (model, left_id, right_id) in [
+        (hybrid_model(), PieceId::Loop, PieceId::LoopRight),
+        (hybrid_model(), PieceId::LargeLoop, PieceId::LargeLoopRight),
+        (
+            crate::track::multi_launch_model(),
+            PieceId::Loop,
+            PieceId::LoopRight,
+        ),
+        (
+            crate::track::multi_launch_model(),
+            PieceId::LargeLoop,
+            PieceId::LargeLoopRight,
+        ),
         (
             crate::track::wooden_twister_model(),
-            "SteelLoop",
-            "SteelLoopRight",
+            PieceId::SteelLoop,
+            PieceId::SteelLoopRight,
         ),
     ] {
         let construction = Construction::new(start(), model);
         let choices = construction.choices(&world(), &[]);
-        let left = choices
-            .iter()
-            .find(|choice| format!("{:?}", choice.id) == left_name)
-            .unwrap();
-        let right = choices
-            .iter()
-            .find(|choice| format!("{:?}", choice.id) == right_name)
-            .unwrap();
+        let left = choices.iter().find(|choice| choice.id == left_id).unwrap();
+        let right = choices.iter().find(|choice| choice.id == right_id).unwrap();
         let left = templates()
             .iter()
             .find(|piece| piece.id == left.id)

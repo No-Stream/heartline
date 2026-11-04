@@ -8,7 +8,6 @@ pub mod construction;
 pub mod curves;
 pub mod models;
 pub mod supports;
-mod vertical_loop;
 mod vertical_top_hat;
 
 pub use catalog::catalog;

@@ -111,7 +111,6 @@ pub fn demo_circuit() -> Circuit {
         GentleUp,
         GentleUp,
         GentleUp,
-        GentleUp,
         GentleUpToLevel,
         Straight,
         OneTileStraight,
@@ -120,7 +119,6 @@ pub fn demo_circuit() -> Circuit {
         TurnLargeEntry,
         TurnLargeExit,
         LevelToGentleDown,
-        GentleDown,
         GentleDown,
         GentleDown,
         GentleDown,
@@ -134,7 +132,7 @@ pub fn demo_circuit() -> Circuit {
             .expect("demo piece in catalog")
             .at(state)
             .expect("demo piece joins");
-        if (1..=8).contains(&pieces.len()) {
+        if (1..=6).contains(&pieces.len()) {
             piece.kind = PieceKind::Lift;
         }
         state = piece.exit;
@@ -164,7 +162,15 @@ pub fn demo_circuit() -> Circuit {
             connector.vertical_curvature as u8,
         )
     };
-    let return_options = [Straight, TurnSmallStandalone, TurnSmallRightStandalone];
+    let return_options = [
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallRightStandalone,
+        TurnLargeStandalone,
+        TurnLargeRightStandalone,
+        OffsetLeft,
+        OffsetRight,
+    ];
     let mut queue = VecDeque::from([(state, Vec::<PieceId>::new())]);
     let mut visited = HashSet::from([connector_key(state)]);
     let return_path = loop {
