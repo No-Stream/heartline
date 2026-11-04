@@ -51,16 +51,16 @@ fn build_catalog() -> Vec<Piece> {
         ))
     });
     static FULL_CORKSCREW: LazyLock<Arc<RollGeometry>> =
-        LazyLock::new(|| Arc::new(RollGeometry::helix(32.0, std::f64::consts::TAU, 4.0)));
+        LazyLock::new(|| Arc::new(RollGeometry::general_helix_for_connector()));
     static HALF_CORKSCREW: LazyLock<Arc<RollGeometry>> =
-        LazyLock::new(|| Arc::new(RollGeometry::helix(32.0, std::f64::consts::PI, 4.8)));
+        LazyLock::new(|| Arc::new(RollGeometry::half_roll()));
     static HEARTLINE: LazyLock<Arc<RollGeometry>> =
         LazyLock::new(|| Arc::new(RollGeometry::spline_turns(1.0)));
     static RAVEN_ROLL: LazyLock<Arc<RollGeometry>> =
         LazyLock::new(|| Arc::new(RollGeometry::spline()));
     static BARREL_DROP: LazyLock<Arc<RollGeometry>> = LazyLock::new(|| {
         Arc::new(RollGeometry::spline_turns_with_asymmetric_descent(
-            1.0, 1.60, 0.4,
+            1.0, 1.65, 0.4,
         ))
     });
     static BANKED_DROP: LazyLock<Arc<RollGeometry>> =
@@ -510,8 +510,8 @@ fn build_catalog() -> Vec<Piece> {
         (
             Corkscrew,
             "Left classic corkscrew (not heartlined)",
-            16,
-            0,
+            14,
+            8,
             0,
             East,
             Level,
@@ -561,8 +561,8 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfCorkscrewLeftUp,
-            "Left half corkscrew up (not heartlined)",
-            16,
+            "Left half roll up (not heartlined)",
+            20,
             0,
             6,
             East,
@@ -574,8 +574,8 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfCorkscrewLeftDown,
-            "Left half corkscrew down (not heartlined)",
-            16,
+            "Left half roll down (not heartlined)",
+            20,
             0,
             -6,
             East,
@@ -741,22 +741,26 @@ fn build_catalog() -> Vec<Piece> {
                             Some(SIXTY_CREST.rated_speeds("SixtyUpToLevel", 30.0, 2.0, 8.0))
                         }
                         Corkscrew => Some(RatedSpeeds {
-                            minimum_entry: 18.0,
-                            maximum_entry: 20.0,
+                            minimum_entry: 14.0,
+                            maximum_entry: 19.0,
                         }),
                         HeartlineRoll => Some(RatedSpeeds {
                             minimum_entry: 8.0,
                             maximum_entry: 20.0,
                         }),
                         HalfCorkscrewLeftUp => Some(RatedSpeeds {
-                            minimum_entry: 18.0,
+                            minimum_entry: 17.0,
                             maximum_entry: 22.0,
                         }),
                         HalfCorkscrewLeftDown => Some(RatedSpeeds {
-                            minimum_entry: 2.0,
+                            minimum_entry: 3.0,
                             maximum_entry: (22.0_f64.powi(2) - 2.0 * 9.81 * 12.0).sqrt(),
                         }),
-                        RavenRollLeftUp | RavenRollLeftDown => Some(RatedSpeeds {
+                        RavenRollLeftUp => Some(RatedSpeeds {
+                            minimum_entry: 8.0,
+                            maximum_entry: 17.0,
+                        }),
+                        RavenRollLeftDown => Some(RatedSpeeds {
                             minimum_entry: 8.0,
                             maximum_entry: 18.0,
                         }),
@@ -766,7 +770,7 @@ fn build_catalog() -> Vec<Piece> {
                         }),
                         BarrelDropLeft => Some(RatedSpeeds {
                             minimum_entry: 10.0,
-                            maximum_entry: 12.0,
+                            maximum_entry: 15.0,
                         }),
                         LevelToSixtyUp => {
                             Some(SIXTY_PULL.rated_speeds("LevelToSixtyUp", 34.0, 2.0, 5.0))
@@ -1208,12 +1212,12 @@ fn build_catalog() -> Vec<Piece> {
         (
             HalfCorkscrewLeftUp,
             HalfCorkscrewRightUp,
-            "Right half corkscrew up (not heartlined)",
+            "Right half roll up (not heartlined)",
         ),
         (
             HalfCorkscrewLeftDown,
             HalfCorkscrewRightDown,
-            "Right half corkscrew down (not heartlined)",
+            "Right half roll down (not heartlined)",
         ),
         (
             RavenRollLeftUp,

@@ -285,6 +285,13 @@ fn assert_train_crosses_element(
         "{piece_id:?} {} {cars} cars at {entry_speed}: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}, longitudinal {maximum_longitudinal}; limits {limits:?}",
         model.name
     );
+    if matches!(piece_id, PieceId::Corkscrew | PieceId::CorkscrewRight) {
+        assert!(
+            maximum_lateral <= 1.0,
+            "{piece_id:?} {} {cars} cars at {entry_speed}: lateral {maximum_lateral} exceeds 1 g",
+            model.name
+        );
+    }
     if minimum_speed_required {
         assert!(
             minimum_speed >= 5.0,

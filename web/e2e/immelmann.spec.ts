@@ -11,5 +11,5 @@ test("builds an Immelmann from the construction palette", async ({ page }) => {
   await expect(page.locator("[data-next] [data-preview-name]")).toHaveText("Left Immelmann (not heartlined)");
   await placePiece(page);
   await expect(page.locator("[data-track] li")).toHaveCount(3);
-  await expect(page.locator("[data-track] li")).toContainText(["Station", "half loop", "half corkscrew"], { ignoreCase: true });
+  await expect(page.locator("[data-track] li")).toContainText(["Station", "half loop", "half roll"], { ignoreCase: true });
 });

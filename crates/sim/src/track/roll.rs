@@ -5,18 +5,63 @@ use crate::track::curves::{HEART_HEIGHT_METRES, TrackState, Vec3};
 
 const DIFFERENCE_STEP: f64 = 1.0e-5;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 enum RollPath {
     Spline {
         extra_turns: Option<f64>,
         descent_bias: f64,
         descent_asymmetry: f64,
+        ramp: f64,
+        roll_window: f64,
     },
-    Helix {
-        axial_length: f64,
-        total_roll: f64,
-        radius: f64,
+    GeneralHelix {
+        curvature: f64,
+        torsion: f64,
+        ramp: f64,
+        turns: f64,
+        positions: Vec<Vec3>,
+        unwrapped_roll: Vec<f64>,
     },
+}
+
+impl PartialEq for RollPath {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Spline {
+                    extra_turns: a,
+                    descent_bias: b,
+                    descent_asymmetry: c,
+                    ramp: d,
+                    roll_window: e,
+                },
+                Self::Spline {
+                    extra_turns: f,
+                    descent_bias: g,
+                    descent_asymmetry: h,
+                    ramp: i,
+                    roll_window: j,
+                },
+            ) => (a, b, c, d, e) == (f, g, h, i, j),
+            (
+                Self::GeneralHelix {
+                    curvature: a,
+                    torsion: b,
+                    ramp: c,
+                    turns: d,
+                    ..
+                },
+                Self::GeneralHelix {
+                    curvature: e,
+                    torsion: f,
+                    ramp: g,
+                    turns: h,
+                    ..
+                },
+            ) => (a, b, c, d) == (e, f, g, h),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +86,8 @@ impl RollGeometry {
                 extra_turns: None,
                 descent_bias: 0.0,
                 descent_asymmetry: 0.0,
+                ramp: 0.25,
+                roll_window: 0.0,
             },
         }
     }
@@ -52,6 +99,8 @@ impl RollGeometry {
                 extra_turns: Some(turns),
                 descent_bias: 0.0,
                 descent_asymmetry: 0.0,
+                ramp: 0.25,
+                roll_window: 0.0,
             },
         }
     }
@@ -72,44 +121,92 @@ impl RollGeometry {
                 extra_turns: Some(turns),
                 descent_bias,
                 descent_asymmetry,
+                ramp: 0.5,
+                roll_window: 0.0,
             },
         }
     }
 
-    pub(crate) fn helix(axial_length: f64, total_roll: f64, radius: f64) -> Self {
-        assert!(axial_length > 0.0, "helix length must be positive");
-        assert!(total_roll.is_finite(), "helix roll must be finite");
-        assert!(radius > 0.0, "helix radius must be positive");
+    pub(crate) fn half_roll() -> Self {
+        let mut geometry = Self::spline();
+        if let RollPath::Spline { roll_window, .. } = &mut geometry.path {
+            *roll_window = 0.2;
+        }
+        geometry
+    }
+
+    pub(crate) fn general_helix_for_connector() -> Self {
+        let (mut radius, mut beta) = (4.5914_f64, 42.530_f64.to_radians());
+        let displacement = |radius: f64, beta: f64| {
+            let omega = beta.sin() / radius;
+            let curvature = omega * beta.sin();
+            let torsion = -omega * beta.cos();
+            let positions = helix_positions(curvature, torsion, 0.25, 1.0);
+            let end = positions.last().unwrap();
+            (end.x, end.y)
+        };
+        for _ in 0..10 {
+            let (x, y) = displacement(radius, beta);
+            let error = (x - 28.0, y - 16.0);
+            if error.0.abs().max(error.1.abs()) < 1e-10 {
+                break;
+            }
+            let step = 1e-5;
+            let (rx, ry) = displacement(radius + step, beta);
+            let (bx, by) = displacement(radius, beta + step);
+            let (a, b, c, d) = (
+                (rx - x) / step,
+                (bx - x) / step,
+                (ry - y) / step,
+                (by - y) / step,
+            );
+            let determinant = a * d - b * c;
+            radius -= (d * error.0 - b * error.1) / determinant;
+            beta -= (a * error.1 - c * error.0) / determinant;
+        }
+        let (x, y) = displacement(radius, beta);
+        assert!((x - 28.0).abs() < 1e-9 && (y - 16.0).abs() < 1e-9);
+        let omega = beta.sin() / radius;
+        let curvature = omega * beta.sin();
+        let torsion = -omega * beta.cos();
         Self {
-            path: RollPath::Helix {
-                axial_length,
-                total_roll,
-                radius,
+            path: RollPath::GeneralHelix {
+                curvature,
+                torsion,
+                ramp: 0.25,
+                turns: 1.0,
+                positions: helix_positions(curvature, torsion, 0.25, 1.0),
+                unwrapped_roll: helix_roll_knots(curvature, torsion, 0.25, 1.0),
             },
         }
     }
 
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        match self.path {
+        match &self.path {
             RollPath::Spline {
                 extra_turns,
                 descent_bias,
                 descent_asymmetry,
+                ramp,
+                roll_window,
             } => {
                 hash.write_u8(0);
-                hash.write_option(extra_turns, |hash, turns| hash.write_f64(turns));
-                hash.write_f64(descent_bias);
-                hash.write_f64(descent_asymmetry);
+                hash.write_option(*extra_turns, |hash, turns| hash.write_f64(turns));
+                for value in [descent_bias, descent_asymmetry, ramp, roll_window] {
+                    hash.write_f64(*value);
+                }
             }
-            RollPath::Helix {
-                axial_length,
-                total_roll,
-                radius,
+            RollPath::GeneralHelix {
+                curvature,
+                torsion,
+                ramp,
+                turns,
+                ..
             } => {
                 hash.write_u8(1);
-                hash.write_f64(axial_length);
-                hash.write_f64(total_roll);
-                hash.write_f64(radius);
+                for value in [curvature, torsion, ramp, turns] {
+                    hash.write_f64(*value);
+                }
             }
         }
     }
@@ -127,7 +224,7 @@ impl RollGeometry {
         let heart_tangent = self
             .heart_kinematics(entry, exit, mirrored, tangent_scale, t)
             .1;
-        let desired_up = self.desired_up(entry, heart_tangent, roll);
+        let desired_up = self.desired_up(entry, heart_tangent, roll, mirrored, t);
         let position = heart - desired_up * HEART_HEIGHT_METRES;
         let (first, second) = self.rail_derivatives(entry, exit, mirrored, tangent_scale, t);
         let tangent = first.unit();
@@ -197,23 +294,34 @@ impl RollGeometry {
             .heart_kinematics(entry, exit, mirrored, tangent_scale, t)
             .1;
         let roll = self.roll_angle(entry, exit, mirrored, t);
-        let up = self.desired_up(entry, tangent, roll);
+        let up = self.desired_up(entry, tangent, roll, mirrored, t);
         heart - up * HEART_HEIGHT_METRES
     }
 
-    fn desired_up(&self, entry: TrackState, heart_tangent: Vec3, roll: f64) -> Vec3 {
-        match self.path {
+    fn desired_up(
+        &self,
+        entry: TrackState,
+        heart_tangent: Vec3,
+        roll: f64,
+        mirrored: bool,
+        t: f64,
+    ) -> Vec3 {
+        match &self.path {
             RollPath::Spline { .. } => {
                 let tangent = heart_tangent.unit();
                 let base_up = unbanked_up(tangent);
                 let left = base_up.cross(tangent).unit();
                 base_up * roll.cos() + left * roll.sin()
             }
-            RollPath::Helix { .. } => {
-                let phase = roll - entry.bank.radians();
-                let up = bank_up(entry);
-                let side = up.cross(horizontal_forward(entry)).unit();
-                up * phase.cos() - side * phase.sin()
+            RollPath::GeneralHelix {
+                curvature,
+                torsion,
+                ramp,
+                turns,
+                ..
+            } => {
+                let (_, normal) = helix_frame(*curvature, *torsion, *ramp, *turns, t);
+                transform_frame(entry, normal, mirrored)
             }
         }
     }
@@ -241,7 +349,7 @@ impl RollGeometry {
         let (entry_up, exit_up) = (state_up(entry), state_up(exit));
         let start = entry.position() + entry_up * HEART_HEIGHT_METRES;
         let end = exit.position() + exit_up * HEART_HEIGHT_METRES;
-        match self.path {
+        match &self.path {
             RollPath::Spline {
                 descent_bias,
                 descent_asymmetry,
@@ -255,54 +363,60 @@ impl RollGeometry {
                     t,
                 );
                 let u = 1.0 - t;
-                let offset = -256.0 * descent_bias;
+                let offset = -256.0 * *descent_bias;
                 let vertical = Vec3::new(0.0, 0.0, offset);
                 let base = t.powi(4) * u.powi(4);
                 let base_first = 4.0 * t.powi(3) * u.powi(3) * (1.0 - 2.0 * t);
                 let base_second = 12.0 * t.powi(2) * u.powi(2) * (1.0 - 2.0 * t).powi(2)
                     - 8.0 * t.powi(3) * u.powi(3);
-                let asymmetry = 1.0 + descent_asymmetry * (t - 0.5);
+                let asymmetry = 1.0 + *descent_asymmetry * (t - 0.5);
                 (
                     position + vertical * (base * asymmetry),
-                    first + vertical * (base_first * asymmetry + base * descent_asymmetry),
+                    first + vertical * (base_first * asymmetry + base * *descent_asymmetry),
                     second
                         + vertical
-                            * (base_second * asymmetry + 2.0 * base_first * descent_asymmetry),
+                            * (base_second * asymmetry + 2.0 * base_first * *descent_asymmetry),
                 )
             }
-            RollPath::Helix {
-                axial_length: _,
-                total_roll,
-                radius,
+            RollPath::GeneralHelix {
+                curvature,
+                torsion,
+                ramp,
+                turns,
+                positions,
+                ..
             } => {
-                let forward = horizontal_forward(entry);
-                let axial_length = (end - start).dot(forward);
-                let banked_up = bank_up(entry);
-                let side = banked_up.cross(forward).unit();
-                let (smooth, smooth_first, smooth_second) = roll_schedule(t);
-                let direction = if mirrored { -1.0 } else { 1.0 };
-                let angle = total_roll * direction * smooth;
-                let angle_first = total_roll * direction * smooth_first;
-                let angle_second = total_roll * direction * smooth_second;
-                let endpoint_radius = if (total_roll.abs() - PI).abs() < 1.0e-8 {
-                    (end - start).dot(banked_up) / 2.0
-                } else {
-                    radius
-                };
-                let position = start
-                    + forward * (axial_length * t)
-                    + side * (endpoint_radius * angle.sin())
-                    + banked_up * (endpoint_radius * (1.0 - angle.cos()));
-                let first = forward * axial_length
-                    + side * (endpoint_radius * angle.cos() * angle_first)
-                    + banked_up * (endpoint_radius * angle.sin() * angle_first);
-                let second = side
-                    * (endpoint_radius
-                        * (angle.cos() * angle_second - angle.sin() * angle_first.powi(2)))
-                    + banked_up
-                        * (endpoint_radius
-                            * (angle.sin() * angle_second + angle.cos() * angle_first.powi(2)));
-                (position, first, second)
+                let omega = curvature.hypot(*torsion);
+                let scale = (end - start).length() / positions.last().unwrap().length();
+                let length = TAU * turns / omega * scale;
+                let scaled = t.clamp(0.0, 1.0) * 1024.0;
+                let index = (scaled.floor() as usize).min(1023);
+                let u = scaled - index as f64;
+                let (tangent0, _) =
+                    helix_frame(*curvature, *torsion, *ramp, *turns, index as f64 / 1024.0);
+                let (tangent1, _) = helix_frame(
+                    *curvature,
+                    *torsion,
+                    *ramp,
+                    *turns,
+                    (index + 1) as f64 / 1024.0,
+                );
+                let h = 1.0 / 1024.0;
+                let position = positions[index] * scale * (2.0 * u.powi(3) - 3.0 * u.powi(2) + 1.0)
+                    + tangent0 * (length * h * (u.powi(3) - 2.0 * u.powi(2) + u))
+                    + positions[index + 1] * scale * (-2.0 * u.powi(3) + 3.0 * u.powi(2))
+                    + tangent1 * (length * h * (u.powi(3) - u.powi(2)));
+                let (tangent, normal) = helix_frame(*curvature, *torsion, *ramp, *turns, t);
+                let (_, rate, _) = roll_schedule(t, *ramp);
+                (
+                    start + transform_frame(entry, position, mirrored),
+                    transform_frame(entry, tangent * length, mirrored),
+                    transform_frame(
+                        entry,
+                        normal * (length * length * curvature * rate / scale),
+                        mirrored,
+                    ),
+                )
             }
         }
     }
@@ -310,24 +424,43 @@ impl RollGeometry {
     fn roll_angle(&self, entry: TrackState, exit: TrackState, mirrored: bool, t: f64) -> f64 {
         let start = entry.bank.radians();
         let direction = if mirrored { -1.0 } else { 1.0 };
-        let end = match self.path {
+        match &self.path {
             RollPath::Spline {
-                extra_turns: None, ..
-            } => {
-                let mut difference = exit.bank.radians() - start;
-                if difference.abs() > PI || (difference.abs() == PI && mirrored) {
-                    difference = -PI.copysign(difference);
-                }
-                start + difference
-            }
-            RollPath::Spline {
-                extra_turns: Some(turns),
+                extra_turns,
+                ramp,
+                roll_window,
                 ..
-            } => exit.bank.radians() + direction * turns * TAU,
-            RollPath::Helix { total_roll, .. } => start + direction * total_roll,
-        };
-        let (smooth, _, _) = roll_schedule(t);
-        start + (end - start) * smooth
+            } => {
+                let end = if let Some(turns) = extra_turns {
+                    exit.bank.radians() + direction * turns * TAU
+                } else {
+                    let mut difference = exit.bank.radians() - start;
+                    if difference.abs() > PI || (difference.abs() == PI && mirrored) {
+                        difference = -PI.copysign(difference);
+                    }
+                    start + difference
+                };
+                let parameter = ((t - roll_window) / (1.0 - 2.0 * roll_window)).clamp(0.0, 1.0);
+                start + (end - start) * roll_schedule(parameter, *ramp).0
+            }
+            RollPath::GeneralHelix {
+                curvature,
+                torsion,
+                ramp,
+                turns,
+                unwrapped_roll,
+                ..
+            } => {
+                let (tangent, normal) = helix_frame(*curvature, *torsion, *ramp, *turns, t);
+                let tangent = transform_frame(entry, tangent, mirrored);
+                let normal = transform_frame(entry, normal, mirrored);
+                let base = unbanked_up(tangent);
+                let angle = normal.dot(base.cross(tangent)).atan2(normal.dot(base));
+                let index = ((t.clamp(0.0, 1.0) * 1024.0).floor() as usize).min(1024);
+                let reference = start + direction * unwrapped_roll[index];
+                angle + TAU * ((reference - angle) / TAU).round()
+            }
+        }
     }
 }
 
@@ -364,32 +497,77 @@ fn spline_kinematics(
     )
 }
 
-fn roll_schedule(t: f64) -> (f64, f64, f64) {
-    const RAMP: f64 = 0.25;
-    const PEAK: f64 = 1.0 / (1.0 - RAMP);
-    if t > 1.0 - RAMP {
-        let (value, first, second) = roll_schedule(1.0 - t);
+fn roll_schedule(t: f64, ramp: f64) -> (f64, f64, f64) {
+    let peak = 1.0 / (1.0 - ramp);
+    if t > 1.0 - ramp {
+        let (value, first, second) = roll_schedule(1.0 - t, ramp);
         return (1.0 - value, first, -second);
     }
-    if t >= RAMP {
-        return (PEAK * (t - RAMP / 2.0), PEAK, 0.0);
+    if t >= ramp {
+        return (peak * (t - ramp / 2.0), peak, 0.0);
     }
-    let x = t / RAMP;
+    let x = t / ramp;
     let x2 = x * x;
     let x3 = x2 * x;
     let x4 = x3 * x;
     let x5 = x4 * x;
     let x6 = x5 * x;
     (
-        PEAK * RAMP * (2.5 * x4 - 3.0 * x5 + x6),
-        PEAK * (10.0 * x3 - 15.0 * x4 + 6.0 * x5),
-        PEAK / RAMP * (30.0 * x2 - 60.0 * x3 + 30.0 * x4),
+        peak * ramp * (2.5 * x4 - 3.0 * x5 + x6),
+        peak * (10.0 * x3 - 15.0 * x4 + 6.0 * x5),
+        peak / ramp * (30.0 * x2 - 60.0 * x3 + 30.0 * x4),
     )
 }
 
-fn horizontal_forward(state: TrackState) -> Vec3 {
-    let tangent = state.tangent();
-    Vec3::new(tangent.x, tangent.y, 0.0).unit()
+fn helix_frame(curvature: f64, torsion: f64, ramp: f64, turns: f64, t: f64) -> (Vec3, Vec3) {
+    let omega = curvature.hypot(torsion);
+    let axis = Vec3::new(torsion / omega, -curvature / omega, 0.0);
+    let angle = TAU * turns * roll_schedule(t, ramp).0;
+    let rotate = |vector: Vec3| {
+        vector * angle.cos()
+            + axis.cross(vector) * angle.sin()
+            + axis * (axis.dot(vector) * (1.0 - angle.cos()))
+    };
+    (
+        rotate(Vec3::new(1.0, 0.0, 0.0)),
+        rotate(Vec3::new(0.0, 0.0, 1.0)),
+    )
+}
+
+fn helix_roll_knots(curvature: f64, torsion: f64, ramp: f64, turns: f64) -> Vec<f64> {
+    let mut knots = Vec::with_capacity(1025);
+    for index in 0..=1024 {
+        let (tangent, normal) =
+            helix_frame(curvature, torsion, ramp, turns, f64::from(index) / 1024.0);
+        let base = unbanked_up(tangent);
+        let angle = normal.dot(base.cross(tangent)).atan2(normal.dot(base));
+        let reference = knots.last().copied().unwrap_or(0.0);
+        knots.push(angle + TAU * ((reference - angle) / TAU).round());
+    }
+    knots
+}
+
+fn helix_positions(curvature: f64, torsion: f64, ramp: f64, turns: f64) -> Vec<Vec3> {
+    let length = TAU * turns / curvature.hypot(torsion);
+    let mut positions = Vec::with_capacity(1025);
+    positions.push(Vec3::new(0.0, 0.0, 0.0));
+    for index in 0..1024 {
+        let t = index as f64 / 1024.0;
+        let h = 1.0 / 1024.0;
+        let tangent = |t| helix_frame(curvature, torsion, ramp, turns, t).0;
+        positions.push(
+            positions[index]
+                + (tangent(t) + tangent(t + h / 2.0) * 4.0 + tangent(t + h)) * (length * h / 6.0),
+        );
+    }
+    positions
+}
+
+fn transform_frame(entry: TrackState, vector: Vec3, mirrored: bool) -> Vec3 {
+    let forward = entry.tangent().unit();
+    let up = bank_up(entry);
+    let side = up.cross(forward).unit();
+    forward * vector.x + side * (vector.y * if mirrored { -1.0 } else { 1.0 }) + up * vector.z
 }
 
 fn unbanked_up(tangent: Vec3) -> Vec3 {
@@ -471,6 +649,8 @@ mod tests {
                     extra_turns: Some(1.0),
                     descent_bias: bias,
                     descent_asymmetry: asymmetry,
+                    ramp: 0.5,
+                    roll_window: 0.0,
                 },
             };
             let upward = |geometry: &RollGeometry| {
@@ -520,14 +700,21 @@ mod tests {
     }
 
     use crate::track::catalog;
-    use crate::track::curves::{
-        Bank, Heading, Heartlining, Inversion, Piece, PieceId, PieceKind, RatedSpeeds, Shape,
-        Slope, TrackState, Vec3,
-    };
+    use crate::track::curves::{Bank, Heading, PieceId, Slope, TrackState, Vec3};
 
     use super::{RollGeometry, RollPath};
 
     const GRAVITY: f64 = 9.81;
+
+    #[test]
+    fn classic_corkscrew_lands_at_the_sideways_connector() {
+        let piece = catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::Corkscrew)
+            .unwrap();
+        assert_eq!((piece.exit.x, piece.exit.y, piece.exit.z), (14, 8, 0));
+        assert!((piece.sample(piece.length()).position - piece.exit.position()).length() < 1e-7);
+    }
 
     #[test]
     fn spline_heartline_keeps_rail_endpoints_on_the_connectors() {
@@ -557,6 +744,7 @@ mod tests {
         let speed = piece.rated_speeds.unwrap().maximum_entry;
         let step = piece.length() / 4000.0;
         let mut peak_acceleration: f64 = 0.0;
+        let mut peak_along_axis: f64 = 0.0;
         let mut peak_roll_rate: f64 = 0.0;
         for index in 2..3999 {
             let distance = step * f64::from(index);
@@ -565,15 +753,17 @@ mod tests {
             let next = piece.sample(distance + step);
             let acceleration =
                 (previous.heart - sample.heart * 2.0 + next.heart) / step.powi(2) * speed.powi(2);
-            peak_acceleration = peak_acceleration.max(acceleration.length() / GRAVITY);
+            peak_acceleration = peak_acceleration
+                .max((acceleration - Vec3::new(acceleration.x, 0.0, 0.0)).length() / GRAVITY);
+            peak_along_axis = peak_along_axis.max(acceleration.x.abs() / GRAVITY);
             peak_roll_rate =
                 peak_roll_rate.max((next.roll - previous.roll).abs() / (2.0 * step) * speed);
         }
         eprintln!(
-            "heartline peak acceleration {peak_acceleration:.4} g, roll rate {:.2} degrees/s",
+            "heartline perpendicular acceleration {peak_acceleration:.4} g, along-axis {peak_along_axis:.4} g, roll rate {:.2} degrees/s",
             peak_roll_rate.to_degrees()
         );
-        assert!(peak_acceleration <= 0.1, "{peak_acceleration}");
+        assert!(peak_acceleration <= 0.01, "{peak_acceleration}");
         assert!(
             peak_roll_rate.to_degrees() <= 200.0,
             "{}",
@@ -582,126 +772,115 @@ mod tests {
     }
 
     #[test]
-    fn helix_endpoints_match_the_track_connectors() {
-        let piece = roll_piece(
-            PieceId::Corkscrew,
-            16,
-            0,
-            Bank::Level,
-            Bank::Level,
-            RollGeometry::helix(32.0, std::f64::consts::TAU, 5.0),
-        );
-
-        let start = piece.sample(0.0);
-        let end = piece.sample(piece.length());
-        assert!((start.position - piece.entry.position()).length() < 1.0e-7);
-        assert!((end.position - piece.exit.position()).length() < 1.0e-7);
-        assert!((start.heart - (piece.entry.position() + start.up * 1.2)).length() < 1.0e-6);
-        assert!((end.heart - (piece.exit.position() + end.up * 1.2)).length() < 1.0e-6);
-    }
-
-    #[test]
-    fn half_helix_ends_on_the_inverted_connector() {
-        let piece = roll_piece(
-            PieceId::HalfCorkscrewLeftUp,
-            16,
-            4,
-            Bank::Level,
-            Bank::Inverted,
-            RollGeometry::helix(32.0, std::f64::consts::PI, 5.0),
-        );
-
-        let start = piece.sample(0.0);
-        let end = piece.sample(piece.length());
-        assert!((start.position - piece.entry.position()).length() < 1.0e-7);
-        assert!((end.position - piece.exit.position()).length() < 1.0e-7);
-        assert!((start.up.z - 1.0).abs() < 1.0e-7);
-        assert!((end.up.z + 1.0).abs() < 1.0e-7);
-    }
-
-    #[test]
-    fn diagonal_helices_end_on_the_rotated_connector() {
-        for (exit_z, exit_bank, total_roll) in [
-            (0, Bank::Level, std::f64::consts::TAU),
-            (6, Bank::Inverted, std::f64::consts::PI),
-        ] {
-            let template = roll_piece(
-                PieceId::Corkscrew,
-                20,
-                exit_z,
-                Bank::Level,
-                exit_bank,
-                RollGeometry::helix(40.0, total_roll, 5.0),
-            );
-            let mut entry = TrackState::origin();
-            entry.heading = Heading::NorthEast;
-            let placed = template.at(entry).unwrap();
-            let end = placed.sample(placed.length());
-            assert!(
-                (end.position - placed.exit.position()).length() < 1.0e-6,
-                "{:?} {:?}",
-                end.position,
-                placed.exit.position()
-            );
+    fn general_helix_roll_is_continuous_in_every_heading() {
+        let mut maximum_endpoint_error = 0.0_f64;
+        for id in [PieceId::Corkscrew, PieceId::CorkscrewRight] {
+            let template = catalog().iter().find(|piece| piece.id == id).unwrap();
+            for heading_index in 0..8 {
+                let mut entry = TrackState::origin();
+                entry.heading = Heading::from_index(heading_index);
+                let piece = template.at(entry).unwrap();
+                let mut previous = piece.sample(0.0).roll;
+                for index in 1..=8192 {
+                    let sample = piece.sample(piece.length() * f64::from(index) / 8192.0);
+                    assert!(
+                        (sample.roll - previous).abs() < 0.02,
+                        "{id:?} {heading_index} {index}"
+                    );
+                    previous = sample.roll;
+                }
+                assert!((previous.abs() - std::f64::consts::TAU).abs() < 1e-8);
+                let error =
+                    (piece.sample(piece.length()).position - piece.exit.position()).length();
+                maximum_endpoint_error = maximum_endpoint_error.max(error);
+            }
         }
+        eprintln!("maximum connector error: {maximum_endpoint_error:.3e} m");
+        assert!(maximum_endpoint_error < 1e-9);
     }
 
     #[test]
-    fn mirrored_helix_reverses_the_side_displacement() {
-        let left = roll_piece(
-            PieceId::Corkscrew,
-            16,
-            0,
-            Bank::Level,
-            Bank::Level,
-            RollGeometry::helix(32.0, std::f64::consts::TAU, 5.0),
+    fn general_helix_frame_and_diagonal_placement() {
+        let pieces = catalog();
+        let left = pieces
+            .iter()
+            .find(|piece| piece.id == PieceId::Corkscrew)
+            .unwrap();
+        let right = pieces
+            .iter()
+            .find(|piece| piece.id == PieceId::CorkscrewRight)
+            .unwrap();
+        for piece in [left, right] {
+            for heading in [Heading::East, Heading::NorthEast] {
+                let mut entry = TrackState::origin();
+                entry.heading = heading;
+                let placed = piece.at(entry).unwrap();
+                for distance in [0.0, placed.length()] {
+                    let sample = placed.sample(distance);
+                    let connector = if distance == 0.0 {
+                        placed.entry
+                    } else {
+                        placed.exit
+                    };
+                    assert!((sample.position - connector.position()).length() < 1e-7);
+                    assert!(sample.curvature.abs() < 1e-8);
+                }
+                let step = 0.01;
+                for index in 1..10 {
+                    let distance = placed.length() * f64::from(index) / 10.0;
+                    let before = placed.sample(distance - step);
+                    let sample = placed.sample(distance);
+                    let after = placed.sample(distance + step);
+                    let heart_tangent = (after.heart - before.heart).unit();
+                    let acceleration = before.heart - sample.heart * 2.0 + after.heart;
+                    let normal =
+                        (acceleration - heart_tangent * acceleration.dot(heart_tangent)).unit();
+                    assert!(
+                        normal.dot(sample.up) > 0.999,
+                        "{index}: {:?}",
+                        normal.dot(sample.up)
+                    );
+                }
+            }
+        }
+        for index in 0..=10 {
+            let fraction = f64::from(index) / 10.0;
+            let a = left.sample(left.length() * fraction);
+            let b = right.sample(right.length() * fraction);
+            assert!(
+                (a.position - Vec3::new(b.position.x, -b.position.y, b.position.z)).length() < 1e-7
+            );
+            assert!((a.roll + b.roll).abs() < 1e-7);
+        }
+        eprintln!(
+            "corkscrew length {:.3} m, minimum radius {:.3} m, midpoint height {:.3} m",
+            left.length(),
+            1.0 / left.maximum_curvature,
+            left.sample(left.length() / 2.0).position.z
         );
-        let mut right = left.clone();
-        right.mirrored = true;
-
-        let left_sample = left.sample(left.length() * 0.25);
-        let right_sample = right.sample(right.length() * 0.25);
-        assert!((left_sample.heart.y + right_sample.heart.y).abs() < 1.0e-6);
-        assert!((left_sample.heart.z - right_sample.heart.z).abs() < 1.0e-6);
     }
 
-    fn roll_piece(
-        id: PieceId,
-        exit_x: i32,
-        exit_z: i32,
-        entry_bank: Bank,
-        exit_bank: Bank,
-        geometry: RollGeometry,
-    ) -> Piece {
-        let mut entry = TrackState::origin();
-        entry.heading = Heading::East;
-        entry.slope = Slope::Level;
-        entry.bank = entry_bank;
-        let mut exit = entry;
-        exit.x = exit_x;
-        exit.z = exit_z;
-        exit.bank = exit_bank;
-        let mut piece = Piece {
-            id,
-            name: "roll test",
-            kind: PieceKind::Track,
-            inversion: Some(Inversion::Corkscrew),
-            heartlining: Some(Heartlining::NotHeartlined),
-            structure_material: None,
-            rated_speeds: Some(RatedSpeeds {
-                minimum_entry: 2.0,
-                maximum_entry: 20.0,
-            }),
-            entry,
-            exit,
-            shape: Shape::Roll(std::sync::Arc::new(geometry)),
-            tangent_scale: (exit.position() - entry.position()).length(),
-            mirrored: false,
-            arc_lengths: Vec::new(),
-            arc_speeds: Vec::new(),
-            maximum_curvature: 0.0,
-        };
-        piece.rebuild_arc();
-        piece
+    #[test]
+    fn half_roll_and_barrel_roll_rates_at_maximum_speed() {
+        for id in [
+            PieceId::HalfCorkscrewLeftUp,
+            PieceId::HalfCorkscrewLeftDown,
+            PieceId::BarrelDropLeft,
+        ] {
+            let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+            let speed = piece.rated_speeds.unwrap().maximum_entry;
+            let step = piece.length() / 4000.0;
+            let mut peak = 0.0_f64;
+            for index in 1..4000 {
+                let distance = f64::from(index) * step;
+                let before = piece.sample(distance - step);
+                let after = piece.sample(distance + step);
+                peak = peak.max((after.roll - before.roll).abs() * speed / (2.0 * step));
+            }
+            eprintln!("{id:?} peak roll rate {:.2} degrees/s", peak.to_degrees());
+            if id != PieceId::BarrelDropLeft {
+                assert!(peak.to_degrees() <= 200.0);
+            }
+        }
     }
 }

@@ -641,7 +641,7 @@ fn lifted_and_launched_inversion_compositions_complete_within_force_limits() {
         name: "lift into corkscrew",
         model: hybrid_model(),
         lift_gentle_pieces: 1,
-        lift_one_tile_pieces: 2,
+        lift_one_tile_pieces: 1,
         elements: vec![Corkscrew],
         launch: false,
         restoration: HeightRestoration::None,

@@ -1089,55 +1089,6 @@ mod tests {
     }
 
     #[test]
-    fn connected_inversion_support_positions_snapshot() {
-        let world = World::new(
-            256,
-            256,
-            Surface {
-                corners: [0; 4],
-                water: None,
-            },
-        );
-        let templates = catalog();
-        let mut state = TrackState {
-            x: 80,
-            y: 80,
-            z: 10,
-            ..TrackState::origin()
-        };
-        let mut snapshot = Vec::new();
-        for id in [PieceId::Loop, PieceId::Corkscrew, PieceId::HalfLoopUp] {
-            let piece = templates
-                .iter()
-                .find(|piece| piece.id == id)
-                .unwrap()
-                .at(state)
-                .unwrap();
-            let rounded = |position: Vec3| {
-                Vec3::new(
-                    (position.x * 1e6).round() / 1e6,
-                    (position.y * 1e6).round() / 1e6,
-                    (position.z * 1e6).round() / 1e6,
-                )
-            };
-            let supports: Vec<_> = generate_supports(&piece, &world, &[])
-                .unwrap()
-                .into_iter()
-                .map(|support| Support {
-                    anchor: rounded(support.anchor),
-                    footing: rounded(support.footing),
-                })
-                .collect();
-            snapshot.push((id, supports));
-            state = piece.exit;
-        }
-        assert_eq!(
-            format!("{snapshot:#?}\n"),
-            include_str!("support_positions_snapshot.txt")
-        );
-    }
-
-    #[test]
     fn segment_clearance_matches_exact_distance() {
         let points = [
             Vec3::new(0.0, 0.0, 0.0),

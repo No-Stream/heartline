@@ -887,8 +887,11 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                         cars_seen.iter().all(|seen| *seen)
                             && train.distance() >= range.end + configuration.length_metres
                             && train.notes().is_empty(),
-                        "{id:?} {} at rated {entry_speed} m/s did not clear without rollback",
-                        model.name
+                        "{id:?} {} at rated {entry_speed} m/s did not clear: distance {}, range {range:?}, speed {}, notes {:?}, cars seen {cars_seen:?}",
+                        model.name,
+                        train.distance(),
+                        train.speed(),
+                        train.notes()
                     );
                     assert!(
                         minimum_vertical >= limits.minimum_vertical_g
@@ -1387,8 +1390,11 @@ fn half_rolls_pass_full_trains_at_both_rated_endpoints() {
                         seen.iter().all(|seen| *seen)
                             && train.distance() >= end + config.length_metres
                             && train.notes().is_empty(),
-                        "{target:?} {} {cars} cars at {speed}: incomplete or rollback",
-                        model.name
+                        "{target:?} {} {cars} cars at {speed}: distance {}, range {start}..{end}, speed {}, notes {:?}, cars seen {seen:?}",
+                        model.name,
+                        train.distance(),
+                        train.speed(),
+                        train.notes()
                     );
                     assert!(
                         min_vertical >= limits.minimum_vertical_g
@@ -1614,6 +1620,7 @@ fn corkscrews_have_contiguous_rated_windows() {
                         && minimum_vertical >= limits.minimum_vertical_g
                         && maximum_vertical <= limits.maximum_vertical_g
                         && maximum_lateral <= limits.maximum_lateral_g
+                        && (target != Corkscrew || maximum_lateral <= 1.0)
                         && maximum_longitudinal <= limits.maximum_longitudinal_g
                 })
             })
@@ -1633,6 +1640,15 @@ fn corkscrews_have_contiguous_rated_windows() {
         assert!(
             rated.maximum_entry - rated.minimum_entry >= 2.0,
             "{target:?}: {rated:?}"
+        );
+        let (expected_minimum, expected_maximum) = match target {
+            Corkscrew => (14.0, 19.0),
+            HalfCorkscrewLeftUp => (17.0, 22.0),
+            _ => unreachable!(),
+        };
+        assert!(
+            rated.minimum_entry <= expected_minimum && rated.maximum_entry >= expected_maximum,
+            "{target:?}: rated window {rated:?} does not contain {expected_minimum}..{expected_maximum} m/s"
         );
         let sample_count = (rated.maximum_entry - rated.minimum_entry).ceil() as usize;
         for index in 0..=sample_count {

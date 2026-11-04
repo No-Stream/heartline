@@ -2,6 +2,7 @@ use super::*;
 use crate::physics::{PhysicsConfig, Train};
 use crate::track::{Heading, Slope, Vec3, hybrid_model};
 use crate::world::Surface;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 fn world() -> World {
@@ -1388,6 +1389,82 @@ fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
 }
 
 #[test]
+fn construction_closes_a_corkscrew_side_exit() {
+    use PieceId::*;
+
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [Station, Corkscrew] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+
+    let corkscrew = construction.pieces().last().unwrap();
+    assert_eq!(corkscrew.exit.y - corkscrew.entry.y, 8);
+    let model = construction.model();
+    let return_options = [
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallRightStandalone,
+        TurnLargeStandalone,
+        TurnLargeRightStandalone,
+        OffsetLeft,
+        OffsetRight,
+    ];
+    let key = |state: TrackState| {
+        (
+            state.x,
+            state.y,
+            state.z,
+            state.heading as u8,
+            state.slope as u8,
+            state.bank as u8,
+            state.horizontal_curvature as u8,
+            state.vertical_curvature as u8,
+        )
+    };
+    let start_key = key(construction.start());
+    let mut queue = VecDeque::from([(construction.end(), Vec::new())]);
+    let mut visited = HashSet::from([key(construction.end())]);
+    let return_path = loop {
+        let (state, path) = queue.pop_front().expect("level return path exists");
+        if key(state) == start_key {
+            break path;
+        }
+        if path.len() >= 40 {
+            continue;
+        }
+        let available = model.available_pieces(state);
+        for id in return_options {
+            let Some(piece) = available.iter().find(|piece| piece.id == id) else {
+                continue;
+            };
+            if !(0..128).contains(&piece.exit.x) || !(0..128).contains(&piece.exit.y) {
+                continue;
+            }
+            if !visited.insert(key(piece.exit)) {
+                continue;
+            }
+            let mut next_path = path.clone();
+            next_path.push(id);
+            queue.push_back((piece.exit, next_path));
+        }
+    };
+    for id in return_path {
+        construction
+            .append(id, &world, &[])
+            .unwrap_or_else(|error| panic!("cannot append {id:?}: {error:?}"));
+    }
+    assert_eq!(construction.end(), construction.start());
+    construction.close().unwrap();
+
+    assert!(construction.is_closed());
+    assert_eq!(
+        construction.pieces().last().unwrap().exit,
+        construction.start()
+    );
+}
+
+#[test]
 fn raven_turns_reverse_heading_and_offset_the_exit() {
     let world = World::new(
         512,
@@ -1504,6 +1581,26 @@ fn named_inversion_elements_compose_half_pieces() {
         let validated = construction
             .append_sequence(&pieces, &world, &[])
             .expect("the uncached sequence should validate");
+        let half_roll = validated
+            .pieces()
+            .iter()
+            .find(|piece| {
+                matches!(
+                    piece.id,
+                    PieceId::HalfCorkscrewLeftUp
+                        | PieceId::HalfCorkscrewRightUp
+                        | PieceId::HalfCorkscrewLeftDown
+                        | PieceId::HalfCorkscrewRightDown
+                )
+            })
+            .expect("inversion composition has one half roll");
+        assert_eq!(
+            (half_roll.exit.x - half_roll.entry.x).abs()
+                + (half_roll.exit.y - half_roll.entry.y).abs(),
+            20,
+            "half-roll connector footprint grows to 20 grid units"
+        );
+        assert_eq!((half_roll.exit.z - half_roll.entry.z).abs(), 6);
         assert_eq!(choice.geometry.len(), validated.pieces().len());
         for (cached, revalidated) in choice.geometry.iter().zip(validated.pieces()) {
             assert_eq!(cached.id, revalidated.id);
@@ -1734,4 +1831,161 @@ fn direct_sixty_degree_transitions_are_available_and_complete_a_lap() {
             construction.model().name
         );
     }
+}
+
+fn level_return_path(start: TrackState, target: TrackState, model: &CoasterModel) -> Vec<PieceId> {
+    let key = |state: TrackState| {
+        (
+            state.x,
+            state.y,
+            state.z,
+            state.heading as u8,
+            state.slope as u8,
+            state.bank as u8,
+            state.horizontal_curvature as u8,
+            state.vertical_curvature as u8,
+        )
+    };
+    let target_key = key(target);
+    let candidates = [
+        PieceId::Straight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallRightStandalone,
+        PieceId::TurnLargeStandalone,
+        PieceId::TurnLargeRightStandalone,
+        PieceId::OffsetLeft,
+        PieceId::OffsetRight,
+    ];
+    let mut queue = VecDeque::from([(start, Vec::new())]);
+    let mut visited = HashSet::from([key(start)]);
+    loop {
+        let (state, path) = queue.pop_front().expect("level return path exists");
+        if key(state) == target_key {
+            return path;
+        }
+        if path.len() >= 80 {
+            continue;
+        }
+        let available = model.available_pieces(state);
+        for id in candidates {
+            let Some(piece) = available.iter().find(|piece| piece.id == id) else {
+                continue;
+            };
+            if !(0..256).contains(&piece.exit.x) || !(0..256).contains(&piece.exit.y) {
+                continue;
+            }
+            if !visited.insert(key(piece.exit)) {
+                continue;
+            }
+            let mut next_path = path.clone();
+            next_path.push(id);
+            queue.push_back((piece.exit, next_path));
+        }
+    }
+}
+
+#[test]
+fn closed_inversion_circuit_support_positions_snapshot() {
+    use PieceId::*;
+
+    let track_world = World::new(
+        256,
+        256,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let circuit_start = TrackState {
+        x: 80,
+        y: 80,
+        z: 10,
+        ..TrackState::origin()
+    };
+    let model = hybrid_model();
+    let mut construction = Construction::new(circuit_start, model.clone());
+    for id in [
+        Station,
+        Loop,
+        Corkscrew,
+        HalfCorkscrewLeftUp,
+        HalfCorkscrewLeftDown,
+    ] {
+        construction
+            .append(id, &track_world, &[])
+            .unwrap_or_else(|error| panic!("construction rejected {id:?}: {error:?}"));
+    }
+    let climb_pieces = [LevelToGentleUp]
+        .into_iter()
+        .chain(std::iter::repeat_n(GentleUp, 5))
+        .chain([GentleUpToLevel]);
+    for id in climb_pieces {
+        construction
+            .append(id, &track_world, &[])
+            .unwrap_or_else(|error| panic!("construction rejected climb piece {id:?}: {error:?}"));
+    }
+    let return_target = TrackState {
+        x: circuit_start.x - 56,
+        y: circuit_start.y,
+        z: circuit_start.z + 24,
+        ..circuit_start
+    };
+    for id in level_return_path(construction.end(), return_target, &model) {
+        construction
+            .append(id, &track_world, &[])
+            .unwrap_or_else(|error| panic!("construction rejected return piece {id:?}: {error:?}"));
+    }
+    let descent_pieces = [LevelToGentleDown]
+        .into_iter()
+        .chain(std::iter::repeat_n(GentleDown, 5))
+        .chain([GentleDownToLevel]);
+    for id in descent_pieces {
+        construction
+            .append(id, &track_world, &[])
+            .unwrap_or_else(|error| {
+                panic!("construction rejected descent piece {id:?}: {error:?}")
+            });
+    }
+    assert_eq!(construction.end(), circuit_start);
+    construction.close().unwrap();
+    let circuit = construction.circuit().unwrap();
+    assert!(construction.is_closed());
+    assert!(circuit.length() > construction.model().train.length_metres);
+
+    let cache = construction.validation_cache.borrow();
+    let cache = cache.as_ref().expect("construction validation cache");
+    assert_eq!(cache.supports.len(), construction.pieces().len());
+    let rounded = |position: Vec3| {
+        Vec3::new(
+            (position.x * 1e6).round() / 1e6,
+            (position.y * 1e6).round() / 1e6,
+            (position.z * 1e6).round() / 1e6,
+        )
+    };
+    let snapshot: Vec<_> = construction
+        .pieces()
+        .iter()
+        .zip(&cache.supports)
+        .map(|(piece, result)| {
+            let positions = result
+                .as_ref()
+                .expect("support validation result")
+                .as_ref()
+                .expect("validated support positions")
+                .iter()
+                .map(|support| {
+                    let anchor = rounded(support.anchor);
+                    let footing = rounded(support.footing);
+                    format!(
+                        "({:.6},{:.6},{:.6};{:.6},{:.6},{:.6})",
+                        anchor.x, anchor.y, anchor.z, footing.x, footing.y, footing.z,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{:?}: [{positions}]", piece.id)
+        })
+        .collect();
+    let snapshot = format!("{}\n", snapshot.join("\n"));
+    assert_eq!(snapshot, include_str!("../support_positions_snapshot.txt"));
 }

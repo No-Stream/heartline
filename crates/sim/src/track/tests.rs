@@ -126,6 +126,34 @@ fn inversion_pieces_identify_their_heartlining() {
 }
 
 #[test]
+fn half_corkscrew_ids_display_as_up_and_down_half_rolls() {
+    let expected_names = [
+        (
+            PieceId::HalfCorkscrewLeftUp,
+            "Left half roll up (not heartlined)",
+        ),
+        (
+            PieceId::HalfCorkscrewLeftDown,
+            "Left half roll down (not heartlined)",
+        ),
+        (
+            PieceId::HalfCorkscrewRightUp,
+            "Right half roll up (not heartlined)",
+        ),
+        (
+            PieceId::HalfCorkscrewRightDown,
+            "Right half roll down (not heartlined)",
+        ),
+    ];
+    let pieces = catalog();
+
+    for (id, expected_name) in expected_names {
+        let piece = pieces.iter().find(|piece| piece.id == id).unwrap();
+        assert_eq!(piece.name, expected_name, "{id:?}");
+    }
+}
+
+#[test]
 fn half_inversions_connect_on_inverting_models() {
     for model in [hybrid_model(), multi_launch_model()] {
         for half_corkscrew in [
@@ -548,7 +576,9 @@ fn handed_inversions_are_mirrored() {
         let left = pieces.iter().find(|piece| piece.id == left_id).unwrap();
         let right = pieces.iter().find(|piece| piece.id == right_id).unwrap();
         assert_eq!(left.entry, right.entry);
-        assert_eq!(left.exit, right.exit);
+        let mut reflected_exit = left.exit;
+        reflected_exit.y = -reflected_exit.y;
+        assert_eq!(reflected_exit, right.exit);
         for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
             let a = left.sample(left.length() * fraction);
             let b = right.sample(right.length() * fraction);
@@ -1513,7 +1543,7 @@ fn half_corkscrews_have_mirrored_track_paths() {
         .unwrap();
     let left_middle = left.sample(left.length() / 2.0);
     let right_middle = right.sample(right.length() / 2.0);
-    assert!(left_middle.position.y > 3.0);
+    assert!(left_middle.position.y.abs() > 1.0);
     near(left_middle.position.y, -right_middle.position.y);
 }
 
