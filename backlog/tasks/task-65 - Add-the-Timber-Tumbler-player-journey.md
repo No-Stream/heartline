@@ -4,7 +4,7 @@ title: Add the Timber Tumbler player journey
 status: In Progress
 assignee: []
 created_date: '2026-11-03 20:05'
-updated_date: '2026-11-04 02:50'
+updated_date: '2026-11-04 03:31'
 labels:
   - test
 dependencies: []
@@ -36,4 +36,6 @@ Plan: docs/superpowers/plans/2026-11-03-flexible-track-and-gameplay-tests.md, wo
 2026-11-03 night: Codex job task-mw1ib6nc-duiu3w (gpt-6.1-terra, medium) is building the operate journey from a recorded build session; brief in the lead's scratchpad (copy of the plan: test hook to replay a session into the live worker, web/e2e/sessions/timber-tumbler-built.json, a second @journey spec, riders selected while queued or boarding, never on a moving train). Owner question pending: should players be able to click riders on moving trains?
 
 2026-11-03 night: owner decided players do not need to click riders on moving trains; select riders while they queue or board.
+
+2026-11-03 night: committed 8aabc55, the operate journey from a recorded build (2.5 min of 3; replay loop shared in web/src/session-replay-worker.ts). Codex job task-mw1k7m7v-7rmuci is making the recorded build reproducible (RECORD_JOURNEY_SESSIONS=1 on the build journey) and cutting the operate journey to about 2 min. Close TASK-65 when that lands with three runs under 2 min and a clean full gate.
 <!-- SECTION:NOTES:END -->
