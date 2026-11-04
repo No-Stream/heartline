@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-11-04 10:29'
-updated_date: '2026-11-04 12:35'
+updated_date: '2026-11-04 14:06'
 labels:
   - coaster
   - construction
@@ -33,4 +33,6 @@ Follow-up to TASK-89 (00c93be). (1) Models define minimum curve radii but no for
 2026-11-04: Fable's plan committed on branch inversion-forces (874af14). Implementation job task-mw235gmd-2tmaf0 (Terra, medium) following its twelve work items; stops after the half-loop milestone if the method does not hold.
 
 2026-11-04: implementation stopped at the half-loop milestone (36f093e on branch): a half loop rated for 31.3 m/s needs a 46 m rise with a 0.86 m/s entry window, and a full loop closed 7 m high. Fable is revising the plan (loop sizes per entry-speed band, mirrored climbing half for closure, top-of-loop g target).
+
+2026-11-04: half-loop milestone met on branch (6be1f3e): 38 m rise, 3.95-3.96 g full-train peaks across the rated window 27.96-31.3 m/s, down from about 19 g. Job task-mw26x03f-9m6xa6 implements the remaining work items; TopHat untouched pending the owner's decision.
 <!-- SECTION:NOTES:END -->
