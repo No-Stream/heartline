@@ -49,6 +49,34 @@ main {
   background: var(--canvas-paper);
 }
 .game-world > canvas:focus-visible { outline: 2px solid var(--slate); outline-offset: -2px; }
+.height-markers {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  gap: 0.1rem;
+  transform: translate(12px, calc(-100% - 12px));
+  padding: 0.35rem 0.55rem;
+  border: 2px solid #202028;
+  border-radius: 4px;
+  background: #fff9df;
+  color: #202028;
+  box-shadow: 0 2px 5px #0008;
+  font: 600 14px/1.25 var(--body-font);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.height-markers[hidden] { display: none; }
+.height-markers::after {
+  content: "";
+  position: absolute;
+  left: -13px;
+  bottom: -13px;
+  width: 14px;
+  height: 14px;
+  border-left: 2px solid #fff9df;
+  border-bottom: 2px solid #fff9df;
+  filter: drop-shadow(1px 1px 1px #202028);
+}
 .game-dock {
   box-sizing: border-box;
   width: 400px;

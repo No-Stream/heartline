@@ -13,6 +13,7 @@ function dispatch(action: InputAction): void {
   if (action.type === "construction-select") setConstructionState({ selected: action.piece });
 }
 const panel = createConstructionPanel(container, dispatch);
+panel.setUnits("metric");
 bindKeyboard(container, dispatch, () => ({ x: 400, y: 250 }));
 
 const line = (length: number, turn: number): PieceShape["points"] => Array.from({ length: 33 }, (_, index) => {
@@ -46,7 +47,7 @@ const state: ConstructionState = {
 let current = state;
 function setConstructionState(update: Partial<ConstructionState>): void { current = { ...current, ...update }; panel.update(current); }
 panel.update(state);
-Object.assign(window, { constructionActions: actions, setConstructionState });
+Object.assign(window, { constructionActions: actions, setConstructionState, setConstructionUnits: (units: "metric" | "imperial") => panel.setUnits(units) });
 
 const testingPanel = createTestingPanel(document.querySelector<HTMLElement>("[data-testing]")!,
   { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 }, () => {});

@@ -1,6 +1,7 @@
 import { projectWorld, type Camera, type Viewport } from "./camera";
-import type { GeometryQuad, Triangle, Vertex } from "./render/scene";
+import { terrainHeightAt, type GeometryQuad, type Triangle, type Vertex, type WorldView } from "./render/scene";
 import type { TrackStyle } from "./render/track/geometry";
+import { formatLength, formatSpeed, type Units } from "./units";
 
 export interface TestingSample {
   distance: number; x: number; y: number; z: number; speed: number;
@@ -17,7 +18,7 @@ export interface ProximityEvent {
 }
 export type TestingMetric = "speed" | "verticalG" | "lateralG" | "longitudinalG" | "airtime";
 const metrics: Record<TestingMetric, { label: string; low: string; high: string; value(sample: TestingSample): number }> = {
-  speed: { label: "Speed", low: "0 m/s", high: "30 m/s+", value: (sample) => sample.speed / 30 },
+  speed: { label: "Speed", low: "", high: "", value: (sample) => sample.speed / 30 },
   verticalG: { label: "Vertical force", low: "−1 g", high: "5 g+", value: (sample) => (sample.verticalG + 1) / 6 },
   lateralG: { label: "Lateral force", low: "0 g", high: "3 g+", value: (sample) => Math.abs(sample.lateralG) / 3 },
   longitudinalG: { label: "Longitudinal force", low: "0 g", high: "3 g+", value: (sample) => Math.abs(sample.longitudinalG) / 3 },
@@ -97,12 +98,68 @@ export function buildProximityMarkers(events: readonly ProximityEvent[], camera:
   });
 }
 
-export function formatSample(sample: TestingSample): string {
-  return `Speed: ${number(sample.speed)} m/s · Vertical: ${number(sample.verticalG)} g · Lateral: ${number(sample.lateralG)} g · Longitudinal: ${number(sample.longitudinalG)} g · Airtime: ${sample.airtime ? "yes" : "no"}`;
+export interface RideHeightSummary {
+  readonly maximumHeightMetres: number;
+  readonly biggestDropMetres: number;
 }
 
-export function createTestingPanel(container: HTMLElement, style: TrackStyle, onChange: (metric: TestingMetric | null) => void): { update(report: TestingReport | null): void; inspect(index: number): void; inspectProximity(index: number): void } {
+export function summarizeRideHeights(samples: readonly TestingSample[], world: WorldView): RideHeightSummary | null {
+  if (samples.length === 0) return null;
+  let maximumHeightMetres = -Infinity;
+  let highestElevation = samples[0].z * 4;
+  let previousDistance = samples[0].distance;
+  let biggestDropMetres = 0;
+  for (const sample of samples) {
+    const elevation = sample.z * 4;
+    maximumHeightMetres = Math.max(maximumHeightMetres, elevation - terrainHeightAt(world, sample.x, sample.y));
+  }
+  for (const sample of samples.slice(1)) {
+    const elevation = sample.z * 4;
+    if (sample.distance - previousDistance > 1.001) highestElevation = elevation;
+    biggestDropMetres = Math.max(biggestDropMetres, highestElevation - elevation);
+    highestElevation = Math.max(highestElevation, elevation);
+    previousDistance = sample.distance;
+  }
+  return { maximumHeightMetres, biggestDropMetres };
+}
+
+function formatSampleInUnits(sample: TestingSample, units: Units): string {
+  return `Speed: ${formatSpeed(sample.speed, units)} · Vertical: ${number(sample.verticalG)} g · Lateral: ${number(sample.lateralG)} g · Longitudinal: ${number(sample.longitudinalG)} g · Airtime: ${sample.airtime ? "yes" : "no"}`;
+}
+
+export function formatSample(sample: TestingSample, units: Units = "imperial"): string {
+  return formatSampleInUnits(sample, units);
+}
+
+export function formatTestingNote(note: string, units: Units): string {
+  const stalledDistance = /^The train could not finish the circuit after travelling ([\d.]+) m\.(.*)$/.exec(note);
+  if (stalledDistance) {
+    return `The train could not finish the circuit after travelling ${formatLength(Number(stalledDistance[1]), units)}.${stalledDistance[2]}`;
+  }
+  if (note === "Riders spend at least 8 m in a row under high forces. Add gentler sections between intense elements.") {
+    return `Riders spend at least ${formatLength(8, units)} in a row under high forces. Add gentler sections between intense elements.`;
+  }
+  if (note === "This layout has at least 100 m in a row below 8 m/s. A taller first drop or a faster section could make it feel livelier.") {
+    return `This layout has at least ${formatLength(100, units)} in a row below ${formatSpeed(8, units)}. A taller first drop or a faster section could make it feel livelier.`;
+  }
+  if (/\b\d+(?:\.\d+)? m(?:\/s)?\b/.test(note)) throw new Error(`Ride testing note has an unformatted measurement: ${note}`);
+  return note;
+}
+
+function legendBounds(metric: TestingMetric, units: Units): { low: string; high: string } {
+  if (metric === "speed") return { low: formatSpeed(0, units, 0), high: `${formatSpeed(30, units)}+` };
+  return metrics[metric];
+}
+
+export function createTestingPanel(container: HTMLElement, style: TrackStyle, onChange: (metric: TestingMetric | null) => void): {
+  update(report: TestingReport | null): void;
+  setUnits(units: Units): void;
+  setWorld(world: WorldView): void;
+  inspect(index: number): void;
+  inspectProximity(index: number): void;
+} {
   container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><p data-rating></p>
+    <p data-height-summary hidden>Maximum height above ground (sampled): <span data-report-maximum-height></span> · Biggest drop (sampled): <span data-report-drop-height></span></p>
     <label>Track overlay <select data-metric><option value="off">Off</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
     <div data-legend hidden><span data-low></span> <span data-gradient aria-hidden="true" style="display:inline-block;width:100px;height:10px"></span> <span data-high></span></div>
     <div data-proximity-events></div><p data-inspection>Click the coloured track to inspect it.</p>`;
@@ -111,55 +168,94 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, on
   const legend = container.querySelector<HTMLElement>("[data-legend]")!;
   const inspection = container.querySelector<HTMLElement>("[data-inspection]")!;
   let report: TestingReport | null = null;
+  let world: WorldView | undefined;
+  let activeUnits: Units = "imperial";
+  let inspectedSampleIndex: number | undefined;
+  let inspectedProximityIndex: number | undefined;
+  const renderInspection = (): void => {
+    if (inspectedSampleIndex !== undefined && report?.samples[inspectedSampleIndex]) {
+      inspection.textContent = formatSampleInUnits(report.samples[inspectedSampleIndex], activeUnits);
+      return;
+    }
+    if (inspectedProximityIndex !== undefined && report?.proximityEvents[inspectedProximityIndex]) {
+      const event = report.proximityEvents[inspectedProximityIndex];
+      inspection.textContent = `${formatProximityEvent(event)} · Strength: ${number(event.strength)} · Distance: ${formatLength(event.distance, activeUnits)}`;
+      return;
+    }
+    inspection.textContent = "Click the coloured track to inspect it.";
+  };
   const change = () => {
     const metric = select.value === "off" ? null : select.value as TestingMetric;
     legend.hidden = metric === null || !report?.samples.length;
     if (metric) {
-      container.querySelector<HTMLElement>("[data-low]")!.textContent = metrics[metric].low;
-      container.querySelector<HTMLElement>("[data-high]")!.textContent = metrics[metric].high;
+      const bounds = legendBounds(metric, activeUnits);
+      container.querySelector<HTMLElement>("[data-low]")!.textContent = bounds.low;
+      container.querySelector<HTMLElement>("[data-high]")!.textContent = bounds.high;
     }
     onChange(metric && report?.samples.length ? metric : null);
   };
   select.addEventListener("change", change);
-  return {
-    update(value) {
-      report = value;
-      container.querySelector<HTMLElement>("[data-notes]")!.textContent = value ? value.notes.join(" ") || "No concerns were noted during this test." : "Run a test to see the results.";
-      container.querySelector<HTMLElement>("[data-rating]")!.textContent = value?.rating ? `Excitement: ${number(value.rating.excitement)} · Intensity: ${number(value.rating.intensity)} · Nausea: ${number(value.rating.nausea)}` : "";
-      const eventList = container.querySelector<HTMLElement>("[data-proximity-events]")!;
-      eventList.replaceChildren();
-      if (value?.proximityEvents.length) {
-        const heading = document.createElement("h4");
-        heading.textContent = `Proximity events (${value.proximityEvents.length})`;
-        eventList.append(heading);
-        const groups = new Map<string, ProximityEvent[]>();
-        for (const event of value.proximityEvents) groups.set(event.kind, [...(groups.get(event.kind) ?? []), event]);
-        for (const [kind, events] of groups) {
-          const section = document.createElement("section");
-          const title = document.createElement("h5");
-          title.textContent = `${proximityLabels[kind] ?? "Other close passes"} (${events.length})`;
-          section.append(title);
-          const list = document.createElement("ul");
-          for (const event of events) {
-            const item = document.createElement("li");
-            item.textContent = formatProximityEvent(event);
-            list.append(item);
-          }
-          section.append(list);
-          eventList.append(section);
+  const renderReport = (): void => {
+    const notes = container.querySelector<HTMLElement>("[data-notes]")!;
+    const rating = container.querySelector<HTMLElement>("[data-rating]")!;
+    const heightSummary = container.querySelector<HTMLElement>("[data-height-summary]")!;
+    notes.textContent = report ? report.notes.map((note) => formatTestingNote(note, activeUnits)).join(" ") || "No concerns were noted during this test." : "Run a test to see the results.";
+    rating.textContent = report?.rating ? `Excitement: ${number(report.rating.excitement)} · Intensity: ${number(report.rating.intensity)} · Nausea: ${number(report.rating.nausea)}` : "";
+    let summary: RideHeightSummary | null = null;
+    if (report?.samples.length) {
+      if (!world) throw new Error("Ride testing report requires a world snapshot");
+      summary = summarizeRideHeights(report.samples, world);
+    }
+    heightSummary.hidden = summary === null;
+    container.querySelector<HTMLElement>("[data-report-maximum-height]")!.textContent = summary ? formatLength(summary.maximumHeightMetres, activeUnits) : "";
+    container.querySelector<HTMLElement>("[data-report-drop-height]")!.textContent = summary ? formatLength(summary.biggestDropMetres, activeUnits) : "";
+    const eventList = container.querySelector<HTMLElement>("[data-proximity-events]")!;
+    eventList.replaceChildren();
+    if (report?.proximityEvents.length) {
+      const heading = document.createElement("h4");
+      heading.textContent = `Proximity events (${report.proximityEvents.length})`;
+      eventList.append(heading);
+      const groups = new Map<string, ProximityEvent[]>();
+      for (const event of report.proximityEvents) groups.set(event.kind, [...(groups.get(event.kind) ?? []), event]);
+      for (const [kind, events] of groups) {
+        const section = document.createElement("section");
+        const title = document.createElement("h5");
+        title.textContent = `${proximityLabels[kind] ?? "Other close passes"} (${events.length})`;
+        section.append(title);
+        const list = document.createElement("ul");
+        for (const event of events) {
+          const item = document.createElement("li");
+          item.textContent = formatProximityEvent(event);
+          list.append(item);
         }
-        const contribution = document.createElement("p");
-        contribution.textContent = `Added ${number(proximityContribution(value.proximityEvents))} excitement from proximity events.`;
-        eventList.append(contribution);
+        section.append(list);
+        eventList.append(section);
       }
-      select.disabled = !value?.samples.length;
-      inspection.textContent = "Click the coloured track to inspect it.";
-      change();
+      const contribution = document.createElement("p");
+      contribution.textContent = `Added ${number(proximityContribution(report.proximityEvents))} excitement from proximity events.`;
+      eventList.append(contribution);
+    }
+    select.disabled = !report?.samples.length;
+    renderInspection();
+    change();
+  };
+  return {
+    update(value) { report = value; inspectedSampleIndex = undefined; inspectedProximityIndex = undefined; renderReport(); },
+    setUnits(units) { activeUnits = units; renderReport(); },
+    setWorld(value) { world = value; renderReport(); },
+    inspect(index) {
+      if (report?.samples[index]) {
+        inspectedSampleIndex = index;
+        inspectedProximityIndex = undefined;
+        renderInspection();
+      }
     },
-    inspect(index) { if (report?.samples[index]) inspection.textContent = formatSample(report.samples[index]); },
     inspectProximity(index) {
-      const event = report?.proximityEvents[index];
-      if (event) inspection.textContent = `${formatProximityEvent(event)} · Strength: ${number(event.strength)} · Distance: ${number(event.distance)} m`;
+      if (report?.proximityEvents[index]) {
+        inspectedProximityIndex = index;
+        inspectedSampleIndex = undefined;
+        renderInspection();
+      }
     },
   };
 }
