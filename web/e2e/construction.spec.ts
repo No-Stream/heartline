@@ -309,6 +309,7 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await selectUnits(page, "metric");
   await page.getByLabel("Station height above ground (metres)").fill("72");
   await page.getByLabel("Station height above ground (metres)").press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
