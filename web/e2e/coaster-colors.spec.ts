@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { openTool } from "./game-page";
+import { openTool, showBuilderTab } from "./game-page";
 import { parseReplaySession } from "../src/session-replay";
 import { COASTER_COLORS } from "../src/coaster-colors";
 
@@ -41,6 +41,7 @@ test("the construction panel repaints a built coaster's track, supports and trai
   await page.evaluate((recordedSession) => window.gameTest.replaySession(recordedSession), session);
   await openTool(page, "Coaster");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 236, centerY: 246, zoom: 1.1, rotation: 0 }));
+  await showBuilderTab(page, "Colours");
 
   const swatch = (part: string, color: string) => page.getByRole("radiogroup", { name: `${part} colour` }).getByRole("radio", { name: color, exact: true });
   await expect(swatch("Track", "Coral")).toHaveAttribute("aria-checked", "true");
