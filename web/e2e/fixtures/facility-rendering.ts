@@ -114,7 +114,7 @@ window.renderFacilityFixture = async (kind, rotation) => {
   const geometry = (view: typeof camera, viewport: { width: number; height: number }, currentAtlas: Atlas) =>
     buildFacilityGeometry(facilities, view, viewport, trackStyle(currentAtlas));
 
-  renderer.render(buildWorld(facilities, true, rotation), camera, 0, [geometry]);
+  renderer.render({ world: buildWorld(facilities, true, rotation), camera: camera, waterFrame: 0, geometryPasses: [geometry] });
   renderer.waitForGpu();
   const targetSamples = countTargetSamples(renderer, "facility-1", bounds, false);
   const canvasContext = canvas.getContext("webgl2");
@@ -133,14 +133,14 @@ window.renderFacilityFixture = async (kind, rotation) => {
   previewContext.drawImage(image, 0, 0);
   URL.revokeObjectURL(imageUrl);
 
-  renderer.render(buildWorld([target], true, rotation, 8, false), camera, 0, [
+  renderer.render({ world: buildWorld([target], true, rotation, 8, false), camera: camera, waterFrame: 0, geometryPasses: [
     (view, viewport, currentAtlas) => buildFacilityGeometry([target], view, viewport, trackStyle(currentAtlas)),
-  ]);
+  ] });
   renderer.waitForGpu();
   const upperGroundSamples = countTargetSamples(renderer, "facility-1", bounds, true);
-  renderer.render(buildWorld([target], false, rotation, -100), camera, 0, [
+  renderer.render({ world: buildWorld([target], false, rotation, -100), camera: camera, waterFrame: 0, geometryPasses: [
     (view, viewport, currentAtlas) => buildFacilityGeometry([target], view, viewport, trackStyle(currentAtlas)),
-  ]);
+  ] });
   renderer.waitForGpu();
   const upperReferenceSamples = countTargetSamples(renderer, "facility-1", bounds, true);
   canvas.replaceWith(preview);

@@ -18,6 +18,6 @@ surfaces.set([3, 3, 3, 3, 0, 0], (1 * 4 + 1) * 6);
 surfaces.set([1, 1, 1, 1, 0, 0], (2 * 4 + 2) * 6);
 const world: WorldView = { dimensions: new Uint16Array([4, 4]), surfaces, paths: new Int32Array() };
 window.renderCliffs = async (rotation) => {
-  renderer.render(world, { centerX: 2, centerY: 2, zoom: 2, rotation });
+  renderer.render({ world: world, camera: { centerX: 2, centerY: 2, zoom: 2, rotation } });
   renderer.waitForGpu();
 };

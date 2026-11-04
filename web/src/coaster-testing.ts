@@ -1,4 +1,5 @@
-import { projectWorld, type Camera, type Viewport } from "./camera";
+import { projectVertex } from "./render/projection";
+import type { Camera, Viewport } from "./camera";
 import { terrainHeightAt, type GeometryQuad, type Triangle, type Vertex, type WorldView } from "./render/scene";
 import type { TrackStyle } from "./render/track/geometry";
 import { formatLength, formatSpeed, type Units } from "./units";
@@ -26,9 +27,7 @@ function color(value: number, style: TrackStyle): Triangle["color"] {
 
 export function buildTestingRibbon(samples: readonly TestingSample[], metric: TestingMetric, camera: Camera, viewport: Viewport, style: TrackStyle): GeometryQuad[] {
   const quads: GeometryQuad[] = [];
-  const vertex = (sample: TestingSample): Vertex => ({ ...projectWorld(camera, viewport, sample),
-    depth: [sample.x + sample.y, sample.x - sample.y, -sample.x - sample.y, -sample.x + sample.y][camera.rotation] + sample.z + 0.06,
-    height: sample.z * 4, u: 0, v: 0 });
+  const vertex = (sample: TestingSample): Vertex => projectVertex(camera, viewport, sample, 0.06);
   for (let index = 0; index + 1 < samples.length; index++) {
     if (samples[index + 1].distance - samples[index].distance > 1.001) continue;
     const start = vertex(samples[index]);
@@ -74,11 +73,10 @@ const proximityColors: Readonly<Record<string, "steel" | "wood" | "train" | "ink
 
 export function buildProximityMarkers(events: readonly ProximityEvent[], camera: Camera, viewport: Viewport, style: TrackStyle): GeometryQuad[] {
   return events.flatMap((event, index) => {
-    const center = projectWorld(camera, viewport, event);
+    const center = projectVertex(camera, viewport, event, 0.12);
     const strength = Math.max(0, Math.min(1, event.strength));
     const halfSize = 4 + strength * 2;
-    const depth = [event.x + event.y, event.x - event.y, -event.x - event.y, -event.x + event.y][camera.rotation] + event.z + 0.12;
-    const vertex = (x: number, y: number): Vertex => ({ ...center, x, y, depth, height: event.z * 4, u: 0, v: 0 });
+    const vertex = (x: number, y: number): Vertex => ({ ...center, x, y });
     const marker = (size: number, hex: string): GeometryQuad => {
       const channel = (offset: number): number => parseInt(hex.slice(offset, offset + 2), 16) / 255;
       return {

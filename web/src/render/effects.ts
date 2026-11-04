@@ -1,3 +1,4 @@
+import { projectVertex } from "./projection";
 /**
  * Effects that follow the time of day: ground shadows, night lights and their glow, fireworks, crest confetti and the sky.
  * Every function is a pure function of its inputs and a tick, so the same tick always draws the same frame.
@@ -32,8 +33,7 @@ function hash(first: number, second: number): number {
 }
 
 function project(camera: Camera, viewport: Viewport, x: number, y: number, z: number): Vertex {
-  const screen = projectWorld(camera, viewport, { x, y, z });
-  return { ...screen, depth: [x + y, x - y, -x - y, -x + y][camera.rotation] + z, height: z * 4, u: 0, v: 0 };
+  return projectVertex(camera, viewport, { x, y, z });
 }
 
 function onScreen(viewport: Viewport, point: { x: number; y: number }, margin: number): boolean {

@@ -82,6 +82,14 @@ test("picking is drawn on demand and refreshed after scene and canvas changes", 
   expect(result.resizedPick).toMatchObject({ kind: "terrain", x: 0, y: 0 });
 });
 
+test("world and picking draws establish their required WebGL state", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const normal = await page.evaluate(() => window.renderFixture(0, false, false, "solid"));
+  const disturbed = await page.evaluate(() => window.renderFixture(0, false, false, "solid", false, true));
+  expect(disturbed.color).toEqual(normal.color);
+  expect(disturbed.pick).toEqual(normal.pick);
+});
+
 test("region picking matches individual picks, including clipped pixels", async ({ page }) => {
   await page.goto(fixtureUrl);
   for (const extra of ["behind", "solid", "textured", "thin"] as const) {

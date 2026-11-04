@@ -1,4 +1,5 @@
-import { projectWorld, type Camera, type Viewport } from "../../camera";
+import { projectVertex } from "../projection";
+import type { Camera, Viewport } from "../../camera";
 import type { CoasterModelKey, TrainLayout } from "../../train-layout";
 import type { Atlas } from "../scene";
 import { add, color, createQuadBuilder, cross, normalize, scale, shade, vector, type TrackPaint, type TrackQuad, type Vec } from "./geometry";
@@ -151,7 +152,7 @@ export function buildRiderQuads(poses: Float32Array, camera: Camera, viewport: V
       const top = frame.anchor.y * factor, bottom = (frame.anchor.y - frame.height) * factor;
       const points: Vec[] = [[left,top], [right,top], [right,bottom], [left,bottom]].map(([across, vertical]) => add(add(anchor, scale(spriteRight, across)), scale(up, vertical)));
       const uv = [[0,0], [1,0], [1,1], [0,1]];
-      const vertices = points.map((point, index) => ({ ...projectWorld(camera, viewport, { x: point[0], y: point[1], z: point[2] }), depth: [point[0]+point[1], point[0]-point[1], -point[0]-point[1], -point[0]+point[1]][camera.rotation] + point[2], height: point[2]*4, u: (placement.x + uv[index][0]*placement.width)/page.width, v: (placement.y + uv[index][1]*placement.height)/page.height })) as TrackQuad["vertices"];
+      const vertices = points.map((point, index) => ({ ...projectVertex(camera, viewport, { x: point[0], y: point[1], z: point[2] }), u: (placement.x + uv[index][0]*placement.width)/page.width, v: (placement.y + uv[index][1]*placement.height)/page.height })) as TrackQuad["vertices"];
       riders.push({ vertices, color: [1,1,1,1], kind: "rider", id: occupant?.id ?? `rider-${poses[i]}-${seat}`, tileX: Math.floor(anchor[0]), tileY: Math.floor(anchor[1]), page: placement.page });
     }
   }
