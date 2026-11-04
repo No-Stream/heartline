@@ -1,10 +1,10 @@
 ---
 id: TASK-73
 title: Add the Velocity Viper and Briar Blitz player journeys
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 20:05'
-updated_date: '2026-11-04 05:24'
+updated_date: '2026-11-04 10:01'
 labels:
   - test
 dependencies: []
@@ -28,4 +28,6 @@ Plan: docs/superpowers/plans/2026-11-03-flexible-track-and-gameplay-tests.md, wo
 2026-11-03 night: unblocked by 271bf8e (sloped bank transitions). Codex job task-mw1nb915-szfup6 is building the two journeys.
 
 2026-11-03 night: committed 25e24d3 (Velocity Viper about 39 s, Briar Blitz about 1.4 min, three passes each). Still to confirm: make journeys within 5 minutes on a quiet machine; the first try took 317 s while two other jobs compiled Rust on the same cores, and the operate journey timed out in it.
+
+2026-11-04: make journeys passes (5 journeys) and the full gate is green at c30aa7e.
 <!-- SECTION:NOTES:END -->

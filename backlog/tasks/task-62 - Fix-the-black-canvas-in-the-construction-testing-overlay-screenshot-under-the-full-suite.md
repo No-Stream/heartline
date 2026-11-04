@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-03 19:49'
-updated_date: '2026-11-04 04:33'
+updated_date: '2026-11-04 10:01'
 labels:
   - test
   - rendering
@@ -37,4 +37,6 @@ Four-worker, three-repeat load run: 15 passed, 6 failed; construction stopped at
 Focused render-persistence browser tests passed 2/2; TypeScript typecheck, web production build to /tmp, and 199 web unit tests passed. Full make ci was explicitly not run. Reconcile the concurrent chain-lift changes and screenshot differences, rerun the unchanged repeated slow tests under load with lifecycle instrumentation, and investigate any reproduced black canvas before closing this ticket.
 
 2026-11-03 night: clean full make ci runs at f631a95 and b8dfac1 (two of the three needed; both under the new resource budget).
+
+2026-11-04: clean full make ci at c30aa7e (also f631a95 and b8dfac1, but gates in between failed for other reasons, so the three are not consecutive yet).
 <!-- SECTION:NOTES:END -->

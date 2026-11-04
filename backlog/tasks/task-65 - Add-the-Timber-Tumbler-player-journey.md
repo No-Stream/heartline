@@ -1,10 +1,10 @@
 ---
 id: TASK-65
 title: Add the Timber Tumbler player journey
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 20:05'
-updated_date: '2026-11-04 07:17'
+updated_date: '2026-11-04 10:01'
 labels:
   - test
 dependencies: []
@@ -44,4 +44,6 @@ Plan: docs/superpowers/plans/2026-11-03-flexible-track-and-gameplay-tests.md, wo
 2026-11-03 night: the operate journey timed out in a full gate that ran while two Codex jobs compiled on the same 8 cores (selecting a queued guest took too long); it passes alone. It has the least margin of the journeys.
 
 2026-11-03 night: reopened. The operate journey timed out in three full gates run alongside other agents' builds (phases about 1.7x slower under load). Codex job task-mw1saiyz-j09xty in worktree theme-park-sim-worktrees/journey-speed is profiling replay setup (29 s for 7,408 ticks in frozen mode) and terrain flattening (23 s), target about 75 s per run, no limit increase.
+
+2026-11-04: operate journey 66-75 s alone after c30aa7e; full make ci green at c30aa7e on a quiet machine.
 <!-- SECTION:NOTES:END -->
