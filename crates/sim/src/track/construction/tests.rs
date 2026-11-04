@@ -1239,7 +1239,7 @@ fn completion_connects_a_sloped_approach() {
 }
 
 #[test]
-fn completion_finishes_the_lift_powered_circuit_after_large_turn_entry() {
+fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
     use PieceId::*;
     let world = world();
     let mut construction = Construction::new(TrackState { z: 36, ..start() }, hybrid_model());
@@ -1259,8 +1259,9 @@ fn completion_finishes_the_lift_powered_circuit_after_large_turn_entry() {
     }
     construction.set_chain(false);
     for id in [
-        Straight,
-        Straight,
+        OneTileStraight,
+        OneTileStraight,
+        OffsetLeft,
         TurnLargeEntry,
         TurnLargeExit,
         LevelToGentleDown,
@@ -1271,18 +1272,22 @@ fn completion_finishes_the_lift_powered_circuit_after_large_turn_entry() {
         GentleDown,
         GentleDownToLevel,
         Loop,
+        OffsetRight,
         TurnLargeEntry,
+        TurnLargeExit,
+        Straight,
+        OneTileStraight,
     ] {
         construction.append(id, &world, &[]).unwrap();
     }
     let mut expected = construction.copy_for_completion();
-    expected.append(TurnLargeExit, &world, &[]).unwrap();
+    expected.append(OneTileStraight, &world, &[]).unwrap();
     assert_eq!(expected.end(), expected.start());
     expected.close().unwrap();
     let completion = construction
         .find_completion(&world, &[])
-        .expect("large turn exit");
-    assert_eq!(completion.pieces, [TurnLargeExit]);
+        .expect("one-tile straight");
+    assert_eq!(completion.pieces, [OneTileStraight]);
     construction
         .apply_completion(&completion, &world, &[])
         .unwrap();

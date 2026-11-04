@@ -728,6 +728,9 @@ impl BlockPlacementSearch {
             && config.brake_speed > 0.0
         {
             let mut candidates = brake_runs(&circuit, train.length_metres);
+            candidates.retain(|run| {
+                validate_brake_forces(&circuit, config, std::slice::from_ref(run)).is_ok()
+            });
             candidates.extend(powered_holds(&circuit));
             candidates
                 .sort_by(|left, right| left.boundary_metres.total_cmp(&right.boundary_metres));
@@ -766,6 +769,45 @@ impl BlockPlacementSearch {
                 bootstrap.push(chosen);
             }
         }
+        let mut powered_bootstrap = Vec::new();
+        for hold in powered_holds(&circuit) {
+            let mut following: Vec<_> = candidates
+                .iter()
+                .enumerate()
+                .filter(|(_, run)| {
+                    !is_powered_hold(&circuit, run) && run.boundary_metres != hold.boundary_metres
+                })
+                .collect();
+            following.sort_by(|(_, left), (_, right)| {
+                (left.boundary_metres - hold.boundary_metres)
+                    .rem_euclid(circuit.length())
+                    .total_cmp(
+                        &(right.boundary_metres - hold.boundary_metres)
+                            .rem_euclid(circuit.length()),
+                    )
+                    .then_with(|| left.piece_indices.len().cmp(&right.piece_indices.len()))
+            });
+            if let Some(&(first_index, first)) = following.first() {
+                let mut pairs = Vec::new();
+                for &(second_index, second) in &following[1..] {
+                    if !brake_runs_overlap(first, second)
+                        && pairs
+                            .last()
+                            .is_none_or(|(_, boundary)| *boundary != second.boundary_metres)
+                    {
+                        pairs.push((second_index, second.boundary_metres));
+                    }
+                    if pairs.len() == 3 {
+                        break;
+                    }
+                }
+                for (second_index, _) in pairs.into_iter().rev() {
+                    powered_bootstrap.push(vec![first_index, second_index]);
+                }
+            }
+        }
+        powered_bootstrap.extend(bootstrap);
+        let bootstrap = powered_bootstrap;
         let complete = false;
         best.placement_search_complete = false;
         let baseline = Box::pin(BlockLayout::verify_single_train(best.clone()));
