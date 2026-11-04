@@ -108,10 +108,7 @@ fn every_model_piece_variant_has_a_reachable_entry_connector() {
             .find(|piece| piece.id == PieceId::Station)
             .expect("model must offer a station");
         let reachable = reachable_connectors(&model, ConnectorState::from(station.exit), false);
-        for piece in catalog()
-            .into_iter()
-            .filter(|piece| model.allows_piece(piece))
-        {
+        for piece in catalog().iter().filter(|piece| model.allows_piece(piece)) {
             let entry = ConnectorState::from(piece.entry);
             if !reachable.contains(&entry) {
                 failures.push(format!(

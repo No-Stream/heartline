@@ -429,7 +429,7 @@ fn near_angle(a: f64, b: f64) {
 
 #[test]
 fn banked_turns_lean_into_their_curves() {
-    for piece in catalog().into_iter().filter(|piece| {
+    for piece in catalog().iter().filter(|piece| {
         piece.entry.heading != piece.exit.heading
             && matches!(piece.entry.bank, Bank::Left | Bank::Right)
     }) {
@@ -812,7 +812,7 @@ fn vertical_curve_segments_match_curvature_vectors_at_rotated_joins() {
 #[test]
 fn pieces_reject_states_with_incompatible_slope_or_bank() {
     let straight = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .unwrap();
     assert!(
@@ -864,7 +864,7 @@ fn four_turns_make_a_closed_circuit() {
             PieceId::TurnSmallExit,
         ] {
             let piece = catalog()
-                .into_iter()
+                .iter()
                 .find(|piece| piece.id == id)
                 .unwrap()
                 .at(end)
@@ -1153,7 +1153,7 @@ fn inversions_turn_over_and_are_regular_in_every_heading() {
             PieceId::HeartlineRoll,
         ] {
             let piece = catalog()
-                .into_iter()
+                .iter()
                 .find(|piece| piece.id == id)
                 .unwrap()
                 .at(start)
@@ -1511,7 +1511,7 @@ fn classic_corkscrew_has_a_larger_track_path_than_heartline_roll() {
 #[test]
 fn top_hat_has_a_tall_summit_and_level_connectors() {
     let piece = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::TopHat)
         .unwrap();
     let midpoint = piece.sample(piece.length() / 2.0);
@@ -1668,7 +1668,7 @@ fn barrel_drop_supports_stay_outside_inverted_sections() {
         },
     );
     for id in [PieceId::BarrelDropLeft, PieceId::BarrelDropRight] {
-        let template = catalog().into_iter().find(|piece| piece.id == id).unwrap();
+        let template = catalog().iter().find(|piece| piece.id == id).unwrap();
         let state = TrackState {
             x: 100,
             y: 100,

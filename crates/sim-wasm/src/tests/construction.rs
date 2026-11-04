@@ -454,7 +454,7 @@ fn wooden_twister_geometry_distinguishes_track_and_steel_loop_supports() {
     assert!(supports.chunks_exact(7).all(|record| record[0] == 0.0));
 
     let loop_piece = super::catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == super::PieceId::SteelLoop)
         .unwrap()
         .at(super::TrackState {
@@ -650,7 +650,7 @@ fn placed_support_cache_matches_full_render_after_track_changes() {
 fn deleting_distant_track_reuses_cached_supports() {
     let simulation = WasmSimulation::new(42, 0, String::from("demo"));
     let template = super::catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == super::PieceId::Straight)
         .unwrap();
     let first = template
@@ -722,7 +722,7 @@ fn rendered_supports_clear_other_tracks_train_envelope() {
         },
     );
     let template = super::catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == super::PieceId::Straight)
         .unwrap();
     let lower = template

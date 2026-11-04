@@ -3,7 +3,7 @@ fn catalog_shape_variants_have_unique_piece_and_exit_slope_keys() {
     let pieces = super::catalog();
     let piece_count = pieces.len();
     let keys: std::collections::HashSet<_> = pieces
-        .into_iter()
+        .iter()
         .map(|piece| (piece.id, format!("{:?}", piece.exit.slope)))
         .collect();
     assert_eq!(keys.len(), piece_count);

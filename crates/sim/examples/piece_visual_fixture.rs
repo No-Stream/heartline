@@ -9,7 +9,7 @@ fn append_vector(output: &mut Vec<f32>, vector: Vec3) {
 fn main() {
     let models = [hybrid_model(), multi_launch_model(), wooden_twister_model()];
     let pieces: Vec<_> = catalog()
-        .into_iter()
+        .iter()
         .filter(|piece| {
             models
                 .iter()

@@ -143,7 +143,7 @@ fn circuit_for_level_piece(piece_id: PieceId) -> (Circuit, f64, f64) {
     pieces.push(element);
     let element_end = pieces.iter().map(Piece::length).sum();
 
-    let mut return_path = level_return_path(state, &templates);
+    let mut return_path = level_return_path(state, templates);
     for id in return_path.drain(..) {
         let piece = template(id).at(state).unwrap();
         state = piece.exit;
@@ -151,6 +151,122 @@ fn circuit_for_level_piece(piece_id: PieceId) -> (Circuit, f64, f64) {
     }
     assert_eq!(state, TrackState::origin());
     (Circuit::new(pieces).unwrap(), element_start, element_end)
+}
+
+#[test]
+fn level_elements_clear_from_their_minimum_after_a_steep_crest() {
+    use PieceId::*;
+    for piece in catalog().iter().filter(|piece| {
+        piece.rated_speeds.is_some()
+            && piece.entry == TrackState::origin()
+            && piece.exit.slope == theme_park_sim::track::Slope::Level
+            && piece.exit.bank == theme_park_sim::track::Bank::Level
+    }) {
+        let (circuit, ranges) = circuit_for_sequence(&[LevelToSixtyUp, SixtyUpToLevel, piece.id]);
+        let (_, start, end) = ranges[2];
+        for model in models()
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            for cars in [6, 12] {
+                assert_train_crosses_element(
+                    &model,
+                    &circuit,
+                    piece.id,
+                    start..end,
+                    cars,
+                    piece.rated_speeds.unwrap().minimum_entry,
+                    false,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn half_inversion_windows_hold_after_preceding_inversion() {
+    use PieceId::*;
+    for sequence in [
+        [HalfLoopUp, HalfCorkscrewLeftDown],
+        [HalfLoopUp, HalfCorkscrewRightDown],
+        [HalfLoopUp, RavenRollLeftDown],
+        [HalfLoopUp, RavenRollRightDown],
+        [HalfCorkscrewLeftUp, HalfLoopDown],
+        [HalfCorkscrewRightUp, HalfLoopDown],
+        [RavenRollLeftUp, HalfLoopDown],
+        [RavenRollRightUp, HalfLoopDown],
+    ] {
+        let (circuit, ranges) = circuit_for_sequence(&sequence);
+        let (id, start, end) = ranges[1];
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let rated = piece.rated_speeds.unwrap();
+        for model in [hybrid_model(), multi_launch_model()] {
+            for cars in [6, 12] {
+                for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    assert_train_crosses_element(
+                        &model,
+                        &circuit,
+                        id,
+                        start..end,
+                        cars,
+                        speed,
+                        false,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sixty_degree_windows_hold_with_connected_approaches() {
+    use PieceId::*;
+    let sequences: [&[PieceId]; 2] = [
+        &[
+            LevelToSixtyUp,
+            SixtyUpToLevel,
+            LevelToSixtyDown,
+            SixtyDownToLevel,
+        ],
+        &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+            GentleToSteepDown,
+            SteepToSixtyDown,
+            SixtyToSteepDown,
+            SteepToGentleDown,
+            GentleDownToLevel,
+        ],
+    ];
+    for sequence in sequences {
+        let (circuit, ranges) = circuit_for_sequence(sequence);
+        for (id, start, end) in ranges {
+            let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+            let Some(rated) = piece.rated_speeds else {
+                continue;
+            };
+            for model in [hybrid_model(), multi_launch_model()] {
+                for cars in [6, 12] {
+                    for speed in [rated.minimum_entry, rated.maximum_entry] {
+                        assert_train_crosses_element(
+                            &model,
+                            &circuit,
+                            id,
+                            start..end,
+                            cars,
+                            speed,
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn circuit_for_sequence(elements: &[PieceId]) -> (Circuit, Vec<(PieceId, f64, f64)>) {
@@ -186,6 +302,21 @@ fn circuit_for_sequence(elements: &[PieceId]) -> (Circuit, Vec<(PieceId, f64, f6
         pieces.push(element);
         element_ranges.push((id, element_start, pieces.iter().map(Piece::length).sum()));
     }
+    while state.z != 0 {
+        let id = if state.z > 0 {
+            PieceId::ShortFall
+        } else {
+            PieceId::ShortRise
+        };
+        let piece = templates
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
     assert_eq!(
         (state.z, state.slope, state.bank),
         (
@@ -196,7 +327,7 @@ fn circuit_for_sequence(elements: &[PieceId]) -> (Circuit, Vec<(PieceId, f64, f6
         "sequence does not return to level height and bank: {elements:?}"
     );
 
-    let return_path = level_return_path(state, &templates);
+    let return_path = level_return_path(state, templates);
     for id in return_path {
         let template = templates.iter().find(|piece| piece.id == id).unwrap();
         let piece = template.at(state).unwrap();
@@ -331,16 +462,13 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
         BarrelDropRight,
     ];
     let allowed_models = models();
-    for piece in catalog().into_iter().filter(|piece| {
+    for piece in catalog().iter().filter(|piece| {
         piece.id != TopHat
             && (piece.inversion.is_some()
                 || sixty_transitions.contains(&piece.id)
                 || drops.contains(&piece.id))
     }) {
-        if allowed_models
-            .iter()
-            .any(|model| model.allows_piece(&piece))
-        {
+        if allowed_models.iter().any(|model| model.allows_piece(piece)) {
             let rated = piece
                 .rated_speeds
                 .unwrap_or_else(|| panic!("buildable {:?} has no rated speed window", piece.id));
@@ -362,7 +490,7 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
 
 #[test]
 fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
-    for template in catalog().into_iter().filter(|piece| {
+    for template in catalog().iter().filter(|piece| {
         piece.rated_speeds.is_some()
             && piece.entry == TrackState::origin()
             && piece.exit.slope == theme_park_sim::track::Slope::Level
@@ -378,7 +506,7 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
         );
         for model in models()
             .into_iter()
-            .filter(|model| model.allows_piece(&template))
+            .filter(|model| model.allows_piece(template))
         {
             for cars in [6, 12] {
                 for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
@@ -493,16 +621,13 @@ fn every_tilted_roll_and_drop_variant_passes_full_train_at_both_window_ends() {
             if !rated_ids.contains(&piece_id) {
                 continue;
             }
-            let piece = catalog()
-                .into_iter()
-                .find(|piece| piece.id == piece_id)
-                .unwrap();
+            let piece = catalog().iter().find(|piece| piece.id == piece_id).unwrap();
             let rated = piece
                 .rated_speeds
                 .unwrap_or_else(|| panic!("{piece_id:?} has no rated speeds"));
             for model in models()
                 .into_iter()
-                .filter(|model| model.allows_piece(&piece))
+                .filter(|model| model.allows_piece(piece))
             {
                 for cars in [6, 12] {
                     for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
@@ -529,10 +654,7 @@ fn barrel_roll_drop_rail_descends_monotonically_for_both_mirrors() {
     use PieceId::{BarrelDropLeft, BarrelDropRight};
 
     for piece_id in [BarrelDropLeft, BarrelDropRight] {
-        let piece = catalog()
-            .into_iter()
-            .find(|piece| piece.id == piece_id)
-            .unwrap();
+        let piece = catalog().iter().find(|piece| piece.id == piece_id).unwrap();
         let maximum_upward_tangent = (0..=2048)
             .map(|step| {
                 piece

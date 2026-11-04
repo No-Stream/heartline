@@ -1836,7 +1836,7 @@ fn coaster_exports_rails_and_evenly_spaced_ties_from_circuit_curves() {
 #[test]
 fn supports_reroute_around_another_sampled_track() {
     let straight = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .unwrap();
     let state = TrackState {

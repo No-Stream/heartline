@@ -738,7 +738,7 @@ mod tests {
     #[test]
     fn catalog_heartline_roll_limits_heart_acceleration_and_roll_rate() {
         let piece = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::HeartlineRoll)
             .unwrap();
         let speed = piece.rated_speeds.unwrap().maximum_entry;

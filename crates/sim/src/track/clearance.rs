@@ -551,7 +551,7 @@ mod tests {
             ..TrackState::origin()
         };
         catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(state)
@@ -758,7 +758,7 @@ mod tests {
         let index = ClearanceIndex::new(std::slice::from_ref(&retained));
         for y in [20, 32, 38, 40, 42, 48, 60] {
             let candidate = catalog()
-                .into_iter()
+                .iter()
                 .find(|piece| piece.id == PieceId::BankedTurnStandalone)
                 .unwrap()
                 .at(TrackState {
@@ -819,7 +819,7 @@ mod tests {
         let train = hybrid_model().train;
         let first = straight(20, 20, 5);
         let short = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::HalfTileStraight)
             .unwrap()
             .at(first.exit)
@@ -884,7 +884,7 @@ mod tests {
     fn connected_loop_still_checks_track_far_from_the_join() {
         let piece = straight(40, 40, 20);
         let mut connected_loop = catalog()
-            .into_iter()
+            .iter()
             .find(|item| item.id == PieceId::Loop)
             .unwrap()
             .at(piece.entry)
@@ -908,7 +908,7 @@ mod tight_clearance_tests {
     #[test]
     fn half_metre_near_miss_passes_and_overlap_fails() {
         let piece = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(TrackState {
@@ -952,7 +952,7 @@ mod tight_clearance_tests {
     #[test]
     fn diagonal_train_allows_half_metre_near_miss() {
         let piece = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(TrackState {

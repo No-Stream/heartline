@@ -837,7 +837,7 @@ mod shape_tests {
     #[test]
     fn arc_length_inversion_has_continuous_speed_at_table_boundaries() {
         let piece = crate::track::catalog::catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::BarrelDropLeft)
             .unwrap();
         let delta = 1e-5;
@@ -861,14 +861,14 @@ mod shape_tests {
     #[test]
     fn arc_speed_cache_matches_geometry_after_cloning_and_placement() {
         let piece = crate::track::catalog::catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::BarrelDropLeft)
             .unwrap();
         let cloned = piece.clone();
         let mut state = piece.entry;
         state.heading = Heading::NorthEast;
         let placed = piece.at(state).unwrap();
-        for candidate in [&piece, &cloned, &placed] {
+        for candidate in [piece, &cloned, &placed] {
             assert_eq!(candidate.arc_speeds.len(), candidate.arc_lengths.len());
             let steps = candidate.arc_speeds.len() - 1;
             for (index, speed) in candidate.arc_speeds.iter().enumerate() {
@@ -945,7 +945,7 @@ mod shape_tests {
     #[test]
     fn heart_acceleration_converges_as_arc_table_resolution_increases() {
         let piece = crate::track::catalog::catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::BarrelDropLeft)
             .unwrap();
         let mut pieces = Vec::new();

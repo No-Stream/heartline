@@ -1119,7 +1119,7 @@ mod tests {
             ..TrackState::origin()
         };
         catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(state)
@@ -1236,7 +1236,7 @@ mod tests {
 
     fn straight_at_height(z: i32) -> Piece {
         catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(TrackState {
@@ -1357,7 +1357,7 @@ mod tests {
                 Heading::SouthEast,
             ] {
                 let loop_piece = catalog()
-                    .into_iter()
+                    .iter()
                     .find(|piece| piece.id == piece_id)
                     .unwrap()
                     .at(TrackState {
@@ -1405,10 +1405,7 @@ mod tests {
             },
         );
         let model = hybrid_model();
-        for template in catalog()
-            .into_iter()
-            .filter(|piece| piece.inversion.is_some())
-        {
+        for template in catalog().iter().filter(|piece| piece.inversion.is_some()) {
             let piece = template
                 .at(TrackState {
                     x: 32,

@@ -726,7 +726,7 @@ fn build_catalog() -> Vec<Piece> {
                     structure_material: None,
                     rated_speeds: match id {
                         LevelToSixtyDown => Some(RatedSpeeds {
-                            minimum_entry: 3.0,
+                            minimum_entry: 5.0,
                             maximum_entry: 19.0,
                         }),
                         SixtyToSteepUp => Some(RatedSpeeds {
@@ -753,7 +753,7 @@ fn build_catalog() -> Vec<Piece> {
                             maximum_entry: 22.0,
                         }),
                         HalfCorkscrewLeftDown => Some(RatedSpeeds {
-                            minimum_entry: 3.0,
+                            minimum_entry: 5.0,
                             maximum_entry: (22.0_f64.powi(2) - 2.0 * 9.81 * 12.0).sqrt(),
                         }),
                         RavenRollLeftUp => Some(RatedSpeeds {
@@ -795,7 +795,7 @@ fn build_catalog() -> Vec<Piece> {
                             maximum_entry: 31.3,
                         }),
                         HalfLoopDown => Some(RatedSpeeds {
-                            minimum_entry: 2.0,
+                            minimum_entry: 4.0,
                             maximum_entry: (31.3_f64.powi(2)
                                 - 2.0 * 9.81 * HALF_LOOP.endpoint()[1])
                                 .sqrt(),

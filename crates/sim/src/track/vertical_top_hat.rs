@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn catalog_piece_preserves_the_profile_after_arc_length_sampling() {
         let piece = crate::track::catalog::catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == crate::track::PieceId::TopHat)
             .unwrap();
         let horizontal_scale = (piece.exit.position().x - piece.entry.position().x) / endpoint()[0];

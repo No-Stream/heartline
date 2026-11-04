@@ -1815,7 +1815,7 @@ mod coaster_access_tests {
                     },
                 );
                 let station = catalog()
-                    .into_iter()
+                    .iter()
                     .find(|piece| piece.id == PieceId::Station)
                     .unwrap()
                     .at(TrackState {
@@ -1877,7 +1877,7 @@ mod coaster_access_tests {
             .build_path_route(queue, queue, PathKind::Queue, 0)
             .unwrap();
         let station = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Station)
             .unwrap()
             .at(TrackState {
@@ -1893,7 +1893,7 @@ mod coaster_access_tests {
     fn station_access_rejects_queue_interiors_and_queue_exits() {
         use crate::world::PathKind;
         let station = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Station)
             .unwrap()
             .at(TrackState {
@@ -1954,7 +1954,7 @@ mod coaster_access_tests {
             Heading::SouthEast,
         ] {
             let station = catalog()
-                .into_iter()
+                .iter()
                 .find(|piece| piece.id == PieceId::Station)
                 .unwrap()
                 .at(TrackState {

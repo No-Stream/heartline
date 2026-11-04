@@ -264,10 +264,10 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
     let mut pieces = Vec::new();
     let mut state = TrackState::origin();
     let sixty_degree_drop = composition.elements.first() == Some(&PieceId::LevelToSixtyDown);
-    append_piece(&mut pieces, &mut state, &templates, PieceId::Station, None);
+    append_piece(&mut pieces, &mut state, templates, PieceId::Station, None);
     if !sixty_degree_drop {
-        append_piece(&mut pieces, &mut state, &templates, PieceId::Straight, None);
-        append_piece(&mut pieces, &mut state, &templates, PieceId::Straight, None);
+        append_piece(&mut pieces, &mut state, templates, PieceId::Straight, None);
+        append_piece(&mut pieces, &mut state, templates, PieceId::Straight, None);
     }
 
     if composition.launch {
@@ -275,24 +275,19 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
             append_piece(
                 &mut pieces,
                 &mut state,
-                &templates,
+                templates,
                 PieceId::LaunchLong,
                 None,
             );
         }
     } else if sixty_degree_drop {
-        append_piece(
-            &mut pieces,
-            &mut state,
-            &templates,
-            PieceId::ShortFall,
-            None,
-        );
+        append_piece(&mut pieces, &mut state, templates, PieceId::ShortFall, None);
+        append_piece(&mut pieces, &mut state, templates, PieceId::ShortFall, None);
     } else {
         append_piece(
             &mut pieces,
             &mut state,
-            &templates,
+            templates,
             PieceId::LevelToGentleUp,
             Some(PieceKind::Lift),
         );
@@ -300,7 +295,7 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
             append_piece(
                 &mut pieces,
                 &mut state,
-                &templates,
+                templates,
                 PieceId::GentleUp,
                 Some(PieceKind::Lift),
             );
@@ -309,7 +304,7 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
             append_piece(
                 &mut pieces,
                 &mut state,
-                &templates,
+                templates,
                 PieceId::OneTileGentleUp,
                 Some(PieceKind::Lift),
             );
@@ -317,28 +312,28 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
         append_piece(
             &mut pieces,
             &mut state,
-            &templates,
+            templates,
             PieceId::GentleUpToLevel,
             Some(PieceKind::Lift),
         );
         append_piece(
             &mut pieces,
             &mut state,
-            &templates,
+            templates,
             PieceId::Straight,
             Some(PieceKind::Lift),
         );
         append_piece(
             &mut pieces,
             &mut state,
-            &templates,
+            templates,
             PieceId::Straight,
             Some(PieceKind::Lift),
         );
         append_piece(
             &mut pieces,
             &mut state,
-            &templates,
+            templates,
             PieceId::LevelToGentleDown,
             None,
         );
@@ -346,7 +341,7 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
             append_piece(
                 &mut pieces,
                 &mut state,
-                &templates,
+                templates,
                 PieceId::GentleDown,
                 None,
             );
@@ -355,7 +350,7 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
             append_piece(
                 &mut pieces,
                 &mut state,
-                &templates,
+                templates,
                 PieceId::OneTileGentleDown,
                 None,
             );
@@ -363,7 +358,7 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
         append_piece(
             &mut pieces,
             &mut state,
-            &templates,
+            templates,
             PieceId::GentleDownToLevel,
             None,
         );
@@ -379,21 +374,21 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
             composition.model.name
         );
         let element_start = pieces.iter().map(Piece::length).sum();
-        append_piece(&mut pieces, &mut state, &templates, id, None);
+        append_piece(&mut pieces, &mut state, templates, id, None);
         let element_end = pieces.iter().map(Piece::length).sum();
         element_ranges.push((id, element_start..element_end));
     }
     match composition.restoration {
         HeightRestoration::None => {}
         HeightRestoration::RestoreToStartingHeight => {
-            append_height_restoration(&mut pieces, &mut state, &templates, None);
+            append_height_restoration(&mut pieces, &mut state, templates, None);
         }
         HeightRestoration::LiftToStartingHeight => {
             assert!(
                 state.z < 0,
                 "lift return requires a drop below station height"
             );
-            append_height_restoration(&mut pieces, &mut state, &templates, Some(PieceKind::Lift));
+            append_height_restoration(&mut pieces, &mut state, templates, Some(PieceKind::Lift));
         }
     }
     assert_eq!(
@@ -433,16 +428,16 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
             append_piece(
                 &mut pieces,
                 &mut state,
-                &templates,
+                templates,
                 PieceId::LaunchLong,
                 None,
             );
         }
     }
 
-    let return_path = level_return_path(state, &composition.model, &templates);
+    let return_path = level_return_path(state, &composition.model, templates);
     for id in return_path {
-        append_piece(&mut pieces, &mut state, &templates, id, None);
+        append_piece(&mut pieces, &mut state, templates, id, None);
     }
     assert_eq!(state, TrackState::origin());
     (Circuit::new(pieces).unwrap(), element_ranges)
@@ -751,7 +746,7 @@ fn lifted_composition_enters_its_rated_loop_window() {
         });
         let element_range = &element_ranges[0].1;
         let rated = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == element)
             .unwrap()
             .rated_speeds

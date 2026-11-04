@@ -8,11 +8,11 @@ use crate::world::{Surface, World};
 #[test]
 fn straight_level_track_reads_one_vertical_g_and_no_other_forces() {
     let piece = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .unwrap();
 
-    let forces = rider_g(&piece, piece.length() / 2.0, 17.0, 0.0);
+    let forces = rider_g(piece, piece.length() / 2.0, 17.0, 0.0);
 
     assert!((forces.vertical - 1.0).abs() < 1e-9, "{forces:?}");
     assert!(forces.lateral.abs() < 1e-9, "{forces:?}");
@@ -22,12 +22,12 @@ fn straight_level_track_reads_one_vertical_g_and_no_other_forces() {
 #[test]
 fn level_small_turn_reads_lateral_g_from_its_sixteen_metre_radius() {
     let piece = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::TurnSmall)
         .unwrap();
     let speed = 20.0;
 
-    let forces = rider_g(&piece, piece.length() / 2.0, speed, 0.0);
+    let forces = rider_g(piece, piece.length() / 2.0, speed, 0.0);
     let expected_lateral = speed.powi(2) / (GRAVITY * 16.0);
 
     assert!(
@@ -39,14 +39,14 @@ fn level_small_turn_reads_lateral_g_from_its_sixteen_metre_radius() {
 #[test]
 fn climbing_gentle_track_reads_longitudinal_g_from_its_slope() {
     let piece = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::GentleUp)
         .unwrap();
     let distance = piece.length() / 2.0;
     let sample = piece.sample(distance);
     let acceleration = 2.5;
 
-    let forces = rider_g(&piece, distance, 17.0, acceleration);
+    let forces = rider_g(piece, distance, 17.0, acceleration);
     let expected_longitudinal = acceleration / GRAVITY + sample.tangent.z;
 
     assert!(
@@ -77,13 +77,13 @@ fn track_sample_places_the_rider_heart_above_the_rail() {
 #[test]
 fn heartline_roll_reads_gravity_only_at_twenty_five_metres_per_second() {
     let piece = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::HeartlineRoll)
         .unwrap();
     let readings: Vec<_> = (0..=200)
         .map(|step| {
             let distance = piece.length() * f64::from(step) / 200.0;
-            rider_g(&piece, distance, 25.0, 0.0)
+            rider_g(piece, distance, 25.0, 0.0)
         })
         .collect();
     let entry = readings.first().unwrap();
@@ -487,7 +487,7 @@ fn energy_conservation_and_repeatable_full_lap() {
 #[test]
 fn vertical_loop_g_uses_curvature_projected_onto_rider_up() {
     let loop_piece = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Loop)
         .unwrap();
     for distance in [loop_piece.length() * 0.05, loop_piece.length() * 0.5] {
@@ -503,7 +503,7 @@ fn vertical_loop_g_uses_curvature_projected_onto_rider_up() {
         let heart_curvature = curvature_along_rider_up
             * (1.0 - crate::track::HEART_HEIGHT_METRES * curvature_along_rider_up);
         let expected = sample.up.z + 20.0_f64.powi(2) * heart_curvature / GRAVITY;
-        let g = rider_g(&loop_piece, distance, 20.0, 0.0);
+        let g = rider_g(loop_piece, distance, 20.0, 0.0);
         assert!(
             (g.vertical - expected).abs() < 0.01,
             "{g:?} versus {expected}"
