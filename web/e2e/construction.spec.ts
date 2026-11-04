@@ -297,7 +297,7 @@ test("closes a compact circuit with short straights and full-tile offsets @fast"
     if (index < pieces.length - 1) await expect(closeCircuit).toBeDisabled();
   }
 
-  await expect(track.last()).toContainText("Standalone small left turn");
+  await expect(track.last()).toContainText("Small left turn");
   await expect(closeCircuit).toBeEnabled();
   await closeCircuit.click();
   await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();
@@ -384,4 +384,79 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
   await page.getByRole("button", { name: "Test coaster" }).click();
   await page.evaluate(() => window.gameTest.advanceTicks(10000));
   await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status")).toHaveText("Train completed a lap.");
+});
+
+test("places a 60-degree climb and complete banked turn with lift markers @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.locator(".builder select[data-model]").selectOption("model:hybrid");
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const track = page.locator("[data-track] li");
+  const elements = page.locator("[data-elements]");
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const placePiece = page.getByRole("button", { name: "Place piece" });
+  const chain = page.getByRole("button", { name: "Chain lift", exact: true });
+  const chainMarkers = page.locator("[data-track] [data-chain-marker]");
+  await expect(track).toHaveCount(1);
+  await expect(choices.locator('[data-piece="Straight"]')).toBeVisible();
+  for (const [pieceId, name] of [
+    ["VerticalUpEntry", "Start of steep upward curve"],
+    ["VerticalDownEntry", "Start of steep downward curve"],
+  ] as const) {
+    const choice = choices.locator(`[data-piece="${pieceId}"]`);
+    await expect(choice).toHaveAttribute("data-piece", pieceId);
+    await expect(choice).toHaveAccessibleName(name);
+  }
+
+  await chain.click();
+  await expect(chain).toHaveAttribute("aria-pressed", "true");
+  const climbToSixty = elements.locator('[data-element="element:climb-60"]');
+  await expect(climbToSixty).toHaveText("Climb to 60°");
+  await climbToSixty.click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", "element:climb-60");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+
+  await expect.poll(() => track.count()).toBeGreaterThan(1);
+  const climbTrackCount = await track.count();
+  expect(climbTrackCount).toBeGreaterThan(1);
+  await expect(elements.locator('[data-element="element:climb-60"]')).toHaveCount(0);
+  await expect(chainMarkers).toHaveCount(climbTrackCount - 1);
+
+  await chain.click();
+  await expect(chain).toHaveAttribute("aria-pressed", "false");
+  const levelOut = elements.locator('[data-element="element:level"]');
+  await expect(levelOut).toHaveText("Level out");
+  await levelOut.click();
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(elements.locator('[data-element="element:level"]')).toHaveCount(0);
+  await expect(chainMarkers).toHaveCount(climbTrackCount - 1);
+
+  const bankedTurn = elements.locator('[data-element="element:small-left-banked-turn"]');
+  await expect(bankedTurn).toHaveText("Small left banked turn");
+  await bankedTurn.click();
+  const trackCountBeforeTurn = await track.count();
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track).toHaveCount(trackCountBeforeTurn + 3);
+  await expect(chainMarkers).toHaveCount(climbTrackCount - 1);
+  const trackNames = page.locator("[data-track] .track-chip__name");
+  await expect(trackNames.nth(trackCountBeforeTurn)).toHaveText("Bank left");
+  await expect(trackNames.nth(trackCountBeforeTurn + 1)).toHaveText("Small left-banked turn");
+  await expect(trackNames.nth(trackCountBeforeTurn + 2)).toHaveText("Level from left bank");
+  for (const index of [trackCountBeforeTurn, trackCountBeforeTurn + 1, trackCountBeforeTurn + 2]) {
+    await expect(track.nth(index).locator("[data-chain-marker]")).toHaveCount(0);
+  }
 });

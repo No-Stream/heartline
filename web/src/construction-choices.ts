@@ -10,11 +10,25 @@ const slopeLabels: Record<string, string> = {
   DownSixty: "Very steep down 60°", DownSteep: "Steep down 45°", DownModerate: "Moderate down 37°", DownGentle: "Gentle down 27°", Level: "Level",
   UpGentle: "Gentle up 27°", UpModerate: "Moderate up 37°", UpSteep: "Steep up 45°", UpSixty: "Very steep up 60°",
 };
+const steepCurveNames: Record<string, string> = {
+  "Begin upward curve": "Start of steep upward curve",
+  "Continue upward curve": "Middle of steep upward curve",
+  "End upward curve": "End of steep upward curve",
+  "Begin downward curve": "Start of steep downward curve",
+  "Continue downward curve": "Middle of steep downward curve",
+  "End downward curve": "End of steep downward curve",
+};
 const bankOrder = ["Left", "Level", "Right"];
 
 function turnLabel(turn: number): string {
   if (turn === 0) return "Ahead";
   return `${turn > 0 ? "Left" : "Right"} ${Math.abs(turn) * 45}°`;
+}
+
+function normalizedTurnName(label: string): string {
+  const repeatedBankDirection = /^(Begin |End )?(small|large) (left|right)-banked \3 turn$/.exec(label);
+  if (!repeatedBankDirection) return label;
+  return `${repeatedBankDirection[1] ?? ""}${repeatedBankDirection[2]} ${repeatedBankDirection[3]}-banked turn`;
 }
 
 /** A piece's stepper value, ordered so that a lower rank sits on the "previous" side of the stepper. */
@@ -56,12 +70,18 @@ export function groupedPieces(pieces: readonly ConstructionPiece[]): { group: st
 }
 
 export function pieceDisplayName(piece: Pick<ConstructionPiece, "group" | "label" | "slope">): string {
+  if (piece.group === "slope" && steepCurveNames[piece.label]) return steepCurveNames[piece.label];
   if (piece.group !== "turn") return piece.label;
+  const name = normalizedTurnName(piece.label.replace(/^Standalone /, ""));
   const prefix = piece.slope.startsWith("Up") ? "Climbing" : piece.slope.startsWith("Down") ? "Descending" : "";
-  if (!prefix) return piece.label;
-  const phase = /^(Begin|End) /.exec(piece.label);
-  if (phase) return `${phase[0]}${prefix.toLowerCase()} ${piece.label.slice(phase[0].length)}`;
-  return `${prefix} ${piece.label.charAt(0).toLowerCase()}${piece.label.slice(1)}`;
+  const phase = /^(Begin|End) (.+)$/.exec(name);
+  if (phase) {
+    const beginningOrEnd = phase[1] === "Begin" ? "Start" : "End";
+    const prefixText = prefix ? `${prefix.toLowerCase()} ` : "";
+    return `${beginningOrEnd} of a ${prefixText}${phase[2]}`;
+  }
+  if (!prefix) return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+  return `${prefix} ${name.charAt(0).toLowerCase()}${name.slice(1)}`;
 }
 
 /**

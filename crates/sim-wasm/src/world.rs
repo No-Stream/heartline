@@ -124,6 +124,8 @@ impl WasmSimulation {
             terrain_invalidated_paths: Vec::new(),
             construction_model: ConstructionModel::Hybrid,
             selected: None,
+            selected_element: None,
+            construction_undo_groups: Vec::new(),
             construction_completion: None,
             construction_completion_available: None,
             construction_completion_search: None,

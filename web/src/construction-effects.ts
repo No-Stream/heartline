@@ -23,7 +23,7 @@ const depthOf = (point: WorldPoint, rotation: Camera["rotation"]): number => [po
 export function constructionEvent(previous: ConstructionState | undefined, next: ConstructionState): "placed" | "closed" | undefined {
   if (!previous?.active || !next.active) return undefined;
   if (previous.finishPreview && !next.finishPreview && next.canTest) return "closed";
-  if (next.track.length === previous.track.length + 1 && previous.previewRails.length > 0) return "placed";
+  if (next.track.length > previous.track.length && previous.previewRails.length > 0) return "placed";
   if (previous.canClose && !next.canClose && next.track.length === previous.track.length) return "closed";
   return undefined;
 }

@@ -42,7 +42,7 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await expect(page.locator("[data-track] li")).toHaveCount(3);
   await expect(page.getByRole("button", { name: "Turn left", exact: true }), "no climbing turn offered while the chain lift climbs").toBeEnabled();
   await page.getByRole("button", { name: "Turn left", exact: true }).click();
-  await expect(previewName).toHaveText("Climbing standalone small left turn");
+  await expect(previewName).toHaveText("Climbing small left turn");
   await placePiece();
   await expect(page.locator("[data-track] li")).toHaveCount(4);
 
@@ -106,10 +106,10 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await page.getByRole("radio", { name: "Bank left", exact: true }).click();
   await placePiece();
   await expect(page.locator("[data-track] li")).toHaveCount(19);
-  await page.getByRole("radio", { name: "Standalone small left-banked left turn", exact: true }).click();
+  await page.getByRole("radio", { name: "Small left-banked turn", exact: true }).click();
   await placePiece();
   await expect(page.locator("[data-track] li")).toHaveCount(20);
-  await page.getByRole("radio", { name: "Standalone small left-banked left turn", exact: true }).click();
+  await page.getByRole("radio", { name: "Small left-banked turn", exact: true }).click();
   await placePiece();
   await expect(page.locator("[data-track] li")).toHaveCount(21);
   await page.getByRole("radio", { name: "Level from left bank", exact: true }).click();
@@ -120,9 +120,9 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await expect(page.locator("[data-track] li")).toHaveCount(23);
 
   const returnPieces = [
-    "Begin gentle climb", "Climbing standalone small right turn", "End gentle climb",
-    "Begin gentle descent", "Gentle descent", "Gentle descent", "End gentle descent", "Standalone small left turn",
-    ...Array<string>(7).fill("Straight"), "Standalone large left turn", ...Array<string>(3).fill("Straight"),
+    "Begin gentle climb", "Climbing small right turn", "End gentle climb",
+    "Begin gentle descent", "Gentle descent", "Gentle descent", "End gentle descent", "Small left turn",
+    ...Array<string>(7).fill("Straight"), "Large left turn", ...Array<string>(3).fill("Straight"),
   ];
   for (const [index, name] of returnPieces.entries()) {
     if (index === 0 || name !== returnPieces[index - 1]) await page.getByRole("radio", { name, exact: true }).click();
