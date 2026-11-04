@@ -18,6 +18,7 @@ import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from
 import { advanceDayPhase, NOON, START_PHASE } from "./render/daylight";
 import { CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
+import { fitGameBar } from "./game-bar-fit";
 import { trackStyle } from "./render/track/geometry";
 import type { TrainLayout } from "./train-layout";
 import type { CoasterColorScheme } from "./coaster-colors";
@@ -43,6 +44,7 @@ import { createToolbar, type Tool } from "./toolbar";
 import { createThemeToggle } from "./theme";
 import type { WorkerRecording } from "./session-recording";
 import { parseReplaySession, type ReplaySession } from "./session-replay";
+import { createGamePauseState } from "./game-pause";
 import { replaySessionIntoWorker } from "./session-replay-worker";
 import { constructionHeights } from "./height-markers";
 import { formatLength, type Units } from "./units";
@@ -195,6 +197,7 @@ let activeTool: Tool = "none";
 /** The time of day follows simulation ticks, so it pauses with the game. Test mode holds it at noon unless a test sets it. */
 let dayPhase = frozen ? NOON : START_PHASE;
 let daySpeed: DaySpeed = 1;
+const gamePause = createGamePauseState();
 let gameSpeed = 1;
 let dayTick: number | undefined;
 let demoCrests = createCrestTracker();
@@ -209,6 +212,10 @@ function setTimeOfDay(phase: number): void {
 const dayClockContainer = document.querySelector<HTMLElement>("[data-day-clock]");
 if (!dayClockContainer) throw new Error("Day clock is missing");
 const dayClock = createDayClock(dayClockContainer, dispatch);
+const gameBar = document.querySelector<HTMLElement>(".game-bar");
+if (!gameBar) throw new Error("Game bar is missing");
+fitGameBar(gameBar);
+dayClock.setPaused(gamePause.isPaused());
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
   const bounds = gameCanvas.getBoundingClientRect();
@@ -406,6 +413,10 @@ function dispatch(action: InputAction): void {
     gameSpeed = speed;
     renderClock.setSpeed(speed);
     sendWorkerAction(worker, { type: "set-speed", speed });
+  } else if (action.type === "pause-toggle") {
+    const paused = gamePause.toggle();
+    dayClock.setPaused(paused);
+    sendWorkerAction(worker, { type: "set-paused", paused });
   } else if (action.type === "tool-select") {
     openTool(action.tool);
   } else if (action.type === "day-scrub") {

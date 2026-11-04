@@ -22,6 +22,7 @@ const tickRate = 30;
 const finishSearchSliceMs = 4;
 let manualBlockAnalysis = false;
 let simulationPaused = false;
+let gamePaused = false;
 let gameSpeed = 1;
 const workerScope = self as unknown as {
   postMessage(message: WorkerMessage, transfer?: Transferable[]): void;
@@ -74,7 +75,7 @@ function wake(forceSnapshot = false): void {
   const result = advanceSimulation(clock, now - lastWakeup, gameSpeed);
   lastWakeup = now;
   clock = result.clock;
-  if (!simulationPaused) {
+  if (!simulationPaused && !gamePaused) {
     for (let tick = 0; tick < result.ticksToRun; tick += 1) tickSimulation();
   }
 
@@ -95,7 +96,7 @@ function wake(forceSnapshot = false): void {
   if (simulation.construction_active() && (message !== lastConstructionMessage || simulation.construction_block_report_json() !== lastBlockReport || constructionEconomy !== lastConstructionEconomy)) sendConstruction();
   if (selectedGuestId !== undefined && now - lastGuestDetailSentAt >= 500) sendGuestDetail();
   if (simulation.facilities_json() !== lastFacilitiesJson || String(simulation.facility_revenue()) !== lastFacilityRevenue) sendFacilities();
-  if (simulationPaused) return;
+  if (simulationPaused || gamePaused) return;
   setTimeout(wake, Math.max(0, clock.tickDurationMs - clock.accumulatorMs));
 }
 
@@ -267,6 +268,7 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "test-resume") {
       if (!simulationPaused || !manualBlockAnalysis) throw new Error("Test resume requires a frozen worker with manual block analysis");
       simulationPaused = false;
+      gamePaused = false;
       manualBlockAnalysis = false;
       clock = createSimulationClock(tickRate, 4);
       lastWakeup = performance.now();
@@ -278,6 +280,13 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "set-speed") {
       if (!Number.isInteger(action.speed) || action.speed < 1 || action.speed > 16) throw new RangeError("Invalid game speed");
       gameSpeed = action.speed;
+      return;
+    }
+    if (action.type === "set-paused") {
+      gamePaused = action.paused;
+      lastWakeup = performance.now();
+      if (!gamePaused) clock = createSimulationClock(tickRate, 4);
+      wake(true);
       return;
     }
     if (action.type === "test-advance-block-analysis") {

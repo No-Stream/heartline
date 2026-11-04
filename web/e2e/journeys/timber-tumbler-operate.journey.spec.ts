@@ -5,87 +5,68 @@ import { queuedGuests, revenue, riders } from "../player/state";
 import { parseReplaySession } from "../../src/session-replay";
 
 async function selectQueuedGuest(page: Page): Promise<string> {
-  const target: { id: string | null } = { id: null };
-  const counts = { polls: 0, trainsRunning: 0, candidates: 0, vanishedAfterSlowing: 0, missing: 0, unpickable: 0, movedOrLeftQueue: 0, pickChanged: 0, waiting: 0 };
-  const waitingIds = new Set<string>();
-  const deadline = Date.now() + 45_000;
+  await page.getByRole("toolbar", { name: "Tools" }).getByRole("button", { name: "Watch", exact: true }).click();
   await setGameSpeed(page, 16);
-  while (!target.id && Date.now() < deadline) {
-    counts.polls++;
-    const observedRiders = await riders(page);
-    const observedQueue = await queuedGuests(page);
-    for (const id of waitingIds) if (!observedQueue.includes(id)) waitingIds.delete(id);
-    if (observedRiders.length === 0 || !observedQueue.some((id) => !waitingIds.has(id))) {
-      await page.waitForTimeout(100);
-      continue;
-    }
-    counts.trainsRunning++;
-    await setGameSpeed(page, 1);
+  await expect.poll(() => queuedGuests(page), { timeout: 45_000 }).not.toHaveLength(0);
+  await setGameSpeed(page, 1);
+  await expect.poll(() => queuedGuests(page), { timeout: 5_000 }).not.toHaveLength(0);
+  const seenIds = new Set<string>();
+  for (;;) {
+    await page.getByRole("button", { name: "Pause" }).click();
     const queuedIds = await queuedGuests(page);
-    if (!queuedIds.some((id) => !waitingIds.has(id))) counts.vanishedAfterSlowing++;
-    counts.candidates += queuedIds.length;
+    for (const id of queuedIds) seenIds.add(id);
     for (const id of queuedIds) {
-      if (waitingIds.has(id)) continue;
       const guest = await page.evaluate((guestId) => window.gameTest.guests().find((entry) => entry.id === guestId), id);
-      if (!guest) { counts.missing++; continue; }
+      if (!guest) continue;
       await page.evaluate(({ x, y }) => window.gameTest.setCamera({ centerX: x, centerY: y, zoom: 2, rotation: 0 }), guest);
       await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
       const point = await page.evaluate((guestId) => {
-        const current = window.gameTest.guests().find((entry) => entry.id === guestId);
-        if (!current) return null;
-        const projected = window.gameTest.project({ x: current.x, y: current.y, z: current.height / 4 });
-        const offsets: { dx: number; dy: number }[] = [];
-        for (let dy = -64; dy <= 8; dy += 2) for (let dx = -32; dx <= 32; dx += 2) offsets.push({ dx, dy });
-        offsets.sort((first, second) => first.dx ** 2 + (first.dy + 12) ** 2 - second.dx ** 2 - (second.dy + 12) ** 2);
-        const regionX = Math.floor(projected.x) - 34, regionY = Math.floor(projected.y) - 66;
-        const regionWidth = 69, regionHeight = 77;
-        const picks = window.gameTest.pickRegion(regionX, regionY, regionWidth, regionHeight);
-        for (const { dx, dy } of offsets) {
-          const x = projected.x + dx, y = projected.y + dy;
-          const matches = [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2]].every(([offsetX, offsetY]) => {
-            const column = Math.floor(x + offsetX) - regionX, row = Math.floor(y + offsetY) - regionY;
-            const pick = picks[row * regionWidth + column];
-            return pick && "id" in pick && pick.id === guestId;
-          });
-          if (matches) return { x, y };
-        }
-        return null;
+          const current = window.gameTest.guests().find((entry) => entry.id === guestId);
+          if (!current) return null;
+          const projected = window.gameTest.project({ x: current.x, y: current.y, z: current.height / 4 });
+          const offsets: { dx: number; dy: number }[] = [];
+          for (let dy = -64; dy <= 8; dy += 2) for (let dx = -32; dx <= 32; dx += 2) offsets.push({ dx, dy });
+          offsets.sort((first, second) => first.dx ** 2 + (first.dy + 12) ** 2 - second.dx ** 2 - (second.dy + 12) ** 2);
+          const regionX = Math.floor(projected.x) - 34, regionY = Math.floor(projected.y) - 66;
+          const regionWidth = 69, regionHeight = 77;
+          const picks = window.gameTest.pickRegion(regionX, regionY, regionWidth, regionHeight);
+          for (const { dx, dy } of offsets) {
+            const x = projected.x + dx, y = projected.y + dy;
+            const matches = [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2]].every(([offsetX, offsetY]) => {
+              const column = Math.floor(x + offsetX) - regionX, row = Math.floor(y + offsetY) - regionY;
+              const pick = picks[row * regionWidth + column];
+              return pick && "id" in pick && pick.id === guestId;
+            });
+            if (matches) return { x, y };
+          }
+          return null;
       }, id);
-      if (!point) { counts.unpickable++; continue; }
-      await page.waitForTimeout(100);
-      const current = await page.evaluate((guestId) => window.gameTest.guests().find((entry) => entry.id === guestId), id);
-      if (!current || !(await queuedGuests(page)).includes(id)
-        || current.x !== guest.x || current.y !== guest.y || current.height !== guest.height) {
-        counts.movedOrLeftQueue++;
-        continue;
-      }
+      if (!point) continue;
       const pickedId = await page.evaluate(({ x, y }) => {
         const pick = window.gameTest.pick(x, y);
         return pick && "id" in pick ? pick.id : null;
       }, point);
-      if (pickedId !== id) { counts.pickChanged++; continue; }
+      if (pickedId !== id) continue;
       const clickPoint = await canvasToPage(page, point);
       await page.mouse.click(clickPoint.x, clickPoint.y);
-      const afterClick = await page.evaluate((guestId) => window.gameTest.guests().find((entry) => entry.id === guestId), id);
-      expect(afterClick && { x: afterClick.x, y: afterClick.y, height: afterClick.height }, "queued guest moved during selection").toEqual({ x: current.x, y: current.y, height: current.height });
       await expect(page.getByTestId("guest-panel")).toHaveAttribute("data-guest-id", id);
       await expect.poll(() => page.evaluate((guestId) => window.gameTest.guestDetail()?.id === guestId, id)).toBe(true);
       const activity = await page.evaluate(() => window.gameTest.guestDetail()!.activity);
       expect(activity.placeId, "selected guest's destination").toBe(0xffff_ffff);
       if (activity.kind === "waiting" || activity.kind === "riding") {
-        counts.waiting++;
-        waitingIds.add(id);
         await page.getByTestId("guest-panel-close").click();
         continue;
       }
       expect(activity.kind, "selected guest's coaster activity").toBe("queuing");
-      target.id = id;
-      break;
+      await page.keyboard.press("Space");
+      await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+      return id;
     }
-    if (!target.id) await setGameSpeed(page, 16);
+    await page.getByRole("button", { name: "Resume" }).click();
+    await setGameSpeed(page, 16);
+    await expect.poll(async () => (await queuedGuests(page)).some((id) => !seenIds.has(id)), { timeout: 45_000 }).toBe(true);
+    await setGameSpeed(page, 1);
   }
-  if (!target.id) throw new Error(`No stationary queued guest was pickable within 45 seconds: ${JSON.stringify(counts)}`);
-  return target.id;
 }
 
 test("Timber Tumbler operating journey @journey", async ({ page }) => {

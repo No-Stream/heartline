@@ -66,6 +66,7 @@ test.describe("day and night", () => {
   });
 
   test("the Watch tool can scrub the day and change its speed @fast", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 750 });
     await startPaused(page);
     const scrub = page.getByRole("slider", { name: "Set the time of day" });
     await scrub.fill("1290");
