@@ -169,3 +169,42 @@ test("shows and places visible slope-to-level choices on Velocity Viper @slow", 
   await page.getByRole("button", { name: "Place piece" }).click();
   await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");
 });
+
+test("builds a descending banked turn on Briar Blitz from the visible construction choices", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.locator(".builder select[data-model]").selectOption("model:wooden_twister");
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  const station = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 }));
+  await moveOverCanvas(page, station);
+  await clickCanvas(page, station);
+  const direction = await page.evaluate(() => window.gameTest.project({ x: 52.5, y: 50.5, z: 2 }));
+  await moveOverCanvas(page, direction);
+  await clickCanvas(page, direction);
+
+  const palette = page.getByRole("radiogroup", { name: "Next piece" });
+  const track = page.locator("[data-track] li");
+  await expect(track).toHaveCount(1);
+  let expectedTrackCount = 1;
+  const place = async (pieceId: string): Promise<void> => {
+    const choice = palette.locator(`[data-piece="${pieceId}"]`);
+    await expect(choice).toBeVisible();
+    await choice.click();
+    await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", pieceId);
+    await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
+    await page.getByRole("button", { name: "Place piece" }).click();
+    expectedTrackCount += 1;
+    await expect(track).toHaveCount(expectedTrackCount);
+  };
+
+  await place("LevelToGentleDown");
+  await place("GentleDown");
+  await place("BankLeft");
+  await place("BankedTurnStandalone");
+  await place("UnbankLeft");
+  await expect(track).toHaveCount(6);
+});

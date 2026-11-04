@@ -1,3 +1,4 @@
+use crate::track::catalog::catalog;
 use crate::track::{
     Bank, CoasterModel, HorizontalCurvature, PieceId, Slope, TrackState, VerticalCurvature,
     hybrid_model, multi_launch_model, wooden_twister_model,
@@ -90,6 +91,37 @@ fn capability_expectations() -> Vec<CapabilityExpectations> {
 fn slope_degrees(state: TrackState) -> f64 {
     let tangent = state.tangent();
     tangent.z.atan2(tangent.x.hypot(tangent.y)).to_degrees()
+}
+
+#[test]
+fn every_model_piece_variant_has_a_reachable_entry_connector() {
+    let mut failures = Vec::new();
+    for expectations in capability_expectations() {
+        let model = expectations.model;
+        let station = model
+            .available_pieces(TrackState::origin())
+            .into_iter()
+            .find(|piece| piece.id == PieceId::Station)
+            .expect("model must offer a station");
+        let reachable = reachable_connectors(&model, ConnectorState::from(station.exit), false);
+        for piece in catalog()
+            .into_iter()
+            .filter(|piece| model.allows_piece(piece))
+        {
+            let entry = ConnectorState::from(piece.entry);
+            if !reachable.contains(&entry) {
+                failures.push(format!(
+                    "{}: {:?} ({}) at {entry:?}",
+                    model.name, piece.id, piece.name
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "unreachable piece variants:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]

@@ -867,6 +867,22 @@ pub fn catalog() -> Vec<Piece> {
         LargeRightBankedTurnExit,
         LargeRightBankedTurnStandalone,
     ];
+    let bank_transition_ids = [BankLeft, UnbankLeft, BankRight, UnbankRight];
+    let sloped_bank_transitions: Vec<_> = pieces
+        .iter()
+        .filter(|piece| bank_transition_ids.contains(&piece.id))
+        .flat_map(|piece| {
+            [UpGentle, DownGentle].into_iter().map(move |slope| {
+                let mut transition = piece.clone();
+                transition.entry.slope = slope;
+                transition.exit.slope = slope;
+                transition.exit.z = if slope == UpGentle { 4 } else { -4 };
+                transition.rebuild_arc();
+                transition
+            })
+        })
+        .collect();
+    pieces.extend(sloped_bank_transitions);
     let sloped_turns: Vec<_> = pieces
         .iter()
         .filter(|piece| turn_ids.contains(&piece.id))
