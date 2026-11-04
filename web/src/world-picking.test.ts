@@ -1,6 +1,6 @@
 import { projectWorld, type Camera, type Viewport } from "./camera";
 import { describe, expect, it } from "vitest";
-import { blockBoundaryIndexFromPick, entityIdFromPick, facilityIdFromPick, landscapingTileFromPick, sceneryTileFromPick } from "./world-picking";
+import { blockBoundaryIndexFromPick, entityIdFromPick, facilityIdFromPick, facilityTileFromPicks, landscapingTileFromPick, sceneryTileFromPick, stationTileFromSurfacePick } from "./world-picking";
 import type { Pick, WorldView } from "./render/scene";
 
 const camera: Camera = { centerX: 1, centerY: 1, zoom: 1, rotation: 0 };
@@ -19,6 +19,30 @@ function surfacePick(kind: "terrain" | "path" | "carved-floor", x = 0, height = 
 }
 
 describe("world picking helpers", () => {
+  it("targets ground beneath coaster geometry while retaining facility occlusion", () => {
+    const ground = surfacePick("terrain", 4, 6);
+    for (const overlay of [
+      { kind: "support", id: "support-1", x: 4, y: 0, height: 12 },
+      { kind: "track", id: "track-1", x: 4, y: 0, height: 12 },
+      { kind: "train", id: "train-1", x: 4, y: 0, height: 12 },
+      { kind: "sprite", id: "sprite-1", x: 4, y: 0, height: 12 },
+    ]) {
+      expect(stationTileFromSurfacePick(ground)).toEqual({ x: 4, y: 0, height: 6 });
+      expect(facilityTileFromPicks(ground, overlay)).toEqual({ x: 4, y: 0, height: 6 });
+    }
+    expect(facilityTileFromPicks(ground, { kind: "facility", id: "facility-1", x: 4, y: 0, height: 6 })).toBeNull();
+    expect(facilityTileFromPicks(ground, { kind: "building", id: "building-1", x: 4, y: 0, height: 6 })).toBeNull();
+    expect(facilityTileFromPicks(ground, { kind: "sprite", id: "facility-1", x: 4, y: 0, height: 6 })).toBeNull();
+  });
+
+  it("lets station and facility placement target paths and carved floors", () => {
+    for (const pick of [surfacePick("path", 2, 5), surfacePick("carved-floor", 3, 4)]) {
+      expect(stationTileFromSurfacePick(pick)).toEqual({ x: pick.x, y: 0, height: pick.height });
+      expect(facilityTileFromPicks(pick, null)).toEqual({ x: pick.x, y: 0, height: pick.height });
+    }
+    expect(stationTileFromSurfacePick({ kind: "water", x: 0, y: 0, height: 4 })).toBeNull();
+  });
+
   it("chooses the closest corner using the terrain's individual corner heights", () => {
     const pick = surfacePick("terrain");
     const target = projectWorld(camera, viewport, { x: 1, y: 1, z: 12 / 4 });

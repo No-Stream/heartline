@@ -65,6 +65,20 @@ export function facilityIdFromPick(pick: Pick | null): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+/** Resolve a placement tile from the ground scene while retaining building occlusion. */
+export function facilityTileFromPicks(surfacePick: Pick | null, foregroundPick: Pick | null): { readonly x: number; readonly y: number; readonly height: number } | null {
+  const isFacilitySprite = !!foregroundPick && "id" in foregroundPick && foregroundPick.kind === "sprite" && foregroundPick.id.startsWith("facility-");
+  if (foregroundPick?.kind === "facility" || foregroundPick?.kind === "building" || isFacilitySprite) return null;
+  if (!surfacePick || (surfacePick.kind !== "terrain" && surfacePick.kind !== "path" && surfacePick.kind !== "carved-floor")) return null;
+  return { x: surfacePick.x, y: surfacePick.y, height: surfacePick.height };
+}
+
+/** Resolve a station tile from terrain or a path, ignoring all rendered overlays. */
+export function stationTileFromSurfacePick(pick: Pick | null): { readonly x: number; readonly y: number; readonly height: number } | null {
+  if (!pick || (pick.kind !== "terrain" && pick.kind !== "path" && pick.kind !== "carved-floor")) return null;
+  return { x: pick.x, y: pick.y, height: pick.height };
+}
+
 export function blockBoundaryIndexFromPick(pick: Pick | null): number | null {
   if (!pick || !("id" in pick)) return null;
   const match = /^block-boundary-(\d+)$/.exec(pick.id);

@@ -1,4 +1,4 @@
-import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick } from "./world-picking";
+import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick, facilityTileFromPicks, stationTileFromSurfacePick } from "./world-picking";
 import { createStationTool } from "./station-tool";
 import { createFacilityTool } from "./facility-tool";
 import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
@@ -501,15 +501,18 @@ function dispatch(action: InputAction): void {
   } else if (stationTool.state().active && (action.type === "hover" || action.type === "select")) {
     const position = action.position;
     const selection = position ? renderer.pick(position.x, position.y) : null;
-    const tile = selection?.kind === "terrain" || selection?.kind === "carved-floor" ? selection : null;
+    const surface = position ? renderer.pickSurface(position.x, position.y) : null;
+    const tile = stationTileFromSurfacePick(surface);
     const preserve = !!selection && "id" in selection && selection.id.startsWith("preview-");
     const pointer = { position, tile, preserve, project: (point: WorldPoint) => projectWorld(screenCamera(), viewport, point) };
     if (action.type === "hover") stationAdapter.pointerMove(pointer);
     else stationAdapter.click(pointer);
   } else if (facilityTool.state().mode !== "inactive" && (action.type === "hover" || action.type === "select")) {
     const position = action.position;
-    const selection = position ? (action.type === "hover" ? renderer.pickSurface(position.x, position.y) : renderer.pick(position.x, position.y)) : null;
-    const tile = selection?.kind === "terrain" || selection?.kind === "carved-floor" ? selection : null;
+    const selection = position ? renderer.pick(position.x, position.y) : null;
+    const surface = position ? renderer.pickSurface(position.x, position.y) : null;
+    const facility = position ? renderer.pickFacilityPlacement(position.x, position.y) : null;
+    const tile = facilityTileFromPicks(surface, facility);
     const pointer = { tile, id: facilityIdFromPick(selection) };
     if (action.type === "hover") {
       if (facilityTool.state().mode === "place" && !tile) facilityPanel.previewDirection(undefined);
