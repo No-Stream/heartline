@@ -66,18 +66,36 @@ impl Construction {
                 choices.push(choice);
             }
         }
+        for (id, name, roll) in [
+            (
+                "raven-turn-left",
+                "Left raven turn (not heartlined)",
+                PieceId::RavenRollLeftDown,
+            ),
+            (
+                "raven-turn-right",
+                "Right raven turn (not heartlined)",
+                PieceId::RavenRollRightDown,
+            ),
+        ] {
+            if let Some(choice) =
+                self.element_choice(id, name, vec![PieceId::HalfLoopUp, roll], world, obstacles)
+            {
+                choices.push(choice);
+            }
+        }
         for (id, name, down, up) in [
             (
                 "sea-serpent-left",
                 "Left sea serpent (not heartlined)",
-                PieceId::HalfCorkscrewLeftDown,
-                PieceId::HalfCorkscrewRightUp,
+                PieceId::RavenRollLeftDown,
+                PieceId::RavenRollRightUp,
             ),
             (
                 "sea-serpent-right",
                 "Right sea serpent (not heartlined)",
-                PieceId::HalfCorkscrewRightDown,
-                PieceId::HalfCorkscrewLeftUp,
+                PieceId::RavenRollRightDown,
+                PieceId::RavenRollLeftUp,
             ),
         ] {
             let pieces = vec![PieceId::HalfLoopUp, down, up, PieceId::HalfLoopDown];

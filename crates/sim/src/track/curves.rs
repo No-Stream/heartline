@@ -303,6 +303,10 @@ pub enum PieceId {
     TwistedDropRight,
     BarrelDropLeft,
     BarrelDropRight,
+    RavenRollLeftUp,
+    RavenRollRightUp,
+    RavenRollLeftDown,
+    RavenRollRightDown,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -335,6 +339,7 @@ pub(crate) enum Shape {
     HalfLoop,
     HalfCorkscrew,
     TopHat,
+    OffsetHalfRoll,
 }
 #[derive(Clone, Debug)]
 pub struct Piece {
@@ -432,6 +437,27 @@ impl Piece {
     }
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
+        if matches!(self.shape, Shape::HalfLoop) {
+            let ascending = self.exit.z > self.entry.z;
+            let parameter = if ascending { t } else { 1.0 - t };
+            let (position, first, second) = super::half_loop::sample(parameter);
+            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+            let up = Vec3::new(0.0, 0.0, 1.0);
+            let displacement = self.exit.position() - self.entry.position();
+            let endpoint = super::half_loop::endpoint();
+            let horizontal_scale = displacement.dot(forward).abs() / endpoint[0];
+            let vertical_scale = displacement.z.abs() / endpoint[1];
+            let origin = if ascending { [0.0, 0.0] } else { endpoint };
+            let derivative_sign = if ascending { 1.0 } else { -1.0 };
+            return (
+                self.entry.position()
+                    + forward * ((position[0] - origin[0]) * horizontal_scale)
+                    + up * ((position[1] - origin[1]) * vertical_scale),
+                (forward * (first[0] * horizontal_scale) + up * (first[1] * vertical_scale))
+                    * derivative_sign,
+                forward * (second[0] * horizontal_scale) + up * (second[1] * vertical_scale),
+            );
+        }
         if matches!(self.shape, Shape::TopHat) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let vertical = Vec3::new(0.0, 0.0, 1.0);
@@ -696,7 +722,9 @@ impl Piece {
         };
         let bank = if matches!(self.shape, Shape::HalfLoop) {
             self.entry.bank.radians()
-        } else if matches!(self.shape, Shape::HalfCorkscrew) && self.mirrored {
+        } else if matches!(self.shape, Shape::HalfCorkscrew | Shape::OffsetHalfRoll)
+            && self.mirrored
+        {
             -self.entry.bank.radians() - (self.exit.bank.radians() - self.entry.bank.radians()) * s
         } else {
             self.entry.bank.radians() + (self.exit.bank.radians() - self.entry.bank.radians()) * s

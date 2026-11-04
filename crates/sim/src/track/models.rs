@@ -61,6 +61,15 @@ pub struct LaunchParameters {
     pub target_speed: f64,
     pub acceleration: f64,
 }
+/// Provisional game design targets for instantaneous rider forces, in multiples of gravity.
+/// Real ride safety and comfort also depend on duration, direction and restraint design.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComfortableForceLimits {
+    pub minimum_vertical_g: f64,
+    pub maximum_vertical_g: f64,
+    pub maximum_lateral_g: f64,
+    pub maximum_longitudinal_g: f64,
+}
 #[derive(Clone, Debug)]
 pub struct CoasterModel {
     pub manufacturer: &'static str,
@@ -69,6 +78,7 @@ pub struct CoasterModel {
     pub allowed_pieces: Vec<PieceId>,
     pub sloped_turn_slopes: Vec<Slope>,
     pub minimum_radius_metres: f64,
+    pub comfortable_force_limits: ComfortableForceLimits,
     pub minimum_height_cm: u16,
     pub allowed_inversions: Vec<Inversion>,
     pub lift_rules: Option<LiftRules>,
@@ -94,6 +104,10 @@ impl CoasterModel {
             hash.write_u8(*slope as u8);
         }
         hash.write_f64(self.minimum_radius_metres);
+        hash.write_f64(self.comfortable_force_limits.minimum_vertical_g);
+        hash.write_f64(self.comfortable_force_limits.maximum_vertical_g);
+        hash.write_f64(self.comfortable_force_limits.maximum_lateral_g);
+        hash.write_f64(self.comfortable_force_limits.maximum_longitudinal_g);
         hash.write_u16(self.minimum_height_cm);
         hash.write_len(self.allowed_inversions.len());
         for inversion in &self.allowed_inversions {
@@ -244,6 +258,12 @@ pub fn wooden_twister_model() -> CoasterModel {
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 8.0,
+        comfortable_force_limits: ComfortableForceLimits {
+            minimum_vertical_g: -1.0,
+            maximum_vertical_g: 4.0,
+            maximum_lateral_g: 1.5,
+            maximum_longitudinal_g: 1.0,
+        },
         minimum_height_cm: 122,
         allowed_inversions: vec![Inversion::VerticalLoop],
         lift_rules: Some(LiftRules {
@@ -368,6 +388,10 @@ pub fn hybrid_model() -> CoasterModel {
                 HalfCorkscrewRightUp,
                 HalfCorkscrewLeftDown,
                 HalfCorkscrewRightDown,
+                RavenRollLeftUp,
+                RavenRollRightUp,
+                RavenRollLeftDown,
+                RavenRollRightDown,
                 LaunchShort,
                 Launch,
                 LaunchLong,
@@ -386,6 +410,12 @@ pub fn hybrid_model() -> CoasterModel {
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 5.0,
+        comfortable_force_limits: ComfortableForceLimits {
+            minimum_vertical_g: -1.5,
+            maximum_vertical_g: 5.0,
+            maximum_lateral_g: 1.5,
+            maximum_longitudinal_g: 1.0,
+        },
         minimum_height_cm: 122,
         allowed_inversions: vec![
             Inversion::VerticalLoop,
@@ -518,6 +548,10 @@ pub fn multi_launch_model() -> CoasterModel {
                 HalfCorkscrewRightUp,
                 HalfCorkscrewLeftDown,
                 HalfCorkscrewRightDown,
+                RavenRollLeftUp,
+                RavenRollRightUp,
+                RavenRollLeftDown,
+                RavenRollRightDown,
                 LaunchShort,
                 Launch,
                 LaunchLong,
@@ -530,6 +564,12 @@ pub fn multi_launch_model() -> CoasterModel {
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 5.0,
+        comfortable_force_limits: ComfortableForceLimits {
+            minimum_vertical_g: -1.5,
+            maximum_vertical_g: 5.0,
+            maximum_lateral_g: 1.5,
+            maximum_longitudinal_g: 1.0,
+        },
         minimum_height_cm: 132,
         allowed_inversions: vec![
             Inversion::VerticalLoop,

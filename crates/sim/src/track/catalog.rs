@@ -471,7 +471,7 @@ pub fn catalog() -> Vec<Piece> {
         (
             HalfLoopUp,
             "Half loop up (not heartlined)",
-            0,
+            16,
             0,
             16,
             West,
@@ -484,7 +484,7 @@ pub fn catalog() -> Vec<Piece> {
         (
             HalfLoopDown,
             "Half loop down (not heartlined)",
-            0,
+            -16,
             0,
             -16,
             West,
@@ -519,6 +519,32 @@ pub fn catalog() -> Vec<Piece> {
             Inverted,
             FlatBank,
             Shape::HalfCorkscrew,
+        ),
+        (
+            RavenRollLeftUp,
+            "Left offset half roll up (not heartlined)",
+            24,
+            4,
+            0,
+            East,
+            Level,
+            Level,
+            FlatBank,
+            Inverted,
+            Shape::OffsetHalfRoll,
+        ),
+        (
+            RavenRollLeftDown,
+            "Left offset half roll down (not heartlined)",
+            24,
+            4,
+            0,
+            East,
+            Level,
+            Level,
+            Inverted,
+            FlatBank,
+            Shape::OffsetHalfRoll,
         ),
         (
             TopHat,
@@ -603,9 +629,11 @@ pub fn catalog() -> Vec<Piece> {
                     Loop | HalfLoopUp | HalfLoopDown => {
                         (PieceKind::Track, Some(Inversion::VerticalLoop))
                     }
-                    Corkscrew | HalfCorkscrewLeftUp | HalfCorkscrewLeftDown => {
-                        (PieceKind::Track, Some(Inversion::Corkscrew))
-                    }
+                    Corkscrew
+                    | HalfCorkscrewLeftUp
+                    | HalfCorkscrewLeftDown
+                    | RavenRollLeftUp
+                    | RavenRollLeftDown => (PieceKind::Track, Some(Inversion::Corkscrew)),
                     HeartlineRoll => (PieceKind::Track, Some(Inversion::HeartlineRoll)),
                     _ => (PieceKind::Track, None),
                 };
@@ -620,7 +648,9 @@ pub fn catalog() -> Vec<Piece> {
                         | HalfLoopUp
                         | HalfLoopDown
                         | HalfCorkscrewLeftUp
-                        | HalfCorkscrewLeftDown => Some(Heartlining::NotHeartlined),
+                        | HalfCorkscrewLeftDown
+                        | RavenRollLeftUp
+                        | RavenRollLeftDown => Some(Heartlining::NotHeartlined),
                         HeartlineRoll => Some(Heartlining::Heartlined),
                         _ => None,
                     },
@@ -999,6 +1029,16 @@ pub fn catalog() -> Vec<Piece> {
             HalfCorkscrewLeftDown,
             HalfCorkscrewRightDown,
             "Right half corkscrew down (not heartlined)",
+        ),
+        (
+            RavenRollLeftUp,
+            RavenRollRightUp,
+            "Right offset half roll up (not heartlined)",
+        ),
+        (
+            RavenRollLeftDown,
+            RavenRollRightDown,
+            "Right offset half roll down (not heartlined)",
         ),
     ] {
         let mut piece = pieces

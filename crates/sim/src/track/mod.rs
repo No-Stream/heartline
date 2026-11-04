@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod colors;
 pub mod construction;
 pub mod curves;
+mod half_loop;
 pub mod models;
 pub mod supports;
 
@@ -17,8 +18,8 @@ pub use curves::{
     TrackSample, TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
-    CoasterModel, LaunchParameters, LaunchType, LiftRules, Material, SupportStyle,
-    TrainConfiguration, hybrid_model, multi_launch_model, wooden_twister_model,
+    CoasterModel, ComfortableForceLimits, LaunchParameters, LaunchType, LiftRules, Material,
+    SupportStyle, TrainConfiguration, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 
 #[cfg(test)]

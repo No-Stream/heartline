@@ -1,5 +1,14 @@
 use super::*;
 
+#[test]
+fn half_loop_has_grid_aligned_forward_displacement() {
+    let pieces = catalog();
+    for (id, expected_x) in [(PieceId::HalfLoopUp, 16), (PieceId::HalfLoopDown, -16)] {
+        let piece = pieces.iter().find(|piece| piece.id == id).unwrap();
+        assert_eq!(piece.exit.x - piece.entry.x, expected_x);
+    }
+}
+
 fn end_state_after_allowed_pieces(model: &CoasterModel, ids: &[PieceId]) -> TrackState {
     let mut state = TrackState::origin();
     for id in ids {
@@ -353,19 +362,28 @@ fn every_turn_and_offset_has_a_mirrored_catalog_piece() {
     }
 }
 
+fn mirrored_bank(bank: Bank) -> Bank {
+    match bank {
+        Bank::Left => Bank::Right,
+        Bank::Right => Bank::Left,
+        Bank::Level => Bank::Level,
+        Bank::Inverted => Bank::Inverted,
+    }
+}
+
 fn mirrored_geometry_matches(piece: &Piece, candidate: &Piece) -> bool {
     if candidate.entry.x != piece.entry.x
         || candidate.entry.y != -piece.entry.y
         || candidate.entry.z != piece.entry.z
         || candidate.entry.heading.index() != (-piece.entry.heading.index()).rem_euclid(8)
         || candidate.entry.slope != piece.entry.slope
-        || candidate.entry.bank.radians() != -piece.entry.bank.radians()
+        || candidate.entry.bank != mirrored_bank(piece.entry.bank)
         || candidate.exit.x != piece.exit.x
         || candidate.exit.y != -piece.exit.y
         || candidate.exit.z != piece.exit.z
         || candidate.exit.heading.index() != (-piece.exit.heading.index()).rem_euclid(8)
         || candidate.exit.slope != piece.exit.slope
-        || candidate.exit.bank.radians() != -piece.exit.bank.radians()
+        || candidate.exit.bank != mirrored_bank(piece.exit.bank)
         || (candidate.entry.curvature_vector().y + piece.entry.curvature_vector().y).abs() >= 1e-10
         || (candidate.exit.curvature_vector().x - piece.exit.curvature_vector().x).abs() >= 1e-10
         || (candidate.exit.curvature_vector().y + piece.exit.curvature_vector().y).abs() >= 1e-10

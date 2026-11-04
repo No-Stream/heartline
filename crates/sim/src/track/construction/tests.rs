@@ -1317,33 +1317,84 @@ fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
 }
 
 #[test]
-fn sea_serpent_elements_compose_half_pieces() {
-    let world = world();
-    let construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());
+fn raven_turns_reverse_heading_and_offset_the_exit() {
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let construction = Construction::new(
+        TrackState {
+            x: 200,
+            y: 200,
+            z: 30,
+            ..start()
+        },
+        hybrid_model(),
+    );
     let choices = construction.element_choices(&world, &[]);
-    for (id, down, up) in [
-        (
-            "sea-serpent-left",
-            PieceId::HalfCorkscrewLeftDown,
-            PieceId::HalfCorkscrewRightUp,
-        ),
-        (
-            "sea-serpent-right",
-            PieceId::HalfCorkscrewRightDown,
-            PieceId::HalfCorkscrewLeftUp,
-        ),
-    ] {
+    for (id, lateral_sign) in [("raven-turn-left", -1), ("raven-turn-right", 1)] {
         let choice = choices
             .iter()
             .find(|choice| choice.id == id)
             .unwrap_or_else(|| panic!("missing {id}"));
+        let mut placed = construction.copy_for_completion();
+        placed.apply_element(choice, &world, &[]).unwrap();
         assert_eq!(
-            choice.pieces,
-            [PieceId::HalfLoopUp, down, up, PieceId::HalfLoopDown]
+            placed.end().heading.index(),
+            (construction.end().heading.index() + 4) % 8
         );
+        assert_eq!(
+            (placed.end().y - construction.end().y).signum(),
+            lateral_sign
+        );
+        assert_eq!(placed.end().bank, crate::track::Bank::Level);
+    }
+}
+
+#[test]
+fn sea_serpent_elements_reverse_heading_twice() {
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let construction = Construction::new(
+        TrackState {
+            x: 200,
+            y: 200,
+            z: 30,
+            ..start()
+        },
+        hybrid_model(),
+    );
+    let choices = construction.element_choices(&world, &[]);
+    for id in ["sea-serpent-left", "sea-serpent-right"] {
+        let choice = choices
+            .iter()
+            .find(|choice| choice.id == id)
+            .unwrap_or_else(|| panic!("missing {id}"));
+        assert_eq!(choice.geometry.len(), 4);
+        for pair in choice.geometry.windows(2) {
+            let end = pair[0].sample(pair[0].length());
+            let start = pair[1].sample(0.0);
+            assert!((end.position - start.position).length() < 1e-6);
+            assert!(end.tangent.dot(start.tangent) > 0.999999);
+            assert!(end.up.dot(start.up) > 0.999999);
+        }
         let roll_change =
             |piece: &Piece| piece.sample(piece.length()).roll - piece.sample(0.0).roll;
         assert!(roll_change(&choice.geometry[1]) * roll_change(&choice.geometry[2]) > 0.0);
+        assert_eq!(
+            choice.geometry[1].exit.heading.index(),
+            (construction.end().heading.index() + 4) % 8
+        );
         let mut placed = construction.copy_for_completion();
         placed.apply_element(choice, &world, &[]).unwrap();
         assert_eq!(placed.end().bank, crate::track::Bank::Level);
@@ -1586,8 +1637,6 @@ fn direct_sixty_degree_transitions_are_available_and_complete_a_lap() {
         construction.close().unwrap();
         let circuit = construction.circuit().unwrap();
         let config = PhysicsConfig {
-            rolling_resistance: 0.0,
-            drag_coefficient: 0.0,
             powered_sections: false,
             ..PhysicsConfig::default()
         };

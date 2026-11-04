@@ -68,6 +68,69 @@ fn unpowered() -> PhysicsConfig {
 }
 
 #[test]
+fn trains_cross_half_loops_within_model_force_limits() {
+    use PieceId::*;
+    let (circuit, start, end) = circuit_with_elements(&[
+        HalfLoopUp,
+        RavenRollLeftDown,
+        RavenRollRightUp,
+        HalfLoopDown,
+    ]);
+    let mut distance = 0.0;
+    let half_loop_ranges: Vec<_> = circuit
+        .pieces()
+        .iter()
+        .filter_map(|piece| {
+            let begin = distance;
+            distance += piece.length();
+            matches!(piece.id, HalfLoopUp | HalfLoopDown).then_some(begin..distance)
+        })
+        .collect();
+    for model in [hybrid_model(), multi_launch_model()] {
+        for entry_speed in [28.0, 30.0, 32.0] {
+            let config = PhysicsConfig {
+                powered_sections: false,
+                ..PhysicsConfig::default()
+            };
+            let mut train = Train::new(&circuit, &model.train, config, start, entry_speed);
+            let mut observed = [false; 2];
+            let mut minimum_vertical = f64::INFINITY;
+            let mut maximum_vertical = f64::NEG_INFINITY;
+            let mut maximum_lateral: f64 = 0.0;
+            for _ in 0..100_000 {
+                train.step(&circuit);
+                for car in train.take_readings().into_iter().flatten() {
+                    for (index, range) in half_loop_ranges.iter().enumerate() {
+                        if range.contains(&car.distance) {
+                            observed[index] = true;
+                            minimum_vertical = minimum_vertical.min(car.g.vertical);
+                            maximum_vertical = maximum_vertical.max(car.g.vertical);
+                            maximum_lateral = maximum_lateral.max(car.g.lateral.abs());
+                        }
+                    }
+                }
+                if train.distance() >= end + model.train.length_metres {
+                    break;
+                }
+            }
+            assert!(
+                observed.into_iter().all(|seen| seen),
+                "{} at {entry_speed} m/s did not reach both half loops",
+                model.name
+            );
+            let limits = model.comfortable_force_limits;
+            assert!(
+                minimum_vertical >= limits.minimum_vertical_g
+                    && maximum_vertical <= limits.maximum_vertical_g
+                    && maximum_lateral <= limits.maximum_lateral_g,
+                "{} at {entry_speed} m/s: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}",
+                model.name
+            );
+        }
+    }
+}
+
+#[test]
 fn train_completes_laps_through_combined_half_inversions() {
     use PieceId::*;
     for (name, elements) in [
@@ -93,8 +156,8 @@ fn train_completes_laps_through_combined_half_inversions() {
             "sea serpent left",
             [
                 HalfLoopUp,
-                HalfCorkscrewLeftDown,
-                HalfCorkscrewRightUp,
+                RavenRollLeftDown,
+                RavenRollRightUp,
                 HalfLoopDown,
             ],
         ),
@@ -102,8 +165,8 @@ fn train_completes_laps_through_combined_half_inversions() {
             "sea serpent right",
             [
                 HalfLoopUp,
-                HalfCorkscrewRightDown,
-                HalfCorkscrewLeftUp,
+                RavenRollRightDown,
+                RavenRollLeftUp,
                 HalfLoopDown,
             ],
         ),
