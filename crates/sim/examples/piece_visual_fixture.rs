@@ -1,14 +1,20 @@
-use theme_park_sim::track::{TrackSample, Vec3, catalog, hybrid_model};
+use theme_park_sim::track::{
+    TrackSample, Vec3, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
+};
 
 fn append_vector(output: &mut Vec<f32>, vector: Vec3) {
     output.extend([vector.x as f32, vector.y as f32, vector.z as f32]);
 }
 
 fn main() {
-    let model = hybrid_model();
+    let models = [hybrid_model(), multi_launch_model(), wooden_twister_model()];
     let pieces: Vec<_> = catalog()
         .into_iter()
-        .filter(|piece| model.allowed_pieces.contains(&piece.id))
+        .filter(|piece| {
+            models
+                .iter()
+                .any(|model| model.allowed_pieces.contains(&piece.id))
+        })
         .collect();
     print!("[");
     for (index, piece) in pieces.iter().enumerate() {

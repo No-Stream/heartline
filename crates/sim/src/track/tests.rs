@@ -14,6 +14,55 @@ fn end_state_after_allowed_pieces(model: &CoasterModel, ids: &[PieceId]) -> Trac
 }
 
 #[test]
+fn inversion_pieces_identify_their_heartlining() {
+    for piece in catalog() {
+        assert_eq!(
+            piece.inversion.is_some(),
+            piece.heartlining.is_some(),
+            "{:?}",
+            piece.id
+        );
+        if let Some(heartlining) = piece.heartlining {
+            let label = match heartlining {
+                Heartlining::Heartlined => "(heartlined)",
+                Heartlining::NotHeartlined => "(not heartlined)",
+            };
+            assert!(piece.name.contains(label), "{:?}: {}", piece.id, piece.name);
+        }
+    }
+}
+
+#[test]
+fn half_inversions_connect_on_inverting_models() {
+    for model in [hybrid_model(), multi_launch_model()] {
+        for half_corkscrew in [
+            PieceId::HalfCorkscrewLeftDown,
+            PieceId::HalfCorkscrewRightDown,
+        ] {
+            let end =
+                end_state_after_allowed_pieces(&model, &[PieceId::HalfLoopUp, half_corkscrew]);
+            assert_eq!(end.bank, Bank::Level);
+        }
+        for half_corkscrew in [PieceId::HalfCorkscrewLeftUp, PieceId::HalfCorkscrewRightUp] {
+            let end =
+                end_state_after_allowed_pieces(&model, &[half_corkscrew, PieceId::HalfLoopDown]);
+            assert_eq!(end.bank, Bank::Level);
+        }
+    }
+}
+
+#[test]
+fn wooden_twister_offers_top_hat() {
+    let model = wooden_twister_model();
+    assert!(
+        model
+            .available_pieces(TrackState::origin())
+            .iter()
+            .any(|piece| piece.id == PieceId::TopHat)
+    );
+}
+
+#[test]
 fn wooden_twister_offers_vertical_curve_continuations() {
     let model = wooden_twister_model();
     let upward_end = end_state_after_allowed_pieces(
@@ -242,7 +291,8 @@ fn near_angle(a: f64, b: f64) {
 #[test]
 fn banked_turns_lean_into_their_curves() {
     for piece in catalog().into_iter().filter(|piece| {
-        piece.entry.heading != piece.exit.heading && piece.entry.bank != Bank::Level
+        piece.entry.heading != piece.exit.heading
+            && matches!(piece.entry.bank, Bank::Left | Bank::Right)
     }) {
         let distance = piece.length() / 2.0;
         let sample = piece.sample(distance);
@@ -263,10 +313,11 @@ fn banked_turns_lean_into_their_curves() {
 #[test]
 fn every_turn_and_offset_has_a_mirrored_catalog_piece() {
     let pieces = catalog();
-    for piece in pieces
-        .iter()
-        .filter(|piece| piece.entry.heading != piece.exit.heading || piece.exit.y != 0)
-    {
+    for piece in pieces.iter().filter(|piece| {
+        (piece.entry.heading != piece.exit.heading
+            && (piece.exit.heading.index() - piece.entry.heading.index()).rem_euclid(8) != 4)
+            || piece.exit.y != 0
+    }) {
         let mirrored = pieces
             .iter()
             .find(|candidate| mirrored_geometry_matches(piece, candidate))
@@ -1172,6 +1223,128 @@ fn vertical_loop_separates_entry_and_exit_and_clears_itself() {
                         "{heading:?}: {distance} and {other_distance}"
                     );
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn half_inversions_join_with_matching_frames() {
+    use PieceId::*;
+    for (first, second) in [
+        (HalfLoopUp, HalfCorkscrewLeftDown),
+        (HalfLoopUp, HalfCorkscrewRightDown),
+        (HalfCorkscrewLeftUp, HalfLoopDown),
+        (HalfCorkscrewRightUp, HalfLoopDown),
+    ] {
+        let pieces = catalog();
+        let first = pieces.iter().find(|piece| piece.id == first).unwrap();
+        let second = pieces
+            .iter()
+            .find(|piece| piece.id == second)
+            .unwrap()
+            .at(first.exit)
+            .unwrap();
+        let end = first.sample(first.length());
+        let start = second.sample(0.0);
+        near_vec(end.position, start.position);
+        near_vec(end.tangent, start.tangent);
+        near_vec(end.up, start.up);
+        assert!(end.up.z < -0.99);
+        assert!(second.sample(second.length()).up.z > 0.99);
+    }
+}
+
+#[test]
+fn classic_corkscrew_has_a_larger_track_path_than_heartline_roll() {
+    let pieces = catalog();
+    let corkscrew = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::Corkscrew)
+        .unwrap();
+    let heartline = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::HeartlineRoll)
+        .unwrap();
+    let corkscrew_midpoint = corkscrew.sample(corkscrew.length() / 2.0);
+    let heartline_midpoint = heartline.sample(heartline.length() / 2.0);
+    assert!(corkscrew_midpoint.position.z > heartline_midpoint.position.z + 5.0);
+}
+
+#[test]
+fn top_hat_has_a_tall_summit_and_level_connectors() {
+    let piece = catalog()
+        .into_iter()
+        .find(|piece| piece.id == PieceId::TopHat)
+        .unwrap();
+    let midpoint = piece.sample(piece.length() / 2.0);
+    assert!(midpoint.position.z >= 29.0);
+    let slopes: Vec<_> = (0..=1000)
+        .map(|index| {
+            piece
+                .sample(piece.length() * (f64::from(index) / 1000.0))
+                .tangent
+                .z
+        })
+        .collect();
+    assert!(slopes.iter().copied().fold(0.0, f64::max) > 0.95);
+    assert!(slopes.iter().copied().fold(0.0, f64::min) < -0.95);
+    near_vec(piece.sample(0.0).tangent, piece.entry.tangent());
+    near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
+}
+
+#[test]
+fn half_corkscrews_have_mirrored_track_paths() {
+    let pieces = catalog();
+    let left = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::HalfCorkscrewLeftUp)
+        .unwrap();
+    let right = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::HalfCorkscrewRightUp)
+        .unwrap();
+    let left_middle = left.sample(left.length() / 2.0);
+    let right_middle = right.sample(right.length() / 2.0);
+    assert!(left_middle.position.y > 3.0);
+    near(left_middle.position.y, -right_middle.position.y);
+}
+
+#[test]
+fn new_elements_have_regular_frames_in_every_heading() {
+    use PieceId::*;
+    let pieces = catalog();
+    for id in [
+        HalfLoopUp,
+        HalfLoopDown,
+        HalfCorkscrewLeftUp,
+        HalfCorkscrewRightUp,
+        HalfCorkscrewLeftDown,
+        HalfCorkscrewRightDown,
+        TopHat,
+    ] {
+        let template = pieces.iter().find(|piece| piece.id == id).unwrap();
+        for heading in [
+            Heading::East,
+            Heading::NorthEast,
+            Heading::North,
+            Heading::NorthWest,
+            Heading::West,
+            Heading::SouthWest,
+            Heading::South,
+            Heading::SouthEast,
+        ] {
+            let state = TrackState {
+                heading,
+                ..template.entry
+            };
+            let piece = template.at(state).unwrap();
+            for index in 0..=100 {
+                let sample = piece.sample(piece.length() * (f64::from(index) / 100.0));
+                assert!(sample.curvature.is_finite(), "{id:?} {heading:?} {index}");
+                near(sample.tangent.length(), 1.0);
+                near(sample.up.length(), 1.0);
+                near(sample.up.dot(sample.tangent), 0.0);
             }
         }
     }

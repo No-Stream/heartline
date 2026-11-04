@@ -1,12 +1,12 @@
 use super::{
-    Bank, Heading, HorizontalCurvature, Inversion, Material, Piece, PieceId, PieceKind, Shape,
-    Slope, TrackState, VerticalCurvature,
+    Bank, Heading, Heartlining, HorizontalCurvature, Inversion, Material, Piece, PieceId,
+    PieceKind, Shape, Slope, TrackState, VerticalCurvature,
 };
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
 pub fn catalog() -> Vec<Piece> {
-    use Bank::{Left, Level as FlatBank, Right};
-    use Heading::{East, North};
+    use Bank::{Inverted, Left, Level as FlatBank, Right};
+    use Heading::{East, North, West};
     use PieceId::*;
     use Slope::{
         DownGentle, DownModerate, DownSixty, DownSteep, Level, UpGentle, UpModerate, UpSixty,
@@ -379,7 +379,7 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (
             Loop,
-            "Vertical loop",
+            "Vertical loop (not heartlined)",
             32,
             2,
             0,
@@ -392,7 +392,7 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (
             Corkscrew,
-            "Left corkscrew",
+            "Left classic corkscrew (not heartlined)",
             16,
             0,
             0,
@@ -405,7 +405,7 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (
             HeartlineRoll,
-            "Left heartline roll",
+            "Left heartline roll (heartlined)",
             16,
             0,
             0,
@@ -415,6 +415,71 @@ pub fn catalog() -> Vec<Piece> {
             FlatBank,
             FlatBank,
             Shape::Heartline,
+        ),
+        (
+            HalfLoopUp,
+            "Half loop up (not heartlined)",
+            0,
+            0,
+            16,
+            West,
+            Level,
+            Level,
+            FlatBank,
+            Inverted,
+            Shape::HalfLoop,
+        ),
+        (
+            HalfLoopDown,
+            "Half loop down (not heartlined)",
+            0,
+            0,
+            -16,
+            West,
+            Level,
+            Level,
+            Inverted,
+            FlatBank,
+            Shape::HalfLoop,
+        ),
+        (
+            HalfCorkscrewLeftUp,
+            "Left half corkscrew up (not heartlined)",
+            16,
+            0,
+            4,
+            East,
+            Level,
+            Level,
+            FlatBank,
+            Inverted,
+            Shape::HalfCorkscrew,
+        ),
+        (
+            HalfCorkscrewLeftDown,
+            "Left half corkscrew down (not heartlined)",
+            16,
+            0,
+            -4,
+            East,
+            Level,
+            Level,
+            Inverted,
+            FlatBank,
+            Shape::HalfCorkscrew,
+        ),
+        (
+            TopHat,
+            "Top hat",
+            64,
+            0,
+            0,
+            East,
+            Level,
+            Level,
+            FlatBank,
+            FlatBank,
+            Shape::TopHat,
         ),
         (
             Brakes,
@@ -483,8 +548,12 @@ pub fn catalog() -> Vec<Piece> {
                 let (kind, inversion) = match id {
                     Brakes => (PieceKind::Brakes, None),
                     Station => (PieceKind::Station, None),
-                    Loop => (PieceKind::Track, Some(Inversion::VerticalLoop)),
-                    Corkscrew => (PieceKind::Track, Some(Inversion::Corkscrew)),
+                    Loop | HalfLoopUp | HalfLoopDown => {
+                        (PieceKind::Track, Some(Inversion::VerticalLoop))
+                    }
+                    Corkscrew | HalfCorkscrewLeftUp | HalfCorkscrewLeftDown => {
+                        (PieceKind::Track, Some(Inversion::Corkscrew))
+                    }
                     HeartlineRoll => (PieceKind::Track, Some(Inversion::HeartlineRoll)),
                     _ => (PieceKind::Track, None),
                 };
@@ -493,6 +562,16 @@ pub fn catalog() -> Vec<Piece> {
                     name,
                     kind,
                     inversion,
+                    heartlining: match id {
+                        Loop
+                        | Corkscrew
+                        | HalfLoopUp
+                        | HalfLoopDown
+                        | HalfCorkscrewLeftUp
+                        | HalfCorkscrewLeftDown => Some(Heartlining::NotHeartlined),
+                        HeartlineRoll => Some(Heartlining::Heartlined),
+                        _ => None,
+                    },
                     structure_material: None,
                     entry,
                     exit,
@@ -722,7 +801,7 @@ pub fn catalog() -> Vec<Piece> {
     full_offset.rebuild_arc();
     pieces.push(full_offset);
     for (base, id, name) in [
-        (Loop, SteelLoop, "Steel-structure loop"),
+        (Loop, SteelLoop, "Steel-structure loop (not heartlined)"),
         (TurnSmallStandalone, TwisterFanLeft, "Left fan turn"),
         (TurnSmallStandalone, TightTwisterLeft, "Tight left turn"),
         (
@@ -843,10 +922,32 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (OffsetLeft, OffsetRight, "Right half-tile offset"),
         (FullOffsetLeft, FullOffsetRight, "Right full-tile offset"),
-        (Loop, LoopRight, "Right vertical loop"),
-        (SteelLoop, SteelLoopRight, "Right steel-structure loop"),
-        (Corkscrew, CorkscrewRight, "Right corkscrew"),
-        (HeartlineRoll, HeartlineRollRight, "Right heartline roll"),
+        (Loop, LoopRight, "Right vertical loop (not heartlined)"),
+        (
+            SteelLoop,
+            SteelLoopRight,
+            "Right steel-structure loop (not heartlined)",
+        ),
+        (
+            Corkscrew,
+            CorkscrewRight,
+            "Right classic corkscrew (not heartlined)",
+        ),
+        (
+            HeartlineRoll,
+            HeartlineRollRight,
+            "Right heartline roll (heartlined)",
+        ),
+        (
+            HalfCorkscrewLeftUp,
+            HalfCorkscrewRightUp,
+            "Right half corkscrew up (not heartlined)",
+        ),
+        (
+            HalfCorkscrewLeftDown,
+            HalfCorkscrewRightDown,
+            "Right half corkscrew down (not heartlined)",
+        ),
     ] {
         let mut piece = pieces
             .iter()
@@ -862,6 +963,7 @@ pub fn catalog() -> Vec<Piece> {
                 Bank::Left => Bank::Right,
                 Bank::Right => Bank::Left,
                 Bank::Level => Bank::Level,
+                Bank::Inverted => Bank::Inverted,
             };
             state.horizontal_curvature = match state.horizontal_curvature {
                 HorizontalCurvature::Straight => HorizontalCurvature::Straight,
