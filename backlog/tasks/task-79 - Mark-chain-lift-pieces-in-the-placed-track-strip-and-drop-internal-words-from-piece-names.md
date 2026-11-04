@@ -3,10 +3,10 @@ id: TASK-79
 title: >-
   Mark chain lift pieces in the placed-track strip and drop internal words from
   piece names
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 23:11'
-updated_date: '2026-11-04 07:17'
+updated_date: '2026-11-04 08:49'
 labels:
   - coaster
   - interface
@@ -27,4 +27,6 @@ From the TASK-70 palette pass (b4c2e8d): the placed-track strip in the builder d
 Owner playtest 2026-11-03: 'Begin gentle descent' and 'Begin downward curve' read alike. The downward curve (VerticalDownEntry/Continue/Exit) is a three-piece smooth pitch from level into a 45-degree drop; the gentle descent tips only to 27 degrees in one piece. Rename the curve family so the steepness and the three-step nature are clear (same for the upward curve).
 
 2026-11-03 night: Codex job task-mw1sbatq-yb7ls7 in worktree theme-park-sim-worktrees/palette-elements (element choices, plain names, chain markers).
+
+2026-11-04: merged 1fbfe0b. Known limit: a climbing or descending turn that needs a slope transition first only tries the shortest transition, so it can hide a turn another transition would allow.
 <!-- SECTION:NOTES:END -->
