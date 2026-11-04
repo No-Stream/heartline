@@ -54,11 +54,11 @@ test("the chain lift toggle follows the worker, refuses pieces without a chain, 
   await page.getByRole("radio", { name: "Gentle climb", exact: true }).click();
   await placePiece(page);
   await page.getByRole("button", { name: "Turn left", exact: true }).click();
-  await expect(page.locator("[data-next] [data-preview-name]")).toHaveText("Climbing standalone small left turn");
+  await expect(page.locator("[data-next] [data-preview-name]")).toHaveText("Climbing small left turn");
   await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
   await placePiece(page);
   await expect(page.locator("[data-track] li")).toHaveCount(4);
-  await expect(page.locator("[data-track] li").last()).toHaveAttribute("title", "Climbing standalone small left turn");
+  await expect(page.locator("[data-track] li").last()).toHaveAttribute("title", "Climbing small left turn");
   await expectChain(page, true);
 
   await chain.click();

@@ -53,6 +53,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_start() { wasmMock.constructionActive.mockReturnValue(true); }
     construction_advance_block_analysis(budget: number) { return wasmMock.advanceBlockAnalysis(budget); }
     construction_choices() { return ""; }
+    construction_elements() { return ""; }
     construction_selected() { return ""; }
     construction_track() { return ""; }
     construction_rails() { return new Float32Array(); }

@@ -40,7 +40,21 @@ impl Construction {
             chain: self.chain,
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
+            element_choices_cache: RefCell::new(None),
         }
+    }
+
+    pub(super) fn append_sequence(
+        &self,
+        pieces: &[PieceId],
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<Self, ConstructionError> {
+        let mut updated = self.copy_for_completion();
+        for &id in pieces {
+            updated.append(id, world, obstacles)?;
+        }
+        Ok(updated)
     }
 
     pub fn completion_search(&self) -> Option<CompletionSearch> {
@@ -96,10 +110,7 @@ impl Construction {
         if self.state_hash() != completion.construction_hash {
             return Err(ConstructionError::InvalidCircuit);
         }
-        let mut updated = self.copy_for_completion();
-        for &id in &completion.pieces {
-            updated.append(id, world, obstacles)?;
-        }
+        let mut updated = self.append_sequence(&completion.pieces, world, obstacles)?;
         updated.close()?;
         *self = updated;
         Ok(())

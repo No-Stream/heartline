@@ -62,6 +62,14 @@ export interface ConstructionPiece {
   readonly refusal: string;
 }
 
+export interface ConstructionElement {
+  readonly id: string;
+  readonly name: string;
+  readonly pieceId: string;
+  readonly slope: string;
+  readonly kind: string;
+}
+
 /** A catalog piece's centreline in metres, entering at the origin along +x, with the track's up vector at each point. */
 export interface PieceShape {
   readonly id: string;
@@ -88,6 +96,7 @@ export interface ConstructionState {
   readonly active: boolean;
   readonly chain: boolean;
   readonly pieces: readonly ConstructionPiece[];
+  readonly elements: readonly ConstructionElement[];
   readonly selected: string | null;
   readonly track: readonly {
     readonly id: number;
@@ -96,6 +105,7 @@ export interface ConstructionState {
     readonly name: string;
     readonly group: string;
     readonly slope: string;
+    readonly kind: string;
   }[];
   readonly canAppend: boolean;
   readonly canClose: boolean;

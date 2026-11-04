@@ -1,7 +1,7 @@
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState, steppedTrainCount } from "./block-panel-state";
 import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions, type StepAttribute } from "./construction-choices";
-import type { BlockReport, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
+import type { BlockReport, ConstructionElement, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
@@ -114,7 +114,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         </button>
         <p class="builder__chain-hint" id="chain-lift-hint" data-chain-hint></p>
       </div>
-      <section class="tool-panel__section builder__palette" role="radiogroup" aria-label="Next piece" data-palette></section>
+      <section class="tool-panel__section" aria-label="Track elements"><h3>Track elements</h3><div class="builder__elements" data-elements></div></section>
       <section class="tool-panel__section" aria-label="Track actions">
         <div class="builder__actions">
           <div class="builder__ride-controls">
@@ -145,6 +145,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <p class="builder__test-hint">Coaster income: <span data-coaster-income>0</span></p>
         <label class="builder__toggle"><input type="checkbox" data-delete-mode> Delete track by clicking it ${hint("deleteMode")}</label>
       </section>
+      <section class="tool-panel__section" aria-label="Individual pieces"><h3>Individual pieces</h3><p class="tool-panel__hint">Choose individual pieces for fine control.</p><div class="builder__palette" role="radiogroup" aria-label="Next piece" data-palette></div></section>
       <section class="tool-panel__section" aria-label="Circuit">
         <p class="builder__test-hint" data-panel-track-height></p>
         <p class="builder__test-hint" data-panel-station-height></p>
@@ -214,6 +215,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const height = element<HTMLInputElement>("[data-height]");
   const editor = element("[data-editor]");
   const palette = element("[data-palette]");
+  const elements = element("[data-elements]");
   const append = element<HTMLButtonElement>("[data-append]");
   const undo = element<HTMLButtonElement>("[data-undo]");
   const close = element<HTMLButtonElement>("[data-close]");
@@ -258,6 +260,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   let shapes = new Map<string, PieceShape>();
   let state: ConstructionState | undefined;
   let paletteKey = "";
+  let elementsKey = "";
   let trackKey = "";
   let blockKey = "";
   let applyBestRequested = false;
@@ -336,6 +339,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const tile = (event.target as Element).closest<HTMLElement>("[data-piece]");
     if (tile) select(tile.dataset.piece);
   });
+  elements.addEventListener("click", (event) => {
+    const tile = (event.target as Element).closest<HTMLElement>("[data-element]");
+    if (tile) select(tile.dataset.element);
+  });
   palette.addEventListener("keydown", (event) => {
     const tile = (event.target as Element).closest<HTMLElement>("[data-piece]");
     if (event.key === "Enter" && tile?.dataset.piece === state?.selected) {
@@ -377,7 +384,22 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }));
   }
 
+  function renderElements(choices: readonly ConstructionElement[]): void {
+    elements.replaceChildren(...choices.map((choice) => {
+      const shape = shapeOf(choice.pieceId, choice.slope);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "builder__element";
+      button.dataset.element = choice.id;
+      button.setAttribute("aria-pressed", String(choice.id === state?.selected));
+      button.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}<span></span>`;
+      button.querySelector("span")!.textContent = choice.name;
+      return button;
+    }));
+  }
+
   function renderSelection(current: ConstructionState, focusInPalette: boolean): void {
+    for (const tile of elements.querySelectorAll<HTMLElement>("[data-element]")) tile.setAttribute("aria-pressed", String(tile.dataset.element === current.selected));
     for (const tile of palette.querySelectorAll<HTMLElement>("[data-piece]")) {
       const checked = tile.dataset.piece === current.selected;
       tile.setAttribute("aria-checked", String(checked));
@@ -385,14 +407,22 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       if (checked && focusInPalette) tile.focus();
     }
     const selected = current.pieces.find(({ id }) => id === current.selected);
+    const selectedElement = current.elements.find(({ id }) => id === current.selected);
     const preview = element("[data-preview]");
-    preview.hidden = !selected;
+    preview.hidden = !selected && !selectedElement;
     if (selected) {
       const shape = shapeOf(selected.id, selected.slope);
       preview.style.setProperty("--plate", groupPlates[selected.group]);
       element("[data-preview-icons]").innerHTML = iconViews(shape).map((view) => pieceIconSvg(shape, view, 70, 52)).join("");
       element("[data-preview-name]").textContent = pieceDisplayName(selected);
       element("[data-preview-group]").textContent = groupNames[selected.group];
+    }
+    if (selectedElement) {
+      const shape = shapeOf(selectedElement.pieceId, selectedElement.slope);
+      preview.style.setProperty("--plate", "var(--teal)");
+      element("[data-preview-icons]").innerHTML = iconViews(shape).map((view) => pieceIconSvg(shape, view, 70, 52)).join("");
+      element("[data-preview-name]").textContent = selectedElement.name;
+      element("[data-preview-group]").textContent = "Track element";
     }
     for (const { attribute } of steppers) {
       const options = stepperOptions(current.pieces, shapes, current.selected, attribute);
@@ -427,7 +457,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   }
 
   function renderTrack(current: ConstructionState, grew: boolean): void {
-    track.replaceChildren(...current.track.map(({ id, label, name, group, slope }, index) => {
+    track.replaceChildren(...current.track.map(({ id, label, name, group, slope, kind }, index) => {
       const shape = shapeOf(label, slope);
       const displayName = pieceDisplayName({ label: name, group, slope });
       const item = document.createElement("li");
@@ -435,6 +465,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       item.title = displayName;
       item.innerHTML = `<span class="track-chip__number">${index + 1}</span>${pieceIconSvg(shape, iconViews(shape)[0], 26, 20)}<span class="track-chip__name"></span>`;
       item.querySelector(".track-chip__name")!.textContent = displayName;
+      if (kind === "Lift") {
+        const marker = document.createElement("span");
+        marker.dataset.chainMarker = "";
+        marker.className = "track-chip__chain";
+        marker.textContent = "Chain";
+        item.append(marker);
+      }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "×";
@@ -640,8 +677,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       const focusInPalette = palette.contains(document.activeElement);
       const nextPaletteKey = next.pieces.map(({ id, refusal }) => `${id}:${refusal}`).join("|");
       if (nextPaletteKey !== paletteKey) { paletteKey = nextPaletteKey; renderPalette(next.pieces); }
+      const nextElementsKey = JSON.stringify(next.elements);
+      if (nextElementsKey !== elementsKey) { elementsKey = nextElementsKey; renderElements(next.elements); }
       renderSelection(next, focusInPalette);
-      const nextTrackKey = next.track.map(({ id, label }) => `${id}:${label}`).join("|");
+      const nextTrackKey = next.track.map(({ id, label, kind }) => `${id}:${label}:${kind}`).join("|");
       if (nextTrackKey !== trackKey) { trackKey = nextTrackKey; renderTrack(next, event === "placed"); }
       append.disabled = !next.canAppend;
       undo.disabled = next.track.length === 0;

@@ -141,6 +141,75 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
 }
 
 #[test]
+fn elements_preview_the_full_sequence_append_atomically_and_undo_together() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    let before = simulation.construction_track();
+
+    assert!(
+        simulation
+            .construction_elements()
+            .lines()
+            .any(|row| row.starts_with("element:climb-60\t"))
+    );
+    simulation.construction_select("element:climb-60");
+
+    assert_eq!(simulation.construction_selected(), "element:climb-60");
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_message()
+    );
+    let preview = simulation.construction_preview();
+    assert!(!preview.is_empty());
+    assert!(!simulation.construction_rails().is_empty());
+
+    simulation.construction_append();
+    assert!(simulation.construction_message().is_empty());
+    assert_eq!(
+        simulation.construction_track().lines().count(),
+        before.lines().count() + preview.len()
+    );
+
+    simulation.construction_undo();
+    assert_eq!(simulation.construction_track(), before);
+}
+
+#[test]
+fn chain_mode_marks_every_piece_in_an_element_as_a_lift() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_set_chain(true);
+    simulation.construction_select("element:small-left-banked-turn");
+
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_message()
+    );
+    let preview = simulation.construction_preview();
+    assert_eq!(preview.len(), 3);
+    assert!(
+        preview
+            .iter()
+            .all(|piece| piece.kind == super::PieceKind::Lift)
+    );
+
+    simulation.construction_append();
+    assert_eq!(
+        simulation
+            .construction_track()
+            .lines()
+            .skip(1)
+            .map(|row| row.split('\t').nth(5).unwrap())
+            .collect::<Vec<_>>(),
+        ["Lift", "Lift", "Lift"]
+    );
+    simulation.construction_undo();
+    assert_eq!(simulation.construction_track().lines().count(), 1);
+}
+
+#[test]
 fn coaster_ticket_price_defaults_to_six_and_can_be_changed_to_zero() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
 
@@ -352,20 +421,20 @@ fn construction_commands_validate_and_preview_without_mutating_on_failure() {
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel\n1\tStraight\tStraight\tstraight\tLevel"
+        "0\tStation\tStation\tspecial\tLevel\tStation\n1\tStraight\tStraight\tstraight\tLevel\tTrack"
     );
     assert!(!simulation.construction_placed_rails().is_empty());
     simulation.construction_select("GentleUp");
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel\n1\tStraight\tStraight\tstraight\tLevel"
+        "0\tStation\tStation\tspecial\tLevel\tStation\n1\tStraight\tStraight\tstraight\tLevel\tTrack"
     );
     assert!(!simulation.construction_message().is_empty());
     simulation.construction_undo();
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel"
+        "0\tStation\tStation\tspecial\tLevel\tStation"
     );
 }
 
@@ -381,14 +450,14 @@ fn deleting_middle_piece_preserves_and_identifies_retained_track() {
     simulation.construction_delete(1);
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel\n2\tStraight\tStraight\tstraight\tLevel"
+        "0\tStation\tStation\tspecial\tLevel\tStation\n2\tStraight\tStraight\tstraight\tLevel\tTrack"
     );
     let rails = simulation.construction_placed_rails();
     assert!(rails.chunks_exact(19).any(|rail| rail[0] == 2.0));
     simulation.construction_delete(2);
     assert_eq!(
         simulation.construction_track(),
-        "0\tStation\tStation\tspecial\tLevel"
+        "0\tStation\tStation\tspecial\tLevel\tStation"
     );
 }
 

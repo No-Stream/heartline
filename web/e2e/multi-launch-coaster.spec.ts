@@ -34,12 +34,12 @@ test("builds and runs the Velocity Viper with two short launches @slow", async (
   await expect(track.locator("li")).toHaveCount(1);
   const pieces = [
     "Short launch",
-    "Standalone small left turn",
-    "Standalone small left turn",
+    "Small left turn",
+    "Small left turn",
     "Short launch",
     "Straight",
-    "Standalone small left turn",
-    "Standalone small left turn",
+    "Small left turn",
+    "Small left turn",
   ];
   for (const [index, piece] of pieces.entries()) {
     await page.getByRole("radio", { name: piece, exact: true }).click();

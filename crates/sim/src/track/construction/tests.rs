@@ -340,6 +340,28 @@ fn closed_circuit_requires_explicit_close_and_reopens_on_deletion() {
 }
 
 #[test]
+fn closed_circuit_has_no_elements_without_populating_search_cache() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [
+        Station,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    construction.close().unwrap();
+    assert!(construction.element_choices(&world, &[]).is_empty());
+    assert!(construction.element_choices_cache.borrow().is_none());
+    construction.delete_from(5).unwrap();
+    assert!(!construction.element_choices(&world, &[]).is_empty());
+}
+
+#[test]
 fn every_coaster_model_can_build_a_closed_circuit() {
     use PieceId::*;
 
@@ -1245,4 +1267,138 @@ fn completion_finishes_the_lift_powered_circuit_after_large_turn_entry() {
     construction
         .apply_completion(&completion, &world, &[])
         .unwrap();
+}
+
+#[test]
+fn elements_offer_complete_slopes_and_banked_turns_and_apply_atomically() {
+    let world = world();
+    let mut construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());
+    let elements = construction.element_choices(&world, &[]);
+    for id in [
+        "climb-60",
+        "descend-60",
+        "small-left-banked-turn",
+        "small-right-banked-turn",
+        "large-left-banked-turn",
+        "large-right-banked-turn",
+    ] {
+        assert!(
+            elements.iter().any(|element| element.id == id),
+            "missing {id}"
+        );
+    }
+    let climb = elements
+        .iter()
+        .find(|element| element.id == "climb-60")
+        .unwrap();
+    assert!(climb.pieces.len() > 1);
+    let mut stale = construction.copy_for_completion();
+    stale.append(PieceId::Straight, &world, &[]).unwrap();
+    let before = stale.state_hash();
+    assert!(stale.apply_element(climb, &world, &[]).is_err());
+    assert_eq!(stale.state_hash(), before);
+    construction.apply_element(climb, &world, &[]).unwrap();
+    assert_eq!(construction.end().slope, Slope::UpSixty);
+    assert!(
+        construction
+            .element_choices(&world, &[])
+            .iter()
+            .any(|element| element.id == "level")
+    );
+}
+
+#[test]
+fn elements_support_chain_and_gentle_sloped_turns() {
+    let world = world();
+    let mut construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());
+    construction.set_chain(true);
+    let climb = construction
+        .element_choices(&world, &[])
+        .into_iter()
+        .find(|element| element.id == "climb-gentle")
+        .unwrap();
+    construction.apply_element(&climb, &world, &[]).unwrap();
+    assert!(
+        construction
+            .pieces()
+            .iter()
+            .all(|piece| piece.kind == PieceKind::Lift)
+    );
+    construction.set_chain(false);
+    let turn = construction
+        .element_choices(&world, &[])
+        .into_iter()
+        .find(|element| element.id == "large-left-banked-turn")
+        .expect("sloped banked turn");
+    construction.apply_element(&turn, &world, &[]).unwrap();
+    assert_eq!(construction.end().slope, Slope::UpGentle);
+    assert_eq!(construction.end().bank, crate::track::Bank::Level);
+}
+
+#[test]
+fn elements_offer_climbing_and_descending_turns_from_level() {
+    let world = world();
+    let construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());
+    let choices = construction.element_choices(&world, &[]);
+    for (id, slope) in [
+        ("climbing-small-left-turn", Slope::UpGentle),
+        ("climbing-large-right-turn", Slope::UpGentle),
+        ("descending-small-right-turn", Slope::DownGentle),
+        ("descending-large-left-turn", Slope::DownGentle),
+    ] {
+        let choice = choices.iter().find(|choice| choice.id == id).unwrap();
+        let mut placed = construction.copy_for_completion();
+        placed.apply_element(choice, &world, &[]).unwrap();
+        assert_eq!(placed.end().slope, slope);
+        assert_ne!(placed.end().heading, construction.end().heading);
+    }
+}
+
+#[test]
+fn element_apply_revalidates_world_and_keeps_original_on_failure() {
+    let world = world();
+    let mut construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());
+    let choice = construction
+        .element_choices(&world, &[])
+        .into_iter()
+        .find(|element| element.id == "small-left-banked-turn")
+        .unwrap();
+    let blocked = SupportObstacle {
+        min: Vec3::new(-1000.0, -1000.0, -1000.0),
+        max: Vec3::new(1000.0, 1000.0, 1000.0),
+    };
+    let before = construction.state_hash();
+    assert!(
+        construction
+            .apply_element(&choice, &world, &[blocked])
+            .is_err()
+    );
+    assert_eq!(construction.state_hash(), before);
+    assert!(
+        !construction
+            .element_choices(&world, &[blocked])
+            .iter()
+            .any(|element| element.id == choice.id)
+    );
+}
+
+#[test]
+fn element_preview_excludes_reattached_track() {
+    let world = world();
+    let mut construction = Construction::new(TrackState { z: 30, ..start() }, hybrid_model());
+    construction
+        .append(PieceId::LevelToGentleUp, &world, &[])
+        .unwrap();
+    construction.append(PieceId::GentleUp, &world, &[]).unwrap();
+    let first_id = construction.piece_ids()[0];
+    construction.delete_from(first_id).unwrap();
+    let choice = construction
+        .element_choices(&world, &[])
+        .into_iter()
+        .find(|choice| choice.id == "climb-gentle")
+        .unwrap();
+    assert_eq!(choice.geometry.len(), choice.pieces.len());
+    construction.apply_element(&choice, &world, &[]).unwrap();
+    assert_eq!(construction.pieces().len(), 2);
+    assert!(construction.disconnected_segments().is_empty());
 }

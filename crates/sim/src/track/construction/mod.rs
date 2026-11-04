@@ -21,11 +21,13 @@ use std::sync::OnceLock;
 mod tests;
 
 mod completion;
+mod elements;
 #[cfg(test)]
 mod flexibility_tests;
 #[cfg(test)]
 mod walk_tests;
 pub use completion::{Completion, CompletionSearch, CompletionSearchProgress};
+pub use elements::ElementChoice;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstructionError {
@@ -81,6 +83,7 @@ pub struct Construction {
     chain: bool,
     validation_cache: RefCell<Option<ValidationCache>>,
     choices_cache: RefCell<Option<ChoicesCache>>,
+    element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
 }
 
 impl Construction {
@@ -96,6 +99,7 @@ impl Construction {
             chain: false,
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
+            element_choices_cache: RefCell::new(None),
         }
     }
 

@@ -33,7 +33,7 @@ test("player driver places a station in the live park", async ({ page }) => {
 
 test("player driver uses the construction steppers and actions", async ({ page }) => {
   await page.goto(fixtureUrl);
-  await choosePiece(page, [{ attribute: "turn", direction: "left" }], "Standalone small left turn");
+  await choosePiece(page, [{ attribute: "turn", direction: "left" }], "Small left turn");
   await placePiece(page);
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ canClose: true, canTest: true }));
   await closeCircuit(page);
@@ -77,7 +77,7 @@ test("construction controls dispatch actions with the keyboard and reflect worke
   await page.keyboard.press("Enter");
   await page.getByLabel("Station height above ground (metres)").fill("80");
   await page.getByLabel("Station height above ground (metres)").press("Tab");
-  await page.getByRole("radio", { name: "Standalone small left turn" }).focus();
+  await page.getByRole("radio", { name: "Small left turn" }).focus();
   await page.keyboard.press("Space");
   await page.getByRole("button", { name: "Place piece" }).focus();
   await page.keyboard.press("Enter");
@@ -184,8 +184,8 @@ test("piece steppers and palette show the choice, and refused pieces explain why
   await expect(page.getByRole("button", { name: "Turn right" })).toBeDisabled();
   await page.getByRole("button", { name: "Turn left" }).click();
   await expect(direction).toContainText("Left 90°");
-  await expect(page.getByRole("radio", { name: "Standalone small left turn" })).toHaveAttribute("aria-checked", "true");
-  await expect(page.locator("[data-preview-name]")).toHaveText("Standalone small left turn");
+  await expect(page.getByRole("radio", { name: "Small left turn" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("[data-preview-name]")).toHaveText("Small left turn");
   const refused = page.getByRole("radio", { name: "Begin gentle climb" });
   await expect(refused).toHaveClass(/piece-tile--refused/);
   await expect(refused).toHaveAccessibleDescription(/The train would collide with terrain\./);
@@ -238,7 +238,7 @@ test("the whole build loop runs from the keyboard with the panel focused", async
   ]);
   await page.getByRole("radio", { name: "Begin gentle climb" }).focus();
   await page.keyboard.press("ArrowLeft");
-  await expect(page.getByRole("radio", { name: "Standalone small left turn" })).toBeFocused();
+  await expect(page.getByRole("radio", { name: "Small left turn" })).toBeFocused();
   await page.keyboard.press("Enter");
   expect((await recorded(page)).slice(-2)).toEqual([{ type: "construction-select", piece: "TurnSmallStandalone" }, { type: "construction-append" }]);
 });

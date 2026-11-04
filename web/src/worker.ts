@@ -116,6 +116,11 @@ function sendConstruction(): void {
   const choices = simulation.construction_choices();
   const rows = choices ? choices.split("\n").map((row) => row.split("\t")) : [];
   const pieces: ConstructionPiece[] = rows.map(([id, label, group, heading, slope, bank, refusal]) => ({ id, label, group, heading, slope, bank, refusal }));
+  const elementRows = simulation.construction_elements();
+  const elements = elementRows ? elementRows.split("\n").map((row) => {
+    const [id, name, pieceId, slope, kind] = row.split("\t");
+    return { id, name, pieceId, slope, kind };
+  }) : [];
   const selected = simulation.construction_selected();
   const selectedChoice = rows.find((fields) => fields[0] === selected);
   const track = simulation.construction_track();
@@ -132,12 +137,12 @@ function sendConstruction(): void {
   const coasterPrice = simulation.construction_coaster_price();
   const coasterIncome = simulation.construction_coaster_income();
   lastConstructionEconomy = `${coasterPrice}:${coasterIncome}`;
-  workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), pieces,
+  workerScope.postMessage({ type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), pieces, elements,
     selected: selected || null, track: track ? track.split("\n").map((row) => {
-      const [id, label, name, group, slope] = row.split("\t");
-      return { id: Number(id), label, name, group, slope };
+      const [id, label, name, group, slope, kind] = row.split("\t");
+      return { id: Number(id), label, name, group, slope, kind };
     }) : [],
-    canAppend: simulation.construction_finish_preview_active() || (!!selectedChoice && !selectedChoice[6]), canClose: simulation.construction_can_close(),
+    canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice[6]), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
     canFinish: simulation.construction_can_finish(), finishReason: simulation.construction_finish_reason(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as unknown,

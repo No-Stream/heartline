@@ -105,7 +105,7 @@ describe("construction steppers", () => {
     expect(steppedPiece(climbingPieces, shapes, "ClimbingTurnLeft", "turn", 1)).toBe("GentleUp");
   });
 
-  it("adds climbing and descending prefixes to turn names", () => {
+  it("adds climbing and descending to turn names", () => {
     const climbingTurn = { ...piece("TurnSmallStandalone", "turn", "UpGentle"), label: "Small left turn" };
     const descendingTurn = { ...piece("TurnSmallStandalone", "turn", "DownGentle"), label: "Small left turn" };
     const levelTurn = { ...piece("TurnSmallStandalone", "turn"), label: "Small left turn" };
@@ -117,13 +117,46 @@ describe("construction steppers", () => {
     expect(pieceDisplayName(climbingSlope)).toBe("Gentle climb");
   });
 
-  it("puts the climbing or descending word after Begin and End so the name reads as a phrase", () => {
+  it("uses plain names for complete turns and start or end phrases for turn segments", () => {
     const turn = (label: string, slope: string) => ({ ...piece("TurnSmallEntry", "turn", slope), label });
 
-    expect(pieceDisplayName(turn("Begin small left turn", "UpGentle"))).toBe("Begin climbing small left turn");
-    expect(pieceDisplayName(turn("End large right-banked right turn", "DownGentle"))).toBe("End descending large right-banked right turn");
-    expect(pieceDisplayName(turn("Standalone small left turn", "UpGentle"))).toBe("Climbing standalone small left turn");
-    expect(pieceDisplayName(turn("Begin small left turn", "Level"))).toBe("Begin small left turn");
+    expect(pieceDisplayName(turn("Begin small left turn", "UpGentle"))).toBe("Start of a climbing small left turn");
+    expect(pieceDisplayName(turn("End large right-banked right turn", "DownGentle"))).toBe("End of a descending large right-banked turn");
+    expect(pieceDisplayName(turn("Standalone small left turn", "UpGentle"))).toBe("Climbing small left turn");
+    expect(pieceDisplayName(turn("Standalone large right turn", "Level"))).toBe("Large right turn");
+    expect(pieceDisplayName(turn("Begin small left-banked left turn", "Level"))).toBe("Start of a small left-banked turn");
+    expect(pieceDisplayName(turn("End small right-banked right turn", "Level"))).toBe("End of a small right-banked turn");
+  });
+
+  it("names the three-piece steep curves by direction and place in the sequence", () => {
+    const verticalCurvePieces = [
+      piece("VerticalUpEntry", "slope", "UpSteep"),
+      piece("VerticalUpContinue", "slope", "UpSteep"),
+      piece("VerticalUpExit", "slope", "Level"),
+      piece("VerticalDownEntry", "slope", "DownSteep"),
+      piece("VerticalDownContinue", "slope", "DownSteep"),
+      piece("VerticalDownExit", "slope", "Level"),
+    ];
+    const labels = [
+      "Begin upward curve",
+      "Continue upward curve",
+      "End upward curve",
+      "Begin downward curve",
+      "Continue downward curve",
+      "End downward curve",
+    ];
+
+    expect(verticalCurvePieces.map((verticalPiece, index) => pieceDisplayName({
+      ...verticalPiece,
+      label: labels[index],
+    }))).toEqual([
+      "Start of steep upward curve",
+      "Middle of steep upward curve",
+      "End of steep upward curve",
+      "Start of steep downward curve",
+      "Middle of steep downward curve",
+      "End of steep downward curve",
+    ]);
   });
 
   it("prefers placeable pieces when several share the stepped value", () => {

@@ -1,5 +1,30 @@
 use super::*;
 
+fn element_representative(element: &ElementChoice) -> &Piece {
+    element
+        .geometry
+        .iter()
+        .find(|piece| piece.entry.heading != piece.exit.heading)
+        .or_else(|| {
+            element
+                .geometry
+                .iter()
+                .max_by_key(|piece| slope_rank(piece.entry.slope).max(slope_rank(piece.exit.slope)))
+        })
+        .or_else(|| element.geometry.first())
+        .expect("an element choice contains at least one piece")
+}
+
+fn slope_rank(slope: Slope) -> u8 {
+    match slope {
+        Slope::Level => 0,
+        Slope::UpGentle | Slope::DownGentle => 1,
+        Slope::UpModerate | Slope::DownModerate => 2,
+        Slope::UpSteep | Slope::DownSteep => 3,
+        Slope::UpSixty | Slope::DownSixty => 4,
+    }
+}
+
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn construction_start(&mut self, x: i32, y: i32, z: i32, heading: u8) {
@@ -40,8 +65,10 @@ impl WasmSimulation {
         }
         self.close_live_coaster();
         self.construction = Some(construction);
+        self.construction_undo_groups.clear();
         self.clear_block_layout();
         self.selected = None;
+        self.selected_element = None;
         self.select_compatible_piece();
         self.construction_train = None;
         self.recovered_station = None;
@@ -72,6 +99,7 @@ impl WasmSimulation {
 
     pub fn construction_select(&mut self, id: &str) {
         self.construction_finish_invalidate();
+        self.selected_element = None;
         match id {
             "model:hybrid" => {
                 self.construction_model = ConstructionModel::Hybrid;
@@ -93,6 +121,24 @@ impl WasmSimulation {
             }
             _ => {}
         }
+        if let Some(element_id) = id.strip_prefix("element:") {
+            let obstacles = self.facility_obstacles();
+            self.selected = None;
+            self.selected_element = self.park.construction.as_ref().and_then(|construction| {
+                construction
+                    .element_choices(&self.world, &obstacles)
+                    .into_iter()
+                    .find(|element| element.id == element_id)
+                    .map(|element| element.id)
+            });
+            self.construction_message = if self.selected_element.is_some() {
+                String::new()
+            } else {
+                "Unknown element".into()
+            };
+            self.refresh_construction_support_rendering();
+            return;
+        }
         self.selected = catalog()
             .into_iter()
             .find(|piece| format!("{:?}", piece.id) == id)
@@ -110,6 +156,9 @@ impl WasmSimulation {
     }
 
     pub fn construction_selected(&self) -> String {
+        if let Some(element_id) = self.selected_element {
+            return format!("element:{element_id}");
+        }
         self.selected
             .map(|id| format!("{id:?}"))
             .unwrap_or_default()
@@ -143,6 +192,29 @@ impl WasmSimulation {
             .join("\n")
     }
 
+    pub fn construction_elements(&self) -> String {
+        let Some(construction) = &self.construction else {
+            return String::new();
+        };
+        let obstacles = self.facility_obstacles();
+        construction
+            .element_choices(&self.world, &obstacles)
+            .into_iter()
+            .map(|element| {
+                let representative = element_representative(&element);
+                format!(
+                    "element:{}\t{}\t{:?}\t{:?}\t{:?}",
+                    element.id,
+                    element.name,
+                    representative.id,
+                    representative.exit.slope,
+                    representative.kind
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub fn construction_track(&self) -> String {
         let Some(construction) = &self.construction else {
             return String::new();
@@ -159,11 +231,12 @@ impl WasmSimulation {
             )
             .map(|(id, piece)| {
                 format!(
-                    "{id}\t{:?}\t{}\t{}\t{:?}",
+                    "{id}\t{:?}\t{}\t{}\t{:?}\t{:?}",
                     piece.id,
                     piece.name,
                     piece_group(piece),
-                    piece.exit.slope
+                    piece.exit.slope,
+                    piece.kind
                 )
             })
             .collect::<Vec<_>>()
@@ -171,15 +244,22 @@ impl WasmSimulation {
     }
 
     pub fn construction_can_append(&self) -> bool {
-        self.construction
-            .as_ref()
-            .zip(self.selected)
-            .is_some_and(|(construction, selected)| {
-                construction
-                    .choices(&self.world, &self.facility_obstacles())
-                    .iter()
-                    .any(|choice| choice.id == selected && choice.result.is_ok())
-            })
+        let Some(construction) = self.construction.as_ref() else {
+            return false;
+        };
+        let obstacles = self.facility_obstacles();
+        if let Some(element_id) = self.selected_element {
+            return construction
+                .element_choices(&self.world, &obstacles)
+                .iter()
+                .any(|element| element.id == element_id);
+        }
+        self.selected.is_some_and(|selected| {
+            construction
+                .choices(&self.world, &obstacles)
+                .iter()
+                .any(|choice| choice.id == selected && choice.result.is_ok())
+        })
     }
 
     pub fn construction_preview_valid(&self) -> bool {
@@ -187,6 +267,19 @@ impl WasmSimulation {
     }
 
     pub fn construction_preview_reason(&self) -> String {
+        if let Some(element_id) = self.selected_element {
+            let available = self.construction.as_ref().is_some_and(|construction| {
+                construction
+                    .element_choices(&self.world, &self.facility_obstacles())
+                    .iter()
+                    .any(|element| element.id == element_id)
+            });
+            return if available {
+                String::new()
+            } else {
+                "Element is no longer available here.".into()
+            };
+        }
         let Some((construction, selected)) = self.construction.as_ref().zip(self.selected) else {
             return String::new();
         };
@@ -306,20 +399,42 @@ impl WasmSimulation {
         self.construction_finish_invalidate();
         let obstacles = self.facility_obstacles();
         let selected = self.selected;
+        let selected_element = self.selected_element;
         let world = &self.park.world;
-        let result = self
-            .park
-            .construction
-            .as_mut()
-            .zip(selected)
-            .ok_or("Select a piece first".to_string())
-            .and_then(|(construction, selected)| {
+        let element = selected_element.and_then(|element_id| {
+            self.park.construction.as_ref().and_then(|construction| {
                 construction
-                    .append(selected, world, &obstacles)
-                    .map_err(construction_error)
-            });
+                    .element_choices(world, &obstacles)
+                    .into_iter()
+                    .find(|element| element.id == element_id)
+            })
+        });
+        let undo_group_size = element.as_ref().map_or(1, |element| element.pieces.len());
+        let result = if let Some(element) = element {
+            self.park
+                .construction
+                .as_mut()
+                .expect("available element requires construction")
+                .apply_element(&element, world, &obstacles)
+                .map_err(construction_error)
+        } else if selected_element.is_some() {
+            Err("Selected element is no longer available here.".into())
+        } else {
+            self.park
+                .construction
+                .as_mut()
+                .zip(selected)
+                .ok_or("Select a piece first".to_string())
+                .and_then(|(construction, selected)| {
+                    construction
+                        .append(selected, world, &obstacles)
+                        .map_err(construction_error)
+                })
+        };
         let changed = result.is_ok();
         if changed {
+            self.construction_undo_groups.push(undo_group_size);
+            self.selected_element = None;
             self.close_live_coaster();
             self.clear_block_layout();
             self.park.support_render_cache.clear();
@@ -336,19 +451,36 @@ impl WasmSimulation {
     }
 
     pub fn construction_undo(&mut self) {
-        let Some(id) = self
+        if self
             .construction
             .as_ref()
-            .and_then(|construction| construction.piece_ids().last())
-            .copied()
-        else {
+            .is_none_or(|construction| construction.piece_ids().is_empty())
+        {
             self.construction_message = "There is no active track to undo.".into();
             return;
-        };
-        self.construction_delete(id);
+        }
+        let mut undo_groups = std::mem::take(&mut self.construction_undo_groups);
+        let undo_group_size = undo_groups.pop().unwrap_or(1);
+        for _ in 0..undo_group_size {
+            let Some(id) = self
+                .construction
+                .as_ref()
+                .and_then(|construction| construction.piece_ids().last())
+                .copied()
+            else {
+                break;
+            };
+            self.construction_delete_piece(id);
+        }
+        self.construction_undo_groups = undo_groups;
     }
 
     pub fn construction_delete(&mut self, index: usize) {
+        self.construction_undo_groups.clear();
+        self.construction_delete_piece(index);
+    }
+
+    fn construction_delete_piece(&mut self, index: usize) {
         self.construction_finish_invalidate();
         let result = self
             .construction

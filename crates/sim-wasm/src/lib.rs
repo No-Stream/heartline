@@ -30,7 +30,8 @@ use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlaceme
 #[cfg(test)]
 use theme_park_sim::track::clearance::ClearanceBox;
 use theme_park_sim::track::construction::{
-    Completion, CompletionSearch, CompletionSearchProgress, Construction, track_support_obstacles,
+    Completion, CompletionSearch, CompletionSearchProgress, Construction, ElementChoice,
+    track_support_obstacles,
 };
 use theme_park_sim::track::proximity::ProximityKind;
 #[cfg(test)]
@@ -67,6 +68,8 @@ pub struct WasmSimulation {
     terrain_invalidated_paths: Vec<Position>,
     construction_model: ConstructionModel,
     selected: Option<PieceId>,
+    selected_element: Option<&'static str>,
+    construction_undo_groups: Vec<usize>,
     construction_completion: Option<Completion>,
     construction_completion_available: Option<Completion>,
     construction_completion_search: Option<CompletionSearch>,
@@ -142,6 +145,7 @@ impl WasmSimulation {
             .collect()
     }
     fn select_compatible_piece(&mut self) {
+        self.selected_element = None;
         let Some(construction) = &self.park.construction else {
             return;
         };
@@ -214,8 +218,16 @@ impl WasmSimulation {
         if construction.is_closed() {
             return Vec::new();
         }
+        let obstacles = self.facility_obstacles();
+        if let Some(element_id) = self.selected_element {
+            return construction
+                .element_choices(&self.park.world, &obstacles)
+                .into_iter()
+                .find(|element| element.id == element_id)
+                .map_or_else(Vec::new, |element| element.geometry);
+        }
         construction
-            .available_choices(&self.park.world, &self.facility_obstacles())
+            .available_choices(&self.park.world, &obstacles)
             .into_iter()
             .filter_map(|(piece, _)| (Some(piece.id) == self.selected).then_some(piece))
             .collect()
