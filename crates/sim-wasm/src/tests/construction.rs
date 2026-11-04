@@ -58,6 +58,8 @@ fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     let before = simulation.construction_track();
     simulation.construction_finish_search_start();
     while !simulation.construction_finish_search_advance() {}
+    simulation.construction_select("Straight");
+    assert!(simulation.construction_can_finish());
     simulation.construction_finish_preview();
     assert!(
         simulation.construction_finish_preview_active(),
@@ -70,6 +72,19 @@ fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     assert!(!simulation.construction_finish_preview_active());
     assert!(simulation.construction.as_ref().unwrap().is_closed());
     assert_ne!(simulation.construction_track(), before);
+}
+
+#[test]
+fn finish_search_reports_when_the_station_is_missing() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_delete(0);
+    simulation.construction_finish_search_start();
+    assert!(simulation.construction_finish_search_advance());
+    assert_eq!(
+        simulation.construction_finish_reason(),
+        "Place a station before finishing the coaster."
+    );
 }
 
 #[test]

@@ -77,6 +77,7 @@ pub struct WasmSimulation {
     construction_completion_available: Option<Completion>,
     construction_completion_search: Option<CompletionSearch>,
     construction_completion_checked: bool,
+    construction_completion_unavailable_reason: Option<&'static str>,
     construction_preview_supports_cache: Vec<f32>,
     construction_placed_supports_cache: Vec<f32>,
     recovered_station: Option<Piece>,
