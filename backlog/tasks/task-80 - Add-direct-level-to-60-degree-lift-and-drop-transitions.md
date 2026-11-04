@@ -1,10 +1,10 @@
 ---
 id: TASK-80
 title: Add direct level-to-60-degree lift and drop transitions
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-04 00:28'
-updated_date: '2026-11-04 10:30'
+updated_date: '2026-11-04 10:57'
 labels:
   - coaster
 dependencies: []
@@ -22,4 +22,6 @@ Owner playtest 2026-11-03: on Timber Tumbler a 60-degree lift takes two steps (g
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-04: Codex job task-mw1z6m4f-34wppt in worktree theme-park-sim-worktrees/track-batch (with the other two of TASK-80, TASK-81, TASK-83).
+
+2026-11-04: merged 5fad6b4. Lap tests use frictionless physics; forces sampled at 25 m/s (60-degree transitions) and 20 m/s (banked drops).
 <!-- SECTION:NOTES:END -->
