@@ -1117,7 +1117,7 @@ mod tests {
                 &world(20),
                 &piece,
                 &train,
-                std::slice::from_ref(&piece),
+                &[],
                 &[]
             ),
             Err(ClearanceCollision::Terrain)

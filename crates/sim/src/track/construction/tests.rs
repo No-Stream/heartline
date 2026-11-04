@@ -941,14 +941,33 @@ fn choices_reflect_world_obstacle_and_track_changes() {
             water: None,
         },
     );
-    assert!(
+    assert_eq!(
         construction
             .choices(&world, &[])
             .iter()
             .find(|choice| choice.id == PieceId::Straight)
             .unwrap()
-            .result
-            .is_err()
+            .result,
+        Ok(()),
+        "terrain alone should be tunneled through"
+    );
+    let water_world = World::new(
+        128,
+        128,
+        Surface {
+            corners: [0; 4],
+            water: Some(20),
+        },
+    );
+    assert_eq!(
+        construction
+            .choices(&water_world, &[])
+            .iter()
+            .find(|choice| choice.id == PieceId::Straight)
+            .unwrap()
+            .result,
+        Err(ConstructionError::Clearance(ClearanceCollision::Water)),
+        "water in the candidate clearance should still block the choice"
     );
     construction.delete_from(0).unwrap();
     assert_eq!(
