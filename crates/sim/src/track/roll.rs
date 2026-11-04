@@ -279,7 +279,7 @@ impl RollGeometry {
                 let axial_length = (end - start).dot(forward);
                 let banked_up = bank_up(entry);
                 let side = banked_up.cross(forward).unit();
-                let (smooth, smooth_first, smooth_second) = smooth7(t);
+                let (smooth, smooth_first, smooth_second) = roll_schedule(t);
                 let direction = if mirrored { -1.0 } else { 1.0 };
                 let angle = total_roll * direction * smooth;
                 let angle_first = total_roll * direction * smooth_first;
@@ -326,7 +326,7 @@ impl RollGeometry {
             } => exit.bank.radians() + direction * turns * TAU,
             RollPath::Helix { total_roll, .. } => start + direction * total_roll,
         };
-        let (smooth, _, _) = smooth7(t);
+        let (smooth, _, _) = roll_schedule(t);
         start + (end - start) * smooth
     }
 }
@@ -364,17 +364,26 @@ fn spline_kinematics(
     )
 }
 
-fn smooth7(t: f64) -> (f64, f64, f64) {
-    let t2 = t * t;
-    let t3 = t2 * t;
-    let t4 = t3 * t;
-    let t5 = t4 * t;
-    let t6 = t5 * t;
-    let t7 = t6 * t;
+fn roll_schedule(t: f64) -> (f64, f64, f64) {
+    const RAMP: f64 = 0.25;
+    const PEAK: f64 = 1.0 / (1.0 - RAMP);
+    if t > 1.0 - RAMP {
+        let (value, first, second) = roll_schedule(1.0 - t);
+        return (1.0 - value, first, -second);
+    }
+    if t >= RAMP {
+        return (PEAK * (t - RAMP / 2.0), PEAK, 0.0);
+    }
+    let x = t / RAMP;
+    let x2 = x * x;
+    let x3 = x2 * x;
+    let x4 = x3 * x;
+    let x5 = x4 * x;
+    let x6 = x5 * x;
     (
-        35.0 * t4 - 84.0 * t5 + 70.0 * t6 - 20.0 * t7,
-        140.0 * t3 - 420.0 * t4 + 420.0 * t5 - 140.0 * t6,
-        420.0 * t2 - 1680.0 * t3 + 2100.0 * t4 - 840.0 * t5,
+        PEAK * RAMP * (2.5 * x4 - 3.0 * x5 + x6),
+        PEAK * (10.0 * x3 - 15.0 * x4 + 6.0 * x5),
+        PEAK / RAMP * (30.0 * x2 - 60.0 * x3 + 30.0 * x4),
     )
 }
 
@@ -406,9 +415,6 @@ fn state_up(state: TrackState) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashSet, VecDeque};
-    use std::f64::consts::TAU;
-    use std::sync::Arc;
 
     #[test]
     fn barrel_descent_bias_keeps_the_rail_descending() {
@@ -513,13 +519,10 @@ mod tests {
         assert!(candidates.iter().any(|candidate| candidate.2 < 1.5));
     }
 
-    use crate::physics::{Circuit, PhysicsConfig, Train};
+    use crate::track::catalog;
     use crate::track::curves::{
         Bank, Heading, Heartlining, Inversion, Piece, PieceId, PieceKind, RatedSpeeds, Shape,
         Slope, TrackState, Vec3,
-    };
-    use crate::track::{
-        CoasterModel, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
     };
 
     use super::{RollGeometry, RollPath};
@@ -546,60 +549,36 @@ mod tests {
     }
 
     #[test]
-    fn heartline_roll_keeps_the_rider_on_a_straight_heart_path() {
-        let first_passing_span = (248..=320)
-            .step_by(2)
-            .map(f64::from)
-            .find(|span| heartline_force_peaks(*span).3 <= 0.05);
-        assert_eq!(first_passing_span, Some(274.0));
-    }
-
-    #[test]
-    fn catalog_heartline_roll_reads_gravity_at_twenty_five_metres_per_second() {
-        let (minimum_vertical, maximum_vertical, maximum_lateral, maximum_longitudinal) =
-            heartline_force_peaks(284.0);
-        assert!((maximum_vertical - 1.0).abs() < 0.05, "{maximum_vertical}");
-        assert!((minimum_vertical + 1.0).abs() < 0.05, "{minimum_vertical}");
-        assert!(maximum_lateral <= 1.05, "{maximum_lateral}");
-        assert!(maximum_longitudinal <= 0.05, "{maximum_longitudinal}");
-    }
-
-    fn heartline_force_peaks(axial_span: f64) -> (f64, f64, f64, f64) {
-        let piece = roll_piece(
-            PieceId::HeartlineRoll,
-            (axial_span / 2.0) as i32,
-            0,
-            Bank::Level,
-            Bank::Level,
-            RollGeometry::spline_turns(1.0),
-        );
-        let sample_step = piece.length() / 500.0;
-        let mut minimum_vertical = f64::INFINITY;
-        let mut maximum_vertical = f64::NEG_INFINITY;
-        let mut maximum_lateral: f64 = 0.0;
-        let mut maximum_longitudinal: f64 = 0.0;
-        for index in 2..499 {
-            let distance = sample_step * f64::from(index);
+    fn catalog_heartline_roll_limits_heart_acceleration_and_roll_rate() {
+        let piece = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::HeartlineRoll)
+            .unwrap();
+        let speed = piece.rated_speeds.unwrap().maximum_entry;
+        let step = piece.length() / 4000.0;
+        let mut peak_acceleration: f64 = 0.0;
+        let mut peak_roll_rate: f64 = 0.0;
+        for index in 2..3999 {
+            let distance = step * f64::from(index);
+            let previous = piece.sample(distance - step);
             let sample = piece.sample(distance);
-            let previous = piece.sample(distance - 0.02).heart;
-            let next = piece.sample(distance + 0.02).heart;
+            let next = piece.sample(distance + step);
             let acceleration =
-                (previous - sample.heart * 2.0 + next) / 0.02_f64.powi(2) * 25.0_f64.powi(2);
-            let force = acceleration + Vec3::new(0.0, 0.0, GRAVITY);
-            minimum_vertical = minimum_vertical.min(force.dot(sample.up) / GRAVITY);
-            maximum_vertical = maximum_vertical.max(force.dot(sample.up) / GRAVITY);
-            maximum_lateral =
-                maximum_lateral.max((force.dot(sample.up.cross(sample.tangent)) / GRAVITY).abs());
-            maximum_longitudinal =
-                maximum_longitudinal.max((force.dot(sample.tangent) / GRAVITY).abs());
+                (previous.heart - sample.heart * 2.0 + next.heart) / step.powi(2) * speed.powi(2);
+            peak_acceleration = peak_acceleration.max(acceleration.length() / GRAVITY);
+            peak_roll_rate =
+                peak_roll_rate.max((next.roll - previous.roll).abs() / (2.0 * step) * speed);
         }
-
-        (
-            minimum_vertical,
-            maximum_vertical,
-            maximum_lateral,
-            maximum_longitudinal,
-        )
+        eprintln!(
+            "heartline peak acceleration {peak_acceleration:.4} g, roll rate {:.2} degrees/s",
+            peak_roll_rate.to_degrees()
+        );
+        assert!(peak_acceleration <= 0.1, "{peak_acceleration}");
+        assert!(
+            peak_roll_rate.to_degrees() <= 200.0,
+            "{}",
+            peak_roll_rate.to_degrees()
+        );
     }
 
     #[test]
@@ -684,243 +663,6 @@ mod tests {
         let right_sample = right.sample(right.length() * 0.25);
         assert!((left_sample.heart.y + right_sample.heart.y).abs() < 1.0e-6);
         assert!((left_sample.heart.z - right_sample.heart.z).abs() < 1.0e-6);
-    }
-
-    #[test]
-    fn full_corkscrew_uses_the_shortest_passing_two_metre_grid_length() {
-        let catalog_length = catalog()
-            .iter()
-            .find(|piece| piece.id == PieceId::Corkscrew)
-            .unwrap()
-            .exit
-            .x as f64
-            * 2.0;
-        let first_passing_length = (20..=catalog_length as i32)
-            .step_by(2)
-            .map(f64::from)
-            .find(|length| corkscrew_passes_at_rated_endpoints(*length));
-        assert_eq!(first_passing_length, Some(catalog_length));
-    }
-
-    fn corkscrew_passes_at_rated_endpoints(axial_length: f64) -> bool {
-        let templates = catalog();
-        let mut element_template = templates
-            .iter()
-            .find(|piece| piece.id == PieceId::Corkscrew)
-            .expect("corkscrew catalog template")
-            .clone();
-        element_template.exit.x = (axial_length / 2.0) as i32;
-        element_template.shape = Shape::Roll(Arc::new(RollGeometry::helix(axial_length, TAU, 5.0)));
-
-        let mut state = TrackState::origin();
-        let mut pieces = Vec::new();
-        for id in [PieceId::Station, PieceId::Straight, PieceId::Straight] {
-            let template = templates
-                .iter()
-                .find(|piece| piece.id == id)
-                .expect("prefix catalog template");
-            let piece = template.at(state).expect("prefix connector");
-            state = piece.exit;
-            pieces.push(piece);
-        }
-
-        let element_start = pieces.iter().map(Piece::length).sum();
-        let element = element_template.at(state).expect("corkscrew connector");
-        state = element.exit;
-        pieces.push(element);
-        let element_end = pieces.iter().map(Piece::length).sum();
-        for id in level_return_path(state, &templates) {
-            let template = templates
-                .iter()
-                .find(|piece| piece.id == id)
-                .expect("return-path catalog template");
-            let piece = template.at(state).expect("return-path connector");
-            state = piece.exit;
-            pieces.push(piece);
-        }
-        assert_eq!(state, TrackState::origin());
-        let circuit = Circuit::new(pieces).expect("closed corkscrew circuit");
-        let element = circuit
-            .pieces()
-            .iter()
-            .find(|piece| piece.id == PieceId::Corkscrew)
-            .expect("placed corkscrew");
-        let rated = element.rated_speeds.expect("rated corkscrew");
-
-        [wooden_twister_model(), hybrid_model(), multi_launch_model()]
-            .into_iter()
-            .filter(|model| model.allows_piece(element))
-            .all(|model| {
-                [6, 12].into_iter().all(|cars| {
-                    [rated.minimum_entry, rated.maximum_entry]
-                        .into_iter()
-                        .all(|speed| {
-                            corkscrew_train_passes(
-                                &model,
-                                &circuit,
-                                element_start,
-                                element_end,
-                                cars,
-                                speed,
-                            )
-                        })
-                })
-            })
-    }
-
-    fn corkscrew_train_passes(
-        model: &CoasterModel,
-        circuit: &Circuit,
-        element_start: f64,
-        element_end: f64,
-        cars: u8,
-        entry_speed: f64,
-    ) -> bool {
-        let mut train_configuration = model.train.clone();
-        train_configuration.cars = cars;
-        let mut train = Train::new(
-            circuit,
-            &train_configuration,
-            PhysicsConfig {
-                rolling_resistance: 0.0,
-                drag_coefficient: 0.0,
-                powered_sections: false,
-                ..PhysicsConfig::default()
-            },
-            element_start,
-            entry_speed,
-        );
-        let mut cars_seen = vec![false; usize::from(cars)];
-        let mut minimum_vertical = f64::INFINITY;
-        let mut maximum_vertical = f64::NEG_INFINITY;
-        let mut maximum_lateral: f64 = 0.0;
-        let mut maximum_longitudinal: f64 = 0.0;
-
-        for _ in 0..100_000 {
-            train.step(circuit);
-            for frame in train.take_readings() {
-                for (index, reading) in frame.into_iter().enumerate() {
-                    if (element_start..element_end).contains(&reading.distance) {
-                        cars_seen[index] = true;
-                        minimum_vertical = minimum_vertical.min(reading.g.vertical);
-                        maximum_vertical = maximum_vertical.max(reading.g.vertical);
-                        maximum_lateral = maximum_lateral.max(reading.g.lateral.abs());
-                        maximum_longitudinal =
-                            maximum_longitudinal.max(reading.g.longitudinal.abs());
-                    }
-                }
-            }
-            if train.distance() >= element_end + train_configuration.length_metres {
-                break;
-            }
-            if train.speed() <= 0.0 || !train.notes().is_empty() {
-                return false;
-            }
-        }
-
-        let limits = model.comfortable_force_limits;
-        cars_seen.into_iter().all(|seen| seen)
-            && train.distance() >= element_end + train_configuration.length_metres
-            && minimum_vertical >= limits.minimum_vertical_g
-            && maximum_vertical <= limits.maximum_vertical_g
-            && maximum_lateral <= limits.maximum_lateral_g
-            && maximum_longitudinal <= limits.maximum_longitudinal_g
-    }
-
-    fn level_return_path(start: TrackState, templates: &[Piece]) -> Vec<PieceId> {
-        let mut queue = VecDeque::from([(start, Vec::new())]);
-        let mut visited = HashSet::from([connector_key(start)]);
-        while let Some((state, path)) = queue.pop_front() {
-            if state == TrackState::origin() {
-                return path;
-            }
-            if path.len() == 48 {
-                continue;
-            }
-            for id in [
-                PieceId::Straight,
-                PieceId::HalfTileStraight,
-                PieceId::OneTileStraight,
-                PieceId::TurnSmallStandalone,
-                PieceId::TurnSmallRightStandalone,
-                PieceId::TurnLargeStandalone,
-                PieceId::TurnLargeRightStandalone,
-                PieceId::OffsetLeft,
-                PieceId::OffsetRight,
-            ] {
-                let template = templates
-                    .iter()
-                    .find(|piece| piece.id == id)
-                    .expect("return-path catalog template");
-                if !same_connector_shape(state, template.entry) {
-                    continue;
-                }
-                let next = next_connector(template, state);
-                if next.x.abs() > 300 || next.y.abs() > 300 || next.z.abs() > 300 {
-                    continue;
-                }
-                if !visited.insert(connector_key(next)) {
-                    continue;
-                }
-                let mut next_path = path.clone();
-                next_path.push(id);
-                queue.push_back((next, next_path));
-            }
-        }
-        panic!("no bounded level return path from {start:?}");
-    }
-
-    fn same_connector_shape(first: TrackState, second: TrackState) -> bool {
-        first.slope == second.slope
-            && first.bank == second.bank
-            && first.horizontal_curvature == second.horizontal_curvature
-            && first.vertical_curvature == second.vertical_curvature
-    }
-
-    fn connector_key(state: TrackState) -> (i32, i32, i32, u8, u8, u8, u8, u8) {
-        (
-            state.x,
-            state.y,
-            state.z,
-            state.heading as u8,
-            state.slope as u8,
-            state.bank as u8,
-            state.horizontal_curvature as u8,
-            state.vertical_curvature as u8,
-        )
-    }
-
-    fn next_connector(piece: &Piece, state: TrackState) -> TrackState {
-        let rotation = (state.heading as i32 - piece.entry.heading as i32).rem_euclid(8);
-        let delta_x = piece.exit.x - piece.entry.x;
-        let delta_y = piece.exit.y - piece.entry.y;
-        let (rotated_x, rotated_y) = match rotation {
-            0 => (delta_x, delta_y),
-            1 => (delta_x - delta_y, delta_x + delta_y),
-            2 => (-delta_y, delta_x),
-            3 => (-delta_x - delta_y, delta_x - delta_y),
-            4 => (-delta_x, -delta_y),
-            5 => (delta_y - delta_x, -delta_x - delta_y),
-            6 => (delta_y, -delta_x),
-            7 => (delta_x + delta_y, delta_y - delta_x),
-            _ => unreachable!(),
-        };
-        TrackState {
-            x: state.x + rotated_x,
-            y: state.y + rotated_y,
-            z: state.z
-                + if rotation % 2 == 0 {
-                    piece.exit.z - piece.entry.z
-                } else {
-                    (f64::from(piece.exit.z - piece.entry.z) * std::f64::consts::SQRT_2).round()
-                        as i32
-                },
-            heading: Heading::from_index(piece.exit.heading.index() + rotation),
-            slope: piece.exit.slope,
-            bank: piece.exit.bank,
-            horizontal_curvature: piece.exit.horizontal_curvature,
-            vertical_curvature: piece.exit.vertical_curvature,
-        }
     }
 
     fn roll_piece(

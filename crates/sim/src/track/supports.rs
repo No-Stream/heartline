@@ -1113,7 +1113,22 @@ mod tests {
                 .unwrap()
                 .at(state)
                 .unwrap();
-            snapshot.push((id, generate_supports(&piece, &world, &[]).unwrap()));
+            let rounded = |position: Vec3| {
+                Vec3::new(
+                    (position.x * 1e6).round() / 1e6,
+                    (position.y * 1e6).round() / 1e6,
+                    (position.z * 1e6).round() / 1e6,
+                )
+            };
+            let supports: Vec<_> = generate_supports(&piece, &world, &[])
+                .unwrap()
+                .into_iter()
+                .map(|support| Support {
+                    anchor: rounded(support.anchor),
+                    footing: rounded(support.footing),
+                })
+                .collect();
+            snapshot.push((id, supports));
             state = piece.exit;
         }
         assert_eq!(

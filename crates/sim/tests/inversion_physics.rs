@@ -1552,3 +1552,92 @@ fn banked_drops_pass_full_trains_at_both_rated_endpoints() {
         }
     }
 }
+
+#[test]
+fn corkscrews_have_contiguous_rated_windows() {
+    use PieceId::*;
+    for (target, sequence) in [
+        (Corkscrew, vec![Corkscrew]),
+        (
+            HalfCorkscrewLeftUp,
+            vec![HalfCorkscrewLeftUp, HalfCorkscrewLeftDown],
+        ),
+    ] {
+        let (circuit, _, _) = circuit_with_elements(&sequence);
+        let index = circuit
+            .pieces()
+            .iter()
+            .position(|piece| piece.id == target)
+            .unwrap();
+        let piece = &circuit.pieces()[index];
+        let rated = piece.rated_speeds.unwrap();
+        let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+        let end = start + piece.length();
+        let passes = |speed: f64| {
+            [hybrid_model(), multi_launch_model()].iter().all(|model| {
+                [6, 12].into_iter().all(|cars| {
+                    let mut configuration = model.train.clone();
+                    configuration.cars = cars;
+                    let mut train = Train::new(&circuit, &configuration, unpowered(), start, speed);
+                    let mut seen = vec![false; usize::from(cars)];
+                    let mut minimum_vertical = f64::INFINITY;
+                    let mut maximum_vertical = f64::NEG_INFINITY;
+                    let mut maximum_lateral: f64 = 0.0;
+                    let mut maximum_longitudinal: f64 = 0.0;
+                    let mut minimum_speed = f64::INFINITY;
+                    for _ in 0..100_000 {
+                        train.step(&circuit);
+                        for frame in train.take_readings() {
+                            for (car_index, car) in frame.into_iter().enumerate() {
+                                if (start..end).contains(&car.distance) {
+                                    seen[car_index] = true;
+                                    minimum_speed = minimum_speed.min(car.speed);
+                                    minimum_vertical = minimum_vertical.min(car.g.vertical);
+                                    maximum_vertical = maximum_vertical.max(car.g.vertical);
+                                    maximum_lateral = maximum_lateral.max(car.g.lateral.abs());
+                                    maximum_longitudinal =
+                                        maximum_longitudinal.max(car.g.longitudinal.abs());
+                                }
+                            }
+                        }
+                        if train.distance() >= end + configuration.length_metres
+                            || train.speed() <= 0.0
+                        {
+                            break;
+                        }
+                    }
+                    let limits = model.comfortable_force_limits;
+                    seen.iter().all(|seen| *seen)
+                        && train.distance() >= end + configuration.length_metres
+                        && train.notes().is_empty()
+                        && (target != HalfCorkscrewLeftUp || minimum_speed >= 5.0)
+                        && minimum_vertical >= limits.minimum_vertical_g
+                        && maximum_vertical <= limits.maximum_vertical_g
+                        && maximum_lateral <= limits.maximum_lateral_g
+                        && maximum_longitudinal <= limits.maximum_longitudinal_g
+                })
+            })
+        };
+        let passing: Vec<f64> = (4..=60)
+            .map(|i| f64::from(i) * 0.5)
+            .filter(|speed| passes(*speed))
+            .collect();
+        eprintln!("{target:?} measured passing speeds at 0.5 m/s intervals: {passing:?}");
+        assert!(!passing.is_empty(), "{target:?} has no passing speeds");
+        assert!(
+            passing
+                .windows(2)
+                .all(|pair| (pair[1] - pair[0] - 0.5).abs() < 1e-9),
+            "{target:?}: {passing:?}"
+        );
+        assert!(
+            rated.maximum_entry - rated.minimum_entry >= 2.0,
+            "{target:?}: {rated:?}"
+        );
+        let sample_count = (rated.maximum_entry - rated.minimum_entry).ceil() as usize;
+        for index in 0..=sample_count {
+            let speed = (rated.minimum_entry + index as f64).min(rated.maximum_entry);
+            assert!(passes(speed), "{target:?} fails at {speed} m/s");
+        }
+    }
+}

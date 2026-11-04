@@ -51,9 +51,9 @@ fn build_catalog() -> Vec<Piece> {
         ))
     });
     static FULL_CORKSCREW: LazyLock<Arc<RollGeometry>> =
-        LazyLock::new(|| Arc::new(RollGeometry::helix(86.0, std::f64::consts::TAU, 5.0)));
+        LazyLock::new(|| Arc::new(RollGeometry::helix(32.0, std::f64::consts::TAU, 4.0)));
     static HALF_CORKSCREW: LazyLock<Arc<RollGeometry>> =
-        LazyLock::new(|| Arc::new(RollGeometry::helix(64.0, std::f64::consts::PI, 4.8)));
+        LazyLock::new(|| Arc::new(RollGeometry::helix(32.0, std::f64::consts::PI, 4.8)));
     static HEARTLINE: LazyLock<Arc<RollGeometry>> =
         LazyLock::new(|| Arc::new(RollGeometry::spline_turns(1.0)));
     static RAVEN_ROLL: LazyLock<Arc<RollGeometry>> =
@@ -510,7 +510,7 @@ fn build_catalog() -> Vec<Piece> {
         (
             Corkscrew,
             "Left classic corkscrew (not heartlined)",
-            43,
+            16,
             0,
             0,
             East,
@@ -523,7 +523,7 @@ fn build_catalog() -> Vec<Piece> {
         (
             HeartlineRoll,
             "Left heartline roll (heartlined)",
-            142,
+            24,
             0,
             0,
             East,
@@ -562,7 +562,7 @@ fn build_catalog() -> Vec<Piece> {
         (
             HalfCorkscrewLeftUp,
             "Left half corkscrew up (not heartlined)",
-            32,
+            16,
             0,
             6,
             East,
@@ -575,7 +575,7 @@ fn build_catalog() -> Vec<Piece> {
         (
             HalfCorkscrewLeftDown,
             "Left half corkscrew down (not heartlined)",
-            32,
+            16,
             0,
             -6,
             East,
@@ -746,14 +746,14 @@ fn build_catalog() -> Vec<Piece> {
                         }),
                         HeartlineRoll => Some(RatedSpeeds {
                             minimum_entry: 8.0,
-                            maximum_entry: 30.0,
+                            maximum_entry: 20.0,
                         }),
                         HalfCorkscrewLeftUp => Some(RatedSpeeds {
                             minimum_entry: 18.0,
                             maximum_entry: 22.0,
                         }),
                         HalfCorkscrewLeftDown => Some(RatedSpeeds {
-                            minimum_entry: 10.0,
+                            minimum_entry: 2.0,
                             maximum_entry: (22.0_f64.powi(2) - 2.0 * 9.81 * 12.0).sqrt(),
                         }),
                         RavenRollLeftUp | RavenRollLeftDown => Some(RatedSpeeds {
