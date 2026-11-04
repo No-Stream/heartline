@@ -31,13 +31,10 @@ export function isCoasterColorName(value: string): value is CoasterColorName {
   return Object.hasOwn(COASTER_COLORS, value);
 }
 
-/** Reads the worker's tab-separated track, supports and train names; throws on anything outside the palette. */
-export function parseCoasterColors(names: string): CoasterColorScheme {
-  const parts = names.split("\t");
-  if (parts.length !== COASTER_PARTS.length) throw new Error(`Invalid coaster colours "${names}"`);
-  for (const part of parts) if (!isCoasterColorName(part)) throw new Error(`Unknown coaster colour "${part}"`);
-  const [track, supports, trains] = parts as CoasterColorName[];
-  return { track, supports, trains };
+/** Validates palette names received from the worker. */
+export function parseCoasterColors(value: { track: string; supports: string; trains: string }): CoasterColorScheme {
+  for (const part of COASTER_PARTS) if (!isCoasterColorName(value[part])) throw new Error(`Unknown coaster colour "${value[part]}"`);
+  return value as CoasterColorScheme;
 }
 
 /** The same scheme with one part repainted. */

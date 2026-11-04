@@ -1,3 +1,4 @@
+import { BRIDGE_LAYOUTS } from "../bridge-layouts";
 import type { Rotation } from "../camera";
 import type { PersonAppearance } from "../../art/generators/people.ts";
 import type { Atlas, WorldSprite } from "./scene";
@@ -8,8 +9,8 @@ export interface GuestSnapshot {
   readonly appearances: Uint8Array;
 }
 
-const RECORD_SIZE = 7;
-const APPEARANCE_SIZE = 5;
+const RECORD_SIZE = BRIDGE_LAYOUTS.GUEST.length;
+const APPEARANCE_SIZE = BRIDGE_LAYOUTS.GUEST_APPEARANCE.length;
 const TILE_EDGE_UNITS = 32 / Math.SQRT1_2;
 const VIEWS = ["se", "sw", "nw", "ne"] as const;
 const SKIN_GROUPS = ["deep", "medium", "light"] as const;
@@ -101,13 +102,13 @@ function validate(snapshot: GuestSnapshot): void {
 
 export function riderAppearances(snapshot: GuestSnapshot, riders: Uint32Array, atlas: Atlas): Map<string, { id: string; sprite: string }> {
   validate(snapshot);
-  if (riders.length % 3) throw new Error("Invalid rider snapshot");
+  if (riders.length % BRIDGE_LAYOUTS.RIDER.length) throw new Error("Invalid rider snapshot");
   const indices = new Map<number, number>();
   snapshot.guestIds.forEach((id, index) => indices.set(id, index));
   const result = new Map<string, { id: string; sprite: string }>();
   const choices = personSprites(atlas);
-  for (let offset = 0; offset < riders.length; offset += 3) {
-    const [car, seat, id] = riders.subarray(offset, offset + 3);
+  for (let offset = 0; offset < riders.length; offset += BRIDGE_LAYOUTS.RIDER.length) {
+    const [car, seat, id] = riders.subarray(offset, offset + BRIDGE_LAYOUTS.RIDER.length);
     const index = indices.get(id);
     const key = `${car}-${seat}`;
     if (index === undefined || seat >= 4 || result.has(key)) throw new Error("Invalid rider snapshot");

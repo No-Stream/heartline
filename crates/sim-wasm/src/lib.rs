@@ -3,7 +3,9 @@ mod command_errors;
 mod construction;
 mod facilities;
 mod guest_benchmark;
+mod guest_report;
 mod guests;
+pub mod layouts;
 mod reports;
 mod scenery;
 mod world;
@@ -41,8 +43,8 @@ use theme_park_sim::track::supports::{
     generate_steel_columns, generate_wooden_lattice,
 };
 use theme_park_sim::track::{
-    CoasterColors, Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle, TrackSample,
-    TrackState, TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model,
+    CoasterColors, CoasterModel, Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle,
+    TrackSample, TrackState, TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model,
     wooden_twister_model,
 };
 use theme_park_sim::world::{
@@ -113,14 +115,12 @@ impl WasmSimulation {
         self.park.demo_coaster.as_ref()
     }
 
-    fn block_reasons_json(&self) -> String {
-        let reasons = [&self.block_message, &self.block_throughput_reason]
+    fn block_reasons(&self) -> Vec<String> {
+        [&self.block_message, &self.block_throughput_reason]
             .into_iter()
             .filter(|reason| !reason.is_empty())
-            .map(|reason| json_string(reason))
-            .collect::<Vec<_>>()
-            .join(",");
-        format!("[{reasons}]")
+            .cloned()
+            .collect()
     }
 
     fn facility_obstacles(&self) -> Vec<SupportObstacle> {
@@ -197,7 +197,7 @@ impl WasmSimulation {
             for record in geometry.chunks_exact_mut(stride) {
                 record[0] = -record[0] - 1.0;
             }
-        } else if stride != 7
+        } else if stride != layouts::SUPPORT.len()
             && self
                 .construction
                 .as_ref()
@@ -253,26 +253,6 @@ fn piece_group(piece: &Piece) -> &'static str {
     } else {
         "straight"
     }
-}
-
-fn json_string(value: &str) -> String {
-    let mut result = String::from("\"");
-    for character in value.chars() {
-        match character {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            character if character.is_control() => {
-                use std::fmt::Write;
-                write!(result, "\\u{:04x}", character as u32).expect("write to string");
-            }
-            character => result.push(character),
-        }
-    }
-    result.push('"');
-    result
 }
 
 fn parse_path_kind(kind: &str) -> Option<PathKind> {
@@ -448,28 +428,6 @@ fn scenery_kind(name: &str) -> Option<SceneryKind> {
     }
 }
 
-fn scenery_kind_name(kind: SceneryKind) -> &'static str {
-    match kind {
-        SceneryKind::TreeOval => "tree_oval",
-        SceneryKind::BushFlowering => "bush_flowering",
-        SceneryKind::FlowerBed => "flower_bed",
-        SceneryKind::Bench => "bench",
-        SceneryKind::Lamp => "lamp",
-        SceneryKind::Fountain => "fountain",
-        SceneryKind::Planter => "planter",
-        SceneryKind::TreeCone => "tree_cone",
-        SceneryKind::TreeConeOchre => "tree_cone_ochre",
-        SceneryKind::TreeCypress => "tree_cypress",
-        SceneryKind::TreeCypressShort => "tree_cypress_short",
-        SceneryKind::TreeOvalCoral => "tree_oval_coral",
-        SceneryKind::TreeTiers => "tree_tiers",
-        SceneryKind::Fence => "fence",
-        SceneryKind::Signpost => "signpost",
-        SceneryKind::Bin => "bin",
-        SceneryKind::BalloonCart => "balloon_cart",
-    }
-}
-
 #[cfg(test)]
 fn boxes_overlap(a: ClearanceBox, b: ClearanceBox) -> bool {
     a.min.x < b.max.x
@@ -536,6 +494,46 @@ fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
     append_vector(result, sample.position / 4.0);
     append_vector(result, sample.up.cross(sample.tangent));
     append_vector(result, sample.up);
+}
+
+/// The renderer's key for a coaster model's trains; the same keys name the models in `construction_select`.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "snake_case")]
+enum TrainModelKey {
+    Hybrid,
+    VelocityViper,
+    WoodenTwister,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+struct TrainLayoutReport {
+    model: TrainModelKey,
+    cars_per_train: u8,
+    rows_per_car: u8,
+    seats_per_row: u8,
+    length_metres: f64,
+}
+
+fn train_model_key(model: &CoasterModel) -> TrainModelKey {
+    [
+        (TrainModelKey::Hybrid, hybrid_model()),
+        (TrainModelKey::VelocityViper, multi_launch_model()),
+        (TrainModelKey::WoodenTwister, wooden_twister_model()),
+    ]
+    .into_iter()
+    .find_map(|(key, known)| (known.name == model.name).then_some(key))
+    .unwrap_or_else(|| panic!("no train look for coaster model {}", model.name))
+}
+
+fn train_layout(model: TrainModelKey, train: &TrainConfiguration) -> TrainLayoutReport {
+    TrainLayoutReport {
+        model,
+        cars_per_train: train.cars,
+        rows_per_car: train.rows_per_car,
+        seats_per_row: train.seats_per_row,
+        length_metres: train.length_metres,
+    }
 }
 
 fn editable_block_boundaries(layout: &BlockLayout) -> Vec<f64> {

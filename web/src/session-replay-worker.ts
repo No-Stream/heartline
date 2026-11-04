@@ -1,3 +1,4 @@
+import { sendWorkerAction, type WorkerAction } from "./protocol";
 import { prepareReplayCommand, type ReplaySession } from "./session-replay";
 
 export interface ReplayWorkerMessage {
@@ -63,7 +64,7 @@ export async function replaySessionIntoWorker(
       }, replyTimeoutMs);
       waiters.set(replyType, [...(waiters.get(replyType) ?? []), { resolve, reject, timeout }]);
     });
-    worker.postMessage(action);
+    sendWorkerAction(worker, action as WorkerAction);
     return reply;
   };
   const advanceTo = async (currentTick: number, targetTick: number): Promise<number> => {
@@ -88,7 +89,7 @@ export async function replaySessionIntoWorker(
       if (command.type === "construction-finish-preview") await postAndWait({ type: "construction-finish-await" }, "construction-finish-ready");
       if (command.type === "test-advance-block-analysis") await postAndWait(preparedCommand, "test-block-analysis-advanced");
       else if (constructionCommandsAwaitingState.has(command.type)) await postAndWait(preparedCommand, "construction-state");
-      else worker.postMessage(preparedCommand);
+      else sendWorkerAction(worker, preparedCommand as WorkerAction);
     }
     await advanceTo(tick, session.finalTick);
     const finalReply = await postAndWait(finalAction.action, finalAction.replyType);

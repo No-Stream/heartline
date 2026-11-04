@@ -1,3 +1,5 @@
+import type { SceneryReport as Scenery } from "./generated/SceneryReport";
+import type { SceneryReportKind as SceneryKind } from "./generated/SceneryReportKind";
 import { projectWorld, type Camera, type Viewport } from "./camera";
 import type { GeometryQuad, WorldSprite, WorldView } from "./render/scene";
 
@@ -5,8 +7,8 @@ export const SCENERY_SETS = {
   Garden: ["tree_oval", "bush_flowering", "flower_bed", "bench", "lamp", "fountain", "planter"],
   Woodland: ["tree_cone", "tree_cone_ochre", "tree_cypress", "tree_cypress_short", "tree_oval_coral", "tree_tiers", "fence", "signpost", "bin", "balloon_cart"],
 } as const;
-export type SceneryKind = typeof SCENERY_SETS[keyof typeof SCENERY_SETS][number];
-export interface Scenery { readonly id: string; readonly kind: SceneryKind; readonly x: number; readonly y: number; readonly z: number; readonly rotation: number; readonly quarter: number }
+export type { SceneryReport as Scenery } from "./generated/SceneryReport";
+export type { SceneryReportKind as SceneryKind } from "./generated/SceneryReportKind";
 export interface SceneryTile { readonly x: number; readonly y: number; readonly z: number; readonly quarter: number }
 export type SceneryCommand =
   | { readonly type: "scenery-place"; readonly kind: SceneryKind; readonly x: number; readonly y: number; readonly rotation: number; readonly quarter: number }

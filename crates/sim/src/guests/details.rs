@@ -157,91 +157,6 @@ pub struct GuestDetail {
     pub thought_text: String,
 }
 
-impl GuestDetail {
-    /// Encode the panel record as JSON without adding a runtime serialization dependency.
-    pub fn to_json(&self) -> String {
-        let members = self
-            .group_members
-            .iter()
-            .map(|member| {
-                format!(
-                    "{{\"id\":{},\"name\":{},\"relationship\":{}}}",
-                    json_string(&format!("guest-{}", member.id.0)),
-                    json_string(&member.name),
-                    json_string(relationship_name(member.relationship))
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let favourite_ride_types = self
-            .traits
-            .favourite_ride_types
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let memories = self
-            .memories
-            .iter()
-            .map(memory_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        let (thought_kind, thought_data) = thought_json(self.thought);
-        let destination = self.activity.destination.map_or_else(
-            || "null".to_owned(),
-            |position| {
-                format!(
-                    "{{\"x\":{},\"y\":{},\"height\":{}}}",
-                    position.x, position.y, position.height
-                )
-            },
-        );
-        format!(
-            concat!(
-                "{{\"id\":{},\"name\":{},\"age\":{},\"groupKind\":{},",
-                "\"groupMembers\":[{}],\"activity\":{{\"kind\":{},\"destination\":{},\"placeId\":{}}},",
-                "\"needs\":{{\"hunger\":{},\"thirst\":{},\"restroom\":{},\"nausea\":{}}},",
-                "\"energy\":{},\"happiness\":{},\"traits\":{{\"intensity\":{},\"nauseaTolerance\":{},",
-                "\"favouriteRideTypes\":[{}],\"themingCare\":{},\"preferredTheme\":{},\"spending\":{},",
-                "\"heightCm\":{},\"walkingSpeed\":{}}},\"memories\":[{}],",
-                "\"moneySpent\":{},\"lifetimeMoneySpent\":{},\"visitNumber\":{},",
-                "\"thought\":{{\"kind\":{},\"data\":{}}},\"thoughtText\":{}}}"
-            ),
-            json_string(&format!("guest-{}", self.id.0)),
-            json_string(&self.name),
-            json_string(age_name(self.age)),
-            json_string(group_name(self.group_kind)),
-            members,
-            json_string(activity_name(self.activity.kind)),
-            destination,
-            self.activity
-                .place_id
-                .map_or_else(|| "null".to_owned(), |id| id.to_string()),
-            self.needs.hunger,
-            self.needs.thirst,
-            self.needs.restroom,
-            self.needs.nausea,
-            self.energy,
-            self.happiness,
-            self.traits.intensity,
-            self.traits.nausea_tolerance,
-            favourite_ride_types,
-            self.traits.theming_care,
-            self.traits.preferred_theme,
-            json_string(spending_name(self.traits.spending)),
-            self.traits.height_cm,
-            self.traits.walking_speed,
-            memories,
-            self.money_spent,
-            self.lifetime_money_spent,
-            self.visit_number,
-            json_string(thought_kind),
-            thought_data,
-            json_string(&self.thought_text),
-        )
-    }
-}
-
 impl GuestStore {
     pub fn name(&self, id: GuestId) -> String {
         self.index(id);
@@ -447,82 +362,6 @@ fn relationship_between(store: &GuestStore, guest: GuestId, member: GuestId) -> 
     }
 }
 
-fn memory_json(memory: &GuestMemoryDetail) -> String {
-    match *memory {
-        GuestMemoryDetail::Ride {
-            ride_id,
-            enjoyment,
-            nausea,
-            tick,
-        } => format!(
-            "{{\"kind\":\"ride\",\"rideId\":{ride_id},\"enjoyment\":{enjoyment},\"nausea\":{nausea},\"tick\":{tick}}}"
-        ),
-        GuestMemoryDetail::Proximity {
-            ride_id,
-            kind,
-            position,
-            strength,
-            tick,
-        } => format!(
-            "{{\"kind\":\"proximity\",\"rideId\":{ride_id},\"eventKind\":\"{}\",\"position\":{{\"x\":{},\"y\":{},\"z\":{}}},\"strength\":{strength},\"tick\":{tick}}}",
-            proximity_name(kind),
-            position.x,
-            position.y,
-            position.z
-        ),
-        GuestMemoryDetail::Food { place_id, tick } => {
-            format!("{{\"kind\":\"food\",\"placeId\":{place_id},\"tick\":{tick}}}")
-        }
-        GuestMemoryDetail::Wait {
-            place_id,
-            duration_ticks,
-            perceived_duration_ticks,
-            tick,
-        } => format!(
-            "{{\"kind\":\"wait\",\"placeId\":{place_id},\"durationTicks\":{duration_ticks},\"perceivedDurationTicks\":{perceived_duration_ticks},\"tick\":{tick}}}"
-        ),
-        GuestMemoryDetail::Scenery {
-            theme,
-            enjoyment,
-            tick,
-        } => format!(
-            "{{\"kind\":\"scenery\",\"theme\":{theme},\"enjoyment\":{enjoyment},\"tick\":{tick}}}"
-        ),
-    }
-}
-
-fn thought_json(thought: Thought) -> (&'static str, String) {
-    match thought {
-        Thought::Exploring => ("exploring", "null".into()),
-        Thought::Hungry => ("hungry", "null".into()),
-        Thought::Thirsty => ("thirsty", "null".into()),
-        Thought::NeedsRestroom => ("needsRestroom", "null".into()),
-        Thought::Nauseous => ("nauseous", "null".into()),
-        Thought::Tired => ("tired", "null".into()),
-        Thought::Unhappy => ("unhappy", "null".into()),
-        Thought::EnjoyedRide(ride_id) => ("enjoyedRide", ride_id.to_string()),
-        Thought::DislikedRide(ride_id) => ("dislikedRide", ride_id.to_string()),
-        Thought::EnjoyedScenery(theme) => ("enjoyedScenery", theme.to_string()),
-        Thought::Proximity(ride_id, kind) => (
-            "proximity",
-            format!(
-                "{{\"rideId\":{ride_id},\"eventKind\":\"{}\"}}",
-                proximity_name(kind)
-            ),
-        ),
-    }
-}
-
-fn proximity_name(kind: ProximityKind) -> &'static str {
-    match kind {
-        ProximityKind::NearMiss => "nearMiss",
-        ProximityKind::Headchopper => "headchopper",
-        ProximityKind::Dueling => "dueling",
-        ProximityKind::Tunnel => "tunnel",
-        ProximityKind::TerrainHugging => "terrainHugging",
-    }
-}
-
 fn proximity_text(kind: ProximityKind) -> &'static str {
     match kind {
         ProximityKind::NearMiss => "That was a close pass!",
@@ -530,77 +369,6 @@ fn proximity_text(kind: ProximityKind) -> &'static str {
         ProximityKind::Dueling => "The other train came so close!",
         ProximityKind::Tunnel => "The tunnel was exciting!",
         ProximityKind::TerrainHugging => "We came so close to the ground!",
-    }
-}
-
-fn json_string(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len() + 2);
-    encoded.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => encoded.push_str("\\\""),
-            '\\' => encoded.push_str("\\\\"),
-            '\n' => encoded.push_str("\\n"),
-            '\r' => encoded.push_str("\\r"),
-            '\t' => encoded.push_str("\\t"),
-            character if character <= '\u{1f}' => {
-                encoded.push_str(&format!("\\u{:04x}", character as u32));
-            }
-            character => encoded.push(character),
-        }
-    }
-    encoded.push('"');
-    encoded
-}
-
-const fn age_name(age: AgeGroup) -> &'static str {
-    match age {
-        AgeGroup::Child => "child",
-        AgeGroup::Adult => "adult",
-        AgeGroup::Senior => "senior",
-    }
-}
-
-const fn group_name(group: GroupKind) -> &'static str {
-    match group {
-        GroupKind::Single => "single",
-        GroupKind::Couple => "couple",
-        GroupKind::Family => "family",
-        GroupKind::Friends => "friends",
-    }
-}
-
-const fn relationship_name(relationship: RelationshipKind) -> &'static str {
-    match relationship {
-        RelationshipKind::SelfGuest => "self",
-        RelationshipKind::Groupmate => "groupmate",
-        RelationshipKind::Parent => "parent",
-        RelationshipKind::Child => "child",
-        RelationshipKind::Partner => "partner",
-        RelationshipKind::Friend => "friend",
-    }
-}
-
-const fn activity_name(activity: ActivityKind) -> &'static str {
-    match activity {
-        ActivityKind::Wandering => "wandering",
-        ActivityKind::Walking => "walking",
-        ActivityKind::Queuing => "queuing",
-        ActivityKind::Riding => "riding",
-        ActivityKind::Eating => "eating",
-        ActivityKind::Drinking => "drinking",
-        ActivityKind::Restroom => "restroom",
-        ActivityKind::Resting => "resting",
-        ActivityKind::Shopping => "shopping",
-        ActivityKind::Waiting => "waiting",
-    }
-}
-
-const fn spending_name(spending: SpendingLevel) -> &'static str {
-    match spending {
-        SpendingLevel::Budget => "budget",
-        SpendingLevel::Regular => "regular",
-        SpendingLevel::Premium => "premium",
     }
 }
 
@@ -616,7 +384,7 @@ mod tests {
     use crate::guests::{GuestId, generate_guests};
     use crate::world::{Path, Position, Surface, World};
 
-    use super::{GuestMemoryDetail, ParkGuests, Vec3};
+    use super::{GuestMemoryDetail, ParkGuests};
 
     fn park(seed: u64, guest_count: usize) -> (ParkGuests, World) {
         let entrance = Position {
@@ -704,27 +472,9 @@ mod tests {
     }
 
     #[test]
-    fn proximity_memories_and_thoughts_serialize_with_event_type() {
+    fn proximity_thought_has_friendly_text() {
         use crate::track::proximity::ProximityKind;
 
-        let memory = GuestMemoryDetail::Proximity {
-            ride_id: 42,
-            kind: ProximityKind::NearMiss,
-            position: Vec3::new(1.0, 2.0, 3.0),
-            strength: 0.5,
-            tick: 10,
-        };
-        assert_eq!(
-            super::memory_json(&memory),
-            r#"{"kind":"proximity","rideId":42,"eventKind":"nearMiss","position":{"x":1,"y":2,"z":3},"strength":0.5,"tick":10}"#
-        );
-        assert_eq!(
-            super::thought_json(Thought::Proximity(42, ProximityKind::NearMiss)),
-            (
-                "proximity",
-                r#"{"rideId":42,"eventKind":"nearMiss"}"#.to_owned()
-            )
-        );
         assert!(
             !super::thought_text(GuestId(0), Thought::Proximity(42, ProximityKind::NearMiss))
                 .is_empty()

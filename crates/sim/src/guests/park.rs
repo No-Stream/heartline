@@ -492,7 +492,6 @@ mod tests {
         assert!(detail.happiness > without.guest_detail(guest).unwrap().happiness);
         assert_eq!(detail.thought, Thought::EnjoyedScenery(theme));
         assert!(detail.memories.iter().any(|memory| matches!(memory, GuestMemoryDetail::Scenery { theme: remembered, .. } if *remembered == theme)));
-        assert!(detail.to_json().contains("\"kind\":\"scenery\""));
     }
 
     #[test]

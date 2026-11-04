@@ -11,7 +11,7 @@ try {
   for (const [index, piece] of pieces.entries()) {
     simulation.construction_select(piece);
     simulation.construction_append();
-    const track = simulation.construction_track().split('\n');
+    const track = JSON.parse(simulation.construction_track());
     if (track.length !== index + 2) throw new Error(`Piece ${index + 1} failed: ${simulation.construction_message()}`);
   }
   simulation.construction_close();
@@ -27,9 +27,9 @@ try {
   const repeatStart = performance.now();
   const repeated = simulation.construction_choices();
   const repeatMs = performance.now() - repeatStart;
-  if (simulation.construction_track().split('\n').length !== 149) throw new Error('Deletion failed');
+  if (JSON.parse(simulation.construction_track()).length !== 149) throw new Error('Deletion failed');
   if (choices !== repeated || !choices) throw new Error('Choice refresh returned inconsistent results');
-  self.postMessage({ firstMs, deleteMs, choiceMs, repeatMs, rows: choices.split('\n').length });
+  self.postMessage({ firstMs, deleteMs, choiceMs, repeatMs, rows: JSON.parse(choices).length });
   simulation.free();
 } catch (error) {
   self.postMessage({ error: String(error) });

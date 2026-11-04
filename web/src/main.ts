@@ -1,3 +1,4 @@
+import { sendWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterSnapshot } from "./protocol";
 import "./print-modern.css";
 import "./app.css";
 import { buildFacilityGeometry, facilitySprites, type Facility, type FacilityKind } from "./facilities";
@@ -11,11 +12,12 @@ import { createWorldRenderer, loadAtlas, type AtmospherePass, type WorldView, ty
 import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, lightingAt, NOON, printOnBackdrop, START_PHASE, sunAt } from "./render/daylight";
 import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
-import { buildPeople, riderAppearances, type GuestSnapshot } from "./render/people";
-import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle } from "./render/track/geometry";
+import { buildPeople, riderAppearances } from "./render/people";
+import { buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle } from "./render/track/geometry";
+import { buildRiderQuads, buildTrainQuads } from "./render/track/trains";
+import type { TrainLayout } from "./train-layout";
 import type { CoasterColorScheme } from "./coaster-colors";
 import { createStaticTrackCache } from "./render/track/cache";
-import type { WorldSnapshot } from "./world-snapshot";
 import { RenderClock } from "./render-clock";
 import { createConstructionPanel } from "./construction";
 import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
@@ -72,10 +74,8 @@ function moveCamera(action: CameraAction): void {
     : action.type === "zoom" ? { ...action, anchor: { x: action.anchor.x / pixelRatio, y: action.anchor.y / pixelRatio } } : action;
   camera = applyCameraAction(camera, cssViewport(), cssAction);
 }
-/** `coasterColors` is the demo coaster's paint, or null in a park without one. */
-type CoasterWorld = WorldView & { pathMetadata: Int32Array; coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array; coasterColors: CoasterColorScheme | null };
-type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array; coasterColors?: CoasterColorScheme | null };
-type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array; constructionRiders: Uint32Array };
+/** Demo coaster geometry, paint, and train, when present. */
+type CoasterWorld = WorldView & { pathMetadata: Int32Array; coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array; coasterColors: CoasterColorScheme | null; coasterTrain: TrainLayout | null };
 let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
@@ -156,12 +156,12 @@ let selectedGuestId: string | undefined;
 const guestPanel = createGuestPanel(gameCanvas, {
   onSelectGuestId(id) {
     selectedGuestId = id;
-    worker.postMessage({ type: "guest-detail-request", guestId: id });
+    sendWorkerAction(worker, { type: "guest-detail-request", guestId: id });
     gameTest.ready = false;
   },
   onClose() {
     selectedGuestId = undefined;
-    worker.postMessage({ type: "guest-detail-close" });
+    sendWorkerAction(worker, { type: "guest-detail-close" });
     gameTest.ready = false;
   },
 });
@@ -182,12 +182,12 @@ const facilityPanel = createFacilityPanel(facilityContainer, { atlas, images }, 
   facilityRemoval = false;
 }, () => { openTool("facilities"); facilityRemoval = true; facilityPlacement = undefined; },
 () => { facilityPlacement = undefined; facilityRemoval = false; },
-(id, price) => worker.postMessage({ type: "facility-price", id, price }));
+(id, price) => sendWorkerAction(worker, { type: "facility-price", id, price }));
 const pathContainer = document.querySelector<HTMLElement>("[data-paths]");
 if (!pathContainer) throw new Error("Path panel is missing");
 const pathsElement = pathContainer;
 let pathHover: { x: number; y: number } | null = null;
-const pathTool = createPathTool((command) => worker.postMessage(command), () => {
+const pathTool = createPathTool((command) => sendWorkerAction(worker, command), () => {
   const state = pathTool.state();
   const refusal = state.preview && pathHover ? pathPreviewRefusalAt(decodePathPreview(state.preview.paths), pathHover.x, pathHover.y) : null;
   pathPanel.message(refusal ?? state.message);
@@ -214,13 +214,13 @@ const landscapingTool = createLandscapingTool((command) => {
     landscapingPanel.message("Brush extends outside the park.");
     return;
   }
-  worker.postMessage(command);
+  sendWorkerAction(worker, command);
 }, () => { gameTest.ready = false; });
 
 let scenery: Scenery[] = [];
 const sceneryContainer = document.querySelector<HTMLElement>("[data-scenery]");
 if (!sceneryContainer) throw new Error("Scenery panel is missing");
-const sceneryTool = createSceneryTool((command) => worker.postMessage(command), () => {
+const sceneryTool = createSceneryTool((command) => sendWorkerAction(worker, command), () => {
   sceneryPanel.message(sceneryTool.state().message);
   gameTest.ready = false;
 });
@@ -252,7 +252,7 @@ const dayClockContainer = document.querySelector<HTMLElement>("[data-day-clock]"
 if (!dayClockContainer) throw new Error("Day clock is missing");
 const dayClock = createDayClock(dayClockContainer, setTimeOfDay, (speed) => { daySpeed = speed; }, (speed) => {
   renderClock.setSpeed(speed);
-  worker.postMessage({ type: "set-speed", speed });
+  sendWorkerAction(worker, { type: "set-speed", speed });
 }, () => dispatch({ type: "session-export" }));
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
@@ -341,22 +341,22 @@ const gameTest: GameTest = {
     }
     return spans;
   },
-  requestGuestDetail(id) { worker.postMessage({ type: "guest-detail-request", guestId: id }); },
+  requestGuestDetail(id) { sendWorkerAction(worker, { type: "guest-detail-request", guestId: id }); },
   guestDetail() { return latestGuestDetail; },
   testingReport() { return construction?.testingReport ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
   replaySession: replayLiveSession,
   advanceTicks(count) {
     if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
-    return new Promise<void>((resolve) => { advanceTicksComplete = resolve; worker.postMessage({ type: "test-advance", count }); });
+    return new Promise<void>((resolve) => { advanceTicksComplete = resolve; sendWorkerAction(worker, { type: "test-advance", count }); });
   },
   advanceBlockAnalysis(budget) {
     if (!manualBlockAnalysis || advanceBlockAnalysisComplete) throw new Error("Invalid test block analysis advance");
     validateBlockAnalysisBudget(budget);
-    return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; worker.postMessage({ type: "test-advance-block-analysis", budget }); });
+    return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; sendWorkerAction(worker, { type: "test-advance-block-analysis", budget }); });
   },
   setCamera(value) { camera = value; followPoints = undefined; gameTest.ready = false; },
-  setSurface(x, y, corners) { worker.postMessage({ type: "set-surface", x, y, corners: new Int16Array(corners) }); },
+  setSurface(x, y, corners) { sendWorkerAction(worker, { type: "set-surface", x, y, corners: new Int16Array(corners) }); },
   project(point) { return projectWorld(screenCamera(), viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
   pickRegion(x, y, width, height) { return renderer.pickRegion(x, y, width, height); },
@@ -393,7 +393,7 @@ function dispatch(action: InputAction): void {
   if (action.type === "session-export") {
     const requestId = ++sessionExportRequest;
     pendingSessionExports.set(requestId, inputLog.slice());
-    worker.postMessage({ type: "export-session", requestId });
+    sendWorkerAction(worker, { type: "export-session", requestId });
   } else if (action.type === "game-speed-cycle") {
     dayClock.cycleGameSpeed();
   } else if (action.type === "tool-select") {
@@ -475,24 +475,24 @@ function dispatch(action: InputAction): void {
     const surface = action.position ? renderer.pickSurface(action.position.x, action.position.y) : null;
     const requestId = ++facilityPreviewRequestId;
     if (surface && (surface.kind === "terrain" || surface.kind === "carved-floor")) {
-      worker.postMessage({ type: "facility-access-preview", requestId, kind: facilityPlacement.kind, x: surface.x, y: surface.y, height: Math.round(surface.height), rotation: facilityPlacement.rotation });
+      sendWorkerAction(worker, { type: "facility-access-preview", requestId, kind: facilityPlacement.kind, x: surface.x, y: surface.y, height: Math.round(surface.height), rotation: facilityPlacement.rotation });
     } else facilityPanel.previewDirection(undefined);
   } else if (action.type === "select" && facilityRemoval) {
     const selection = renderer.pick(action.position.x, action.position.y);
     const match = selection && "id" in selection ? /^facility-(\d+)$/.exec(selection.id) : null;
-    if (match) worker.postMessage({ type: "facility-remove", id: Number(match[1]) });
+    if (match) sendWorkerAction(worker, { type: "facility-remove", id: Number(match[1]) });
     else facilityPanel.message("Choose a facility to remove.");
   } else if (action.type === "select" && facilityPlacement) {
     const selection = renderer.pick(action.position.x, action.position.y);
     if (selection?.kind === "terrain" || selection?.kind === "carved-floor") {
       const height = Math.round(selection.height);
-      worker.postMessage({ type: "facility-place", ...facilityPlacement, x: selection.x, y: selection.y, height });
+      sendWorkerAction(worker, { type: "facility-place", ...facilityPlacement, x: selection.x, y: selection.y, height });
     }
     else facilityPanel.message("Choose a flat terrain tile.");
   } else if (action.type === "select" && stationPlacement) {
     updateStationPreview(action.position);
     if (station?.locked) {
-      worker.postMessage({ type: "construction-start", x: station.x, y: station.y, z: station.z, heading: station.heading });
+      sendWorkerAction(worker, { type: "construction-start", x: station.x, y: station.y, z: station.z, heading: station.heading });
       stationPlacement = false;
       station = undefined;
       gameCanvas.dataset.stationPreview = "";
@@ -504,7 +504,7 @@ function dispatch(action: InputAction): void {
       const distance = nearestBlockBoundaryMetres(construction.placedRails, construction.railDistances, action.position, screenCamera(), viewport);
       if (distance !== undefined) {
         const closest = Array.from(construction.blockCandidates).reduce<number | undefined>((best, candidate) => best === undefined || Math.abs(candidate - distance) < Math.abs(best - distance) ? candidate : best, undefined);
-        worker.postMessage({ type: "construction-move-block", index: selectedBlock, boundaryMetres: closest !== undefined && Math.abs(closest - distance) < 1 ? closest : distance });
+        sendWorkerAction(worker, { type: "construction-move-block", index: selectedBlock, boundaryMetres: closest !== undefined && Math.abs(closest - distance) < 1 ? closest : distance });
       }
     }
   } else if (action.type === "block-marker-nudge") {
@@ -512,10 +512,10 @@ function dispatch(action: InputAction): void {
     if (section && selectedBlock !== null && construction) {
       const candidates = Array.from(construction.blockCandidates).filter((candidate) => action.step * (candidate - section.boundaryMetres) > 1e-7);
       const target = action.step > 0 ? candidates[0] : candidates.at(-1);
-      if (target !== undefined) worker.postMessage({ type: "construction-move-block", index: selectedBlock, boundaryMetres: target });
+      if (target !== undefined) sendWorkerAction(worker, { type: "construction-move-block", index: selectedBlock, boundaryMetres: target });
     }
   } else if (action.type === "block-marker-remove") {
-    if (selectedBlock !== null) worker.postMessage({ type: "construction-remove-block", index: selectedBlock });
+    if (selectedBlock !== null) sendWorkerAction(worker, { type: "construction-remove-block", index: selectedBlock });
   } else if (action.type === "select") {
     const selection = renderer.pick(action.position.x, action.position.y);
     gameCanvas.dataset.selection = JSON.stringify(selection);
@@ -533,11 +533,11 @@ function dispatch(action: InputAction): void {
       if (match) dispatch({ type: "construction-delete", id: Number(match[1]) });
     } else if (selection && "id" in selection && /^guest-\d+$/.test(selection.id)) {
       selectedGuestId = selection.id;
-      worker.postMessage({ type: "guest-detail-request", guestId: selection.id });
+      sendWorkerAction(worker, { type: "guest-detail-request", guestId: selection.id });
       gameTest.ready = false;
     }
   } else if (action.type === "chain-toggle") {
-    if (construction?.active) worker.postMessage({ type: "construction-set-chain", enabled: !construction.chain });
+    if (construction?.active) sendWorkerAction(worker, { type: "construction-set-chain", enabled: !construction.chain });
   } else if (action.type === "construction-delete-mode" || action.type === "delete-mode-toggle") {
     deleteMode = action.type === "delete-mode-toggle" ? !deleteMode : action.enabled;
     panel.setDeleteMode(deleteMode);
@@ -550,13 +550,16 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "piece-step" || action.type === "piece-group") {
     panel.choose(action);
   } else if (action.type === "construction-set-model") {
-    worker.postMessage({ type: "construction-select", piece: `model:${action.model}` });
-  } else if (action.type.startsWith("construction-")) {
-    worker.postMessage(action);
+    sendWorkerAction(worker, { type: "construction-select", piece: `model:${action.model}` });
+  } else if (isConstructionAction(action)) {
+    sendWorkerAction(worker, action);
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
     moveCamera(action);
     if (action.type !== "rotate") followPoints = undefined;
   }
+}
+function isConstructionAction(action: InputAction): action is Extract<InputAction, WorkerAction> {
+  return action.type.startsWith("construction-");
 }
 bindInput(gameCanvas, dispatch, () => pathTool.state().mode === "build" || landscapingTool.state().active, (position) => blockAt(position) !== null, () => activeTool === "coaster" && selectedBlock !== null);
 
@@ -572,11 +575,11 @@ const park = params.get("park") ?? "demo";
 if (park !== "new" && park !== "demo") throw new RangeError("Invalid park");
 const guestCount = testAgents === null ? 12 : Number(testAgents);
 if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 500) throw new RangeError("Invalid test guest count");
-worker.postMessage({ type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
-worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"; requestId: number; recording: WorkerRecording } | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number; tickCount: number } & CoasterSnapshot) | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "facility-access-preview"; requestId: number; rotation: number | undefined } | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean } | { type: "guest-detail"; guestId: string; detail: GuestDetail | null } | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string }>) => {
+sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
+worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   const message = event.data;
-  if (message.type === "ready") workerReady = true;
-  if (message.type === "session-export") {
+  if (message.type === "ready") { workerReady = true;
+  } else if (message.type === "session-export") {
     const inputs = pendingSessionExports.get(message.requestId);
     if (!inputs) throw new Error("Unknown session export request");
     pendingSessionExports.delete(message.requestId);
@@ -603,8 +606,9 @@ worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"
     const coasterRails = message.coasterRails ?? world?.coasterRails;
     const coasterTies = message.coasterTies ?? world?.coasterTies;
     const coasterColors = message.coasterColors !== undefined ? message.coasterColors : world?.coasterColors;
-    if (!coasterGeometry || !coasterRails || !coasterTies || coasterColors === undefined) throw new Error("Initial coaster geometry is missing");
-    world = { ...message, coasterGeometry, coasterRails, coasterTies, coasterColors };
+    const coasterTrain = message.coasterTrain !== undefined ? message.coasterTrain : world?.coasterTrain;
+    if (!coasterGeometry || !coasterRails || !coasterTies || coasterColors === undefined || coasterTrain === undefined) throw new Error("Initial coaster geometry is missing");
+    world = { ...message, coasterGeometry, coasterRails, coasterTies, coasterColors, coasterTrain };
     testingPanel.setWorld(world);
     landscapingTool.setDimensions(world.dimensions[0], world.dimensions[1]);
     gameTest.ready = false;
@@ -655,6 +659,10 @@ worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"
     else if (advanceTicksComplete) observeCrests(message);
     output.value = String(message.tickCount);
     gameCanvas.dataset.agentCount = String(current?.guestIds.length ?? 0);
+  } else if (message.type === "surface-edited" || message.type === "test-resumed" || message.type === "construction-finish-ready") {
+    // These replies are consumed by test and replay listeners.
+  } else {
+    assertNever(message);
   }
 });
 
@@ -763,15 +771,15 @@ function frame(now: number): void {
     (renderCamera, renderViewport, renderAtlas, scale) => [
       ...(currentWorld.coasterColors ? staticTrack(currentWorld.coasterRails, currentWorld.coasterTies, currentWorld.coasterSupports, currentWorld.coasterColors, renderCamera, renderViewport) : []),
       ...(construction?.colors ? (activeTool === "coaster" && construction.blockReport.sections.length
-        ? buildTrackQuads(construction.placedRails, construction.placedTies, construction.placedSupports, noGeometry, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors), construction.blockReport.sections.map((section) => section.boundaryMetres), construction.railDistances)
+        ? buildTrackQuads(construction.placedRails, construction.placedTies, construction.placedSupports, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors), construction.blockReport.sections.map((section) => section.boundaryMetres), construction.railDistances)
         : builtTrack(construction.placedRails, construction.placedTies, construction.placedSupports, construction.colors, renderCamera, renderViewport)).map((quad) => ({ ...quad, id: `construction-${quad.id}` })) : []),
       ...(construction && activeTool === "coaster" ? buildBlockBoundaryQuads(construction.placedRails, construction.railDistances, construction.blockReport.sections, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
       ...buildGhostQuads(stationGhost(), noGeometry, noGeometry, true, renderCamera, renderViewport, trackStyle(renderAtlas)).map((quad) => ({ ...quad, color: [0.25, 0.55, 0.85, 0.55] as const })),
       ...(construction ? buildGhostQuads(construction.previewRails, construction.previewTies, construction.previewSupports, construction.canAppend, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
-      ...(currentWorld.coasterColors ? buildTrackQuads(noGeometry, noGeometry, noGeometry, trainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), currentWorld.coasterColors)) : []),
-      ...(construction?.colors ? buildTrackQuads(noGeometry, noGeometry, noGeometry, constructionTrainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors)) : []),
-      ...buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale),
-      ...buildRiderQuads(constructionTrainPoses, renderCamera, renderViewport, renderAtlas, scale, occupants).map((quad) => {
+      ...(currentWorld.coasterColors && currentWorld.coasterTrain ? buildTrainQuads(trainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), currentWorld.coasterColors), currentWorld.coasterTrain) : []),
+      ...(construction?.colors && construction.trainLayout ? buildTrainQuads(constructionTrainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors), construction.trainLayout) : []),
+      ...(currentWorld.coasterTrain ? buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale, currentWorld.coasterTrain) : []),
+      ...(construction?.trainLayout ? buildRiderQuads(constructionTrainPoses, renderCamera, renderViewport, renderAtlas, scale, construction.trainLayout, occupants) : []).map((quad) => {
         renderedRiders.push({ id: quad.id, left: Math.min(...quad.vertices.map((vertex) => vertex.x)), right: Math.max(...quad.vertices.map((vertex) => vertex.x)), top: Math.min(...quad.vertices.map((vertex) => vertex.y)), bottom: Math.max(...quad.vertices.map((vertex) => vertex.y)) });
         if (quad.id === selectedGuestId) {
           guestPanel.setAnchor({ x: quad.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4, y: quad.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 4 });

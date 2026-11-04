@@ -24,15 +24,15 @@ describe("coaster colour palette", () => {
 
 describe("coaster colour schemes", () => {
   it("parse the worker's names and refuse anything outside the palette", () => {
-    expect(parseCoasterColors("teal\tcream\tcoral")).toEqual({ track: "teal", supports: "cream", trains: "coral" });
-    expect(() => parseCoasterColors("teal\tcream")).toThrow();
-    expect(() => parseCoasterColors("teal\t#ffffff\tcoral")).toThrow();
-    expect(() => parseCoasterColors("teal\tconstructor\tcoral")).toThrow();
+    expect(parseCoasterColors({ track: "teal", supports: "cream", trains: "coral" })).toEqual({ track: "teal", supports: "cream", trains: "coral" });
+
+    expect(() => parseCoasterColors({ track: "teal", supports: "#ffffff", trains: "coral" })).toThrow();
+    expect(() => parseCoasterColors({ track: "teal", supports: "constructor", trains: "coral" })).toThrow();
     expect(isCoasterColorName("toString")).toBe(false);
   });
 
   it("repaint one part and leave the others", () => {
-    const scheme = parseCoasterColors("coral\ttimber\tsage");
+    const scheme = parseCoasterColors({ track: "coral", supports: "timber", trains: "sage" });
     expect(repaint(scheme, "supports", "charcoal")).toEqual({ track: "coral", supports: "charcoal", trains: "sage" });
     expect(scheme.supports).toBe("timber");
     expect(() => repaint(scheme, "track", "gold")).toThrow();
