@@ -314,3 +314,90 @@ fn chain_lifts_reach_each_models_maximum_lift_slope() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn models_offer_short_straights_full_tile_offsets_and_height_steps() {
+    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
+        let state = TrackState::origin();
+        let pieces = model.available_pieces(state);
+        for (name, x, y, z) in [
+            ("Half-tile straight", 1, 0, 0),
+            ("Left full-tile offset", 12, 2, 0),
+            ("Right full-tile offset", 12, -2, 0),
+            ("Short rise", 6, 0, 1),
+            ("Short descent", 6, 0, -1),
+        ] {
+            let piece = pieces
+                .iter()
+                .find(|piece| piece.name == name)
+                .unwrap_or_else(|| panic!("{} does not offer {name}", model.name));
+            assert_eq!((piece.exit.x, piece.exit.y, piece.exit.z), (x, y, z));
+            assert_eq!(
+                ConnectorState::from(piece.exit),
+                ConnectorState::from(state)
+            );
+            assert_eq!(piece.exit.heading, state.heading);
+        }
+    }
+}
+
+#[test]
+fn near_station_gaps_can_be_closed_in_a_few_pieces() {
+    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
+        for (gap, names) in [
+            ((3, 0, 0), vec!["Half-tile straight", "One-tile straight"]),
+            (
+                (13, 2, 0),
+                vec!["Left full-tile offset", "Half-tile straight"],
+            ),
+            (
+                (13, -2, 0),
+                vec!["Right full-tile offset", "Half-tile straight"],
+            ),
+            ((9, 0, 1), vec!["Shallow rise", "Half-tile straight"]),
+            ((9, 0, -1), vec!["Shallow descent", "Half-tile straight"]),
+        ] {
+            let mut end = TrackState::origin();
+            for name in names {
+                end = model
+                    .available_pieces(end)
+                    .into_iter()
+                    .find(|piece| piece.name == name)
+                    .unwrap_or_else(|| panic!("{} cannot use {name} at {end:?}", model.name))
+                    .exit;
+            }
+            let station = TrackState {
+                x: gap.0,
+                y: gap.1,
+                z: gap.2,
+                ..TrackState::origin()
+            };
+            assert_eq!(end, station, "{} cannot close gap {gap:?}", model.name);
+        }
+    }
+}
+
+#[test]
+fn models_offer_short_gentle_straights() {
+    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
+        for (slope, height, name) in [
+            (Slope::UpGentle, 1, "One-tile gentle climb"),
+            (Slope::DownGentle, -1, "One-tile gentle descent"),
+        ] {
+            let state = TrackState {
+                slope,
+                ..TrackState::origin()
+            };
+            let piece = model
+                .available_pieces(state)
+                .into_iter()
+                .find(|piece| piece.name == name)
+                .unwrap_or_else(|| panic!("{} does not offer {name}", model.name));
+            assert_eq!((piece.exit.x, piece.exit.y, piece.exit.z), (2, 0, height));
+            assert_eq!(
+                ConnectorState::from(piece.exit),
+                ConnectorState::from(state)
+            );
+        }
+    }
+}

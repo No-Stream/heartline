@@ -1,5 +1,5 @@
 //! Conservative sampled clearance envelopes in metres.
-use crate::track::{Piece, TrainConfiguration, Vec3};
+use crate::track::{Piece, TrackState, TrainConfiguration, Vec3};
 use crate::world::{Ground, World};
 use std::collections::{HashMap, HashSet};
 
@@ -117,6 +117,47 @@ pub(crate) fn connector_allowance(train: &TrainConfiguration) -> f64 {
     let height = train.height_metres + SAMPLE_SPACING;
     (half_length * half_length + half_width * half_width + height * height).sqrt()
         + (TRACK_RADIUS + SAMPLE_SPACING / 2.0) * 3.0_f64.sqrt()
+}
+
+fn connected_distance(
+    start: TrackState,
+    end: TrackState,
+    pieces: &[Piece],
+    excluded_piece: Option<usize>,
+    second_excluded_piece: Option<usize>,
+    limit: f64,
+) -> Option<f64> {
+    let mut reachable = vec![(start, 0.0)];
+    let mut index = 0;
+    while index < reachable.len() {
+        let (state, distance) = reachable[index];
+        index += 1;
+        for (piece_index, piece) in pieces.iter().enumerate() {
+            if Some(piece_index) == excluded_piece
+                || Some(piece_index) == second_excluded_piece
+                || piece.entry != state
+            {
+                continue;
+            }
+            let next_distance = distance + piece.length();
+            if next_distance > limit {
+                continue;
+            }
+            if let Some((_, best)) = reachable.iter_mut().find(|(next, _)| *next == piece.exit) {
+                if next_distance < *best {
+                    *best = next_distance;
+                    reachable.push((piece.exit, next_distance));
+                }
+            } else {
+                reachable.push((piece.exit, next_distance));
+            }
+        }
+    }
+    reachable
+        .iter()
+        .filter(|(state, _)| *state == end)
+        .map(|(_, distance)| *distance)
+        .min_by(f64::total_cmp)
 }
 
 fn train_sample_spacing(train: &TrainConfiguration) -> f64 {
@@ -263,13 +304,31 @@ pub fn check_reverse_track_clearance(
     let connector_allowance = connector_allowance(train);
     for piece_index in nearby {
         let piece = &index.pieces[piece_index];
+        let entry_gap = connected_distance(
+            candidate.exit,
+            piece.entry,
+            &index.pieces,
+            Some(piece_index),
+            None,
+            connector_allowance,
+        );
+        let exit_gap = connected_distance(
+            piece.exit,
+            candidate.entry,
+            &index.pieces,
+            Some(piece_index),
+            None,
+            connector_allowance,
+        );
         for distance in samples(piece, spacing) {
             let oriented = envelope(piece, distance, train, spacing);
             for (other_distance, bounds) in &candidate_index.samples[0] {
-                let near_entry = piece.entry == candidate.exit
-                    && distance + (candidate.length() - other_distance) <= connector_allowance;
-                let near_exit = piece.exit == candidate.entry
-                    && (piece.length() - distance) + other_distance <= connector_allowance;
+                let near_entry = entry_gap.is_some_and(|gap| {
+                    distance + (candidate.length() - other_distance) + gap <= connector_allowance
+                });
+                let near_exit = exit_gap.is_some_and(|gap| {
+                    (piece.length() - distance) + other_distance + gap <= connector_allowance
+                });
                 if !near_entry && !near_exit && intersects_envelope(&oriented, *bounds) {
                     return Err(ClearanceCollision::Track);
                 }
@@ -364,11 +423,34 @@ pub fn check_clearance_indexed(
                     }
                     let (distance, bounds) = index.samples[piece_index][sample_index];
                     if intersects(overall, bounds) {
-                        nearby_track.push((&index.pieces[piece_index], distance, bounds));
+                        nearby_track.push((piece_index, distance, bounds));
                     }
                 }
             }
         }
+    }
+    let mut connection_gaps = HashMap::new();
+    for (index_to_check, _, _) in &nearby_track {
+        connection_gaps.entry(*index_to_check).or_insert_with(|| {
+            let other = &index.pieces[*index_to_check];
+            let entry_gap = connected_distance(
+                other.exit,
+                piece.entry,
+                &index.pieces,
+                Some(*index_to_check),
+                excluded_piece,
+                connector_allowance,
+            );
+            let exit_gap = connected_distance(
+                piece.exit,
+                other.entry,
+                &index.pieces,
+                Some(*index_to_check),
+                excluded_piece,
+                connector_allowance,
+            );
+            (entry_gap, exit_gap)
+        });
     }
     for (distance, oriented) in envelopes {
         let bounds = oriented.bounds;
@@ -437,11 +519,15 @@ pub fn check_clearance_indexed(
         {
             return Err(ClearanceCollision::Scenery);
         }
-        for (other, other_distance, other_bounds) in &nearby_track {
-            let near_entry = piece.entry == other.exit
-                && distance + (other.length() - other_distance) <= connector_allowance;
-            let near_exit = piece.exit == other.entry
-                && (piece.length() - distance) + other_distance <= connector_allowance;
+        for (other_index, other_distance, other_bounds) in &nearby_track {
+            let other = &index.pieces[*other_index];
+            let (entry_gap, exit_gap) = connection_gaps[other_index];
+            let near_entry = entry_gap.is_some_and(|gap| {
+                distance + (other.length() - other_distance) + gap <= connector_allowance
+            });
+            let near_exit = exit_gap.is_some_and(|gap| {
+                (piece.length() - distance) + other_distance + gap <= connector_allowance
+            });
             if !near_entry && !near_exit && intersects_envelope(&oriented, *other_bounds) {
                 return Err(ClearanceCollision::Track);
             }
@@ -725,6 +811,44 @@ mod tests {
         ));
         assert!(check_clearance(&world(0), &piece, &train, &[straight(12, 4, 3)], &[]).is_ok());
         assert!(check_clearance(&world(0), &piece, &train, &[straight(4, 8, 3)], &[]).is_ok());
+    }
+
+    #[test]
+    fn short_connected_piece_does_not_hide_overlapping_track() {
+        let train = hybrid_model().train;
+        let first = straight(20, 20, 5);
+        let short = catalog()
+            .into_iter()
+            .find(|piece| piece.id == PieceId::HalfTileStraight)
+            .unwrap()
+            .at(first.exit)
+            .unwrap();
+        let candidate = straight(short.exit.x, short.exit.y, short.exit.z);
+        let index = ClearanceIndex::new(&[first.clone(), short.clone()]);
+        assert_eq!(
+            check_clearance(
+                &world(0),
+                &candidate,
+                &train,
+                &[first.clone(), short.clone()],
+                &[]
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            check_reverse_track_clearance(&index, &candidate, &train),
+            Ok(())
+        );
+        let overlap = candidate.clone();
+        let index = ClearanceIndex::new(&[first.clone(), short.clone(), overlap.clone()]);
+        assert_eq!(
+            check_clearance(&world(0), &candidate, &train, &[first, short, overlap], &[]),
+            Err(ClearanceCollision::Track)
+        );
+        assert_eq!(
+            check_reverse_track_clearance(&index, &candidate, &train),
+            Err(ClearanceCollision::Track)
+        );
     }
 
     #[test]
