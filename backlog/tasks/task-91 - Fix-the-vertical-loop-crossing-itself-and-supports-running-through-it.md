@@ -1,10 +1,10 @@
 ---
 id: TASK-91
 title: Fix the vertical loop crossing itself and supports running through it
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-04 05:08'
-updated_date: '2026-11-04 05:24'
+updated_date: '2026-11-04 08:16'
 labels:
   - coaster
   - art
@@ -23,4 +23,6 @@ Owner screenshot 2026-11-03 (night view of a loop): the loop's exit runs through
 
 <!-- SECTION:NOTES:BEGIN -->
 Codex job task-mw1o97te-m8d6r7, worktree theme-park-sim-worktrees/loop-geometry.
+
+2026-11-04: merged 80a14d0. The loop's exit shifts 4 m sideways (left and right loops), supports avoid loops (none under inverted sections; routed columns on wooden loops). The two-train block-section failure was a search weakness: a valid layout existed but the search ran out of budget; it now drops brake runs that fail force checks alone and tries brake pairs after powered sections first. Budget and assertions unchanged. Rust workspace and Vitest pass on master; full gate pending until the journey speed work lands.
 <!-- SECTION:NOTES:END -->
