@@ -4,7 +4,7 @@ title: Add sound
 status: To Do
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-04 17:00'
+updated_date: '2026-11-04 17:23'
 labels:
   - audio
 milestone: m-3
@@ -32,4 +32,6 @@ Owner decision 2026-11-04: generate sounds from scratch in the browser (Web Audi
 
 <!-- SECTION:NOTES:BEGIN -->
 Owner asked for sound in the 2026-11-03 playtest ('sound please').
+
+Owner approved all four plan decisions on 2026-11-04 (fast-forward silences one-off sounds at x8/x16; master volume and mute only; hybrid track mixes steel roar with half the wooden rumble; silent in automated tests). Slightly imperfect sound at high game speeds is fine. Plan: docs/superpowers/plans/2026-11-04-generated-sound.md. Starts after TASK-95 because the first work item adds train forces to snapshots.
 <!-- SECTION:NOTES:END -->
