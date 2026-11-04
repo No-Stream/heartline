@@ -108,6 +108,22 @@ afterEach(() => {
   wasmMock.setChain.mockReset();
 });
 
+it("sends an incomplete station state before the complete state", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  postMessage.mockClear();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true]);
+  const sent = postMessage.mock.calls.map(([message]) => message);
+  expect(sent.findIndex((message) => message.type === "world")).toBeLessThan(sent.findIndex((message) => message.type === "construction-state" && message.complete));
+});
+
 it("sends block analysis progress without rebuilding construction geometry", async () => {
   vi.useFakeTimers();
   wasmMock.initialize.mockResolvedValue(undefined);

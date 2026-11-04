@@ -32,10 +32,84 @@ const BEAM_CLEARANCE: f64 = 0.18 * std::f64::consts::SQRT_2;
 const FOOTER_HALF_WIDTH: f64 = 0.4;
 const FOOTER_HEIGHT: f64 = 0.2;
 const TRACK_RAIL_HALF_SPACING: f64 = 1.0;
+const SUPPORT_SEGMENTS_PER_BLOCK: usize = 32;
 const SUPPORT_SEARCH_RADIUS_METRES: i32 = 32;
 /// Maximum distance at which world changes can affect generated support geometry.
 pub const SUPPORT_INFLUENCE_RADIUS_METRES: f64 =
     SUPPORT_SEARCH_RADIUS_METRES as f64 + 2.0 + FOOTER_HALF_WIDTH;
+
+#[derive(Clone, Copy)]
+struct TrackSegment {
+    start_distance: f64,
+    end_distance: f64,
+    start: Vec3,
+    end: Vec3,
+}
+
+#[derive(Clone, Copy)]
+struct ProjectedTrackSegment {
+    start: Vec3,
+    end: Vec3,
+}
+
+#[derive(Clone, Copy)]
+struct SegmentBounds {
+    min: Vec3,
+    max: Vec3,
+}
+
+struct SegmentBlock<T> {
+    bounds: SegmentBounds,
+    segments: Vec<T>,
+}
+
+fn segment_blocks<T: Copy>(
+    segments: Vec<T>,
+    endpoints: impl Fn(&T) -> (Vec3, Vec3),
+) -> Vec<SegmentBlock<T>> {
+    segments
+        .chunks(SUPPORT_SEGMENTS_PER_BLOCK)
+        .map(|block| {
+            let (first_start, first_end) = endpoints(&block[0]);
+            let mut bounds = SegmentBounds {
+                min: Vec3::new(
+                    first_start.x.min(first_end.x),
+                    first_start.y.min(first_end.y),
+                    first_start.z.min(first_end.z),
+                ),
+                max: Vec3::new(
+                    first_start.x.max(first_end.x),
+                    first_start.y.max(first_end.y),
+                    first_start.z.max(first_end.z),
+                ),
+            };
+            for segment in &block[1..] {
+                let (start, end) = endpoints(segment);
+                bounds.min.x = bounds.min.x.min(start.x).min(end.x);
+                bounds.min.y = bounds.min.y.min(start.y).min(end.y);
+                bounds.min.z = bounds.min.z.min(start.z).min(end.z);
+                bounds.max.x = bounds.max.x.max(start.x).max(end.x);
+                bounds.max.y = bounds.max.y.max(start.y).max(end.y);
+                bounds.max.z = bounds.max.z.max(start.z).max(end.z);
+            }
+            SegmentBlock {
+                bounds,
+                segments: block.to_vec(),
+            }
+        })
+        .collect()
+}
+
+fn segment_is_clear_of_bounds(start: Vec3, end: Vec3, bounds: SegmentBounds) -> bool {
+    let support_min = Vec3::new(start.x.min(end.x), start.y.min(end.y), start.z.min(end.z));
+    let support_max = Vec3::new(start.x.max(end.x), start.y.max(end.y), start.z.max(end.z));
+    support_min.x - bounds.max.x > BEAM_CLEARANCE
+        || bounds.min.x - support_max.x > BEAM_CLEARANCE
+        || support_min.y - bounds.max.y > BEAM_CLEARANCE
+        || bounds.min.y - support_max.y > BEAM_CLEARANCE
+        || support_min.z - bounds.max.z > BEAM_CLEARANCE
+        || bounds.min.z - support_max.z > BEAM_CLEARANCE
+}
 
 /// Checks the same beam, brace, and footer clearances used when routing a support.
 pub fn support_intersects_obstacle(support: &Support, obstacle: &SupportObstacle) -> bool {
@@ -165,24 +239,25 @@ fn route_supports(
     let tunnels: Vec<_> = world.carved_spans().collect();
     let inversion_track_segments = piece.inversion.is_some().then(|| {
         let steps = (piece.length() / 0.25).ceil() as usize;
-        (0..steps)
+        let segments = (0..steps)
             .flat_map(|index| {
-                let start_distance = piece.length() * index as f64 / steps as f64;
-                let end_distance = piece.length() * (index + 1) as f64 / steps as f64;
+                let start_distance = piece.length() * (index as f64 / steps as f64);
+                let end_distance = piece.length() * ((index + 1) as f64 / steps as f64);
                 let start = piece.sample(start_distance);
                 let end = piece.sample(end_distance);
                 let start_lateral = start.up.cross(start.tangent).unit();
                 let end_lateral = end.up.cross(end.tangent).unit();
                 [-TRACK_RAIL_HALF_SPACING, 0.0, TRACK_RAIL_HALF_SPACING].map(|offset| {
-                    (
+                    TrackSegment {
                         start_distance,
                         end_distance,
-                        start.position + start_lateral * offset,
-                        end.position + end_lateral * offset,
-                    )
+                        start: start.position + start_lateral * offset,
+                        end: end.position + end_lateral * offset,
+                    }
                 })
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        segment_blocks(segments, |segment| (segment.start, segment.end))
     });
     let inverted_track_segments = inverted_track_rail_segments(piece);
     let count = (piece.length() / spacing).ceil() as usize;
@@ -311,7 +386,7 @@ fn route_supports(
 fn support_clears_inversion_track(
     support: &Support,
     anchor_distance: f64,
-    track_segments: &[(f64, f64, Vec3, Vec3)],
+    track_segments: &[SegmentBlock<TrackSegment>],
 ) -> bool {
     let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
     let support_segments = if top == support.anchor {
@@ -319,41 +394,56 @@ fn support_clears_inversion_track(
     } else {
         [(support.footing, top), (top, support.anchor)]
     };
-    track_segments
-        .iter()
-        .all(|(start_distance, end_distance, start, end)| {
-            if *start_distance >= anchor_distance - 1.0 && *end_distance <= anchor_distance + 1.0 {
-                return true;
+    for (support_start, support_end) in support_segments {
+        for block in track_segments {
+            if segment_is_clear_of_bounds(support_start, support_end, block.bounds) {
+                continue;
             }
-            support_segments.iter().all(|(support_start, support_end)| {
-                segment_distance(*support_start, *support_end, *start, *end) > BEAM_CLEARANCE
-            })
-        })
+            for segment in &block.segments {
+                if segment.start_distance >= anchor_distance - 1.0
+                    && segment.end_distance <= anchor_distance + 1.0
+                {
+                    continue;
+                }
+                if !segments_clear(support_start, support_end, segment.start, segment.end) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 fn support_clears_inverted_track_projection(
     support: &Support,
-    inverted_track_segments: &[(Vec3, Vec3)],
+    inverted_track_segments: &[SegmentBlock<ProjectedTrackSegment>],
 ) -> bool {
     let top = Vec3::new(support.footing.x, support.footing.y, support.anchor.z);
     let support_segments = [(support.footing, top), (top, support.anchor)];
-    inverted_track_segments
-        .iter()
-        .all(|(track_start, track_end)| {
-            support_segments.iter().all(|(support_start, support_end)| {
-                segment_distance_xy(*support_start, *support_end, *track_start, *track_end)
-                    > BEAM_CLEARANCE
-            })
-        })
+    for (support_start, support_end) in support_segments {
+        let support_start = Vec3::new(support_start.x, support_start.y, 0.0);
+        let support_end = Vec3::new(support_end.x, support_end.y, 0.0);
+        for block in inverted_track_segments {
+            if segment_is_clear_of_bounds(support_start, support_end, block.bounds) {
+                continue;
+            }
+            for segment in &block.segments {
+                if !segments_clear(support_start, support_end, segment.start, segment.end) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
-fn inverted_track_rail_segments(piece: &Piece) -> Option<Vec<(Vec3, Vec3)>> {
+fn inverted_track_rail_segments(piece: &Piece) -> Option<Vec<SegmentBlock<ProjectedTrackSegment>>> {
     piece.inversion.map(|_| {
         let steps = (piece.length() / 0.25).ceil() as usize;
-        (0..steps)
+        let segments = (0..steps)
             .filter_map(|index| {
-                let start_distance = piece.length() * index as f64 / steps as f64;
-                let end_distance = piece.length() * (index + 1) as f64 / steps as f64;
+                let start_distance = piece.length() * (index as f64 / steps as f64);
+                let end_distance = piece.length() * ((index + 1) as f64 / steps as f64);
                 let start = piece.sample(start_distance);
                 let end = piece.sample(end_distance);
                 let middle = piece.sample((start_distance + end_distance) / 2.0);
@@ -363,28 +453,41 @@ fn inverted_track_rail_segments(piece: &Piece) -> Option<Vec<(Vec3, Vec3)>> {
                 let start_lateral = start.up.cross(start.tangent).unit();
                 let end_lateral = end.up.cross(end.tangent).unit();
                 [-TRACK_RAIL_HALF_SPACING, 0.0, TRACK_RAIL_HALF_SPACING].map(|offset| {
-                    (
-                        start.position + start_lateral * offset,
-                        end.position + end_lateral * offset,
-                    )
+                    ProjectedTrackSegment {
+                        start: Vec3::new(
+                            start.position.x + start_lateral.x * offset,
+                            start.position.y + start_lateral.y * offset,
+                            0.0,
+                        ),
+                        end: Vec3::new(
+                            end.position.x + end_lateral.x * offset,
+                            end.position.y + end_lateral.y * offset,
+                            0.0,
+                        ),
+                    }
                 })
             })
-            .collect()
+            .collect::<Vec<_>>();
+        segment_blocks(segments, |segment| (segment.start, segment.end))
     })
 }
 
-fn segment_distance_xy(
+fn segments_clear(
     first_start: Vec3,
     first_end: Vec3,
     second_start: Vec3,
     second_end: Vec3,
-) -> f64 {
-    segment_distance(
-        Vec3::new(first_start.x, first_start.y, 0.0),
-        Vec3::new(first_end.x, first_end.y, 0.0),
-        Vec3::new(second_start.x, second_start.y, 0.0),
-        Vec3::new(second_end.x, second_end.y, 0.0),
-    )
+) -> bool {
+    for (a, b, c, d) in [
+        (first_start.x, first_end.x, second_start.x, second_end.x),
+        (first_start.y, first_end.y, second_start.y, second_end.y),
+        (first_start.z, first_end.z, second_start.z, second_end.z),
+    ] {
+        if a.min(b) - c.max(d) > BEAM_CLEARANCE || c.min(d) - a.max(b) > BEAM_CLEARANCE {
+            return true;
+        }
+    }
+    segment_distance(first_start, first_end, second_start, second_end) > BEAM_CLEARANCE
 }
 
 fn segment_distance(
@@ -1020,6 +1123,29 @@ mod tests {
 
     const SUPPORT_ATTACHMENT_NEIGHBORHOOD_METRES: f64 = 1.0;
 
+    #[test]
+    fn segment_clearance_matches_exact_distance() {
+        let points = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.1, 0.1, 0.1),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(-2.0, 3.0, 5.0),
+            Vec3::new(4.0, -1.0, 2.0),
+        ];
+        for &a in &points {
+            for &b in &points {
+                for &c in &points {
+                    for &d in &points {
+                        assert_eq!(
+                            segments_clear(a, b, c, d),
+                            segment_distance(a, b, c, d) > BEAM_CLEARANCE
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn piece() -> Piece {
         let state = TrackState {
             x: 4,
@@ -1091,8 +1217,8 @@ mod tests {
                 .filter(|(endpoint_distance, _)| *endpoint_distance < 0.01)
                 .map(|(_, distance)| distance);
             for index in 0..steps {
-                let start_distance = piece.length() * index as f64 / steps as f64;
-                let end_distance = piece.length() * (index + 1) as f64 / steps as f64;
+                let start_distance = piece.length() * (index as f64 / steps as f64);
+                let end_distance = piece.length() * ((index + 1) as f64 / steps as f64);
                 if attachment_distance.is_some_and(|distance| {
                     start_distance >= distance - SUPPORT_ATTACHMENT_NEIGHBORHOOD_METRES
                         && end_distance <= distance + SUPPORT_ATTACHMENT_NEIGHBORHOOD_METRES
@@ -1368,6 +1494,76 @@ mod tests {
                     &format!("{:?}, {style}, {spacing} m spacing", piece.id),
                 );
             }
+        }
+    }
+
+    #[test]
+    fn inversion_segment_blocks_match_ungrouped_clearance_at_the_boundary() {
+        let support = Support {
+            footing: Vec3::new(0.0, 0.0, 0.0),
+            anchor: Vec3::new(0.0, 0.0, 8.0),
+        };
+        for (offset, expected_clear) in [
+            (BEAM_CLEARANCE - 1e-8, false),
+            (BEAM_CLEARANCE, false),
+            (BEAM_CLEARANCE + 1e-8, true),
+            (2.0, true),
+        ] {
+            let mut track_segments = vec![
+                TrackSegment {
+                    start_distance: 0.0,
+                    end_distance: 0.25,
+                    start: Vec3::new(5.0, 0.0, 1.0),
+                    end: Vec3::new(5.0, 0.0, 7.0),
+                };
+                SUPPORT_SEGMENTS_PER_BLOCK * 2
+            ];
+            for index in [SUPPORT_SEGMENTS_PER_BLOCK - 1, SUPPORT_SEGMENTS_PER_BLOCK] {
+                track_segments[index] = TrackSegment {
+                    start_distance: index as f64,
+                    end_distance: index as f64 + 0.25,
+                    start: Vec3::new(offset, 0.0, 1.0),
+                    end: Vec3::new(offset, 0.0, 7.0),
+                };
+            }
+            let blocks = segment_blocks(track_segments.clone(), |segment| {
+                (segment.start, segment.end)
+            });
+            let ungrouped = track_segments.iter().all(|segment| {
+                if segment.start_distance >= 999.0 && segment.end_distance <= 1001.0 {
+                    return true;
+                }
+                segments_clear(support.footing, support.anchor, segment.start, segment.end)
+            });
+            assert_eq!(ungrouped, expected_clear);
+            assert_eq!(
+                support_clears_inversion_track(&support, 1000.0, &blocks),
+                ungrouped
+            );
+
+            let projected_segments = track_segments
+                .iter()
+                .map(|segment| ProjectedTrackSegment {
+                    start: Vec3::new(segment.start.x, segment.start.y, 0.0),
+                    end: Vec3::new(segment.end.x, segment.end.y, 0.0),
+                })
+                .collect::<Vec<_>>();
+            let projected_blocks = segment_blocks(projected_segments.clone(), |segment| {
+                (segment.start, segment.end)
+            });
+            let ungrouped_projection = projected_segments.iter().all(|segment| {
+                segments_clear(
+                    Vec3::new(support.footing.x, support.footing.y, 0.0),
+                    Vec3::new(support.anchor.x, support.anchor.y, 0.0),
+                    segment.start,
+                    segment.end,
+                )
+            });
+            assert_eq!(ungrouped_projection, expected_clear);
+            assert_eq!(
+                support_clears_inverted_track_projection(&support, &projected_blocks),
+                ungrouped_projection
+            );
         }
     }
 

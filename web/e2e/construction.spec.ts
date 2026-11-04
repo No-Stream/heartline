@@ -42,6 +42,7 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 30, centerY: 30, zoom: 1, rotation: 0 }));
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
+  await expect(canvas).toHaveAttribute("data-station-preview", "");
   await expect(track.locator("li")).toHaveCount(1);
   const pieces = [
     "LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel",

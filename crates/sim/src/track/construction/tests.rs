@@ -70,6 +70,19 @@ fn loop_profiles_offer_mirrored_choices_for_each_model() {
 }
 
 #[test]
+fn barrel_roll_drops_are_constructible_from_level_track_in_both_directions() {
+    let construction = Construction::new(start(), hybrid_model());
+    let choices = construction.choices(&world(), &[]);
+
+    for id in [PieceId::BarrelDropLeft, PieceId::BarrelDropRight] {
+        assert!(
+            choices.iter().any(|choice| choice.id == id),
+            "missing construction choice {id:?} from a level connector"
+        );
+    }
+}
+
+#[test]
 fn briar_blitz_choices_after_vertical_exit() {
     let world = world();
     let mut construction = Construction::new(
@@ -671,13 +684,10 @@ fn choices_reflect_world_obstacle_and_track_changes() {
     };
     assert!(
         construction
-            .choices(&world, &[obstacle])
-            .iter()
-            .find(|choice| choice.id == PieceId::Straight)
-            .unwrap()
-            .result
+            .append_cached_choice(PieceId::Straight, &world, &[obstacle])
             .is_err()
     );
+    assert_eq!(construction.pieces().len(), 1);
     assert_eq!(construction.choices(&world, &[]), initial);
     world.set_surface(
         30,
@@ -689,13 +699,10 @@ fn choices_reflect_world_obstacle_and_track_changes() {
     );
     assert!(
         construction
-            .choices(&world, &[])
-            .iter()
-            .find(|choice| choice.id == PieceId::Straight)
-            .unwrap()
-            .result
+            .append_cached_choice(PieceId::Straight, &world, &[])
             .is_err()
     );
+    assert_eq!(construction.pieces().len(), 1);
     construction.delete_from(0).unwrap();
     assert_eq!(
         construction
@@ -706,6 +713,58 @@ fn choices_reflect_world_obstacle_and_track_changes() {
             .result,
         Ok(())
     );
+}
+
+#[test]
+fn targeted_piece_selection_matches_full_choice_priority_without_building_the_menu() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    let connector = construction.end();
+    let same_orientation = |first: TrackState, second: TrackState| {
+        first.heading == second.heading
+            && first.slope == second.slope
+            && first.bank == second.bank
+            && first.horizontal_curvature == second.horizontal_curvature
+            && first.vertical_curvature == second.vertical_curvature
+    };
+
+    let targeted = construction.first_valid_piece(&world, &[], |piece| {
+        piece.inversion.is_none()
+            && matches!(piece.kind, PieceKind::Track | PieceKind::Lift)
+            && same_orientation(piece.entry, connector)
+            && same_orientation(piece.exit, connector)
+    });
+    assert!(construction.choices_cache.borrow().is_none());
+
+    let choices = construction.available_choices(&world, &[]);
+    let expected = choices
+        .iter()
+        .filter(|(_, choice)| choice.result.is_ok())
+        .find(|(piece, _)| {
+            piece.inversion.is_none()
+                && matches!(piece.kind, PieceKind::Track | PieceKind::Lift)
+                && same_orientation(piece.entry, connector)
+                && same_orientation(piece.exit, connector)
+        })
+        .or_else(|| choices.iter().find(|(_, choice)| choice.result.is_ok()))
+        .map(|(piece, _)| piece.id);
+
+    assert_eq!(targeted, expected);
+}
+
+#[test]
+fn appending_a_cached_choice_without_a_menu_validates_only_that_piece() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+
+    construction
+        .append_cached_choice(PieceId::Straight, &world, &[])
+        .unwrap();
+
+    assert_eq!(construction.pieces().len(), 1);
+    assert_eq!(construction.pieces()[0].id, PieceId::Straight);
+    assert!(construction.choices_cache.borrow().is_none());
 }
 
 #[test]
@@ -1302,10 +1361,18 @@ fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
         OffsetRight,
         TurnLargeEntry,
         TurnLargeExit,
-        Straight,
+        HalfTileStraight,
+        OneTileStraight,
         OneTileStraight,
     ] {
-        construction.append(id, &world, &[]).unwrap();
+        construction
+            .append(id, &world, &[])
+            .unwrap_or_else(|error| {
+                panic!(
+                    "cannot append {id:?} at {:?}: {error:?}",
+                    construction.end()
+                )
+            });
     }
     let mut expected = construction.copy_for_completion();
     expected.append(OneTileStraight, &world, &[]).unwrap();
@@ -1434,6 +1501,16 @@ fn named_inversion_elements_compose_half_pieces() {
             .find(|choice| choice.id == id)
             .unwrap_or_else(|| panic!("missing {id}"));
         assert_eq!(choice.pieces, pieces);
+        let validated = construction
+            .append_sequence(&pieces, &world, &[])
+            .expect("the uncached sequence should validate");
+        assert_eq!(choice.geometry.len(), validated.pieces().len());
+        for (cached, revalidated) in choice.geometry.iter().zip(validated.pieces()) {
+            assert_eq!(cached.id, revalidated.id);
+            assert_eq!(cached.entry, revalidated.entry);
+            assert_eq!(cached.exit, revalidated.exit);
+            assert_eq!(cached.length(), revalidated.length());
+        }
         let mut placed = construction.copy_for_completion();
         placed.apply_element(choice, &world, &[]).unwrap();
         assert_eq!(placed.end().bank, crate::track::Bank::Level);

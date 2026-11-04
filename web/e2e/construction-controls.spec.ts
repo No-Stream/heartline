@@ -25,6 +25,17 @@ test.afterAll(async () => {
 type Window = { constructionActions: unknown[]; setConstructionState(state: object): void; setConstructionUnits(units: "metric" | "imperial"): void };
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
 
+test("construction controls wait for complete worker state", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: false }));
+  await expect(page.locator("[data-editor]")).toHaveAttribute("inert", "");
+  await expect(page.locator("[data-editor]")).toHaveAttribute("aria-busy", "true");
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: true }));
+  await expect(page.locator("[data-editor]")).not.toHaveAttribute("inert", "");
+  await page.getByRole("radio", { name: "Small left turn" }).click();
+  expect(await recorded(page)).toContainEqual({ type: "construction-select", piece: "TurnSmallStandalone" });
+});
+
 test("player driver places a station in the live park", async ({ page }) => {
   await startPark(page, { park: "new", seed: 2026, speed: 1 });
   await placeStation(page, { model: "hybrid", height: 12, tile: { x: 50, y: 50, z: 2 }, direction: { x: 52, y: 50, z: 2 } });

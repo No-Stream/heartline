@@ -757,7 +757,7 @@ impl WasmSimulation {
             0.0,
             2.0,
         );
-        self.construction_recorder = Some(TestRunRecorder::new(circuit.length()));
+        self.construction_recorder = Some(TestRunRecorder::for_circuit(&circuit));
         self.construction_report = None;
         self.construction_train = Some((circuit, train));
         self.recovered_station = None;
@@ -1113,6 +1113,10 @@ pub(crate) fn wire_pieceid(value: PieceId) -> &'static str {
         PieceId::HalfCorkscrewRightUp => "HalfCorkscrewRightUp",
         PieceId::HalfCorkscrewLeftDown => "HalfCorkscrewLeftDown",
         PieceId::HalfCorkscrewRightDown => "HalfCorkscrewRightDown",
+        PieceId::RavenRollLeftUp => "RavenRollLeftUp",
+        PieceId::RavenRollRightUp => "RavenRollRightUp",
+        PieceId::RavenRollLeftDown => "RavenRollLeftDown",
+        PieceId::RavenRollRightDown => "RavenRollRightDown",
         PieceId::TopHat => "TopHat",
         PieceId::LevelToSixtyUp => "LevelToSixtyUp",
         PieceId::SixtyUpToLevel => "SixtyUpToLevel",

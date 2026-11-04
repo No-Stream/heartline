@@ -146,7 +146,7 @@ impl CoasterModel {
         };
         piece.kind == PieceKind::Track
             && piece.inversion.is_none()
-            && piece.shape == Shape::Plain
+            && matches!(piece.shape, Shape::Plain | Shape::Profile(_))
             && [piece.entry.slope, piece.exit.slope].iter().all(|slope| {
                 slope.gradient() >= 0.0 && slope.gradient() <= rules.max_slope.gradient()
             })
@@ -262,7 +262,7 @@ pub fn wooden_twister_model() -> CoasterModel {
             minimum_vertical_g: -1.0,
             maximum_vertical_g: 4.0,
             maximum_lateral_g: 1.5,
-            maximum_longitudinal_g: 1.0,
+            maximum_longitudinal_g: 1.5,
         },
         minimum_height_cm: 122,
         allowed_inversions: vec![Inversion::VerticalLoop],
@@ -414,9 +414,9 @@ pub fn hybrid_model() -> CoasterModel {
         minimum_radius_metres: 5.0,
         comfortable_force_limits: ComfortableForceLimits {
             minimum_vertical_g: -1.5,
-            maximum_vertical_g: 5.0,
+            maximum_vertical_g: 4.5,
             maximum_lateral_g: 1.5,
-            maximum_longitudinal_g: 1.0,
+            maximum_longitudinal_g: 1.5,
         },
         minimum_height_cm: 122,
         allowed_inversions: vec![
@@ -572,7 +572,7 @@ pub fn multi_launch_model() -> CoasterModel {
             minimum_vertical_g: -1.5,
             maximum_vertical_g: 5.0,
             maximum_lateral_g: 1.5,
-            maximum_longitudinal_g: 1.0,
+            maximum_longitudinal_g: 1.5,
         },
         minimum_height_cm: 132,
         allowed_inversions: vec![

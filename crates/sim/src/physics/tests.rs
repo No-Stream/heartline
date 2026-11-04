@@ -74,6 +74,40 @@ fn track_sample_places_the_rider_heart_above_the_rail() {
     }
 }
 
+#[test]
+fn heartline_roll_reads_gravity_only_at_twenty_five_metres_per_second() {
+    let piece = catalog()
+        .into_iter()
+        .find(|piece| piece.id == PieceId::HeartlineRoll)
+        .unwrap();
+    let readings: Vec<_> = (0..=200)
+        .map(|step| {
+            let distance = piece.length() * f64::from(step) / 200.0;
+            rider_g(&piece, distance, 25.0, 0.0)
+        })
+        .collect();
+    let entry = readings.first().unwrap();
+    let middle = &readings[readings.len() / 2];
+    let exit = readings.last().unwrap();
+    let maximum_lateral = readings
+        .iter()
+        .map(|forces| forces.lateral.abs())
+        .fold(0.0_f64, f64::max);
+    let maximum_longitudinal = readings
+        .iter()
+        .map(|forces| forces.longitudinal.abs())
+        .fold(0.0_f64, f64::max);
+
+    assert!((entry.vertical - 1.0).abs() < 0.05, "{entry:?}");
+    assert!((middle.vertical + 1.0).abs() < 0.05, "{middle:?}");
+    assert!((exit.vertical - 1.0).abs() < 0.05, "{exit:?}");
+    assert!(maximum_lateral <= 1.05, "lateral {maximum_lateral:.4} g");
+    assert!(
+        maximum_longitudinal <= 0.05,
+        "longitudinal {maximum_longitudinal:.4} g"
+    );
+}
+
 fn circuit(ids: &[PieceId]) -> Circuit {
     let catalog = catalog();
     let mut state = TrackState::origin();
@@ -737,7 +771,12 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
             .iter()
             .all(|piece| piece.kind == PieceKind::Lift)
     );
-    assert_ne!(circuit.pieces()[7].kind, PieceKind::Lift);
+    assert!(
+        circuit.pieces()[7..10]
+            .iter()
+            .all(|piece| piece.kind == PieceKind::Lift)
+    );
+    assert_ne!(circuit.pieces()[10].kind, PieceKind::Lift);
     assert_eq!(
         circuit.pieces().last().unwrap().exit,
         circuit.pieces()[0].entry
@@ -763,24 +802,15 @@ fn demo_return_path_uses_searchable_level_pieces() {
         .iter()
         .position(|piece| piece.id == PieceId::Loop)
         .expect("demo circuit contains its loop");
-    let alignment_pieces = [
-        PieceId::OffsetRight,
-        PieceId::OneTileStraight,
-        PieceId::OneTileStraight,
-    ];
-    let return_path_start = loop_index + 1 + alignment_pieces.len();
-    assert_eq!(
-        circuit.pieces()[loop_index + 1..return_path_start]
-            .iter()
-            .map(|piece| piece.id)
-            .collect::<Vec<_>>(),
-        alignment_pieces
-    );
-    let return_path = &circuit.pieces()[return_path_start..];
+    let return_path = &circuit.pieces()[loop_index + 1..];
     let allowed_return_pieces = [
         PieceId::Straight,
         PieceId::TurnSmallStandalone,
         PieceId::TurnSmallRightStandalone,
+        PieceId::TurnLargeStandalone,
+        PieceId::TurnLargeRightStandalone,
+        PieceId::OffsetLeft,
+        PieceId::OffsetRight,
     ];
 
     assert!(!return_path.is_empty());
@@ -1419,12 +1449,21 @@ fn banked_drops_complete_physics_laps_with_finite_forces() {
         if unbank.is_some() {
             ids.push(GentleUp);
         }
-        ids.extend([GentleUpToLevel, first_turn, second_turn, bank, drop]);
+        ids.push(GentleUpToLevel);
+        let barrel_drop = matches!(drop, BarrelDropLeft | BarrelDropRight);
+        ids.extend([first_turn, second_turn]);
+        if barrel_drop {
+            ids.push(Straight);
+        }
+        ids.extend([bank, drop]);
         if let Some(unbank) = unbank {
             ids.push(unbank);
         }
         ids.push(GentleDownToLevel);
         ids.extend([first_turn, second_turn]);
+        if barrel_drop {
+            ids.extend([TerrainRise, TerrainRise]);
+        }
         let mut state = TrackState::origin();
         let mut pieces = Vec::new();
         for id in ids {

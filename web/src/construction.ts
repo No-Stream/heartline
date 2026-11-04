@@ -649,7 +649,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       shapes = nextShapes;
     },
     choose(action) {
-      if (!state?.active) return;
+      if (!state?.active || !state.complete) return;
       select(action.type === "piece-group" ? pieceInGroup(state.pieces, action.group) : steppedPiece(state.pieces, shapes, state.selected, action.attribute, action.step));
     },
     setDeleteMode(enabled) { deleteMode.checked = enabled; },
@@ -663,6 +663,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     update(next) {
       const previous = state;
       state = next;
+      editor.inert = !next.complete;
+      editor.setAttribute("aria-busy", String(!next.complete));
       editor.hidden = !next.active;
       blockPanel.hidden = !next.active || (!next.canTest && next.blockReport.sections.length === 0);
       modelSelect.disabled = next.active;

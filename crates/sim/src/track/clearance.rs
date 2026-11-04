@@ -170,6 +170,7 @@ fn samples(piece: &Piece, spacing: f64) -> impl Iterator<Item = f64> + '_ {
 }
 
 /// Cached rail samples for repeated clearance checks against the same track.
+#[derive(Clone)]
 pub struct ClearanceIndex {
     pieces: Vec<Piece>,
     samples: Vec<Vec<(f64, ClearanceBox)>>,

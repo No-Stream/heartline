@@ -31,9 +31,11 @@ use theme_park_sim::track::blocks::ThroughputEstimator;
 use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch};
 #[cfg(test)]
 use theme_park_sim::track::clearance::ClearanceBox;
+#[cfg(test)]
+use theme_park_sim::track::construction::PieceChoice;
 use theme_park_sim::track::construction::{
     Completion, CompletionSearch, CompletionSearchProgress, Construction, ElementChoice,
-    PieceChoice, track_support_obstacles,
+    track_support_obstacles,
 };
 use theme_park_sim::track::proximity::ProximityKind;
 #[cfg(test)]
@@ -111,7 +113,8 @@ fn same_track_orientation(first: TrackState, second: TrackState) -> bool {
         && first.vertical_curvature == second.vertical_curvature
 }
 
-fn default_construction_piece(
+#[cfg(test)]
+fn default_construction_piece_from_choices(
     available: &[(Piece, PieceChoice)],
     connector: TrackState,
 ) -> Option<PieceId> {
@@ -179,15 +182,20 @@ impl WasmSimulation {
         let Some(construction) = &self.park.construction else {
             return;
         };
-        let available =
-            construction.available_choices(&self.park.world, &self.facility_obstacles());
+        let obstacles = self.facility_obstacles();
         if self
             .selected
-            .is_some_and(|selected| available.iter().any(|(piece, _)| piece.id == selected))
+            .is_some_and(|selected| construction.candidate_piece(selected).is_some())
         {
             return;
         }
-        self.selected = default_construction_piece(&available, construction.end());
+        let connector = construction.end();
+        self.selected = construction.first_valid_piece(&self.park.world, &obstacles, |piece| {
+            piece.inversion.is_none()
+                && matches!(piece.kind, PieceKind::Track | PieceKind::Lift)
+                && same_track_orientation(piece.entry, connector)
+                && same_track_orientation(piece.exit, connector)
+        });
     }
     fn construction_render(
         &self,

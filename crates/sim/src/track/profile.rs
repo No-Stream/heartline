@@ -41,6 +41,7 @@ pub(crate) struct ProfileSpec {
     fixed_speed: bool,
     mirror_apex: bool,
     start_angle: f64,
+    taper_angle: Option<f64>,
     name: &'static str,
 }
 
@@ -59,6 +60,7 @@ impl ProfileSpec {
             fixed_speed: false,
             mirror_apex: false,
             start_angle: 0.0,
+            taper_angle: None,
             name: "half loop",
         }
     }
@@ -72,7 +74,29 @@ impl ProfileSpec {
             fixed_speed: false,
             mirror_apex: false,
             start_angle,
+            taper_angle: None,
             name: "pull profile",
+        }
+    }
+    pub(crate) fn crest(
+        start_angle: f64,
+        end_angle: f64,
+        maximum_entry: f64,
+        minimum_force: f64,
+    ) -> Self {
+        assert!(end_angle < start_angle);
+        assert!(minimum_force < 0.0);
+        Self {
+            segments: vec![Segment::Arc {
+                angle: end_angle - start_angle,
+                schedule: Schedule::Constant(minimum_force),
+            }],
+            maximum_entry,
+            fixed_speed: false,
+            mirror_apex: false,
+            start_angle,
+            taper_angle: None,
+            name: "crest profile",
         }
     }
     pub(crate) fn full_loop(maximum_entry: f64, bottom: f64, top: f64) -> Self {
@@ -93,11 +117,17 @@ impl ProfileSpec {
             fixed_speed: true,
             mirror_apex: false,
             start_angle: 0.0,
+            taper_angle: None,
             name: "test arc",
         }
     }
     pub(crate) fn named(mut self, name: &'static str) -> Self {
         self.name = name;
+        self
+    }
+    pub(crate) fn with_taper_angle(mut self, taper_angle: f64) -> Self {
+        assert!(taper_angle > 0.0 && taper_angle <= PI / 4.0);
+        self.taper_angle = Some(taper_angle);
         self
     }
 }
@@ -169,13 +199,24 @@ impl SolvedProfile {
             .recip()
     }
     pub(crate) fn minimum_entry(&self) -> f64 {
-        let max_mean_height = self
+        let max_mean_height_during_piece = self
             .points
             .iter()
             .map(|p| maximum_mean_height(self, p.distance))
             .fold(f64::NEG_INFINITY, f64::max);
-        (2.0 * GRAVITY * max_mean_height + 36.0).sqrt()
+        let minimum_initial_mean = [6, 12]
+            .into_iter()
+            .map(|cars| train_mean_height(self, 0.0, cars))
+            .fold(f64::INFINITY, f64::min);
+        let maximum_clearance_mean = [6, 12]
+            .into_iter()
+            .map(|cars| train_mean_height(self, self.length() + 18.0, cars))
+            .fold(f64::NEG_INFINITY, f64::max);
+        let height_gain =
+            max_mean_height_during_piece.max(maximum_clearance_mean) - minimum_initial_mean;
+        (2.0 * GRAVITY * height_gain + 36.0).sqrt()
     }
+    #[cfg(test)]
     pub(crate) fn maximum_force(&self, entry: f64) -> f64 {
         self.points
             .iter()
@@ -184,6 +225,16 @@ impl SolvedProfile {
                     + p.angle.cos()
             })
             .fold(f64::NEG_INFINITY, f64::max)
+    }
+    #[cfg(test)]
+    pub(crate) fn minimum_force(&self, entry: f64) -> f64 {
+        self.points
+            .iter()
+            .map(|p| {
+                p.heart_curvature * worst_speed_squared(self, p.distance, entry, false) / GRAVITY
+                    + p.angle.cos()
+            })
+            .fold(f64::INFINITY, f64::min)
     }
     pub(crate) fn sample(&self, distance: f64) -> ([f64; 2], [f64; 2], [f64; 2]) {
         let index = self
@@ -268,8 +319,9 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                 schedule,
             } => {
                 let start_angle = angle;
-                let taper_angle =
-                    0.3_f64.min(delta.abs() / 4.0 * if delta.abs() < PI / 3.0 { 1.0 } else { 4.0 });
+                let taper_angle = spec.taper_angle.unwrap_or_else(|| {
+                    0.3_f64.min(delta.abs() / 4.0 * if delta.abs() < PI / 3.0 { 1.0 } else { 4.0 })
+                });
                 for index in 0..steps {
                     let midpoint_parameter = (index as f64 + 0.5) / steps as f64;
                     let smooth = |t: f64| t.powi(3) * (10.0 + t * (-15.0 + 6.0 * t));
@@ -299,6 +351,11 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                     let speed_squared = previous.map_or(point_speed_squared, |profile| {
                         worst_speed_squared(profile, distance, spec.maximum_entry, spec.mirror_apex)
                     });
+                    assert!(
+                        speed_squared.is_finite() && speed_squared > 0.0,
+                        "{}: non-positive design speed squared at angle {midpoint_angle}",
+                        spec.name
+                    );
                     let curvature =
                         GRAVITY * (schedule.force(midpoint_angle) - midpoint_angle.cos()) * taper
                             / speed_squared;
@@ -327,6 +384,11 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                     let end_speed_squared = previous.map_or(end_point_speed_squared, |profile| {
                         worst_speed_squared(profile, distance, spec.maximum_entry, spec.mirror_apex)
                     });
+                    assert!(
+                        end_speed_squared.is_finite() && end_speed_squared > 0.0,
+                        "{}: non-positive design speed squared at angle {angle}",
+                        spec.name
+                    );
                     let heart_curvature =
                         GRAVITY * (schedule.force(angle) - angle.cos()) * end_taper
                             / end_speed_squared;
@@ -345,46 +407,59 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
     SolvedProfile { points }
 }
 
+fn train_mean_height(profile: &SolvedProfile, front_distance: f64, cars: usize) -> f64 {
+    let spacing = 18.0 / cars as f64;
+    (0..cars)
+        .map(|car| rail_height(profile, front_distance - car as f64 * spacing, false))
+        .sum::<f64>()
+        / cars as f64
+}
+
 fn minimum_mean_height(profile: &SolvedProfile, distance: f64, mirror: bool) -> f64 {
-    [6, 12]
+    let (six_car_means, twelve_car_means) = train_mean_heights(profile, distance, mirror);
+    six_car_means
         .into_iter()
-        .flat_map(|cars| {
-            (0..cars).map(move |car| {
-                let spacing = 18.0 / cars as f64;
-                (0..cars)
-                    .map(|other| {
-                        rail_height(
-                            profile,
-                            distance + (car as f64 - other as f64) * spacing,
-                            mirror,
-                        )
-                    })
-                    .sum::<f64>()
-                    / cars as f64
-            })
-        })
+        .chain(twelve_car_means)
         .fold(f64::INFINITY, f64::min)
 }
 
 fn maximum_mean_height(profile: &SolvedProfile, distance: f64) -> f64 {
-    [6, 12]
+    let (six_car_means, twelve_car_means) = train_mean_heights(profile, distance, false);
+    six_car_means
         .into_iter()
-        .flat_map(|cars| {
-            (0..cars).map(move |car| {
-                let spacing = 18.0 / cars as f64;
-                (0..cars)
-                    .map(|other| {
-                        rail_height(
-                            profile,
-                            distance + (car as f64 - other as f64) * spacing,
-                            false,
-                        )
-                    })
-                    .sum::<f64>()
-                    / cars as f64
-            })
-        })
+        .chain(twelve_car_means)
         .fold(f64::NEG_INFINITY, f64::max)
+}
+
+fn train_mean_heights(
+    profile: &SolvedProfile,
+    front_distance: f64,
+    mirror: bool,
+) -> ([f64; 6], [f64; 12]) {
+    let rail_heights: [f64; 23] = std::array::from_fn(|index| {
+        rail_height(
+            profile,
+            front_distance + (index as f64 - 11.0) * 1.5,
+            mirror,
+        )
+    });
+    let mut six_car_means = [0.0; 6];
+    for (front_car, mean_height) in six_car_means.iter_mut().enumerate() {
+        for other_car in 0..6 {
+            let offset = (front_car as isize - other_car as isize) * 2;
+            *mean_height += rail_heights[(offset + 11) as usize];
+        }
+        *mean_height /= 6.0;
+    }
+    let mut twelve_car_means = [0.0; 12];
+    for (front_car, mean_height) in twelve_car_means.iter_mut().enumerate() {
+        for other_car in 0..12 {
+            let offset = front_car as isize - other_car as isize;
+            *mean_height += rail_heights[(offset + 11) as usize];
+        }
+        *mean_height /= 12.0;
+    }
+    (six_car_means, twelve_car_means)
 }
 
 fn worst_speed_squared(
@@ -413,9 +488,15 @@ fn rail_height(profile: &SolvedProfile, distance: f64, mirror: bool) -> f64 {
 }
 
 pub(crate) fn solve(spec: &ProfileSpec) -> SolvedProfile {
-    let mut profile = integrate(spec, None, 2048);
+    let profile = solve_with_steps(spec, 2048);
+    assert_design_force_schedule(spec, &profile);
+    profile
+}
+
+fn solve_with_steps(spec: &ProfileSpec, steps: usize) -> SolvedProfile {
+    let mut profile = integrate(spec, None, steps);
     for _ in 0..12 {
-        let next = integrate(spec, Some(&profile), 2048);
+        let next = integrate(spec, Some(&profile), steps);
         let before = profile.points.last().unwrap();
         let after = next.points.last().unwrap();
         let movement = (before.x - after.x).hypot(before.z - after.z);
@@ -428,6 +509,58 @@ pub(crate) fn solve(spec: &ProfileSpec) -> SolvedProfile {
         "{}: profile did not converge; adjust the force schedule or rated speed",
         spec.name
     );
+}
+
+fn assert_design_force_schedule(spec: &ProfileSpec, profile: &SolvedProfile) {
+    for point in &profile.points {
+        let Some(design_force) = schedule_force_at(spec, point.angle) else {
+            continue;
+        };
+        let actual_force = point.heart_curvature
+            * worst_speed_squared(
+                profile,
+                point.distance,
+                spec.maximum_entry,
+                spec.mirror_apex,
+            )
+            / GRAVITY
+            + point.angle.cos();
+        if design_force >= point.angle.cos() {
+            assert!(
+                actual_force <= design_force + 1e-6,
+                "{}: design force exceeded at angle {}: {actual_force} g > {design_force} g",
+                spec.name,
+                point.angle
+            );
+        } else {
+            assert!(
+                actual_force >= design_force - 1e-6,
+                "{}: design force fell below target at angle {}: {actual_force} g < {design_force} g",
+                spec.name,
+                point.angle
+            );
+        }
+    }
+}
+
+fn schedule_force_at(spec: &ProfileSpec, angle: f64) -> Option<f64> {
+    let mut segment_start_angle = spec.start_angle;
+    for segment in &spec.segments {
+        if let Segment::Arc {
+            angle: delta,
+            schedule,
+        } = *segment
+        {
+            let segment_end_angle = segment_start_angle + delta;
+            let lower_angle = segment_start_angle.min(segment_end_angle) - 1e-10;
+            let upper_angle = segment_start_angle.max(segment_end_angle) + 1e-10;
+            if (lower_angle..=upper_angle).contains(&angle) {
+                return Some(schedule.force(angle));
+            }
+            segment_start_angle = segment_end_angle;
+        }
+    }
+    None
 }
 
 pub(crate) fn snap_half_loop(spec: &ProfileSpec) -> SolvedProfile {
@@ -450,7 +583,7 @@ fn snap_half_loop_with_hold_range(
     } else {
         panic!("half loop requires a loop arc");
     }
-    let lower_height = solve(&adjusted).endpoint()[1];
+    let mut lower_height = solve(&adjusted).endpoint()[1];
     if let Segment::Arc {
         schedule: Schedule::Loop { hold, .. },
         ..
@@ -458,12 +591,32 @@ fn snap_half_loop_with_hold_range(
     {
         *hold = high;
     }
-    let upper_height = solve(&adjusted).endpoint()[1];
+    let mut upper_height = solve(&adjusted).endpoint()[1];
     if !(upper_height <= target_height && target_height <= lower_height) {
         return snap_half_loop_with_vertical_insert(spec);
     }
+    let mut converged = (upper_height - target_height).abs() < 1e-10;
+    if (lower_height - target_height).abs() < 1e-10 {
+        if let Segment::Arc {
+            schedule: Schedule::Loop { hold, .. },
+            ..
+        } = &mut adjusted.segments[0]
+        {
+            *hold = low;
+        }
+        converged = true;
+    }
     for _ in 0..40 {
-        let hold = (low + high) / 2.0;
+        if converged {
+            break;
+        }
+        let secant_hold =
+            low + (target_height - lower_height) * (high - low) / (upper_height - lower_height);
+        let hold = if (low..high).contains(&secant_hold) {
+            secant_hold
+        } else {
+            (low + high) / 2.0
+        };
         if let Segment::Arc {
             schedule:
                 Schedule::Loop {
@@ -477,22 +630,30 @@ fn snap_half_loop_with_hold_range(
         } else {
             panic!("half loop requires a loop arc");
         }
-        if solve(&adjusted).endpoint()[1] > target_height {
+        let height = solve(&adjusted).endpoint()[1];
+        if (height - target_height).abs() < 1e-10 {
+            converged = true;
+            break;
+        }
+        if height > target_height {
             low = hold;
+            lower_height = height;
         } else {
             high = hold;
+            upper_height = height;
         }
     }
+    assert!(converged, "half loop height refinement did not converge");
     let core = solve(&adjusted);
     let target_x = (core.endpoint()[0] / 2.0).floor() * 2.0;
     adjusted
         .segments
         .push(Segment::Insert(core.endpoint()[0] - target_x));
-    let mut result = solve(&adjusted);
-    let last = result.points.last_mut().unwrap();
+    let mut profile = solve(&adjusted);
+    let last = profile.points.last_mut().unwrap();
     last.x = target_x;
     last.z = target_height;
-    result
+    profile
 }
 
 fn snap_half_loop_with_vertical_insert(spec: &ProfileSpec) -> SolvedProfile {
@@ -515,21 +676,43 @@ fn snap_half_loop_with_vertical_insert(spec: &ProfileSpec) -> SolvedProfile {
     let core = solve(&adjusted);
     let target_height = (core.endpoint()[1] / 2.0).ceil() * 2.0;
     let mut low = 0.0;
+    let mut lower_height = core.endpoint()[1];
     let mut high = 2.0;
     adjusted.segments[1] = Segment::Insert(high);
-    while solve(&adjusted).endpoint()[1] < target_height {
+    let mut upper_height = solve(&adjusted).endpoint()[1];
+    while upper_height < target_height {
         high *= 2.0;
         adjusted.segments[1] = Segment::Insert(high);
+        upper_height = solve(&adjusted).endpoint()[1];
+    }
+    let mut converged = (lower_height - target_height).abs() < 1e-10;
+    if converged {
+        adjusted.segments[1] = Segment::Insert(0.0);
     }
     for _ in 0..40 {
-        let length = (low + high) / 2.0;
+        if converged {
+            break;
+        }
+        let length =
+            low + (target_height - lower_height) * (high - low) / (upper_height - lower_height);
         adjusted.segments[1] = Segment::Insert(length);
-        if solve(&adjusted).endpoint()[1] < target_height {
+        let height = solve(&adjusted).endpoint()[1];
+        if (height - target_height).abs() < 1e-10 {
+            converged = true;
+            break;
+        }
+        if height < target_height {
             low = length;
+            lower_height = height;
         } else {
             high = length;
+            upper_height = height;
         }
     }
+    assert!(
+        converged,
+        "half loop vertical insert refinement did not converge"
+    );
     let core = solve(&adjusted);
     let target_x = (core.endpoint()[0] / 2.0).floor() * 2.0;
     adjusted
@@ -577,8 +760,8 @@ pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
     assert_eq!(spec.segments.len(), 1);
     let end_angle = spec.start_angle + angle;
     let determinant = (end_angle - spec.start_angle).sin();
-    assert!(determinant > 0.0);
-    let raw = solve(spec);
+    assert!(determinant.abs() > f64::EPSILON);
+    let raw = solve_with_steps(spec, 512);
     let [raw_x, raw_z] = raw.endpoint();
     let first_x = (raw_x / 2.0).ceil() as i32;
     let first_z = (raw_z / 2.0).ceil() as i32;
@@ -601,24 +784,75 @@ pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
         candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (_, x, z, mut start, mut end) in candidates {
             let mut adjusted = spec.clone();
-            for _ in 0..20 {
+            let mut coarse_converged = false;
+            for _ in 0..6 {
                 adjusted.segments = vec![
                     Segment::Insert(start),
                     spec.segments[0],
                     Segment::Insert(end),
                 ];
-                let mut profile = solve(&adjusted);
+                let profile = solve_with_steps(&adjusted, 512);
+                let [actual_x, actual_z] = profile.endpoint();
+                let dx = 2.0 * x as f64 - actual_x;
+                let dz = 2.0 * z as f64 - actual_z;
+                if dx.hypot(dz) < 1e-7 {
+                    coarse_converged = true;
+                    break;
+                }
+                const START_PERTURBATION: f64 = 0.1;
+                adjusted.segments[0] = Segment::Insert(start + START_PERTURBATION);
+                let perturbed = solve_with_steps(&adjusted, 512);
+                let [perturbed_x, perturbed_z] = perturbed.endpoint();
+                let start_derivative_x = (perturbed_x - actual_x) / START_PERTURBATION;
+                let start_derivative_z = (perturbed_z - actual_z) / START_PERTURBATION;
+                let end_tangent_x = end_angle.cos();
+                let end_tangent_z = end_angle.sin();
+                let jacobian_determinant =
+                    start_derivative_x * end_tangent_z - end_tangent_x * start_derivative_z;
+                if jacobian_determinant.abs() < f64::EPSILON {
+                    break;
+                }
+                start += (dx * end_tangent_z - end_tangent_x * dz) / jacobian_determinant;
+                end += (start_derivative_x * dz - start_derivative_z * dx) / jacobian_determinant;
+                if start < 0.0 || end < 0.0 {
+                    break;
+                }
+            }
+            if !coarse_converged {
+                continue;
+            }
+            for _ in 0..6 {
+                adjusted.segments = vec![
+                    Segment::Insert(start),
+                    spec.segments[0],
+                    Segment::Insert(end),
+                ];
+                let mut profile = solve_with_steps(&adjusted, 2048);
                 let [actual_x, actual_z] = profile.endpoint();
                 let dx = 2.0 * x as f64 - actual_x;
                 let dz = 2.0 * z as f64 - actual_z;
                 if dx.hypot(dz) < 1e-10 {
+                    assert_design_force_schedule(&adjusted, &profile);
                     let last = profile.points.last_mut().unwrap();
                     last.x = 2.0 * x as f64;
                     last.z = 2.0 * z as f64;
                     return profile;
                 }
-                start += (dx * end_angle.sin() - dz * end_angle.cos()) / determinant;
-                end += (dz * spec.start_angle.cos() - dx * spec.start_angle.sin()) / determinant;
+                const START_PERTURBATION: f64 = 0.1;
+                adjusted.segments[0] = Segment::Insert(start + START_PERTURBATION);
+                let perturbed = solve_with_steps(&adjusted, 2048);
+                let [perturbed_x, perturbed_z] = perturbed.endpoint();
+                let start_derivative_x = (perturbed_x - actual_x) / START_PERTURBATION;
+                let start_derivative_z = (perturbed_z - actual_z) / START_PERTURBATION;
+                let end_tangent_x = end_angle.cos();
+                let end_tangent_z = end_angle.sin();
+                let jacobian_determinant =
+                    start_derivative_x * end_tangent_z - end_tangent_x * start_derivative_z;
+                if jacobian_determinant.abs() < f64::EPSILON {
+                    break;
+                }
+                start += (dx * end_tangent_z - end_tangent_x * dz) / jacobian_determinant;
+                end += (start_derivative_x * dz - start_derivative_z * dx) / jacobian_determinant;
                 if start < 0.0 || end < 0.0 {
                     break;
                 }
@@ -699,6 +933,7 @@ mod tests {
             fixed_speed: false,
             mirror_apex: false,
             start_angle: 0.0,
+            taper_angle: None,
             name: "half loop test",
         };
         let mut profile = integrate(&spec, None, 2048);
@@ -741,6 +976,40 @@ mod tests {
 #[cfg(test)]
 mod solver_acceptance_tests {
     use super::*;
+
+    #[test]
+    fn snapped_half_loop_exit_insert_follows_its_tangent() {
+        let spec = ProfileSpec::half_loop(31.3, 4.2, 1.5);
+        for profile in [
+            snap_half_loop(&spec),
+            snap_half_loop_with_hold_range(&spec, 120.0_f64.to_radians(), 120.0_f64.to_radians()),
+        ] {
+            let [before, end] = &profile.points[profile.points.len() - 2..] else {
+                unreachable!();
+            };
+            let distance = end.distance - before.distance;
+            let error = (end.x - before.x - distance * before.angle.cos())
+                .hypot(end.z - before.z - distance * before.angle.sin());
+            assert!(error < 1e-9, "exit insert tangent error: {error}");
+        }
+    }
+
+    #[test]
+    fn minimum_entry_clears_the_whole_train_on_an_uphill_exit() {
+        let profile = snap_pull(&ProfileSpec::pull(0.0, PI / 3.0, 34.0, 4.2));
+        for cars in [6, 12] {
+            let spacing = 18.0 / cars as f64;
+            let mean_height = |front: f64| {
+                (0..cars)
+                    .map(|car| rail_height(&profile, front - car as f64 * spacing, false))
+                    .sum::<f64>()
+                    / cars as f64
+            };
+            let speed_squared = profile.minimum_entry().powi(2)
+                - 2.0 * GRAVITY * (mean_height(profile.length() + 18.0) - mean_height(0.0));
+            assert!(speed_squared >= 36.0 - 1e-6, "{cars} cars: {speed_squared}");
+        }
+    }
 
     #[test]
     fn half_loop_falls_back_to_a_vertical_insert() {
@@ -787,6 +1056,30 @@ mod solver_acceptance_tests {
             }
             assert!(profile.maximum_force(34.0) <= 4.2 + 1e-6);
         }
+    }
+
+    #[test]
+    fn descending_crest_profile_respects_its_negative_force_target() {
+        let spec = ProfileSpec::crest(PI / 3.0, 0.0, 30.0, -1.45)
+            .with_taper_angle(0.1)
+            .named("sixty-degree crest");
+        let profile = solve(&spec);
+        assert!(profile.minimum_force(30.0) >= -1.45 - 1e-6);
+        assert!(profile.maximum_force(30.0) <= 1.0 + 1e-6);
+        assert!(30.0 - profile.minimum_entry() >= 2.0);
+        let snapped = snap_pull(&spec);
+        for coordinate in snapped.endpoint() {
+            assert!((coordinate / 2.0 - (coordinate / 2.0).round()).abs() < 1e-9);
+        }
+        assert!(snapped.minimum_force(30.0) >= -1.45 - 1e-6);
+        assert!(30.0 - snapped.minimum_entry() >= 2.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "stalled crest: speed window is too narrow")]
+    fn solver_rejects_a_crest_that_stalls_inside_its_design_speed() {
+        let profile = solve(&ProfileSpec::crest(PI / 3.0, 0.0, 30.0, -0.7));
+        profile.rated_speeds("stalled crest", 30.0, 2.0, 8.0);
     }
 
     #[test]

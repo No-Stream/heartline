@@ -74,7 +74,7 @@ impl CoasterRun {
                 } else {
                     0
                 })
-                    .map(|_| TestRunRecorder::new(circuit.length()))
+                    .map(|_| TestRunRecorder::for_circuit(circuit))
                     .collect(),
             ),
             station_distance,

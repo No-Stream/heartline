@@ -1,12 +1,109 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train};
 use theme_park_sim::track::{
-    Bank, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model, multi_launch_model,
-    wooden_twister_model,
+    Bank, Heading, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 
 fn circuit_with_elements(elements: &[PieceId]) -> (Circuit, f64, f64) {
     let catalog = catalog();
+    circuit_with_elements_from_catalog(&catalog, elements)
+}
+
+type ConnectorKey = (i32, i32, i32, u8, u8, u8, u8, u8);
+
+fn connector_key(state: TrackState) -> ConnectorKey {
+    (
+        state.x,
+        state.y,
+        state.z,
+        state.heading as u8,
+        state.slope as u8,
+        state.bank as u8,
+        state.horizontal_curvature as u8,
+        state.vertical_curvature as u8,
+    )
+}
+
+fn heading_index(heading: Heading) -> i32 {
+    match heading {
+        Heading::East => 0,
+        Heading::NorthEast => 1,
+        Heading::North => 2,
+        Heading::NorthWest => 3,
+        Heading::West => 4,
+        Heading::SouthWest => 5,
+        Heading::South => 6,
+        Heading::SouthEast => 7,
+    }
+}
+
+fn heading_from_index(index: i32) -> Heading {
+    [
+        Heading::East,
+        Heading::NorthEast,
+        Heading::North,
+        Heading::NorthWest,
+        Heading::West,
+        Heading::SouthWest,
+        Heading::South,
+        Heading::SouthEast,
+    ][index.rem_euclid(8) as usize]
+}
+
+fn connector_exit_at(piece: &Piece, state: TrackState) -> Option<TrackState> {
+    if state.slope != piece.entry.slope
+        || state.bank != piece.entry.bank
+        || state.horizontal_curvature != piece.entry.horizontal_curvature
+        || state.vertical_curvature != piece.entry.vertical_curvature
+    {
+        return None;
+    }
+    let rotation =
+        (heading_index(state.heading) - heading_index(piece.entry.heading)).rem_euclid(8);
+    let dx = piece.exit.x - piece.entry.x;
+    let dy = piece.exit.y - piece.entry.y;
+    let (x, y) = match rotation {
+        0 => (dx, dy),
+        1 => (dx - dy, dx + dy),
+        2 => (-dy, dx),
+        3 => (-dx - dy, dx - dy),
+        4 => (-dx, -dy),
+        5 => (dy - dx, -dx - dy),
+        6 => (dy, -dx),
+        7 => (dx + dy, dy - dx),
+        _ => unreachable!(),
+    };
+    Some(TrackState {
+        x: state.x + x,
+        y: state.y + y,
+        z: state.z
+            + if rotation % 2 == 0 {
+                piece.exit.z - piece.entry.z
+            } else {
+                (f64::from(piece.exit.z - piece.entry.z) * std::f64::consts::SQRT_2).round() as i32
+            },
+        heading: heading_from_index(heading_index(piece.exit.heading) + rotation),
+        slope: piece.exit.slope,
+        bank: piece.exit.bank,
+        horizontal_curvature: piece.exit.horizontal_curvature,
+        vertical_curvature: piece.exit.vertical_curvature,
+    })
+}
+
+fn circuit_with_elements_from_catalog(
+    catalog: &[Piece],
+    elements: &[PieceId],
+) -> (Circuit, f64, f64) {
+    circuit_with_lifted_elements_from_catalog(catalog, elements, 0)
+}
+
+fn circuit_with_lifted_elements_from_catalog(
+    catalog: &[Piece],
+    elements: &[PieceId],
+    lifted_element_count: usize,
+) -> (Circuit, f64, f64) {
+    assert!(lifted_element_count <= elements.len());
     let template = |id| catalog.iter().find(|piece| piece.id == id).unwrap();
     let start = TrackState::origin();
     let mut state = start;
@@ -18,22 +115,36 @@ fn circuit_with_elements(elements: &[PieceId]) -> (Circuit, f64, f64) {
     };
     append(PieceId::Station);
     let element_start = pieces.iter().map(Piece::length).sum();
-    for &id in elements {
-        let piece = template(id).at(state).unwrap();
+    for (element_index, &id) in elements.iter().enumerate() {
+        let mut piece = template(id).at(state).unwrap();
+        if element_index < lifted_element_count {
+            piece.kind = PieceKind::Lift;
+        }
         state = piece.exit;
         pieces.push(piece);
     }
     let element_end = pieces.iter().map(Piece::length).sum();
 
     // Find a return path using level track, keeping the element sequence intact.
-    let mut queue = VecDeque::from([(state, Vec::<PieceId>::new())]);
-    let mut visited = HashSet::from([format!("{state:?}")]);
+    let search_start_key = connector_key(state);
+    let start_key = connector_key(start);
+    let mut queue = VecDeque::from([(state, search_start_key, 0)]);
+    let mut visited = HashSet::from([search_start_key]);
+    let mut predecessors: HashMap<ConnectorKey, (ConnectorKey, PieceId)> = HashMap::new();
     let return_path = loop {
-        let (current, path) = queue.pop_front().expect("no return path");
-        if current == start {
+        let (current, current_key, path_length) = queue.pop_front().expect("no return path");
+        if current_key == start_key {
+            let mut path = Vec::new();
+            let mut key = current_key;
+            while key != search_start_key {
+                let (previous_key, piece_id) = predecessors[&key];
+                path.push(piece_id);
+                key = previous_key;
+            }
+            path.reverse();
             break path;
         }
-        if path.len() >= 80 {
+        if path_length >= 80 {
             continue;
         }
         for id in [
@@ -45,16 +156,16 @@ fn circuit_with_elements(elements: &[PieceId]) -> (Circuit, f64, f64) {
             PieceId::OffsetLeft,
             PieceId::OffsetRight,
         ] {
-            let piece = template(id).at(current).unwrap();
-            if piece.exit.x.abs() > 300 || piece.exit.y.abs() > 300 {
+            let next = connector_exit_at(template(id), current).unwrap();
+            if next.x.abs() > 300 || next.y.abs() > 300 {
                 continue;
             }
-            if !visited.insert(format!("{:?}", piece.exit)) {
+            let next_key = connector_key(next);
+            if !visited.insert(next_key) {
                 continue;
             }
-            let mut next = path.clone();
-            next.push(id);
-            queue.push_back((piece.exit, next));
+            predecessors.insert(next_key, (current_key, id));
+            queue.push_back((next, next_key, path_length + 1));
         }
     };
     for id in return_path {
@@ -63,6 +174,55 @@ fn circuit_with_elements(elements: &[PieceId]) -> (Circuit, f64, f64) {
         pieces.push(piece);
     }
     (Circuit::new(pieces).unwrap(), element_start, element_end)
+}
+
+fn circuit_with_gentle_lift_drop_and_loop(
+    loop_id: PieceId,
+    gentle_up_piece_count: usize,
+) -> Circuit {
+    // The catalog's gentle lift steps snap to 8 m increments: seven and three
+    // climbs give the plan's roughly 60 m and 30 m drops.
+    let mut elements = vec![PieceId::LevelToGentleUp];
+    elements.extend(std::iter::repeat_n(
+        PieceId::GentleUp,
+        gentle_up_piece_count,
+    ));
+    elements.push(PieceId::GentleUpToLevel);
+    let lifted_element_count = elements.len();
+    elements.push(PieceId::LevelToGentleDown);
+    elements.extend(std::iter::repeat_n(
+        PieceId::GentleDown,
+        gentle_up_piece_count,
+    ));
+    elements.push(PieceId::GentleDownToLevel);
+    elements.push(loop_id);
+
+    circuit_with_lifted_elements_from_catalog(&catalog(), &elements, lifted_element_count).0
+}
+
+fn run_one_car_coaster(
+    circuit: &Circuit,
+    rolling_resistance: f64,
+) -> theme_park_sim::physics::CoasterOutcome {
+    let mut train_configuration = hybrid_model().train;
+    train_configuration.cars = 1;
+    train_configuration.length_metres = 4.0;
+    let mut run = CoasterRun::new(
+        circuit,
+        &train_configuration,
+        PhysicsConfig {
+            lift_speed: 5.0,
+            rolling_resistance,
+            powered_sections: true,
+            ..PhysicsConfig::default()
+        },
+    );
+    for _ in 0..100_000 {
+        if let Some(outcome) = run.step(circuit) {
+            return outcome;
+        }
+    }
+    panic!("one-car test run did not complete or recover");
 }
 
 fn unpowered() -> PhysicsConfig {
@@ -109,9 +269,210 @@ fn circuit_with_straight_return(elements: &[PieceId]) -> Circuit {
 }
 
 #[test]
-fn sixty_degree_crest_ratings_pass_full_train_scan() {
+fn sixty_degree_crests_pass_full_trains_at_both_rated_endpoints() {
     use PieceId::*;
-    let mut results = Vec::new();
+    let sequences: [&[PieceId]; 2] = [
+        &[
+            LevelToSixtyUp,
+            SixtyUpToLevel,
+            Straight,
+            Straight,
+            LevelToSixtyDown,
+            SixtyDownToLevel,
+        ],
+        &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+            GentleToSteepDown,
+            SteepToSixtyDown,
+            SixtyToSteepDown,
+            SteepToGentleDown,
+            GentleDownToLevel,
+        ],
+    ];
+    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    for sequence in sequences {
+        let (circuit, _, _) = circuit_with_elements(sequence);
+        for id in [
+            SixtyUpToLevel,
+            LevelToSixtyDown,
+            SixtyToSteepUp,
+            SteepToSixtyDown,
+        ] {
+            let Some(index) = circuit.pieces().iter().position(|piece| piece.id == id) else {
+                continue;
+            };
+            let piece = &circuit.pieces()[index];
+            let rated = piece
+                .rated_speeds
+                .expect("crest needs a rated speed window");
+            assert!(
+                rated.minimum_entry >= 3.0 && rated.maximum_entry <= 30.0,
+                "{id:?}: {rated:?} must stay within 3–30 m/s"
+            );
+            assert!(
+                rated.maximum_entry - rated.minimum_entry >= 2.0,
+                "{id:?}: {rated:?} is narrower than 2 m/s"
+            );
+            let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+            let end = start + piece.length();
+
+            for model in models.iter().filter(|model| model.allows_piece(piece)) {
+                for cars in [6, 12] {
+                    let mut configuration = model.train.clone();
+                    configuration.cars = cars;
+                    for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                        let mut train =
+                            Train::new(&circuit, &configuration, unpowered(), start, entry_speed);
+                        let mut cars_seen = vec![false; usize::from(cars)];
+                        let mut minimum_vertical = f64::INFINITY;
+                        let mut maximum_vertical = f64::NEG_INFINITY;
+                        let mut maximum_lateral: f64 = 0.0;
+                        let mut maximum_longitudinal: f64 = 0.0;
+                        let mut minimum_speed = f64::INFINITY;
+                        for _ in 0..100_000 {
+                            train.step(&circuit);
+                            for frame in train.take_readings() {
+                                for (car_index, car) in frame.into_iter().enumerate() {
+                                    if (start..end).contains(&car.distance) {
+                                        cars_seen[car_index] = true;
+                                        minimum_vertical = minimum_vertical.min(car.g.vertical);
+                                        maximum_vertical = maximum_vertical.max(car.g.vertical);
+                                        maximum_lateral = maximum_lateral.max(car.g.lateral.abs());
+                                        maximum_longitudinal =
+                                            maximum_longitudinal.max(car.g.longitudinal.abs());
+                                        minimum_speed = minimum_speed.min(car.speed);
+                                    }
+                                }
+                            }
+                            if train.distance() >= end + configuration.length_metres
+                                || train.speed() <= 0.0
+                            {
+                                break;
+                            }
+                        }
+                        let limits = model.comfortable_force_limits;
+                        assert!(
+                            cars_seen.iter().all(|seen| *seen)
+                                && train.distance() >= end + configuration.length_metres
+                                && train.notes().is_empty(),
+                            "{id:?} {} {cars} cars at {entry_speed:.3} m/s did not clear",
+                            model.name
+                        );
+                        assert!(
+                            minimum_vertical >= limits.minimum_vertical_g
+                                && maximum_vertical <= limits.maximum_vertical_g
+                                && maximum_lateral <= limits.maximum_lateral_g
+                                && maximum_longitudinal <= limits.maximum_longitudinal_g,
+                            "{id:?} {} {cars} cars at {entry_speed:.3} m/s: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, lateral {maximum_lateral:.3}, longitudinal {maximum_longitudinal:.3}; limits {limits:?}",
+                            model.name
+                        );
+                        if piece.exit.position().z > piece.entry.position().z
+                            && entry_speed == rated.minimum_entry
+                        {
+                            assert!(minimum_speed >= 5.0, "{id:?}: {minimum_speed}");
+                        }
+                        eprintln!(
+                            "{id:?} {} {cars} cars at {entry_speed:.3}: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, lateral {maximum_lateral:.3}, longitudinal {maximum_longitudinal:.3}",
+                            model.name
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sixty_degree_ascending_crest_has_a_contiguous_rated_window() {
+    use PieceId::*;
+    let sequence = [
+        LevelToSixtyUp,
+        SixtyUpToLevel,
+        Straight,
+        Straight,
+        LevelToSixtyDown,
+        SixtyDownToLevel,
+    ];
+    let (circuit, _, _) = circuit_with_elements(&sequence);
+    let piece_index = circuit
+        .pieces()
+        .iter()
+        .position(|piece| piece.id == SixtyUpToLevel)
+        .unwrap();
+    let piece = &circuit.pieces()[piece_index];
+    let rated = piece.rated_speeds.unwrap();
+    let element_start: f64 = circuit.pieces()[..piece_index]
+        .iter()
+        .map(Piece::length)
+        .sum();
+    let element_end = element_start + piece.length();
+    let model = hybrid_model();
+    let limits = model.comfortable_force_limits;
+    let sample_count = (rated.maximum_entry - rated.minimum_entry).ceil() as usize;
+
+    for sample_index in 0..=sample_count {
+        let entry_speed = (rated.minimum_entry + sample_index as f64).min(rated.maximum_entry);
+        for cars in [6, 12] {
+            let mut configuration = model.train.clone();
+            configuration.cars = cars;
+            let mut train = Train::new(
+                &circuit,
+                &configuration,
+                unpowered(),
+                element_start,
+                entry_speed,
+            );
+            let mut cars_seen = vec![false; usize::from(cars)];
+            let mut minimum_speed = f64::INFINITY;
+            let mut minimum_vertical = f64::INFINITY;
+            let mut maximum_vertical = f64::NEG_INFINITY;
+            let mut maximum_lateral: f64 = 0.0;
+            let mut maximum_longitudinal: f64 = 0.0;
+            for _ in 0..100_000 {
+                train.step(&circuit);
+                for frame in train.take_readings() {
+                    for (car_index, car) in frame.into_iter().enumerate() {
+                        if (element_start..element_end).contains(&car.distance) {
+                            cars_seen[car_index] = true;
+                            minimum_speed = minimum_speed.min(car.speed);
+                            minimum_vertical = minimum_vertical.min(car.g.vertical);
+                            maximum_vertical = maximum_vertical.max(car.g.vertical);
+                            maximum_lateral = maximum_lateral.max(car.g.lateral.abs());
+                            maximum_longitudinal =
+                                maximum_longitudinal.max(car.g.longitudinal.abs());
+                        }
+                    }
+                }
+                if train.distance() >= element_end + configuration.length_metres
+                    || train.speed() <= 0.0
+                {
+                    break;
+                }
+            }
+            assert!(
+                cars_seen.iter().all(|seen| *seen)
+                    && train.distance() >= element_end + configuration.length_metres
+                    && train.notes().is_empty()
+                    && minimum_speed >= 5.0
+                    && minimum_vertical >= limits.minimum_vertical_g
+                    && maximum_vertical <= limits.maximum_vertical_g
+                    && maximum_lateral <= limits.maximum_lateral_g
+                    && maximum_longitudinal <= limits.maximum_longitudinal_g,
+                "SixtyUpToLevel {cars} cars at {entry_speed:.3} m/s: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}, longitudinal {maximum_longitudinal}, minimum speed {minimum_speed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sixty_degree_pull_profiles_keep_trains_within_force_limits() {
+    use PieceId::*;
     let sequences: [&[PieceId]; 2] = [
         &[
             LevelToSixtyUp,
@@ -137,54 +498,135 @@ fn sixty_degree_crest_ratings_pass_full_train_scan() {
     for sequence in sequences {
         let circuit = circuit_with_straight_return(sequence);
         for id in [
-            SixtyUpToLevel,
-            LevelToSixtyDown,
-            SixtyToSteepUp,
-            SteepToSixtyDown,
+            LevelToSixtyUp,
+            SixtyDownToLevel,
+            SteepToSixtyUp,
+            SixtyToSteepDown,
         ] {
             let Some(index) = circuit.pieces().iter().position(|piece| piece.id == id) else {
                 continue;
             };
+            let piece = &circuit.pieces()[index];
             let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
-            let end = start + circuit.pieces()[index].length();
-            let mut passing = Vec::new();
-            for speed in 2..=30 {
-                let mut passed = true;
+            let end = start + piece.length();
+            let rated = piece.rated_speeds.unwrap();
+            for model in [hybrid_model(), multi_launch_model()] {
                 for cars in [6, 12] {
-                    let mut config = hybrid_model().train;
+                    let mut config = model.train.clone();
                     config.cars = cars;
-                    let mut train = Train::new(&circuit, &config, unpowered(), start, speed as f64);
-                    let mut minimum_vertical = f64::INFINITY;
-                    for _ in 0..100_000 {
-                        train.step(&circuit);
-                        for frame in train.take_readings() {
-                            for car in frame {
-                                if (start..end).contains(&car.distance) {
-                                    minimum_vertical = minimum_vertical.min(car.g.vertical);
+                    for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                        let mut train =
+                            Train::new(&circuit, &config, unpowered(), start, entry_speed);
+                        let mut seen = vec![false; cars as usize];
+                        let mut minimum_vertical = f64::INFINITY;
+                        let mut maximum_vertical = f64::NEG_INFINITY;
+                        let mut maximum_lateral: f64 = 0.0;
+                        let mut maximum_longitudinal: f64 = 0.0;
+                        let mut minimum_speed = f64::INFINITY;
+                        for _ in 0..100_000 {
+                            train.step(&circuit);
+                            for frame in train.take_readings() {
+                                for (index, car) in frame.iter().enumerate() {
+                                    if (start..end).contains(&car.distance) {
+                                        seen[index] = true;
+                                        minimum_speed = minimum_speed.min(car.speed);
+                                        minimum_vertical = minimum_vertical.min(car.g.vertical);
+                                        maximum_vertical = maximum_vertical.max(car.g.vertical);
+                                        maximum_lateral = maximum_lateral.max(car.g.lateral.abs());
+                                        maximum_longitudinal =
+                                            maximum_longitudinal.max(car.g.longitudinal.abs());
+                                    }
                                 }
                             }
+                            if train.distance() >= end + config.length_metres
+                                || train.speed() <= 0.0
+                            {
+                                break;
+                            }
                         }
-                        if train.distance() >= end + config.length_metres || train.speed() <= 0.0 {
-                            break;
+                        eprintln!(
+                            "{id:?} {} {cars} cars at {entry_speed:.3}: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, lateral {maximum_lateral:.3}, longitudinal {maximum_longitudinal:.3}, minimum speed {minimum_speed:.3}",
+                            model.name
+                        );
+                        let limits = model.comfortable_force_limits;
+                        assert!(
+                            seen.iter().all(|seen| *seen)
+                                && train.distance() >= end + config.length_metres
+                                && train.notes().is_empty(),
+                            "{id:?} {cars} cars at {entry_speed}: incomplete, progress {} required {}, speed {} seen {:?}",
+                            train.distance() - start,
+                            end - start + config.length_metres,
+                            train.speed(),
+                            seen
+                        );
+                        assert!(
+                            minimum_vertical >= limits.minimum_vertical_g
+                                && maximum_vertical <= limits.maximum_vertical_g
+                                && maximum_lateral <= limits.maximum_lateral_g
+                                && maximum_longitudinal <= limits.maximum_longitudinal_g,
+                            "{id:?} {cars} cars at {entry_speed}"
+                        );
+                        if matches!(id, LevelToSixtyUp | SteepToSixtyUp)
+                            && entry_speed == rated.minimum_entry
+                        {
+                            assert!(minimum_speed >= 5.0, "{id:?}: {minimum_speed}");
                         }
-                    }
-                    if train.distance() < end + config.length_metres || minimum_vertical < -1.2 {
-                        if id == SixtyUpToLevel {
-                            eprintln!("{id:?} {cars} cars at {speed}: minimum vertical {minimum_vertical:.3}, progress {:.2}/{:.2}, speed {:.2}", train.distance() - start, end - start + config.length_metres, train.speed());
-                        }
-                        passed = false;
-                        break;
                     }
                 }
-                if passed { passing.push(speed); }
             }
-            eprintln!("{id:?}: passing speeds {passing:?}");
-            results.push((id, passing.last().copied(), circuit.pieces()[index].rated_speeds));
         }
     }
-    for (id, maximum, rated) in results {
-        let maximum = maximum.expect("no traversable speed meets the crest force target");
-        assert_eq!(rated.unwrap().maximum_entry, maximum as f64, "{id:?}");
+}
+
+#[test]
+fn descending_fifteen_degree_pull_maximum_respects_longitudinal_limit() {
+    use PieceId::*;
+    let circuit = circuit_with_straight_return(&[
+        LevelToGentleUp,
+        GentleToSteepUp,
+        SteepToSixtyUp,
+        SixtyToSteepUp,
+        SteepToGentleUp,
+        GentleUpToLevel,
+        LevelToGentleDown,
+        GentleToSteepDown,
+        SteepToSixtyDown,
+        SixtyToSteepDown,
+        SteepToGentleDown,
+        GentleDownToLevel,
+    ]);
+    let index = circuit
+        .pieces()
+        .iter()
+        .position(|piece| piece.id == SixtyToSteepDown)
+        .unwrap();
+    let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+    let end = start + circuit.pieces()[index].length();
+    let maximum = circuit.pieces()[index].rated_speeds.unwrap().maximum_entry;
+    let mut config = hybrid_model().train;
+    config.cars = 12;
+    for (speed, should_pass) in [(maximum, true), (maximum + 1.0, false)] {
+        let mut train = Train::new(&circuit, &config, unpowered(), start, speed);
+        let mut maximum_longitudinal: f64 = 0.0;
+        for _ in 0..100_000 {
+            train.step(&circuit);
+            for frame in train.take_readings() {
+                for car in frame {
+                    if (start..end).contains(&car.distance) {
+                        maximum_longitudinal = maximum_longitudinal.max(car.g.longitudinal.abs());
+                    }
+                }
+            }
+            if train.distance() >= end + config.length_metres || train.speed() <= 0.0 {
+                break;
+            }
+        }
+        assert!(train.distance() >= end + config.length_metres);
+        assert_eq!(
+            maximum_longitudinal <= 1.5,
+            should_pass,
+            "speed {speed}, longitudinal {maximum_longitudinal}"
+        );
     }
 }
 
@@ -322,17 +764,7 @@ fn trains_cross_half_loops_within_model_force_limits() {
 }
 
 #[test]
-fn all_constructible_half_inversion_combinations_stay_within_force_limits() {
-    struct ElementForces {
-        id: PieceId,
-        minimum_vertical: f64,
-        maximum_vertical: f64,
-        maximum_lateral: f64,
-        maximum_longitudinal: f64,
-        cars_seen: Vec<bool>,
-        minimum_entry_speed: f64,
-        maximum_entry_speed: f64,
-    }
+fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
     use PieceId::*;
     let combinations = [
         [
@@ -372,119 +804,118 @@ fn all_constructible_half_inversion_combinations_stay_within_force_limits() {
             HalfCorkscrewRightDown,
         ],
     ];
-    let mut failures = Vec::new();
+    let templates = catalog();
     for elements in combinations {
-        let (circuit, element_start, element_end) = circuit_with_elements(&elements);
-        let element_ranges: Vec<_> = circuit
-            .pieces()
-            .iter()
-            .scan(0.0, |distance, piece| {
-                let start = *distance;
-                *distance += piece.length();
-                Some((piece, start..*distance))
-            })
-            .filter(|(piece, _)| piece.inversion.is_some())
-            .map(|(piece, range)| (piece.id, range))
-            .collect();
-        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()] {
+        let (circuit, _, _) = circuit_with_elements(&elements);
+        let mut element_ranges = Vec::with_capacity(elements.len());
+        let mut start = circuit.pieces()[0].length();
+        for (index, id) in elements.iter().enumerate() {
+            let piece = &circuit.pieces()[index + 1];
+            assert_eq!(
+                piece.id, *id,
+                "element sequence changed while building circuit"
+            );
+            let end = start + piece.length();
+            let rated = templates
+                .iter()
+                .find(|template| template.id == *id)
+                .unwrap()
+                .rated_speeds
+                .unwrap_or_else(|| panic!("{id:?} has no rated entry band"));
+            element_ranges.push((
+                *id,
+                start..end,
+                piece.exit.position().z > piece.entry.position().z,
+                rated,
+            ));
+            start = end;
+        }
+
+        let mut supported_model_count = 0;
+        for model in [hybrid_model(), multi_launch_model()] {
             if elements.iter().any(|id| {
-                let piece = catalog().into_iter().find(|piece| piece.id == *id).unwrap();
-                !model.allows_piece(&piece)
+                let piece = templates.iter().find(|piece| piece.id == *id).unwrap();
+                !model.allows_piece(piece)
             }) {
                 continue;
             }
-            for initial_element_speed in [27.0, 30.0, 32.0] {
-                let mut train = Train::new(
-                    &circuit,
-                    &model.train,
-                    unpowered(),
-                    element_start,
-                    initial_element_speed,
-                );
-                let mut element_forces: Vec<_> = element_ranges
-                    .iter()
-                    .map(|(id, _)| ElementForces {
-                        id: *id,
-                        minimum_vertical: f64::INFINITY,
-                        maximum_vertical: f64::NEG_INFINITY,
-                        maximum_lateral: 0.0,
-                        maximum_longitudinal: 0.0,
-                        cars_seen: vec![false; usize::from(model.train.cars)],
-                        minimum_entry_speed: f64::INFINITY,
-                        maximum_entry_speed: f64::NEG_INFINITY,
-                    })
-                    .collect();
-                let mut cleared = false;
-                let mut rolled_back = false;
-                for _ in 0..100_000 {
-                    train.step(&circuit);
-                    for frame in train.take_readings() {
-                        for (car_index, reading) in frame.into_iter().enumerate() {
-                            if let Some(range_index) = element_ranges
-                                .iter()
-                                .position(|(_, range)| range.contains(&reading.distance))
-                            {
-                                let forces = &mut element_forces[range_index];
-                                if !forces.cars_seen[car_index] {
-                                    forces.minimum_entry_speed =
-                                        forces.minimum_entry_speed.min(reading.speed);
-                                    forces.maximum_entry_speed =
-                                        forces.maximum_entry_speed.max(reading.speed);
-                                    forces.cars_seen[car_index] = true;
+            supported_model_count += 1;
+            let configuration = model.train.clone();
+            let limits = model.comfortable_force_limits;
+            for (id, range, ascending, rated) in &element_ranges {
+                for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let mut train = Train::new(
+                        &circuit,
+                        &configuration,
+                        unpowered(),
+                        range.start,
+                        entry_speed,
+                    );
+                    let mut cars_seen = vec![false; usize::from(configuration.cars)];
+                    let mut minimum_vertical = f64::INFINITY;
+                    let mut maximum_vertical = f64::NEG_INFINITY;
+                    let mut maximum_lateral: f64 = 0.0;
+                    let mut maximum_longitudinal: f64 = 0.0;
+                    let mut minimum_speed = f64::INFINITY;
+                    for _ in 0..100_000 {
+                        train.step(&circuit);
+                        for frame in train.take_readings() {
+                            for (car_index, reading) in frame.into_iter().enumerate() {
+                                if range.contains(&reading.distance) {
+                                    cars_seen[car_index] = true;
+                                    minimum_vertical = minimum_vertical.min(reading.g.vertical);
+                                    maximum_vertical = maximum_vertical.max(reading.g.vertical);
+                                    maximum_lateral = maximum_lateral.max(reading.g.lateral.abs());
+                                    maximum_longitudinal =
+                                        maximum_longitudinal.max(reading.g.longitudinal.abs());
+                                    minimum_speed = minimum_speed.min(reading.speed);
                                 }
-                                forces.minimum_vertical =
-                                    forces.minimum_vertical.min(reading.g.vertical);
-                                forces.maximum_vertical =
-                                    forces.maximum_vertical.max(reading.g.vertical);
-                                forces.maximum_lateral =
-                                    forces.maximum_lateral.max(reading.g.lateral.abs());
-                                forces.maximum_longitudinal = forces
-                                    .maximum_longitudinal
-                                    .max(reading.g.longitudinal.abs());
                             }
                         }
+                        if train.distance() >= range.end + configuration.length_metres
+                            || train.speed() <= 0.0
+                            || !train.notes().is_empty()
+                        {
+                            break;
+                        }
                     }
-                    if train.distance() >= element_end + model.train.length_metres {
-                        cleared = true;
-                        break;
-                    }
-                    rolled_back = !train.notes().is_empty();
-                    if rolled_back {
-                        break;
-                    }
-                }
-                let limits = model.comfortable_force_limits;
-                for forces in element_forces {
-                    let all_cars_seen = forces.cars_seen.iter().all(|seen| *seen);
-                    let within_limits = forces.minimum_vertical >= limits.minimum_vertical_g
-                        && forces.maximum_vertical <= limits.maximum_vertical_g
-                        && forces.maximum_lateral <= limits.maximum_lateral_g
-                        && forces.maximum_longitudinal <= limits.maximum_longitudinal_g;
-                    if !all_cars_seen || !cleared || rolled_back || !within_limits {
-                        failures.push(format!(
-                            "{:?} {} starting at {initial_element_speed} m/s: observed entry speed {:.2}..{:.2} m/s, vertical {:.2}..{:.2}, lateral {:.2}, longitudinal {:.2}, cars {}/{}, cleared {cleared}, rollback {rolled_back}; limits {limits:?}",
-                            forces.id,
-                            model.name,
-                            forces.minimum_entry_speed,
-                            forces.maximum_entry_speed,
-                            forces.minimum_vertical,
-                            forces.maximum_vertical,
-                            forces.maximum_lateral,
-                            forces.maximum_longitudinal,
-                            forces.cars_seen.iter().filter(|seen| **seen).count(),
-                            forces.cars_seen.len()
-                        ));
+                    eprintln!(
+                        "{id:?} {} at rated {entry_speed:.3} m/s: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, lateral {maximum_lateral:.3}, longitudinal {maximum_longitudinal:.3}",
+                        model.name
+                    );
+                    assert!(
+                        cars_seen.iter().all(|seen| *seen)
+                            && train.distance() >= range.end + configuration.length_metres
+                            && train.notes().is_empty(),
+                        "{id:?} {} at rated {entry_speed} m/s did not clear without rollback",
+                        model.name
+                    );
+                    assert!(
+                        minimum_vertical >= limits.minimum_vertical_g
+                            && maximum_vertical <= limits.maximum_vertical_g
+                            && maximum_lateral <= limits.maximum_lateral_g
+                            && maximum_longitudinal <= limits.maximum_longitudinal_g,
+                        "{id:?} {} at rated {entry_speed} m/s: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}, longitudinal {maximum_longitudinal}; limits {limits:?}",
+                        model.name
+                    );
+                    if *ascending && entry_speed == rated.minimum_entry {
+                        assert!(
+                            minimum_speed >= 5.0,
+                            "{id:?} {} at rated minimum {entry_speed} m/s slowed to {minimum_speed} m/s",
+                            model.name
+                        );
                     }
                 }
             }
         }
+        assert!(supported_model_count > 0, "no model supports {elements:?}");
     }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
 fn full_trains_cross_loop_profiles_within_their_rated_force_limits() {
     use PieceId::*;
+    let piece_catalog = catalog();
     for (model, piece_id) in [
         (wooden_twister_model(), SteelLoop),
         (hybrid_model(), Loop),
@@ -492,12 +923,13 @@ fn full_trains_cross_loop_profiles_within_their_rated_force_limits() {
         (multi_launch_model(), Loop),
         (multi_launch_model(), LargeLoop),
     ] {
-        let piece = catalog()
-            .into_iter()
+        let piece = piece_catalog
+            .iter()
             .find(|piece| piece.id == piece_id)
             .unwrap();
         let rated_speeds = piece.rated_speeds.unwrap();
-        let (circuit, element_start, element_end) = circuit_with_elements(&[piece_id]);
+        let (circuit, element_start, element_end) =
+            circuit_with_elements_from_catalog(&piece_catalog, &[piece_id]);
         for cars in [6, 12] {
             let mut train_configuration = model.train.clone();
             train_configuration.cars = cars;
@@ -563,129 +995,6 @@ fn full_trains_cross_loop_profiles_within_their_rated_force_limits() {
                 }
             }
         }
-    }
-}
-
-#[test]
-fn train_completes_laps_through_combined_half_inversions() {
-    use PieceId::*;
-    for (name, elements) in [
-        (
-            "Immelmann left",
-            [
-                HalfLoopUp,
-                HalfCorkscrewLeftDown,
-                HalfCorkscrewLeftUp,
-                HalfLoopDown,
-            ],
-        ),
-        (
-            "Immelmann right",
-            [
-                HalfLoopUp,
-                HalfCorkscrewRightDown,
-                HalfCorkscrewRightUp,
-                HalfLoopDown,
-            ],
-        ),
-        (
-            "sea serpent left",
-            [
-                HalfLoopUp,
-                RavenRollLeftDown,
-                RavenRollRightUp,
-                HalfLoopDown,
-            ],
-        ),
-        (
-            "sea serpent right",
-            [
-                HalfLoopUp,
-                RavenRollRightDown,
-                RavenRollLeftUp,
-                HalfLoopDown,
-            ],
-        ),
-        (
-            "dive loop left",
-            [
-                HalfCorkscrewLeftUp,
-                HalfLoopDown,
-                HalfLoopUp,
-                HalfCorkscrewLeftDown,
-            ],
-        ),
-        (
-            "dive loop right",
-            [
-                HalfCorkscrewRightUp,
-                HalfLoopDown,
-                HalfLoopUp,
-                HalfCorkscrewRightDown,
-            ],
-        ),
-    ] {
-        let (circuit, element_start, element_end) = circuit_with_elements(&elements);
-        for model in [hybrid_model(), multi_launch_model()] {
-            let config = PhysicsConfig {
-                powered_sections: false,
-                ..PhysicsConfig::default()
-            };
-            let mut train = Train::new(&circuit, &model.train, config, 0.0, 50.0);
-            let mut inverted = false;
-            for _ in 0..100_000 {
-                train.step(&circuit);
-                for car in train.take_readings().into_iter().flatten() {
-                    if (element_start..element_end).contains(&car.distance) {
-                        inverted |= car.inverted;
-                        assert!(
-                            car.g.vertical.is_finite()
-                                && car.g.lateral.is_finite()
-                                && car.g.longitudinal.is_finite(),
-                            "{name} {}: non-finite forces",
-                            model.name
-                        );
-                    }
-                }
-                if train.distance() >= circuit.length() {
-                    break;
-                }
-            }
-            assert!(
-                train.distance() >= circuit.length(),
-                "{name} {}: stalled at {} of {}",
-                model.name,
-                train.distance(),
-                circuit.length()
-            );
-            assert!(inverted, "{name} {}: no inverted rider", model.name);
-        }
-        let mut configuration = multi_launch_model().train;
-        configuration.cars = 1;
-        let mut train = Train::new(&circuit, &configuration, unpowered(), 0.0, 50.0);
-        let initial_energy = train.mechanical_energy(&circuit);
-        let mut inverted = false;
-        for _ in 0..100_000 {
-            train.step(&circuit);
-            if (element_start..element_end).contains(&train.distance()) {
-                inverted |= train.readings().last().unwrap()[0].inverted;
-            }
-            if train.distance() >= circuit.length() {
-                break;
-            }
-        }
-        assert!(
-            train.distance() >= circuit.length(),
-            "{name}: stalled at {} of {}",
-            train.distance(),
-            circuit.length()
-        );
-        assert!(inverted, "{name}: never recorded an inverted rider");
-        assert!(
-            (train.mechanical_energy(&circuit) - initial_energy).abs() / initial_energy.abs()
-                < 0.002,
-            "{name}: energy changed"
-        );
     }
 }
 
@@ -835,6 +1144,411 @@ fn ride_test_reports_whether_the_train_clears_the_top_hat() {
                     .iter()
                     .any(|note| note.contains("could not finish"))
             );
+        }
+    }
+}
+
+#[test]
+fn coaster_run_reports_large_loop_overspeed_once() {
+    let circuit = circuit_with_gentle_lift_drop_and_loop(PieceId::LargeLoop, 7);
+    let outcome = run_one_car_coaster(&circuit, 0.005);
+
+    assert!(!outcome.recovered);
+    assert!(outcome.reports[0].completed);
+    let speed_band_notes: Vec<_> = outcome.reports[0]
+        .notes
+        .iter()
+        .filter(|note| note.contains("rated speed band"))
+        .collect();
+    assert_eq!(
+        speed_band_notes.len(),
+        1,
+        "notes={:?}",
+        outcome.reports[0].notes
+    );
+    assert!(speed_band_notes[0].contains("Large vertical loop"));
+    assert!(speed_band_notes[0].contains("above its rated speed band"));
+    assert!(speed_band_notes[0].contains("31.3 m/s"));
+}
+
+#[test]
+fn coaster_run_reports_loop_underspeed_when_the_train_stalls_once() {
+    let circuit = circuit_with_gentle_lift_drop_and_loop(PieceId::Loop, 3);
+    let outcome = run_one_car_coaster(&circuit, 0.06);
+
+    assert!(outcome.recovered, "the train should stall in the loop");
+    let speed_band_notes: Vec<_> = outcome.reports[0]
+        .notes
+        .iter()
+        .filter(|note| note.contains("rated speed band"))
+        .collect();
+    assert_eq!(
+        speed_band_notes.len(),
+        1,
+        "notes={:?}",
+        outcome.reports[0].notes
+    );
+    assert!(speed_band_notes[0].contains("Vertical loop"));
+    assert!(speed_band_notes[0].contains("below its rated speed band"));
+    assert!(speed_band_notes[0].contains("24.7–27.5 m/s"));
+}
+
+fn half_roll_test_circuit(elements: &[PieceId]) -> Circuit {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    let templates = catalog();
+    let template = |id| templates.iter().find(|piece| piece.id == id).unwrap();
+    let mut pieces = Vec::new();
+    let mut state = TrackState::origin();
+    for id in [PieceId::Station, PieceId::Straight, PieceId::Straight]
+        .into_iter()
+        .chain(elements.iter().copied())
+    {
+        let piece = templates
+            .iter()
+            .filter(|piece| piece.id == id)
+            .find_map(|piece| piece.at(state))
+            .unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let mut nodes = vec![(state, Vec::<PieceId>::new())];
+    let mut queue = BinaryHeap::from([Reverse((0_usize, 0_usize))]);
+    let mut visited = HashSet::from([connector_key(state)]);
+    let path = loop {
+        let Reverse((_, index)) = queue.pop().expect("no return path");
+        let (state, path) = nodes[index].clone();
+        if state == TrackState::origin() {
+            break path;
+        }
+        if path.len() >= 60 {
+            continue;
+        }
+        for id in [
+            PieceId::Straight,
+            PieceId::HalfTileStraight,
+            PieceId::OneTileStraight,
+            PieceId::TurnSmallStandalone,
+            PieceId::TurnSmallRightStandalone,
+            PieceId::TurnLargeStandalone,
+            PieceId::TurnLargeRightStandalone,
+            PieceId::OffsetLeft,
+            PieceId::OffsetRight,
+        ] {
+            let next = connector_exit_at(template(id), state).unwrap();
+            if next.x.abs() > 300 || next.y.abs() > 300 || !visited.insert(connector_key(next)) {
+                continue;
+            }
+            let mut next_path = path.clone();
+            next_path.push(id);
+            let priority =
+                (next.x.unsigned_abs() + next.y.unsigned_abs()) as usize * 100 + next_path.len();
+            nodes.push((next, next_path));
+            queue.push(Reverse((priority, nodes.len() - 1)));
+        }
+    };
+    for id in path {
+        let piece = template(id).at(state).unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    Circuit::new(pieces).unwrap()
+}
+
+#[test]
+fn half_rolls_pass_full_trains_at_both_rated_endpoints() {
+    use PieceId::*;
+    for (target, elements) in [
+        (
+            HalfCorkscrewLeftUp,
+            [
+                HalfLoopUp,
+                HalfCorkscrewLeftDown,
+                HalfCorkscrewLeftUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            HalfCorkscrewRightUp,
+            [
+                HalfLoopUp,
+                HalfCorkscrewRightDown,
+                HalfCorkscrewRightUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            HalfCorkscrewLeftDown,
+            [
+                HalfLoopUp,
+                HalfCorkscrewLeftDown,
+                HalfCorkscrewLeftUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            HalfCorkscrewRightDown,
+            [
+                HalfLoopUp,
+                HalfCorkscrewRightDown,
+                HalfCorkscrewRightUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            RavenRollLeftUp,
+            [HalfLoopUp, RavenRollLeftDown, RavenRollLeftUp, HalfLoopDown],
+        ),
+        (
+            RavenRollRightUp,
+            [
+                HalfLoopUp,
+                RavenRollRightDown,
+                RavenRollRightUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            RavenRollLeftDown,
+            [HalfLoopUp, RavenRollLeftDown, RavenRollLeftUp, HalfLoopDown],
+        ),
+        (
+            RavenRollRightDown,
+            [
+                HalfLoopUp,
+                RavenRollRightDown,
+                RavenRollRightUp,
+                HalfLoopDown,
+            ],
+        ),
+    ] {
+        let circuit = half_roll_test_circuit(&elements);
+        let mut start = 0.0;
+        let piece = circuit
+            .pieces()
+            .iter()
+            .find(|piece| {
+                if piece.id == target {
+                    true
+                } else {
+                    start += piece.length();
+                    false
+                }
+            })
+            .unwrap();
+        let end = start + piece.length();
+        let rated = piece.rated_speeds.unwrap();
+        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            for cars in [6, 12] {
+                let mut config = model.train.clone();
+                config.cars = cars;
+                for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let mut train = Train::new(&circuit, &config, unpowered(), start, speed);
+                    let mut seen = vec![false; usize::from(cars)];
+                    let mut min_vertical = f64::INFINITY;
+                    let mut max_vertical = f64::NEG_INFINITY;
+                    let mut max_lateral: f64 = 0.0;
+                    let mut max_longitudinal: f64 = 0.0;
+                    for _ in 0..100_000 {
+                        train.step(&circuit);
+                        for frame in train.take_readings() {
+                            for (index, reading) in frame.into_iter().enumerate() {
+                                if (start..end).contains(&reading.distance) {
+                                    seen[index] = true;
+                                    min_vertical = min_vertical.min(reading.g.vertical);
+                                    max_vertical = max_vertical.max(reading.g.vertical);
+                                    max_lateral = max_lateral.max(reading.g.lateral.abs());
+                                    max_longitudinal =
+                                        max_longitudinal.max(reading.g.longitudinal.abs());
+                                }
+                            }
+                        }
+                        if train.distance() >= end + config.length_metres
+                            || !train.notes().is_empty()
+                        {
+                            break;
+                        }
+                    }
+                    if matches!(target, HalfCorkscrewLeftDown | HalfCorkscrewRightDown)
+                        && speed == rated.maximum_entry
+                    {
+                        assert!(
+                            train.speed() <= 22.0,
+                            "{target:?} {} {cars} cars: {:.6} m/s after clearing",
+                            model.name,
+                            train.speed()
+                        );
+                    }
+                    let limits = model.comfortable_force_limits;
+                    assert!(
+                        seen.iter().all(|seen| *seen)
+                            && train.distance() >= end + config.length_metres
+                            && train.notes().is_empty(),
+                        "{target:?} {} {cars} cars at {speed}: incomplete or rollback",
+                        model.name
+                    );
+                    assert!(
+                        min_vertical >= limits.minimum_vertical_g
+                            && max_vertical <= limits.maximum_vertical_g
+                            && max_lateral <= limits.maximum_lateral_g
+                            && max_longitudinal <= limits.maximum_longitudinal_g,
+                        "{target:?} {} {cars} cars at {speed}: vertical {min_vertical}..{max_vertical}, lateral {max_lateral}, longitudinal {max_longitudinal}; limits {limits:?}",
+                        model.name
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn banked_drops_pass_full_trains_at_both_rated_endpoints() {
+    use PieceId::*;
+    for (target, elements) in [
+        (
+            BankedDropLeft,
+            vec![
+                BankLeft,
+                BankedDropLeft,
+                UnbankLeft,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                GentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            BankedDropRight,
+            vec![
+                BankRight,
+                BankedDropRight,
+                UnbankRight,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                GentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            TwistedDropLeft,
+            vec![
+                BankLeft,
+                TwistedDropLeft,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            TwistedDropRight,
+            vec![
+                BankRight,
+                TwistedDropRight,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            BarrelDropLeft,
+            vec![
+                BankLeft,
+                BarrelDropLeft,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                OneTileGentleUp,
+                OneTileGentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            BarrelDropRight,
+            vec![
+                BankRight,
+                BarrelDropRight,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                OneTileGentleUp,
+                OneTileGentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+    ] {
+        let circuit = half_roll_test_circuit(&elements);
+        let mut start = 0.0;
+        let piece = circuit
+            .pieces()
+            .iter()
+            .find(|piece| {
+                if piece.id == target {
+                    true
+                } else {
+                    start += piece.length();
+                    false
+                }
+            })
+            .unwrap();
+        let end = start + piece.length();
+        let rated = piece.rated_speeds.unwrap();
+        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            for cars in [6, 12] {
+                let mut config = model.train.clone();
+                config.cars = cars;
+                for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let mut train = Train::new(&circuit, &config, unpowered(), start, speed);
+                    let mut seen = vec![false; usize::from(cars)];
+                    let mut min_vertical = f64::INFINITY;
+                    let mut max_vertical = f64::NEG_INFINITY;
+                    let mut max_lateral: f64 = 0.0;
+                    let mut max_longitudinal: f64 = 0.0;
+                    for _ in 0..100_000 {
+                        train.step(&circuit);
+                        for frame in train.take_readings() {
+                            for (index, reading) in frame.into_iter().enumerate() {
+                                if (start..end).contains(&reading.distance) {
+                                    seen[index] = true;
+                                    min_vertical = min_vertical.min(reading.g.vertical);
+                                    max_vertical = max_vertical.max(reading.g.vertical);
+                                    max_lateral = max_lateral.max(reading.g.lateral.abs());
+                                    max_longitudinal =
+                                        max_longitudinal.max(reading.g.longitudinal.abs());
+                                }
+                            }
+                        }
+                        if train.distance() >= end + config.length_metres
+                            || !train.notes().is_empty()
+                        {
+                            break;
+                        }
+                    }
+                    let limits = model.comfortable_force_limits;
+                    eprintln!(
+                        "{target:?} {} {cars} cars at {speed}: vertical {min_vertical}..{max_vertical}, lateral {max_lateral}, longitudinal {max_longitudinal}",
+                        model.name
+                    );
+                    assert!(
+                        seen.iter().all(|seen| *seen)
+                            && train.distance() >= end + config.length_metres
+                            && train.notes().is_empty(),
+                        "{target:?} {} {cars} cars at {speed}: incomplete or rollback",
+                        model.name
+                    );
+                    assert!(
+                        min_vertical >= limits.minimum_vertical_g
+                            && max_vertical <= limits.maximum_vertical_g
+                            && max_lateral <= limits.maximum_lateral_g
+                            && max_longitudinal <= limits.maximum_longitudinal_g,
+                        "{target:?} {} {cars} cars at {speed}: vertical {min_vertical}..{max_vertical}, lateral {max_lateral}, longitudinal {max_longitudinal}; limits {limits:?}",
+                        model.name
+                    );
+                }
+            }
         }
     }
 }

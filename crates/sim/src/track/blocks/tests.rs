@@ -3,50 +3,8 @@ use crate::track::blocks::brake_runs;
 
 #[test]
 fn automatic_search_finds_two_trains_on_loop_boarding_circuit() {
-    use crate::track::{PieceId::*, PieceKind, TrackState, catalog, hybrid_model};
-    let ids = [
-        Station,
-        LevelToGentleUp,
-        GentleUp,
-        GentleUp,
-        GentleUp,
-        GentleUp,
-        GentleUp,
-        GentleUpToLevel,
-        Straight,
-        Straight,
-        Straight,
-        OffsetLeft,
-        TurnLargeEntry,
-        TurnLargeExit,
-        LevelToGentleDown,
-        GentleDown,
-        GentleDown,
-        GentleDown,
-        GentleDown,
-        GentleDown,
-        GentleDownToLevel,
-        Loop,
-        OffsetRight,
-        TurnLargeEntry,
-        TurnLargeExit,
-    ];
-    let mut state = TrackState::origin();
-    let mut pieces = Vec::new();
-    for id in ids {
-        let mut piece = catalog()
-            .iter()
-            .find(|piece| piece.id == id)
-            .unwrap()
-            .at(state)
-            .unwrap();
-        if (1..=8).contains(&pieces.len()) {
-            piece.kind = PieceKind::Lift;
-        }
-        state = piece.exit;
-        pieces.push(piece);
-    }
-    let circuit = crate::physics::Circuit::new(pieces).unwrap();
+    use crate::track::hybrid_model;
+    let circuit = demo_circuit();
     let config = crate::physics::PhysicsConfig {
         lift_speed: 5.0,
         ..Default::default()
@@ -390,9 +348,55 @@ fn level_unbanked_turn_can_hold_and_restart_a_train() {
     assert!(layout.capacity() >= 1);
 }
 
+fn hilly_brake_test_circuit() -> crate::physics::Circuit {
+    use crate::track::{PieceId::*, PieceKind, TrackState, catalog};
+    let catalog = catalog();
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::new();
+    for id in [
+        Station,
+        LevelToGentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUpToLevel,
+        Straight,
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LevelToGentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Straight,
+        Straight,
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ] {
+        let mut piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        if (1..=9).contains(&pieces.len()) {
+            piece.kind = PieceKind::Lift;
+        }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    crate::physics::Circuit::new(pieces).unwrap()
+}
+
 #[test]
 fn gentle_downhill_brake_requires_holding_force_and_validates_restart() {
-    let circuit = demo_circuit();
+    let circuit = hilly_brake_test_circuit();
     let train = crate::track::hybrid_model().train;
     let candidates = brake_runs(&circuit, train.length_metres);
     let downhill: Vec<_> = candidates
@@ -1081,17 +1085,12 @@ fn existing_brakes_remain_boundaries_without_installed_stopping_runs() {
 
 #[test]
 fn manual_boundary_uses_a_longer_run_when_short_run_cannot_stop() {
-    let mut pieces = demo_circuit().pieces().to_vec();
-    let first_straight = pieces
-        .iter_mut()
-        .find(|piece| piece.id == crate::track::PieceId::Straight)
-        .unwrap();
-    first_straight.kind = crate::track::PieceKind::Track;
-    let circuit = crate::physics::Circuit::new(pieces).unwrap();
+    let circuit = hilly_brake_test_circuit();
     let train = crate::track::hybrid_model().train;
     let candidates = brake_runs(&circuit, train.length_metres);
     let config = crate::physics::PhysicsConfig {
-        braking_acceleration: 0.5,
+        braking_acceleration: 6.0,
+        lift_speed: 5.0,
         ..Default::default()
     };
     for short in &candidates {

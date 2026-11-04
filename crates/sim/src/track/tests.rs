@@ -432,7 +432,7 @@ fn every_turn_and_offset_has_a_mirrored_catalog_piece() {
                 Vec3::new(a.position.x, -a.position.y, a.position.z),
             );
             near_vec(b.up, Vec3::new(a.up.x, -a.up.y, a.up.z));
-            near(b.roll, -a.roll);
+            near_angle(b.roll, -a.roll);
         }
     }
 }
@@ -658,7 +658,14 @@ fn joined_pieces_have_matching_position_tangent_roll_and_curvature() {
             near_vec(a.tangent, b.tangent);
             near_angle(a.roll, b.roll);
             near_vec(a.up, b.up);
-            near(a.curvature, b.curvature);
+            assert!(
+                (a.curvature - b.curvature).abs() < 1e-8,
+                "{:?} -> {:?}: curvature {} != {}",
+                first.id,
+                second.id,
+                a.curvature,
+                b.curvature
+            );
         }
     }
 }
@@ -967,6 +974,21 @@ fn sixty_degree_pull_profiles_match_connectors_and_reverse() {
 }
 
 #[test]
+fn coaster_models_use_peak_rider_force_limits() {
+    for (model, minimum_vertical, maximum_vertical) in [
+        (wooden_twister_model(), -1.0, 4.0),
+        (hybrid_model(), -1.5, 4.5),
+        (multi_launch_model(), -1.5, 5.0),
+    ] {
+        let limits = model.comfortable_force_limits;
+        assert_eq!(limits.minimum_vertical_g, minimum_vertical);
+        assert_eq!(limits.maximum_vertical_g, maximum_vertical);
+        assert_eq!(limits.maximum_lateral_g, 1.5);
+        assert_eq!(limits.maximum_longitudinal_g, 1.5);
+    }
+}
+
+#[test]
 fn sixty_degree_track_is_allowed_only_by_models_with_sixty_degree_limits() {
     use PieceId::{
         LevelToSixtyDown, LevelToSixtyUp, SixtyDown, SixtyDownToLevel, SixtyToSteepDown,
@@ -1041,8 +1063,15 @@ fn all_eight_headings_place_pieces_on_grid() {
         }
         for piece in available {
             assert_eq!(piece.entry, start);
+            assert_eq!(piece.exit_at(start), Some(piece.exit));
             near_vec(piece.sample(0.0).position, piece.entry.position());
-            near_vec(piece.sample(piece.length()).position, piece.exit.position());
+            assert!(
+                (piece.sample(piece.length()).position - piece.exit.position()).length() < 1e-8,
+                "{:?} {heading:?}: endpoint {:?} != {:?}",
+                piece.id,
+                piece.sample(piece.length()).position,
+                piece.exit.position()
+            );
             near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
         }
     }
@@ -1577,7 +1606,11 @@ fn barrel_drops_make_a_full_roll_and_mirror() {
         let left_sample = left.sample(left.length() * fraction);
         let right_sample = right.sample(right.length() * fraction);
         assert!((left_sample.roll + right_sample.roll).abs() < 1e-8);
-        assert!(left_sample.tangent.z <= 1e-8);
+        assert!(
+            left_sample.tangent.z <= 1e-8,
+            "fraction {fraction}: tangent {:?}",
+            left_sample.tangent
+        );
     }
     assert!(left.sample(left.length() * 0.5).roll > std::f64::consts::PI);
     assert!((left.sample(left.length()).roll - std::f64::consts::TAU).abs() < 1e-8);

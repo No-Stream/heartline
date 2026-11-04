@@ -309,34 +309,23 @@ mod tests {
     }
 
     #[test]
-    fn catalog_piece_keeps_the_force_profile_after_arc_length_sampling() {
+    fn catalog_piece_preserves_the_profile_after_arc_length_sampling() {
         let piece = crate::track::catalog::catalog()
             .into_iter()
             .find(|piece| piece.id == crate::track::PieceId::TopHat)
             .unwrap();
-        let mut minimum_vertical = f64::INFINITY;
-        let mut maximum_vertical = f64::NEG_INFINITY;
+        let horizontal_scale = (piece.exit.position().x - piece.entry.position().x) / endpoint()[0];
         for index in 0..=4000 {
             let distance = piece.length() * index as f64 / 4000.0;
-            let sample = piece.sample(distance);
-            let delta = 0.001;
-            let before = (distance - delta).max(0.0);
-            let after = (distance + delta).min(piece.length());
-            let tangent_change =
-                (piece.sample(after).tangent - piece.sample(before).tangent) / (after - before);
-            let speed_squared = DESIGN_SPEED.powi(2)
-                - 2.0 * GRAVITY * (sample.position.z - piece.sample(0.0).position.z);
-            let force = tangent_change * speed_squared
-                + sample.tangent * (-GRAVITY * sample.tangent.z)
-                + crate::track::curves::Vec3::new(0.0, 0.0, GRAVITY);
-            let vertical_g = force.dot(sample.up) / GRAVITY;
-            minimum_vertical = minimum_vertical.min(vertical_g);
-            maximum_vertical = maximum_vertical.max(vertical_g);
+            let actual = piece.sample(distance);
+            let (position, first, _) = sample(piece.parameter_at_distance(distance));
+            let expected_tangent =
+                crate::track::curves::Vec3::new(first[0] * horizontal_scale, 0.0, first[1]).unit();
+            assert!((actual.position.x - position[0] * horizontal_scale).abs() < 1e-8);
+            assert!((actual.position.z - position[1]).abs() < 1e-8);
+            assert!((actual.tangent - expected_tangent).length() < 1e-8);
         }
-        assert!(
-            minimum_vertical >= MINIMUM_VERTICAL_G - 0.05
-                && maximum_vertical <= MAXIMUM_VERTICAL_G + 0.05,
-            "catalog top hat force profile {minimum_vertical}..{maximum_vertical} g"
-        );
+        assert!((piece.sample(0.0).position - piece.entry.position()).length() < 1e-8);
+        assert!((piece.sample(piece.length()).position - piece.exit.position()).length() < 1e-8);
     }
 }

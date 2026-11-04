@@ -104,9 +104,9 @@ function sendGuestDetail(guestId = selectedGuestId): void {
   lastGuestDetailSentAt = performance.now();
 }
 
-function sendConstruction(): void {
+function sendConstruction(complete = true): void {
   const pieces = JSON.parse(simulation.construction_choices()) as ConstructionPiece[];
-  const elements = JSON.parse(simulation.construction_elements()) as ConstructionElement[];
+  const elements = complete ? JSON.parse(simulation.construction_elements()) as ConstructionElement[] : [];
   const selected = simulation.construction_selected();
   const selectedChoice = pieces.find((piece) => piece.id === selected);
   const track = JSON.parse(simulation.construction_track()) as ConstructionTrack[];
@@ -126,7 +126,7 @@ function sendConstruction(): void {
   const colorNames = JSON.parse(simulation.construction_colors()) as ConstructionColors | null;
   const layoutReport = JSON.parse(simulation.construction_train_layout()) as TrainLayout | null;
   const trainLayout = layoutReport ? parseTrainLayout(layoutReport) : null;
-  sendWorkerMessage(workerScope, { type: "construction-state", active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
+  sendWorkerMessage(workerScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     selected: selected || null, track,
     canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
@@ -420,9 +420,11 @@ workerScope.addEventListener("message", (event) => {
         case "construction-delete-mode": return;
         default: assertNever(action);
       }
+      if (["construction-start", "construction-append", "construction-undo", "construction-delete"].includes(action.type)
+        && simulation.construction_active() && !simulation.construction_selected().startsWith("element:")) sendConstruction(false);
+      if (["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-finish-confirm", "construction-set-open"].includes(action.type)) sendWorld();
       sendConstruction();
       scheduleBlockAnalysis();
-      if (["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-finish-confirm", "construction-set-open"].includes(action.type)) sendWorld();
       return;
     }
     validateSurfaceEdit(action, simulation.world_dimensions());

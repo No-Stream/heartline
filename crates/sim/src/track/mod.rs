@@ -30,3 +30,6 @@ pub mod clearance;
 pub mod proximity;
 
 mod profile;
+mod roll;
+#[cfg(test)]
+mod roll_scan;

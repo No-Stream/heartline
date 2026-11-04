@@ -42,6 +42,49 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
 use super::WasmSimulation;
 
 #[test]
+fn station_height_used_by_browser_can_start_construction() {
+    let mut simulation = WasmSimulation::new(2026, 12, String::from("demo"));
+    simulation.construction_start(100, 100, 40, 0);
+    let obstacles = simulation.facility_obstacles();
+    let world = &simulation.park.world;
+    let construction = simulation.park.construction.as_mut().unwrap();
+    construction.set_chain(true);
+    for piece_id in [
+        theme_park_sim::track::PieceId::LevelToGentleUp,
+        theme_park_sim::track::PieceId::GentleUp,
+        theme_park_sim::track::PieceId::GentleUp,
+        theme_park_sim::track::PieceId::GentleUp,
+        theme_park_sim::track::PieceId::GentleUp,
+        theme_park_sim::track::PieceId::GentleUp,
+        theme_park_sim::track::PieceId::GentleUpToLevel,
+        theme_park_sim::track::PieceId::Straight,
+    ] {
+        construction.append(piece_id, world, &obstacles).unwrap();
+    }
+    simulation.construction_set_chain(false);
+    let choices = simulation.construction_choices();
+    let elements = simulation.construction_elements();
+
+    assert!(
+        simulation.construction_active(),
+        "{}",
+        simulation.construction_message()
+    );
+    assert_eq!(
+        simulation
+            .construction
+            .as_ref()
+            .expect("station construction should be active")
+            .pieces()
+            .len(),
+        9
+    );
+    assert!(!choices.is_empty());
+    assert!(!elements.is_empty());
+    assert!(simulation.construction_message().is_empty());
+}
+
+#[test]
 fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
@@ -228,6 +271,13 @@ fn construction_falls_back_to_the_first_valid_piece_without_a_straight_continuat
         .unwrap();
 
     assert_eq!(simulation.construction_selected(), first_valid);
+    let construction = simulation.park.construction.as_ref().unwrap();
+    let candidates =
+        construction.available_choices(&simulation.park.world, &simulation.facility_obstacles());
+    assert_eq!(
+        simulation.selected,
+        super::default_construction_piece_from_choices(&candidates, construction.end())
+    );
 }
 
 #[test]
@@ -1111,6 +1161,7 @@ fn construction_lists_are_structured_and_preserve_selection_ids() {
         serde_json::json!([])
     );
     simulation.construction_start(200, 200, 20, 0);
+    assert_eq!(simulation.construction_selected(), "Straight");
     let choices: serde_json::Value =
         serde_json::from_str(&simulation.construction_choices()).unwrap();
     assert!(

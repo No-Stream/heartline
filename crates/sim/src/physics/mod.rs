@@ -91,7 +91,8 @@ impl Circuit {
 
 /// A small closed circuit for the playable demonstration world.
 pub fn demo_circuit() -> Circuit {
-    use std::collections::{HashSet, VecDeque};
+    use std::cmp::Reverse;
+    use std::collections::{BinaryHeap, HashMap};
 
     use crate::track::{PieceId, TrackState, catalog};
     use PieceId::*;
@@ -132,20 +133,9 @@ pub fn demo_circuit() -> Circuit {
             .expect("demo piece in catalog")
             .at(state)
             .expect("demo piece joins");
-        if (1..=6).contains(&pieces.len()) {
+        if (1..=9).contains(&pieces.len()) {
             piece.kind = PieceKind::Lift;
         }
-        state = piece.exit;
-        pieces.push(piece);
-    }
-
-    for id in [OffsetRight, OneTileStraight, OneTileStraight] {
-        let piece = catalog
-            .iter()
-            .find(|piece| piece.id == id)
-            .expect("demo alignment piece in catalog")
-            .at(state)
-            .expect("demo alignment piece joins");
         state = piece.exit;
         pieces.push(piece);
     }
@@ -171,33 +161,99 @@ pub fn demo_circuit() -> Circuit {
         OffsetLeft,
         OffsetRight,
     ];
-    let mut queue = VecDeque::from([(state, Vec::<PieceId>::new())]);
-    let mut visited = HashSet::from([connector_key(state)]);
-    let return_path = loop {
-        let (current, path) = queue.pop_front().expect("demo has a level return path");
-        if current == start {
-            break path;
-        }
-        if path.len() >= 80 {
+    type ConnectorKey = (i32, i32, i32, u8, u8, u8, u8, u8);
+    let start_key: ConnectorKey = connector_key(start);
+    let return_pieces: Vec<_> = return_options
+        .map(|id| {
+            (
+                id,
+                catalog
+                    .iter()
+                    .find(|piece| piece.id == id)
+                    .expect("demo return piece in catalog"),
+            )
+        })
+        .into_iter()
+        .collect();
+    let maximum_horizontal_displacement = return_pieces
+        .iter()
+        .map(|(_, piece)| {
+            let dx = f64::from(piece.exit.x - piece.entry.x);
+            let dy = f64::from(piece.exit.y - piece.entry.y);
+            (std::f64::consts::SQRT_2 * dx.hypot(dy)).ceil() as u32
+        })
+        .max()
+        .expect("demo return options are nonempty");
+    let maximum_heading_change = return_pieces
+        .iter()
+        .map(|(_, piece)| {
+            let heading_change = (piece.exit.heading as u8).abs_diff(piece.entry.heading as u8);
+            heading_change.min(8 - heading_change)
+        })
+        .max()
+        .unwrap_or(0)
+        .max(1);
+    let estimate_remaining_pieces = |connector: ConnectorKey| {
+        let horizontal_distance =
+            connector.0.abs_diff(start_key.0) + connector.1.abs_diff(start_key.1);
+        let distance_lower_bound = horizontal_distance.div_ceil(maximum_horizontal_displacement);
+        let heading_difference = connector.3.abs_diff(start_key.3);
+        let heading_distance = u32::from(heading_difference.min(8 - heading_difference));
+        let heading_lower_bound = heading_distance.div_ceil(u32::from(maximum_heading_change));
+        distance_lower_bound.max(heading_lower_bound) as usize
+    };
+    let initial_key: ConnectorKey = connector_key(state);
+    let mut queue = BinaryHeap::from([Reverse((
+        estimate_remaining_pieces(initial_key),
+        0_usize,
+        initial_key,
+    ))]);
+    let mut states = HashMap::from([(initial_key, state)]);
+    let mut best_path_lengths = HashMap::from([(initial_key, 0_usize)]);
+    let mut parents: HashMap<ConnectorKey, (ConnectorKey, PieceId)> = HashMap::new();
+    while let Some(Reverse((_, path_length, current_key))) = queue.pop() {
+        if best_path_lengths.get(&current_key) != Some(&path_length) {
             continue;
         }
-        for id in return_options {
-            let piece = catalog
-                .iter()
-                .find(|piece| piece.id == id)
-                .and_then(|piece| piece.at(current))
-                .expect("demo return piece joins");
-            if piece.exit.x.abs_diff(start.x) > 300 || piece.exit.y.abs_diff(start.y) > 300 {
-                continue;
-            }
-            if !visited.insert(connector_key(piece.exit)) {
-                continue;
-            }
-            let mut next_path = path.clone();
-            next_path.push(id);
-            queue.push_back((piece.exit, next_path));
+        if current_key == start_key {
+            break;
         }
-    };
+        if path_length >= 80 {
+            continue;
+        }
+        let current = states[&current_key];
+        for (id, piece) in &return_pieces {
+            let next_state = piece.exit_at(current).expect("demo return piece joins");
+            if next_state.x.abs_diff(start.x) > 300 || next_state.y.abs_diff(start.y) > 300 {
+                continue;
+            }
+            let next_key: ConnectorKey = connector_key(next_state);
+            let next_path_length = path_length + 1;
+            if best_path_lengths
+                .get(&next_key)
+                .is_some_and(|best| *best <= next_path_length)
+            {
+                continue;
+            }
+            states.insert(next_key, next_state);
+            best_path_lengths.insert(next_key, next_path_length);
+            parents.insert(next_key, (current_key, *id));
+            let estimate = next_path_length + estimate_remaining_pieces(next_key);
+            queue.push(Reverse((estimate, next_path_length, next_key)));
+        }
+    }
+    assert!(
+        best_path_lengths.contains_key(&start_key),
+        "demo has a level return path within 80 pieces"
+    );
+    let mut return_path = Vec::new();
+    let mut key = start_key;
+    while key != initial_key {
+        let (previous, piece) = parents[&key];
+        return_path.push(piece);
+        key = previous;
+    }
+    return_path.reverse();
     for id in return_path {
         let piece = catalog
             .iter()

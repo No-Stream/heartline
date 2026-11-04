@@ -335,6 +335,7 @@ toolbar.setActive(activeTool);
 fitCanvas(false);
 
 function handleCoasterPointer(action: InputAction): boolean {
+  if (construction && !construction.complete) return true;
   if (action.type === "select") {
     const block = blockAt(action.position);
     if (block === null) return false;
@@ -362,6 +363,7 @@ function handleCoasterPointer(action: InputAction): boolean {
   return true;
 }
 const coasterAdapter = coasterToolAdapter((action) => {
+  if (construction && !construction.complete) return true;
   if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") return handleCoasterPointer(action);
   if (action.type === "chain-toggle") {
     if (construction?.active) sendWorkerAction(worker, { type: "construction-set-chain", enabled: !construction.chain });
