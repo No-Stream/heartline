@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { canvasToPage, clickCanvas, moveOverCanvas, openTool } from "./game-page";
+import { canvasToPage, clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
 
 const blockCircuitPieces = [
   "Straight", "Straight", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
@@ -170,6 +170,7 @@ async function buildBlockCircuit(
   }
   if (pageErrors.length > 0) throw new Error(`Browser startup errors: ${pageErrors.join(" | ")}`);
   if (failedResources.length > 0) throw new Error(`Game assets failed to load: ${failedResources.join(" | ")}`);
+  await selectUnits(page, "metric");
   await openTool(page, "Coaster");
   await page.evaluate(({ x, y }) => window.gameTest.setCamera({ centerX: x, centerY: y, zoom: 1, rotation: 0 }), { x, y });
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);

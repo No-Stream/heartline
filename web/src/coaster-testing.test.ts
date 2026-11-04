@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildProximityMarkers, buildTestingRibbon, formatProximityEvent, formatSample, proximityContribution, type ProximityEvent, type TestingSample } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, formatProximityEvent, formatSample, formatTestingNote, proximityContribution, summarizeRideHeights, type ProximityEvent, type TestingSample } from "./coaster-testing";
+import type { WorldView } from "./render/scene";
 
 const samples: TestingSample[] = [
   { distance: 0, x: 2, y: 3, z: 1, speed: 4, verticalG: 1, lateralG: 0.2, longitudinalG: 0, airtime: false },
@@ -54,8 +55,47 @@ describe("coaster testing overlay", () => {
 
   it("skips stationary samples and describes forces and airtime", () => {
     expect(buildTestingRibbon([samples[0], samples[0]], "verticalG", camera, viewport, style)).toHaveLength(0);
-    expect(formatSample(samples[1])).toContain("12.0 m/s");
+    expect(formatSample(samples[1], "imperial")).toContain("26.8 mph");
+    expect(formatSample(samples[1], "metric")).toContain("43.2 km/h");
     expect(formatSample(samples[1])).toContain("−0.2 g");
     expect(formatSample(samples[1])).toContain("Airtime: yes");
+  });
+
+  it("reports sampled maximum height above terrain and the largest downhill drop", () => {
+    const world = {
+      dimensions: new Uint16Array([2, 2]),
+      surfaces: new Int32Array([
+        2, 2, 2, 2, 0, 0, 2, 2, 2, 2, 0, 0,
+        2, 2, 2, 2, 0, 0, 2, 2, 2, 2, 0, 0,
+      ]),
+      paths: new Int32Array(),
+    } as WorldView;
+    const reportSamples: TestingSample[] = [
+      { ...samples[0], x: 0.25, y: 0.25, z: 3 },
+      { ...samples[1], x: 0.5, y: 0.25, z: 8 },
+      { ...samples[2], x: 0.75, y: 0.25, z: 4 },
+    ];
+
+    expect(summarizeRideHeights(reportSamples, world)).toEqual({ maximumHeightMetres: 30, biggestDropMetres: 16 });
+    expect(summarizeRideHeights([
+      { ...reportSamples[1], distance: 0 },
+      { ...reportSamples[2], distance: 3 },
+    ], world)?.biggestDropMetres).toBe(0);
+    expect(summarizeRideHeights([], world)).toBeNull();
+  });
+
+  it("formats measured values in ride testing notes using the selected units", () => {
+    expect(formatTestingNote(
+      "The train could not finish the circuit after travelling 12.0 m. Add a lift or launch, or shorten the circuit.",
+      "imperial",
+    )).toBe("The train could not finish the circuit after travelling 39.4 ft. Add a lift or launch, or shorten the circuit.");
+    expect(formatTestingNote(
+      "Riders spend at least 8 m in a row under high forces. Add gentler sections between intense elements.",
+      "metric",
+    )).toBe("Riders spend at least 8 m in a row under high forces. Add gentler sections between intense elements.");
+    expect(formatTestingNote(
+      "This layout has at least 100 m in a row below 8 m/s. A taller first drop or a faster section could make it feel livelier.",
+      "imperial",
+    )).toBe("This layout has at least 328.1 ft in a row below 17.9 mph. A taller first drop or a faster section could make it feel livelier.");
   });
 });

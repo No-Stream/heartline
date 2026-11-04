@@ -13,6 +13,7 @@ function dispatch(action: InputAction): void {
   if (action.type === "construction-select") setConstructionState({ selected: action.piece });
 }
 const panel = createConstructionPanel(container, dispatch);
+panel.setUnits("metric");
 bindKeyboard(container, dispatch, () => ({ x: 400, y: 250 }));
 
 const line = (length: number, turn: number): PieceShape["points"] => Array.from({ length: 33 }, (_, index) => {
@@ -38,7 +39,7 @@ const state: ConstructionState = {
   track: [
     { id: 4, label: "Station", name: "Station", group: "special", slope: "Level" },
     { id: 9, label: "Straight", name: "Straight", group: "straight", slope: "Level" },
-  ], canAppend: true, canClose: false, canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [227, 251, 12, 227, 253, 12], message: "Ready to place",
+  ], canAppend: true, canClose: false, finishPreview: false, canFinish: false, finishReason: "Build more track to reach a connection.", canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [227, 251, 12, 227, 253, 12], message: "Ready to place",
   blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
   trainCount: 1, placedRails: new Float32Array(), railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
   previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array(),
@@ -46,7 +47,7 @@ const state: ConstructionState = {
 let current = state;
 function setConstructionState(update: Partial<ConstructionState>): void { current = { ...current, ...update }; panel.update(current); }
 panel.update(state);
-Object.assign(window, { constructionActions: actions, setConstructionState });
+Object.assign(window, { constructionActions: actions, setConstructionState, setConstructionUnits: (units: "metric" | "imperial") => panel.setUnits(units) });
 
 const testingPanel = createTestingPanel(document.querySelector<HTMLElement>("[data-testing]")!,
   { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 }, () => {});

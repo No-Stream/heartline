@@ -39,6 +39,9 @@ import { createThemeToggle } from "./theme";
 import type { WorkerRecording } from "./session-recording";
 import { parseReplaySession, type ReplaySession } from "./session-replay";
 import { replaySessionIntoWorker } from "./session-replay-worker";
+import { constructionHeights } from "./height-markers";
+import { formatLength, type Units } from "./units";
+import { createUnitsSetting } from "./units-setting";
 
 declare const __GIT_HASH__: string;
 
@@ -360,6 +363,19 @@ const gameTest: GameTest = {
   crestBursts() { return crestHistory; },
 };
 window.gameTest = gameTest;
+const heightMarkers = document.querySelector<HTMLElement>("[data-height-markers]")!;
+const trackHeightMarker = heightMarkers.querySelector<HTMLElement>("[data-track-height]")!;
+const stationHeightMarker = heightMarkers.querySelector<HTMLElement>("[data-station-height]")!;
+const unitsContainer = document.querySelector<HTMLElement>("[data-units-setting]")!;
+function applyUnits(units: Units): void {
+  panel.setUnits(units);
+  landscapingPanel.setUnits(units);
+  guestPanel.setUnits(units);
+  testingPanel.setUnits(units);
+  gameTest.ready = false;
+}
+const unitsSetting = createUnitsSetting(unitsContainer, applyUnits);
+applyUnits(unitsSetting.units());
 gameCanvas.addEventListener("webglcontextlost", () => { gameTest.ready = false; });
 gameCanvas.addEventListener("webglcontextrestored", () => { gameTest.ready = false; });
 toolbar.setActive(activeTool);
@@ -585,6 +601,7 @@ worker.addEventListener("message", (event: MessageEvent<{ type: "session-export"
     const coasterTies = message.coasterTies ?? world?.coasterTies;
     if (!coasterGeometry || !coasterRails || !coasterTies) throw new Error("Initial coaster geometry is missing");
     world = { ...message, coasterGeometry, coasterRails, coasterTies };
+    testingPanel.setWorld(world);
     landscapingTool.setDimensions(world.dimensions[0], world.dimensions[1]);
     gameTest.ready = false;
   } else if (message.type === "test-advanced") {
@@ -685,6 +702,18 @@ function frame(now: number): void {
     if (followed.settled) followPoints = undefined;
   }
   lastFrameAt = now;
+  const heights = activeTool === "coaster" && construction?.active ? constructionHeights(world, construction.placedRails) : null;
+  heightMarkers.hidden = heights === null;
+  if (heights) {
+    const trackText = `Track end: ${formatLength(heights.end.metres, unitsSetting.units())} above ground`;
+    const stationText = `Station: ${formatLength(heights.station.metres, unitsSetting.units())} above ground`;
+    trackHeightMarker.textContent = trackText;
+    stationHeightMarker.textContent = stationText;
+    panel.setHeightMarkers(trackText, stationText);
+    const anchor = projectWorld(camera, cssViewport(), heights.end.position);
+    heightMarkers.style.left = `${anchor.x}px`;
+    heightMarkers.style.top = `${anchor.y}px`;
+  }
   constructionEffects.active(now);
   const occupants = renderCurrent ? riderAppearances(renderCurrent, renderCurrent.constructionRiders, atlas) : new Map();
   const ridingIds = new Set([...occupants.values()].map((occupant) => occupant.id));

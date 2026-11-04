@@ -1045,3 +1045,245 @@ fn closure_with_short_straights_and_full_tile_offsets() {
         construction.close().unwrap();
     }
 }
+
+#[test]
+fn completion_finds_a_valid_deterministic_nearby_connection() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [
+        Station,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        Straight,
+        TurnSmallStandalone,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let original_hash = construction.state_hash();
+    let completion = construction
+        .find_completion(&world, &[])
+        .expect("nearby connection");
+    assert!(!completion.pieces.is_empty());
+    assert!(completion.score.is_finite());
+    let repeated = construction.find_completion(&world, &[]).unwrap();
+    assert_eq!(completion.pieces, repeated.pieces);
+    assert_eq!(completion.score, repeated.score);
+    assert_eq!(original_hash, construction.state_hash());
+    for id in completion.pieces {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    assert_eq!(construction.end(), construction.start());
+    construction.close().unwrap();
+}
+
+#[test]
+fn completion_rejects_a_distant_end() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    for _ in 0..20 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    assert!(construction.find_completion(&world, &[]).is_none());
+}
+
+#[test]
+fn completion_search_yields_and_application_is_atomic() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [
+        Station,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        Straight,
+        TurnSmallStandalone,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let mut search = construction.completion_search().unwrap();
+    assert!(matches!(
+        search.advance(&world, &[]),
+        CompletionSearchProgress::Pending
+    ));
+    let completion = loop {
+        let progress = search.advance(&world, &[]);
+        if let CompletionSearchProgress::Finished(result) = progress {
+            break result.unwrap();
+        }
+    };
+    let hash = construction.state_hash();
+    let mut invalid = completion.clone();
+    invalid.pieces.push(Straight);
+    assert!(
+        construction
+            .apply_completion(&invalid, &world, &[])
+            .is_err()
+    );
+    assert_eq!(construction.state_hash(), hash);
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+    assert!(construction.is_closed());
+}
+
+#[test]
+fn completion_connects_a_short_turn_sequence() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [Station, TurnSmallStandalone, TurnSmallStandalone, Straight] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let completion = construction
+        .find_completion(&world, &[])
+        .expect("two-turn connection");
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+    assert!(construction.is_closed());
+}
+
+#[test]
+fn completion_connects_a_laterally_offset_approach() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [
+        Station,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        Straight,
+        Straight,
+        Straight,
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        OffsetLeft,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let mut expected = construction.copy_for_completion();
+    expected.append(OffsetRight, &world, &[]).unwrap();
+    assert_eq!(expected.end(), expected.start());
+    let completion = construction
+        .find_completion(&world, &[])
+        .expect("offset connection");
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+}
+
+#[test]
+fn completion_connects_an_offset_followed_by_turns() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    for id in [
+        Station,
+        Straight,
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        OffsetLeft,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let mut expected = construction.copy_for_completion();
+    for id in [OffsetRight, TurnSmallStandalone, TurnSmallStandalone] {
+        expected.append(id, &world, &[]).unwrap();
+    }
+    assert_eq!(expected.end(), expected.start());
+    expected.close().unwrap();
+    let mut search = construction.completion_search().unwrap();
+    let completion = loop {
+        let progress = search.advance(&world, &[]);
+        if let CompletionSearchProgress::Finished(result) = progress {
+            break result.expect("offset and turns connection");
+        }
+    };
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+}
+
+#[test]
+fn completion_connects_a_sloped_approach() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(TrackState { z: 20, ..start() }, hybrid_model());
+    for id in [
+        Station,
+        LevelToGentleUp,
+        GentleUpToLevel,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        Straight,
+        LevelToGentleDown,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let mut expected = construction.copy_for_completion();
+    for id in [GentleDownToLevel, TurnSmallStandalone, TurnSmallStandalone] {
+        expected.append(id, &world, &[]).unwrap();
+    }
+    assert_eq!(expected.end(), expected.start());
+    expected.close().unwrap();
+    let completion = construction
+        .find_completion(&world, &[])
+        .expect("sloped connection");
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+}
+
+#[test]
+fn completion_finishes_the_lift_powered_circuit_after_large_turn_entry() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = Construction::new(TrackState { z: 36, ..start() }, hybrid_model());
+    construction.append(Station, &world, &[]).unwrap();
+    construction.set_chain(true);
+    for id in [
+        LevelToGentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUpToLevel,
+        Straight,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    construction.set_chain(false);
+    for id in [
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LevelToGentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Loop,
+        TurnLargeEntry,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let mut expected = construction.copy_for_completion();
+    expected.append(TurnLargeExit, &world, &[]).unwrap();
+    assert_eq!(expected.end(), expected.start());
+    expected.close().unwrap();
+    let completion = construction
+        .find_completion(&world, &[])
+        .expect("large turn exit");
+    assert_eq!(completion.pieces, [TurnLargeExit]);
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+}

@@ -4,7 +4,7 @@ title: Add the Timber Tumbler player journey
 status: Done
 assignee: []
 created_date: '2026-11-03 20:05'
-updated_date: '2026-11-04 04:33'
+updated_date: '2026-11-04 06:54'
 labels:
   - test
 dependencies: []
@@ -40,4 +40,6 @@ Plan: docs/superpowers/plans/2026-11-03-flexible-track-and-gameplay-tests.md, wo
 2026-11-03 night: committed 8aabc55, the operate journey from a recorded build (2.5 min of 3; replay loop shared in web/src/session-replay-worker.ts). Codex job task-mw1k7m7v-7rmuci is making the recorded build reproducible (RECORD_JOURNEY_SESSIONS=1 on the build journey) and cutting the operate journey to about 2 min. Close TASK-65 when that lands with three runs under 2 min and a clean full gate.
 
 2026-11-03 night: done. Operate journey about 2.1 min (b8dfac1); built session regenerates with RECORD_JOURNEY_SESSIONS=1; full make ci green at b8dfac1.
+
+2026-11-03 night: the operate journey timed out in a full gate that ran while two Codex jobs compiled on the same 8 cores (selecting a queued guest took too long); it passes alone. It has the least margin of the journeys.
 <!-- SECTION:NOTES:END -->

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { clickCanvas, moveOverCanvas, openTool } from "./game-page";
+import { clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
 
 test("builds and runs a wooden twister @slow", async ({ page }) => {
   test.setTimeout(240_000);
@@ -8,6 +8,7 @@ test("builds and runs a wooden twister @slow", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
   await page.getByRole("combobox", { name: "Coaster model" }).selectOption("model:wooden_twister");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.getByLabel("Station height above ground (metres)").fill("72");

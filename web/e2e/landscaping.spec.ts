@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { canvasToPage, clickCanvas, openTool } from "./game-page";
+import { canvasToPage, clickCanvas, openTool, selectUnits } from "./game-page";
 
 test.use({
   deviceScaleFactor: 1,
@@ -10,12 +10,31 @@ test("sculpts a hill, carves a tunnel and builds an underground path @slow", asy
   test.setTimeout(180_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await selectUnits(page, "metric");
   await openTool(page, "Landscape");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 150.5, centerY: 150.5, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
 
   const landscaping = page.getByRole("region", { name: "Landscaping" });
   await landscaping.locator('[data-landscape-tool="flatten"]').click();
+  await page.getByLabel("Brush size").selectOption("1");
+  await selectUnits(page, "imperial");
+  const imperialFlattenHeight = page.getByLabel("Flatten height");
+  await imperialFlattenHeight.fill("26.25");
+  await landscaping.locator("[data-landscape-apply]").click();
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+  const imperialFlattenPoint = await worldPoint(page, 147, 150, 2);
+  await clickCanvas(page, imperialFlattenPoint);
+  await expect(landscaping.locator(".landscaping__status")).toHaveText("Terrain updated", { timeout: 10_000 });
+  await landscaping.locator("[data-landscape-cancel]").click();
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+  const imperialFlattenedTerrain = await page.evaluate(() => {
+    const point = window.gameTest.project({ x: 147.5, y: 150.5, z: 2 });
+    return window.gameTest.pick(point.x, point.y);
+  });
+  expect(imperialFlattenedTerrain).toMatchObject({ kind: "terrain", x: 147, y: 150, height: 8 });
+  await selectUnits(page, "metric");
+
   await page.getByLabel("Brush size").selectOption("3");
   await page.getByLabel("Flatten height").fill("16");
   await landscaping.locator("[data-landscape-apply]").click();

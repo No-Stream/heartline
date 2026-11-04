@@ -39,6 +39,61 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
 use super::WasmSimulation;
 
 #[test]
+fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    for piece in [
+        "TurnSmallStandalone",
+        "TurnSmallStandalone",
+        "Straight",
+        "TurnSmallStandalone",
+    ] {
+        simulation.construction_select(piece);
+        simulation.construction_append();
+        assert!(simulation.construction_message().is_empty());
+    }
+    let before = simulation.construction_track();
+    simulation.construction_finish_search_start();
+    while !simulation.construction_finish_search_advance() {}
+    simulation.construction_finish_preview();
+    assert!(
+        simulation.construction_finish_preview_active(),
+        "{}",
+        simulation.construction_message()
+    );
+    assert_eq!(simulation.construction_track(), before);
+    assert!(!simulation.construction_rails().is_empty());
+    simulation.construction_finish_confirm();
+    assert!(!simulation.construction_finish_preview_active());
+    assert!(simulation.construction.as_ref().unwrap().is_closed());
+    assert_ne!(simulation.construction_track(), before);
+}
+
+#[test]
+fn finish_preview_is_cancelled_by_track_edits() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    for piece in [
+        "TurnSmallStandalone",
+        "TurnSmallStandalone",
+        "Straight",
+        "TurnSmallStandalone",
+    ] {
+        simulation.construction_select(piece);
+        simulation.construction_append();
+    }
+    simulation.construction_finish_search_start();
+    while !simulation.construction_finish_search_advance() {}
+    simulation.construction_finish_preview();
+    assert!(simulation.construction_finish_preview_active());
+    simulation.construction_undo();
+    let before = simulation.construction_track();
+    simulation.construction_finish_confirm();
+    assert_eq!(simulation.construction_track(), before);
+    assert!(!simulation.construction.as_ref().unwrap().is_closed());
+}
+
+#[test]
 fn piece_groups_follow_track_geometry_instead_of_piece_names() {
     let catalog = super::catalog();
     let expected_groups = [

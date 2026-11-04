@@ -1,15 +1,31 @@
 import { expect, test } from "@playwright/test";
-import { canvasSize, clickCanvas, moveOverCanvas, openTool } from "./game-page";
+import { canvasSize, clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
+import { formatTestingNote } from "../src/coaster-testing";
+
+function displayedHeight(text: string, unit: "ft" | "m"): number {
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(ft|m)\b/);
+  if (!match || match[2] !== unit) throw new Error(`Expected a height in ${unit}, received: ${text}`);
+  return Number(match[1]);
+}
 
 test("builds a closed coaster and runs a train around it @slow", async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
+  const stationHeightInput = page.getByLabel("Station height above ground (metres)");
+  await expect(stationHeightInput).toHaveValue("12");
+  await page.getByRole("button", { name: "Raise the station" }).click();
+  await expect(stationHeightInput).toHaveValue("14");
+  await selectUnits(page, "imperial");
+  await expect(page.getByLabel("Station height above ground (feet)")).toHaveValue("45.93");
+  await selectUnits(page, "metric");
+  await expect(stationHeightInput).toHaveValue("14");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-  await page.getByLabel("Station height above ground (metres)").fill("72");
-  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await stationHeightInput.fill("72");
+  await stationHeightInput.press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
   const position = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 }));
   const canvas = page.locator("canvas");
@@ -43,6 +59,11 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
       await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
       await page.addStyleTag({ content: "[data-testid='tick-count'] { visibility: hidden; }" });
       await page.mouse.move(0, 0);
+      await page.evaluate(() => {
+        const dock = document.querySelector<HTMLElement>("[data-dock]");
+        if (!dock) throw new Error("Tool panel is missing");
+        dock.scrollTop = 0;
+      });
       await expect(page.locator("main")).toHaveScreenshot("construction-preview.png", { animations: "disabled" });
     }
     await page.getByRole("button", { name: "Place piece" }).click();
@@ -67,8 +88,18 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   expect(testingReport?.samples.length ?? 0).toBeGreaterThan(1);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.length).toBeGreaterThan(0);
-  await expect(page.locator("[data-notes]")).toHaveText(notes.join(" "));
+  await expect(page.locator("[data-notes]")).toHaveText(notes.map((note) => formatTestingNote(note, "metric")).join(" "));
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  const maximumHeight = page.locator("[data-report-maximum-height]");
+  const biggestDrop = page.locator("[data-report-drop-height]");
+  const metricMaximumHeight = displayedHeight((await maximumHeight.textContent()) ?? "", "m");
+  const metricBiggestDrop = displayedHeight((await biggestDrop.textContent()) ?? "", "m");
+  await selectUnits(page, "imperial");
+  const imperialMaximumHeight = displayedHeight((await maximumHeight.textContent()) ?? "", "ft");
+  const imperialBiggestDrop = displayedHeight((await biggestDrop.textContent()) ?? "", "ft");
+  expect(metricMaximumHeight).toBeCloseTo(imperialMaximumHeight * 0.3048, 1);
+  expect(metricBiggestDrop).toBeCloseTo(imperialBiggestDrop * 0.3048, 1);
+  await selectUnits(page, "metric");
   const proximityEventCount = await page.evaluate(() => window.gameTest.testingReport()!.proximityEvents.length);
   expect(proximityEventCount).toBeGreaterThan(0);
   await expect(page.locator("[data-proximity-events]")).toContainText(`Proximity events (${proximityEventCount})`);
@@ -85,7 +116,12 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
     window.gameTest.setCamera({ centerX: (middleX + middleY) / 2, centerY: (middleY - middleX) / 2, zoom, rotation: 0 });
   }, overlaySize);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready), { timeout: 30_000 }).toBe(true);
-  await expect(page.getByText("30 m/s+")).toBeVisible();
+  const speedHigh = page.locator("[data-high]");
+  await expect(speedHigh).toHaveText("108 km/h+");
+  await selectUnits(page, "imperial");
+  await expect(speedHigh).toHaveText("67.1 mph+");
+  await selectUnits(page, "metric");
+  await expect(speedHigh).toHaveText("108 km/h+");
   const proximityInspectionPoint = await page.evaluate((size) => {
     const report = window.gameTest.testingReport();
     if (!report) throw new Error("Missing coaster test report");
@@ -112,6 +148,12 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   }, overlaySize);
   await clickCanvas(page, inspectionPoint);
   await expect(page.locator("[data-inspection]")).toContainText("Vertical:");
+  await page.evaluate(() => {
+    const dock = document.querySelector<HTMLElement>("[data-dock]");
+    const testing = document.querySelector<HTMLElement>("[data-testing]");
+    if (!dock || !testing) throw new Error("Coaster testing panel is missing");
+    dock.scrollTop += testing.getBoundingClientRect().top - dock.getBoundingClientRect().top;
+  });
   await expect(page.locator("[data-testing]")).toHaveScreenshot("coaster-testing-panel.png", { animations: "disabled" });
   await expect(canvas).toHaveScreenshot("coaster-testing-overlay.png", { animations: "disabled" });
   await page.getByLabel("Track overlay").selectOption("airtime");
@@ -128,6 +170,7 @@ test("shows and places visible slope-to-level choices on Velocity Viper @slow", 
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:velocity_viper");
   await page.getByLabel("Station height above ground (metres)").fill("72");
@@ -175,6 +218,7 @@ test("builds a descending banked turn on Briar Blitz from the visible constructi
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.locator(".builder select[data-model]").selectOption("model:wooden_twister");
   await page.getByLabel("Station height above ground (metres)").fill("72");
@@ -215,6 +259,7 @@ test("closes a compact circuit with short straights and full-tile offsets @fast"
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await selectUnits(page, "metric");
   await page.getByLabel("Station height above ground (metres)").fill("72");
   await page.getByLabel("Station height above ground (metres)").press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
@@ -257,4 +302,81 @@ test("closes a compact circuit with short straights and full-tile offsets @fast"
   await closeCircuit.click();
   await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+});
+
+test("previews and confirms a lift-powered circuit finish, then completes a ride test @fast", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await selectUnits(page, "metric");
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const track = page.locator("[data-track] li");
+  const finishCoaster = page.getByRole("button", { name: "Finish coaster" });
+  const pieces = [
+    "LevelToGentleUp",
+    "GentleUp",
+    "GentleUp",
+    "GentleUp",
+    "GentleUp",
+    "GentleUp",
+    "GentleUpToLevel",
+    "Straight",
+    "Straight",
+    "Straight",
+    "TurnLargeEntry",
+    "TurnLargeExit",
+    "LevelToGentleDown",
+    "GentleDown",
+    "GentleDown",
+    "GentleDown",
+    "GentleDown",
+    "GentleDown",
+    "GentleDownToLevel",
+    "Loop",
+    "TurnLargeEntry",
+  ];
+
+  await expect(track).toHaveCount(1);
+  await expect(finishCoaster).toBeDisabled();
+  await expect(page.locator("[data-finish-reason]")).toHaveText(/\S/);
+  for (const [index, piece] of pieces.entries()) {
+    if (index === 0 || index === 8) await page.keyboard.press("h");
+    const choice = choices.locator(`[data-piece="${piece}"]`);
+    await expect(choice).toBeVisible();
+    await choice.click();
+    await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
+    await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
+    await page.getByRole("button", { name: "Place piece" }).click();
+    await expect(track).toHaveCount(index + 2);
+  }
+
+  await expect(finishCoaster).toBeEnabled();
+  await finishCoaster.click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "true");
+  await expect(page.getByRole("button", { name: "Confirm coaster finish" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel finish preview" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel finish preview" }).click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "false");
+
+  await finishCoaster.click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "true");
+  await page.getByRole("button", { name: "Confirm coaster finish" }).click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "false");
+  await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();
+  await expect.poll(() => track.count()).toBeGreaterThan(pieces.length + 1);
+  await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+  await page.getByRole("button", { name: "Test coaster" }).click();
+  await page.evaluate(() => window.gameTest.advanceTicks(10000));
+  await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status")).toHaveText("Train completed a lap.");
 });

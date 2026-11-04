@@ -20,10 +20,12 @@ use std::sync::OnceLock;
 #[cfg(test)]
 mod tests;
 
+mod completion;
 #[cfg(test)]
 mod flexibility_tests;
 #[cfg(test)]
 mod walk_tests;
+pub use completion::{Completion, CompletionSearch, CompletionSearchProgress};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstructionError {

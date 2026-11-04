@@ -5,6 +5,7 @@ import type { BlockReport, ConstructionPiece, ConstructionState, PieceShape } fr
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
+import { displayToMetres, formatLength, metresToDisplay, unitLabel, type Units } from "./units";
 import "./print-modern.css";
 import "./construction.css";
 
@@ -16,6 +17,8 @@ export interface ConstructionPanel {
   choose(action: PieceAction): void;
   setDeleteMode(enabled: boolean): void;
   setSelectedBlock(index: number | null): void;
+  setUnits(units: Units): void;
+  setHeightMarkers(track: string, station: string): void;
 }
 
 const groupNames: Record<string, string> = { straight: "Straight", turn: "Turns", slope: "Slopes", bank: "Banks", inversion: "Inversions", special: "Special" };
@@ -128,12 +131,23 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
           <button type="button" class="tool-panel__action tool-panel__action--primary" data-append>Place piece ${hint("place")}</button>
           <button type="button" class="tool-panel__action" data-undo>Undo last piece ${hint("undo")}</button>
           <button type="button" class="tool-panel__action" data-close>Close circuit ${hint("close")}</button>
+          <div class="builder__finish-flow">
+            <button type="button" class="tool-panel__action" data-finish aria-describedby="finish-reason">Finish coaster</button>
+            <p class="builder__finish-reason" id="finish-reason" data-finish-reason aria-live="polite"></p>
+            <div class="builder__finish-confirmation" data-finish-confirmation hidden>
+              <p>Review the highlighted connection, then confirm to add it and close the circuit.</p>
+              <button type="button" class="tool-panel__action tool-panel__action--primary" data-finish-confirm>Confirm coaster finish</button>
+              <button type="button" class="tool-panel__action" data-finish-cancel>Cancel finish preview</button>
+            </div>
+          </div>
           <button type="button" class="tool-panel__action" data-test>Test coaster ${hint("test")}</button>
         </div>
         <p class="builder__test-hint">Coaster income: <span data-coaster-income>0</span></p>
         <label class="builder__toggle"><input type="checkbox" data-delete-mode> Delete track by clicking it ${hint("deleteMode")}</label>
       </section>
       <section class="tool-panel__section" aria-label="Circuit">
+        <p class="builder__test-hint" data-panel-track-height></p>
+        <p class="builder__test-hint" data-panel-station-height></p>
         <p class="builder__stamp" data-stamp hidden>Circuit complete</p>
         <p class="builder__test-hint" data-test-hint></p>
         <p class="builder__test-hint" data-station-access></p>
@@ -163,7 +177,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <datalist id="block-boundary-options" data-block-boundary-options></datalist>
         <p class="tool-panel__hint">Choose an available listed brake boundary. The game keeps the current layout until an edit validates.</p>
         <div class="builder__block-add" data-block-add-controls hidden>
-          <label><span class="tool-panel__label">New boundary (m)</span><input type="number" min="0" step="any" data-block-add-boundary list="block-boundary-options"></label>
+          <label><span class="tool-panel__label" data-block-add-label>New boundary (m)</span><input type="number" min="0" step="any" data-block-add-boundary list="block-boundary-options"></label>
           <button type="button" class="tool-panel__action" data-block-add>Add block</button>
         </div>
         <ul class="builder__block-notes" data-block-notes></ul>
@@ -203,6 +217,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const append = element<HTMLButtonElement>("[data-append]");
   const undo = element<HTMLButtonElement>("[data-undo]");
   const close = element<HTMLButtonElement>("[data-close]");
+  const finish = element<HTMLButtonElement>("[data-finish]");
+  const finishReason = element("[data-finish-reason]");
+  const finishConfirmation = element("[data-finish-confirmation]");
+  const confirmFinish = element<HTMLButtonElement>("[data-finish-confirm]");
+  const cancelFinish = element<HTMLButtonElement>("[data-finish-cancel]");
   const test = element<HTMLButtonElement>("[data-test]");
   const open = element<HTMLButtonElement>("[data-open]");
   const coasterPrice = element<HTMLInputElement>("[data-coaster-price]");
@@ -244,6 +263,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   let applyBestRequested = false;
   let selectedBlock: number | null = null;
   let closed = false;
+  let units: Units = "imperial";
 
   const shapeOf = (id: string, slope?: string): PieceShape => {
     const shape = (slope && shapes.get(`${id}\0${slope}`)) ?? shapes.get(id);
@@ -267,8 +287,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     });
   }
   addBlock.addEventListener("click", () => {
-    const boundaryMetres = addBlockBoundary.valueAsNumber;
-    if (Number.isFinite(boundaryMetres)) dispatch({ type: "construction-add-block", boundaryMetres });
+    const boundary = addBlockBoundary.valueAsNumber;
+    if (Number.isFinite(boundary)) dispatch({ type: "construction-add-block", boundaryMetres: displayToMetres(boundary, units) });
   });
   container.dataset.model = modelSelect.value;
   modelSelect.addEventListener("change", () => {
@@ -281,15 +301,18 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   let dispatchedHeight = stationHeight.initial;
   const setHeight = (value: number): void => {
     const snapped = Math.min(stationHeight.maximum, Math.max(stationHeight.minimum, Math.round(value / stationHeight.step) * stationHeight.step));
-    height.value = String(snapped);
+    height.value = String(Number(metresToDisplay(snapped, units).toFixed(2)));
     if (snapped !== dispatchedHeight) { dispatchedHeight = snapped; dispatch({ type: "station-height", height: snapped }); }
   };
-  height.addEventListener("change", () => setHeight(Number(height.value) || dispatchedHeight));
+  height.addEventListener("change", () => setHeight(displayToMetres(Number(height.value), units) || dispatchedHeight));
   container.querySelectorAll<HTMLButtonElement>("[data-height-step]").forEach((button) => button.addEventListener("click", () => setHeight(dispatchedHeight + Number(button.dataset.heightStep) * stationHeight.step)));
   element("[data-start]").addEventListener("click", () => dispatch({ type: "station-placement", enabled: true }));
   append.addEventListener("click", () => dispatch({ type: "construction-append" }));
   undo.addEventListener("click", () => dispatch({ type: "construction-undo" }));
   close.addEventListener("click", () => dispatch({ type: "construction-close" }));
+  finish.addEventListener("click", () => dispatch({ type: "construction-finish-preview" }));
+  confirmFinish.addEventListener("click", () => dispatch({ type: "construction-finish-confirm" }));
+  cancelFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cancel" }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
   open.addEventListener("click", () => dispatch({ type: "construction-set-open", open: !state?.isOpen }));
   const setCoasterPrice = (price: number): void => {
@@ -398,7 +421,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     launches.hidden = positions.length === 0;
     launchList.replaceChildren(...positions.map(({ piece, distance: launchDistance }) => {
       const item = document.createElement("li");
-      item.textContent = `Piece ${piece} · ${launchDistance.toFixed(1)} m from station`;
+      item.textContent = `Piece ${piece} · ${formatLength(launchDistance, units)} from station`;
       return item;
     }));
   }
@@ -438,7 +461,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         : `Fixed boundary · ${trackKindName}`;
       const boundary = document.createElement("span");
       boundary.className = "builder__block-position";
-      boundary.textContent = `${section.boundaryMetres.toFixed(1)} m from the station`;
+      boundary.textContent = `${formatLength(section.boundaryMetres, units)} from the station`;
       const reason = document.createElement("p");
       reason.textContent = section.reason;
       item.append(heading, boundary, reason);
@@ -448,13 +471,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         label.className = "builder__block-boundary";
         const labelText = document.createElement("span");
         labelText.className = "tool-panel__label";
-        labelText.textContent = "Move boundary (m)";
+        labelText.textContent = `Move boundary (${unitLabel(units)})`;
         const input = document.createElement("input");
         input.type = "number";
         input.min = "0";
         input.step = "any";
-        input.value = String(section.boundaryMetres);
-        input.setAttribute("aria-label", `Block ${section.editableIndex + 1} boundary in metres`);
+        input.value = String(metresToDisplay(section.boundaryMetres, units));
+        input.setAttribute("aria-label", `Block ${section.editableIndex + 1} boundary in ${units === "metric" ? "metres" : "feet"}`);
         input.dataset.blockBoundary = "";
         input.dataset.editable = "true";
         input.dataset.blockIndex = String(section.editableIndex);
@@ -470,8 +493,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         move.dataset.blockMove = String(section.editableIndex);
         move.disabled = actionsDisabled;
         move.addEventListener("click", () => {
-          const boundaryMetres = input.valueAsNumber;
-          if (Number.isFinite(boundaryMetres)) dispatch({ type: "construction-move-block", index: section.editableIndex!, boundaryMetres });
+          const boundary = input.valueAsNumber;
+          if (Number.isFinite(boundary)) dispatch({ type: "construction-move-block", index: section.editableIndex!, boundaryMetres: displayToMetres(boundary, units) });
         });
         const remove = document.createElement("button");
         remove.type = "button";
@@ -526,10 +549,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }));
     blockBoundaryOptions.replaceChildren(...availableBlockBoundaries(current.blockCandidates, report).map((boundaryMetres) => {
       const option = document.createElement("option");
-      option.value = String(boundaryMetres);
+      option.value = String(metresToDisplay(boundaryMetres, units));
       return option;
     }));
-    const nextBlockKey = JSON.stringify([report.sections, report.notes, report.suggestions, report.placementStatus, view.busy, canEdit, view.message, current.message, selectedBlock]);
+    const nextBlockKey = JSON.stringify([report.sections, report.notes, report.suggestions, report.placementStatus, view.busy, canEdit, view.message, current.message, selectedBlock, units]);
     if (nextBlockKey !== blockKey) {
       blockKey = nextBlockKey;
       renderBlockSections(report, !canEdit);
@@ -537,7 +560,30 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     blockPanel.dataset.selectedBlock = selectedBlock === null ? "" : String(selectedBlock);
   }
 
+  function renderStationAccess(current: ConstructionState): void {
+    const access = current.stationPositions;
+    if (access.length !== 0 && access.length !== 6) throw new Error("Invalid station access positions");
+    element("[data-station-access]").textContent = access.length ? `Connect a queue at (${access[0]}, ${access[1]}) and a normal exit path at (${access[3]}, ${access[4]}), both at terrain height ${formatLength(access[2], units)}. Connect the queue to the park's normal paths.` : "";
+  }
+
   return {
+    setUnits(value) {
+      const previousBoundary = addBlockBoundary.valueAsNumber;
+      if (Number.isFinite(previousBoundary)) addBlockBoundary.value = String(metresToDisplay(displayToMetres(previousBoundary, units), value));
+      units = value;
+      height.min = String(Number(metresToDisplay(stationHeight.minimum, units).toFixed(2)));
+      height.max = String(Number(metresToDisplay(stationHeight.maximum, units).toFixed(2)));
+      height.step = "any";
+      height.setAttribute("aria-label", `Station height above ground (${units === "metric" ? "metres" : "feet"})`);
+      element(".builder__station-height .stepper__unit").textContent = unitLabel(units);
+      element("[data-block-add-label]").textContent = `New boundary (${unitLabel(units)})`;
+      setHeight(dispatchedHeight);
+      if (state) { renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
+    },
+    setHeightMarkers(trackHeight, stationHeightText) {
+      element("[data-panel-track-height]").textContent = trackHeight;
+      element("[data-panel-station-height]").textContent = stationHeightText;
+    },
     setShapes(value) {
       const nextShapes = new Map<string, PieceShape>();
       for (const shape of value) {
@@ -568,6 +614,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       modelSelect.disabled = next.active;
       container.dataset.selected = next.selected ?? "";
       container.dataset.chain = String(next.chain);
+      container.dataset.finishPreview = String(next.finishPreview);
       chainToggle.setAttribute("aria-pressed", String(next.chain));
       chainState.textContent = next.chain ? "On" : "Off";
       chainHint.textContent = next.chain
@@ -582,7 +629,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       palette.hidden = closed;
       chainSection.hidden = closed;
       close.classList.toggle("tool-panel__action--primary", next.canClose);
-      append.classList.toggle("tool-panel__action--primary", !next.canClose);
+      finish.classList.toggle("tool-panel__action--primary", next.canFinish && !next.canClose);
+      append.classList.toggle("tool-panel__action--primary", !next.canClose && !next.canFinish);
+      finish.hidden = closed || next.finishPreview;
+      finish.disabled = !next.canFinish;
+      finishReason.textContent = next.finishReason;
+      finishReason.hidden = closed || next.canFinish || next.finishPreview;
+      finishConfirmation.hidden = closed || !next.finishPreview;
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");
       const focusInPalette = palette.contains(document.activeElement);
       const nextPaletteKey = next.pieces.map(({ id, refusal }) => `${id}:${refusal}`).join("|");
@@ -602,9 +655,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         button.disabled = priceChange < 0 ? next.coasterPrice === 0 : next.coasterPrice === 65535;
       }
       coasterIncome.textContent = String(next.coasterIncome);
-      const access = next.stationPositions;
-      if (access.length !== 0 && access.length !== 6) throw new Error("Invalid station access positions");
-      element("[data-station-access]").textContent = access.length ? `Connect a queue at (${access[0]}, ${access[1]}) and a normal exit path at (${access[3]}, ${access[4]}), both at terrain height ${access[2]}. Connect the queue to the park's normal paths.` : "";
+      renderStationAccess(next);
       element("[data-test-hint]").textContent = !next.canTest && !next.testingReport ? "Complete the circuit and make it longer than the train to test your coaster." : "";
       message.textContent = next.message;
       renderBlockPanel(next);

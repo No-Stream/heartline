@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { clickCanvas, moveOverCanvas, openTool } from "./game-page";
+import { clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
 
 test.use({ launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] } });
 
@@ -10,6 +10,7 @@ test("builds and runs the Velocity Viper with two short launches @slow", async (
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
 
   const model = page.getByRole("combobox", { name: "Coaster model" });
   await model.selectOption("model:velocity_viper");
@@ -41,7 +42,7 @@ test("builds and runs the Velocity Viper with two short launches @slow", async (
     "Standalone small left turn",
   ];
   for (const [index, piece] of pieces.entries()) {
-    await page.getByRole("radio", { name: piece }).click();
+    await page.getByRole("radio", { name: piece, exact: true }).click();
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
     await page.getByRole("button", { name: "Place piece" }).click();
     await expect(track.locator("li")).toHaveCount(index + 2);
@@ -70,7 +71,7 @@ test("builds and runs the Velocity Viper with two short launches @slow", async (
     .toHaveText("Train completed a lap.", { timeout: 150_000 });
   await expect.poll(() => page.evaluate(() => window.gameTest.testingReport()?.samples.length ?? 0)).toBeGreaterThan(1);
   await page.getByLabel("Track overlay").selectOption("speed");
-  await expect(page.getByText("30 m/s+")).toBeVisible();
+  await expect(page.getByText("108 km/h+")).toBeVisible();
   await expect(launchPositions).toHaveCount(2);
   await expect(launchPositions.nth(0)).toBeVisible();
   const launchSpeeds = await page.evaluate((centres) => {

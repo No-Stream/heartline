@@ -67,6 +67,20 @@ async function replayWithWorker(page: Page, session: ReplaySession): Promise<Rep
   return page.evaluate((recordedSession) => window.replayWorkerSession(recordedSession), session);
 }
 
+test("replay waits for a finish-coaster search before confirming the connection @fast", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const pieces = ["TurnSmallStandalone", "TurnSmallStandalone", "Straight", "TurnSmallStandalone"];
+  const commands = [
+    { type: "construction-start", x: 100, y: 100, z: 40, heading: 0 },
+    ...pieces.flatMap((piece) => [{ type: "construction-select", piece }, { type: "construction-append" }]),
+    { type: "construction-finish-preview" },
+    { type: "construction-finish-confirm" },
+  ].map((command) => ({ tick: 0, command }));
+  const session = parseReplaySession({ format: "theme-park-session", version: 1, build: { gitHash: "test", mode: "development" }, seed: "42", park: "demo", guestCount: 0, commands, checkpoints: [], finalTick: 0 });
+  const outcome = await replayWithWorker(page, session);
+  expect(outcome.observation.constructionPieces).toBeGreaterThan(5);
+});
+
 async function replaySessionsDirectory(): Promise<{ readonly path: string; readonly session: ReplaySession }[]> {
   const sessionsDirectory = resolve("web/e2e/sessions");
   const names = (await readdir(sessionsDirectory)).filter((name) => name.endsWith(".json")).sort();

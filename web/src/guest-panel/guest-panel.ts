@@ -1,5 +1,6 @@
 import { activityLabel, memoryLabel, relationshipLabel, thoughtLabel, traitSummary } from "./presentation";
 import type { GuestDetail } from "./protocol";
+import { formatLength, type Units } from "../units";
 import "./guest-panel.css";
 
 export interface GuestPanelCallbacks {
@@ -14,6 +15,7 @@ export interface GuestPanelAnchor {
 }
 
 export interface GuestPanel {
+  setUnits(units: Units): void;
   update(detail: GuestDetail): void;
   setAnchor(anchor: GuestPanelAnchor | null): void;
   close(): void;
@@ -97,6 +99,7 @@ export function createGuestPanel(
   const memories = root.querySelector<HTMLUListElement>("[data-panel-memories]")!;
   const closeButton = root.querySelector<HTMLButtonElement>("[data-testid='guest-panel-close']")!;
   let detail: GuestDetail | undefined;
+  let units: Units = "imperial";
   let anchor: GuestPanelAnchor | null = null;
 
   const closeWithoutNotification = (): void => {
@@ -161,7 +164,7 @@ export function createGuestPanel(
       `Nausea tolerance: ${current.traits.nauseaTolerance}%`,
       favoriteTypes,
       `Spending: ${current.traits.spending.toLowerCase()}`,
-      `Height: ${current.traits.heightCm} cm`,
+      `Height: ${units === "metric" ? `${current.traits.heightCm} cm` : formatLength(current.traits.heightCm / 100, units)}`,
       `Theme preference: ${current.traits.preferredTheme + 1}`,
     ];
     traits.replaceChildren(...traitLines.map(listItem));
@@ -205,6 +208,10 @@ export function createGuestPanel(
   }
 
   return {
+    setUnits(value) {
+      units = value;
+      if (detail) render(detail);
+    },
     update(next) {
       detail = next;
       render(next);

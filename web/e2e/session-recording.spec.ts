@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
-import { canvasToPage, clickCanvas, moveOverCanvas, openTool } from "./game-page";
+import { canvasToPage, clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
 
 interface ExportedSession {
   format: string;
@@ -19,6 +19,7 @@ test("exports the UI-built command count and final simulation tick", async ({ pa
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 
   await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await page.getByLabel("Station height above ground (metres)").fill("72");

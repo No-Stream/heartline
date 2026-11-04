@@ -22,7 +22,7 @@ test.afterAll(async () => {
   if (outDir) await rm(outDir, { recursive: true });
 });
 
-type Window = { constructionActions: unknown[]; setConstructionState(state: object): void };
+type Window = { constructionActions: unknown[]; setConstructionState(state: object): void; setConstructionUnits(units: "metric" | "imperial"): void };
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
 
 test("player driver places a station in the live park", async ({ page }) => {
@@ -96,6 +96,33 @@ test("construction controls dispatch actions with the keyboard and reflect worke
   await expect(page.getByRole("status")).toHaveText("Track collides");
 });
 
+test("finish controls explain missing connections and confirm or cancel a preview @fast", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const finish = page.getByRole("button", { name: "Finish coaster" });
+  const reason = page.locator("[data-finish-reason]");
+  await expect(finish).toBeDisabled();
+  await expect(reason).toHaveText("Build more track to reach a connection.");
+
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ canFinish: true, finishReason: "" }));
+  await expect(finish).toBeEnabled();
+  await finish.click();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: true }));
+  await expect(page.getByRole("button", { name: "Confirm coaster finish" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel finish preview" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel finish preview" }).click();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: false }));
+  await finish.click();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: true }));
+  await page.getByRole("button", { name: "Confirm coaster finish" }).click();
+
+  expect(await recorded(page)).toEqual([
+    { type: "construction-finish-preview" },
+    { type: "construction-finish-cancel" },
+    { type: "construction-finish-preview" },
+    { type: "construction-finish-confirm" },
+  ]);
+});
+
 test("station height stepper stays within its range in two-metre steps", async ({ page }) => {
   await page.goto(fixtureUrl);
   const height = page.getByLabel("Station height above ground (metres)");
@@ -115,6 +142,39 @@ test("station height stepper stays within its range in two-metre steps", async (
   await height.press("Tab");
   await expect(height).toHaveValue("4");
   expect(await recorded(page)).toEqual([14, 16, 14, 8, 100, 4].map((value) => ({ type: "station-height", height: value })));
+});
+
+test("station heights convert when units change and inputs dispatch metres", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => (window as unknown as Window).setConstructionUnits("imperial"));
+  const height = page.getByLabel("Station height above ground (feet)");
+  await expect(height).toHaveValue("39.37");
+  await height.fill("65.62");
+  await height.press("Tab");
+  expect(await recorded(page)).toContainEqual({ type: "station-height", height: 20 });
+  await page.evaluate(() => (window as unknown as Window).setConstructionUnits("metric"));
+  await expect(page.getByLabel("Station height above ground (metres)")).toHaveValue("20");
+});
+
+test("block boundaries display and dispatch in the selected units", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => {
+    const fixture = window as unknown as Window;
+    fixture.setConstructionState({ canTest: true, blockCandidates: new Float64Array([10, 20]), blockReport: {
+      sections: [{ boundaryMetres: 10, brakeStartMetres: 8, brakePieceIndices: [], editable: true, editableIndex: 0, reason: "", trackKind: "blockBrake" }],
+      trainCapacity: 2, capacitySearchComplete: true, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "manual", placementSearchComplete: true, reasons: [], notes: [], suggestions: [],
+    } });
+    fixture.setConstructionUnits("imperial");
+  });
+  const input = page.getByLabel("Block 1 boundary in feet");
+  await expect(input).toHaveValue(/32\.808/);
+  await input.fill("65.61679790026247");
+  await page.getByRole("button", { name: "Move block", exact: true }).click();
+  const actions = await recorded(page) as { type: string; boundaryMetres: number }[];
+  expect(actions.at(-1)?.type).toBe("construction-move-block");
+  expect(actions.at(-1)?.boundaryMetres).toBeCloseTo(20, 8);
+  await page.evaluate(() => (window as unknown as Window).setConstructionUnits("metric"));
+  await expect(page.getByLabel("Block 1 boundary in metres")).toHaveValue("10");
 });
 
 test("piece steppers and palette show the choice, and refused pieces explain why", async ({ page }) => {

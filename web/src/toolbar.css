@@ -53,6 +53,8 @@
 .theme-toggle { flex: none; padding: 0 0.3rem; }
 .theme-toggle .theme-toggle__ink { fill: currentColor; }
 
+.units-toggle { min-width: 30px; justify-content: center; font: 600 0.8rem/1 var(--heading-font); }
+
 /* As the window narrows the tabs drop their key hints first, then their names. Icon-only tabs show the key hint again,
    since there is room and the icon alone does not say which key opens the tool. */
 @media (max-width: 1699px) {

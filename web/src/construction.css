@@ -123,6 +123,14 @@
 .builder__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; }
 .builder__ride-controls { grid-column: 1 / -1; display: flex; align-items: end; gap: 0.5rem; }
 .builder__coaster-price { display: grid; gap: 0.25rem; }
+.builder__finish-flow { grid-column: 1 / -1; display: grid; gap: 0.3rem; }
+.builder__finish-flow > [data-finish] { width: 100%; }
+.builder__finish-reason { margin: 0; color: var(--ink-soft); font-size: 0.78rem; }
+.builder__finish-confirmation { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; padding: 0.45rem; background: color-mix(in srgb, var(--mustard) 18%, var(--paper)); border: var(--hairline); }
+.builder__finish-confirmation p { grid-column: 1 / -1; margin: 0; font-size: 0.8rem; }
+.builder__finish-confirmation .tool-panel__action { min-width: 0; }
+.builder__finish-confirmation[hidden],
+.builder__finish-reason[hidden] { display: none; }
 .builder__toggle { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.5rem; font-size: 0.82rem; cursor: pointer; }
 .builder__toggle input { accent-color: var(--coral); }
 .builder__toggle kbd { margin-left: auto; }
