@@ -17,6 +17,7 @@ export async function riders(page: Page): Promise<readonly { id: string; car: nu
 export async function queuedGuests(page: Page): Promise<readonly string[]> {
   return page.evaluate(() => {
     const queue = new Set(window.gameTest.paths().filter(({ kind }) => kind === 1).map(({ x, y }) => `${x},${y}`));
-    return window.gameTest.guests().filter(({ x, y }) => queue.has(`${Math.floor(x)},${Math.floor(y)}`)).map(({ id }) => id);
+    const riderIds = new Set(window.gameTest.riders().map(({ id }) => id));
+    return window.gameTest.guests().filter(({ id, x, y }) => !riderIds.has(id) && queue.has(`${Math.floor(x)},${Math.floor(y)}`)).map(({ id }) => id);
   });
 }

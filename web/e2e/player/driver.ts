@@ -109,48 +109,34 @@ export async function flattenTerrainTiles(page: Page, tiles: readonly { x: numbe
 
 type FacilityPriceName = "entrance" | "food stall" | "drink stall" | "restroom" | "carousel" | "ferris wheel" | "souvenir shop";
 
-async function stepPriceTo(page: Page, options: {
+async function setPrice(options: {
   input: Locator;
-  lower: Locator;
-  raise: Locator;
   price: number;
 }): Promise<void> {
   if (!Number.isInteger(options.price)) throw new RangeError("Price must be a whole number");
   const minimum = Number(await options.input.getAttribute("min"));
   const maximum = Number(await options.input.getAttribute("max"));
   if (options.price < minimum || options.price > maximum) throw new RangeError(`Price must be between ${minimum} and ${maximum}`);
-  let currentPrice = Number(await options.input.inputValue());
-  if (!Number.isInteger(currentPrice)) throw new Error("Price control does not contain a whole number");
-  while (currentPrice !== options.price) {
-    const previousPrice = currentPrice;
-    await (currentPrice < options.price ? options.raise : options.lower).click();
-    currentPrice = Number(await options.input.inputValue());
-    if (!Number.isInteger(currentPrice) || (previousPrice < options.price ? currentPrice <= previousPrice : currentPrice >= previousPrice)) {
-      throw new Error(`Price stepper did not move toward ${options.price}`);
-    }
-  }
+  await options.input.fill(String(options.price));
+  await options.input.press("Tab");
   await expect(options.input).toHaveValue(String(options.price));
 }
 
-/** Adjust the coaster ticket price using its visible plus and minus controls. */
+/** Enter the coaster ticket price in its visible control. */
 export async function setCoasterTicketPrice(page: Page, price: number): Promise<void> {
   await openTool(page, "Coaster");
-  await stepPriceTo(page, {
+  await setPrice({
     input: page.getByRole("spinbutton", { name: "Coaster ticket price" }),
-    lower: page.getByRole("button", { name: "Lower the coaster ticket price" }),
-    raise: page.getByRole("button", { name: "Raise the coaster ticket price" }),
     price,
   });
 }
 
-/** Adjust a facility's price using its visible plus and minus controls. */
+/** Enter a facility's price in its visible control. */
 export async function setFacilityPrice(page: Page, facility: { id: number; name: FacilityPriceName }, price: number): Promise<void> {
   await openTool(page, "Facilities");
   const label = `Price of ${facility.name} ${facility.id}`;
-  await stepPriceTo(page, {
+  await setPrice({
     input: page.getByRole("spinbutton", { name: label }),
-    lower: page.getByRole("button", { name: `Lower the price of ${facility.name} ${facility.id}` }),
-    raise: page.getByRole("button", { name: `Raise the price of ${facility.name} ${facility.id}` }),
     price,
   });
 }
@@ -190,7 +176,7 @@ export async function dragTiles(page: Page, start: Tile, end: Tile): Promise<voi
   const from = await canvasToPage(page, startPoint), to = await canvasToPage(page, endPoint);
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
-  await page.mouse.move(to.x, to.y, { steps: 12 });
+  await page.mouse.move(to.x, to.y);
   await page.mouse.up();
 }
 

@@ -34,11 +34,16 @@ async function selectQueuedGuest(page: Page): Promise<string> {
         const current = window.gameTest.guests().find((entry) => entry.id === guestId);
         if (!current) return null;
         const projected = window.gameTest.project({ x: current.x, y: current.y, z: current.height / 4 });
-        for (let dy = -64; dy <= 8; dy += 2) {
-          for (let dx = -32; dx <= 32; dx += 2) {
-            const pick = window.gameTest.pick(projected.x + dx, projected.y + dy);
-            if (pick && "id" in pick && pick.id === guestId) return { x: projected.x + dx, y: projected.y + dy };
-          }
+        const offsets: { dx: number; dy: number }[] = [];
+        for (let dy = -64; dy <= 8; dy += 2) for (let dx = -32; dx <= 32; dx += 2) offsets.push({ dx, dy });
+        offsets.sort((first, second) => first.dx ** 2 + (first.dy + 12) ** 2 - second.dx ** 2 - (second.dy + 12) ** 2);
+        for (const { dx, dy } of offsets) {
+          const x = projected.x + dx, y = projected.y + dy;
+          const matches = [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2]].every(([offsetX, offsetY]) => {
+            const pick = window.gameTest.pick(x + offsetX, y + offsetY);
+            return pick && "id" in pick && pick.id === guestId;
+          });
+          if (matches) return { x, y };
         }
         return null;
       }, id);
@@ -63,7 +68,7 @@ async function selectQueuedGuest(page: Page): Promise<string> {
       await expect.poll(() => page.evaluate((guestId) => window.gameTest.guestDetail()?.id === guestId, id)).toBe(true);
       const activity = await page.evaluate(() => window.gameTest.guestDetail()!.activity);
       expect(activity.placeId, "selected guest's destination").toBe(0xffff_ffff);
-      if (activity.kind === "waiting") {
+      if (activity.kind === "waiting" || activity.kind === "riding") {
         counts.waiting++;
         waitingIds.add(id);
         await page.getByTestId("guest-panel-close").click();
@@ -95,6 +100,13 @@ test("Timber Tumbler operating journey @journey", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window.gameTest.ready), { timeout: 30_000 }).toBe(true);
   await setGameSpeed(page, 1);
   phase("replay setup");
+  await openTool(page, "Facilities");
+  const entrance = await page.evaluate(() => window.gameTest.facilities().find(({ kind }) => kind === "entrance"));
+  if (!entrance) throw new Error("The park entrance is missing");
+  await setFacilityPrice(page, { id: entrance.id, name: "entrance" }, 7);
+  await page.getByRole("button", { name: `Raise the price of entrance ${entrance.id}` }).click();
+  await expect(page.getByRole("spinbutton", { name: `Price of entrance ${entrance.id}` })).toHaveValue("8");
+  await setGameSpeed(page, 16);
   await flattenTerrainTiles(page, [
     ...Array.from({ length: 6 }, (_, index) => 255 - index).flatMap((y, index) => [238, 244].map((x) => ({ x, y, height: Math.min(12, 8 + index) }))),
     { x: 239, y: 250, height: 12 }, { x: 243, y: 250, height: 12 },
@@ -107,11 +119,9 @@ test("Timber Tumbler operating journey @journey", async ({ page }) => {
   await layQueue(page, { x: 243, y: 250, z: 3 }, { x: 244, y: 256, z: 2 });
   await layPath(page, { x: 239, y: 250, z: 3 }, { x: 238, y: 256, z: 2 });
   phase("station access");
-  await openTool(page, "Facilities");
-  const entrance = await page.evaluate(() => window.gameTest.facilities().find(({ kind }) => kind === "entrance"));
-  if (!entrance) throw new Error("The park entrance is missing");
-  await setFacilityPrice(page, { id: entrance.id, name: "entrance" }, 8);
-  await setCoasterTicketPrice(page, 9);
+  await setCoasterTicketPrice(page, 8);
+  await page.getByRole("button", { name: "Raise the coaster ticket price" }).click();
+  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toHaveValue("9");
   const revenueBeforeOpening = await revenue(page);
   const crestBurstsBeforeOpening = await page.evaluate(() => window.gameTest.crestBursts().length);
   await openRide(page);

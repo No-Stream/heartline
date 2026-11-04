@@ -2,7 +2,7 @@
   "format": "theme-park-session",
   "version": 1,
   "build": {
-    "gitHash": "a5a4e04861e4c682d13768405f91727bcba753b2",
+    "gitHash": "421101e625d1cfa976f0d5d14ea4b0b0f389b5ab",
     "mode": "production"
   },
   "seed": "2026",
@@ -10,7 +10,7 @@
   "guestCount": 12,
   "commands": [
     {
-      "tick": 87,
+      "tick": 77,
       "command": {
         "type": "path-build",
         "start": {
@@ -29,7 +29,7 @@
       }
     },
     {
-      "tick": 114,
+      "tick": 100,
       "command": {
         "type": "facility-place",
         "kind": "food_stall",
@@ -40,7 +40,7 @@
       }
     },
     {
-      "tick": 134,
+      "tick": 113,
       "command": {
         "type": "facility-place",
         "kind": "drink_stall",
@@ -51,7 +51,7 @@
       }
     },
     {
-      "tick": 152,
+      "tick": 128,
       "command": {
         "type": "facility-place",
         "kind": "restroom",
@@ -62,21 +62,21 @@
       }
     },
     {
-      "tick": 162,
+      "tick": 137,
       "command": {
         "type": "construction-select",
         "piece": "model:hybrid"
       }
     },
     {
-      "tick": 163,
+      "tick": 138,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 176,
+      "tick": 151,
       "command": {
         "type": "construction-start",
         "x": 241,
@@ -86,371 +86,425 @@
       }
     },
     {
-      "tick": 180,
+      "tick": 155,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 180,
+      "tick": 155,
       "command": {
         "type": "construction-set-chain",
         "enabled": true
       }
     },
     {
-      "tick": 182,
+      "tick": 157,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 195,
+      "tick": 168,
       "command": {
         "type": "construction-select",
         "piece": "LevelToGentleUp"
       }
     },
     {
-      "tick": 197,
+      "tick": 171,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 211,
+      "tick": 183,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 212,
+      "tick": 184,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 247,
+      "tick": 215,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 249,
+      "tick": 216,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 266,
+      "tick": 232,
       "command": {
         "type": "construction-select",
         "piece": "TurnSmallStandalone"
       }
     },
     {
-      "tick": 268,
+      "tick": 234,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 283,
+      "tick": 246,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 284,
+      "tick": 248,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 299,
+      "tick": 261,
       "command": {
         "type": "construction-select",
         "piece": "GentleUp"
       }
     },
     {
-      "tick": 301,
+      "tick": 264,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 313,
+      "tick": 274,
       "command": {
         "type": "construction-select",
         "piece": "GentleToSteepUp"
       }
     },
     {
-      "tick": 316,
+      "tick": 277,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 330,
+      "tick": 290,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 331,
+      "tick": 292,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 365,
+      "tick": 319,
       "command": {
         "type": "construction-select",
         "piece": "SteepToSixtyUp"
       }
     },
     {
-      "tick": 367,
+      "tick": 322,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 387,
+      "tick": 338,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 388,
+      "tick": 339,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 409,
+      "tick": 357,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 411,
+      "tick": 358,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 426,
+      "tick": 373,
       "command": {
         "type": "construction-select",
         "piece": "SixtyToSteepUp"
       }
     },
     {
-      "tick": 428,
+      "tick": 375,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 444,
+      "tick": 390,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 446,
+      "tick": 392,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 463,
+      "tick": 407,
       "command": {
         "type": "construction-select",
         "piece": "SteepToGentleUp"
       }
     },
     {
-      "tick": 466,
+      "tick": 410,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 480,
+      "tick": 423,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 482,
+      "tick": 425,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 500,
+      "tick": 440,
       "command": {
         "type": "construction-select",
         "piece": "GentleUpToLevel"
       }
     },
     {
-      "tick": 502,
+      "tick": 443,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 516,
+      "tick": 456,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 518,
+      "tick": 458,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 522,
+      "tick": 462,
       "command": {
         "type": "construction-set-chain",
         "enabled": false
       }
     },
     {
-      "tick": 524,
+      "tick": 464,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 538,
+      "tick": 476,
       "command": {
         "type": "construction-select",
         "piece": "LevelToGentleDown"
       }
     },
     {
-      "tick": 541,
+      "tick": 479,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 555,
+      "tick": 492,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 556,
+      "tick": 494,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 573,
+      "tick": 509,
       "command": {
         "type": "construction-select",
         "piece": "GentleToSteepDown"
       }
     },
     {
+      "tick": 512,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 526,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 528,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 560,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 562,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
       "tick": 576,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 591,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 593,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 630,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 631,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 653,
       "command": {
         "type": "construction-select",
         "piece": "SteepToSixtyDown"
       }
     },
     {
-      "tick": 655,
+      "tick": 578,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 676,
+      "tick": 598,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 677,
+      "tick": 600,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 723,
+      "tick": 643,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 724,
+      "tick": 644,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 666,
+      "command": {
+        "type": "construction-select",
+        "piece": "SixtyToSteepDown"
+      }
+    },
+    {
+      "tick": 668,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 693,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 694,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 712,
+      "command": {
+        "type": "construction-select",
+        "piece": "SteepToGentleDown"
+      }
+    },
+    {
+      "tick": 715,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 730,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 732,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
@@ -460,186 +514,186 @@
       "tick": 750,
       "command": {
         "type": "construction-select",
-        "piece": "SixtyToSteepDown"
-      }
-    },
-    {
-      "tick": 752,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 777,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 778,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 800,
-      "command": {
-        "type": "construction-select",
-        "piece": "SteepToGentleDown"
-      }
-    },
-    {
-      "tick": 802,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 817,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 819,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 838,
-      "command": {
-        "type": "construction-select",
         "piece": "GentleDownToLevel"
       }
     },
     {
-      "tick": 840,
+      "tick": 753,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 857,
+      "tick": 769,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 859,
+      "tick": 772,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 881,
+      "tick": 789,
       "command": {
         "type": "construction-select",
         "piece": "BankLeft"
       }
     },
     {
-      "tick": 884,
+      "tick": 792,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 898,
+      "tick": 804,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 900,
+      "tick": 806,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 920,
+      "tick": 823,
       "command": {
         "type": "construction-select",
         "piece": "BankedTurnStandalone"
       }
     },
     {
-      "tick": 923,
+      "tick": 825,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 948,
+      "tick": 847,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 950,
+      "tick": 849,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 990,
+      "tick": 887,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 992,
+      "tick": 888,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1019,
+      "tick": 911,
       "command": {
         "type": "construction-select",
         "piece": "UnbankLeft"
       }
     },
     {
-      "tick": 1022,
+      "tick": 913,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1046,
+      "tick": 933,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1048,
+      "tick": 936,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1077,
+      "tick": 962,
       "command": {
         "type": "construction-select",
         "piece": "AirtimeHill"
       }
     },
     {
-      "tick": 1079,
+      "tick": 964,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1001,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 1003,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1030,
+      "command": {
+        "type": "construction-select",
+        "piece": "LevelToGentleUp"
+      }
+    },
+    {
+      "tick": 1033,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1059,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 1061,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1089,
+      "command": {
+        "type": "construction-select",
+        "piece": "TurnSmallRightStandalone"
+      }
+    },
+    {
+      "tick": 1092,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
@@ -652,178 +706,190 @@
       }
     },
     {
-      "tick": 1120,
+      "tick": 1119,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1150,
-      "command": {
-        "type": "construction-select",
-        "piece": "LevelToGentleUp"
-      }
-    },
-    {
-      "tick": 1152,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1180,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 1181,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1211,
-      "command": {
-        "type": "construction-select",
-        "piece": "TurnSmallRightStandalone"
-      }
-    },
-    {
-      "tick": 1213,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1237,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 1239,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1265,
+      "tick": 1144,
       "command": {
         "type": "construction-select",
         "piece": "GentleUpToLevel"
       }
     },
     {
-      "tick": 1268,
+      "tick": 1147,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1295,
+      "tick": 1173,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1298,
+      "tick": 1175,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1326,
+      "tick": 1199,
       "command": {
         "type": "construction-select",
         "piece": "LevelToGentleDown"
       }
     },
     {
-      "tick": 1329,
+      "tick": 1202,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1352,
+      "tick": 1224,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1354,
+      "tick": 1226,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1410,
+      "tick": 1277,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1412,
+      "tick": 1279,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1443,
+      "tick": 1307,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1445,
+      "tick": 1309,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1469,
+      "tick": 1330,
       "command": {
         "type": "construction-select",
         "piece": "GentleDownToLevel"
       }
     },
     {
-      "tick": 1471,
+      "tick": 1333,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1488,
+      "tick": 1350,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1491,
+      "tick": 1352,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1513,
+      "tick": 1374,
       "command": {
         "type": "construction-select",
         "piece": "TurnSmallStandalone"
+      }
+    },
+    {
+      "tick": 1376,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1400,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 1403,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1429,
+      "command": {
+        "type": "construction-select",
+        "piece": "Straight"
+      }
+    },
+    {
+      "tick": 1432,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1456,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 1458,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1484,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 1487,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1514,
+      "command": {
+        "type": "construction-append"
       }
     },
     {
@@ -834,7 +900,7 @@
       }
     },
     {
-      "tick": 1543,
+      "tick": 1544,
       "command": {
         "type": "construction-append"
       }
@@ -847,239 +913,173 @@
       }
     },
     {
-      "tick": 1579,
-      "command": {
-        "type": "construction-select",
-        "piece": "Straight"
-      }
-    },
-    {
-      "tick": 1582,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1606,
+      "tick": 1574,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1608,
+      "tick": 1576,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
+      }
+    },
+    {
+      "tick": 1605,
+      "command": {
+        "type": "construction-append"
+      }
+    },
+    {
+      "tick": 1607,
+      "command": {
+        "type": "test-advance-block-analysis",
+        "budget": 1000
+      }
+    },
+    {
+      "tick": 1635,
+      "command": {
+        "type": "construction-append"
       }
     },
     {
       "tick": 1637,
       "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 1639,
-      "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1668,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 1670,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1700,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 1702,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1732,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 1734,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1763,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 1765,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1796,
-      "command": {
-        "type": "construction-append"
-      }
-    },
-    {
-      "tick": 1798,
-      "command": {
-        "type": "test-advance-block-analysis",
-        "budget": 1000
-      }
-    },
-    {
-      "tick": 1823,
+      "tick": 1663,
       "command": {
         "type": "construction-select",
         "piece": "TurnLargeStandalone"
       }
     },
     {
-      "tick": 1825,
+      "tick": 1665,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1860,
+      "tick": 1697,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1863,
+      "tick": 1699,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1891,
+      "tick": 1726,
       "command": {
         "type": "construction-select",
         "piece": "Straight"
       }
     },
     {
-      "tick": 1893,
+      "tick": 1728,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1920,
+      "tick": 1753,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1922,
+      "tick": 1755,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1953,
+      "tick": 1785,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1956,
+      "tick": 1788,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 1987,
+      "tick": 1818,
       "command": {
         "type": "construction-append"
       }
     },
     {
-      "tick": 1989,
+      "tick": 1820,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 2035,
+      "tick": 1862,
       "command": {
         "type": "construction-close"
       }
     },
     {
-      "tick": 2037,
+      "tick": 1864,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
       }
     },
     {
-      "tick": 2126,
+      "tick": 1946,
       "command": {
         "type": "set-speed",
         "speed": 2
       }
     },
     {
-      "tick": 2208,
+      "tick": 2018,
       "command": {
         "type": "set-speed",
         "speed": 4
       }
     },
     {
-      "tick": 2368,
+      "tick": 2190,
       "command": {
         "type": "set-speed",
         "speed": 8
       }
     },
     {
-      "tick": 2672,
+      "tick": 2494,
       "command": {
         "type": "set-speed",
         "speed": 16
       }
     },
     {
-      "tick": 4000,
+      "tick": 3678,
       "command": {
         "type": "construction-test"
       }
     },
     {
-      "tick": 4032,
+      "tick": 3694,
       "command": {
         "type": "test-advance-block-analysis",
         "budget": 1000
@@ -1089,110 +1089,106 @@
   "checkpoints": [
     {
       "tick": 300,
-      "hash": "15452629956320679839"
+      "hash": "9458212038029449503"
     },
     {
       "tick": 600,
-      "hash": "7633467325657319153"
+      "hash": "8271171208020378900"
     },
     {
       "tick": 900,
-      "hash": "477871022205742795"
+      "hash": "14454439929109892994"
     },
     {
       "tick": 1200,
-      "hash": "9738652590917343502"
+      "hash": "5995526342926761932"
     },
     {
       "tick": 1500,
-      "hash": "16652994225400182642"
+      "hash": "11664448924013005786"
     },
     {
       "tick": 1800,
-      "hash": "1150169188666482888"
+      "hash": "7578317490482623221"
     },
     {
       "tick": 2100,
-      "hash": "17241750120018773831"
+      "hash": "3859203349564910140"
     },
     {
       "tick": 2400,
-      "hash": "16539129463657527948"
+      "hash": "17776988646896928475"
     },
     {
       "tick": 2700,
-      "hash": "919490870483246485"
+      "hash": "16355044065999424903"
     },
     {
       "tick": 3000,
-      "hash": "8247912493469264917"
+      "hash": "6393574008237769950"
     },
     {
       "tick": 3300,
-      "hash": "17342284707011999863"
+      "hash": "12945125885231359551"
     },
     {
       "tick": 3600,
-      "hash": "179981628694992087"
+      "hash": "15855241247118245594"
     },
     {
       "tick": 3900,
-      "hash": "17420430060162804160"
+      "hash": "6173053159898571575"
     },
     {
       "tick": 4200,
-      "hash": "1353866845342189274"
+      "hash": "9894567710781841432"
     },
     {
       "tick": 4500,
-      "hash": "18347279298607556955"
+      "hash": "10955992784048378525"
     },
     {
       "tick": 4800,
-      "hash": "17089879144180144960"
+      "hash": "5897078044596763862"
     },
     {
       "tick": 5100,
-      "hash": "8579882120717136204"
+      "hash": "11794431566203950979"
     },
     {
       "tick": 5400,
-      "hash": "14234885530881069892"
+      "hash": "5425641740737535659"
     },
     {
       "tick": 5700,
-      "hash": "6604921574515914526"
+      "hash": "5159942957223144803"
     },
     {
       "tick": 6000,
-      "hash": "11205092610560135760"
+      "hash": "4868988649874341812"
     },
     {
       "tick": 6300,
-      "hash": "3483615530609781021"
+      "hash": "6588125997877939866"
     },
     {
       "tick": 6600,
-      "hash": "2976160713637597309"
+      "hash": "14001145625625511054"
     },
     {
       "tick": 6900,
-      "hash": "3041810480220117754"
-    },
-    {
-      "tick": 7200,
-      "hash": "9536767333845892810"
+      "hash": "12316602974461268332"
     }
   ],
-  "finalTick": 7408,
+  "finalTick": 7102,
   "inputs": [
     {
       "action": {
         "type": "tool-select",
         "tool": "paths"
       },
-      "time": 3108.8000000002794,
-      "tick": 46,
+      "time": 2975.300000000745,
+      "tick": 44,
       "viewport": {
         "width": 800,
         "height": 436
@@ -1212,7 +1208,7 @@
           "y": 10
         }
       },
-      "time": 4022.100000000093,
+      "time": 3932.300000000745,
       "tick": 74,
       "viewport": {
         "width": 400,
@@ -1233,239 +1229,8 @@
           "y": 10
         }
       },
-      "time": 4101.5,
-      "tick": 77,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 333.3333435058594,
-          "y": 23.333335876464844
-        }
-      },
-      "time": 4101.700000000186,
-      "tick": 77,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 306.6666564941406,
-          "y": 36.666664123535156
-        }
-      },
-      "time": 4138,
-      "tick": 78,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 280,
-          "y": 50
-        }
-      },
-      "time": 4171.300000000279,
-      "tick": 79,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 253.3333282470703,
-          "y": 63.333335876464844
-        }
-      },
-      "time": 4204.600000000093,
-      "tick": 80,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 226.6666717529297,
-          "y": 76.66666412353516
-        }
-      },
-      "time": 4221.300000000279,
-      "tick": 80,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 200,
-          "y": 90
-        }
-      },
-      "time": 4237.9000000003725,
-      "tick": 81,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 173.3333282470703,
-          "y": 103.33332824707031
-        }
-      },
-      "time": 4254.600000000093,
-      "tick": 81,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 146.6666717529297,
-          "y": 116.66667175292969
-        }
-      },
-      "time": 4271.200000000186,
-      "tick": 82,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 120,
-          "y": 130
-        }
-      },
-      "time": 4304.600000000093,
-      "tick": 83,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 93.33333587646484,
-          "y": 143.3333282470703
-        }
-      },
-      "time": 4338,
-      "tick": 84,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 218.5,
-        "centerY": 254,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "drag-move",
-        "position": {
-          "x": 66.66666412353516,
-          "y": 156.6666717529297
-        }
-      },
-      "time": 4371.300000000279,
-      "tick": 85,
+      "time": 4002.7000000001863,
+      "tick": 76,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1485,8 +1250,8 @@
           "y": 170
         }
       },
-      "time": 4421.300000000279,
-      "tick": 86,
+      "time": 4002.9000000003725,
+      "tick": 76,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1506,8 +1271,8 @@
           "y": 170
         }
       },
-      "time": 4451.9000000003725,
-      "tick": 87,
+      "time": 4032.2000000001863,
+      "tick": 77,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1524,8 +1289,8 @@
         "type": "hover",
         "position": null
       },
-      "time": 4687.300000000279,
-      "tick": 94,
+      "time": 4214.700000000186,
+      "tick": 83,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1542,8 +1307,8 @@
         "type": "tool-select",
         "tool": "facilities"
       },
-      "time": 4837.600000000093,
-      "tick": 99,
+      "time": 4348.800000000745,
+      "tick": 87,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1563,8 +1328,8 @@
           "y": 90
         }
       },
-      "time": 5335.700000000186,
-      "tick": 113,
+      "time": 4811,
+      "tick": 100,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1584,8 +1349,8 @@
           "y": 90
         }
       },
-      "time": 5336.300000000279,
-      "tick": 113,
+      "time": 4811.5,
+      "tick": 100,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1602,8 +1367,8 @@
         "type": "hover",
         "position": null
       },
-      "time": 5567.600000000093,
-      "tick": 120,
+      "time": 4980.300000000745,
+      "tick": 105,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1623,8 +1388,8 @@
           "y": 90
         }
       },
-      "time": 6003.600000000093,
-      "tick": 133,
+      "time": 5228.100000000559,
+      "tick": 113,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1644,8 +1409,8 @@
           "y": 90
         }
       },
-      "time": 6004.200000000186,
-      "tick": 133,
+      "time": 5228.600000000559,
+      "tick": 113,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1662,8 +1427,8 @@
         "type": "hover",
         "position": null
       },
-      "time": 6263.200000000186,
-      "tick": 141,
+      "time": 5380,
+      "tick": 118,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1683,8 +1448,8 @@
           "y": 90
         }
       },
-      "time": 6622.300000000279,
-      "tick": 152,
+      "time": 5710.700000000186,
+      "tick": 127,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1704,8 +1469,8 @@
           "y": 90
         }
       },
-      "time": 6622.800000000279,
-      "tick": 152,
+      "time": 5711.200000000186,
+      "tick": 127,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1722,8 +1487,8 @@
         "type": "hover",
         "position": null
       },
-      "time": 6853.200000000186,
-      "tick": 159,
+      "time": 5929,
+      "tick": 134,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1740,8 +1505,8 @@
         "type": "tool-select",
         "tool": "coaster"
       },
-      "time": 6853.700000000186,
-      "tick": 159,
+      "time": 5929.600000000559,
+      "tick": 134,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1758,8 +1523,8 @@
         "type": "construction-set-model",
         "model": "hybrid"
       },
-      "time": 6952.5,
-      "tick": 162,
+      "time": 6013.9000000003725,
+      "tick": 137,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1776,8 +1541,8 @@
         "type": "station-height",
         "height": 4
       },
-      "time": 7085.800000000279,
-      "tick": 166,
+      "time": 6131,
+      "tick": 140,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1794,8 +1559,8 @@
         "type": "station-placement",
         "enabled": true
       },
-      "time": 7209.9000000003725,
-      "tick": 169,
+      "time": 6232.100000000559,
+      "tick": 143,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1815,8 +1580,8 @@
           "y": 58
         }
       },
-      "time": 7337.5,
-      "tick": 174,
+      "time": 6425.700000000186,
+      "tick": 149,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1836,8 +1601,8 @@
           "y": 58
         }
       },
-      "time": 7339,
-      "tick": 174,
+      "time": 6427.4000000003725,
+      "tick": 149,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1857,8 +1622,8 @@
           "y": 122
         }
       },
-      "time": 7402.300000000279,
-      "tick": 176,
+      "time": 6493.800000000745,
+      "tick": 151,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1878,8 +1643,8 @@
           "y": 122
         }
       },
-      "time": 7403.4000000003725,
-      "tick": 176,
+      "time": 6494.600000000559,
+      "tick": 151,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1895,8 +1660,8 @@
       "action": {
         "type": "chain-toggle"
       },
-      "time": 7532.300000000279,
-      "tick": 176,
+      "time": 6623.800000000745,
+      "tick": 154,
       "viewport": {
         "width": 400,
         "height": 436
@@ -1913,15 +1678,15 @@
         "type": "hover",
         "position": null
       },
-      "time": 8027.5,
-      "tick": 193,
+      "time": 7066.9000000003725,
+      "tick": 167,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 239.02534305778258,
-        "centerY": 252.88476475903772,
+        "centerX": 239.05607209230212,
+        "centerY": 252.85515196004675,
         "zoom": 2,
         "rotation": 0
       }
@@ -1931,15 +1696,15 @@
         "type": "construction-select",
         "piece": "LevelToGentleUp"
       },
-      "time": 8029,
-      "tick": 193,
+      "time": 7068.200000000186,
+      "tick": 167,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 239.02534305778258,
-        "centerY": 252.88476475903772,
+        "centerX": 239.05607209230212,
+        "centerY": 252.85515196004675,
         "zoom": 2,
         "rotation": 0
       }
@@ -1948,15 +1713,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 8571.700000000186,
-      "tick": 210,
+      "time": 7554.4000000003725,
+      "tick": 182,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 238.9566324678343,
-        "centerY": 252.9509794293162,
+        "centerX": 238.9569948728905,
+        "centerY": 252.95063018866318,
         "zoom": 2,
         "rotation": 0
       }
@@ -1965,15 +1730,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 9778.700000000186,
-      "tick": 246,
+      "time": 8615.400000000373,
+      "tick": 213,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 236.9574497555496,
-        "centerY": 254.9501621416009,
+        "centerX": 236.95704718144646,
+        "centerY": 254.95057788010723,
         "zoom": 2,
         "rotation": 0
       }
@@ -1983,15 +1748,15 @@
         "type": "construction-select",
         "piece": "TurnSmallStandalone"
       },
-      "time": 10394.700000000186,
-      "tick": 264,
+      "time": 9186.300000000745,
+      "tick": 230,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 234.98881406205152,
-        "centerY": 256.9187978350989,
+        "centerX": 234.9982122330621,
+        "centerY": 256.90941282849155,
         "zoom": 2,
         "rotation": 0
       }
@@ -2000,15 +1765,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 10958,
-      "tick": 281,
+      "time": 9672.900000000373,
+      "tick": 245,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 232.0493308692369,
-        "centerY": 255.98489049900104,
+        "centerX": 232.10792867332486,
+        "centerY": 256.00348289715436,
         "zoom": 2,
         "rotation": 0
       }
@@ -2018,15 +1783,15 @@
         "type": "construction-select",
         "piece": "GentleUp"
       },
-      "time": 11497.5,
-      "tick": 297,
+      "time": 10167.400000000373,
+      "tick": 260,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 224.60105599854822,
-        "centerY": 252.747632862494,
+        "centerX": 224.66816477319605,
+        "centerY": 252.77660200368,
         "zoom": 2,
         "rotation": 0
       }
@@ -2036,15 +1801,15 @@
         "type": "construction-select",
         "piece": "GentleToSteepUp"
       },
-      "time": 11983.5,
-      "tick": 312,
+      "time": 10600.400000000373,
+      "tick": 273,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 224.9699635539821,
-        "centerY": 254.86754220559035,
+        "centerX": 224.9613461736277,
+        "centerY": 254.81253565186557,
         "zoom": 2,
         "rotation": 0
       }
@@ -2053,15 +1818,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 12530.5,
-      "tick": 330,
+      "time": 11141.5,
+      "tick": 289,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 224.5194406418585,
-        "centerY": 254.51717057460763,
+        "centerX": 224.5170723616731,
+        "centerY": 254.5141449975481,
         "zoom": 2,
         "rotation": 0
       }
@@ -2071,15 +1836,15 @@
         "type": "construction-select",
         "piece": "SteepToSixtyUp"
       },
-      "time": 13696.200000000186,
-      "tick": 363,
+      "time": 12104.200000000186,
+      "tick": 318,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 217.00669190668953,
-        "centerY": 251.00312793627404,
+        "centerX": 217.00957097977974,
+        "centerY": 251.0044726565978,
         "zoom": 2,
         "rotation": 0
       }
@@ -2088,15 +1853,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 14435.80000000028,
-      "tick": 385,
+      "time": 12716.600000000559,
+      "tick": 336,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 216.2550985499619,
-        "centerY": 250.25507453611814,
+        "centerX": 216.2667902298551,
+        "centerY": 250.2667011508103,
         "zoom": 2,
         "rotation": 0
       }
@@ -2105,15 +1870,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 15177.5,
-      "tick": 408,
+      "time": 13357.5,
+      "tick": 356,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 209.14033876234424,
-        "centerY": 245.4315369132201,
+        "centerX": 209.18510344430734,
+        "centerY": 245.46191710636424,
         "zoom": 2,
         "rotation": 0
       }
@@ -2123,15 +1888,15 @@
         "type": "construction-select",
         "piece": "SixtyToSteepUp"
       },
-      "time": 15738,
-      "tick": 425,
+      "time": 13896.100000000559,
+      "tick": 372,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 203.73569291704084,
-        "centerY": 241.99047003232369,
+        "centerX": 203.75408135271627,
+        "centerY": 242.0022181492059,
         "zoom": 2,
         "rotation": 0
       }
@@ -2140,15 +1905,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 16357,
-      "tick": 443,
+      "time": 14466.700000000186,
+      "tick": 389,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 201.303718216929,
-        "centerY": 241.26553662793629,
+        "centerX": 201.3270441857609,
+        "centerY": 241.272395931071,
         "zoom": 2,
         "rotation": 0
       }
@@ -2158,15 +1923,15 @@
         "type": "construction-select",
         "piece": "SteepToGentleUp"
       },
-      "time": 16987,
-      "tick": 462,
+      "time": 15033.200000000186,
+      "tick": 406,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 192.6363712493808,
-        "centerY": 236.57388217051627,
+        "centerX": 192.71985211301114,
+        "centerY": 236.61900859603057,
         "zoom": 2,
         "rotation": 0
       }
@@ -2175,15 +1940,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 17549.700000000186,
-      "tick": 479,
+      "time": 15566.900000000373,
+      "tick": 422,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 192.98654216626952,
-        "centerY": 236.9854511226793,
+        "centerX": 192.9847773107175,
+        "centerY": 236.98254381045678,
         "zoom": 2,
         "rotation": 0
       }
@@ -2193,15 +1958,15 @@
         "type": "construction-select",
         "piece": "GentleUpToLevel"
       },
-      "time": 18202.100000000093,
-      "tick": 498,
+      "time": 16138.5,
+      "tick": 439,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 186.5893825196516,
-        "centerY": 234.53427619552124,
+        "centerX": 186.6620520390373,
+        "centerY": 234.56212500665126,
         "zoom": 2,
         "rotation": 0
       }
@@ -2210,15 +1975,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 18745,
-      "tick": 515,
+      "time": 16671.400000000373,
+      "tick": 455,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 186.5489781618572,
-        "centerY": 234.5425131338637,
+        "centerX": 186.5650127713393,
+        "centerY": 234.5585466069628,
         "zoom": 2,
         "rotation": 0
       }
@@ -2227,15 +1992,15 @@
       "action": {
         "type": "chain-toggle"
       },
-      "time": 18940.100000000093,
-      "tick": 520,
+      "time": 16848,
+      "tick": 460,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 184.79861244203298,
-        "centerY": 235.05782444110028,
+        "centerX": 184.97684460975347,
+        "centerY": 235.01551251468584,
         "zoom": 2,
         "rotation": 0
       }
@@ -2245,15 +2010,15 @@
         "type": "construction-select",
         "piece": "LevelToGentleDown"
       },
-      "time": 19484,
-      "tick": 537,
+      "time": 17330.5,
+      "tick": 475,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 183.48356111847718,
-        "centerY": 235.44497828497973,
+        "centerX": 183.50196720355095,
+        "centerY": 235.43988111053562,
         "zoom": 2,
         "rotation": 0
       }
@@ -2262,15 +2027,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 20028.600000000093,
-      "tick": 553,
+      "time": 17853.300000000745,
+      "tick": 491,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 183.46254364489278,
-        "centerY": 235.45525975830017,
+        "centerX": 183.46645899695477,
+        "centerY": 235.4599895317499,
         "zoom": 2,
         "rotation": 0
       }
@@ -2280,15 +2045,15 @@
         "type": "construction-select",
         "piece": "GentleToSteepDown"
       },
-      "time": 20656.5,
-      "tick": 572,
+      "time": 18437.800000000745,
+      "tick": 508,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 181.48995108400905,
-        "centerY": 237.4278523191839,
+        "centerX": 181.50762396845357,
+        "centerY": 237.4188245602511,
         "zoom": 2,
         "rotation": 0
       }
@@ -2297,15 +2062,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 21253.100000000093,
-      "tick": 590,
+      "time": 19000.300000000745,
+      "tick": 525,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 181.46213940623025,
-        "centerY": 237.4556639969627,
+        "centerX": 181.4664589996198,
+        "centerY": 237.45998952908488,
         "zoom": 2,
         "rotation": 0
       }
@@ -2314,15 +2079,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 22530.400000000373,
-      "tick": 628,
+      "time": 20139.800000000745,
+      "tick": 559,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 179.54934003768327,
-        "centerY": 239.54287055755012,
+        "centerX": 179.54934701277253,
+        "centerY": 239.54287754222898,
         "zoom": 2,
         "rotation": 0
       }
@@ -2332,15 +2097,15 @@
         "type": "construction-select",
         "piece": "SteepToSixtyDown"
       },
-      "time": 23301.400000000373,
-      "tick": 651,
+      "time": 20657.700000000186,
+      "tick": 576,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 179.5462648259114,
-        "centerY": 243.52232207257,
+        "centerX": 179.54635700403136,
+        "centerY": 243.40336216222138,
         "zoom": 2,
         "rotation": 0
       }
@@ -2349,15 +2114,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 24065.200000000186,
-      "tick": 674,
+      "time": 21408.300000000745,
+      "tick": 596,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 181.0361395046134,
-        "centerY": 245.03602654928562,
+        "centerX": 181.03485954141806,
+        "centerY": 245.03410000619738,
         "zoom": 2,
         "rotation": 0
       }
@@ -2366,15 +2131,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 25630,
-      "tick": 721,
+      "time": 22879.10000000056,
+      "tick": 641,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 182.39128702436105,
-        "centerY": 248.69208602490298,
+        "centerX": 182.39156269218756,
+        "centerY": 248.69283260562668,
         "zoom": 2,
         "rotation": 0
       }
@@ -2384,15 +2149,15 @@
         "type": "construction-select",
         "piece": "SixtyToSteepDown"
       },
-      "time": 26530.5,
-      "tick": 748,
+      "time": 23662,
+      "tick": 664,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 183.88984320178724,
-        "centerY": 252.18962444780587,
+        "centerX": 183.88577094177728,
+        "centerY": 252.18012059022118,
         "zoom": 2,
         "rotation": 0
       }
@@ -2401,15 +2166,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 27433,
-      "tick": 775,
+      "time": 24549,
+      "tick": 691,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 184.04567058420423,
-        "centerY": 254.03935923278814,
+        "centerX": 184.0458352908154,
+        "centerY": 254.04140846353985,
         "zoom": 2,
         "rotation": 0
       }
@@ -2419,15 +2184,15 @@
         "type": "construction-select",
         "piece": "SteepToGentleDown"
       },
-      "time": 28197.900000000373,
-      "tick": 797,
+      "time": 25209.200000000186,
+      "tick": 711,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 184.0462424584928,
-        "centerY": 258.0192481449451,
+        "centerX": 184.04624131290782,
+        "centerY": 257.9972878543844,
         "zoom": 2,
         "rotation": 0
       }
@@ -2436,15 +2201,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 28788.30000000028,
-      "tick": 816,
+      "time": 25785.5,
+      "tick": 729,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 184.04150663692266,
-        "centerY": 258.0342178252841,
+        "centerX": 184.03275981831044,
+        "centerY": 258.0254744352475,
         "zoom": 2,
         "rotation": 0
       }
@@ -2454,15 +2219,15 @@
         "type": "construction-select",
         "piece": "GentleDownToLevel"
       },
-      "time": 29470.5,
-      "tick": 836,
+      "time": 26466.800000000745,
+      "tick": 749,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 182.05958665797976,
-        "centerY": 260.01613780422707,
+        "centerX": 182.05087259211552,
+        "centerY": 260.00736166144236,
         "zoom": 2,
         "rotation": 0
       }
@@ -2471,15 +2236,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 30103.5,
-      "tick": 856,
+      "time": 27106.800000000745,
+      "tick": 768,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 182.04073587290878,
-        "centerY": 260.034988589298,
+        "centerX": 182.03235483262182,
+        "centerY": 260.02587942093606,
         "zoom": 2,
         "rotation": 0
       }
@@ -2489,15 +2254,15 @@
         "type": "construction-select",
         "piece": "BankLeft"
       },
-      "time": 30909.600000000093,
-      "tick": 878,
+      "time": 27775.300000000745,
+      "tick": 788,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 179.9715916712574,
-        "centerY": 261.9373534509602,
+        "centerX": 179.98596464813033,
+        "centerY": 261.9238784118143,
         "zoom": 2,
         "rotation": 0
       }
@@ -2506,15 +2271,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 31470.30000000028,
-      "tick": 897,
+      "time": 28276.800000000745,
+      "tick": 803,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 179.9639239176116,
-        "centerY": 261.9442872686256,
+        "centerX": 179.97145909761988,
+        "centerY": 261.93768247674086,
         "zoom": 2,
         "rotation": 0
       }
@@ -2524,15 +2289,15 @@
         "type": "construction-select",
         "piece": "BankedTurnStandalone"
       },
-      "time": 32220.5,
-      "tick": 919,
+      "time": 28894.60000000056,
+      "tick": 821,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 175.96770616189778,
-        "centerY": 261.96677695444527,
+        "centerX": 176.0109558725371,
+        "centerY": 261.9664189785913,
         "zoom": 2,
         "rotation": 0
       }
@@ -2541,15 +2306,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 33148.80000000028,
-      "tick": 947,
+      "time": 29707.400000000373,
+      "tick": 845,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 174.06806553752511,
-        "centerY": 259.81653771311744,
+        "centerX": 174.07158986728027,
+        "centerY": 259.82038083354104,
         "zoom": 2,
         "rotation": 0
       }
@@ -2558,15 +2323,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 34547,
-      "tick": 989,
+      "time": 31017.10000000056,
+      "tick": 886,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 175.75507390183932,
-        "centerY": 255.76156090731436,
+        "centerX": 175.75483226420673,
+        "centerY": 255.7621419720333,
         "zoom": 2,
         "rotation": 0
       }
@@ -2576,15 +2341,15 @@
         "type": "construction-select",
         "piece": "UnbankLeft"
       },
-      "time": 35508.40000000037,
-      "tick": 1016,
+      "time": 31814.200000000186,
+      "tick": 908,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 179.15216020461457,
-        "centerY": 254.7162721066985,
+        "centerX": 179.1379833097279,
+        "centerY": 254.72063739201633,
         "zoom": 2,
         "rotation": 0
       }
@@ -2593,15 +2358,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 36405.80000000028,
-      "tick": 1045,
+      "time": 32573.900000000373,
+      "tick": 932,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 179.86302487415057,
-        "centerY": 253.8433173901642,
+        "centerX": 179.86169461915927,
+        "centerY": 253.8449047098285,
         "zoom": 2,
         "rotation": 0
       }
@@ -2611,15 +2376,15 @@
         "type": "construction-select",
         "piece": "AirtimeHill"
       },
-      "time": 37430.5,
-      "tick": 1074,
+      "time": 33523.200000000186,
+      "tick": 959,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 182.0434652490649,
-        "centerY": 252.04853553040067,
+        "centerX": 182.04177103720872,
+        "centerY": 252.0499300412531,
         "zoom": 2,
         "rotation": 0
       }
@@ -2628,15 +2393,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 38787.700000000186,
-      "tick": 1115,
+      "time": 34834.90000000037,
+      "tick": 999,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 184.99462108083665,
-        "centerY": 252.99826896995978,
+        "centerX": 184.992313051035,
+        "centerY": 252.99752526949024,
         "zoom": 2,
         "rotation": 0
       }
@@ -2646,15 +2411,15 @@
         "type": "construction-select",
         "piece": "LevelToGentleUp"
       },
-      "time": 39859.30000000028,
-      "tick": 1147,
+      "time": 35808,
+      "tick": 1028,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 192.99367182543148,
-        "centerY": 252.9999986316375,
+        "centerX": 192.9870603002561,
+        "centerY": 252.99999600105875,
         "zoom": 2,
         "rotation": 0
       }
@@ -2663,15 +2428,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 40864.700000000186,
-      "tick": 1178,
+      "time": 36776,
+      "tick": 1058,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 191.95761841328053,
-        "centerY": 253.9502091275479,
+        "centerX": 191.9561514470876,
+        "centerY": 253.9515509403954,
         "zoom": 2,
         "rotation": 0
       }
@@ -2681,15 +2446,15 @@
         "type": "construction-select",
         "piece": "TurnSmallRightStandalone"
       },
-      "time": 41894.80000000028,
-      "tick": 1208,
+      "time": 37760.300000000745,
+      "tick": 1086,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 193.95165674350474,
-        "centerY": 251.9561707973237,
+        "centerX": 193.9506253961257,
+        "centerY": 251.9570769913573,
         "zoom": 2,
         "rotation": 0
       }
@@ -2698,15 +2463,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 42779.700000000186,
-      "tick": 1235,
+      "time": 38688.300000000745,
+      "tick": 1115,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 192.9566751257287,
-        "centerY": 248.96254354621144,
+        "centerX": 192.95579707645933,
+        "centerY": 248.9599099546184,
         "zoom": 2,
         "rotation": 0
       }
@@ -2716,15 +2481,15 @@
         "type": "construction-select",
         "piece": "GentleUpToLevel"
       },
-      "time": 43716.10000000009,
-      "tick": 1262,
+      "time": 39603.800000000745,
+      "tick": 1142,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 189.6505535654937,
-        "centerY": 241.37782772831645,
+        "centerX": 189.65055416145665,
+        "centerY": 241.3778295427754,
         "zoom": 2,
         "rotation": 0
       }
@@ -2733,15 +2498,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 44714.80000000028,
-      "tick": 1294,
+      "time": 40555.800000000745,
+      "tick": 1171,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 192.03832396696617,
-        "centerY": 242.0440066767852,
+        "centerX": 192.03921636110402,
+        "centerY": 242.04426208878814,
         "zoom": 2,
         "rotation": 0
       }
@@ -2751,15 +2516,15 @@
         "type": "construction-select",
         "piece": "LevelToGentleDown"
       },
-      "time": 45749.40000000037,
-      "tick": 1324,
+      "time": 41437.60000000056,
+      "tick": 1197,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 192.9520881912982,
-        "centerY": 238.95937585922883,
+        "centerX": 192.950737055558,
+        "centerY": 238.96394772194355,
         "zoom": 2,
         "rotation": 0
       }
@@ -2768,15 +2533,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 46598.90000000037,
-      "tick": 1350,
+      "time": 42256.800000000745,
+      "tick": 1222,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 192.9520881912982,
-        "centerY": 238.95937585922883,
+        "centerX": 192.95208981485968,
+        "centerY": 238.95937632390812,
         "zoom": 2,
         "rotation": 0
       }
@@ -2785,15 +2550,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 48550.30000000028,
-      "tick": 1408,
+      "time": 44028.40000000037,
+      "tick": 1275,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 194.95372141758386,
-        "centerY": 236.95774263294317,
+        "centerX": 194.95209037934765,
+        "centerY": 236.95937575942014,
         "zoom": 2,
         "rotation": 0
       }
@@ -2802,15 +2567,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 49658.10000000009,
-      "tick": 1442,
+      "time": 45038,
+      "tick": 1305,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 196.95208970270346,
-        "centerY": 234.95937434782357,
+        "centerX": 196.95318437992142,
+        "centerY": 234.95828175884637,
         "zoom": 2,
         "rotation": 0
       }
@@ -2820,15 +2585,15 @@
         "type": "construction-select",
         "piece": "GentleDownToLevel"
       },
-      "time": 50499.200000000186,
-      "tick": 1467,
+      "time": 45801.10000000056,
+      "tick": 1329,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 198.9482856902674,
-        "centerY": 232.96317836025963,
+        "centerX": 198.94374868424026,
+        "centerY": 232.96771745452756,
         "zoom": 2,
         "rotation": 0
       }
@@ -2837,15 +2602,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 51136.90000000037,
-      "tick": 1486,
+      "time": 46452.40000000037,
+      "tick": 1349,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 198.95174682682813,
-        "centerY": 232.95821761367966,
+        "centerX": 198.95180490043185,
+        "centerY": 232.9569067793532,
         "zoom": 2,
         "rotation": 0
       }
@@ -2855,15 +2620,15 @@
         "type": "construction-select",
         "piece": "TurnSmallStandalone"
       },
-      "time": 51992.80000000028,
-      "tick": 1511,
+      "time": 47252.700000000186,
+      "tick": 1372,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 198.95374420792788,
-        "centerY": 228.97261865285552,
+        "centerX": 198.9537405220741,
+        "centerY": 228.98074596897763,
         "zoom": 2,
         "rotation": 0
       }
@@ -2872,15 +2637,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 52991.700000000186,
-      "tick": 1542,
+      "time": 48145.700000000186,
+      "tick": 1399,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 199.95629224279978,
-        "centerY": 227.96293268513332,
+        "centerX": 199.95838309484836,
+        "centerY": 227.9658782186852,
         "zoom": 2,
         "rotation": 0
       }
@@ -2890,15 +2655,15 @@
         "type": "construction-select",
         "piece": "Straight"
       },
-      "time": 54177.700000000186,
-      "tick": 1577,
+      "time": 49105.300000000745,
+      "tick": 1427,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 204.25311037685753,
-        "centerY": 227.7410411239786,
+        "centerX": 204.24809388949032,
+        "centerY": 227.74130811982758,
         "zoom": 2,
         "rotation": 0
       }
@@ -2907,99 +2672,99 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 55059.40000000037,
+      "time": 50001.60000000056,
+      "tick": 1455,
+      "viewport": {
+        "width": 400,
+        "height": 436
+      },
+      "camera": {
+        "centerX": 204.9508199154504,
+        "centerY": 226.95705023865946,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-append"
+      },
+      "time": 50937.10000000056,
+      "tick": 1482,
+      "viewport": {
+        "width": 400,
+        "height": 436
+      },
+      "camera": {
+        "centerX": 207.04079767903187,
+        "centerY": 225.05121492971986,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-append"
+      },
+      "time": 51934.40000000037,
+      "tick": 1513,
+      "viewport": {
+        "width": 400,
+        "height": 436
+      },
+      "camera": {
+        "centerX": 211.03978184636716,
+        "centerY": 225.04625132375125,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-append"
+      },
+      "time": 52923.60000000056,
+      "tick": 1542,
+      "viewport": {
+        "width": 400,
+        "height": 436
+      },
+      "camera": {
+        "centerX": 215.0405002365259,
+        "centerY": 225.04624634504137,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-append"
+      },
+      "time": 53925.300000000745,
+      "tick": 1571,
+      "viewport": {
+        "width": 400,
+        "height": 436
+      },
+      "camera": {
+        "centerX": 219.03895855462972,
+        "centerY": 225.04624633790363,
+        "zoom": 2,
+        "rotation": 0
+      }
+    },
+    {
+      "action": {
+        "type": "construction-append"
+      },
+      "time": 54954.5,
       "tick": 1604,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 204.95081990290305,
-        "centerY": 226.9570502209831,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "construction-append"
-      },
-      "time": 56113.10000000009,
-      "tick": 1636,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 207.04357899237456,
-        "centerY": 225.04867867055788,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "construction-append"
-      },
-      "time": 57123.90000000037,
-      "tick": 1666,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 211.04050978142524,
-        "centerY": 225.04624982386946,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "construction-append"
-      },
-      "time": 58204,
-      "tick": 1699,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 215.04222667903383,
-        "centerY": 225.04624634138872,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "construction-append"
-      },
-      "time": 59264.700000000186,
-      "tick": 1730,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 219.0411494737369,
-        "centerY": 225.04624633789507,
-        "zoom": 2,
-        "rotation": 0
-      }
-    },
-    {
-      "action": {
-        "type": "construction-append"
-      },
-      "time": 60307.60000000009,
-      "tick": 1762,
-      "viewport": {
-        "width": 400,
-        "height": 436
-      },
-      "camera": {
-        "centerX": 223.03977446265404,
+        "centerX": 223.04114947372472,
         "centerY": 225.04624633789064,
         "zoom": 2,
         "rotation": 0
@@ -3009,14 +2774,14 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 61395.80000000028,
-      "tick": 1794,
+      "time": 55954.10000000056,
+      "tick": 1634,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 227.04114635222032,
+        "centerX": 227.03977908377146,
         "centerY": 225.04624633789064,
         "zoom": 2,
         "rotation": 0
@@ -3027,14 +2792,14 @@
         "type": "construction-select",
         "piece": "TurnLargeStandalone"
       },
-      "time": 62297.5,
-      "tick": 1820,
+      "time": 56879.10000000056,
+      "tick": 1659,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 231.0330354925348,
+        "centerX": 231.02948229017176,
         "centerY": 225.04624633789064,
         "zoom": 2,
         "rotation": 0
@@ -3044,15 +2809,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 63553.10000000009,
-      "tick": 1858,
+      "time": 58018.5,
+      "tick": 1695,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 235.0790071180804,
-        "centerY": 228.90659157282724,
+        "centerX": 235.08122027163677,
+        "centerY": 228.90870469237652,
         "zoom": 2,
         "rotation": 0
       }
@@ -3062,15 +2827,15 @@
         "type": "construction-select",
         "piece": "Straight"
       },
-      "time": 64573.700000000186,
-      "tick": 1889,
+      "time": 58988.300000000745,
+      "tick": 1723,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 234.21996273533392,
-        "centerY": 238.20846993602893,
+        "centerX": 234.22055977026793,
+        "centerY": 238.20205258411985,
         "zoom": 2,
         "rotation": 0
       }
@@ -3079,15 +2844,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 65529.700000000186,
-      "tick": 1919,
+      "time": 59883.90000000037,
+      "tick": 1751,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 237.21021453041254,
-        "centerY": 235.22250049708478,
+        "centerX": 237.20696486317976,
+        "centerY": 235.22253989535264,
         "zoom": 2,
         "rotation": 0
       }
@@ -3096,15 +2861,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 66656.20000000019,
-      "tick": 1952,
+      "time": 60974.200000000186,
+      "tick": 1784,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 237.04641352082845,
-        "centerY": 239.04240927969158,
+        "centerX": 237.04645452632545,
+        "centerY": 239.0413787265196,
         "zoom": 2,
         "rotation": 0
       }
@@ -3113,15 +2878,15 @@
       "action": {
         "type": "construction-append"
       },
-      "time": 67766,
-      "tick": 1985,
+      "time": 62060.300000000745,
+      "tick": 1815,
       "viewport": {
         "width": 400,
         "height": 436
       },
       "camera": {
-        "centerX": 237.04624660785026,
-        "centerY": 243.03978111805066,
+        "centerX": 237.046246573102,
+        "centerY": 243.0417216368011,
         "zoom": 2,
         "rotation": 0
       }
@@ -3131,15 +2896,15 @@
         "type": "hover",
         "position": null
       },
-      "time": 69364,
-      "tick": 2031,
+      "time": 63513.10000000056,
+      "tick": 1859,
       "viewport": {
         "width": 880,
         "height": 676
       },
       "camera": {
-        "centerX": 239.7313743534506,
-        "centerY": 247.78248247617879,
+        "centerX": 239.71189018111372,
+        "centerY": 247.76051052333716,
         "zoom": 2,
         "rotation": 0
       }
@@ -3148,15 +2913,15 @@
       "action": {
         "type": "construction-close"
       },
-      "time": 69365.1000000001,
-      "tick": 2031,
+      "time": 63514.200000000186,
+      "tick": 1859,
       "viewport": {
         "width": 880,
         "height": 676
       },
       "camera": {
-        "centerX": 239.7313743534506,
-        "centerY": 247.78248247617879,
+        "centerX": 239.71189018111372,
+        "centerY": 247.76051052333716,
         "zoom": 2,
         "rotation": 0
       }
@@ -3166,15 +2931,15 @@
         "type": "tool-select",
         "tool": "none"
       },
-      "time": 70839.70000000019,
-      "tick": 2076,
+      "time": 64867.200000000186,
+      "tick": 1899,
       "viewport": {
         "width": 880,
         "height": 676
       },
       "camera": {
-        "centerX": 239.7313743534506,
-        "centerY": 247.78248247617879,
+        "centerX": 239.71189018111372,
+        "centerY": 247.76051052333716,
         "zoom": 2,
         "rotation": 0
       }
@@ -3184,15 +2949,15 @@
         "type": "tool-select",
         "tool": "coaster"
       },
-      "time": 77855.70000000019,
-      "tick": 3328,
+      "time": 71529.20000000019,
+      "tick": 3070,
       "viewport": {
         "width": 1280,
         "height": 676
       },
       "camera": {
-        "centerX": 241.2938743534506,
-        "centerY": 246.21998247617879,
+        "centerX": 241.27439018111372,
+        "centerY": 246.19801052333716,
         "zoom": 2,
         "rotation": 0
       }
@@ -3201,15 +2966,15 @@
       "action": {
         "type": "construction-test"
       },
-      "time": 79159.5,
-      "tick": 3968,
+      "time": 72699.5,
+      "tick": 3630,
       "viewport": {
         "width": 880,
         "height": 676
       },
       "camera": {
-        "centerX": 239.7313743534506,
-        "centerY": 247.78248247617879,
+        "centerX": 239.71189018111372,
+        "centerY": 247.76051052333716,
         "zoom": 2,
         "rotation": 0
       }
@@ -3219,15 +2984,15 @@
         "type": "tool-select",
         "tool": "none"
       },
-      "time": 84877.30000000028,
-      "tick": 6704,
+      "time": 78445.40000000037,
+      "tick": 6398,
       "viewport": {
         "width": 880,
         "height": 676
       },
       "camera": {
-        "centerX": 239.7313743534506,
-        "centerY": 247.78248247617879,
+        "centerX": 239.71189018111372,
+        "centerY": 247.76051052333716,
         "zoom": 2,
         "rotation": 0
       }
@@ -3236,15 +3001,15 @@
       "action": {
         "type": "session-export"
       },
-      "time": 86245.90000000037,
-      "tick": 7360,
+      "time": 79822,
+      "tick": 7054,
       "viewport": {
         "width": 1280,
         "height": 676
       },
       "camera": {
-        "centerX": 241.2938743534506,
-        "centerY": 246.21998247617879,
+        "centerX": 241.27439018111372,
+        "centerY": 246.19801052333716,
         "zoom": 2,
         "rotation": 0
       }

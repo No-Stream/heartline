@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { closeCircuit, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
 
 test("Timber Tumbler player journey @journey", async ({ page }) => {
@@ -144,4 +145,12 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
 
   phase("ride test");
+  if (process.env.RECORD_JOURNEY_SESSIONS === "1") {
+    await openTool(page, "Watch");
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export session", exact: true }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/^session-.*\.json$/);
+    await download.saveAs(fileURLToPath(new URL("../sessions/timber-tumbler-built.json", import.meta.url)));
+  }
 });
