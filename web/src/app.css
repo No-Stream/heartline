@@ -87,6 +87,8 @@ main {
   scrollbar-color: var(--ink-faint) var(--transparent);
 }
 .game-dock[hidden] { display: none; }
+.game-dock__tunnel-preview { margin: 0 1rem 0.75rem; color: var(--ink-soft); font-size: 0.8rem; }
+.game-dock__tunnel-preview[hidden] { display: none; }
 @media (max-width: 760px) {
   main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 44px minmax(0, 1fr) auto; }
   .game-dock { width: auto; max-height: 45vh; border-left: 0; border-top: var(--key-line); }

@@ -15,4 +15,11 @@ describe("construction preview", () => {
     expect(valid.every((quad) => quad.color[1] > quad.color[0] && quad.color[3] < 1)).toBe(true);
     expect(invalid.every((quad) => quad.color[0] > quad.color[1] && quad.color[3] < 1)).toBe(true);
   });
+
+  it("marks a valid piece that will tunnel with an amber preview", () => {
+    const tunneled = buildGhostQuads(rails, new Float32Array(), new Float32Array(), true, camera, viewport, style, true);
+    expect(tunneled.length).toBeGreaterThan(0);
+    expect(tunneled.every((quad) => quad.color[0] > quad.color[1] && quad.color[1] > quad.color[2])).toBe(true);
+    expect(tunneled.every((quad) => quad.color[3] < 1)).toBe(true);
+  });
 });

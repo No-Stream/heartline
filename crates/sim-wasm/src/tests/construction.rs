@@ -41,6 +41,207 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
 }
 use super::WasmSimulation;
 
+fn tunnel_construction(surface_height: i16, track_height: i32) -> WasmSimulation {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.world = theme_park_sim::world::World::new(
+        128,
+        128,
+        theme_park_sim::world::Surface {
+            corners: [surface_height; 4],
+            water: None,
+        },
+    );
+    simulation.park.construction = Some(theme_park_sim::track::construction::Construction::new(
+        super::TrackState {
+            x: 50,
+            y: 50,
+            z: track_height,
+            ..super::TrackState::origin()
+        },
+        super::hybrid_model(),
+    ));
+    simulation
+}
+
+#[test]
+fn browser_route_can_append_gentle_down_after_transition() {
+    let mut simulation = WasmSimulation::new(2027, 12, String::from("new"));
+    assert!(simulation.terrain_apply("flatten", vec![66, 63, 9, 0, 0, 20, 0, 0]));
+
+    simulation.construction_start(100, 100, 6, 0);
+    assert!(
+        simulation.construction_active(),
+        "{}",
+        simulation.construction_message()
+    );
+    simulation.construction_set_chain(true);
+    for piece in [
+        "LevelToGentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUpToLevel",
+        "Straight",
+    ] {
+        simulation.construction_select(piece);
+        assert!(
+            simulation.construction_can_append(),
+            "{piece}: {}",
+            simulation.construction_preview_reason()
+        );
+        simulation.construction_append();
+        for _ in 0..8 {
+            simulation.tick();
+        }
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{piece}: {}",
+            simulation.construction_message()
+        );
+    }
+    simulation.construction_set_chain(false);
+    for piece in [
+        "OneTileStraight",
+        "OneTileStraight",
+        "OffsetLeft",
+        "TurnLargeEntry",
+        "TurnLargeExit",
+        "LevelToGentleDown",
+    ] {
+        simulation.construction_select(piece);
+        assert!(
+            simulation.construction_can_append(),
+            "{piece}: {}",
+            simulation.construction_preview_reason()
+        );
+        simulation.construction_append();
+        for _ in 0..8 {
+            simulation.tick();
+        }
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{piece}: {}",
+            simulation.construction_message()
+        );
+    }
+
+    let transition_exit = simulation.construction.as_ref().unwrap().end();
+    assert_eq!(transition_exit.x, 180, "{transition_exit:?}");
+    assert_eq!(transition_exit.y, 133, "{transition_exit:?}");
+    assert_eq!(transition_exit.z, 28, "{transition_exit:?}");
+
+    let descending_choice = simulation
+        .construction
+        .as_ref()
+        .unwrap()
+        .choices(&simulation.world, &[])
+        .into_iter()
+        .find(|choice| choice.id == theme_park_sim::track::PieceId::GentleDown)
+        .unwrap();
+    assert_eq!(descending_choice.result, Ok(()), "{descending_choice:?}");
+    simulation.construction_select("GentleDown");
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_preview_reason()
+    );
+    simulation.construction_append();
+    for _ in 0..8 {
+        simulation.tick();
+    }
+    assert!(simulation.construction_message().is_empty());
+
+    let mut descents_will_tunnel = descending_choice.would_tunnel;
+    for (piece, piece_id) in [
+        ("GentleDown", theme_park_sim::track::PieceId::GentleDown),
+        ("GentleDown", theme_park_sim::track::PieceId::GentleDown),
+        ("GentleDown", theme_park_sim::track::PieceId::GentleDown),
+        ("GentleDown", theme_park_sim::track::PieceId::GentleDown),
+        (
+            "GentleDownToLevel",
+            theme_park_sim::track::PieceId::GentleDownToLevel,
+        ),
+    ] {
+        let choice = simulation
+            .construction
+            .as_ref()
+            .unwrap()
+            .choices(&simulation.world, &[])
+            .into_iter()
+            .find(|choice| choice.id == piece_id)
+            .unwrap();
+        assert_eq!(
+            choice.result,
+            Ok(()),
+            "{piece} from {:?}: {choice:?}",
+            simulation.construction.as_ref().unwrap().end(),
+        );
+        descents_will_tunnel |= choice.would_tunnel;
+
+        let terrain_before_preview = simulation.world_state_hash();
+        simulation.construction_select(piece);
+        assert_eq!(simulation.construction_selected(), piece);
+        assert_eq!(simulation.world_state_hash(), terrain_before_preview);
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{piece} preview supports: {}; choice={choice:?}",
+            simulation.construction_message(),
+        );
+        assert!(
+            simulation.construction_can_append(),
+            "{piece}: {}",
+            simulation.construction_preview_reason()
+        );
+        if piece == "GentleDownToLevel" {
+            let _ = simulation.construction_choices();
+            let _ = simulation.construction_elements();
+            let _ = simulation.construction_track();
+            let _ = simulation.construction_rails();
+            let _ = simulation.construction_ties();
+            let _ = simulation.construction_supports();
+            let _ = simulation.construction_placed_rails();
+            let _ = simulation.construction_rail_distances();
+            let _ = simulation.construction_block_candidates();
+            let _ = simulation.construction_placed_ties();
+            let _ = simulation.construction_placed_supports();
+            let _ = simulation.construction_block_report_json();
+            let _ = simulation.construction_coaster_price();
+            let _ = simulation.construction_coaster_income();
+            let _ = simulation.construction_colors();
+            let _ = simulation.construction_train_layout();
+            let _ = simulation.construction_finish_preview_active();
+            let _ = simulation.construction_can_close();
+            let _ = simulation.construction_can_finish();
+            let _ = simulation.construction_finish_reason();
+            let _ = simulation.construction_test_report_json();
+            let _ = simulation.construction_can_test();
+            let _ = simulation.construction_is_open();
+            let _ = simulation.construction_station_positions();
+            let _ = simulation.construction_train_count();
+        }
+        if choice.would_tunnel {
+            assert!(
+                !simulation.construction_supports().is_empty(),
+                "{piece} tunnel preview must include its support geometry"
+            );
+        }
+        let terrain_before_append = simulation.world_state_hash();
+        simulation.construction_append();
+        for _ in 0..8 {
+            simulation.tick();
+        }
+        if choice.would_tunnel {
+            assert_ne!(simulation.world_state_hash(), terrain_before_append);
+        }
+    }
+    assert!(
+        descents_will_tunnel,
+        "the downhill run should preview a tunnel"
+    );
+}
+
 #[test]
 fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
@@ -563,6 +764,180 @@ fn deleting_middle_piece_preserves_and_identifies_retained_track() {
         simulation.construction_track(),
         "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
+}
+
+#[test]
+fn placing_track_into_a_hill_carves_it_and_undo_restores_terrain() {
+    let mut simulation = tunnel_construction(20, 10);
+    simulation.construction_select("LevelToGentleDown");
+    let piece = simulation
+        .construction_preview()
+        .into_iter()
+        .next()
+        .expect("selected track has preview geometry");
+    let tunnel_plan = theme_park_sim::track::clearance::tunnel_plan(
+        &simulation.world,
+        &piece,
+        &simulation.construction.as_ref().unwrap().model().train,
+    )
+    .expect("selected piece has a tunnel plan");
+    let midpoint = piece.sample(piece.length() / 2.0).position;
+    assert!(
+        tunnel_plan.would_tunnel(),
+        "tunnel plan: {tunnel_plan:?}; midpoint: {midpoint:?}; tile surface: {:?}",
+        simulation
+            .world
+            .surface((midpoint.x / 4.0) as u16, (midpoint.y / 4.0) as u16)
+    );
+
+    let terrain_before_piece = simulation.world_state_hash();
+    let mut expected_world = simulation.world.clone();
+    for cell in &tunnel_plan.carve_cells {
+        expected_world.carve(cell.x, cell.y, cell.height, cell.height + 1);
+    }
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_preview_reason()
+    );
+    simulation.construction_append();
+
+    assert_eq!(simulation.construction.as_ref().unwrap().pieces().len(), 1);
+    assert_eq!(simulation.world_state_hash(), expected_world.state_hash());
+    assert_ne!(simulation.world_state_hash(), terrain_before_piece);
+    simulation.construction_undo();
+    assert!(
+        simulation
+            .construction
+            .as_ref()
+            .unwrap()
+            .pieces()
+            .is_empty()
+    );
+    assert_eq!(simulation.world_state_hash(), terrain_before_piece);
+}
+
+#[test]
+fn deleting_a_middle_piece_restores_only_cells_no_remaining_piece_needs() {
+    let mut simulation = tunnel_construction(20, 10);
+    let terrain_before_pieces = simulation.world.clone();
+    for (index, piece) in ["LevelToGentleDown", "GentleDown", "GentleDownToLevel"]
+        .into_iter()
+        .enumerate()
+    {
+        simulation.construction_select(piece);
+        simulation.construction_append();
+        assert_eq!(
+            simulation.construction.as_ref().unwrap().pieces().len(),
+            index + 1
+        );
+    }
+
+    simulation.construction_delete(1);
+
+    let construction = simulation.construction.as_ref().unwrap();
+    let retained: Vec<_> = construction
+        .piece_ids()
+        .iter()
+        .zip(construction.pieces())
+        .chain(
+            construction
+                .disconnected_segments()
+                .iter()
+                .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+        )
+        .map(|(_, piece)| piece)
+        .collect();
+    let mut expected_world = terrain_before_pieces.clone();
+    let train = construction.model().train.clone();
+    let cells: std::collections::BTreeSet<_> = retained
+        .iter()
+        .flat_map(|piece| {
+            theme_park_sim::track::clearance::tunnel_plan(&terrain_before_pieces, piece, &train)
+                .expect("retained piece has a tunnel plan")
+                .carve_cells
+        })
+        .collect();
+    for cell in cells {
+        expected_world.carve(cell.x, cell.y, cell.height, cell.height + 1);
+    }
+    assert_eq!(simulation.world_state_hash(), expected_world.state_hash());
+}
+
+#[test]
+fn undo_preserves_space_the_player_carved_by_hand() {
+    let mut simulation = tunnel_construction(20, 10);
+    simulation.construction_select("LevelToGentleDown");
+    let piece = simulation
+        .construction_preview()
+        .into_iter()
+        .next()
+        .expect("selected track has preview geometry");
+    let train = simulation
+        .construction
+        .as_ref()
+        .unwrap()
+        .model()
+        .train
+        .clone();
+    let manual_cell =
+        theme_park_sim::track::clearance::tunnel_plan(&simulation.world, &piece, &train)
+            .expect("track has a tunnel plan")
+            .carve_cells
+            .into_iter()
+            .next()
+            .expect("hill intersects the selected track");
+    assert!(simulation.terrain_apply(
+        "carve",
+        vec![
+            i32::from(manual_cell.x),
+            i32::from(manual_cell.y),
+            1,
+            0,
+            0,
+            0,
+            i32::from(manual_cell.height),
+            i32::from(manual_cell.height + 1),
+        ]
+    ));
+    let terrain_with_manual_cavern = simulation.world_state_hash();
+
+    simulation.construction_append();
+    assert_eq!(simulation.construction.as_ref().unwrap().pieces().len(), 1);
+    simulation.construction_undo();
+
+    assert_eq!(simulation.world_state_hash(), terrain_with_manual_cavern);
+}
+
+#[test]
+fn tunnelled_element_undo_restores_its_whole_sequence() {
+    let mut simulation = tunnel_construction(20, 10);
+    let terrain_before_element = simulation.world_state_hash();
+    simulation.construction_select("element:descend-gentle");
+    assert_eq!(simulation.world_state_hash(), terrain_before_element);
+    let element_geometry = simulation.construction_preview();
+    assert!(!element_geometry.is_empty());
+    assert!(
+        simulation.construction_message().is_empty(),
+        "element preview supports: {}",
+        simulation.construction_message()
+    );
+    assert!(!simulation.construction_supports().is_empty());
+
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_preview_reason()
+    );
+    simulation.construction_append();
+
+    assert_eq!(
+        simulation.construction.as_ref().unwrap().pieces().len(),
+        element_geometry.len()
+    );
+    assert_ne!(simulation.world_state_hash(), terrain_before_element);
+    simulation.construction_undo();
+    assert_eq!(simulation.world_state_hash(), terrain_before_element);
 }
 
 #[test]

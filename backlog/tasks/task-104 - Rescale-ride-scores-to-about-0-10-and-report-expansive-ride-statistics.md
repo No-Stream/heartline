@@ -1,9 +1,10 @@
 ---
 id: TASK-104
 title: Rescale ride scores to about 0-10 and report expansive ride statistics
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-04 17:00'
+updated_date: '2026-11-04 22:06'
 labels: []
 dependencies:
   - TASK-95
@@ -23,3 +24,9 @@ Owner request 2026-11-04. Scores (excitement, intensity, nausea or whatever the 
 - [ ] #2 Report lists the airtime, force and speed statistics
 - [ ] #3 Covered by tests on known circuits
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner request 2026-11-04: inform scores by ASTM F2291 and reasoned judgement of why people like coasters (airtime most important; laterals and positives less; element variety with diminishing returns for repeated inversions, little for airtime; pacing; whip and aggression; theming; ride time; max and average speed). The running job delivers the statistics and the 0-10 rescale; a Fable plan (docs/superpowers/plans/2026-11-04-coaster-scoring.md) designs the scoring model to implement afterwards.
+<!-- SECTION:NOTES:END -->

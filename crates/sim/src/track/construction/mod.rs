@@ -1,8 +1,8 @@
 use crate::physics::Circuit;
 use crate::state_hash::StateHasher;
 use crate::track::clearance::{
-    ClearanceBox, ClearanceCollision, ClearanceIndex, check_clearance_indexed,
-    check_reverse_track_clearance,
+    ClearanceBox, ClearanceCollision, ClearanceIndex, TunnelPlan, check_clearance_indexed,
+    check_reverse_track_clearance, tunnel_plan,
 };
 use crate::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle,
@@ -15,7 +15,7 @@ use crate::track::{
 };
 use crate::world::World;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::OnceLock;
 
 #[cfg(test)]
@@ -49,6 +49,12 @@ pub enum ConstructionError {
 pub struct PieceChoice {
     pub id: PieceId,
     pub result: Result<(), ConstructionError>,
+    pub would_tunnel: bool,
+}
+
+struct PieceValidation {
+    supports: Vec<Vec<Support>>,
+    tunnel_plan: TunnelPlan,
 }
 
 pub struct TrackSegment {
@@ -69,6 +75,7 @@ struct ValidationCache {
     world_revision: u64,
     obstacles: Vec<SupportObstacle>,
     existing: Vec<Piece>,
+    existing_tunnel_plans: Vec<TunnelPlan>,
     clearance_index: ClearanceIndex,
     track_obstacles: Vec<Vec<SupportObstacle>>,
     supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
@@ -145,6 +152,10 @@ impl Construction {
         &self.model
     }
 
+    pub fn next_piece_id(&self) -> usize {
+        self.next_id
+    }
+
     /// Stable fingerprint of the editable track state, excluding derived validation caches.
     pub fn state_hash(&self) -> u64 {
         let mut hash = StateHasher::new();
@@ -192,6 +203,7 @@ impl Construction {
         for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
             let template = template_for(base.id, self.end());
             let placed = self.model_placeable_geometry(template);
+            let mut would_tunnel = false;
             let result = if self.closed {
                 Err(ConstructionError::Closed)
             } else {
@@ -206,15 +218,20 @@ impl Construction {
                         .iter()
                         .find(|(previous_piece, _)| same_geometry(previous_piece, piece))
                     {
+                        would_tunnel = previous_choice.would_tunnel;
                         previous_choice.result
                     } else {
-                        self.validate_piece(piece, world, obstacles).map(|_| ())
+                        self.validate_piece(piece, world, obstacles)
+                            .map(|validation| {
+                                would_tunnel = validation.tunnel_plan.would_tunnel();
+                            })
                     }
                 })
             };
             let choice = PieceChoice {
                 id: template.id,
                 result,
+                would_tunnel,
             };
             if let Ok(mut piece) = placed {
                 if self.chain && self.model.allows_chain(&piece) {
@@ -258,6 +275,31 @@ impl Construction {
         let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
         self.validate_piece(&piece, world, obstacles).map(|_| ())
+    }
+
+    pub fn tunnel_plan(
+        &self,
+        id: PieceId,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<TunnelPlan, ConstructionError> {
+        let template = template_for(id, self.end());
+        let piece = self.placeable(template)?;
+        self.validate_piece(&piece, world, obstacles)
+            .map(|validation| validation.tunnel_plan)
+    }
+
+    pub fn tunnel_plans_for_geometry(
+        &self,
+        pieces: &[Piece],
+        world: &World,
+    ) -> Result<Vec<TunnelPlan>, ConstructionError> {
+        pieces
+            .iter()
+            .map(|piece| {
+                tunnel_plan(world, piece, &self.model.train).map_err(ConstructionError::Clearance)
+            })
+            .collect()
     }
 
     fn placeable(&self, template: &Piece) -> Result<Piece, ConstructionError> {
@@ -370,7 +412,7 @@ impl Construction {
         piece: &Piece,
         world: &World,
         obstacles: &[SupportObstacle],
-    ) -> Result<Vec<Vec<Support>>, ConstructionError> {
+    ) -> Result<PieceValidation, ConstructionError> {
         let scenery: Vec<_> = obstacles
             .iter()
             .map(|obstacle| ClearanceBox {
@@ -391,6 +433,13 @@ impl Construction {
                 .chain(self.disconnected.iter().flat_map(|segment| &segment.pieces))
                 .cloned()
                 .collect();
+            let existing_tunnel_plans = existing
+                .iter()
+                .map(|piece| {
+                    tunnel_plan(world, piece, &self.model.train)
+                        .map_err(ConstructionError::Clearance)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let track_obstacles: Vec<_> = existing
                 .iter()
                 .map(|piece| {
@@ -404,23 +453,47 @@ impl Construction {
                 obstacles: obstacles.to_vec(),
                 clearance_index: ClearanceIndex::new(&existing),
                 existing,
+                existing_tunnel_plans,
                 track_obstacles,
                 supports,
             });
         }
         let cache = cache.as_mut().expect("validation cache initialized");
-        let clearance_index = &cache.clearance_index;
+        let mut all_pieces = cache.existing.clone();
+        all_pieces.push(piece.clone());
+        let piece_tunnel_plan =
+            tunnel_plan(world, piece, &self.model.train).map_err(ConstructionError::Clearance)?;
+        let mut carve_cells: BTreeSet<_> = cache
+            .existing_tunnel_plans
+            .iter()
+            .flat_map(|plan| plan.carve_cells.iter().copied())
+            .collect();
+        carve_cells.extend(piece_tunnel_plan.carve_cells.iter().copied());
+        let mut carved_world = None;
+        if !carve_cells.is_empty() {
+            let mut candidate_world = world.clone();
+            let cells = carve_cells
+                .iter()
+                .map(|cell| (cell.x, cell.y, cell.height))
+                .collect::<Vec<_>>();
+            let invalidated = candidate_world
+                .carve_cells(&cells)
+                .map_err(|_| ConstructionError::Clearance(ClearanceCollision::Scenery))?;
+            if !invalidated.is_empty() {
+                return Err(ConstructionError::Clearance(ClearanceCollision::Path));
+            }
+            carved_world = Some(candidate_world);
+        }
+        let candidate_world = carved_world.as_ref().unwrap_or(world);
         check_clearance_indexed(
-            world,
+            &candidate_world,
             piece,
             &self.model.train,
-            clearance_index,
+            &cache.clearance_index,
             None,
             &scenery,
         )
         .map_err(ConstructionError::Clearance)?;
-        let mut all_pieces = cache.existing.clone();
-        all_pieces.push(piece.clone());
         let mut end = piece.exit;
         let mut connected = Vec::new();
         loop {
@@ -442,32 +515,20 @@ impl Construction {
             end = segment.pieces.last().expect("nonempty segment").exit;
         }
         if connected.is_empty() {
-            check_reverse_track_clearance(clearance_index, piece, &self.model.train)
+            check_reverse_track_clearance(&cache.clearance_index, piece, &self.model.train)
                 .map_err(ConstructionError::Clearance)?;
         } else {
             let index_for_recheck = ClearanceIndex::new(&all_pieces);
             for (index, retained_piece) in all_pieces.iter().enumerate() {
-                if index < cache.existing.len() {
-                    check_clearance_indexed(
-                        world,
-                        retained_piece,
-                        &self.model.train,
-                        &index_for_recheck,
-                        Some(index),
-                        &scenery,
-                    )
-                    .map_err(ConstructionError::Clearance)?;
-                } else {
-                    check_clearance_indexed(
-                        world,
-                        retained_piece,
-                        &self.model.train,
-                        clearance_index,
-                        None,
-                        &scenery,
-                    )
-                    .map_err(ConstructionError::Clearance)?;
-                }
+                check_clearance_indexed(
+                    &candidate_world,
+                    retained_piece,
+                    &self.model.train,
+                    &index_for_recheck,
+                    Some(index),
+                    &scenery,
+                )
+                .map_err(ConstructionError::Clearance)?;
             }
         }
         let candidate_bounds =
@@ -481,6 +542,33 @@ impl Construction {
             } else {
                 generate_supports
             };
+            if !carve_cells.is_empty() {
+                let mut support_obstacles = obstacles.to_vec();
+                let region = support_search_region(supported_piece);
+                for (other_index, other_bounds) in cache.track_obstacles.iter().enumerate() {
+                    if index != other_index {
+                        support_obstacles.extend(
+                            other_bounds
+                                .iter()
+                                .copied()
+                                .filter(|bounds| region.overlaps(bounds)),
+                        );
+                    }
+                }
+                if index < cache.existing.len() {
+                    support_obstacles.extend(
+                        candidate_bounds
+                            .iter()
+                            .copied()
+                            .filter(|bounds| region.overlaps(bounds)),
+                    );
+                }
+                validated_supports.push(
+                    route_supports(supported_piece, &candidate_world, &support_obstacles)
+                        .map_err(construction_support_error)?,
+                );
+                continue;
+            }
             if index < cache.existing.len() && cache.supports[index].is_none() {
                 let mut bounds = obstacles.to_vec();
                 let region = support_search_region(supported_piece);
@@ -539,7 +627,10 @@ impl Construction {
                 .map_err(construction_support_error)?;
             validated_supports.push(supports);
         }
-        Ok(validated_supports)
+        Ok(PieceValidation {
+            supports: validated_supports,
+            tunnel_plan: piece_tunnel_plan,
+        })
     }
 
     pub fn append(
@@ -550,20 +641,22 @@ impl Construction {
     ) -> Result<(), ConstructionError> {
         let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
-        let supports = self.validate_piece(&piece, world, obstacles)?;
+        let validation = self.validate_piece(&piece, world, obstacles)?;
         if self.disconnected.is_empty() {
             let cache = self
                 .validation_cache
                 .get_mut()
                 .as_mut()
                 .expect("validation cache initialized");
+            cache.existing_tunnel_plans.push(validation.tunnel_plan);
             cache.track_obstacles.push(track_support_obstacles(
                 std::slice::from_ref(&piece),
                 &self.model.train,
             ));
             cache.existing.push(piece.clone());
             cache.clearance_index.push(&piece);
-            cache.supports = supports
+            cache.supports = validation
+                .supports
                 .into_iter()
                 .map(|support| Some(Ok(support)))
                 .collect();
@@ -689,6 +782,10 @@ impl Construction {
         cache.track_obstacles = indices
             .iter()
             .map(|&index| cache.track_obstacles[index].clone())
+            .collect();
+        cache.existing_tunnel_plans = indices
+            .iter()
+            .map(|&index| cache.existing_tunnel_plans[index].clone())
             .collect();
         cache.supports = indices
             .iter()

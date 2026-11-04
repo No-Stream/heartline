@@ -82,7 +82,7 @@ const PATH_NIGHT_LIGHT = 0.22;
 const GUEST_NIGHT_LIGHT = 0.45;
 /** Coasters keep part of their paint at night, as if floodlit, so each coaster's colours still read after dark. */
 const COASTER_NIGHT_LIGHT: Readonly<Record<string, number>> = { track: 0.4, train: 0.55, support: 0.2 };
-const GROUND_KINDS: ReadonlySet<string> = new Set(["terrain", "cliff", "water", "path", "carved-floor", "cavern-wall"]);
+const GROUND_KINDS: ReadonlySet<string> = new Set(["terrain", "cliff", "water", "path", "carved-floor", "cavern-wall", "tunnel-portal"]);
 const GLOW_DOWNSCALE = 4;
 const POOL_DOWNSCALE = 2;
 /** The glow layer is printed slightly out of register with the world, in CSS pixels. */

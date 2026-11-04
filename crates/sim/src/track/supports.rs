@@ -32,6 +32,7 @@ const BEAM_CLEARANCE: f64 = 0.18 * std::f64::consts::SQRT_2;
 const FOOTER_HALF_WIDTH: f64 = 0.4;
 const FOOTER_HEIGHT: f64 = 0.2;
 const TRACK_RAIL_HALF_SPACING: f64 = 1.0;
+const SUPPORT_HEIGHT_EPSILON: f64 = 1e-9;
 const SUPPORT_SEARCH_RADIUS_METRES: i32 = 32;
 /// Maximum distance at which world changes can affect generated support geometry.
 pub const SUPPORT_INFLUENCE_RADIUS_METRES: f64 =
@@ -225,24 +226,28 @@ fn route_supports(
                 .iter()
                 .filter(|&&(tx, ty, _, _)| tx == tile_x && ty == tile_y)
                 .collect();
-            let ground = if anchor.z > terrain {
-                // A surface footer must not cover an excavation underneath it.
-                if tunnels.iter().any(|&(tunnel_x, tunnel_y, _, _)| {
-                    let west = f64::from(tunnel_x) * 4.0;
-                    let north = f64::from(tunnel_y) * 4.0;
-                    x + FOOTER_HALF_WIDTH > west
-                        && x - FOOTER_HALF_WIDTH < west + 4.0
-                        && y + FOOTER_HALF_WIDTH > north
-                        && y - FOOTER_HALF_WIDTH < north + 4.0
-                }) {
-                    continue;
-                }
+            let surface_footing_clear = !tunnels.iter().any(|&(tunnel_x, tunnel_y, _, _)| {
+                let west = f64::from(tunnel_x) * 4.0;
+                let north = f64::from(tunnel_y) * 4.0;
+                x + FOOTER_HALF_WIDTH > west
+                    && x - FOOTER_HALF_WIDTH < west + 4.0
+                    && y + FOOTER_HALF_WIDTH > north
+                    && y - FOOTER_HALF_WIDTH < north + 4.0
+            });
+            let tunnel_ground = tile_tunnels.iter().find_map(|&&(_, _, bottom, top)| {
+                (f64::from(bottom) <= anchor.z + SUPPORT_HEIGHT_EPSILON
+                    && anchor.z <= f64::from(top) + SUPPORT_HEIGHT_EPSILON)
+                    .then_some(f64::from(bottom))
+            });
+            let ground = if anchor.z > terrain + SUPPORT_HEIGHT_EPSILON {
+                surface_footing_clear.then_some(terrain)
+            } else if let Some(tunnel_floor) = tunnel_ground {
+                Some(tunnel_floor)
+            } else if (anchor.z - terrain).abs() <= SUPPORT_HEIGHT_EPSILON && surface_footing_clear
+            {
                 Some(terrain)
             } else {
-                tile_tunnels.iter().find_map(|&&(_, _, bottom, top)| {
-                    (f64::from(bottom) < anchor.z && anchor.z < f64::from(top))
-                        .then_some(f64::from(bottom))
-                })
+                None
             };
             let Some(ground) = ground else {
                 continue;
@@ -261,7 +266,9 @@ fn route_supports(
                 .max_by(|(_, first), (_, second)| first.max.z.total_cmp(&second.max.z));
             let z = supporting_structure.map_or(ground, |(_, structure)| structure.max.z);
             let footing = Vec3::new(x, y, z);
-            if !brace_clears_terrain(world, &tunnels, Vec3::new(x, y, anchor.z), anchor) {
+            let support_top = Vec3::new(x, y, anchor.z);
+            if support_top != anchor && !brace_clears_terrain(world, &tunnels, support_top, anchor)
+            {
                 continue;
             }
             let top = Vec3::new(x, y, anchor.z);
@@ -699,8 +706,8 @@ fn framed_support_segments(
             let (_, _, bottom, _) = tunnels.iter().find(|&&(tx, ty, bottom, top)| {
                 tx == tile_x
                     && ty == tile_y
-                    && f64::from(bottom) < track_z
-                    && f64::from(top) > track_z
+                    && f64::from(bottom) <= track_z
+                    && f64::from(top) >= track_z
             })?;
             let ground = f64::from(*bottom);
             let footer_fits = [-FOOTER_HALF_WIDTH, FOOTER_HALF_WIDTH]
@@ -713,7 +720,7 @@ fn framed_support_segments(
                                 tx == ((x + dx) / 4.0).floor() as u16
                                     && ty == ((y + dy) / 4.0).floor() as u16
                                     && f64::from(bottom) <= ground
-                                    && f64::from(top) > track_z
+                                    && f64::from(top) >= track_z
                             })
                         })
                 });
@@ -919,8 +926,8 @@ fn brace_clears_terrain(
                             || tunnels.iter().any(|&(x, y, bottom, top)| {
                                 x == (point.x / 4.0).floor() as u16
                                     && y == (point.y / 4.0).floor() as u16
-                                    && point.z > f64::from(bottom)
-                                    && point.z < f64::from(top)
+                                    && point.z >= f64::from(bottom)
+                                    && point.z <= f64::from(top)
                             }))
                 })
             })
@@ -1695,6 +1702,40 @@ mod tests {
         }
         let supports = generate_supports(&piece(), &world, &[]).unwrap();
         assert!(supports.iter().all(|support| support.footing.z == 2.0));
+    }
+
+    #[test]
+    fn supports_can_rest_on_the_exact_surface_height() {
+        let world = World::new(
+            16,
+            16,
+            Surface {
+                corners: [20; 4],
+                water: None,
+            },
+        );
+        let supports = generate_supports(&straight_at_height(10), &world, &[]).unwrap();
+        assert!(supports.iter().all(|support| support.footing.z == 20.0));
+    }
+
+    #[test]
+    fn supports_at_a_tunnel_ceiling_reach_the_tunnel_floor() {
+        let mut world = World::new(
+            16,
+            16,
+            Surface {
+                corners: [20; 4],
+                water: None,
+            },
+        );
+        for x in 0..16 {
+            for y in 0..16 {
+                world.carve(x, y, 10, 20);
+            }
+        }
+
+        let supports = generate_supports(&straight_at_height(10), &world, &[]).unwrap();
+        assert!(supports.iter().all(|support| support.footing.z == 10.0));
     }
 
     #[test]

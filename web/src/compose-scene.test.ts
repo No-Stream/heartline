@@ -4,6 +4,7 @@ import type { Atlas } from "./render/scene";
 import type { Facility } from "./facilities";
 import type { Scenery } from "./scenery-tool";
 import type { CoasterSnapshot } from "./protocol";
+import type { ConstructionState } from "./construction-protocol";
 
 const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
 const viewport = { width: 400, height: 300 };
@@ -104,5 +105,28 @@ describe("composeScene", () => {
 
   it("holds water animation at frame zero for frozen render state", () => {
     expect(composeScene(sceneInput({ now: 3_750, frozen: true })).waterFrame).toBe(0);
+  });
+
+  it("marks a selected construction piece that will tunnel", () => {
+    const construction = {
+      selected: "piece:down-gentle",
+      pieces: [{ id: "piece:down-gentle", wouldTunnel: true }],
+      elements: [],
+      canAppend: true,
+      previewRails: new Float32Array([0, 0, 0, 2, 0, 1, 0, 0, 0, 1, 1, 0, 2, 0, 1, 0, 0, 0, 1]),
+      previewTies: new Float32Array(),
+      previewSupports: new Float32Array(),
+      placedRails: new Float32Array(),
+      railDistances: new Float32Array(),
+      placedTies: new Float32Array(),
+      placedSupports: new Float32Array(),
+      blockReport: { sections: [] },
+    } as unknown as ConstructionState;
+    const preview = composeScene(sceneInput({ construction, activeTool: "coaster" }))
+      .geometryPasses[5](camera, viewport, atlas, "1")
+      .filter((quad) => quad.id.startsWith("preview-"));
+
+    expect(preview.length).toBeGreaterThan(0);
+    expect(preview.every((quad) => quad.color[0] > quad.color[1] && quad.color[1] > quad.color[2])).toBe(true);
   });
 });

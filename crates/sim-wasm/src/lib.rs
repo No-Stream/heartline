@@ -154,7 +154,8 @@ impl WasmSimulation {
     }
 
     fn facility_obstacles(&self) -> Vec<SupportObstacle> {
-        self.park
+        let mut obstacles: Vec<_> = self
+            .park
             .facilities
             .buildings()
             .iter()
@@ -173,7 +174,14 @@ impl WasmSimulation {
                     ),
                 }
             })
-            .collect()
+            .collect();
+        if let Some(coaster) = &self.park.demo_coaster {
+            obstacles.extend(track_support_obstacles(
+                coaster.circuit.pieces(),
+                &coaster.train_configuration,
+            ));
+        }
+        obstacles
     }
     fn select_compatible_piece(&mut self) {
         self.selected_element = None;
@@ -408,11 +416,17 @@ fn construction_error(error: theme_park_sim::track::construction::ConstructionEr
         ConstructionError::Clearance(ClearanceCollision::Terrain) => {
             "The train would collide with terrain."
         }
+        ConstructionError::Clearance(ClearanceCollision::TerrainDepth) => {
+            "The track would go below the minimum terrain depth."
+        }
+        ConstructionError::Clearance(ClearanceCollision::Water) => {
+            "Track cannot tunnel through water."
+        }
         ConstructionError::Clearance(ClearanceCollision::Path) => {
             "The train would collide with a path."
         }
         ConstructionError::Clearance(ClearanceCollision::Scenery) => {
-            "The train would collide with scenery."
+            "The train would collide with scenery, a facility, or another ride."
         }
         ConstructionError::Clearance(ClearanceCollision::Track) => {
             "The train would collide with track."
