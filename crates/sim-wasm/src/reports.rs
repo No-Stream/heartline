@@ -167,6 +167,10 @@ mod wire_tests {
         } else {
             std::env::temp_dir().join(format!("theme-park-report-types-{}", std::process::id()))
         };
+        // Process ids repeat (always, inside sandboxes), so a leftover folder from an earlier run would add stale files.
+        if output != destination && output.exists() {
+            std::fs::remove_dir_all(&output).unwrap();
+        }
         crate::TrainLayoutReport::export_all_to(&output).unwrap();
         BlockReport::export_all_to(&output).unwrap();
         TestingReport::export_all_to(&output).unwrap();
@@ -192,6 +196,7 @@ mod wire_tests {
                     expected.display()
                 );
             }
+            std::fs::remove_dir_all(&output).unwrap();
         }
     }
 
