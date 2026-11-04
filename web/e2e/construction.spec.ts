@@ -460,3 +460,91 @@ test("places a 60-degree climb and complete banked turn with lift markers @fast"
     await expect(track.nth(index).locator("[data-chain-marker]")).toHaveCount(0);
   }
 });
+
+test("offers direct level-to-60-degree lift and drop transitions on both eligible models @fast", async ({ page }) => {
+  for (const model of ["hybrid", "velocity_viper"] as const) {
+    await page.goto("/?test=1");
+    await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+    await openTool(page, "Coaster");
+    await selectUnits(page, "metric");
+    await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+    await page.locator(".builder select[data-model]").selectOption(`model:${model}`);
+    await page.getByLabel("Station height above ground (metres)").fill("72");
+    await page.getByLabel("Station height above ground (metres)").press("Tab");
+    await page.getByRole("button", { name: "Place station" }).click();
+    for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+      const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+      await moveOverCanvas(page, position);
+      await clickCanvas(page, position);
+    }
+
+    const track = page.locator("[data-track] li");
+    const choices = page.getByRole("radiogroup", { name: "Next piece" });
+    const chain = page.getByRole("button", { name: "Chain lift", exact: true });
+    const chainMarkers = page.locator("[data-track] [data-chain-marker]");
+    let trackCount = 1;
+    const placePiece = async (pieceId: string, label: string): Promise<void> => {
+      const choice = choices.locator(`[data-piece="${pieceId}"]`);
+      await expect(choice).toBeVisible();
+      await expect(choice).toHaveAccessibleName(label);
+      await choice.click();
+      await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", pieceId);
+      await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
+      await page.getByRole("button", { name: "Place piece" }).click();
+      trackCount += 1;
+      await expect(track).toHaveCount(trackCount);
+    };
+
+    await expect(track).toHaveCount(trackCount);
+    await chain.click();
+    await expect(chain).toHaveAttribute("aria-pressed", "true");
+    await placePiece("LevelToSixtyUp", "Begin 60-degree climb");
+    await expect(chainMarkers).toHaveCount(1);
+
+    await chain.click();
+    await expect(chain).toHaveAttribute("aria-pressed", "false");
+    await placePiece("SixtyUpToLevel", "Level out from 60-degree climb");
+    await placePiece("LevelToSixtyDown", "Begin 60-degree descent");
+    await placePiece("SixtyDownToLevel", "Level out from 60-degree descent");
+    await expect(chainMarkers).toHaveCount(1);
+  }
+});
+
+test("offers and places a twisted drop directly from a banked track @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.locator(".builder select[data-model]").selectOption("model:hybrid");
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const track = page.locator("[data-track] li");
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const placePiece = page.getByRole("button", { name: "Place piece" });
+  await expect(track).toHaveCount(1);
+  const bankLeft = choices.locator('[data-piece="BankLeft"]');
+  await expect(bankLeft).toBeVisible();
+  await bankLeft.click();
+  await placePiece.click();
+  await expect(track).toHaveCount(2);
+
+  for (const pieceId of ["BankedDropLeft", "TwistedDropLeft", "BarrelDropLeft"]) {
+    await expect(choices.locator(`[data-piece="${pieceId}"]`)).toBeVisible();
+  }
+  const twistedDrop = choices.locator('[data-piece="TwistedDropLeft"]');
+  await expect(twistedDrop).toHaveAccessibleName("Left twisted drop");
+  await twistedDrop.click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", "TwistedDropLeft");
+  await expect(placePiece).toBeEnabled();
+  await placePiece.click();
+  await expect(track).toHaveCount(3);
+  await expect(track.last().locator(".track-chip__name")).toHaveText("Left twisted drop");
+});

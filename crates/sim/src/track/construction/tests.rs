@@ -199,10 +199,11 @@ fn launch_model_builds_midcourse_launch_and_chain_lifts() {
         .unwrap();
     assert_eq!(construction.pieces()[2].kind, crate::track::PieceKind::Lift);
     let mut hybrid = Construction::new(start(), hybrid_model());
-    assert_eq!(
-        hybrid.append(PieceId::Launch, &world(), &[]),
-        Err(ConstructionError::ModelForbidden)
-    );
+    hybrid.append(PieceId::Launch, &world(), &[]).unwrap();
+    hybrid.set_chain(true);
+    hybrid.append(PieceId::LaunchShort, &world(), &[]).unwrap();
+    assert_eq!(hybrid.pieces()[0].kind, crate::track::PieceKind::Launch);
+    assert_eq!(hybrid.pieces()[1].kind, crate::track::PieceKind::Launch);
 }
 
 #[test]
@@ -1406,7 +1407,7 @@ fn elements_offer_complete_slopes_and_banked_turns_and_apply_atomically() {
         .iter()
         .find(|element| element.id == "climb-60")
         .unwrap();
-    assert!(climb.pieces.len() > 1);
+    assert_eq!(climb.pieces, vec![PieceId::LevelToSixtyUp]);
     let mut stale = construction.copy_for_completion();
     stale.append(PieceId::Straight, &world, &[]).unwrap();
     let before = stale.state_hash();
@@ -1516,4 +1517,91 @@ fn element_preview_excludes_reattached_track() {
     construction.apply_element(&choice, &world, &[]).unwrap();
     assert_eq!(construction.pieces().len(), 2);
     assert!(construction.disconnected_segments().is_empty());
+}
+
+#[test]
+fn direct_sixty_degree_transitions_are_available_and_complete_a_lap() {
+    use PieceId::*;
+
+    let track_world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    for model in [hybrid_model(), crate::track::multi_launch_model()] {
+        let origin = TrackState {
+            x: 100,
+            y: 100,
+            z: 40,
+            ..TrackState::origin()
+        };
+        let mut lift = Construction::new(origin, model.clone());
+        lift.set_chain(true);
+        let climb = lift
+            .element_choices(&track_world, &[])
+            .into_iter()
+            .find(|choice| choice.id == "climb-60")
+            .unwrap();
+        assert_eq!(climb.pieces, vec![LevelToSixtyUp]);
+        lift.apply_element(&climb, &track_world, &[]).unwrap();
+        let level = lift
+            .element_choices(&track_world, &[])
+            .into_iter()
+            .find(|choice| choice.id == "level")
+            .unwrap();
+        assert_eq!(level.pieces, vec![SixtyUpToLevel]);
+        lift.apply_element(&level, &track_world, &[]).unwrap();
+        assert!(
+            lift.pieces()
+                .iter()
+                .all(|piece| piece.kind == PieceKind::Lift)
+        );
+        let mut construction = Construction::new(origin, model);
+        for (id, element) in [
+            (Station, ""),
+            (LevelToSixtyUp, "climb-60"),
+            (SixtyUpToLevel, "level"),
+            (TurnSmallRightStandalone, ""),
+            (TurnSmallRightStandalone, ""),
+            (Straight, ""),
+            (LevelToSixtyDown, "descend-60"),
+            (SixtyDownToLevel, "level"),
+            (TurnSmallRightStandalone, ""),
+            (TurnSmallRightStandalone, ""),
+        ] {
+            if !element.is_empty() {
+                let choice = construction
+                    .element_choices(&track_world, &[])
+                    .into_iter()
+                    .find(|choice| choice.id == element)
+                    .unwrap();
+                assert_eq!(choice.pieces, vec![id]);
+            }
+            construction.append(id, &track_world, &[]).unwrap();
+        }
+        assert_eq!(construction.end(), origin);
+        construction.close().unwrap();
+        let circuit = construction.circuit().unwrap();
+        let config = PhysicsConfig {
+            rolling_resistance: 0.0,
+            drag_coefficient: 0.0,
+            powered_sections: false,
+            ..PhysicsConfig::default()
+        };
+        let mut train = Train::new(&circuit, &construction.model().train, config, 0.0, 50.0);
+        for _ in 0..60_000 {
+            train.step(&circuit);
+            if train.distance() >= circuit.length() {
+                break;
+            }
+        }
+        assert!(
+            train.distance() >= circuit.length(),
+            "{} did not complete a lap",
+            construction.model().name
+        );
+    }
 }
