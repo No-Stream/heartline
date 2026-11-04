@@ -30,6 +30,7 @@ export interface WorldRenderer {
   /** Picks a row-major rectangle in backing-store pixels. Pixels outside the canvas are null. */
   pickRegion(x: number, y: number, width: number, height: number): (Pick | null)[];
   pickSurface(x: number, y: number): Pick | null;
+  pickFacilityPlacement(x: number, y: number): Pick | null;
   waitForGpu(): void;
 }
 
@@ -128,6 +129,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
   const uniform = (target: WebGLProgram, name: string): WebGLUniformLocation | null => gl!.getUniformLocation(target, name);
   let scene: Scene = { triangles: [] };
   let surfaceScene: Scene = { triangles: [] };
+  let facilityScene: Scene = { triangles: [] };
   let groundBatches: Batch[] = []; let standingBatches: Batch[] = [];
   let skyBatches: Batch[] = []; let decalBatches: Batch[] = []; let overlayBatches: Batch[] = []; let sparkBatches: Batch[] = []; let glowBatches: Batch[] = []; let poolBatches: Batch[] = [];
   let atmosphere: Atmosphere | undefined;
@@ -300,6 +302,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       appendGeometry(scene, clip(atmosphere?.lights ?? []), viewport);
       if (scene.triangles.length / 2 >= 0xffffff) throw new Error("Too many visible objects for picking");
       surfaceScene = { triangles: scene.triangles.filter(({ kind }) => kind === "terrain" || kind === "carved-floor" || kind === "path") };
+      facilityScene = { triangles: scene.triangles.filter(({ kind, id }) => kind === "terrain" || kind === "carved-floor" || kind === "path" || kind === "facility" || (kind === "sprite" && id?.startsWith("facility-"))) };
       prepare();
       skyBatches = encode((atmosphere?.sky ?? []).map(fromGeometry));
       decalBatches = encode(clip(atmosphere?.decals ?? []).map(fromGeometry));
@@ -350,6 +353,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       return result;
     },
     pickSurface(x, y) { return pickScene(surfaceScene, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125); },
+    pickFacilityPlacement(x, y) { return pickScene(facilityScene, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125); },
     waitForGpu() { gl!.readPixels(0, 0, 1, 1, gl!.RGBA, gl!.UNSIGNED_BYTE, new Uint8Array(4)); },
   };
 }
@@ -378,6 +382,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
       return Array(width * height).fill(null);
     },
     pickSurface(x, y) { return renderer.pickSurface(x, y); },
+    pickFacilityPlacement(x, y) { return contextLost ? null : renderer.pickFacilityPlacement(x, y); },
     waitForGpu() { if (!contextLost) renderer.waitForGpu(); },
   };
 }

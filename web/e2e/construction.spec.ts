@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { canvasSize, clickCanvas, moveOverCanvas, openTool, selectUnits } from "./game-page";
+import { canvasSize, clickCanvas, clickTile, moveOverCanvas, openTool, selectUnits } from "./game-page";
 import { formatTestingNote } from "../src/coaster-testing";
 
 function displayedHeight(text: string, unit: "ft" | "m"): number {
@@ -7,6 +7,46 @@ function displayedHeight(text: string, unit: "ft" | "m"): number {
   if (!match || match[2] !== unit) throw new Error(`Expected a height in ${unit}, received: ${text}`);
   return Number(match[1]);
 }
+
+test("station placement targets ground directly beneath a coaster support", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1.5, rotation: 0 }));
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+  await page.getByLabel("Station height above ground (metres)").fill("4");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  await clickTile(page, { x: 50, y: 50, z: 2 });
+  await clickCanvas(page, await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 52.5, z: 2 })));
+  await page.getByRole("button", { name: "Place piece" }).click();
+  await expect(page.locator("[data-track] li")).toHaveCount(2);
+
+  await page.getByRole("button", { name: "Place station" }).click();
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+  const supportGroundPoint = await page.evaluate(() => {
+    const canvas = document.querySelector("canvas")!;
+    const center = window.gameTest.project({ x: 52, y: 52, z: 2 });
+    for (let y = Math.max(0, center.y - 180); y < Math.min(canvas.height, center.y + 60); y += 1) {
+      for (let x = Math.max(0, center.x - 180); x < Math.min(canvas.width, center.x + 180); x += 1) {
+        const overlay = window.gameTest.pick(x, y);
+        if (overlay?.kind !== "support") continue;
+        const ground = window.gameTest.pickSurface(x, y);
+        if (ground?.kind === "terrain" && ground.x === overlay.x && ground.y === overlay.y) return { x, y, tile: ground };
+      }
+    }
+    return null;
+  });
+  expect(supportGroundPoint, "a support should cover a pickable terrain tile").not.toBeNull();
+
+  await moveOverCanvas(page, supportGroundPoint!);
+  await expect(page.locator("canvas")).toHaveAttribute("data-station-preview", new RegExp(`${supportGroundPoint!.tile.x},${supportGroundPoint!.tile.y},`));
+  await clickCanvas(page, supportGroundPoint!);
+  await expect(page.locator("canvas")).toHaveAttribute("data-station-preview", new RegExp(`${supportGroundPoint!.tile.x},${supportGroundPoint!.tile.y},`));
+  await clickCanvas(page, supportGroundPoint!);
+  await expect(page.locator("[data-track] li")).toHaveCount(1);
+});
 
 test("builds a closed coaster and runs a train around it @slow", async ({ page }) => {
   test.setTimeout(240_000);

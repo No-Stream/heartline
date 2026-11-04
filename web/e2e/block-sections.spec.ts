@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { canvasToPage, clickCanvas, moveOverCanvas, openTool, selectUnits, visibleTilePoint } from "./game-page";
+import { canvasToPage, clickCanvas, clickTile, moveOverCanvas, openTool, selectUnits } from "./game-page";
 
 const blockCircuitPieces = [
   "Straight", "Straight", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
@@ -179,9 +179,7 @@ async function buildBlockCircuit(
   await stationHeight.press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
 
-  const station = await visibleTilePoint(page, { x, y, z: 2 });
-  await moveOverCanvas(page, station);
-  await clickCanvas(page, station);
+  await clickTile(page, { x, y, z: 2 });
   const heading = orientation === "east"
     ? { x: x + 2.5, y: y + 0.5, z: 2 }
     : { x: x + 0.5, y: y + 2.5, z: 2 };
