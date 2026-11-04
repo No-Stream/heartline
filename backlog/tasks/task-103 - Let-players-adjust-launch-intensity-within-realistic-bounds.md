@@ -1,9 +1,10 @@
 ---
 id: TASK-103
 title: Let players adjust launch intensity within realistic bounds
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-04 17:00'
+updated_date: '2026-11-04 18:34'
 labels: []
 dependencies: []
 priority: high
@@ -22,3 +23,9 @@ Owner playtest 2026-11-04: a launched coaster rolled back and there was no way t
 - [ ] #2 Raising intensity fixes a rollback in a test ride
 - [ ] #3 Covered by a browser test
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner correction 2026-11-04: launch limits should come from what the launch technology can physically achieve (magnetic LSM/LIM and hydraulic: realistic peak acceleration and top speed), not from a per-model cap. A future Mack-style hyper must not be limited to a weak manufacturer launch. Apply as a follow-up to the running job.
+<!-- SECTION:NOTES:END -->
