@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle } from "./geometry";
+import { buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle } from "./geometry";
 import { COASTER_COLORS, RUNNING_RAIL_HEX } from "../../coaster-colors";
 import type { Atlas } from "../scene";
 
@@ -11,7 +11,7 @@ describe("coaster geometry", () => {
     const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
     const style = { track: "#aa6600", supports: "#ff0000", trains: "#00ff00", ink: "#221133", lineWeight: 1 };
     const woodenRail = new Float32Array([1_000_001, ...rail.slice(1)]);
-    const quads = buildTrackQuads(woodenRail, new Float32Array(), new Float32Array(), new Float32Array(), camera, { width: 400, height: 300 }, style);
+    const quads = buildTrackQuads(woodenRail, new Float32Array(), new Float32Array(), camera, { width: 400, height: 300 }, style);
     const runningRail = [1, 3, 5].map((offset) => parseInt(RUNNING_RAIL_HEX.slice(offset, offset + 2), 16) / 255);
     expect(quads.every((quad) => quad.id === "track-1")).toBe(true);
     expect(quads.some((quad) => quad.color[0] === 170 / 255 && quad.color[1] === 102 / 255)).toBe(true);
@@ -19,17 +19,15 @@ describe("coaster geometry", () => {
     expect(quads.some((quad) => quad.color[0] === 1 && quad.color[1] === 0)).toBe(false);
   });
 
-  test("paints track and ties, supports and trains each in the coaster's own colours", () => {
+  test("paints track and ties and supports each in the coaster's own colours", () => {
     const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
     const paint = trackPaint({ steel: "#000000", wood: "#000000", train: "#000000", ink: "#221133", lineWeight: 1 }, { track: "teal", supports: "cream", trains: "plum" });
     const supports = new Float32Array([4, 2, 2, 0, 2, 2, 3]);
-    const poses = new Float32Array([0, 1, 2, 3, 1, 0, 0, 0, 0, 1, 0]);
-    const quads = buildTrackQuads(new Float32Array(rail), new Float32Array(tie), supports, poses, camera, { width: 400, height: 300 }, paint);
+    const quads = buildTrackQuads(new Float32Array(rail), new Float32Array(tie), supports, camera, { width: 400, height: 300 }, paint);
     const fills = (id: string) => new Set(quads.filter((quad) => quad.id === id && quad.color.join() !== [34 / 255, 17 / 255, 51 / 255, 1].join()).map((quad) => quad.color.join()));
     const rgba = (hex: string) => [...[1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255), 1].join();
     expect(fills("track-1")).toEqual(new Set([rgba(COASTER_COLORS.teal.hex)]));
     expect(fills("support-4")).toEqual(new Set([rgba(COASTER_COLORS.cream.hex)]));
-    expect(fills("train-0")).toEqual(new Set([rgba(COASTER_COLORS.plum.hex)]));
   });
   test("renders signed steel geometry as tubes and restores the original picking IDs", () => {
     const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
@@ -41,17 +39,18 @@ describe("coaster geometry", () => {
       5, 3, 2, 0, 3, 2, 3,
     ]);
 
-    const quads = buildTrackQuads(steelRail, steelTie, supports, new Float32Array(), camera, { width: 400, height: 300 }, style);
+    const quads = buildTrackQuads(steelRail, steelTie, supports, camera, { width: 400, height: 300 }, style);
     const railQuads = quads.filter((quad) => quad.id === "track-1");
     const tieQuads = quads.filter((quad) => quad.id === "track-2");
     const steelSupportQuads = quads.filter((quad) => quad.id === "support-3");
     const woodSupportQuads = quads.filter((quad) => quad.id === "support-5");
 
-    expect(railQuads).toHaveLength(8);
+    // An eight-sided tube shows the viewer the four sides that face it.
+    expect(railQuads).toHaveLength(4);
     expect(railQuads.every((quad) => quad.color[0] > 0 && quad.color[0] <= 1 && quad.color[1] === 0 && quad.color[2] === 0)).toBe(true);
-    expect(tieQuads).toHaveLength(8);
+    expect(tieQuads).toHaveLength(4);
     expect(tieQuads.every((quad) => quad.color[0] > 0 && quad.color[0] <= 1 && quad.color[1] === 0 && quad.color[2] === 0)).toBe(true);
-    expect(steelSupportQuads).toHaveLength(8);
+    expect(steelSupportQuads).toHaveLength(4);
     for (const quad of steelSupportQuads) {
       expect(quad.color[1] / quad.color[0]).toBeCloseTo(102 / 170, 6);
       expect(quad.color[2]).toBe(0);
@@ -64,13 +63,37 @@ describe("coaster geometry", () => {
     const style = { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 };
     const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
     const supports = new Float32Array([1, 2, 2, 0, 2, 2, 3, 1, 2, 2, 3, 3, 2, 3]);
-    const quads = buildTrackQuads(new Float32Array(), new Float32Array(), supports, new Float32Array(), camera, { width: 400, height: 300 }, style);
-    expect(quads.filter((quad) => quad.id === "footer-1")).toHaveLength(30);
-    expect(quads.filter((quad) => quad.id === "support-1")).toHaveLength(60);
+    const quads = buildTrackQuads(new Float32Array(), new Float32Array(), supports, camera, { width: 400, height: 300 }, style);
+    // Each inked box shows the viewer three faces, each a fill and four ink borders; the brace has three plain faces.
+    expect(quads.filter((quad) => quad.id === "footer-1")).toHaveLength(15);
+    expect(quads.filter((quad) => quad.id === "support-1")).toHaveLength(18);
+  });
+  test("draws only the support faces that face the viewer, top included, in every rotation", () => {
+    const style = { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 };
+    const column = new Float32Array([1, 2, 2, 0, 2, 2, 3]);
+    for (const rotation of [0, 1, 2, 3] as const) {
+      const camera = { centerX: 2, centerY: 2, zoom: 1, rotation };
+      const quads = buildTrackQuads(new Float32Array(), new Float32Array(), column, camera, { width: 400, height: 300 }, style).filter((quad) => quad.id === "support-1");
+      const fills = quads.filter((_, index) => index % 5 === 0);
+      expect(fills).toHaveLength(3);
+      const topY = Math.min(...quads.flatMap((quad) => quad.vertices.map((vertex) => vertex.y)));
+      expect(fills.some((fill) => fill.vertices.every((vertex) => vertex.y < topY + 10))).toBe(true);
+    }
+  });
+  test("draws support columns thicker than their diagonal braces", () => {
+    const style = { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 };
+    const camera = { centerX: 2, centerY: 2, zoom: 2, rotation: 0 as const };
+    const widthOf = (segment: number[]) => {
+      const quads = buildTrackQuads(new Float32Array(), new Float32Array(), new Float32Array([1, ...segment]), camera, { width: 400, height: 300 }, style).filter((quad) => quad.id === "support-1");
+      const xs = quads.flatMap((quad) => quad.vertices.map((vertex) => vertex.x));
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    // The brace rises along x + y, so like the column its axis stays on one screen column and only its thickness shows.
+    expect(widthOf([2, 2, 0, 2, 2, 2]) / widthOf([2, 2, 0, 2.5, 2.5, 1])).toBeGreaterThan(1.5);
   });
   test("generates geometric rails with depth and picking identity in every camera rotation", () => {
     for (const rotation of [0, 1, 2, 3] as const) {
-      const quads = buildTrackQuads(new Float32Array(rail), new Float32Array(tie), new Float32Array(), new Float32Array(), { centerX: 2, centerY: 2, zoom: 1, rotation }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
+      const quads = buildTrackQuads(new Float32Array(rail), new Float32Array(tie), new Float32Array(), { centerX: 2, centerY: 2, zoom: 1, rotation }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
       expect(quads.length).toBeGreaterThan(0);
       expect(quads.every((quad) => quad.id === "track-1")).toBe(true);
       expect(quads.some((quad) => new Set(quad.vertices.map((vertex) => vertex.depth)).size > 1)).toBe(true);
@@ -78,12 +101,12 @@ describe("coaster geometry", () => {
   });
   test("does not draw inked caps at joins between rail segments", () => {
     const second = [1, 3, 2, 2, 0, 1, 0, 0, 0, 1, 5, 2, 3, 0, 1, 0, 0, 0, 1];
-    const quads = buildTrackQuads(new Float32Array([...rail, ...second]), new Float32Array(), new Float32Array(), new Float32Array(), { centerX: 2, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
+    const quads = buildTrackQuads(new Float32Array([...rail, ...second]), new Float32Array(), new Float32Array(), { centerX: 2, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
     // Four faces with one fill and two longitudinal ink edges per segment.
     expect(quads).toHaveLength(24);
   });
   test("partitions each rail face into non-overlapping fill and ink", () => {
-    const quads = buildTrackQuads(new Float32Array(rail), new Float32Array(), new Float32Array(), new Float32Array(), { centerX: 2, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
+    const quads = buildTrackQuads(new Float32Array(rail), new Float32Array(), new Float32Array(), { centerX: 2, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
     for (let face = 0; face < quads.length; face += 3) {
       const [fill, firstEdge, secondEdge] = quads.slice(face, face + 3);
       expect(fill.vertices[0]).toEqual(firstEdge.vertices[3]);
@@ -93,13 +116,13 @@ describe("coaster geometry", () => {
     }
   });
   test("keeps rail ink visible at normal viewing scale", () => {
-    const quads = buildTrackQuads(new Float32Array(rail), new Float32Array(), new Float32Array(), new Float32Array(), { centerX: 2, centerY: 2, zoom: 1.3, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
+    const quads = buildTrackQuads(new Float32Array(rail), new Float32Array(), new Float32Array(), { centerX: 2, centerY: 2, zoom: 1.3, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
     const edge = quads[1].vertices;
     expect(Math.hypot(edge[0].x - edge[3].x, edge[0].y - edge[3].y)).toBeGreaterThan(0.5);
   });
   test("partitions a support face into non-overlapping fill and four ink borders", () => {
     const supports = new Float32Array([1, 2, 2, 0, 2, 2, 3]);
-    const quads = buildTrackQuads(new Float32Array(), new Float32Array(), supports, new Float32Array(), { centerX: 2, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
+    const quads = buildTrackQuads(new Float32Array(), new Float32Array(), supports, { centerX: 2, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
     const [fill, ...edges] = quads.slice(0, 5);
     for (let edge = 0; edge < 4; edge++) {
       expect(edges[edge].vertices[3]).toEqual(fill.vertices[edge]);
@@ -111,7 +134,7 @@ describe("coaster geometry", () => {
     const style = { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 };
     const faceCornerInset = (height: number) => {
       const supports = new Float32Array([1, 2, 2, 0, 2, 2, height]);
-      const quads = buildTrackQuads(new Float32Array(), new Float32Array(), supports, new Float32Array(), camera, { width: 400, height: 300 }, style);
+      const quads = buildTrackQuads(new Float32Array(), new Float32Array(), supports, camera, { width: 400, height: 300 }, style);
       const fill = quads[10].vertices[0];
       const corner = quads[11].vertices[0];
       return { x: fill.x - corner.x, y: fill.y - corner.y, depth: fill.depth - corner.depth };
@@ -126,55 +149,5 @@ describe("coaster geometry", () => {
     const previous = new Float32Array([0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0]);
     const current = new Float32Array([0, 2, 4, 6, 0, 1, 0, 0, 0, 1, 3]);
     expect([...interpolateTrainPoses(previous, current, 0.5)]).toEqual([0, 1, 2, 3, 0, 1, 0, 0, 0, 1, 3]);
-  });
-  test("renders every car record when a snapshot contains multiple trains", () => {
-    const poses = new Float32Array([
-      0, 1, 2, 3, 1, 0, 0, 0, 0, 1, 0,
-      1, 4, 2, 3, 1, 0, 0, 0, 0, 1, 0,
-    ]);
-    const quads = buildTrackQuads(new Float32Array(), new Float32Array(), new Float32Array(), poses, { centerX: 2, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, { track: "#ff0000", supports: "#aa6600", trains: "#00ff00", ink: "#221133", lineWeight: 1 });
-    expect(new Set(quads.filter((quad) => quad.kind === "train").map((quad) => quad.id))).toEqual(new Set(["train-0", "train-1"]));
-  });
-  test("uses atlas theme and rotates riders with the car", () => {
-    const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };
-    const themeStyle = { steel: "#ff0000", wood: "#aa6600", train: "#00ff00", ink: "#221133", lineWeight: 1 };
-    const atlas: Atlas = { themeStyle, pages: { "1": [{ file: "test.png", width: 40, height: 60 }] }, frames: { "ground/grass_light_0/any/static/0": frame, "people/maya/se/idle/0": frame } };
-    expect(trackStyle(atlas).steel).toBe("#ff0000");
-    const poses = new Float32Array([0, 1, 2, 3, 1, 0, 0, 0, 0, 1, 1]);
-    const riders = buildRiderQuads(poses, { centerX: 1, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, atlas, "1");
-    expect(riders).toHaveLength(1);
-    expect(riders[0].id).toBe("rider-0-0");
-    expect(riders[0].page).toBe(0);
-    expect(new Set(riders[0].vertices.map((vertex) => vertex.depth)).size).toBeGreaterThan(1);
-    const actual = buildRiderQuads(poses, { centerX: 1, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, atlas, "1", new Map([["0-0", { id: "guest-42", sprite: "people/maya" }]]));
-    expect(actual[0].id).toBe("guest-42");
-    const withoutMask = new Float32Array(poses);
-    withoutMask[10] = 0;
-    expect(buildRiderQuads(withoutMask, { centerX: 1, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, atlas, "1", new Map([["0-0", { id: "guest-42", sprite: "people/maya" }]]))[0].id).toBe("guest-42");
-    expect(buildRiderQuads(poses, { centerX: 1, centerY: 2, zoom: 1, rotation: 0 }, { width: 400, height: 300 }, atlas, "1", new Map())).toHaveLength(0);
-  });
-  test("keeps a rider visible on diagonal track while banking and inversion follow the car", () => {
-    const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };
-    const atlas: Atlas = { pages: { "1": [{ file: "test.png", width: 40, height: 60 }] }, frames: Object.fromEntries(["se", "sw", "nw", "ne"].map((view) => [`people/maya/${view}/idle/0`, frame])) };
-    const viewport = { width: 400, height: 300 };
-    const camera = { centerX: 1, centerY: 2, zoom: 1, rotation: 0 as const };
-    const diagonal = Math.SQRT1_2;
-    const quadFor = (up: [number, number, number]) => buildRiderQuads(new Float32Array([0, 1, 2, 3, diagonal, -diagonal, 0, ...up, 1]), camera, viewport, atlas, "1")[0].vertices;
-    const upright = quadFor([0, 0, 1]);
-    const inverted = quadFor([0, 0, -1]);
-    const banked = quadFor([diagonal, diagonal, 0]);
-    const area = (vertices: typeof upright) => Math.abs((vertices[1].x - vertices[0].x) * (vertices[3].y - vertices[0].y) - (vertices[1].y - vertices[0].y) * (vertices[3].x - vertices[0].x));
-    expect(area(upright)).toBeGreaterThan(1);
-    expect(area(inverted)).toBeGreaterThan(1);
-    expect(upright[0].y).toBeLessThan(upright[3].y);
-    expect(inverted[0].y).toBeGreaterThan(inverted[3].y);
-    expect(banked[0].y - banked[3].y).toBeGreaterThan(0);
-    expect(() => quadFor([1 / Math.sqrt(3), 1 / Math.sqrt(3), 1 / Math.sqrt(3)])).not.toThrow();
-    for (const rotation of [0, 1, 2, 3] as const) {
-      const tangentY = rotation % 2 === 0 ? -diagonal : diagonal;
-      const pose = new Float32Array([0, 1, 2, 3, diagonal, tangentY, 0, 0, 0, 1, 1]);
-      const vertices = buildRiderQuads(pose, { ...camera, rotation }, viewport, atlas, "1")[0].vertices;
-      expect(area(vertices)).toBeGreaterThan(1);
-    }
   });
 });

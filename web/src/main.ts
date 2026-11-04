@@ -12,11 +12,12 @@ import { createWorldRenderer, loadAtlas, type AtmospherePass, type WorldView, ty
 import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, lightingAt, NOON, printOnBackdrop, START_PHASE, sunAt } from "./render/daylight";
 import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
-import { buildPeople, riderAppearances, type GuestSnapshot } from "./render/people";
-import { buildRiderQuads, buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle } from "./render/track/geometry";
+import { buildPeople, riderAppearances } from "./render/people";
+import { buildTrackQuads, interpolateTrainPoses, trackPaint, trackStyle } from "./render/track/geometry";
+import { buildRiderQuads, buildTrainQuads } from "./render/track/trains";
+import type { TrainLayout } from "./train-layout";
 import type { CoasterColorScheme } from "./coaster-colors";
 import { createStaticTrackCache } from "./render/track/cache";
-import type { WorldSnapshot } from "./world-snapshot";
 import { RenderClock } from "./render-clock";
 import { createConstructionPanel } from "./construction";
 import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
@@ -73,8 +74,8 @@ function moveCamera(action: CameraAction): void {
     : action.type === "zoom" ? { ...action, anchor: { x: action.anchor.x / pixelRatio, y: action.anchor.y / pixelRatio } } : action;
   camera = applyCameraAction(camera, cssViewport(), cssAction);
 }
-/** `coasterColors` is the demo coaster's paint, or null in a park without one. */
-type CoasterWorld = WorldView & { pathMetadata: Int32Array; coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array; coasterColors: CoasterColorScheme | null };
+/** Demo coaster geometry, paint, and train, when present. */
+type CoasterWorld = WorldView & { pathMetadata: Int32Array; coasterGeometry: Float32Array; coasterRails: Float32Array; coasterTies: Float32Array; coasterSupports: Float32Array; coasterColors: CoasterColorScheme | null; coasterTrain: TrainLayout | null };
 let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
@@ -605,8 +606,9 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     const coasterRails = message.coasterRails ?? world?.coasterRails;
     const coasterTies = message.coasterTies ?? world?.coasterTies;
     const coasterColors = message.coasterColors !== undefined ? message.coasterColors : world?.coasterColors;
-    if (!coasterGeometry || !coasterRails || !coasterTies || coasterColors === undefined) throw new Error("Initial coaster geometry is missing");
-    world = { ...message, coasterGeometry, coasterRails, coasterTies, coasterColors };
+    const coasterTrain = message.coasterTrain !== undefined ? message.coasterTrain : world?.coasterTrain;
+    if (!coasterGeometry || !coasterRails || !coasterTies || coasterColors === undefined || coasterTrain === undefined) throw new Error("Initial coaster geometry is missing");
+    world = { ...message, coasterGeometry, coasterRails, coasterTies, coasterColors, coasterTrain };
     testingPanel.setWorld(world);
     landscapingTool.setDimensions(world.dimensions[0], world.dimensions[1]);
     gameTest.ready = false;
@@ -769,15 +771,15 @@ function frame(now: number): void {
     (renderCamera, renderViewport, renderAtlas, scale) => [
       ...(currentWorld.coasterColors ? staticTrack(currentWorld.coasterRails, currentWorld.coasterTies, currentWorld.coasterSupports, currentWorld.coasterColors, renderCamera, renderViewport) : []),
       ...(construction?.colors ? (activeTool === "coaster" && construction.blockReport.sections.length
-        ? buildTrackQuads(construction.placedRails, construction.placedTies, construction.placedSupports, noGeometry, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors), construction.blockReport.sections.map((section) => section.boundaryMetres), construction.railDistances)
+        ? buildTrackQuads(construction.placedRails, construction.placedTies, construction.placedSupports, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors), construction.blockReport.sections.map((section) => section.boundaryMetres), construction.railDistances)
         : builtTrack(construction.placedRails, construction.placedTies, construction.placedSupports, construction.colors, renderCamera, renderViewport)).map((quad) => ({ ...quad, id: `construction-${quad.id}` })) : []),
       ...(construction && activeTool === "coaster" ? buildBlockBoundaryQuads(construction.placedRails, construction.railDistances, construction.blockReport.sections, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
       ...buildGhostQuads(stationGhost(), noGeometry, noGeometry, true, renderCamera, renderViewport, trackStyle(renderAtlas)).map((quad) => ({ ...quad, color: [0.25, 0.55, 0.85, 0.55] as const })),
       ...(construction ? buildGhostQuads(construction.previewRails, construction.previewTies, construction.previewSupports, construction.canAppend, renderCamera, renderViewport, trackStyle(renderAtlas)) : []),
-      ...(currentWorld.coasterColors ? buildTrackQuads(noGeometry, noGeometry, noGeometry, trainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), currentWorld.coasterColors)) : []),
-      ...(construction?.colors ? buildTrackQuads(noGeometry, noGeometry, noGeometry, constructionTrainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors)) : []),
-      ...buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale),
-      ...buildRiderQuads(constructionTrainPoses, renderCamera, renderViewport, renderAtlas, scale, occupants).map((quad) => {
+      ...(currentWorld.coasterColors && currentWorld.coasterTrain ? buildTrainQuads(trainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), currentWorld.coasterColors), currentWorld.coasterTrain) : []),
+      ...(construction?.colors && construction.trainLayout ? buildTrainQuads(constructionTrainPoses, renderCamera, renderViewport, trackPaint(trackStyle(renderAtlas), construction.colors), construction.trainLayout) : []),
+      ...(currentWorld.coasterTrain ? buildRiderQuads(trainPoses, renderCamera, renderViewport, renderAtlas, scale, currentWorld.coasterTrain) : []),
+      ...(construction?.trainLayout ? buildRiderQuads(constructionTrainPoses, renderCamera, renderViewport, renderAtlas, scale, construction.trainLayout, occupants) : []).map((quad) => {
         renderedRiders.push({ id: quad.id, left: Math.min(...quad.vertices.map((vertex) => vertex.x)), right: Math.max(...quad.vertices.map((vertex) => vertex.x)), top: Math.min(...quad.vertices.map((vertex) => vertex.y)), bottom: Math.max(...quad.vertices.map((vertex) => vertex.y)) });
         if (quad.id === selectedGuestId) {
           guestPanel.setAnchor({ x: quad.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4, y: quad.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 4 });

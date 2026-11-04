@@ -804,6 +804,30 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
 }
 
 #[test]
+fn train_layouts_name_each_model_and_its_train_shape() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    assert_eq!(simulation.construction_train_layout(), "null");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&simulation.coaster_train_layout()).unwrap(),
+        serde_json::json!({"model": "hybrid", "carsPerTrain": 6, "rowsPerCar": 2, "seatsPerRow": 2, "lengthMetres": 18.0})
+    );
+    for (model, key, cars, rows) in [
+        ("model:hybrid", "hybrid", 6, 2),
+        ("model:velocity_viper", "velocity_viper", 6, 2),
+        ("model:wooden_twister", "wooden_twister", 12, 1),
+    ] {
+        simulation.construction_select(model);
+        simulation.construction_start(100, 100, 40, 0);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&simulation.construction_train_layout())
+                .unwrap(),
+            serde_json::json!({"model": key, "carsPerTrain": cars, "rowsPerCar": rows, "seatsPerRow": 2, "lengthMetres": 18.0}),
+            "{model}"
+        );
+    }
+}
+
+#[test]
 fn coaster_colours_replay_to_the_same_state() {
     let paint = |colors: [&str; 3]| {
         let mut simulation = WasmSimulation::new(7, 0, String::from("new"));

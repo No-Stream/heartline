@@ -27,7 +27,7 @@ const sections: readonly BlockSectionBoundary[] = [
 
 describe("block-section rendering", () => {
   test("colors consecutive track sections differently while preserving rail ink", () => {
-    const quads = buildTrackQuads(rails, new Float32Array(), new Float32Array(), new Float32Array(), camera, viewport, paint, [0, 6], railDistances);
+    const quads = buildTrackQuads(rails, new Float32Array(), new Float32Array(), camera, viewport, paint, [0, 6], railDistances);
     const fillColors = (segmentIndex: number) => quads
       .slice(segmentIndex * 24, (segmentIndex + 1) * 24)
       .filter((quad) => quad.color[0] !== 34 / 255 || quad.color[1] !== 17 / 255 || quad.color[2] !== 51 / 255)

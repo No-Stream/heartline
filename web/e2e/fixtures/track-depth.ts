@@ -42,7 +42,7 @@ window.trackDepthCases = async (rotation) => {
   const flat = new Int32Array(8 * 8 * 6);
   const world = (surfaces: Int32Array, paths = new Int32Array(), carved = new Int32Array()): WorldView => ({ dimensions: new Uint16Array([8, 8]), surfaces, paths, carved });
   const render = (view: WorldView, rails: number[], flattenDepth = false): void => renderer.render(view, camera, 0, [(renderCamera, viewport) => {
-    const quads = buildTrackQuads(new Float32Array(rails), new Float32Array(), new Float32Array(), new Float32Array(), renderCamera, viewport, style);
+    const quads = buildTrackQuads(new Float32Array(rails), new Float32Array(), new Float32Array(), renderCamera, viewport, style);
     if (!flattenDepth) return quads;
     const depths = new Map<string, number>();
     return quads.map((quad) => {
