@@ -19,7 +19,7 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   await page.getByRole("button", { name: "Raise the station" }).click();
   await expect(stationHeightInput).toHaveValue("14");
   await selectUnits(page, "imperial");
-  await expect(page.getByLabel("Station height above ground (feet)")).toHaveValue("45.93");
+  await expect(page.getByLabel("Station height above ground (feet)")).toHaveValue("46");
   await selectUnits(page, "metric");
   await expect(stationHeightInput).toHaveValue("14");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
@@ -97,8 +97,8 @@ test("builds a closed coaster and runs a train around it @slow", async ({ page }
   await selectUnits(page, "imperial");
   const imperialMaximumHeight = displayedHeight((await maximumHeight.textContent()) ?? "", "ft");
   const imperialBiggestDrop = displayedHeight((await biggestDrop.textContent()) ?? "", "ft");
-  expect(metricMaximumHeight).toBeCloseTo(imperialMaximumHeight * 0.3048, 1);
-  expect(metricBiggestDrop).toBeCloseTo(imperialBiggestDrop * 0.3048, 1);
+  expect(metricMaximumHeight).toBeCloseTo(imperialMaximumHeight * 0.3048, 0);
+  expect(metricBiggestDrop).toBeCloseTo(imperialBiggestDrop * 0.3048, 0);
   await selectUnits(page, "metric");
   const proximityEventCount = await page.evaluate(() => window.gameTest.testingReport()!.proximityEvents.length);
   expect(proximityEventCount).toBeGreaterThan(0);

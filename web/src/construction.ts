@@ -6,7 +6,7 @@ import type { BlockReport, ConstructionElement, ConstructionPiece, ConstructionS
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
-import { displayToMetres, formatLength, metresToDisplay, unitLabel, type Units } from "./units";
+import { displayToMetres, formatLength, metresToInput, unitLabel, type Units } from "./units";
 import "./print-modern.css";
 import "./construction.css";
 
@@ -313,7 +313,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   let dispatchedHeight = stationHeight.initial;
   const setHeight = (value: number): void => {
     const snapped = Math.min(stationHeight.maximum, Math.max(stationHeight.minimum, Math.round(value / stationHeight.step) * stationHeight.step));
-    height.value = String(Number(metresToDisplay(snapped, units).toFixed(2)));
+    height.value = String(metresToInput(snapped, units));
     if (snapped !== dispatchedHeight) { dispatchedHeight = snapped; dispatch({ type: "station-height", height: snapped }); }
   };
   height.addEventListener("change", () => setHeight(displayToMetres(Number(height.value), units) || dispatchedHeight));
@@ -528,8 +528,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         const input = document.createElement("input");
         input.type = "number";
         input.min = "0";
-        input.step = "any";
-        input.value = String(metresToDisplay(section.boundaryMetres, units));
+        input.step = units === "imperial" ? "1" : "any";
+        input.value = String(metresToInput(section.boundaryMetres, units));
         input.setAttribute("aria-label", `Block ${section.editableIndex + 1} boundary in ${units === "metric" ? "metres" : "feet"}`);
         input.dataset.blockBoundary = "";
         input.dataset.editable = "true";
@@ -602,7 +602,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }));
     blockBoundaryOptions.replaceChildren(...availableBlockBoundaries(current.blockCandidates, report).map((boundaryMetres) => {
       const option = document.createElement("option");
-      option.value = String(metresToDisplay(boundaryMetres, units));
+      option.value = String(metresToInput(boundaryMetres, units));
       return option;
     }));
     const nextBlockKey = JSON.stringify([report.sections, report.notes, report.suggestions, report.placementStatus, view.busy, canEdit, view.message, current.message, selectedBlock, units]);
@@ -622,11 +622,12 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   return {
     setUnits(value) {
       const previousBoundary = addBlockBoundary.valueAsNumber;
-      if (Number.isFinite(previousBoundary)) addBlockBoundary.value = String(metresToDisplay(displayToMetres(previousBoundary, units), value));
+      if (Number.isFinite(previousBoundary)) addBlockBoundary.value = String(metresToInput(displayToMetres(previousBoundary, units), value));
       units = value;
-      height.min = String(Number(metresToDisplay(stationHeight.minimum, units).toFixed(2)));
-      height.max = String(Number(metresToDisplay(stationHeight.maximum, units).toFixed(2)));
-      height.step = "any";
+      height.min = String(metresToInput(stationHeight.minimum, units));
+      height.max = String(metresToInput(stationHeight.maximum, units));
+      height.step = String(metresToInput(stationHeight.step, units));
+      addBlockBoundary.step = units === "imperial" ? "1" : "any";
       height.setAttribute("aria-label", `Station height above ground (${units === "metric" ? "metres" : "feet"})`);
       element(".builder__station-height .stepper__unit").textContent = unitLabel(units);
       element("[data-block-add-label]").textContent = `New boundary (${unitLabel(units)})`;

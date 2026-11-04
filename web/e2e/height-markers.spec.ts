@@ -23,6 +23,17 @@ test("shows coaster height markers in the selected units and saves the preferenc
   await expect(units).toHaveAttribute("data-units", "imperial");
 
   await openTool(page, "Coaster");
+  const stationHeight = page.getByLabel("Station height above ground (feet)");
+  await expect(stationHeight).toHaveValue("39");
+  await expect(stationHeight).toHaveAttribute("step", "7");
+  await page.getByRole("button", { name: "Raise the station" }).click();
+  await expect(stationHeight).toHaveValue("46");
+  await page.getByRole("button", { name: "Lower the station" }).click();
+  await expect(stationHeight).toHaveValue("39");
+  await units.click();
+  await expect(page.getByLabel("Station height above ground (metres)")).toHaveValue("12");
+  await units.click();
+  await expect(stationHeight).toHaveValue("39");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
   await page.getByRole("button", { name: "Place station" }).click();
   const station = await page.evaluate(() => window.gameTest.project({ x: 50.5, y: 50.5, z: 2 }));
@@ -48,6 +59,7 @@ test("shows coaster height markers in the selected units and saves the preferenc
   const heightDisplays = [worldTrackHeight, worldStationHeight, panelTrackHeight, panelStationHeight];
   await expect(page.locator("[data-height-markers]")).toBeVisible();
   const imperialValues = await Promise.all(heightDisplays.map((display) => readHeight(display, "ft")));
+  expect(imperialValues.every(Number.isInteger)).toBe(true);
   await page.evaluate(() => window.gameTest.setTimeOfDay(0.5));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await expect(page.locator("[data-height-markers]")).toBeVisible();
@@ -62,7 +74,7 @@ test("shows coaster height markers in the selected units and saves the preferenc
   await units.click();
   const metricValues = await Promise.all(heightDisplays.map((display) => readHeight(display, "m")));
   for (const [index, feet] of imperialValues.entries()) {
-    expect(metricValues[index]).toBeCloseTo(feet * 0.3048, 1);
+    expect(metricValues[index]).toBeCloseTo(feet * 0.3048, 0);
   }
 
   await page.reload();
