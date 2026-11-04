@@ -2,6 +2,7 @@ import { projectWorld, type Camera, type Viewport } from "./camera";
 import { terrainHeightAt, type GeometryQuad, type Triangle, type Vertex, type WorldView } from "./render/scene";
 import type { TrackStyle } from "./render/track/geometry";
 import { formatLength, formatSpeed, type Units } from "./units";
+import type { InputAction } from "./input/actions";
 
 import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
@@ -143,8 +144,9 @@ function legendBounds(metric: TestingMetric, units: Units): { low: string; high:
   return metrics[metric];
 }
 
-export function createTestingPanel(container: HTMLElement, style: TrackStyle, onChange: (metric: TestingMetric | null) => void): {
+export function createTestingPanel(container: HTMLElement, style: TrackStyle, dispatch: (action: InputAction) => void): {
   update(report: TestingReport | null): void;
+  setMetric(metric: TestingMetric | null): void;
   setUnits(units: Units): void;
   setWorld(world: WorldView): void;
   inspect(index: number): void;
@@ -176,7 +178,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, on
     }
     inspection.textContent = "Click the coloured track to inspect it.";
   };
-  const change = () => {
+  const renderMetric = (): TestingMetric | null => {
     const metric = select.value === "off" ? null : select.value as TestingMetric;
     legend.hidden = metric === null || !report?.samples.length;
     if (metric) {
@@ -184,9 +186,9 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, on
       container.querySelector<HTMLElement>("[data-low]")!.textContent = bounds.low;
       container.querySelector<HTMLElement>("[data-high]")!.textContent = bounds.high;
     }
-    onChange(metric && report?.samples.length ? metric : null);
+    return metric && report?.samples.length ? metric : null;
   };
-  select.addEventListener("change", change);
+  select.addEventListener("change", () => dispatch({ type: "testing-metric-set", metric: renderMetric() }));
   const renderReport = (): void => {
     const notes = container.querySelector<HTMLElement>("[data-notes]")!;
     const rating = container.querySelector<HTMLElement>("[data-rating]")!;
@@ -229,10 +231,11 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, on
     }
     select.disabled = !report?.samples.length;
     renderInspection();
-    change();
+    renderMetric();
   };
   return {
     update(value) { report = value; inspectedSampleIndex = undefined; inspectedProximityIndex = undefined; renderReport(); },
+    setMetric(metric) { select.value = metric ?? "off"; renderMetric(); },
     setUnits(units) { activeUnits = units; renderReport(); },
     setWorld(value) { world = value; renderReport(); },
     inspect(index) {

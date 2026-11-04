@@ -1,12 +1,13 @@
 import { SCENERY_SETS, type SceneryKind } from "./scenery-tool";
 import type { FacilityArt } from "./facility-panel";
+import type { InputAction } from "./input/actions";
 import "./print-modern.css";
 import "./scenery-panel.css";
 
 const names = (kind: string): string => kind.split("_").map((word) => word[0].toUpperCase() + word.slice(1)).join(" ");
 const directional = new Set<SceneryKind>(["flower_bed", "bench", "lamp", "fence", "signpost", "balloon_cart"]);
 
-export function createSceneryPanel(container: HTMLElement, art: FacilityArt, place: (kind: SceneryKind, rotation: number) => void, remove: () => void, cancel: () => void) {
+export function createSceneryPanel(container: HTMLElement, art: FacilityArt, dispatch: (action: InputAction) => void) {
   container.classList.add("tool-panel", "scenery-panel");
   container.innerHTML = `<header class="tool-panel__header"><div><p class="tool-panel__eyebrow">Decorate the park</p><h2>Scenery</h2></div></header>
     ${Object.entries(SCENERY_SETS).map(([theme, kinds]) => `<section class="tool-panel__section"><h3>${theme}</h3><div class="scenery-panel__items" role="group" aria-label="${theme} scenery">${kinds.map((kind) => `<button type="button" class="tool-panel__action" data-scenery-kind="${kind}" aria-pressed="${kind === "tree_oval"}"><span>${names(kind)}</span></button>`).join("")}</div></section>`).join("")}
@@ -34,10 +35,10 @@ export function createSceneryPanel(container: HTMLElement, art: FacilityArt, pla
     button.addEventListener("click", () => { selected = kind; update(); });
   }
   for (const button of container.querySelectorAll<HTMLButtonElement>("[data-turn]")) button.addEventListener("click", () => { rotation = (rotation + Number(button.dataset.turn) + 4) % 4; update(); });
-  function activate(): void { place(selected, rotation); }
+  function activate(): void { dispatch({ type: "scenery-place-mode", kind: selected, rotation }); }
   container.querySelector<HTMLButtonElement>("[data-place]")!.addEventListener("click", activate);
-  container.querySelector<HTMLButtonElement>("[data-remove]")!.addEventListener("click", remove);
-  container.querySelector<HTMLButtonElement>("[data-cancel]")!.addEventListener("click", cancel);
+  container.querySelector<HTMLButtonElement>("[data-remove]")!.addEventListener("click", () => dispatch({ type: "scenery-remove-mode" }));
+  container.querySelector<HTMLButtonElement>("[data-cancel]")!.addEventListener("click", () => dispatch({ type: "scenery-cancel" }));
   update();
   return { message(text: string) { status.textContent = text; }, activate };
 }

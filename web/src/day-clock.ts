@@ -1,4 +1,5 @@
 import { formatClock } from "./render/daylight";
+import type { InputAction } from "./input/actions";
 import "./print-modern.css";
 import "./day-clock.css";
 
@@ -15,7 +16,12 @@ const exportIcon = "M10 2.5v10M6 8.5l4 4l4-4M3.5 13.5v3h13v-3";
  * A clock in the game bar with the time of day. While the Watch tool is open it also has a slider to move through the
  * day and a button that changes how fast the day passes.
  */
-export function createDayClock(container: HTMLElement, onScrub: (phase: number) => void, onSpeed: (speed: DaySpeed) => void, onGameSpeed: (speed: number) => void, onExport: () => void): { update(phase: number): void; setControlsVisible(visible: boolean): void; cycleGameSpeed(): void } {
+export function createDayClock(container: HTMLElement, dispatch: (action: InputAction) => void): {
+  update(phase: number): void;
+  setControlsVisible(visible: boolean): void;
+  setDaySpeed(speed: DaySpeed): void;
+  cycleGameSpeed(): number;
+} {
   container.classList.add("day-clock");
   container.innerHTML = `
     <svg class="day-clock__icon" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path class="day-clock__icon-plate"/><path class="day-clock__icon-line"/></svg>
@@ -34,26 +40,30 @@ export function createDayClock(container: HTMLElement, onScrub: (phase: number) 
   const gameSpeedButton = container.querySelector<HTMLButtonElement>("[data-game-speed]")!;
   const gameSpeeds = [1, 2, 4, 8, 16];
   let gameSpeedIndex = 0;
-  function cycleGameSpeed(): void {
+  function cycleGameSpeed(): number {
     gameSpeedIndex = (gameSpeedIndex + 1) % gameSpeeds.length;
     gameSpeedButton.textContent = `×${gameSpeeds[gameSpeedIndex]}`;
-    onGameSpeed(gameSpeeds[gameSpeedIndex]);
+    return gameSpeeds[gameSpeedIndex]!;
   }
-  gameSpeedButton.addEventListener("click", cycleGameSpeed);
-  container.querySelector<HTMLButtonElement>("[data-session-export]")!.addEventListener("click", onExport);
+  gameSpeedButton.addEventListener("click", () => dispatch({ type: "game-speed-cycle" }));
+  container.querySelector<HTMLButtonElement>("[data-session-export]")!.addEventListener("click", () => dispatch({ type: "session-export" }));
   let speedIndex = 0;
   let shownMinute = -1;
   let dragging = false;
   scrub.addEventListener("pointerdown", () => { dragging = true; });
   scrub.addEventListener("change", () => { dragging = false; });
-  scrub.addEventListener("input", () => onScrub(Number(scrub.value) / MINUTES_PER_DAY));
+  scrub.addEventListener("input", () => dispatch({ type: "day-scrub", phase: Number(scrub.value) / MINUTES_PER_DAY }));
   speedButton.addEventListener("click", () => {
-    speedIndex = (speedIndex + 1) % DAY_SPEEDS.length;
-    speedButton.textContent = `×${DAY_SPEEDS[speedIndex]}`;
-    onSpeed(DAY_SPEEDS[speedIndex]);
+    const nextSpeed = DAY_SPEEDS[(speedIndex + 1) % DAY_SPEEDS.length]!;
+    dispatch({ type: "day-speed-set", speed: nextSpeed });
   });
   return {
     cycleGameSpeed,
+    setDaySpeed(speed) {
+      speedIndex = DAY_SPEEDS.indexOf(speed);
+      if (speedIndex < 0) throw new RangeError(`Unsupported day speed ${speed}`);
+      speedButton.textContent = `×${speed}`;
+    },
     update(phase) {
       const minute = Math.floor(phase * MINUTES_PER_DAY);
       if (minute === shownMinute) return;

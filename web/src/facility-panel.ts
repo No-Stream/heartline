@@ -1,4 +1,5 @@
 import { facilityBuildings, type Facility, type FacilityKind } from "./facilities";
+import type { InputAction } from "./input/actions";
 import type { Atlas } from "./render/index";
 import { trackStyle, type TrackStyle } from "./render/track/geometry";
 import "./print-modern.css";
@@ -91,10 +92,7 @@ function drawBuilding(context: CanvasRenderingContext2D, art: FacilityArt, build
 export function createFacilityPanel(
   container: HTMLElement,
   art: FacilityArt,
-  select: (kind: FacilityKind, rotation: number) => void,
-  remove: () => void,
-  cancel: () => void,
-  setPrice: (id: number, price: number) => void,
+  dispatch: (action: InputAction) => void,
 ): FacilityPanel {
   container.classList.add("tool-panel", "facility-panel");
   container.innerHTML = `<header class="tool-panel__header">
@@ -176,10 +174,13 @@ export function createFacilityPanel(
     rotation = (rotation + Number(button.dataset.directionStep) + 4) % 4;
     renderSelection();
   }));
-  function activate(): void { select(selectedKind, rotation); message.textContent = "Choose a tile for the facility."; }
+  function activate(): void {
+    dispatch({ type: "facility-place-mode", kind: selectedKind, rotation });
+    message.textContent = "Choose a tile for the facility.";
+  }
   element("[data-place]").addEventListener("click", activate);
-  element("[data-remove]").addEventListener("click", () => { remove(); message.textContent = "Choose a facility to remove."; });
-  element("[data-cancel]").addEventListener("click", () => { cancel(); message.textContent = "Facility selection cancelled."; });
+  element("[data-remove]").addEventListener("click", () => { dispatch({ type: "facility-remove-mode" }); message.textContent = "Choose a facility to remove."; });
+  element("[data-cancel]").addEventListener("click", () => { dispatch({ type: "facility-cancel" }); message.textContent = "Facility selection cancelled."; });
   renderSelection();
 
   function priceRow(facility: Facility): HTMLLIElement {
@@ -204,7 +205,7 @@ export function createFacilityPanel(
     const send = (value: number): void => {
       const clamped = Math.min(price.maximum, Math.max(price.minimum, value));
       input.value = String(clamped);
-      setPrice(facility.id, clamped);
+      dispatch({ type: "facility-price", id: facility.id, price: clamped });
     };
     input.addEventListener("change", () => { if (input.validity.valid && input.value !== "") send(Number(input.value)); });
     for (const button of [lower, raise]) button.addEventListener("click", () => send(Number(input.value) + Number(button.dataset.priceStep)));

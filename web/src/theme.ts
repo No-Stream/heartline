@@ -1,5 +1,6 @@
 import "./print-modern.css";
 import "./toolbar.css";
+import type { InputAction } from "./input/actions";
 
 export type Theme = "light" | "dark";
 
@@ -28,9 +29,13 @@ function storeTheme(theme: Theme): void {
 /**
  * A printed tab in the game bar that switches the interface between paper and deep ink. It follows the system
  * preference until the viewer chooses, and sets `data-theme` on the document so the stylesheet's tokens follow it.
- * `changed` runs on every later switch.
+ * `systemChanged` runs only when the system preference changes before the viewer picks a theme.
  */
-export function createThemeToggle(container: HTMLElement, changed: (theme: Theme) => void): { theme(): Theme } {
+export function createThemeToggle(
+  container: HTMLElement,
+  dispatch: (action: InputAction) => void,
+  systemChanged: (theme: Theme) => void,
+): { theme(): Theme; setTheme(theme: Theme): void } {
   let chosen = storedTheme();
   let theme: Theme = chosen ?? (darkPreference.matches ? "dark" : "light");
   container.innerHTML = `
@@ -44,16 +49,20 @@ export function createThemeToggle(container: HTMLElement, changed: (theme: Theme
     button.setAttribute("aria-pressed", String(theme === "dark"));
   }
   button.addEventListener("click", () => {
-    chosen = theme === "dark" ? "light" : "dark";
-    storeTheme(chosen);
-    apply(chosen);
-    changed(theme);
+    dispatch({ type: "theme-set", theme: theme === "dark" ? "light" : "dark" });
   });
   darkPreference.addEventListener("change", () => {
     if (chosen) return;
     apply(darkPreference.matches ? "dark" : "light");
-    changed(theme);
+    systemChanged(theme);
   });
   apply(theme);
-  return { theme: () => theme };
+  return {
+    theme: () => theme,
+    setTheme(next) {
+      chosen = next;
+      storeTheme(next);
+      apply(next);
+    },
+  };
 }
