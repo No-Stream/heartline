@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train};
 use theme_park_sim::track::{
-    Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model, multi_launch_model,
+    Bank, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model, multi_launch_model,
     wooden_twister_model,
 };
 
@@ -76,73 +76,133 @@ fn unpowered() -> PhysicsConfig {
 
 #[test]
 fn trains_cross_half_loops_within_model_force_limits() {
-    use PieceId::*;
-    let (circuit, start, end) = circuit_with_elements(&[
-        HalfLoopUp,
-        RavenRollLeftDown,
-        RavenRollRightUp,
-        HalfLoopDown,
-    ]);
-    let mut distance = 0.0;
-    let half_loop_ranges: Vec<_> = circuit
-        .pieces()
-        .iter()
-        .filter_map(|piece| {
-            let begin = distance;
-            distance += piece.length();
-            matches!(piece.id, HalfLoopUp | HalfLoopDown).then_some(begin..distance)
-        })
-        .collect();
-    for model in [hybrid_model(), multi_launch_model()] {
-        for entry_speed in [28.0, 30.0, 32.0] {
-            let config = PhysicsConfig {
-                powered_sections: false,
-                ..PhysicsConfig::default()
-            };
-            let mut train = Train::new(&circuit, &model.train, config, start, entry_speed);
-            let mut observed = [false; 2];
-            let mut minimum_vertical = f64::INFINITY;
-            let mut maximum_vertical = f64::NEG_INFINITY;
-            let mut minimum_vertical_location = (f64::NAN, usize::MAX);
-            let mut maximum_vertical_location = (f64::NAN, usize::MAX);
-            let mut maximum_vertical_speed = f64::NAN;
-            let mut maximum_lateral: f64 = 0.0;
-            for _ in 0..100_000 {
-                train.step(&circuit);
-                for (car_index, car) in train.take_readings().into_iter().flatten().enumerate() {
-                    for (index, range) in half_loop_ranges.iter().enumerate() {
-                        if range.contains(&car.distance) {
-                            observed[index] = true;
-                            if car.g.vertical < minimum_vertical {
-                                minimum_vertical = car.g.vertical;
-                                minimum_vertical_location = (car.distance, car_index);
+    let catalog = catalog();
+    let template = |id| catalog.iter().find(|piece| piece.id == id).unwrap();
+    let mut inverted_straight = template(PieceId::Straight).clone();
+    inverted_straight.entry.bank = Bank::Inverted;
+    inverted_straight.exit.bank = Bank::Inverted;
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::new();
+    let mut ranges = Vec::new();
+    for piece in [
+        template(PieceId::Station),
+        template(PieceId::Straight),
+        template(PieceId::Straight),
+        template(PieceId::HalfLoopUp),
+        &inverted_straight,
+        &inverted_straight,
+        template(PieceId::HalfLoopDown),
+        template(PieceId::Straight),
+        template(PieceId::Straight),
+    ] {
+        let piece = piece.at(state).unwrap();
+        let start: f64 = pieces.iter().map(Piece::length).sum();
+        if matches!(piece.id, PieceId::HalfLoopUp | PieceId::HalfLoopDown) {
+            ranges.push((
+                piece.id,
+                start..start + piece.length(),
+                piece.rated_speeds.unwrap(),
+            ));
+        }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let return_path = [
+        PieceId::TurnSmallStandalone,
+        PieceId::OffsetLeft,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::OffsetRight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::OffsetLeft,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::OffsetRight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+    ];
+    for id in return_path {
+        let piece = template(id).at(state).unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let circuit = Circuit::new(pieces).unwrap();
+    for (id, range, rated) in ranges {
+        for model in [hybrid_model(), multi_launch_model()] {
+            for cars in [6, 12] {
+                let mut configuration = model.train.clone();
+                configuration.cars = cars;
+                for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let mut train = Train::new(
+                        &circuit,
+                        &configuration,
+                        unpowered(),
+                        range.start,
+                        entry_speed,
+                    );
+                    let mut seen = vec![false; cars as usize];
+                    let mut minimum_speed = f64::INFINITY;
+                    let mut minimum_vertical = f64::INFINITY;
+                    let mut maximum_vertical = f64::NEG_INFINITY;
+                    let mut maximum_lateral: f64 = 0.0;
+                    let mut maximum_longitudinal: f64 = 0.0;
+                    for _ in 0..100_000 {
+                        train.step(&circuit);
+                        for frame in train.take_readings() {
+                            for (index, car) in frame.iter().enumerate() {
+                                if range.contains(&car.distance) {
+                                    seen[index] = true;
+                                    minimum_speed = minimum_speed.min(car.speed);
+                                    minimum_vertical = minimum_vertical.min(car.g.vertical);
+                                    maximum_vertical = maximum_vertical.max(car.g.vertical);
+                                    maximum_lateral = maximum_lateral.max(car.g.lateral.abs());
+                                    maximum_longitudinal =
+                                        maximum_longitudinal.max(car.g.longitudinal.abs());
+                                }
                             }
-                            if car.g.vertical > maximum_vertical {
-                                maximum_vertical = car.g.vertical;
-                                maximum_vertical_location = (car.distance, car_index);
-                                maximum_vertical_speed = car.speed;
-                            }
-                            maximum_lateral = maximum_lateral.max(car.g.lateral.abs());
+                        }
+                        if train.distance() >= range.end + configuration.length_metres {
+                            break;
                         }
                     }
-                }
-                if train.distance() >= end + model.train.length_metres {
-                    break;
+                    eprintln!(
+                        "{id:?} {} {cars} cars at {entry_speed:.3} m/s: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, lateral {maximum_lateral:.3}, longitudinal {maximum_longitudinal:.3}, minimum speed {minimum_speed:.3}",
+                        model.name
+                    );
+                    let limits = model.comfortable_force_limits;
+                    assert!(
+                        seen.iter().all(|seen| *seen)
+                            && train.distance() >= range.end + configuration.length_metres
+                            && train.notes().is_empty(),
+                        "{id:?} {} {cars} cars at {entry_speed}: incomplete or rollback",
+                        model.name
+                    );
+                    assert!(
+                        minimum_vertical >= limits.minimum_vertical_g
+                            && maximum_vertical <= limits.maximum_vertical_g
+                            && maximum_lateral <= limits.maximum_lateral_g
+                            && maximum_longitudinal <= limits.maximum_longitudinal_g,
+                        "{id:?} {} {cars} cars at {entry_speed}: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}, longitudinal {maximum_longitudinal}",
+                        model.name
+                    );
+                    if id == PieceId::HalfLoopUp && entry_speed == rated.minimum_entry {
+                        assert!(
+                            minimum_speed >= 5.0,
+                            "{id:?}: minimum speed {minimum_speed}"
+                        );
+                    }
                 }
             }
-            assert!(
-                observed.into_iter().all(|seen| seen),
-                "{} at {entry_speed} m/s did not reach both half loops",
-                model.name
-            );
-            let limits = model.comfortable_force_limits;
-            assert!(
-                minimum_vertical >= limits.minimum_vertical_g
-                    && maximum_vertical <= limits.maximum_vertical_g
-                    && maximum_lateral <= limits.maximum_lateral_g,
-                "{} at {entry_speed} m/s: vertical {minimum_vertical} at {minimum_vertical_location:?}..{maximum_vertical} at {maximum_vertical_location:?} at {maximum_vertical_speed} m/s, lateral {maximum_lateral}, ranges {half_loop_ranges:?}",
-                model.name
-            );
         }
     }
 }

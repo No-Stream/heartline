@@ -1,5 +1,6 @@
 use std::f64::consts::{FRAC_PI_4, TAU};
 use std::ops::{Add, Div, Mul, Sub};
+use std::sync::Arc;
 
 use super::Material;
 use crate::state_hash::StateHasher;
@@ -327,7 +328,15 @@ pub enum Heartlining {
     Heartlined,
     NotHeartlined,
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+use crate::track::profile::SolvedProfile;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RollGeometry;
+impl RollGeometry {
+    fn hash_into(&self, _hash: &mut StateHasher) {}
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Shape {
     Plain,
     AirtimeHill,
@@ -336,13 +345,14 @@ pub(crate) enum Shape {
     Loop,
     Corkscrew,
     Heartline,
-    HalfLoop,
     HalfCorkscrew,
     TopHat,
     OffsetHalfRoll,
+    Profile(Arc<SolvedProfile>),
+    Roll(Arc<RollGeometry>),
 }
 impl Shape {
-    pub(crate) fn hash_into(self, hash: &mut StateHasher) {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         let tag = match self {
             Self::Plain => 0,
             Self::AirtimeHill => 1,
@@ -351,14 +361,26 @@ impl Shape {
             Self::Loop => 4,
             Self::Corkscrew => 5,
             Self::Heartline => 6,
-            Self::HalfLoop => 7,
             Self::HalfCorkscrew => 8,
             Self::TopHat => 9,
             Self::OffsetHalfRoll => 10,
+            Self::Profile(_) => 11,
+            Self::Roll(_) => 12,
         };
         hash.write_u8(tag);
+        match self {
+            Self::Profile(profile) => profile.hash_into(hash),
+            Self::Roll(roll) => roll.hash_into(hash),
+            _ => {}
+        }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RatedSpeeds {
+    pub minimum_entry: f64,
+    pub maximum_entry: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct Piece {
     pub id: PieceId,
@@ -367,6 +389,7 @@ pub struct Piece {
     pub inversion: Option<Inversion>,
     pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
+    pub rated_speeds: Option<RatedSpeeds>,
     pub entry: TrackState,
     pub exit: TrackState,
     pub(crate) shape: Shape,
@@ -433,6 +456,10 @@ impl Piece {
         hash.write_option(self.structure_material, |hash, material| {
             hash.write_u8(material as u8);
         });
+        hash.write_option(self.rated_speeds, |hash, speeds| {
+            hash.write_f64(speeds.minimum_entry);
+            hash.write_f64(speeds.maximum_entry);
+        });
         self.entry.hash_into(hash);
         self.exit.hash_into(hash);
         self.shape.hash_into(hash);
@@ -445,28 +472,43 @@ impl Piece {
     }
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
-        if matches!(self.shape, Shape::HalfLoop) {
+        if let Shape::Profile(profile) = &self.shape {
             let ascending = self.exit.z > self.entry.z;
-            let parameter = if ascending { t } else { 1.0 - t };
-            let (position, first, second) = super::half_loop::sample(parameter);
+            let distance = if ascending {
+                t * profile.length()
+            } else {
+                (1.0 - t) * profile.length()
+            };
+            let (position, first, second) = profile.sample(distance);
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let up = Vec3::new(0.0, 0.0, 1.0);
-            let displacement = self.exit.position() - self.entry.position();
-            let endpoint = super::half_loop::endpoint();
-            let horizontal_scale = displacement.dot(forward).abs() / endpoint[0];
-            let vertical_scale = displacement.z.abs() / endpoint[1];
-            let origin = if ascending { [0.0, 0.0] } else { endpoint };
-            let derivative_sign = if ascending { 1.0 } else { -1.0 };
+            let endpoint = profile.endpoint();
+            let (x, z, dx, dz, ddx, ddz) = if ascending {
+                (
+                    position[0],
+                    position[1],
+                    first[0],
+                    first[1],
+                    second[0],
+                    second[1],
+                )
+            } else {
+                (
+                    position[0] - endpoint[0],
+                    position[1] - endpoint[1],
+                    -first[0],
+                    -first[1],
+                    second[0],
+                    second[1],
+                )
+            };
             return (
-                self.entry.position()
-                    + forward * ((position[0] - origin[0]) * horizontal_scale)
-                    + up * ((position[1] - origin[1]) * vertical_scale),
-                (forward * (first[0] * horizontal_scale) + up * (first[1] * vertical_scale))
-                    * derivative_sign,
-                forward * (second[0] * horizontal_scale) + up * (second[1] * vertical_scale),
+                self.entry.position() + forward * x + up * z,
+                (forward * dx + up * dz) * profile.length(),
+                (forward * ddx + up * ddz) * profile.length().powi(2),
             );
         }
-        if matches!(self.shape, Shape::Loop) {
+        if matches!(&self.shape, Shape::Loop) {
             let (position, first, second) = super::vertical_loop::sample(t);
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let left = Vec3::new(-forward.y, forward.x, 0.0);
@@ -485,7 +527,7 @@ impl Piece {
                 forward * second[0] + left * (side_displacement * smooth_second) + up * second[1],
             );
         }
-        if matches!(self.shape, Shape::TopHat) {
+        if matches!(&self.shape, Shape::TopHat) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let (position, first, second) = super::vertical_top_hat::sample(t);
             let endpoint = super::vertical_top_hat::endpoint();
@@ -569,7 +611,7 @@ impl Piece {
             + a1 * ddq1
             + correction0 * ddf
             + correction1 * ddg;
-        if matches!(self.shape, Shape::AirtimeHill) {
+        if matches!(&self.shape, Shape::AirtimeHill) {
             let height = 3.0;
             let bump = 64.0 * (t3 - 3.0 * t4 + 3.0 * t5 - t5 * t);
             let derivative = 64.0 * (3.0 * t2 - 12.0 * t3 + 15.0 * t4 - 6.0 * t5);
@@ -578,7 +620,7 @@ impl Piece {
             d.z += height * derivative;
             dd.z += height * second;
         }
-        if matches!(self.shape, Shape::HalfCorkscrew) {
+        if matches!(&self.shape, Shape::HalfCorkscrew) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let direction = if self.mirrored { -1.0 } else { 1.0 };
             let lateral = Vec3::new(-forward.y, forward.x, 0.0) * (4.0 * direction);
@@ -587,7 +629,7 @@ impl Piece {
             dd = dd + lateral * (64.0 * (6.0 * t - 36.0 * t2 + 60.0 * t3 - 30.0 * t4));
         }
         if matches!(
-            self.shape,
+            &self.shape,
             Shape::Loop | Shape::Corkscrew | Shape::Heartline
         ) {
             let angle = TAU * (35.0 * t4 - 84.0 * t5 + 70.0 * t6 - 20.0 * t7);
@@ -596,14 +638,14 @@ impl Piece {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             let left = Vec3::new(-forward.y, forward.x, 0.0);
             let vertical = Vec3::new(0.0, 0.0, 1.0);
-            let (a, b, radius) = if matches!(self.shape, Shape::Loop) {
+            let (a, b, radius) = if matches!(&self.shape, Shape::Loop) {
                 (forward, vertical, 16.0)
-            } else if matches!(self.shape, Shape::Corkscrew) {
+            } else if matches!(&self.shape, Shape::Corkscrew) {
                 (left, vertical, 6.0)
             } else {
                 (left * -1.0, vertical, 1.0)
             };
-            let a = if self.mirrored && !matches!(self.shape, Shape::Loop) {
+            let a = if self.mirrored && !matches!(&self.shape, Shape::Loop) {
                 a * -1.0
             } else {
                 a
@@ -671,7 +713,7 @@ impl Piece {
         let (position, velocity, acceleration) = self.raw(t);
         let tangent = velocity.unit();
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
-        let base_up = if matches!(self.shape, Shape::Loop | Shape::HalfLoop | Shape::TopHat) {
+        let base_up = if matches!(&self.shape, Shape::Loop | Shape::Profile(_) | Shape::TopHat) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit()
         } else {
@@ -683,23 +725,23 @@ impl Piece {
         };
         let (s, _, _) = smooth(t);
         let turns = if matches!(
-            self.shape,
+            &self.shape,
             Shape::Corkscrew | Shape::Heartline | Shape::BarrelDrop
         ) {
             TAU * s * if self.mirrored { -1.0 } else { 1.0 }
         } else {
             0.0
         };
-        let overbank = if matches!(self.shape, Shape::Overbank) {
+        let overbank = if matches!(&self.shape, Shape::Overbank) {
             2.0 * std::f64::consts::PI / 3.0
                 * (std::f64::consts::PI * t).sin().powi(2)
                 * if self.mirrored { -1.0 } else { 1.0 }
         } else {
             0.0
         };
-        let bank = if matches!(self.shape, Shape::HalfLoop) {
+        let bank = if matches!(&self.shape, Shape::Profile(_)) {
             self.entry.bank.radians()
-        } else if matches!(self.shape, Shape::HalfCorkscrew | Shape::OffsetHalfRoll)
+        } else if matches!(&self.shape, Shape::HalfCorkscrew | Shape::OffsetHalfRoll)
             && self.mirrored
         {
             -self.entry.bank.radians() - (self.exit.bank.radians() - self.entry.bank.radians()) * s
@@ -716,7 +758,7 @@ impl Piece {
             up,
             curvature: velocity.cross(acceleration).length() / velocity.length().powi(3),
             roll: angle
-                + if matches!(self.shape, Shape::HalfLoop) {
+                + if matches!(&self.shape, Shape::Profile(_)) {
                     std::f64::consts::PI * s
                 } else {
                     0.0
@@ -774,7 +816,9 @@ impl Piece {
 
 #[cfg(test)]
 mod shape_tests {
-    use super::Shape;
+    use std::sync::Arc;
+
+    use super::{RollGeometry, Shape};
     use crate::state_hash::StateHasher;
 
     #[test]
@@ -787,18 +831,17 @@ mod shape_tests {
             Shape::Loop,
             Shape::Corkscrew,
             Shape::Heartline,
-            Shape::HalfLoop,
             Shape::HalfCorkscrew,
             Shape::TopHat,
             Shape::OffsetHalfRoll,
         ];
 
-        for (expected_tag, shape) in shapes.into_iter().enumerate() {
+        for (expected_tag, shape) in [0_u8, 1, 2, 3, 4, 5, 6, 8, 9, 10].into_iter().zip(shapes) {
             let mut actual = StateHasher::new();
             shape.hash_into(&mut actual);
 
             let mut expected = StateHasher::new();
-            expected.write_u8(expected_tag as u8);
+            expected.write_u8(expected_tag);
 
             assert_eq!(actual.finish(), expected.finish());
         }
@@ -808,5 +851,30 @@ mod shape_tests {
     fn shape_equality_distinguishes_variants() {
         assert_eq!(Shape::Plain, Shape::Plain);
         assert_ne!(Shape::Plain, Shape::AirtimeHill);
+    }
+
+    #[test]
+    fn payload_shapes_use_stable_unique_tags_and_structural_equality() {
+        let profile = Shape::Profile(Arc::new(crate::track::profile::test_profile()));
+        let equivalent_profile = Shape::Profile(Arc::new(crate::track::profile::test_profile()));
+        let roll = Shape::Roll(Arc::new(RollGeometry));
+
+        assert_eq!(profile, equivalent_profile);
+        assert_ne!(profile, roll);
+
+        for (shape, tag) in [(profile, 11), (roll, 12)] {
+            let mut actual = StateHasher::new();
+            shape.hash_into(&mut actual);
+
+            let mut expected = StateHasher::new();
+            expected.write_u8(tag);
+            match &shape {
+                Shape::Profile(profile) => profile.hash_into(&mut expected),
+                Shape::Roll(roll) => roll.hash_into(&mut expected),
+                _ => unreachable!(),
+            }
+
+            assert_eq!(actual.finish(), expected.finish());
+        }
     }
 }

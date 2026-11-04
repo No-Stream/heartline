@@ -181,7 +181,7 @@ impl CompletionSearch {
                         }
                         let template = template_for(base.id, node.construction.end());
                         let piece = node.construction.model_placeable(template).ok()?;
-                        if piece.kind != PieceKind::Track || !matches!(piece.shape, Shape::Plain) {
+                        if piece.kind != PieceKind::Track || !matches!(&piece.shape, Shape::Plain) {
                             return None;
                         }
                         let score = piece_score(&piece);

@@ -1,6 +1,9 @@
+use std::sync::{Arc, LazyLock};
+
+use super::profile::{ProfileSpec, SolvedProfile, snap_half_loop};
 use super::{
     Bank, Heading, Heartlining, HorizontalCurvature, Inversion, Material, Piece, PieceId,
-    PieceKind, Shape, Slope, TrackState, VerticalCurvature,
+    PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
 };
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
@@ -12,6 +15,8 @@ pub fn catalog() -> Vec<Piece> {
         DownGentle, DownModerate, DownSixty, DownSteep, Level, UpGentle, UpModerate, UpSixty,
         UpSteep,
     };
+    static HALF_LOOP: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(snap_half_loop(&ProfileSpec::half_loop(31.3, 4.2, 1.5))));
     let definitions = [
         (
             Straight,
@@ -471,28 +476,28 @@ pub fn catalog() -> Vec<Piece> {
         (
             HalfLoopUp,
             "Half loop up (not heartlined)",
-            20,
+            (HALF_LOOP.endpoint()[0] / 2.0) as i32,
             0,
-            17,
+            (HALF_LOOP.endpoint()[1] / 2.0) as i32,
             West,
             Level,
             Level,
             FlatBank,
             Inverted,
-            Shape::HalfLoop,
+            Shape::Profile(Arc::clone(&HALF_LOOP)),
         ),
         (
             HalfLoopDown,
             "Half loop down (not heartlined)",
-            20,
+            -(HALF_LOOP.endpoint()[0] / 2.0) as i32,
             0,
-            -17,
+            -(HALF_LOOP.endpoint()[1] / 2.0) as i32,
             West,
             Level,
             Level,
             Inverted,
             FlatBank,
-            Shape::HalfLoop,
+            Shape::Profile(Arc::clone(&HALF_LOOP)),
         ),
         (
             HalfCorkscrewLeftUp,
@@ -655,6 +660,19 @@ pub fn catalog() -> Vec<Piece> {
                         _ => None,
                     },
                     structure_material: None,
+                    rated_speeds: match id {
+                        HalfLoopUp => Some(RatedSpeeds {
+                            minimum_entry: HALF_LOOP.minimum_entry(),
+                            maximum_entry: 31.3,
+                        }),
+                        HalfLoopDown => Some(RatedSpeeds {
+                            minimum_entry: 2.0,
+                            maximum_entry: (31.3_f64.powi(2)
+                                - 2.0 * 9.81 * HALF_LOOP.endpoint()[1])
+                                .sqrt(),
+                        }),
+                        _ => None,
+                    },
                     entry,
                     exit,
                     shape,

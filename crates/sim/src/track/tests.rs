@@ -3,9 +3,20 @@ use super::*;
 #[test]
 fn half_loop_has_grid_aligned_forward_displacement() {
     let pieces = catalog();
-    for (id, expected_x) in [(PieceId::HalfLoopUp, 16), (PieceId::HalfLoopDown, -16)] {
+    for (id, expected_x) in [(PieceId::HalfLoopUp, 14), (PieceId::HalfLoopDown, -14)] {
         let piece = pieces.iter().find(|piece| piece.id == id).unwrap();
         assert_eq!(piece.exit.x - piece.entry.x, expected_x);
+        for (distance, state) in [(0.0, piece.entry), (piece.length(), piece.exit)] {
+            let sample = piece.sample(distance);
+            assert!(
+                (sample.position - state.position()).length() < 1e-8,
+                "{id:?} position"
+            );
+            assert!(
+                (sample.tangent - state.tangent()).length() < 1e-8,
+                "{id:?} tangent"
+            );
+        }
     }
 }
 

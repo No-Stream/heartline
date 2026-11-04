@@ -91,6 +91,8 @@ impl Circuit {
 
 /// A small closed circuit for the playable demonstration world.
 pub fn demo_circuit() -> Circuit {
+    use std::collections::{HashSet, VecDeque};
+
     use crate::track::{PieceId, TrackState, catalog};
     use PieceId::*;
     let catalog = catalog();
@@ -100,6 +102,7 @@ pub fn demo_circuit() -> Circuit {
         z: 10,
         ..TrackState::origin()
     };
+    let start = state;
     let mut pieces = Vec::new();
     for id in [
         Station,
@@ -124,12 +127,6 @@ pub fn demo_circuit() -> Circuit {
         GentleDown,
         GentleDownToLevel,
         Loop,
-        OffsetRight,
-        TurnLargeEntry,
-        TurnLargeExit,
-        Straight,
-        OneTileStraight,
-        OneTileStraight,
     ] {
         let mut piece = catalog
             .iter()
@@ -140,6 +137,68 @@ pub fn demo_circuit() -> Circuit {
         if (1..=8).contains(&pieces.len()) {
             piece.kind = PieceKind::Lift;
         }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+
+    for id in [OffsetRight, OneTileStraight, OneTileStraight] {
+        let piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .expect("demo alignment piece in catalog")
+            .at(state)
+            .expect("demo alignment piece joins");
+        state = piece.exit;
+        pieces.push(piece);
+    }
+
+    let connector_key = |connector: TrackState| {
+        (
+            connector.x,
+            connector.y,
+            connector.z,
+            connector.heading as u8,
+            connector.slope as u8,
+            connector.bank as u8,
+            connector.horizontal_curvature as u8,
+            connector.vertical_curvature as u8,
+        )
+    };
+    let return_options = [Straight, TurnSmallStandalone, TurnSmallRightStandalone];
+    let mut queue = VecDeque::from([(state, Vec::<PieceId>::new())]);
+    let mut visited = HashSet::from([connector_key(state)]);
+    let return_path = loop {
+        let (current, path) = queue.pop_front().expect("demo has a level return path");
+        if current == start {
+            break path;
+        }
+        if path.len() >= 80 {
+            continue;
+        }
+        for id in return_options {
+            let piece = catalog
+                .iter()
+                .find(|piece| piece.id == id)
+                .and_then(|piece| piece.at(current))
+                .expect("demo return piece joins");
+            if piece.exit.x.abs_diff(start.x) > 300 || piece.exit.y.abs_diff(start.y) > 300 {
+                continue;
+            }
+            if !visited.insert(connector_key(piece.exit)) {
+                continue;
+            }
+            let mut next_path = path.clone();
+            next_path.push(id);
+            queue.push_back((piece.exit, next_path));
+        }
+    };
+    for id in return_path {
+        let piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .expect("demo return piece in catalog")
+            .at(state)
+            .expect("demo return piece joins");
         state = piece.exit;
         pieces.push(piece);
     }

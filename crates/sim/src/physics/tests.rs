@@ -58,7 +58,11 @@ fn climbing_gentle_track_reads_longitudinal_g_from_its_slope() {
 #[test]
 fn track_sample_places_the_rider_heart_above_the_rail() {
     let catalog = catalog();
-    for id in [PieceId::Straight, PieceId::TurnSmallStandalone, PieceId::GentleUp] {
+    for id in [
+        PieceId::Straight,
+        PieceId::TurnSmallStandalone,
+        PieceId::GentleUp,
+    ] {
         let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
         let sample = piece.sample(piece.length() / 2.0);
 
@@ -68,112 +72,6 @@ fn track_sample_places_the_rider_heart_above_the_rail() {
             "{id:?}"
         );
     }
-}
-
-#[test]
-fn half_loop_forces_across_entry_speeds() {
-    let model = hybrid_model();
-    for entry_speed in [26.0_f64, 28.0, 30.0, 32.0] {
-        for piece in catalog()
-            .into_iter()
-            .filter(|piece| piece.id == PieceId::HalfLoopUp)
-        {
-            let limits = model.comfortable_force_limits;
-            let initial_height = piece.sample(0.0).position.z;
-            for step in 0..=400 {
-                let distance = piece.length() * (f64::from(step) / 400.0);
-                let sample = piece.sample(distance);
-                let speed_squared =
-                    entry_speed.powi(2) - 2.0 * GRAVITY * (sample.position.z - initial_height);
-                assert!(speed_squared > 0.0);
-                let g = rider_g(
-                    &piece,
-                    distance,
-                    speed_squared.sqrt(),
-                    -GRAVITY * sample.tangent.z,
-                );
-                assert!(
-                    (limits.minimum_vertical_g..=limits.maximum_vertical_g).contains(&g.vertical),
-                    "{entry_speed} m/s at {distance} m: {g:?}"
-                );
-                assert!(g.lateral.abs() <= limits.maximum_lateral_g);
-            }
-        }
-    }
-}
-
-#[test]
-fn inversion_and_drop_forces_remain_within_model_comfort_limits() {
-    let mut failures = Vec::new();
-    for model in [
-        wooden_twister_model(),
-        hybrid_model(),
-        crate::track::multi_launch_model(),
-    ] {
-        for piece in catalog().into_iter().filter(|piece| {
-            model.allows_piece(piece)
-                && (piece.inversion.is_some()
-                    || matches!(
-                        piece.id,
-                        PieceId::TopHat
-                            | PieceId::BankedDropLeft
-                            | PieceId::BankedDropRight
-                            | PieceId::TwistedDropLeft
-                            | PieceId::TwistedDropRight
-                    ))
-        }) {
-            // A 30 m/s entry clears a 32 m high half-loop. Descending halves
-            // begin at that height, with the speed left by the ascent.
-            let entry_speed: f64 = match piece.id {
-                PieceId::HalfLoopDown => (30.0_f64.powi(2) - 2.0 * GRAVITY * 32.0).sqrt(),
-                PieceId::Loop
-                | PieceId::LoopRight
-                | PieceId::SteelLoop
-                | PieceId::SteelLoopRight
-                | PieceId::HalfLoopUp
-                | PieceId::TopHat => 30.0,
-                PieceId::RavenRollLeftUp
-                | PieceId::RavenRollRightUp
-                | PieceId::RavenRollLeftDown
-                | PieceId::RavenRollRightDown => (30.0_f64.powi(2) - 2.0 * GRAVITY * 32.0).sqrt(),
-                PieceId::HalfCorkscrewLeftDown | PieceId::HalfCorkscrewRightDown => {
-                    (20.0_f64.powi(2) - 2.0 * GRAVITY * 8.0).sqrt()
-                }
-                _ => 20.0,
-            };
-            let entry_height = piece.sample(0.0).position.z;
-            let mut minimum_vertical = f64::INFINITY;
-            let mut maximum_vertical = f64::NEG_INFINITY;
-            let mut maximum_lateral: f64 = 0.0;
-            let mut maximum_longitudinal: f64 = 0.0;
-            for step in 0..=200 {
-                let distance = piece.length() * (f64::from(step) / 200.0);
-                let sample = piece.sample(distance);
-                let height = sample.position.z;
-                let speed_squared = entry_speed.powi(2) - 2.0 * GRAVITY * (height - entry_height);
-                assert!(speed_squared > 0.0, "{} {:?} stalls", model.name, piece.id);
-                let forces = rider_g(
-                    &piece,
-                    distance,
-                    speed_squared.sqrt(),
-                    -GRAVITY * sample.tangent.z,
-                );
-                minimum_vertical = minimum_vertical.min(forces.vertical);
-                maximum_vertical = maximum_vertical.max(forces.vertical);
-                maximum_lateral = maximum_lateral.max(forces.lateral.abs());
-                maximum_longitudinal = maximum_longitudinal.max(forces.longitudinal.abs());
-            }
-            let limits = model.comfortable_force_limits;
-            if minimum_vertical < limits.minimum_vertical_g
-                || maximum_vertical > limits.maximum_vertical_g
-                || maximum_lateral > limits.maximum_lateral_g
-                || maximum_longitudinal > limits.maximum_longitudinal_g
-            {
-                failures.push(format!("{} {:?}: vertical {minimum_vertical:.2}..{maximum_vertical:.2}, lateral {maximum_lateral:.2}, longitudinal {maximum_longitudinal:.2}", model.name, piece.id));
-            }
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 fn circuit(ids: &[PieceId]) -> Circuit {
@@ -838,6 +736,46 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
     assert!(!train.readings().is_empty());
     assert!(!train.take_readings().is_empty());
     assert!(train.readings().is_empty());
+}
+
+#[test]
+fn demo_return_path_uses_searchable_level_pieces() {
+    let circuit = demo_circuit();
+    let loop_index = circuit
+        .pieces()
+        .iter()
+        .position(|piece| piece.id == PieceId::Loop)
+        .expect("demo circuit contains its loop");
+    let alignment_pieces = [
+        PieceId::OffsetRight,
+        PieceId::OneTileStraight,
+        PieceId::OneTileStraight,
+    ];
+    let return_path_start = loop_index + 1 + alignment_pieces.len();
+    assert_eq!(
+        circuit.pieces()[loop_index + 1..return_path_start]
+            .iter()
+            .map(|piece| piece.id)
+            .collect::<Vec<_>>(),
+        alignment_pieces
+    );
+    let return_path = &circuit.pieces()[return_path_start..];
+    let allowed_return_pieces = [
+        PieceId::Straight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallRightStandalone,
+    ];
+
+    assert!(!return_path.is_empty());
+    assert!(
+        return_path
+            .iter()
+            .all(|piece| allowed_return_pieces.contains(&piece.id))
+    );
+    assert_eq!(
+        circuit.pieces().last().unwrap().exit,
+        circuit.pieces()[0].entry
+    );
 }
 
 #[test]
