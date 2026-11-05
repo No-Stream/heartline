@@ -52,12 +52,12 @@ async function selectQueuedGuest(page: Page): Promise<string> {
       await expect(page.getByTestId("guest-panel")).toHaveAttribute("data-guest-id", id);
       await expect.poll(() => page.evaluate((guestId) => window.gameTest.guestDetail()?.id === guestId, id)).toBe(true);
       const activity = await page.evaluate(() => window.gameTest.guestDetail()!.activity);
-      expect(activity.placeId, "selected guest's destination").toBe(0xffff_ffff);
-      if (activity.kind === "waiting" || activity.kind === "riding") {
+      if (activity.kind !== "queuing" || activity.placeId !== 0xffff_ffff) {
         await page.getByTestId("guest-panel-close").click();
         continue;
       }
       expect(activity.kind, "selected guest's coaster activity").toBe("queuing");
+      expect(activity.placeId, "selected guest's destination").toBe(0xffff_ffff);
       await page.getByRole("button", { name: "Resume" }).click();
       await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
       return id;

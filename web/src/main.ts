@@ -415,6 +415,7 @@ function dispatch(action: InputAction): void {
     sendWorkerAction(worker, { type: "set-speed", speed });
   } else if (action.type === "pause-toggle") {
     const paused = gamePause.toggle();
+    renderClock.setPaused(paused);
     dayClock.setPaused(paused);
     sendWorkerAction(worker, { type: "set-paused", paused });
   } else if (action.type === "tool-select") {
