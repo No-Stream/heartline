@@ -5,23 +5,29 @@ import type { TrackStyle } from "./render/track/geometry";
 import { formatLength, formatSpeed, speedUnitLabel, type Units } from "./units";
 import type { InputAction } from "./input/actions";
 import type { ConstructionForcePreview } from "./construction-protocol";
+import { LIMIT_BAND_COLORS, LIMIT_BAND_LABELS, limitBand, limitCloseness, type LimitBand } from "./force-overlay";
 
 import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
 import type { ProximityEventReport as ProximityEvent } from "./generated/ProximityEventReport";
 export type { TestingSample, TestingReport, ProximityEvent };
 
-export type TestingMetric = "speed" | "verticalG" | "lateralG" | "longitudinalG" | "airtime";
+export type TestingMetric = "limitCloseness" | SingleTestingMetric;
+type SingleTestingMetric = "speed" | "verticalG" | "lateralG" | "longitudinalG" | "airtime";
 export function overlaySamples(measured: readonly TestingSample[] | null, estimated: readonly TestingSample[] | null): readonly TestingSample[] {
   return measured ?? estimated ?? [];
 }
-const metrics: Record<TestingMetric, { label: string; low: string; high: string; value(sample: TestingSample): number }> = {
+const metrics: Record<SingleTestingMetric, { label: string; low: string; high: string; value(sample: TestingSample): number }> = {
   speed: { label: "Speed", low: "", high: "", value: (sample) => sample.speed / 30 },
   verticalG: { label: "Vertical force", low: "−1 g", high: "5 g+", value: (sample) => (sample.verticalG + 1) / 6 },
   lateralG: { label: "Lateral force", low: "0 g", high: "3 g+", value: (sample) => Math.abs(sample.lateralG) / 3 },
   longitudinalG: { label: "Longitudinal force", low: "0 g", high: "3 g+", value: (sample) => Math.abs(sample.longitudinalG) / 3 },
   airtime: { label: "Airtime", low: "No airtime", high: "Airtime", value: (sample) => Number(sample.airtime) },
 };
+function hexColor(hex: string): Triangle["color"] {
+  const channel = (offset: number): number => parseInt(hex.slice(offset, offset + 2), 16) / 255;
+  return [channel(1), channel(3), channel(5), 1];
+}
 function color(value: number, style: TrackStyle): Triangle["color"] {
   const amount = Math.max(0, Math.min(1, value));
   const channel = (hex: string, offset: number): number => parseInt(hex.slice(offset, offset + 2), 16) / 255;
@@ -29,7 +35,9 @@ function color(value: number, style: TrackStyle): Triangle["color"] {
   return [mix(1), mix(3), mix(5), 1];
 }
 
+/** Colours the sampled track by one metric. Limit closeness needs the model's limits and outlines stretches past them in ink. */
 export function buildTestingRibbon(samples: readonly TestingSample[], metric: TestingMetric, camera: Camera, viewport: Viewport, style: TrackStyle, limits?: ConstructionForcePreview["limits"]): GeometryQuad[] {
+  if (metric === "limitCloseness" && samples.length && !limits) throw new Error("The limit closeness overlay needs the model's comfortable force limits");
   const quads: GeometryQuad[] = [];
   const vertex = (sample: TestingSample): Vertex => projectVertex(camera, viewport, sample, 0.06);
   const exceedsLimit = (sample: TestingSample): boolean => !!limits && (
@@ -37,6 +45,7 @@ export function buildTestingRibbon(samples: readonly TestingSample[], metric: Te
       : metric === "lateralG" ? Math.abs(sample.lateralG) > limits.maximumLateralG
         : metric === "longitudinalG" ? Math.abs(sample.longitudinalG) > limits.maximumLongitudinalG : false
   );
+  const band = (start: TestingSample, end: TestingSample): LimitBand => limitBand(Math.max(limitCloseness(start, limits!), limitCloseness(end, limits!)));
   for (let index = 0; index + 1 < samples.length; index++) {
     if (samples[index + 1].distance - samples[index].distance > 1.001) continue;
     const start = vertex(samples[index]);
@@ -44,14 +53,22 @@ export function buildTestingRibbon(samples: readonly TestingSample[], metric: Te
     const dx = end.x - start.x, dy = end.y - start.y;
     const length = Math.hypot(dx, dy);
     if (length < 0.01) continue;
-    const offsetX = -dy / length * 4, offsetY = dx / length * 4;
-    quads.push({ vertices: [
-      { ...start, x: start.x + offsetX, y: start.y + offsetY },
-      { ...end, x: end.x + offsetX, y: end.y + offsetY },
-      { ...end, x: end.x - offsetX, y: end.y - offsetY },
-      { ...start, x: start.x - offsetX, y: start.y - offsetY },
-    ], color: exceedsLimit(samples[index]) || exceedsLimit(samples[index + 1]) ? [0.85, 0.1, 0.1, 1] : color(metrics[metric].value(samples[index]), style), kind: "testing", id: `testing-${index}`,
-    tileX: Math.floor(samples[index].x), tileY: Math.floor(samples[index].y) });
+    const strip = (halfWidth: number, stripColor: Triangle["color"], id: string): GeometryQuad => {
+      const offsetX = -dy / length * halfWidth, offsetY = dx / length * halfWidth;
+      return { vertices: [
+        { ...start, x: start.x + offsetX, y: start.y + offsetY },
+        { ...end, x: end.x + offsetX, y: end.y + offsetY },
+        { ...end, x: end.x - offsetX, y: end.y - offsetY },
+        { ...start, x: start.x - offsetX, y: start.y - offsetY },
+      ], color: stripColor, kind: "testing", id, tileX: Math.floor(samples[index].x), tileY: Math.floor(samples[index].y) };
+    };
+    if (metric === "limitCloseness") {
+      const segmentBand = band(samples[index], samples[index + 1]);
+      if (segmentBand === "past") quads.push(strip(6, hexColor(style.ink), `testing-${index}`));
+      quads.push(strip(segmentBand === "past" ? 4 : 3.5, hexColor(LIMIT_BAND_COLORS[segmentBand]), `testing-${index}`));
+      continue;
+    }
+    quads.push(strip(4, exceedsLimit(samples[index]) || exceedsLimit(samples[index + 1]) ? [0.85, 0.1, 0.1, 1] : color(metrics[metric].value(samples[index]), style), `testing-${index}`));
   }
   return quads;
 }
@@ -179,7 +196,7 @@ export function formatTestingNote(note: string, units: Units): string {
   return note;
 }
 
-function legendBounds(metric: TestingMetric, units: Units): { low: string; high: string } {
+function legendBounds(metric: SingleTestingMetric, units: Units): { low: string; high: string } {
   if (metric === "speed") return { low: formatSpeed(0, units, 0), high: `${formatSpeed(30, units)}+` };
   return metrics[metric];
 }
@@ -195,12 +212,15 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
 } {
   container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><p data-rating></p><ul data-launch-results aria-label="Launch exit speeds"></ul>
     <p data-height-summary hidden>Maximum height above ground (sampled): <span data-report-maximum-height></span> · Biggest drop (sampled): <span data-report-drop-height></span></p>
-    <p data-construction-estimate hidden></p><label>Track overlay <select data-metric><option value="off">Off</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
+    <p data-construction-estimate hidden></p><label>Track overlay <select data-metric><option value="off">Off</option><option value="limitCloseness">Limit closeness</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
+    <div class="testing-band-legend" data-band-legend hidden>${(["comfortable", "near", "past"] as const).map((band) => `<span data-band="${band}"><span class="testing-band-legend__swatch" aria-hidden="true" style="background:${LIMIT_BAND_COLORS[band]}"></span>${LIMIT_BAND_LABELS[band]}</span>`).join("")}</div>
     <div data-legend hidden><span data-low></span> <span data-gradient aria-hidden="true" style="display:inline-block;width:100px;height:10px"></span> <span data-high></span><span data-force-warning hidden> · <span aria-hidden="true" style="color:rgb(85% 10% 10%)">■</span> Above comfortable limit</span></div>
     <div data-proximity-events></div><p data-inspection>Click the coloured track to inspect it.</p>`;
   container.querySelector<HTMLElement>("[data-gradient]")!.style.background = `linear-gradient(to right, ${style.train}, ${style.steel})`;
   const select = container.querySelector<HTMLSelectElement>("[data-metric]")!;
   const legend = container.querySelector<HTMLElement>("[data-legend]")!;
+  const bandLegend = container.querySelector<HTMLElement>("[data-band-legend]")!;
+  const limitClosenessOption = select.querySelector<HTMLOptionElement>("option[value=limitCloseness]")!;
   const inspection = container.querySelector<HTMLElement>("[data-inspection]")!;
   let report: TestingReport | null = null;
   let estimate: ConstructionForcePreview | null = null;
@@ -223,11 +243,15 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     inspection.textContent = "Click the coloured track to inspect it.";
   };
   const renderMetric = (): TestingMetric | null => {
+    // Test-run reports carry no force limits, so limit closeness is offered only for the construction estimate.
+    limitClosenessOption.hidden = limitClosenessOption.disabled = !!report;
+    if (report && select.value === "limitCloseness") select.value = "speed";
     const metric = select.value === "off" ? null : select.value as TestingMetric;
     const samples = overlaySamples(report?.samples ?? null, estimate?.samples ?? null);
-    legend.hidden = metric === null || !samples.length;
+    legend.hidden = metric === null || metric === "limitCloseness" || !samples.length;
+    bandLegend.hidden = metric !== "limitCloseness" || !samples.length;
     container.querySelector<HTMLElement>("[data-force-warning]")!.hidden = !!report || !estimate || (metric !== "verticalG" && metric !== "lateralG" && metric !== "longitudinalG");
-    if (metric) {
+    if (metric && metric !== "limitCloseness") {
       const bounds = legendBounds(metric, activeUnits);
       container.querySelector<HTMLElement>("[data-low]")!.textContent = bounds.low;
       container.querySelector<HTMLElement>("[data-high]")!.textContent = bounds.high;
@@ -290,14 +314,19 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     renderMetric();
   };
   return {
-    update(value) { report = value; inspectedSampleIndex = undefined; inspectedProximityIndex = undefined; renderReport(); },
+    update(value) {
+      report = value; inspectedSampleIndex = undefined; inspectedProximityIndex = undefined;
+      const metricBefore = select.value;
+      renderReport();
+      if (select.value !== metricBefore) dispatch({ type: "testing-metric-set", metric: renderMetric() });
+    },
     updateEstimate(value) {
       estimate = value;
       inspectedSampleIndex = undefined;
       if (!value) autoSelectedEstimate = false;
       if (value?.samples.length && !report && !autoSelectedEstimate) {
         autoSelectedEstimate = true;
-        if (select.value === "off") { select.value = "speed"; dispatch({ type: "testing-metric-set", metric: "speed" }); }
+        if (select.value === "off") { select.value = "limitCloseness"; dispatch({ type: "testing-metric-set", metric: "limitCloseness" }); }
       }
       renderReport();
     },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildProximityMarkers, buildTestingRibbon, formatConstructionEstimate, formatProximityEvent, formatSample, formatTestingNote, overlaySamples, proximityContribution, summarizeRideHeights, type ProximityEvent, type TestingSample } from "./coaster-testing";
 import type { WorldView } from "./render/scene";
+import { LIMIT_BAND_COLORS } from "./force-overlay";
 
 const samples: TestingSample[] = [
   { distance: 0, x: 2, y: 3, z: 1, speed: 4, verticalG: 1, lateralG: 0.2, longitudinalG: 0, airtime: false },
@@ -95,6 +96,19 @@ describe("coaster testing overlay", () => {
     expect(vertical[1].color).not.toEqual(vertical[0].color);
     expect(buildTestingRibbon(readings, "speed", camera, viewport, style, limits)[0].color).not.toEqual(vertical[0].color);
     expect(buildTestingRibbon(readings, "longitudinalG", camera, viewport, style, limits)[0].color).not.toEqual(vertical[0].color);
+  });
+
+  it("colours limit closeness by band and outlines stretches past a limit in ink", () => {
+    const limits = { minimumVerticalG: -1.5, maximumVerticalG: 5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
+    const at = (distance: number, verticalG: number): TestingSample => ({ ...samples[0], distance, x: 2 + distance, verticalG, lateralG: 0 });
+    const quads = buildTestingRibbon([at(0, 1), at(1, 1), at(2, -1.3), at(3, -1.3), at(4, 6)], "limitCloseness", camera, viewport, style, limits);
+    const colorOf = (hex: string): number[] => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255).concat(1);
+    expect(quads.map((quad) => quad.color)).toEqual([
+      colorOf(LIMIT_BAND_COLORS.comfortable), colorOf(LIMIT_BAND_COLORS.near), colorOf(LIMIT_BAND_COLORS.near),
+      colorOf(style.ink), colorOf(LIMIT_BAND_COLORS.past),
+    ]);
+    expect(quads[3].id).toBe(quads[4].id);
+    expect(() => buildTestingRibbon(samples, "limitCloseness", camera, viewport, style)).toThrow("comfortable force limits");
   });
 
   it("does not connect unrecorded parts of the circuit", () => {
