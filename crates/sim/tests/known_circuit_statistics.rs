@@ -65,7 +65,11 @@ fn construction_test(circuit: &Circuit, model: &CoasterModel) -> TestRun {
         0.0,
         2.0,
     );
-    let mut recorder = ConstructionTestRunRecorder::for_circuit(circuit, model.train.cars as usize);
+    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+        circuit,
+        &model.train,
+        model.comfortable_force_limits,
+    );
     let mut slow_steps = 0;
     for _ in 0..60_000 {
         train.step(circuit);

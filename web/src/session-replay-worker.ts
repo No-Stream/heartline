@@ -13,7 +13,7 @@ interface WorkerMessageWaiter {
 }
 
 /** Commands whose effect the replay must see before it goes on, because the worker answers them with a construction state. */
-const constructionCommandsAwaitingState = new Set(["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-finish-preview", "construction-finish-confirm", "construction-finish-cancel"]);
+const constructionCommandsAwaitingState = new Set(["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-finish-preview", "construction-finish-confirm", "construction-finish-cancel", "construction-set-cars-per-train"]);
 const replyTimeoutMs = 30_000;
 
 /**

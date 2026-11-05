@@ -5,6 +5,7 @@ export function shouldInvalidateConstructionFinishSearch(action: WorkerAction): 
   switch (action.type) {
     case "construction-start":
     case "construction-set-chain":
+    case "construction-set-cars-per-train":
     case "construction-append":
     case "construction-undo":
     case "construction-delete":

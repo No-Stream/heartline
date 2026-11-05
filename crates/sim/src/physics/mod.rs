@@ -20,7 +20,7 @@ pub use construction_run::ConstructionTestRunRecorder;
 mod features;
 mod scoring;
 pub use features::Location;
-pub use scoring::{Contribution, ScoreBreakdown, Term};
+pub use scoring::{Contribution, ForceDetail, ScoreBreakdown, Term};
 mod testing;
 pub use testing::{TestRun, TestRunRecorder, TestSample};
 mod coaster_run;

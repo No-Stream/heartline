@@ -706,6 +706,10 @@ pub(super) struct EnvelopeTracker {
 }
 
 impl EnvelopeTracker {
+    pub(super) fn elapsed(&self) -> f64 {
+        self.elapsed
+    }
+
     pub(super) fn record(
         &mut self,
         reading: [f64; 3],

@@ -86,8 +86,12 @@ impl CoasterRun {
                     0
                 })
                     .map(|_| match limits {
-                        Some(limits) => TestRunRecorder::for_circuit_with_limits(circuit, limits),
-                        None => TestRunRecorder::for_circuit(circuit),
+                        Some(limits) => TestRunRecorder::for_circuit_with_train_and_limits(
+                            circuit,
+                            configuration,
+                            limits,
+                        ),
+                        None => TestRunRecorder::for_circuit_with_train(circuit, configuration),
                     })
                     .collect(),
             ),

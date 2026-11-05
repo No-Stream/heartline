@@ -1,7 +1,7 @@
 use crate::WasmSimulation;
 use crate::construction::{pieceid_from_wire, wire_pieceid};
 use serde::Serialize;
-use theme_park_sim::track::construction::select_speed_matched_variant;
+use theme_park_sim::track::construction::select_speed_matched_variant_for_train;
 use theme_park_sim::track::{Piece, PieceId, catalog};
 use ts_rs::TS;
 use wasm_bindgen::prelude::*;
@@ -65,8 +65,9 @@ impl WasmSimulation {
             })
             .map(|(piece, _)| piece)
             .collect();
-        let recommendation =
-            entry_speed.and_then(|speed| select_speed_matched_variant(&candidates, speed));
+        let recommendation = entry_speed.and_then(|speed| {
+            select_speed_matched_variant_for_train(&candidates, speed, &construction.model().train)
+        });
         let result = ConstructionSpeedMatchWire {
             entry_speed,
             recommended_id: recommendation.map(|choice| wire_pieceid(choice.id)),

@@ -173,8 +173,11 @@ fn constructed_reference_laps_report_ratings() {
         ..PhysicsConfig::default()
     };
     let mut train = Train::new(&circuit, &model.train, config, 0.0, 2.0);
-    let mut recorder =
-        ConstructionTestRunRecorder::for_circuit(&circuit, usize::from(model.train.cars));
+    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+        &circuit,
+        &model.train,
+        model.comfortable_force_limits,
+    );
     let mut completed = false;
     for _ in 0..60_000 {
         train.step(&circuit);

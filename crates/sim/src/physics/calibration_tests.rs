@@ -609,9 +609,9 @@ fn calibration_recorder(
     circuit: &super::Circuit,
     model: &CoasterModel,
 ) -> ConstructionTestRunRecorder {
-    ConstructionTestRunRecorder::for_circuit_with_limits(
+    ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
         circuit,
-        usize::from(model.train.cars),
+        &model.train,
         model.comfortable_force_limits,
     )
 }

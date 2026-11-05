@@ -464,7 +464,7 @@ test("testing panel sorts score contributions and inspects a located penalty @fa
     breakdown: {
       excitement: [
         { term: "airtime", value: 0.5, measure: 1.2, unit: "s", location: undefined },
-        { term: "envelope", value: -1.2, measure: 0.5, unit: "g-s", location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 } },
+        { term: "envelope", value: -1.2, measure: 0.5, unit: "g-s", location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 }, forceDetail: { axis: "vertical", measuredValue: 5, limit: 4, unit: "g", durationSeconds: 2.4, carIndex: 0, location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 } } },
       ],
       intensity: [],
       nausea: [],
@@ -472,9 +472,10 @@ test("testing panel sorts score contributions and inspects a located penalty @fa
   }));
 
   const excitement = page.locator('[data-score-breakdown="excitement"]');
+  await expect(page.locator("[data-score-averaging]")).toHaveText("Contributions and their scoring inputs are averaged across cars. Force details show individual cars; car 1 is the front car.");
   await expect(excitement.locator("li")).toHaveText([
-    "Forces above the ASTM comfort envelope (−1.2, 0.5 g-s at Loop, 656 ft)",
-    "Ejector airtime (+0.5, 1.2 s)",
+    "Forces above the ASTM comfort envelope (−1.2): vertical force magnitude 5.0 g, limit 4.0 g at Loop, 656 ft; 2.4 s above the envelope for car 1 during the test",
+    "Ejector airtime (+0.5, 1.2 weighted seconds)",
   ]);
   await excitement.getByRole("button").first().click();
   await expect(page.locator("[data-inspection]")).toHaveText("Selected score location: Loop · 656 ft · 8.0 s");

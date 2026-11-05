@@ -122,6 +122,44 @@ fn hash_force_bands(hash: &mut StateHasher, bands: ForceBandDurations) {
     ] {
         hash.write_f64(value);
     }
+    if bands.excessive_details.iter().any(Option::is_some) {
+        for detail in bands.excessive_details {
+            hash.write_option(detail, |hash, detail| {
+                hash.write_f64(detail.value);
+                hash.write_f64(detail.limit);
+                hash.write_f64(detail.seconds);
+                write_location(hash, detail.location);
+            });
+        }
+    }
+    if bands.band_details.iter().any(Option::is_some) {
+        for detail in bands.band_details {
+            hash.write_option(detail, |hash, detail| {
+                hash.write_f64(detail.value);
+                hash.write_f64(detail.limit);
+                hash.write_f64(detail.seconds);
+                write_location(hash, detail.location);
+            });
+        }
+    }
+    if bands.peak_details.iter().any(Option::is_some) {
+        for detail in bands.peak_details {
+            hash.write_option(detail, |hash, detail| {
+                hash.write_f64(detail.value);
+                hash.write_f64(detail.limit);
+                write_location(hash, detail.location);
+            });
+        }
+    }
+    if bands
+        .dangerous_seconds_by_axis
+        .iter()
+        .any(|seconds| *seconds > 0.0)
+    {
+        for seconds in bands.dangerous_seconds_by_axis {
+            hash.write_f64(seconds);
+        }
+    }
 }
 
 fn write_location(hash: &mut StateHasher, location: super::features::Location) {
@@ -170,6 +208,7 @@ fn record_force_bands(
     reading: CarReading,
     limits: ComfortableForceLimits,
     seconds: f64,
+    location: super::features::Location,
 ) {
     let vertical_axis = if reading.g.vertical < 0.3 {
         ForceAxis::Airtime
@@ -181,6 +220,49 @@ fn record_force_bands(
         (ForceAxis::Lateral, reading.g.lateral),
         (ForceAxis::Longitudinal, reading.g.longitudinal),
     ] {
+        if let Some((index, limit)) =
+            super::scoring::score_band_detail(axis, force_band(axis, value, limits), limits)
+        {
+            let detail =
+                durations.band_details[index].get_or_insert(super::scoring::ExcessiveForceDetail {
+                    value: value.abs(),
+                    limit,
+                    seconds: 0.0,
+                    location,
+                });
+            detail.seconds += seconds;
+            if value.abs() > detail.value {
+                detail.value = value.abs();
+                detail.location = location;
+            }
+        }
+        if matches!(
+            force_band(axis, value, limits),
+            ForceBand::TooMuch | ForceBand::Dangerous
+        ) {
+            let (index, limit) = match axis {
+                ForceAxis::Airtime => (1, -limits.minimum_vertical_g),
+                ForceAxis::Vertical => (0, limits.maximum_vertical_g),
+                ForceAxis::Lateral => (2, limits.maximum_lateral_g),
+                ForceAxis::Longitudinal => (3, limits.maximum_longitudinal_g),
+            };
+            let detail = durations.excessive_details[index].get_or_insert(
+                super::scoring::ExcessiveForceDetail {
+                    value: value.abs(),
+                    limit,
+                    seconds: 0.0,
+                    location,
+                },
+            );
+            detail.seconds += seconds;
+            if force_band(axis, value, limits) == ForceBand::Dangerous {
+                durations.dangerous_seconds_by_axis[index] += seconds;
+            }
+            if value.abs() > detail.value {
+                detail.value = value.abs();
+                detail.location = location;
+            }
+        }
         match (axis, force_band(axis, value, limits)) {
             (ForceAxis::Airtime, ForceBand::Good) => durations.airtime_good += seconds,
             (ForceAxis::Airtime, ForceBand::Great) => durations.airtime_great += seconds,
@@ -303,6 +385,34 @@ impl TestRun {
                     hash.write_f64(location.distance_m);
                     hash.write_f64(location.seconds_from_start);
                 });
+                if let Some(detail) = &contribution.force_detail {
+                    hash.write_bytes(detail.axis.as_bytes());
+                    hash.write_f64(detail.measured_value);
+                    hash.write_f64(detail.limit);
+                    hash.write_bytes(detail.unit.as_bytes());
+                    hash.write_option(detail.duration_seconds, |hash, seconds| {
+                        hash.write_f64(seconds)
+                    });
+                    write_location(hash, detail.location);
+                    hash.write_option(detail.car_index, |hash, index| hash.write_len(index));
+                    hash.write_option(detail.dangerous_seconds, |hash, seconds| {
+                        hash.write_f64(seconds)
+                    });
+                }
+                for detail in &contribution.force_details {
+                    hash.write_bytes(detail.axis.as_bytes());
+                    hash.write_f64(detail.measured_value);
+                    hash.write_f64(detail.limit);
+                    hash.write_option(detail.duration_seconds, |hash, seconds| {
+                        hash.write_f64(seconds)
+                    });
+                    write_location(hash, detail.location);
+                    hash.write_option(detail.weight, |hash, weight| hash.write_f64(weight));
+                    hash.write_option(detail.car_index, |hash, index| hash.write_len(index));
+                    hash.write_option(detail.dangerous_seconds, |hash, seconds| {
+                        hash.write_f64(seconds)
+                    });
+                }
             }
         }
         hash.write_len(self.rating_inputs.len());
@@ -390,8 +500,10 @@ impl TestRun {
         self.notes.retain(|note| !self.rating_notes.contains(note));
         self.rating_notes.clear();
         self.breakdown = ScoreBreakdown::default();
+        let mut envelopes = Vec::new();
+        let mut strongest_lateral: Option<RideStatistics> = None;
         let count = self.rating_inputs.len() as f64;
-        for input in &self.rating_inputs {
+        for (car_index, input) in self.rating_inputs.iter().enumerate() {
             let mut features = super::features::ride_features(
                 &input.samples,
                 &input.pieces,
@@ -401,9 +513,35 @@ impl TestRun {
             );
             features.statistics = input.statistics;
             features.envelope = input.envelope.clone();
+            envelopes.push(&input.envelope);
             features.theming = input.theming;
-            let scores = score(&features, &input.force_bands);
-            for note in scoring_notes(&features, scores.intensity, &scores.breakdown.nausea) {
+            let mut scores = score(&features, &input.force_bands);
+            for contribution in scores
+                .breakdown
+                .excitement
+                .iter_mut()
+                .chain(&mut scores.breakdown.intensity)
+                .chain(&mut scores.breakdown.nausea)
+            {
+                for detail in contribution
+                    .force_detail
+                    .iter_mut()
+                    .chain(&mut contribution.force_details)
+                {
+                    detail.car_index = (count > 1.0).then_some(car_index);
+                }
+            }
+            if scores
+                .breakdown
+                .nausea
+                .iter()
+                .any(|item| item.term == super::scoring::Term::Laterals && item.value >= 1.5)
+                && strongest_lateral
+                    .is_none_or(|current| features.statistics.max_lateral_g > current.max_lateral_g)
+            {
+                strongest_lateral = Some(features.statistics);
+            }
+            for note in scoring_notes(&features) {
                 if !self.rating_notes.contains(&note) {
                     self.rating_notes.push(note);
                 }
@@ -428,10 +566,62 @@ impl TestRun {
                         if total.location.is_none() {
                             total.location = contribution.location;
                         }
+                        if let Some(detail) = contribution.force_detail
+                            && total.force_detail.as_ref().is_none_or(|current| {
+                                let severity = |detail: &super::scoring::ForceDetail| {
+                                    if detail.axis == "onset" {
+                                        0.5
+                                    } else {
+                                        detail.measured_value / detail.limit - 1.0
+                                    }
+                                };
+                                severity(&detail) > severity(current)
+                            })
+                        {
+                            total.location = Some(detail.location);
+                            total.force_detail = Some(detail);
+                        }
+                        for detail in contribution.force_details {
+                            if matches!(
+                                total.term,
+                                super::scoring::Term::PeakForce | super::scoring::Term::Launch
+                            ) {
+                                let severity = |detail: &super::scoring::ForceDetail| {
+                                    if detail.limit == 0.0 {
+                                        detail.measured_value
+                                    } else {
+                                        detail.measured_value / detail.limit
+                                    }
+                                };
+                                if total
+                                    .force_details
+                                    .first()
+                                    .is_none_or(|current| severity(&detail) > severity(current))
+                                {
+                                    total.location = Some(detail.location);
+                                    total.force_details = vec![detail];
+                                }
+                                continue;
+                            }
+                            if let Some(current) = total
+                                .force_details
+                                .iter_mut()
+                                .find(|current| current.axis == detail.axis)
+                            {
+                                if detail.measured_value / detail.limit
+                                    > current.measured_value / current.limit
+                                {
+                                    *current = detail;
+                                }
+                            } else {
+                                total.force_details.push(detail);
+                            }
+                        }
                     }
                 }
             }
         }
+        self.rating_notes.extend(force_advice(&envelopes));
         self.excitement = self
             .breakdown
             .excitement
@@ -440,6 +630,14 @@ impl TestRun {
             .sum();
         self.intensity = self.breakdown.intensity.iter().map(|item| item.value).sum();
         self.nausea = self.breakdown.nausea.iter().map(|item| item.value).sum();
+        if self.intensity >= 7.0 {
+            self.rating_notes.push(format!("This ride has an intensity score of {:.1}. Lower-force sections can make it more comfortable.", self.intensity));
+        }
+        if let Some(statistics) = strongest_lateral
+            && !lateral_envelope_reported(&envelopes)
+        {
+            self.rating_notes.push(format!("The peak sideways force was {:.1} g. Sideways force exceeded the {:.1} g reporting threshold for {:.1} s total during this car's ride. More banking or wider turns can improve comfort.", statistics.max_lateral_g, STRONG_LATERAL_G_THRESHOLD, statistics.strong_lateral_g_seconds));
+        }
         self.notes.extend(self.rating_notes.iter().cloned());
     }
 }
@@ -457,38 +655,69 @@ fn insert_event(events: &mut Vec<ProximityEvent>, event: ProximityEvent) {
     }
 }
 
-fn scoring_notes(
-    features: &super::features::RideFeatures,
-    intensity: f64,
-    nausea: &[super::scoring::Contribution],
-) -> Vec<String> {
+fn lateral_envelope_reported(envelopes: &[&EnvelopeExceedance]) -> bool {
+    envelopes.iter().any(|envelope| {
+        envelope
+            .worst
+            .as_ref()
+            .is_some_and(|worst| worst.axis == super::comfort::EnvelopeAxis::Lateral)
+    })
+}
+
+fn scoring_notes(features: &super::features::RideFeatures) -> Vec<String> {
     let mut notes = Vec::new();
-    if intensity >= 7.0 {
-        notes.push(
-            "This is a very intense ride. A few lower-force sections can make it more comfortable."
-                .to_owned(),
-        );
-    }
-    if nausea
-        .iter()
-        .any(|item| item.term == super::scoring::Term::Laterals && item.value >= 1.5)
-    {
-        notes.push("Some turns pull riders sideways strongly. More banking or wider turns can improve comfort.".to_owned());
-    }
     if features.dead_excess_seconds >= 8.0 {
         notes.push(
             "Long slow stretches reduce excitement. Consider shortening them or adding elements."
                 .to_owned(),
         );
     }
-    if let Some(worst) = &features.envelope.worst {
-        notes.push(format!("High forces exceed the ASTM F2291 comfort envelope for {:.1} s, worst at {} ({:?} {:.1} g where {:.1} g is allowed). The scores are reduced; a gentler valley or a slower entry would recover them.", features.envelope.seconds, worst.location.piece_name, worst.axis, worst.value, worst.allowed));
-    }
     notes
 }
 
+fn force_advice(envelopes: &[&EnvelopeExceedance]) -> Vec<String> {
+    use super::comfort::EnvelopeAxis;
+
+    let mut selected: Vec<&EnvelopeExceedance> = Vec::new();
+    for &envelope in envelopes {
+        let Some(worst) = &envelope.worst else {
+            continue;
+        };
+        if let Some(existing) = selected.iter_mut().find(|existing| {
+            let previous = existing.worst.as_ref().unwrap();
+            previous.location.piece_index == worst.location.piece_index
+                && previous.axis == worst.axis
+        }) {
+            if worst.value > existing.worst.as_ref().unwrap().value {
+                *existing = envelope;
+            }
+        } else {
+            selected.push(envelope);
+        }
+    }
+    selected.into_iter().map(|envelope| {
+        let worst = envelope.worst.as_ref().unwrap();
+        let measurement = match worst.axis {
+            EnvelopeAxis::Vertical => format!("vertical force magnitude was {:.1} g, above the {:.1} g limit", worst.value, worst.allowed),
+            EnvelopeAxis::Lateral => format!("lateral force magnitude was {:.1} g, above the {:.1} g limit", worst.value, worst.allowed),
+            EnvelopeAxis::Longitudinal => format!("forward or braking force magnitude was {:.1} g, above the {:.1} g limit", worst.value, worst.allowed),
+            EnvelopeAxis::Onset => format!("vertical force increased at {:.1} g/s, above the {:.1} g/s limit", worst.value, worst.allowed),
+            axis => {
+                let axes = match axis {
+                    EnvelopeAxis::VerticalLateral => "vertical and lateral",
+                    EnvelopeAxis::VerticalLongitudinal => "vertical and forward or braking",
+                    EnvelopeAxis::LateralLongitudinal => "lateral and forward or braking",
+                    _ => unreachable!(),
+                };
+                format!("combined {axes} forces reached {:.1} times the comfort envelope, above the limit of {:.1}", worst.value, worst.allowed)
+            }
+        };
+        format!("At {} ({:.1} m along the track), {measurement}. High forces exceeded the estimated ASTM F2291 comfort envelope for {:.1} s total during this car's ride. Lower speeds or gentler transitions can improve comfort.", worst.location.piece_name, worst.location.distance_m, envelope.seconds)
+    }).collect()
+}
+
 /// Turns per-tick train readings into one interpolated sample per track metre.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TestRunRecorder {
     circuit_length: f64,
     force_limits: ComfortableForceLimits,
@@ -639,6 +868,35 @@ impl TestRunRecorder {
     }
 
     pub fn for_circuit_with_limits(circuit: &Circuit, limits: ComfortableForceLimits) -> Self {
+        Self::for_circuit_with_windows(circuit, limits, |piece| piece.rated_speeds)
+    }
+
+    pub fn for_circuit_with_train(
+        circuit: &Circuit,
+        train: &crate::track::TrainConfiguration,
+    ) -> Self {
+        Self::for_circuit_with_train_and_limits(
+            circuit,
+            train,
+            crate::track::hybrid_model().comfortable_force_limits,
+        )
+    }
+
+    pub fn for_circuit_with_train_and_limits(
+        circuit: &Circuit,
+        train: &crate::track::TrainConfiguration,
+        limits: ComfortableForceLimits,
+    ) -> Self {
+        Self::for_circuit_with_windows(circuit, limits, |piece| {
+            crate::track::effective_rated_speeds(piece, train)
+        })
+    }
+
+    fn for_circuit_with_windows(
+        circuit: &Circuit,
+        limits: ComfortableForceLimits,
+        rated_speeds: impl Fn(&crate::track::Piece) -> Option<crate::track::RatedSpeeds>,
+    ) -> Self {
         let mut recorder = Self::new(circuit.length());
         recorder.force_limits = limits;
         recorder.piece_starts.clone_from(&circuit.starts);
@@ -660,7 +918,7 @@ impl TestRunRecorder {
             .pieces
             .iter()
             .map(|piece| {
-                piece.rated_speeds.map(|speeds| RatedPieceSpeedWindow {
+                rated_speeds(piece).map(|speeds| RatedPieceSpeedWindow {
                     name: piece.name,
                     minimum_entry: speeds.minimum_entry,
                     maximum_entry: speeds.maximum_entry,
@@ -703,18 +961,49 @@ impl TestRunRecorder {
                             | crate::track::PieceKind::Launch
                             | crate::track::PieceKind::Brakes
                     ));
+            let piece_name = self
+                .piece_summaries
+                .get(reading.piece_index)
+                .map_or("Track", |piece| piece.name);
+            let location = super::features::Location {
+                piece_index: reading.piece_index,
+                piece_name,
+                distance_m: reading.distance.rem_euclid(self.circuit_length),
+                seconds_from_start: self.comfort.elapsed(),
+            };
+            for (index, (value, limit)) in [
+                reading.g.vertical.max(0.0),
+                (-reading.g.vertical).max(0.0),
+                reading.g.lateral.abs(),
+                reading.g.longitudinal.max(0.0),
+                (-reading.g.longitudinal).max(0.0),
+            ]
+            .into_iter()
+            .zip(super::scoring::peak_force_limits())
+            .enumerate()
+            {
+                if value > 0.0
+                    && self.force_bands.peak_details[index]
+                        .is_none_or(|detail| value > detail.value)
+                {
+                    self.force_bands.peak_details[index] =
+                        Some(super::scoring::ExcessiveForceDetail {
+                            value,
+                            limit,
+                            seconds: 0.0,
+                            location,
+                        });
+                }
+            }
             if active {
                 record_force_bands(
                     &mut self.force_bands,
                     reading,
                     self.force_limits,
                     super::TIME_STEP,
+                    location,
                 );
             }
-            let piece_name = self
-                .piece_summaries
-                .get(reading.piece_index)
-                .map_or("Track", |piece| piece.name);
             self.comfort.record(
                 [
                     reading.g.vertical,
@@ -1350,6 +1639,56 @@ mod tests {
     use crate::physics::{CarReading, GForces, PhysicsConfig, Term, Train, demo_circuit};
     use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
 
+    #[test]
+    fn force_advice_deduplicates_by_piece_and_axis_and_uses_correct_units() {
+        use crate::physics::comfort::{EnvelopeAxis, EnvelopeWorst};
+        use crate::physics::features::Location;
+
+        let location = Location {
+            piece_index: 2,
+            piece_name: "Loop",
+            distance_m: 20.0,
+            seconds_from_start: 4.0,
+        };
+        let envelope = |axis, value, allowed, ratio, seconds| EnvelopeExceedance {
+            seconds,
+            worst: Some(EnvelopeWorst {
+                location,
+                axis,
+                value,
+                allowed,
+                ratio,
+            }),
+            ..EnvelopeExceedance::default()
+        };
+        let envelopes = [
+            envelope(EnvelopeAxis::Vertical, 7.0, 6.0, 0.17, 1.0),
+            envelope(EnvelopeAxis::Vertical, 8.0, 6.0, 0.33, 2.0),
+            envelope(EnvelopeAxis::VerticalLateral, 1.5, 1.0, 0.5, 3.0),
+            envelope(EnvelopeAxis::Onset, 20.0, 15.0, 0.5, 0.1),
+        ];
+        let notes = force_advice(&envelopes.iter().collect::<Vec<_>>());
+        assert_eq!(notes.len(), 3);
+        assert!(
+            notes[0].contains("vertical")
+                && notes[0].contains("8.0 g")
+                && notes[0].contains("6.0 g")
+                && notes[0].contains("2.0 s total")
+        );
+        assert!(
+            notes[1].contains("vertical and lateral")
+                && notes[1].contains("1.5")
+                && notes[1].contains("1.0")
+                && !notes[1].contains("1.5 g")
+        );
+        assert!(notes[2].contains("20.0 g/s") && notes[2].contains("15.0 g/s"));
+        assert!(!lateral_envelope_reported(
+            &envelopes.iter().collect::<Vec<_>>()
+        ));
+        let lateral = envelope(EnvelopeAxis::Lateral, 2.0, 1.5, 0.33, 2.0);
+        assert!(lateral_envelope_reported(&[&lateral]));
+    }
+
     fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<String>) {
         let pieces = [PieceSummary {
             id: PieceId::Straight,
@@ -1388,11 +1727,57 @@ mod tests {
                 reading,
                 limits,
                 sample_interval(samples, index, circuit_length, true).seconds,
+                super::super::features::Location {
+                    piece_index: sample.piece_index,
+                    piece_name: pieces[sample.piece_index].name,
+                    distance_m: sample.distance,
+                    seconds_from_start: 0.0,
+                },
             );
         }
         let result = score(&features, &bands);
-        let notes = scoring_notes(&features, result.intensity, &result.breakdown.nausea);
+        let notes = scoring_notes(&features);
         (result.excitement, result.intensity, result.nausea, notes)
+    }
+
+    #[test]
+    fn excessive_force_details_record_peak_and_axis_durations() {
+        let limits = hybrid_model().comfortable_force_limits;
+        let mut bands = ForceBandDurations::default();
+        let location = super::super::features::Location {
+            piece_index: 0,
+            piece_name: "Turn",
+            distance_m: 10.0,
+            seconds_from_start: 2.0,
+        };
+        let mut reading = CarReading {
+            distance: 10.0,
+            speed: 10.0,
+            g: GForces {
+                vertical: 1.0,
+                lateral: limits.maximum_lateral_g * 1.1,
+                longitudinal: 0.0,
+            },
+            airtime: false,
+            height_m: 0.0,
+            inverted: false,
+            roll: 0.0,
+            piece_index: 0,
+        };
+        record_force_bands(&mut bands, reading, limits, 2.0, location);
+        reading.g.lateral = limits.maximum_lateral_g * 1.5;
+        record_force_bands(&mut bands, reading, limits, 1.0, location);
+        let detail = bands.excessive_details[2].unwrap();
+        assert_eq!(detail.seconds, 3.0);
+        assert_eq!(bands.dangerous_seconds_by_axis[2], 1.0);
+        assert_eq!(detail.value, reading.g.lateral);
+        assert_eq!(bands.band_details[4].unwrap().seconds, 3.0);
+        assert_eq!(
+            bands.band_details[4].unwrap().limit,
+            limits.maximum_lateral_g * 0.5
+        );
+        assert_eq!(bands.too_much, 2.0);
+        assert_eq!(bands.dangerous, 1.0);
     }
 
     #[test]
@@ -1835,10 +2220,12 @@ mod tests {
             start_distance,
             initial_speed,
         );
-        let mut recorder = super::super::ConstructionTestRunRecorder::for_circuit(
-            &circuit,
-            usize::from(train_configuration.cars),
-        );
+        let mut recorder =
+            super::super::ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+                &circuit,
+                train_configuration,
+                crate::track::hybrid_model().comfortable_force_limits,
+            );
         let mut completed = false;
         for _ in 0..60_000 {
             train.step(&circuit);
@@ -2010,6 +2397,24 @@ mod tests {
         let report = recorder.finish(true, false);
         assert!(report.intensity >= 7.0);
         assert!(report.nausea > 0.0);
+        let sideways = report
+            .notes
+            .iter()
+            .find(|note| note.contains("sideways"))
+            .unwrap();
+        assert!(
+            sideways.contains("1.4 g") && sideways.contains("1.0 g") && sideways.contains(" s"),
+            "{sideways}"
+        );
+        let intense = report
+            .notes
+            .iter()
+            .find(|note| note.contains("intensity"))
+            .unwrap();
+        assert!(
+            intense.contains(&format!("{:.1}", report.intensity)),
+            "{intense}"
+        );
         assert!(
             report
                 .notes
@@ -2385,6 +2790,32 @@ mod tests {
     }
 
     #[test]
+    fn configured_train_changes_rolled_inversion_speed_note() {
+        let piece = crate::track::catalog()
+            .iter()
+            .find(|piece| piece.id == crate::track::PieceId::ZeroGRollCompactLeft)
+            .unwrap()
+            .clone();
+        let circuit = Circuit {
+            length: piece.length(),
+            pieces: vec![piece],
+            starts: vec![0.0],
+            open: true,
+        };
+        let mut train = crate::track::hybrid_model().train;
+        train.cars = 4;
+        train.length_metres = 12.0;
+        let mut short = TestRunRecorder::for_circuit_with_train(&circuit, &train);
+        short.record_rated_speed_band(0, 16.1);
+        assert_eq!(short.speed_band_notes.len(), 1);
+        train.cars = 8;
+        train.length_metres = 24.0;
+        let mut long = TestRunRecorder::for_circuit_with_train(&circuit, &train);
+        long.record_rated_speed_band(0, 16.1);
+        assert!(long.speed_band_notes.is_empty());
+    }
+
+    #[test]
     fn rated_piece_entry_below_speed_window_is_reported() {
         let mut recorder = TestRunRecorder::new(20.0);
         recorder.piece_starts = vec![0.0, 10.0];
@@ -2473,6 +2904,13 @@ mod tests {
         let mut ride_report = first_car.clone();
         ride_report.average_car_ratings(&[first_car, second_car]);
         assert!((ride_report.excitement - baseline_average).abs() < 1e-10);
+        let positive = ride_report
+            .breakdown
+            .excitement
+            .iter()
+            .find(|item| item.term == Term::PositiveForces)
+            .unwrap();
+        assert_eq!(positive.force_details[0].car_index, Some(1));
 
         ride_report.set_theming(0.5);
 

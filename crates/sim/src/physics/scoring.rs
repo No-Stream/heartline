@@ -62,6 +62,33 @@ pub(super) fn force_band(
     }
 }
 
+pub(super) fn score_band_detail(
+    axis: ForceAxis,
+    band: ForceBand,
+    limits: ComfortableForceLimits,
+) -> Option<(usize, f64)> {
+    match (axis, band) {
+        (ForceAxis::Airtime, ForceBand::Good) => Some((0, 0.2)),
+        (ForceAxis::Airtime, ForceBand::Great) => Some((1, 0.9)),
+        (ForceAxis::Vertical, ForceBand::Good) => Some((2, SCORING.vertical_weak_limit)),
+        (ForceAxis::Vertical, ForceBand::Great) => Some((
+            3,
+            SCORING.vertical_good_limit_fraction * limits.maximum_vertical_g,
+        )),
+        (ForceAxis::Lateral, ForceBand::Strong | ForceBand::TooMuch | ForceBand::Dangerous) => {
+            Some((
+                4,
+                SCORING.horizontal_fine_limit_fraction * limits.maximum_lateral_g,
+            ))
+        }
+        (ForceAxis::Longitudinal, ForceBand::Strong) => Some((
+            5,
+            SCORING.horizontal_fine_limit_fraction * limits.maximum_longitudinal_g,
+        )),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ForceAxis, ForceBand, force_band};
@@ -168,6 +195,114 @@ mod score_tests {
     }
 
     #[test]
+    fn excessive_force_details_keep_axis_duration_and_peak_separate() {
+        let features = ride_features(&[], &[], &[], 0.0, false);
+        let location = Location {
+            piece_index: 1,
+            piece_name: "Turn",
+            distance_m: 12.0,
+            seconds_from_start: 2.0,
+        };
+        let mut bands = ForceBandDurations {
+            too_much: 2.0,
+            ..Default::default()
+        };
+        bands.excessive_details[2] = Some(ExcessiveForceDetail {
+            value: 4.0,
+            limit: 1.5,
+            seconds: 2.0,
+            location,
+        });
+        let scores = score(&features, &bands);
+        let contribution = scores
+            .breakdown
+            .excitement
+            .iter()
+            .find(|item| item.term == Term::ExcessiveForces)
+            .unwrap();
+        assert_eq!(contribution.force_details[0].axis, "lateral");
+        assert_eq!(contribution.force_details[0].measured_value, 4.0);
+        assert_eq!(contribution.force_details[0].duration_seconds, Some(2.0));
+    }
+
+    #[test]
+    fn force_band_details_explain_the_weighted_sustained_measure() {
+        let features = ride_features(&[], &[], &[], 0.0, false);
+        let location = Location {
+            piece_index: 0,
+            piece_name: "Track",
+            distance_m: 3.0,
+            seconds_from_start: 1.0,
+        };
+        let mut bands = ForceBandDurations {
+            vertical_good: 4.0,
+            lateral_strong: 2.0,
+            ..Default::default()
+        };
+        bands.band_details[2] = Some(ExcessiveForceDetail {
+            value: 3.0,
+            limit: 2.0,
+            seconds: 4.0,
+            location,
+        });
+        bands.band_details[4] = Some(ExcessiveForceDetail {
+            value: 1.4,
+            limit: 0.75,
+            seconds: 2.0,
+            location,
+        });
+        let result = score(&features, &bands);
+        let contribution = result
+            .breakdown
+            .intensity
+            .iter()
+            .find(|item| item.term == Term::SustainedForce)
+            .unwrap();
+        assert!((contribution.measure - 4.2).abs() < 1e-12);
+        assert_eq!(contribution.force_details.len(), 2);
+        assert_eq!(contribution.force_details[0].weight, Some(0.55));
+        assert_eq!(contribution.force_details[1].weight, Some(1.0));
+    }
+
+    #[test]
+    fn peak_and_launch_details_use_the_recorded_run_wide_peak() {
+        let mut features = ride_features(&[], &[], &[], 0.0, false);
+        features.statistics.max_forward_g = 3.0;
+        features.statistics.launches = 1;
+        let location = Location {
+            piece_index: 0,
+            piece_name: "Track",
+            distance_m: 3.0,
+            seconds_from_start: 1.0,
+        };
+        let mut bands = ForceBandDurations::default();
+        bands.peak_details[3] = Some(ExcessiveForceDetail {
+            value: 3.0,
+            limit: 6.0,
+            seconds: 0.0,
+            location,
+        });
+        let result = score(&features, &bands);
+        let peak = result
+            .breakdown
+            .intensity
+            .iter()
+            .find(|item| item.term == Term::PeakForce)
+            .unwrap();
+        assert_eq!(peak.measure, 0.5);
+        assert_eq!(peak.force_details[0].axis, "peakForward");
+        assert_eq!(peak.force_details[0].duration_seconds, None);
+        let launch = result
+            .breakdown
+            .excitement
+            .iter()
+            .find(|item| item.term == Term::Launch)
+            .unwrap();
+        assert_eq!(launch.force_details[0].axis, "launchForward");
+        assert_eq!(launch.force_details[0].measured_value, 3.0);
+    }
+
+    #[test]
     fn excitement_floor_is_explained_in_the_breakdown() {
         let mut features = ride_features(&[], &[], &[], 0.0, false);
         features.envelope.g_seconds = 10.0;
@@ -217,6 +352,7 @@ mod score_tests {
             seconds_from_start: 5.0,
         };
         features.envelope.g_seconds = 0.45;
+        features.envelope.seconds = 1.5;
         features.envelope.worst = Some(EnvelopeWorst {
             location,
             axis: EnvelopeAxis::Vertical,
@@ -233,6 +369,13 @@ mod score_tests {
             .unwrap();
         assert!((contribution.value + 1.087).abs() < 0.01);
         assert_eq!(contribution.location, Some(location));
+        let detail = contribution.force_detail.as_ref().unwrap();
+        assert_eq!(detail.axis, "vertical");
+        assert_eq!(detail.measured_value, 5.0);
+        assert_eq!(detail.limit, 4.0);
+        assert_eq!(detail.unit, "g");
+        assert_eq!(detail.duration_seconds, Some(1.5));
+        assert_eq!(detail.location, location);
     }
 
     #[test]
@@ -350,6 +493,22 @@ pub(super) struct ForceBandDurations {
     pub(super) longitudinal_strong: f64,
     pub(super) too_much: f64,
     pub(super) dangerous: f64,
+    #[serde(default)]
+    pub(super) excessive_details: [Option<ExcessiveForceDetail>; 4],
+    #[serde(default)]
+    pub(super) band_details: [Option<ExcessiveForceDetail>; 6],
+    #[serde(default)]
+    pub(super) peak_details: [Option<ExcessiveForceDetail>; 5],
+    #[serde(default)]
+    pub(super) dangerous_seconds_by_axis: [f64; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(super) struct ExcessiveForceDetail {
+    pub(super) value: f64,
+    pub(super) limit: f64,
+    pub(super) seconds: f64,
+    pub(super) location: Location,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -447,6 +606,26 @@ pub struct Contribution {
     pub value: f64,
     pub measure: f64,
     pub location: Option<Location>,
+    #[serde(default)]
+    pub force_detail: Option<ForceDetail>,
+    #[serde(default)]
+    pub force_details: Vec<ForceDetail>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ForceDetail {
+    pub axis: String,
+    pub measured_value: f64,
+    pub limit: f64,
+    pub unit: String,
+    pub duration_seconds: Option<f64>,
+    pub location: Location,
+    #[serde(default)]
+    pub weight: Option<f64>,
+    #[serde(default)]
+    pub car_index: Option<usize>,
+    #[serde(default)]
+    pub dangerous_seconds: Option<f64>,
 }
 impl Contribution {
     pub fn describe(&self) -> String {
@@ -612,6 +791,15 @@ const SCORING: ScoringConstants = ScoringConstants {
     dead: (-0.5, 6.0),
     envelope: (-3.0, 1.0),
 };
+pub(super) fn peak_force_limits() -> [f64; 5] {
+    [
+        SCORING.positive_peak_limit,
+        SCORING.negative_peak_limit,
+        SCORING.lateral_peak_limit,
+        SCORING.forward_peak_limit,
+        SCORING.braking_peak_limit,
+    ]
+}
 fn soft(measure: f64, (weight, scale): (f64, f64)) -> f64 {
     weight * (1.0 - (-measure / scale).exp())
 }
@@ -627,6 +815,8 @@ fn add(
         value,
         measure,
         location,
+        force_detail: None,
+        force_details: Vec::new(),
     });
 }
 fn add_soft(
@@ -920,6 +1110,182 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
         None,
     );
     let excitement = raw_excitement.max(0.0);
+    if let Some(worst) = &envelope.worst {
+        use super::comfort::EnvelopeAxis;
+        let (axis, unit) = match worst.axis {
+            EnvelopeAxis::Vertical => ("vertical", "g"),
+            EnvelopeAxis::Lateral => ("lateral", "g"),
+            EnvelopeAxis::Longitudinal => ("longitudinal", "g"),
+            EnvelopeAxis::VerticalLateral => ("verticalLateral", "ratio"),
+            EnvelopeAxis::VerticalLongitudinal => ("verticalLongitudinal", "ratio"),
+            EnvelopeAxis::LateralLongitudinal => ("lateralLongitudinal", "ratio"),
+            EnvelopeAxis::Onset => ("onset", "g/s"),
+        };
+        let detail = ForceDetail {
+            axis: axis.to_owned(),
+            measured_value: worst.value,
+            limit: worst.allowed,
+            unit: unit.to_owned(),
+            duration_seconds: Some(envelope.seconds),
+            location: worst.location,
+            weight: None,
+            car_index: None,
+            dangerous_seconds: None,
+        };
+        for contributions in [
+            &mut breakdown.excitement,
+            &mut breakdown.intensity,
+            &mut breakdown.nausea,
+        ] {
+            contributions
+                .iter_mut()
+                .find(|item| item.term == Term::Envelope)
+                .unwrap()
+                .force_detail = Some(detail.clone());
+        }
+    }
+    let details: Vec<_> = bands
+        .excessive_details
+        .iter()
+        .zip(["vertical", "negativeVertical", "lateral", "longitudinal"])
+        .enumerate()
+        .filter_map(|(index, (detail, axis))| {
+            detail.map(|detail| ForceDetail {
+                axis: axis.to_owned(),
+                measured_value: detail.value,
+                limit: detail.limit,
+                unit: "g".to_owned(),
+                duration_seconds: Some(detail.seconds),
+                location: detail.location,
+                weight: None,
+                car_index: None,
+                dangerous_seconds: Some(bands.dangerous_seconds_by_axis[index]),
+            })
+        })
+        .collect();
+    for contributions in [
+        &mut breakdown.excitement,
+        &mut breakdown.intensity,
+        &mut breakdown.nausea,
+    ] {
+        contributions
+            .iter_mut()
+            .find(|item| item.term == Term::ExcessiveForces)
+            .unwrap()
+            .force_details = details.clone();
+    }
+    let band_details: Vec<_> = bands
+        .band_details
+        .iter()
+        .zip([
+            "airtimeGood",
+            "airtimeGreat",
+            "verticalGood",
+            "verticalGreat",
+            "lateralStrong",
+            "longitudinalStrong",
+        ])
+        .filter_map(|(detail, axis)| {
+            detail.map(|detail| ForceDetail {
+                axis: axis.to_owned(),
+                measured_value: detail.value,
+                limit: detail.limit,
+                unit: "g".to_owned(),
+                duration_seconds: Some(detail.seconds),
+                location: detail.location,
+                weight: Some(if axis == "airtimeGood" || axis == "verticalGood" {
+                    SCORING.good_band_weight
+                } else {
+                    1.0
+                }),
+                car_index: None,
+                dangerous_seconds: None,
+            })
+        })
+        .collect();
+    for contributions in [
+        &mut breakdown.excitement,
+        &mut breakdown.intensity,
+        &mut breakdown.nausea,
+    ] {
+        for contribution in contributions {
+            let axes: &[&str] = match contribution.term {
+                Term::Airtime => &["airtimeGood", "airtimeGreat"],
+                Term::PositiveForces | Term::GreyOut => &["verticalGood", "verticalGreat"],
+                Term::Laterals => &["lateralStrong"],
+                Term::LongitudinalForces => &["longitudinalStrong"],
+                Term::SustainedForce => &[
+                    "airtimeGood",
+                    "airtimeGreat",
+                    "verticalGood",
+                    "verticalGreat",
+                    "lateralStrong",
+                    "longitudinalStrong",
+                ],
+                _ => &[],
+            };
+            if !axes.is_empty() {
+                contribution.force_details = band_details
+                    .iter()
+                    .filter(|detail| axes.contains(&detail.axis.as_str()))
+                    .cloned()
+                    .collect();
+            }
+        }
+    }
+    let peak_details: Vec<_> = bands
+        .peak_details
+        .iter()
+        .zip([
+            "peakVertical",
+            "peakNegativeVertical",
+            "peakLateral",
+            "peakForward",
+            "peakBraking",
+        ])
+        .filter_map(|(detail, axis)| {
+            detail.map(|detail| ForceDetail {
+                axis: axis.to_owned(),
+                measured_value: detail.value,
+                limit: detail.limit,
+                unit: "g".to_owned(),
+                duration_seconds: None,
+                location: detail.location,
+                weight: None,
+                car_index: None,
+                dangerous_seconds: None,
+            })
+        })
+        .collect();
+    if let Some(peak) = peak_details.iter().max_by(|left, right| {
+        (left.measured_value / left.limit).total_cmp(&(right.measured_value / right.limit))
+    }) {
+        let contribution = breakdown
+            .intensity
+            .iter_mut()
+            .find(|item| item.term == Term::PeakForce)
+            .unwrap();
+        contribution.location = Some(peak.location);
+        contribution.force_details = vec![peak.clone()];
+    }
+    if stats.launches > 0
+        && let Some(forward) = peak_details
+            .iter()
+            .find(|detail| detail.axis == "peakForward")
+    {
+        for contribution in breakdown
+            .excitement
+            .iter_mut()
+            .chain(&mut breakdown.intensity)
+            .filter(|item| item.term == Term::Launch)
+        {
+            let mut detail = forward.clone();
+            detail.axis = "launchForward".to_owned();
+            detail.limit = 0.0;
+            contribution.location = Some(detail.location);
+            contribution.force_details = vec![detail];
+        }
+    }
     Scores {
         excitement,
         intensity,

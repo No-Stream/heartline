@@ -167,6 +167,34 @@ pub(crate) struct ScoreContributionReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub location: Option<ScoreLocationReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub force_detail: Option<ScoreForceDetailReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub force_details: Option<Vec<ScoreForceDetailReport>>,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScoreForceDetailReport {
+    pub axis: String,
+    pub measured_value: f64,
+    pub limit: f64,
+    pub unit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub duration_seconds: Option<f64>,
+    pub location: ScoreLocationReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub car_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub dangerous_seconds: Option<f64>,
 }
 
 impl From<&Contribution> for ScoreContributionReport {
@@ -177,6 +205,25 @@ impl From<&Contribution> for ScoreContributionReport {
             measure: contribution.measure,
             unit: contribution.term.unit().to_owned(),
             location: contribution.location.map(Into::into),
+            force_detail: contribution.force_detail.as_ref().map(Into::into),
+            force_details: (!contribution.force_details.is_empty())
+                .then(|| contribution.force_details.iter().map(Into::into).collect()),
+        }
+    }
+}
+
+impl From<&theme_park_sim::physics::ForceDetail> for ScoreForceDetailReport {
+    fn from(detail: &theme_park_sim::physics::ForceDetail) -> Self {
+        Self {
+            axis: detail.axis.clone(),
+            measured_value: detail.measured_value,
+            limit: detail.limit,
+            unit: detail.unit.clone(),
+            duration_seconds: detail.duration_seconds,
+            location: detail.location.into(),
+            weight: detail.weight,
+            car_index: detail.car_index,
+            dangerous_seconds: detail.dangerous_seconds,
         }
     }
 }
@@ -376,6 +423,8 @@ mod wire_tests {
                         distance: 200.0,
                         seconds: 8.0,
                     }),
+                    force_detail: None,
+                    force_details: None,
                 }],
                 intensity: vec![],
                 nausea: vec![],
@@ -466,6 +515,8 @@ mod wire_tests {
                 value: 0.0,
                 measure: 0.0,
                 location: None,
+                force_detail: None,
+                force_details: vec![],
             };
             assert_eq!(ScoreContributionReport::from(&contribution).term, expected);
         }

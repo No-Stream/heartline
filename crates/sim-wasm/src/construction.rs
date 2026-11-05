@@ -476,10 +476,13 @@ impl WasmSimulation {
                 Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
             )
         });
-        let rated_speed = first.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
-            minimum_entry: speeds.minimum_entry,
-            maximum_entry: speeds.maximum_entry,
-        });
+        let rated_speed =
+            theme_park_sim::track::effective_rated_speeds(first, &construction.model().train).map(
+                |speeds| ConstructionRatedSpeedWire {
+                    minimum_entry: speeds.minimum_entry,
+                    maximum_entry: speeds.maximum_entry,
+                },
+            );
         let start_distance: f64 = construction.pieces().iter().map(Piece::length).sum();
         let mut pieces = construction.pieces().to_vec();
         pieces.extend(candidate);
@@ -813,6 +816,34 @@ impl WasmSimulation {
 
     pub fn construction_set_train_count(&mut self, count: usize) -> bool {
         self.park.construction_set_train_count(count).is_ok()
+    }
+
+    pub fn construction_min_cars_per_train(&self) -> u8 {
+        self.construction.as_ref().map_or(0, |construction| {
+            *construction.model().cars_per_train_range().start()
+        })
+    }
+
+    pub fn construction_max_cars_per_train(&self) -> u8 {
+        self.construction.as_ref().map_or(0, |construction| {
+            *construction.model().cars_per_train_range().end()
+        })
+    }
+
+    pub fn construction_set_cars_per_train(&mut self, cars: u8) -> bool {
+        self.construction_finish_invalidate();
+        match self.park.construction_set_cars_per_train(cars) {
+            Ok(()) => {
+                self.refresh_construction_support_rendering();
+                self.park.construction_message.clear();
+                true
+            }
+            Err(error) => {
+                self.park.construction_message =
+                    crate::command_errors::block_error_message(error).to_owned();
+                false
+            }
+        }
     }
 
     pub fn construction_set_open(&mut self, open: bool) -> bool {
@@ -1229,11 +1260,13 @@ impl WasmSimulation {
             0.0,
             2.0,
         );
-        self.construction_recorder = Some(ConstructionTestRunRecorder::for_circuit_with_limits(
-            &circuit,
-            usize::from(construction.model().train.cars),
-            construction.model().comfortable_force_limits,
-        ));
+        self.construction_recorder = Some(
+            ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+                &circuit,
+                &construction.model().train,
+                construction.model().comfortable_force_limits,
+            ),
+        );
         self.construction_report = None;
         self.construction_train = Some((circuit, train));
         self.recovered_station = None;

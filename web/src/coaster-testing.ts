@@ -10,6 +10,7 @@ import { LIMIT_BAND_COLORS, LIMIT_BAND_LABELS, limitBand, limitCloseness, type L
 import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
 import type { ScoreContributionReport } from "./generated/ScoreContributionReport";
+import type { ScoreForceDetailReport } from "./generated/ScoreForceDetailReport";
 import type { ProximityEventReport as ProximityEvent } from "./generated/ProximityEventReport";
 export type { TestingSample, TestingReport, ProximityEvent };
 export type RideStatistics = TestingReport["statistics"];
@@ -111,6 +112,7 @@ export function buildTestingRibbon(
 
 const number = (value: number): string => value.toFixed(1).replace("-", "−");
 const count = (value: number): string => Math.round(value).toLocaleString("en-US");
+const forceDetailCar = (detail: ScoreForceDetailReport): string => detail.carIndex === undefined ? "this car" : `car ${detail.carIndex + 1}`;
 
 export function formatRideRating(rating: TestingReport["rating"]): string {
   return `Excitement: ${number(rating.excitement)} · Intensity: ${number(rating.intensity)} · Nausea: ${number(rating.nausea)}`;
@@ -151,6 +153,89 @@ export function formatContribution(contribution: ScoreContributionReport, units:
   const label = scoreTermLabels[contribution.term];
   if (label === undefined) throw new Error(`Unknown coaster score term: ${contribution.term}`);
   const score = contribution.value >= 0 ? `+${number(contribution.value)}` : number(contribution.value);
+  if (contribution.term === "topSpeed" || contribution.term === "pace") {
+    return `${label} (${score}): ${formatSpeed(contribution.measure, units)} above the scoring threshold`;
+  }
+  if (contribution.term === "rollRate") {
+    return `${label} (${score}): ${number(contribution.measure)} degrees/s above the scoring threshold`;
+  }
+  if (contribution.term === "inversions") return `${label} (${score}, weighted inversion count ${number(contribution.measure)})`;
+  if (contribution.term === "variety") return `${label} (${score}, ${number(contribution.measure)} additional element types)`;
+  if (contribution.term === "proximity") return `${label} (${score}, total event strength ${number(contribution.measure)})`;
+  if (contribution.term === "whip") return `${label} (${score}, ${number(contribution.measure)} rapid vertical force changes)`;
+  if (contribution.term === "deadTime") {
+    const location = contribution.location ? `; longest section at ${contribution.location.pieceName}, ${formatLength(contribution.location.distance, units)}` : "";
+    return `${label} (${score}, ${number(contribution.measure)} s beyond the allowance for uneventful sections${location})`;
+  }
+  if (contribution.term === "launch") {
+    const detail = contribution.forceDetails?.[0];
+    return detail
+      ? `${label} (${score}): maximum forward force ${number(detail.measuredValue)} g for ${forceDetailCar(detail)} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}`
+      : `${label} (${score}): maximum forward force if the ride has a launch, ${number(contribution.measure)} g`;
+  }
+  const weightedDuration = ["airtime", "positiveForces", "greyOut", "sustainedForce"].includes(contribution.term);
+  const bandDuration = weightedDuration || ["laterals", "longitudinalForces"].includes(contribution.term);
+  if (bandDuration) {
+    const suffix = contribution.term === "sustainedForce" ? " across force bands" : "";
+    const summary = `${label} (${score}, ${number(contribution.measure)} ${weightedDuration ? "weighted seconds" : "s"}${suffix})`;
+    if (!contribution.forceDetails?.length) return summary;
+    const bands: Readonly<Record<string, string>> = {
+      airtimeGood: "good airtime", airtimeGreat: "great airtime",
+      verticalGood: "good positive vertical force", verticalGreat: "great positive vertical force",
+      lateralStrong: "strong or excessive lateral force", longitudinalStrong: "strong longitudinal force",
+    };
+    const details = contribution.forceDetails.map((detail) => {
+      const band = bands[detail.axis];
+      if (band === undefined) throw new Error(`Unknown scoring force band: ${detail.axis}`);
+      if (detail.durationSeconds === undefined) throw new Error(`Missing duration for scoring force band: ${detail.axis}`);
+      const weight = detail.weight !== undefined && detail.weight !== 1 ? ` (${number(detail.weight * 100).replace(/\.0$/, "")}% counts toward the score input)` : "";
+      return `${band} starts above ${number(detail.limit)} ${detail.unit}; peak magnitude ${number(detail.measuredValue)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s in this band for ${forceDetailCar(detail)} during the test${weight}`;
+    });
+    return `${summary}: ${details.join(". ")}`;
+  }
+  if (contribution.term === "peakForce") {
+    const detail = contribution.forceDetails?.[0];
+    if (!detail) return `${label} (${score}, ${number(contribution.measure)} times the scoring reference)`;
+    const axes: Readonly<Record<string, string>> = {
+      peakVertical: "positive vertical force", peakNegativeVertical: "negative vertical force magnitude",
+      peakLateral: "lateral force magnitude", peakForward: "forward force", peakBraking: "braking force magnitude",
+    };
+    const axis = axes[detail.axis];
+    if (axis === undefined) throw new Error(`Unknown peak force axis: ${detail.axis}`);
+    return `${label} (${score}): ${axis} ${number(detail.measuredValue)} ${detail.unit}, scoring reference ${number(detail.limit)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)} for ${forceDetailCar(detail)}`;
+  }
+  if (contribution.term === "excessiveForces" && contribution.forceDetails?.length) {
+    const axes: Readonly<Record<string, string>> = {
+      vertical: "positive vertical force", negativeVertical: "negative vertical force magnitude",
+      lateral: "lateral force magnitude", longitudinal: "longitudinal force magnitude",
+    };
+    const details = contribution.forceDetails.map((detail, index) => {
+      const axis = axes[detail.axis];
+      if (axis === undefined) throw new Error(`Unknown model limit axis: ${detail.axis}`);
+      if (detail.durationSeconds === undefined) throw new Error(`Missing duration for model limit axis: ${detail.axis}`);
+      const description = index === 0 ? axis : axis[0].toUpperCase() + axis.slice(1);
+      const dangerous = detail.dangerousSeconds ? ` (${number(detail.dangerousSeconds)} s in the dangerous band counts twice in scoring)` : "";
+      return `${description} ${number(detail.measuredValue)} ${detail.unit}, limit ${number(detail.limit)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s above this limit for ${forceDetailCar(detail)} during the test${dangerous}`;
+    });
+    return `${label} (${score}): ${details.join(". ")}`;
+  }
+  if (contribution.term === "envelope") {
+    const detail = contribution.forceDetail;
+    if (!detail) return `${label} (${score})`;
+    if (detail.durationSeconds === undefined) throw new Error("Missing duration for comfort envelope");
+    const axes: Readonly<Record<string, string>> = {
+      vertical: "vertical force magnitude", lateral: "lateral force magnitude", longitudinal: "longitudinal force magnitude",
+      verticalLateral: "vertical and lateral force", verticalLongitudinal: "vertical and longitudinal force",
+      lateralLongitudinal: "lateral and longitudinal force", onset: "vertical force increase",
+    };
+    const axis = axes[detail.axis];
+    if (axis === undefined) throw new Error(`Unknown comfort envelope axis: ${detail.axis}`);
+    const unit = detail.unit === "g/s" ? "g per second" : detail.unit;
+    const measured = detail.unit === "ratio"
+      ? `combined ${axis} level ${number(detail.measuredValue / detail.limit)} times its limit (limit ${number(detail.limit)})`
+      : `${axis} ${number(detail.measuredValue)} ${unit}, limit ${number(detail.limit)} ${unit}`;
+    return `${label} (${score}): ${measured} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s above the envelope for ${forceDetailCar(detail)} during the test`;
+  }
   const measure = `${number(contribution.measure)}${contribution.unit ? ` ${contribution.unit}` : ""}`;
   const location = contribution.location
     ? ` at ${contribution.location.pieceName}, ${number(contribution.location.distance)} m`
@@ -298,6 +383,8 @@ export function formatConstructionEstimate(estimate: ConstructionForcePreview, u
 }
 
 export function formatTestingNote(note: string, units: Units): string {
+  const forceAdvice = /^(At .+ \()([\d.]+) m( along the track\), .+)$/.exec(note);
+  if (forceAdvice) return `${forceAdvice[1]}${formatLength(Number(forceAdvice[2]), units)}${forceAdvice[3]}`;
   const contribution = /^(.+) \(([+−-][\d.]+), ([\d.]+)(?: ([A-Za-z0-9/-]+))?(?: at (.+), ([\d.]+) m)?\)$/.exec(note);
   if (contribution) {
     const [, label, score, rawMeasure, unit = "", pieceName, rawDistance] = contribution;
@@ -345,6 +432,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   selectedScoreLocation(): NonNullable<ScoreContributionReport["location"]> | undefined;
 } {
   container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><ul data-launch-results aria-label="Launch exit speeds"></ul><section data-statistics hidden><h4>Scores (about 0–10)</h4><p data-rating></p>
+    <p data-score-averaging>Contributions and their scoring inputs are averaged across cars. Force details show individual cars; car 1 is the front car.</p>
     <h5>Excitement contributions</h5><ul data-score-breakdown="excitement" aria-label="Excitement contributions"></ul>
     <h5>Intensity contributions</h5><ul data-score-breakdown="intensity" aria-label="Intensity contributions"></ul>
     <h5>Nausea contributions</h5><ul data-score-breakdown="nausea" aria-label="Nausea contributions"></ul>

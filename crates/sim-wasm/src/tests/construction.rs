@@ -636,6 +636,40 @@ fn finish_preview_is_cancelled_by_track_edits() {
 }
 
 #[test]
+fn changing_cars_per_train_invalidates_and_rebuilds_finish_preview() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    for piece in [
+        "TurnSmallStandalone",
+        "TurnSmallStandalone",
+        "Straight",
+        "TurnSmallStandalone",
+    ] {
+        simulation.construction_select(piece);
+        simulation.construction_append();
+        assert!(simulation.construction_message().is_empty());
+    }
+    simulation.construction_finish_search_start();
+    while !simulation.construction_finish_search_advance() {}
+    assert!(simulation.construction_can_finish());
+    simulation.construction_finish_preview();
+    assert!(simulation.construction_finish_preview_active());
+    assert!(simulation.construction_set_cars_per_train(4));
+    assert!(!simulation.construction_finish_preview_active());
+    assert!(!simulation.construction_can_finish());
+    simulation.construction_finish_search_start();
+    while !simulation.construction_finish_search_advance() {}
+    assert!(simulation.construction_can_finish());
+    simulation.construction_finish_preview();
+    simulation.construction_finish_confirm();
+    assert!(
+        simulation.construction.as_ref().unwrap().is_closed(),
+        "{}",
+        simulation.construction_message()
+    );
+}
+
+#[test]
 fn piece_groups_follow_track_geometry_instead_of_piece_names() {
     let catalog = super::catalog();
     let expected_groups = [

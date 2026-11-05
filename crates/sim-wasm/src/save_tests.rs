@@ -139,6 +139,24 @@ fn save_preserves_construction_and_a_stale_path_graph() {
 }
 
 #[test]
+fn save_preserves_non_default_cars_per_train() {
+    let mut original = WasmSimulation::new(42, 0, String::from("new"));
+    original.construction_start(100, 100, 20, 0);
+    assert!(original.construction_set_cars_per_train(4));
+    let bytes = original.save_state().unwrap();
+    let restored = WasmSimulation::load_state(&bytes).unwrap();
+    assert_eq!(original.state_hash(), restored.state_hash());
+    assert_eq!(
+        original.construction_train_layout(),
+        restored.construction_train_layout()
+    );
+    assert_eq!(
+        restored.construction.as_ref().unwrap().model().train.cars,
+        4
+    );
+}
+
+#[test]
 fn save_round_trips_built_timber_tumbler_with_ejector_hill() {
     let mut original = WasmSimulation::new(42, 0, String::from("new"));
     append_timber_tumbler_fixture_with_ejector_hill(&mut original);

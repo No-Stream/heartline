@@ -10,23 +10,15 @@ pub struct ConstructionTestRunRecorder {
 }
 
 impl ConstructionTestRunRecorder {
-    pub fn for_circuit(circuit: &Circuit, car_count: usize) -> Self {
-        Self::for_circuit_with_limits(
-            circuit,
-            car_count,
-            crate::track::hybrid_model().comfortable_force_limits,
-        )
-    }
-
-    pub fn for_circuit_with_limits(
+    pub fn for_circuit_with_train_and_limits(
         circuit: &Circuit,
-        car_count: usize,
+        train: &crate::track::TrainConfiguration,
         limits: crate::track::ComfortableForceLimits,
     ) -> Self {
-        assert!(car_count > 0);
+        assert!(train.cars > 0);
         Self {
-            cars: (0..car_count)
-                .map(|_| TestRunRecorder::for_circuit_with_limits(circuit, limits))
+            cars: (0..train.cars)
+                .map(|_| TestRunRecorder::for_circuit_with_train_and_limits(circuit, train, limits))
                 .collect(),
         }
     }
@@ -92,7 +84,7 @@ impl ConstructionTestRunRecorder {
             .map(|car| car.statistics)
             .reduce(merge_worst_car_statistics)
             .expect("train has cars");
-        report.notes.push("Ratings average all cars. The track ribbon, proximity events and ride advice describe the front car; statistics report the most extreme value across cars.".to_owned());
+        report.notes.push("Ratings average all cars. The track ribbon and proximity events describe the front car; statistics and force advice report the most extreme values across cars.".to_owned());
         (report, front_car_report)
     }
 }
@@ -105,7 +97,13 @@ mod tests {
     #[test]
     fn saved_construction_recording_resumes_with_the_same_report() {
         let circuit = crate::physics::demo_circuit();
-        let mut original = ConstructionTestRunRecorder::for_circuit(&circuit, 2);
+        let mut model = crate::track::hybrid_model();
+        model.train.cars = 2;
+        let mut original = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+            &circuit,
+            &model.train,
+            model.comfortable_force_limits,
+        );
         for distance in 0..10 {
             original.record(&[vec![
                 reading(distance as f64, 1.0, 0.0),
