@@ -457,7 +457,15 @@ impl Train {
                 );
             } else {
                 match circuit.pieces[index].kind {
-                    PieceKind::Lift => next_speed = self.config.lift_speed,
+                    // A train faster than the chain coasts and slows under gravity until the chain catches it.
+                    PieceKind::Lift => {
+                        if next_speed < self.config.lift_speed {
+                            let lift_acceleration =
+                                self.config.drive_acceleration + (-initial_gravity).max(0.0);
+                            next_speed = (previous_speed + lift_acceleration * TIME_STEP)
+                                .min(self.config.lift_speed);
+                        }
+                    }
                     PieceKind::Launch => {
                         let launch = self
                             .launch

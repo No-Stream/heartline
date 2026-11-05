@@ -1,3 +1,4 @@
+use theme_park_sim::physics::{CoasterRun, PhysicsConfig, demo_circuit};
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
     PieceId, PieceKind, TrackState, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
@@ -77,4 +78,141 @@ fn player_circuits_close() {
             panic!("{name} circuit does not close from {end:?}: {error:?}")
         });
     }
+}
+
+fn build_player_circuit(
+    name: &str,
+    model: theme_park_sim::track::CoasterModel,
+) -> theme_park_sim::physics::Circuit {
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [8; 4],
+            water: None,
+        },
+    );
+    let start = TrackState {
+        x: 482,
+        y: 498,
+        z: 6,
+        heading: theme_park_sim::track::Heading::North,
+        ..TrackState::origin()
+    };
+    let mut construction = Construction::new(start, model.clone());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    let circuit_text = include_str!("../../../web/e2e/player/circuits.txt");
+    let section = circuit_text
+        .split(&format!("[{name}]"))
+        .nth(1)
+        .unwrap_or_else(|| panic!("{name} circuit missing"));
+    for name in section
+        .lines()
+        .map(str::trim)
+        .take_while(|line| !line.starts_with('['))
+    {
+        if name.is_empty() || name.starts_with('#') {
+            continue;
+        }
+        if name == "+chain" {
+            construction.set_chain(true);
+            continue;
+        }
+        if name == "-chain" {
+            construction.set_chain(false);
+            continue;
+        }
+        let id = catalog()
+            .into_iter()
+            .find(|piece| format!("{:?}", piece.id) == name)
+            .unwrap()
+            .id;
+        construction.append(id, &world, &[]).unwrap();
+    }
+    construction.close().unwrap();
+    construction.circuit().unwrap()
+}
+
+#[test]
+fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
+    let circuits = [
+        ("Timber Tumbler", hybrid_model()),
+        ("Velocity Viper", multi_launch_model()),
+        ("Briar Blitz", wooden_twister_model()),
+    ];
+    for (name, model) in circuits {
+        let circuit = build_player_circuit(name, model.clone());
+        assert_ride_force_bound(name, &circuit, &model);
+    }
+    let model = hybrid_model();
+    let circuit = demo_circuit();
+    assert_ride_force_bound("demo", &circuit, &model);
+}
+
+fn assert_ride_force_bound(
+    name: &str,
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &theme_park_sim::track::CoasterModel,
+) {
+    let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
+    let outcome = (0..60_000).find_map(|_| run.step(circuit));
+    let outcome = outcome.unwrap_or_else(|| panic!("{name} test ride did not finish"));
+    let maximum = outcome
+        .reports
+        .iter()
+        .flat_map(|report| &report.samples)
+        .map(|sample| sample.longitudinal_g.abs())
+        .fold(0.0_f64, f64::max);
+    assert!(
+        maximum <= 2.5,
+        "{name} peak longitudinal force was {maximum:.1} g"
+    );
+}
+
+#[test]
+fn chain_lift_brakes_a_fast_train_at_a_physical_rate() {
+    let circuit = build_player_circuit("Velocity Viper", multi_launch_model());
+    let model = multi_launch_model();
+    let station_distance = circuit
+        .pieces()
+        .iter()
+        .take_while(|piece| piece.kind != PieceKind::Station)
+        .map(|piece| piece.length())
+        .sum::<f64>()
+        + circuit.pieces()[0].length() / 2.0;
+    let mut train = theme_park_sim::physics::Train::new(
+        &circuit,
+        &model.train,
+        PhysicsConfig::default(),
+        station_distance,
+        0.0,
+    );
+    let mut maximum = 0.0_f64;
+    let mut saw_fast_train_on_lift = false;
+    for _ in 0..60_000 {
+        let previous_speed = train.speed();
+        train.step(&circuit);
+        let piece_index = circuit.piece_index(train.distance());
+        if circuit.pieces()[piece_index].kind == PieceKind::Lift
+            && previous_speed > PhysicsConfig::default().lift_speed
+        {
+            saw_fast_train_on_lift = true;
+        }
+        for frame in train.take_readings() {
+            for reading in frame {
+                maximum = maximum.max(reading.g.longitudinal.abs());
+            }
+        }
+        if train.distance() - station_distance >= circuit.length() || !train.notes().is_empty() {
+            break;
+        }
+    }
+    assert!(
+        saw_fast_train_on_lift,
+        "Velocity Viper did not test a chain-lift entry above lift speed"
+    );
+    assert!(
+        maximum <= 2.5,
+        "Velocity Viper peak longitudinal force was {maximum:.1} g"
+    );
 }
