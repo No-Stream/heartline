@@ -2,6 +2,7 @@ import { activityLabel, memoryLabel, relationshipLabel, thoughtLabel, traitSumma
 import type { InputAction } from "../input/actions";
 import type { GuestDetail } from "./protocol";
 import { formatLength, type Units } from "../units";
+import { canKeepGuestPanelPosition, GUEST_PANEL_EDGE as EDGE, GUEST_PANEL_GAP as GAP } from "./placement";
 import "./guest-panel.css";
 
 export interface GuestPanelCallbacks {
@@ -30,8 +31,6 @@ interface Placement {
   readonly score: number;
 }
 
-const EDGE = 10;
-const GAP = 16;
 const MAX_PANEL_WIDTH = 304;
 const AGE_LABELS = { child: "Child", adult: "Adult", senior: "Senior" } as const;
 const NEEDS = [
@@ -101,6 +100,8 @@ export function createGuestPanel(
   let detail: GuestDetail | undefined;
   let units: Units = "imperial";
   let anchor: GuestPanelAnchor | null = null;
+  let positioned = false;
+  let lastGuestId: string | undefined;
 
   const closeWithoutNotification = (): void => {
     root.hidden = true;
@@ -177,6 +178,7 @@ export function createGuestPanel(
     const scaleY = bounds.height / canvas.height;
     const guestX = clamp(bounds.left + anchor.x * scaleX, bounds.left + EDGE, bounds.right - EDGE);
     const guestY = clamp(bounds.top + anchor.y * scaleY, bounds.top + EDGE, bounds.bottom - EDGE);
+    if (positioned && canKeepGuestPanelPosition(bounds, root.getBoundingClientRect(), { x: guestX, y: guestY })) return;
     const options = ([
       { side: "right", availableWidth: bounds.right - guestX - GAP - EDGE, availableHeight: bounds.height - EDGE * 2, score: 0 },
       { side: "left", availableWidth: guestX - bounds.left - GAP - EDGE, availableHeight: bounds.height - EDGE * 2, score: 0 },
@@ -200,6 +202,7 @@ export function createGuestPanel(
         : clamp(guestY - height / 2, bounds.top + EDGE, bounds.bottom - height - EDGE);
     root.style.left = `${clamp(left, bounds.left + EDGE, bounds.right - width - EDGE)}px`;
     root.style.top = `${clamp(top, bounds.top + EDGE, bounds.bottom - height - EDGE)}px`;
+    positioned = true;
   }
 
   new ResizeObserver(placeBesideGuest).observe(canvas);
@@ -211,7 +214,9 @@ export function createGuestPanel(
       if (detail) render(detail);
     },
     update(next) {
+      if (root.hidden && next.id !== lastGuestId) positioned = false;
       detail = next;
+      lastGuestId = next.id;
       render(next);
     },
     setAnchor(next) {

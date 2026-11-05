@@ -619,21 +619,6 @@ fn build_catalog() -> Vec<Piece> {
             FlatBank,
             Shape::Roll(Arc::clone(&RAVEN_ROLL)),
         ),
-        // Pending owner decision: a camelback on Briar Blitz or a fast-launch
-        // top hat on Velocity Viper. Keep this piece outside force assertions.
-        (
-            TopHat,
-            "Top hat",
-            88,
-            0,
-            0,
-            East,
-            Level,
-            Level,
-            FlatBank,
-            FlatBank,
-            Shape::TopHat,
-        ),
         (
             Brakes,
             "Brakes",
@@ -1382,6 +1367,26 @@ fn build_catalog() -> Vec<Piece> {
         .find(|piece| piece.id == Straight)
         .unwrap()
         .clone();
+    for (id, profile_name, name, maximum_entry) in [
+        (TopHat, "BriarTopHat", "Top hat", 27.15540286069387),
+        (
+            LaunchedTopHat,
+            "LaunchedTopHat",
+            "Launched top hat",
+            34.59739161543454,
+        ),
+    ] {
+        let profile = Arc::new(embedded_profile(profile_name));
+        let mut piece = straight.clone();
+        piece.id = id;
+        piece.name = name;
+        piece.exit.x = (profile.endpoint()[0] / 2.0).round() as i32;
+        piece.rated_speeds = Some(profile.rated_speeds(name, maximum_entry, 2.0, 8.0));
+        piece.shape = Shape::Profile(profile);
+        piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+        piece.clear_arc_table();
+        pieces.push(piece);
+    }
     for (id, profile_name, name, feel, height_metres, span_metres, design_speed, model_radius) in [
         (
             EjectorHill8x48,

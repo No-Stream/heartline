@@ -4,12 +4,13 @@ use super::{Direction, Path, Position, World};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum PathKind {
     Normal = 0,
     Queue = 1,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PathMetadata {
     pub kind: PathKind,
     pub style: u8,

@@ -4,6 +4,7 @@ pub mod facilities;
 pub mod guests;
 pub mod park;
 pub mod physics;
+pub mod save;
 pub(crate) mod state_hash;
 pub mod track;
 pub mod world;

@@ -8,7 +8,7 @@ use crate::guests::{GuestId, GuestStore, generate_guests};
 use crate::state_hash::StateHasher;
 use crate::world::{Direction, Path, Position, World};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WalkingGuest {
     pub x: f32,
     pub y: f32,
@@ -44,6 +44,7 @@ pub enum WalkControl {
     Stop,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct WalkingSimulation {
     seed: u64,
     entrance: Option<Position>,
@@ -161,6 +162,9 @@ impl NearestPaths {
 }
 
 impl WalkingSimulation {
+    pub(crate) fn rebind_world(&mut self, world: &World) {
+        self.world_id = world.instance_id();
+    }
     pub fn new(seed: u64, guest_count: usize, world: &World) -> Self {
         Self::build(seed, guest_count, world, None)
     }

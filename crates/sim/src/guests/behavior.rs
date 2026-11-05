@@ -15,7 +15,7 @@ use crate::world::World;
 const QUEUE_ENTRANCE_VISIBILITY_TILES: u16 = 12;
 
 /// A facility's path position, service capacity, and duration in 1/30-second ticks.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Facility {
     pub place: KnownPlace,
     pub capacity: usize,
@@ -36,7 +36,7 @@ pub struct RideState {
     pub progress: f32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 enum Activity {
     Walking(u32),
     Queuing(u32, u64),
@@ -53,7 +53,7 @@ pub enum Movement {
     Stopped,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct BehaviorSimulation {
     pub guests: Vec<GuestBehavior>,
     activities: Vec<Option<Activity>>,

@@ -6,7 +6,7 @@ use super::Material;
 use super::roll::{RollGeometry, RollSample, Twist};
 use crate::state_hash::StateHasher;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Vec3 {
     pub x: f64,
     pub y: f64,
@@ -58,7 +58,7 @@ impl Div<f64> for Vec3 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Heading {
     East,
     NorthEast,
@@ -86,7 +86,7 @@ impl Heading {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Slope {
     DownSteep,
     DownSixty,
@@ -113,7 +113,7 @@ impl Slope {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Bank {
     Right,
     Level,
@@ -130,7 +130,7 @@ impl Bank {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum HorizontalCurvature {
     Straight,
     LeftSmall,
@@ -138,13 +138,13 @@ pub enum HorizontalCurvature {
     RightSmall,
     RightLarge,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VerticalCurvature {
     Straight,
     Up,
     Down,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TrackState {
     pub x: i32,
     pub y: i32,
@@ -191,7 +191,7 @@ impl TrackState {
         hash.write_u8(self.vertical_curvature as u8);
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PieceId {
     Straight,
     GentleUp,
@@ -297,6 +297,7 @@ pub enum PieceId {
     HalfCorkscrewLeftDown,
     HalfCorkscrewRightDown,
     TopHat,
+    LaunchedTopHat,
     LevelToSixtyUp,
     SixtyUpToLevel,
     LevelToSixtyDown,
@@ -364,7 +365,7 @@ pub enum PieceId {
     WaveTurnLeft,
     WaveTurnRight,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {
     Track,
     Lift,
@@ -372,26 +373,25 @@ pub enum PieceKind {
     Brakes,
     Station,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Inversion {
     VerticalLoop,
     Corkscrew,
     HeartlineRoll,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Heartlining {
     Heartlined,
     NotHeartlined,
 }
 use crate::track::profile::SolvedProfile;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Shape {
     Plain,
     AirtimeHill,
     Overbank,
     WaveTurn { bump: f64, peak: f64 },
-    TopHat,
     Profile(Arc<SolvedProfile>),
     Roll(Arc<RollGeometry>),
     RolledProfile(Arc<SolvedProfile>, Twist),
@@ -403,7 +403,6 @@ impl Shape {
             Self::AirtimeHill => 1,
             Self::Overbank => 2,
             Self::WaveTurn { .. } => 14,
-            Self::TopHat => 9,
             Self::Profile(_) => 11,
             Self::Roll(_) => 12,
             Self::RolledProfile(_, _) => 13,
@@ -424,13 +423,13 @@ impl Shape {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RatedSpeeds {
     pub minimum_entry: f64,
     pub maximum_entry: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum HillFeel {
     Ejector,
     Floater,
@@ -439,7 +438,7 @@ pub enum HillFeel {
     Stall,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum HillTwist {
     OuterBankLeft,
     OuterBankRight,
@@ -447,7 +446,7 @@ pub enum HillTwist {
     RightRoll,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HillFamily {
     pub feel: HillFeel,
     pub height_metres: u8,
@@ -462,17 +461,18 @@ impl HillFamily {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct ArcLengthTable {
     lengths: Vec<f64>,
     speeds: Vec<f64>,
     maximum_curvature: f64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Piece {
     pub id: PieceId,
-    pub name: &'static str,
+    #[serde(with = "crate::save::catalog_text")]
+    pub name: crate::save::CatalogText,
     pub kind: PieceKind,
     /// Per-piece launch target speed in metres per second, or `None` for model defaults.
     pub launch_target_speed: Option<f64>,
@@ -486,7 +486,92 @@ pub struct Piece {
     pub(crate) shape: Shape,
     pub(crate) tangent_scale: f64,
     pub(crate) mirrored: bool,
+    #[serde(with = "arc_table_serde")]
     pub(super) arc_table: Arc<OnceLock<ArcLengthTable>>,
+}
+
+mod arc_table_serde {
+    use super::{Arc, ArcLengthTable, OnceLock};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct Context {
+        encoded: HashMap<*const OnceLock<ArcLengthTable>, u64>,
+        decoded: HashMap<u64, Arc<OnceLock<ArcLengthTable>>>,
+    }
+
+    thread_local! {
+        static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn scoped<R>(operation: impl FnOnce() -> R) -> R {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                CONTEXT.with(|context| *context.borrow_mut() = None);
+            }
+        }
+        CONTEXT.with(|context| {
+            assert!(context.borrow().is_none(), "nested snapshot operation");
+            *context.borrow_mut() = Some(Context::default());
+        });
+        let _reset = Reset;
+        operation()
+    }
+
+    pub fn serialize<S: Serializer>(
+        table: &Arc<OnceLock<ArcLengthTable>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let id = CONTEXT.with(|context| {
+            let mut context = context.borrow_mut();
+            context.as_mut().map(|context| {
+                let next = context.encoded.len() as u64;
+                *context.encoded.entry(Arc::as_ptr(table)).or_insert(next)
+            })
+        });
+        (id, table.get()).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Arc<OnceLock<ArcLengthTable>>, D::Error> {
+        let (id, value) = <(Option<u64>, Option<ArcLengthTable>)>::deserialize(deserializer)?;
+        if let Some(id) = id {
+            let existing = CONTEXT.with(|context| {
+                context
+                    .borrow()
+                    .as_ref()
+                    .and_then(|context| context.decoded.get(&id).cloned())
+            });
+            if let Some(existing) = existing {
+                if existing.get() != value.as_ref() {
+                    return Err(D::Error::custom("inconsistent shared arc table"));
+                }
+                return Ok(existing);
+            }
+        }
+        let table = OnceLock::new();
+        if let Some(value) = value {
+            table.set(value).expect("new arc table is empty");
+        }
+        let table = Arc::new(table);
+        if let Some(id) = id {
+            CONTEXT.with(|context| {
+                if let Some(context) = context.borrow_mut().as_mut() {
+                    context.decoded.insert(id, table.clone());
+                }
+            });
+        }
+        Ok(table)
+    }
+}
+
+/// Preserve shared track tables while encoding or decoding one complete snapshot.
+pub fn with_snapshot_arc_tables<R>(operation: impl FnOnce() -> R) -> R {
+    arc_table_serde::scoped(operation)
 }
 #[derive(Clone, Copy, Debug)]
 pub struct TrackSample {
@@ -716,21 +801,6 @@ impl Piece {
                         + vertical_correction * smooth_second),
             );
         }
-        if matches!(&self.shape, Shape::TopHat) {
-            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-            let (position, first, second) = super::vertical_top_hat::sample(t);
-            let endpoint = super::vertical_top_hat::endpoint();
-            let span = (self.exit.position() - self.entry.position()).dot(forward);
-            let horizontal_scale = span / endpoint[0];
-            let vertical = Vec3::new(0.0, 0.0, 1.0);
-            return (
-                self.entry.position()
-                    + forward * (position[0] * horizontal_scale)
-                    + vertical * position[1],
-                forward * (first[0] * horizontal_scale) + vertical * first[1],
-                forward * (second[0] * horizontal_scale) + vertical * second[1],
-            );
-        }
         let (s, ds, dds) = smooth(t);
         let t2 = t * t;
         let t3 = t2 * t;
@@ -933,7 +1003,7 @@ impl Piece {
         let (position, velocity, acceleration) = self.raw(t);
         let tangent = velocity.unit();
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
-        let base_up = if matches!(&self.shape, Shape::Profile(_) | Shape::TopHat) {
+        let base_up = if matches!(&self.shape, Shape::Profile(_)) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit()
         } else {
@@ -1046,6 +1116,25 @@ mod shape_tests {
     };
     use crate::state_hash::StateHasher;
     use crate::track::roll::RollGeometry;
+
+    #[test]
+    fn save_preserves_shared_uninitialized_arc_tables() {
+        let mut piece = crate::track::catalog()[0].clone();
+        piece.clear_arc_table();
+        let mut translated = piece.clone();
+        translated.entry.x += 100;
+        translated.exit.x += 100;
+        assert!(Arc::ptr_eq(&piece.arc_table, &translated.arc_table));
+        assert!(piece.arc_table.get().is_none());
+        let bytes =
+            super::with_snapshot_arc_tables(|| bincode::serialize(&(piece, translated))).unwrap();
+        let (first, second): (Piece, Piece) =
+            super::with_snapshot_arc_tables(|| bincode::deserialize(&bytes)).unwrap();
+        assert!(Arc::ptr_eq(&first.arc_table, &second.arc_table));
+        assert!(first.arc_table.get().is_none());
+        first.length();
+        assert!(second.arc_table.get().is_some());
+    }
     use crate::track::{Slope, TrackState, VerticalCurvature};
 
     #[test]
@@ -1428,14 +1517,9 @@ mod shape_tests {
 
     #[test]
     fn shape_hash_keeps_the_existing_variant_tags() {
-        let shapes = [
-            Shape::Plain,
-            Shape::AirtimeHill,
-            Shape::Overbank,
-            Shape::TopHat,
-        ];
+        let shapes = [Shape::Plain, Shape::AirtimeHill, Shape::Overbank];
 
-        for (expected_tag, shape) in [0_u8, 1, 2, 9].into_iter().zip(shapes) {
+        for (expected_tag, shape) in [0_u8, 1, 2].into_iter().zip(shapes) {
             let mut actual = StateHasher::new();
             shape.hash_into(&mut actual);
 

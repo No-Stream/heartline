@@ -2,12 +2,12 @@ use super::colors::{CoasterColor, CoasterColors};
 use super::{Inversion, Piece, PieceId, PieceKind, Shape, Slope, TrackState, catalog};
 use crate::state_hash::StateHasher;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LiftRules {
     pub max_slope: Slope,
     pub curved: bool,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LaunchType {
     LinearMotor,
 }
@@ -15,13 +15,13 @@ pub enum LaunchType {
 pub const LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED: f64 = 1.5 * 9.81;
 /// Maximum launch speed, based on the 240 km/h record launch speed.
 pub const LAUNCH_MAX_SPEED_METRES_PER_SECOND: f64 = 240.0 / 3.6;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SupportStyle {
     WoodenLattice,
     DenseWoodenLattice,
     SteelColumns,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Material {
     Steel,
     Wood,
@@ -35,7 +35,7 @@ impl SupportStyle {
         }
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TrainConfiguration {
     pub cars: u8,
     pub rows_per_car: u8,
@@ -60,14 +60,14 @@ impl TrainConfiguration {
         });
     }
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct LaunchParameters {
     pub target_speed: f64,
     pub acceleration: f64,
 }
 /// Provisional game design targets for instantaneous rider forces, in multiples of gravity.
 /// Real ride safety and comfort also depend on duration, direction and restraint design.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ComfortableForceLimits {
     pub minimum_vertical_g: f64,
     pub maximum_vertical_g: f64,
@@ -108,11 +108,14 @@ pub struct LaunchSpeedBounds {
     pub minimum: f64,
     pub maximum: f64,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CoasterModel {
-    pub manufacturer: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
+    #[serde(with = "crate::save::catalog_text")]
+    pub manufacturer: crate::save::CatalogText,
+    #[serde(with = "crate::save::catalog_text")]
+    pub name: crate::save::CatalogText,
+    #[serde(with = "crate::save::catalog_text")]
+    pub description: crate::save::CatalogText,
     pub allowed_pieces: Vec<PieceId>,
     pub sloped_turn_slopes: Vec<Slope>,
     pub minimum_radius_metres: f64,
@@ -563,6 +566,7 @@ pub fn multi_launch_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                LaunchedTopHat,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,

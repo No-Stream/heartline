@@ -11,7 +11,9 @@ import { clipGeometryAboveLevel, SHAPE_PAGES, type Atlas, type GeometryQuad, typ
 /** A soft additive light, in canvas pixels, drawn into the low-resolution glow layer. */
 export interface Glow { x: number; y: number; radius: number; color: Rgb; intensity: number; height: number }
 export interface CrestBurst { x: number; y: number; z: number; tick: number }
-export interface CrestTracker { climbing: boolean; climbStartTick: number; climbStartZ: number }
+export type CrestTracker =
+  | { climbing: false; climbStartZ: number; peak: null }
+  | { climbing: true; climbStartZ: number; peak: CrestBurst };
 /** The area fireworks are launched over, in tiles; `ground` is the height of the park in tiles. */
 export interface ParkBounds { minX: number; minY: number; maxX: number; maxY: number; ground: number }
 
@@ -270,24 +272,25 @@ export function buildFireworks(bounds: ParkBounds | null, lighting: Lighting, ti
   return { sparks, glows };
 }
 
-/** A chain lift climbs steadily for several seconds; hills climbed on momentum are over much sooner. */
-const CREST_MINIMUM_CLIMB_TICKS = 120;
+/** Ignore short bumps while allowing a train to reach a real crest at any speed. */
 const CREST_MINIMUM_RISE = 2;
 export function createCrestTracker(): CrestTracker {
-  return { climbing: false, climbStartTick: 0, climbStartZ: 0 };
+  return { climbing: false, climbStartZ: 0, peak: null };
 }
 
-/** Watches the lead car (car 0) of a train and reports a burst when it tops a climb long and high enough to be a lift hill. */
+/** Watches the lead car (car 0) and reports a burst when its sampled height peak is high enough. */
 export function detectCrest(tracker: CrestTracker, poses: Float32Array, tick: number): { tracker: CrestTracker; burst?: CrestBurst } {
   if (poses.length % 11) throw new Error("Invalid train snapshot");
   let lead = -1;
   for (let offset = 0; offset < poses.length; offset += 11) if (poses[offset] === 0) lead = offset;
   if (lead < 0) return { tracker: createCrestTracker() };
   const [x, y, z, climb] = [poses[lead + 1], poses[lead + 2], poses[lead + 3], poses[lead + 6]];
-  if (!tracker.climbing) return { tracker: climb > 0.1 ? { climbing: true, climbStartTick: tick, climbStartZ: z } : tracker };
-  if (climb > 0.02) return { tracker };
-  const liftHill = tick - tracker.climbStartTick >= CREST_MINIMUM_CLIMB_TICKS && z - tracker.climbStartZ >= CREST_MINIMUM_RISE;
-  return { tracker: createCrestTracker(), ...(liftHill ? { burst: { x, y, z, tick } } : {}) };
+  const sample = { x, y, z, tick };
+  if (!tracker.climbing) return { tracker: climb > 0.1 ? { climbing: true, climbStartZ: z, peak: sample } : tracker };
+  const peak = z > tracker.peak.z ? sample : tracker.peak;
+  if (climb > 0.02) return { tracker: { ...tracker, peak } };
+  const heightPeak = peak.z - tracker.climbStartZ >= CREST_MINIMUM_RISE;
+  return { tracker: createCrestTracker(), ...(heightPeak ? { burst: peak } : {}) };
 }
 
 export const CONFETTI_LIFE_TICKS = 90;

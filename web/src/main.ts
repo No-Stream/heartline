@@ -1,3 +1,4 @@
+import { createParkSaves } from "./park-saves";
 import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick, facilityTileFromPicks, stationTileFromSurfacePick } from "./world-picking";
 import { createStationTool } from "./station-tool";
 import { createFacilityTool } from "./facility-tool";
@@ -477,6 +478,7 @@ function dispatch(action: InputAction): void {
     return;
   }
   if (action.type === "session-export") {
+    if (loadedPark) { parkSaves.message("Session export is unavailable after loading a park."); return; }
     const requestId = ++sessionExportRequest;
     pendingSessionExports.set(requestId, inputLog.slice());
     sendWorkerAction(worker, { type: "export-session", requestId });
@@ -668,6 +670,27 @@ bindInput(gameCanvas, dispatch, () => pathTool.state().mode === "build" || lands
 const worker = new Worker(new URL("./worker.ts", import.meta.url), {
   type: "module",
 });
+let parkRequestId = 0;
+let loadedPark = false;
+let snapLoadedPark = false;
+const pendingParkRequests = new Map<number, { resolve: (bytes?: Uint8Array) => void; reject: (error: Error) => void }>();
+const parkSavesContainer = document.querySelector<HTMLElement>("[data-park-saves]");
+if (!parkSavesContainer) throw new Error("Park saves controls are missing");
+const parkSaves = createParkSaves(parkSavesContainer, async () => {
+  const requestId = ++parkRequestId;
+  const bytes = await new Promise<Uint8Array | undefined>((resolve, reject) => {
+    pendingParkRequests.set(requestId, { resolve, reject });
+    sendWorkerAction(worker, { type: "save-park", requestId });
+  });
+  if (!bytes) throw new Error("Worker returned no park data.");
+  return bytes;
+}, async (bytes) => {
+  const requestId = ++parkRequestId;
+  await new Promise<Uint8Array | undefined>((resolve, reject) => {
+    pendingParkRequests.set(requestId, { resolve, reject });
+    sendWorkerAction(worker, { type: "load-park", requestId, bytes });
+  });
+});
 let workerReady = false;
 let replayInProgress = false;
 const params = new URLSearchParams(location.search);
@@ -681,10 +704,31 @@ sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park, guestCoun
 worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   const message = event.data;
   if (message.type === "ready") { workerReady = true;
+  } else if (message.type === "park-saved" || message.type === "park-loaded") {
+    const pending = pendingParkRequests.get(message.requestId);
+    if (!pending) throw new Error("Unknown park request");
+    pendingParkRequests.delete(message.requestId);
+    if (message.error) pending.reject(new Error(message.error));
+    else {
+      if (message.type === "park-loaded") loadedPark = true;
+      pending.resolve(message.type === "park-saved" ? message.bytes : undefined);
+    }
+  } else if (message.type === "park-restoring") {
+    snapLoadedPark = true;
+    dayTick = undefined;
+    demoCrests = createCrestTracker();
+    constructionCrests = createCrestTracker();
+    crestBursts = [];
+    soundMemory = undefined;
+    previous = undefined;
+    current = undefined;
+    if (selectedGuestId) dispatch({ type: "guest-close" });
   } else if (message.type === "session-export") {
     const inputs = pendingSessionExports.get(message.requestId);
     if (!inputs) throw new Error("Unknown session export request");
     pendingSessionExports.delete(message.requestId);
+    if (message.error) { parkSaves.message(message.error); return; }
+    if (!message.recording) throw new Error("Worker returned no session recording");
     const session = { format: "theme-park-session", version: 1, build: { gitHash: __GIT_HASH__, mode: import.meta.env.MODE }, ...message.recording, inputs };
     const url = URL.createObjectURL(new Blob([JSON.stringify(session, null, 2)], { type: "application/json" }));
     const link = document.createElement("a");
@@ -768,7 +812,11 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     validateTrainStates(message.trainStates);
     validateTrainStates(message.constructionTrainStates);
     if (frameLogEnabled) snapshotArrivalEntries.push({ now: performance.now(), sentAt: message.sentAt, tickCount: message.tickCount });
-    if (!frozen && advanceTicksComplete) {
+    if (snapLoadedPark) {
+      renderClock.snap(message);
+      snapLoadedPark = false;
+      renderRevision.invalidate();
+    } else if (!frozen && advanceTicksComplete) {
       renderClock.snap(message);
       renderRevision.invalidate();
     } else if (!frozen && !renderClock.push(message)) return;

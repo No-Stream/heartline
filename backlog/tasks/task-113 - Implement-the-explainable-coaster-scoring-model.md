@@ -4,7 +4,7 @@ title: Implement the explainable coaster scoring model
 status: To Do
 assignee: []
 created_date: '2026-11-04 22:18'
-updated_date: '2026-11-05 05:41'
+updated_date: '2026-11-05 15:46'
 labels: []
 dependencies:
   - TASK-104
@@ -32,4 +32,6 @@ Plan: docs/superpowers/plans/2026-11-04-coaster-scoring.md (eight work items, on
 Owner decisions 2026-11-04: scores may exceed 10, but 10 should mean very high or excellent (calibrate so only outstanding rides reach it); the nausea tolerance rule is loose and soft (nausea above tolerance lowers willingness gradually, no hard refusal); theming counts all scenery equally for now.
 
 2026-11-04 owner: rate every force moment as weak / good / great / too much, not just the g value. Airtime example (vertical g at the heart): about 0 g weak ('an airtime hill offering 0 g is a little sad'); -0.3 to -0.8 g good (floater); -1.0 to -1.3 g great ('-1 g or a hair more is great'); past the model limit (about -1.5 g) too much; about -2 g dangerous. Same idea for positive vertical and lateral. Use the bands in scoring (great airtime raises excitement, too much raises intensity and nausea), in the building overlay labels (TASK-105, bands table in TypeScript), and as the airtime hill's default targets (TASK-101).
+
+2026-11-05 owner approved the calibration proposals (floor excitement at 0; Arrow looper excitement about 4-5; drop the hyper and accelerator nausea targets; rebuild demo and player circuits as good rides in a separate ticket; journeys check honest reports instead of excitement minimums) and added: scores should follow enthusiast preferences: RMC and Intamin Blitz much higher than an Arrow and quite a bit higher than a traditional B&M.
 <!-- SECTION:NOTES:END -->

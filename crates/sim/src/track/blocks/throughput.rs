@@ -3,6 +3,7 @@ use crate::state_hash::StateHasher;
 use crate::track::blocks::BlockLayout;
 
 /// Incrementally estimates hourly riders from sustained train dispatches.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ThroughputEstimator {
     operation: BlockOperation,
     max_idle_steps: usize,

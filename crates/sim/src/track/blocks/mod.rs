@@ -4,6 +4,7 @@ mod throughput;
 use crate::physics::{BlockOperation, Circuit, GRAVITY, PhysicsConfig, TIME_STEP, Train};
 use crate::state_hash::StateHasher;
 use crate::track::{Bank, Piece, PieceKind, Slope, TrainConfiguration};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::future::{Future, poll_fn};
 use std::ops::Deref;
@@ -19,7 +20,7 @@ mod tests;
 #[cfg(test)]
 mod hash_tests;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BrakeRun {
     pub start_metres: f64,
     pub boundary_metres: f64,
@@ -42,7 +43,7 @@ fn write_indices(hash: &mut StateHasher, indices: &[usize]) {
 }
 
 /// A contiguous view into the circuit's shared, doubled sequence of piece indices.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BrakePieces {
     storage: Arc<[usize]>,
     start: usize,
@@ -380,7 +381,7 @@ fn maximum_nonoverlapping_runs(candidates: &[&BrakeRun]) -> usize {
     maximum
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockLayout {
     boundaries: Vec<f64>,
     runs: Vec<BrakeRun>,
@@ -401,6 +402,7 @@ pub struct BlockManualSearch {
     circuit: Circuit,
     train: TrainConfiguration,
     config: PhysicsConfig,
+    boundaries: Vec<f64>,
     choices: Vec<Vec<BrakeRun>>,
     indices: Option<Vec<usize>>,
     active: Option<PlacementFuture>,
@@ -412,6 +414,48 @@ pub struct BlockManualSearch {
     active_upper_bound: usize,
     maximum_capacity: usize,
     work_completed: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ManualSearchSnapshot {
+    circuit: Circuit,
+    train: TrainConfiguration,
+    config: PhysicsConfig,
+    boundaries: Vec<f64>,
+    work_completed: usize,
+}
+
+impl Serialize for BlockManualSearch {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        ManualSearchSnapshot {
+            circuit: self.circuit.clone(),
+            train: self.train.clone(),
+            config: self.config,
+            boundaries: self.boundaries.clone(),
+            work_completed: self.work_completed,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockManualSearch {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let snapshot = ManualSearchSnapshot::deserialize(deserializer)?;
+        let mut search = Self::new(
+            snapshot.circuit,
+            snapshot.train,
+            snapshot.config,
+            snapshot.boundaries,
+        )
+        .map_err(serde::de::Error::custom)?;
+        search.advance(snapshot.work_completed);
+        if search.work_completed != snapshot.work_completed {
+            return Err(serde::de::Error::custom(
+                "manual search work exceeds completion",
+            ));
+        }
+        Ok(search)
+    }
 }
 
 impl BlockManualSearch {
@@ -519,6 +563,7 @@ impl BlockManualSearch {
             circuit,
             train,
             config,
+            boundaries,
             choices,
             indices,
             active,
@@ -685,6 +730,41 @@ pub struct BlockPlacementSearch {
     work_completed: usize,
     complete: bool,
     unverified_upper_bound: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PlacementSearchSnapshot {
+    circuit: Circuit,
+    train: TrainConfiguration,
+    config: PhysicsConfig,
+    work_completed: usize,
+}
+
+impl Serialize for BlockPlacementSearch {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        PlacementSearchSnapshot {
+            circuit: self.circuit.clone(),
+            train: self.train.clone(),
+            config: self.config,
+            work_completed: self.work_completed,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockPlacementSearch {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let snapshot = PlacementSearchSnapshot::deserialize(deserializer)?;
+        let mut search = Self::new(snapshot.circuit, snapshot.train, snapshot.config)
+            .map_err(serde::de::Error::custom)?;
+        search.advance(snapshot.work_completed);
+        if search.work_completed != snapshot.work_completed {
+            return Err(serde::de::Error::custom(
+                "placement search work exceeds completion",
+            ));
+        }
+        Ok(search)
+    }
 }
 
 impl BlockPlacementSearch {

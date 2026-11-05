@@ -1,0 +1,9 @@
+.park-saves { position: relative; }
+.park-saves__toggle, .park-saves__menu button, .park-saves__menu label {
+  color: var(--ink); background: var(--paper); border: var(--key-line); border-radius: 2px;
+  padding: 0.35rem 0.5rem; font: 600 0.8rem/1 var(--heading-font); cursor: pointer;
+}
+.park-saves__menu { position: absolute; right: 0; top: 100%; z-index: 20; display: grid; gap: 0.3rem; min-width: 11rem; padding: 0.5rem; background: var(--paper); border: var(--key-line); }
+.park-saves__menu[hidden] { display: none; }
+.park-saves__menu input { display: block; width: 100%; margin-top: 0.4rem; }
+.park-saves [role=status] { margin: 0; white-space: normal; }
