@@ -42,6 +42,68 @@ test("player driver places a station in the live park", async ({ page }) => {
   await expect(page.locator("[data-track] li")).toContainText(["Station"]);
 });
 
+test("keyboard shortcuts queue in order while live construction validation is busy", async ({ page }) => {
+  await page.addInitScript(() => {
+    interface ConstructionMessageGate {
+      enabled: boolean;
+      sawBusy: boolean;
+      holding: boolean;
+      pending: Array<() => void>;
+      release(): void;
+    }
+    const gate: ConstructionMessageGate = {
+      enabled: true,
+      sawBusy: false,
+      holding: false,
+      pending: [],
+      release() {
+        this.enabled = false;
+        this.holding = false;
+        this.sawBusy = false;
+        for (const deliver of this.pending.splice(0)) deliver();
+      },
+    };
+    Object.assign(window, { constructionMessageGate: gate });
+    const workerPrototype = Worker.prototype as unknown as {
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions): void;
+    };
+    const originalAddEventListener = workerPrototype.addEventListener;
+    workerPrototype.addEventListener = function (this: Worker, type, listener, options): void {
+      if (type !== "message" || typeof listener !== "function") {
+        originalAddEventListener.call(this, type, listener, options);
+        return;
+      }
+      const worker = this;
+      const gatedListener: EventListener = (event) => {
+        const message = event as MessageEvent<{ type?: string; active?: boolean; complete?: boolean }>;
+        const isConstructionState = message.data?.type === "construction-state";
+        if (gate.enabled && isConstructionState && message.data.active === true && message.data.complete === false) gate.sawBusy = true;
+        if (gate.enabled && isConstructionState && (gate.holding || (gate.sawBusy && message.data.active === true && message.data.complete === true))) {
+          gate.holding = true;
+          gate.pending.push(() => listener.call(worker, event));
+        } else listener.call(worker, event);
+      };
+      originalAddEventListener.call(this, type, gatedListener, options);
+    };
+  });
+  await startPark(page, { park: "new", seed: 2026, speed: 1 });
+  await placeStation(page, { model: "hybrid", height: 12, tile: { x: 50, y: 50, z: 2 }, direction: { x: 52, y: 50, z: 2 } });
+  await page.locator("canvas").focus();
+
+  const editor = page.locator("[data-construction] [data-editor]");
+  const track = page.locator("[data-track] li");
+  const queueNotice = page.locator("[data-construction-queue]");
+  await expect(editor).toHaveAttribute("aria-busy", "true");
+  for (const key of ["h", "b", "h", "b"]) await page.keyboard.press(key);
+  await expect(queueNotice).toHaveText("4 actions queued");
+  await page.evaluate(() => (window as unknown as { constructionMessageGate: { release(): void } }).constructionMessageGate.release());
+  await expect(queueNotice).toHaveText("");
+
+  await expect(track).toHaveCount(3);
+  await expect(page.locator("[data-chain-marker]")).toHaveCount(1);
+  await expect(page.locator("[data-chain-toggle]")).toHaveAttribute("aria-pressed", "false");
+});
+
 test("player driver uses the construction steppers and actions", async ({ page }) => {
   await page.goto(fixtureUrl);
   await choosePiece(page, [{ attribute: "turn", direction: "left" }], "Small left turn");
@@ -51,11 +113,12 @@ test("player driver uses the construction steppers and actions", async ({ page }
   await testRide(page);
   await openRide(page);
   expect(await recorded(page)).toEqual([
+    { type: "piece-step", attribute: "turn", step: 1 },
     { type: "construction-select", piece: "TurnSmallStandalone", exact: true },
     { type: "construction-append" },
     { type: "construction-close" },
     { type: "construction-test" },
-    { type: "construction-set-open", open: true },
+    { type: "construction-open-toggle" },
   ]);
 });
 
@@ -79,7 +142,7 @@ test("opens and closes a completed coaster", async ({ page }) => {
   await open.click();
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ isOpen: true }));
   await page.getByRole("button", { name: "Close coaster" }).click();
-  expect(await recorded(page)).toEqual([{ type: "construction-set-open", open: true }, { type: "construction-set-open", open: false }]);
+  expect(await recorded(page)).toEqual([{ type: "construction-open-toggle" }, { type: "construction-open-toggle" }]);
 });
 
 test("construction controls dispatch actions with the keyboard and reflect worker validity", async ({ page }) => {
@@ -228,8 +291,8 @@ test("the chain lift toggle asks for the opposite of the worker's chain state an
   await chain.click();
   await page.keyboard.press("h");
   expect(await recorded(page)).toEqual([
-    { type: "construction-set-chain", enabled: true },
-    { type: "construction-set-chain", enabled: false },
+    { type: "chain-toggle" },
+    { type: "chain-toggle" },
     { type: "chain-toggle" },
   ]);
 });

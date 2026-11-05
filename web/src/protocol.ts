@@ -14,6 +14,7 @@ export type { PathPosition };
 export type PathAction = PathToolCommand;
 export type WorkerAction =
   | { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
+  | { type: "construction-input-barrier" }
   | { type: "export-session"; requestId: number }
   | { type: "construction-finish-await" } | { type: "test-resume" } | { type: "guest-detail-close" }
   | { type: "set-speed"; speed: number }
@@ -29,6 +30,7 @@ export type WorkerAction =
 export type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array; coasterColors?: CoasterColorScheme | null; coasterTrain?: TrainLayout | null };
 export type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array; trainStates: Float32Array; constructionTrainStates: Float32Array; constructionRiders: Uint32Array };
 export type WorkerMessage =
+  | { type: "construction-input-barrier" }
   | { type: "session-export"; requestId: number; recording: WorkerRecording }
   | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
   | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "test-resumed" } | { type: "construction-finish-ready" }
