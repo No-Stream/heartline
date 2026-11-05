@@ -403,15 +403,27 @@ test("the builder keeps every piece choice on the Build tab and settings on Colo
 
 test("testing panel shows an all-clear for a report without notes", async ({ page }) => {
   await page.goto(fixtureUrl);
-  await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({ samples: [], notes: [], proximityEvents: [], rating: { excitement: 20, intensity: 30, nausea: 5 } }));
+  await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({ samples: [], notes: [], proximityEvents: [], rating: { excitement: 2, intensity: 3, nausea: 0.5 }, statistics: {
+    ejectorAirtimeSeconds: 0, floaterAirtimeSeconds: 0, airtimeMoments: 0, strongPositiveGSeconds: 0,
+    longestStrongPositiveGSeconds: 0, strongLateralGSeconds: 0, maxPositiveVerticalG: 0, maxNegativeVerticalG: 0,
+    maxLateralG: 0, maxForwardG: 0, maxBrakingG: 0, maxSpeed: 0, averageSpeed: 0, durationSeconds: 0,
+    trackLength: 0, maxHeight: 0, biggestDrop: 0, steepestDropAngleDegrees: 0, inversions: 0,
+    invertedSeconds: 0, drops: 0, launches: 0, launchPeakSpeed: 0,
+  }, breakdown: { excitement: [], intensity: [], nausea: [] } }));
   await expect(page.locator("[data-notes]")).toHaveText("No concerns were noted during this test.");
-  await expect(page.locator("[data-rating]")).toHaveText("Excitement: 20.0 · Intensity: 30.0 · Nausea: 5.0");
+  await expect(page.locator("[data-rating]")).toHaveText("Excitement: 2.0 · Intensity: 3.0 · Nausea: 0.5");
 });
 
 test("testing panel groups proximity events and shows their excitement contribution", async ({ page }) => {
   await page.goto(fixtureUrl);
   await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({
-    samples: [], notes: [], rating: { excitement: 35, intensity: 30, nausea: 5 }, proximityEvents: [
+    samples: [], notes: [], rating: { excitement: 3.5, intensity: 3, nausea: 0.5 }, statistics: {
+      ejectorAirtimeSeconds: 0, floaterAirtimeSeconds: 0, airtimeMoments: 0, strongPositiveGSeconds: 0,
+      longestStrongPositiveGSeconds: 0, strongLateralGSeconds: 0, maxPositiveVerticalG: 0, maxNegativeVerticalG: 0,
+      maxLateralG: 0, maxForwardG: 0, maxBrakingG: 0, maxSpeed: 0, averageSpeed: 0, durationSeconds: 0,
+      trackLength: 0, maxHeight: 0, biggestDrop: 0, steepestDropAngleDegrees: 0, inversions: 0,
+      invertedSeconds: 0, drops: 0, launches: 0, launchPeakSpeed: 0,
+    }, breakdown: { excitement: [{ term: "proximity", value: 0.2, measure: 1.7, unit: "", location: undefined }], intensity: [], nausea: [] }, proximityEvents: [
       { kind: "nearMiss", pieceIndex: 13, distance: 14, x: 2, y: 3, z: 1, strength: 0.8 },
       { kind: "nearMiss", pieceIndex: 8, distance: 9, x: 3, y: 3, z: 1, strength: 0.5 },
       { kind: "dueling", pieceIndex: 7, distance: 8, x: 4, y: 3, z: 1, strength: 0.4 },
@@ -422,5 +434,51 @@ test("testing panel groups proximity events and shows their excitement contribut
   await expect(events).toContainText("Near-miss with the coaster's supports (2)");
   await expect(events).toContainText("Dueling trains (1)");
   await expect(events).toContainText("piece 14, very close");
-  await expect(events).toContainText("Added 2.4 excitement from proximity events.");
+  await expect(events).toContainText("Added 0.2 excitement from proximity events.");
+  await expect(page.locator("[data-statistics]")).toBeVisible();
+  await expect(page.locator("[data-statistics] h4")).toHaveText([
+    "Scores (about 0–10)",
+    "Airtime",
+    "Forces",
+    "Speed and layout",
+  ]);
+  await expect(page.locator("[data-statistics-airtime] li")).toHaveText([
+    "Ejector airtime: 0.0 s",
+    "Floater airtime: 0.0 s",
+    "Airtime moments: 0",
+  ]);
+});
+
+test("testing panel sorts score contributions and inspects a located penalty @fast", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({
+    samples: [], notes: [], proximityEvents: [],
+    rating: { excitement: 4.2, intensity: 3.1, nausea: 0.8 },
+    statistics: {
+      ejectorAirtimeSeconds: 0, floaterAirtimeSeconds: 0, airtimeMoments: 0, strongPositiveGSeconds: 0,
+      longestStrongPositiveGSeconds: 0, strongLateralGSeconds: 0, maxPositiveVerticalG: 0, maxNegativeVerticalG: 0,
+      maxLateralG: 0, maxForwardG: 0, maxBrakingG: 0, maxSpeed: 0, averageSpeed: 0, durationSeconds: 0,
+      trackLength: 0, maxHeight: 0, biggestDrop: 0, steepestDropAngleDegrees: 0, inversions: 0,
+      invertedSeconds: 0, drops: 0, launches: 0, launchPeakSpeed: 0,
+    },
+    breakdown: {
+      excitement: [
+        { term: "airtime", value: 0.5, measure: 1.2, unit: "s", location: undefined },
+        { term: "envelope", value: -1.2, measure: 0.5, unit: "g-s", location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 }, forceDetail: { axis: "vertical", measuredValue: 5, limit: 4, unit: "g", durationSeconds: 2.4, carIndex: 0, location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 } } },
+      ],
+      intensity: [],
+      nausea: [],
+    },
+  }));
+
+  const excitement = page.locator('[data-score-breakdown="excitement"]');
+  await expect(page.locator("[data-score-averaging]")).toHaveText("Contributions and their scoring inputs are averaged across cars. Force details show individual cars; car 1 is the front car.");
+  await expect(excitement.locator("li")).toHaveText([
+    "Forces above the ASTM comfort envelope (−1.2): vertical force magnitude 5.0 g, limit 4.0 g at Loop, 656 ft; 2.4 s above the envelope for car 1 during the test",
+    "Ejector airtime (+0.5, 1.2 weighted seconds)",
+  ]);
+  await excitement.getByRole("button").first().click();
+  await expect(page.locator("[data-inspection]")).toHaveText("Selected score location: Loop · 656 ft · 8.0 s");
+  expect(await page.evaluate(() => (window as unknown as { selectedScoreLocation(): object }).selectedScoreLocation()))
+    .toEqual({ pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 });
 });

@@ -347,15 +347,16 @@ impl ParkFacilities {
                 {
                     return None;
                 }
-                let (kind, capacity, duration_ticks, intensity, ride_type) = match building.kind {
-                    FacilityKind::Entrance => return None,
-                    FacilityKind::Food => (PlaceKind::Food, 4, 600, 0, 0),
-                    FacilityKind::Drink => (PlaceKind::Drink, 4, 300, 0, 0),
-                    FacilityKind::Restroom => (PlaceKind::Restroom, 4, 450, 0, 0),
-                    FacilityKind::Souvenir => (PlaceKind::Souvenir, 4, 450, 0, 0),
-                    FacilityKind::Carousel => (PlaceKind::Ride, 12, 1800, 15, 0),
-                    FacilityKind::FerrisWheel => (PlaceKind::Ride, 16, 2400, 25, 1),
-                };
+                let (kind, capacity, duration_ticks, intensity, nausea, ride_type) =
+                    match building.kind {
+                        FacilityKind::Entrance => return None,
+                        FacilityKind::Food => (PlaceKind::Food, 4, 600, 0, 0, 0),
+                        FacilityKind::Drink => (PlaceKind::Drink, 4, 300, 0, 0, 0),
+                        FacilityKind::Restroom => (PlaceKind::Restroom, 4, 450, 0, 0, 0),
+                        FacilityKind::Souvenir => (PlaceKind::Souvenir, 4, 450, 0, 0, 0),
+                        FacilityKind::Carousel => (PlaceKind::Ride, 12, 1800, 15, 10, 0),
+                        FacilityKind::FerrisWheel => (PlaceKind::Ride, 16, 2400, 25, 5, 1),
+                    };
                 Some(Facility {
                     exit_position: access.exit_position,
                     place: KnownPlace {
@@ -368,6 +369,7 @@ impl ParkFacilities {
                             _ => 0,
                         },
                         intensity,
+                        nausea,
                         ride_type,
                         theme: 0,
                         price: building.price,
@@ -1372,6 +1374,14 @@ mod tests {
                 .place(&world, kind, position, Direction::North)
                 .unwrap();
             let facility = park.guest_facilities(&world)[0];
+            assert_eq!(
+                facility.place.nausea,
+                match kind {
+                    FacilityKind::Carousel => 10,
+                    FacilityKind::FerrisWheel => 5,
+                    _ => unreachable!(),
+                }
+            );
             let short = generated
                 .ids()
                 .find(|&guest| generated.height_cm(guest) < facility.place.minimum_height_cm)
@@ -1998,6 +2008,7 @@ pub fn coaster_facility(
     construction: &crate::track::construction::Construction,
     id: u32,
     price: u16,
+    ratings: Option<(u8, u8)>,
 ) -> Option<Facility> {
     if !construction.is_closed() {
         return None;
@@ -2008,6 +2019,7 @@ pub fn coaster_facility(
         .find(|piece| piece.id == crate::track::PieceId::Station)?;
     let (position, exit) = station_access(world, station)?;
     let model = construction.model();
+    let (intensity, nausea) = ratings.unwrap_or((50, 30));
     Some(Facility {
         place: KnownPlace {
             id,
@@ -2015,7 +2027,8 @@ pub fn coaster_facility(
             kind: PlaceKind::Ride,
             minimum_height_cm: u8::try_from(model.minimum_height_cm)
                 .expect("coaster height limit exceeds guest height representation"),
-            intensity: 50,
+            intensity,
+            nausea,
             ride_type: 2,
             theme: 0,
             price,

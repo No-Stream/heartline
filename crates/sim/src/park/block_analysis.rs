@@ -121,6 +121,7 @@ impl Park {
             construction,
             COASTER_PLACE_ID,
             self.coaster_price,
+            self.coaster_ratings,
         ) else {
             return Err(BlockCommandError::MissingStationAccess);
         };
@@ -143,11 +144,16 @@ impl Park {
             );
             self.block_baseline_validation = true;
         }
-        let operation = BlockOperation::new(
+        let operation = BlockOperation::new_with_limits(
             self.block_layout
                 .as_ref()
                 .expect("open coaster has a block layout")
                 .clone(),
+            self.construction
+                .as_ref()
+                .expect("open coaster has construction")
+                .model()
+                .comfortable_force_limits,
         );
         self.coaster_operation = Some(operation);
         self.coaster_facility = Some(facility);
@@ -206,7 +212,13 @@ impl Park {
         };
         if self.coaster_open {
             self.recover_live_trains();
-            self.coaster_operation = Some(BlockOperation::new(layout.clone()));
+            let limits = self
+                .construction
+                .as_ref()
+                .expect("open coaster has construction")
+                .model()
+                .comfortable_force_limits;
+            self.coaster_operation = Some(BlockOperation::new_with_limits(layout.clone(), limits));
         }
         self.block_layout = Some(layout);
         self.block_layout_is_automatic = automatic;

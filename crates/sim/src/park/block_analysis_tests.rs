@@ -2,7 +2,9 @@ use super::super::Park;
 use super::{BlockCommandError, block_physics_config};
 use crate::facilities::{ParkFacilities, coaster_access_openings, coaster_facility};
 use crate::guests::park::ParkGuests;
-use crate::physics::{Circuit, PhysicsConfig, Train};
+use crate::physics::{
+    CarReading, Circuit, ConstructionTestRunRecorder, GForces, PhysicsConfig, Train,
+};
 use crate::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch, brake_runs};
 use crate::track::construction::Construction;
 use crate::track::{PieceId, TrackState, TrainConfiguration, hybrid_model};
@@ -287,6 +289,113 @@ fn manual_layout_installation_waits_until_active_train_is_gone() {
 }
 
 #[test]
+fn installing_a_live_layout_preserves_the_coaster_model_force_limits() {
+    let mut park = block_test_park();
+    let layout = unverified_layout(&park);
+    let limits = park
+        .construction
+        .as_ref()
+        .unwrap()
+        .model()
+        .comfortable_force_limits;
+    park.coaster_open = true;
+    park.install_block_layout(layout.clone(), false);
+
+    let expected = crate::physics::BlockOperation::new_with_limits(layout, limits);
+    assert_eq!(
+        park.coaster_operation.as_ref().unwrap().state_hash(),
+        expected.state_hash()
+    );
+}
+
+#[test]
+fn coaster_facility_uses_and_preserves_the_latest_front_car_ratings() {
+    let mut park = block_test_park();
+    let station = park
+        .construction
+        .as_ref()
+        .unwrap()
+        .pieces()
+        .iter()
+        .find(|piece| piece.kind == crate::track::PieceKind::Station)
+        .unwrap();
+    let (queue, exit) = crate::facilities::station_positions(station).unwrap();
+    for (position, kind) in [(queue, PathKind::Queue), (exit, PathKind::Normal)] {
+        park.world.set_surface(
+            position.x,
+            position.y,
+            Surface {
+                corners: [position.height; 4],
+                water: None,
+            },
+        );
+        park.world
+            .build_path_route(position, position, kind, 0)
+            .unwrap();
+    }
+
+    expect_command_success(park.construction_set_open(true));
+    let default_facility = park.coaster_facility.unwrap();
+    assert_eq!(default_facility.place.intensity, 50);
+    assert_eq!(default_facility.place.nausea, 30);
+    expect_command_success(park.construction_set_open(false));
+
+    let (circuit, _) = construction_inputs(&park);
+    let mut model = crate::track::hybrid_model();
+    model.train.cars = 2;
+    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+        &circuit,
+        &model.train,
+        model.comfortable_force_limits,
+    );
+    let mut distance = 0.0;
+    while distance < circuit.length() {
+        let sample = circuit.sample(distance);
+        let reading = |vertical| CarReading {
+            distance,
+            speed: 20.0,
+            g: GForces {
+                vertical,
+                lateral: 0.0,
+                longitudinal: 0.0,
+            },
+            airtime: vertical < 0.0,
+            height_m: sample.position.z,
+            inverted: sample.up.z < 0.0,
+            roll: sample.roll,
+            piece_index: circuit.piece_index(distance),
+        };
+        recorder.record(&[vec![reading(1.0), reading(5.0)]]);
+        distance += 1.0;
+    }
+    let (averaged_report, front_car_report) = recorder.finish_with_front_car(true, false);
+    assert_ne!(
+        crate::guests::knowledge::guest_rating(averaged_report.intensity),
+        crate::guests::knowledge::guest_rating(front_car_report.intensity)
+    );
+    assert_ne!(
+        crate::guests::knowledge::guest_rating(averaged_report.nausea),
+        crate::guests::knowledge::guest_rating(front_car_report.nausea)
+    );
+    park.construction_report = Some(averaged_report);
+    park.remember_front_car_ratings(&front_car_report);
+    let expected_intensity = crate::guests::knowledge::guest_rating(front_car_report.intensity);
+    let expected_nausea = crate::guests::knowledge::guest_rating(front_car_report.nausea);
+
+    expect_command_success(park.construction_set_open(true));
+    assert!(park.construction_report.is_none());
+    let facility = park.coaster_facility.unwrap();
+    assert_eq!(facility.place.intensity, expected_intensity);
+    assert_eq!(facility.place.nausea, expected_nausea);
+
+    expect_command_success(park.construction_set_open(false));
+    expect_command_success(park.construction_set_open(true));
+    let rebuilt_facility = park.coaster_facility.unwrap();
+    assert_eq!(rebuilt_facility.place.intensity, expected_intensity);
+    assert_eq!(rebuilt_facility.place.nausea, expected_nausea);
+}
+
+#[test]
 fn throughput_is_cached_and_clear_resets_analysis_state() {
     let mut park = block_test_park();
     let layout = unverified_layout(&park);
@@ -441,7 +550,8 @@ fn cars_per_train_controls_physics_and_station_capacity() {
     for (cars, capacity) in [(4, 16), (8, 32)] {
         park.construction_set_cars_per_train(cars).unwrap();
         let construction = park.construction.as_ref().unwrap();
-        let facility = coaster_facility(&park.world, construction, 1, 0).unwrap();
+        let facility =
+            coaster_facility(&park.world, construction, 1, 0, park.coaster_ratings).unwrap();
         assert_eq!(facility.capacity, capacity);
 
         let circuit = construction.circuit().unwrap();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProximityMarkers, buildTestingRibbon, formatConstructionEstimate, formatProximityEvent, formatSample, formatTestingNote, overlaySamples, proximityContribution, summarizeRideHeights, type ProximityEvent, type TestingSample } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, formatConstructionEstimate, formatContribution, formatProximityEvent, formatRideRating, formatRideStatistics, formatSample, formatTestingNote, overlaySamples, proximityContribution, scoreTermLabels, summarizeRideHeights, type ProximityEvent, type RideStatistics, type TestingSample } from "./coaster-testing";
 import type { WorldView } from "./render/scene";
 import { LIMIT_BAND_COLORS } from "./force-overlay";
 
@@ -15,8 +15,133 @@ const proximityEvents: ProximityEvent[] = [
   { kind: "nearMiss", pieceIndex: 13, distance: 14, x: 2, y: 3, z: 1, strength: 0.8 },
   { kind: "dueling", pieceIndex: 7, distance: 8, x: 3, y: 3, z: 1, strength: 0.4 },
 ];
+const statistics: RideStatistics = {
+  ejectorAirtimeSeconds: 2.25,
+  floaterAirtimeSeconds: 3.5,
+  airtimeMoments: 4,
+  strongPositiveGSeconds: 1.2,
+  longestStrongPositiveGSeconds: 0.7,
+  strongLateralGSeconds: 0.4,
+  maxPositiveVerticalG: 4.1,
+  maxNegativeVerticalG: -0.8,
+  maxLateralG: 1.4,
+  maxForwardG: 1.1,
+  maxBrakingG: 0.6,
+  maxSpeed: 28,
+  averageSpeed: 14,
+  durationSeconds: 42.5,
+  trackLength: 650,
+  maxHeight: 32,
+  biggestDrop: 25,
+  steepestDropAngleDegrees: 52.3,
+  inversions: 2,
+  invertedSeconds: 3.1,
+  drops: 5,
+  launches: 1,
+  launchPeakSpeed: 24,
+};
 
 describe("coaster testing overlay", () => {
+  it("formats ride scores with one decimal on the soft ten-point scale", () => {
+    expect(formatRideRating({ excitement: 5.14, intensity: 7.06, nausea: 0.34 })).toBe(
+      "Excitement: 5.1 · Intensity: 7.1 · Nausea: 0.3",
+    );
+  });
+
+  it("labels every score term and formats contribution units and locations", () => {
+    const terms = [
+      "excitementFloor", "airtime", "positiveForces", "laterals", "longitudinalForces", "excessiveForces", "airtimeMoments",
+      "inversions", "topSpeed", "biggestDrop", "pace", "launch", "variety", "whip", "rollRate", "fastRolls",
+      "rideTime", "shortRide", "proximity", "theming", "deadTime", "envelope", "sickening", "peakForce",
+      "sustainedForce", "reversals", "greyOut", "timeInverted",
+    ];
+    for (const term of terms) expect(scoreTermLabels).toHaveProperty(term);
+
+    expect(formatContribution({ term: "airtime", value: 2.1, measure: 7.6, unit: "s", location: undefined }, "metric"))
+      .toBe("Ejector airtime (+2.1, 7.6 weighted seconds)");
+    expect(formatContribution({ term: "positiveForces", value: 0.3, measure: 2, unit: "s", location: undefined }, "metric"))
+      .toBe("Positive forces (+0.3, 2.0 weighted seconds)");
+    expect(formatContribution({ term: "sustainedForce", value: 0.3, measure: 2, unit: "s", location: undefined }, "metric"))
+      .toBe("Sustained force (+0.3, 2.0 weighted seconds across force bands)");
+    expect(formatContribution({ term: "peakForce", value: 0.3, measure: 1.2, unit: "", location: undefined }, "metric"))
+      .toBe("Peak force (+0.3, 1.2 times the scoring reference)");
+    expect(formatContribution({ term: "peakForce", value: 0.3, measure: 1.2, unit: "", location: undefined,
+      forceDetails: [{ axis: "peakLateral", measuredValue: 3.6, limit: 3, unit: "g", carIndex: 1, location: { pieceIndex: 1, pieceName: "Turn", distance: 20, seconds: 4 } }],
+    }, "metric")).toBe("Peak force (+0.3): lateral force magnitude 3.6 g, scoring reference 3.0 g at Turn, 20 m for car 2");
+    expect(formatContribution({ term: "launch", value: 0.7, measure: 1.5, unit: "g", location: undefined,
+      forceDetails: [{ axis: "launchForward", measuredValue: 1.5, limit: 0, unit: "g", carIndex: 1, location: { pieceIndex: 1, pieceName: "Turn", distance: 20, seconds: 4 } }],
+    }, "metric")).toBe("Launch (+0.7): maximum forward force 1.5 g for car 2 at Turn, 20 m");
+    expect(formatContribution({
+      term: "airtime", value: 2.1, measure: 1.65, unit: "s", location: undefined,
+      forceDetails: [{ axis: "airtimeGood", measuredValue: 0.8, limit: 0.2, unit: "g", durationSeconds: 3, weight: 0.55, carIndex: 1, location: { pieceIndex: 0, pieceName: "Hill", distance: 10, seconds: 2 } }],
+    }, "metric")).toBe("Ejector airtime (+2.1, 1.6 weighted seconds): good airtime starts above 0.2 g; peak magnitude 0.8 g at Hill, 10 m; 3.0 s in this band for car 2 during the test (55% counts toward the score input)");
+    expect(formatContribution({
+      term: "sustainedForce", value: 0.8, measure: 2, unit: "s", location: undefined,
+      forceDetails: [{ axis: "lateralStrong", measuredValue: 2, limit: 0.9, unit: "g", durationSeconds: 2, weight: 1, location: { pieceIndex: 1, pieceName: "Turn", distance: 20, seconds: 4 } }],
+    }, "imperial")).toContain("strong or excessive lateral force starts above 0.9 g; peak magnitude 2.0 g at Turn, 66 ft; 2.0 s in this band for this car during the test");
+    expect(formatContribution({ term: "excitementFloor", value: 0.5, measure: 0.5, unit: "", location: undefined }, "metric"))
+      .toBe("Excitement floor (+0.5, 0.5)");
+    expect(formatContribution({ term: "topSpeed", value: 0.7, measure: 20, unit: "m/s", location: undefined }, "imperial"))
+      .toBe("Top speed (+0.7): 44.7 mph above the scoring threshold");
+    expect(formatContribution({ term: "pace", value: 0.7, measure: 5, unit: "m/s", location: undefined }, "metric"))
+      .toBe("Pace (+0.7): 18 km/h above the scoring threshold");
+    expect(formatContribution({ term: "rollRate", value: 0.7, measure: 20, unit: "degrees/s", location: undefined }, "metric"))
+      .toBe("Roll rate (+0.7): 20.0 degrees/s above the scoring threshold");
+    expect(formatContribution({ term: "inversions", value: 0.7, measure: 1.5, unit: "", location: undefined }, "metric"))
+      .toBe("Inversions (+0.7, weighted inversion count 1.5)");
+    expect(formatContribution({ term: "variety", value: 0.3, measure: 2, unit: "", location: undefined }, "metric"))
+      .toBe("Variety (+0.3, 2.0 additional element types)");
+    expect(formatContribution({ term: "deadTime", value: -0.3, measure: 2, unit: "s", location: undefined }, "metric"))
+      .toBe("Dead time (−0.3, 2.0 s beyond the allowance for uneventful sections)");
+    expect(formatContribution({ term: "proximity", value: 0.3, measure: 2, unit: "", location: undefined }, "metric"))
+      .toBe("Proximity (+0.3, total event strength 2.0)");
+    expect(formatContribution({ term: "whip", value: 0.3, measure: 2, unit: "", location: undefined }, "metric"))
+      .toBe("Whip (+0.3, 2.0 rapid vertical force changes)");
+    expect(formatContribution({ term: "launch", value: 0.7, measure: 1.5, unit: "g", location: undefined }, "metric"))
+      .toBe("Launch (+0.7): maximum forward force if the ride has a launch, 1.5 g");
+    expect(formatContribution({
+      term: "envelope", value: -1.2, measure: 0.5, unit: "g-s",
+      location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 },
+      forceDetail: { axis: "vertical", measuredValue: 5, limit: 4, unit: "g", durationSeconds: 2.4, carIndex: 0, location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 } },
+    }, "imperial")).toBe("Forces above the ASTM comfort envelope (−1.2): vertical force magnitude 5.0 g, limit 4.0 g at Loop, 656 ft; 2.4 s above the envelope for car 1 during the test");
+    expect(formatContribution({
+      term: "envelope", value: 0.4, measure: 0.2, unit: "g-s",
+      location: { pieceIndex: 0, pieceName: "Turn", distance: 10, seconds: 2 },
+      forceDetail: { axis: "verticalLateral", measuredValue: 1.2, limit: 1, unit: "ratio", durationSeconds: 0.8, location: { pieceIndex: 0, pieceName: "Turn", distance: 10, seconds: 2 } },
+    }, "metric")).toBe("Forces above the ASTM comfort envelope (+0.4): combined vertical and lateral force level 1.2 times its limit (limit 1.0) at Turn, 10 m; 0.8 s above the envelope for this car during the test");
+    expect(formatContribution({
+      term: "envelope", value: -0.3, measure: 0.2, unit: "g-s", location: undefined,
+      forceDetail: { axis: "onset", measuredValue: 18, limit: 15, unit: "g/s", durationSeconds: 0.1, location: { pieceIndex: 0, pieceName: "Hill", distance: 10, seconds: 2 } },
+    }, "metric")).toContain("vertical force increase 18.0 g per second, limit 15.0 g per second");
+    expect(formatContribution({ term: "envelope", value: -0.3, measure: 0.2, unit: "g-s", location: undefined }, "metric"))
+      .toBe("Forces above the ASTM comfort envelope (−0.3)");
+    expect(formatContribution({
+      term: "excessiveForces", value: -1, measure: 3, unit: "s", location: undefined,
+      forceDetails: [
+        { axis: "vertical", measuredValue: 5, limit: 4, unit: "g", durationSeconds: 2, dangerousSeconds: 0.5, carIndex: 1, location: { pieceIndex: 0, pieceName: "Hill", distance: 10, seconds: 2 } },
+        { axis: "lateral", measuredValue: 2, limit: 1.5, unit: "g", durationSeconds: 1, location: { pieceIndex: 1, pieceName: "Turn", distance: 20, seconds: 4 } },
+      ],
+    }, "metric")).toBe("Excessive forces (−1.0): positive vertical force 5.0 g, limit 4.0 g at Hill, 10 m; 2.0 s above this limit for car 2 during the test (0.5 s in the dangerous band counts twice in scoring). Lateral force magnitude 2.0 g, limit 1.5 g at Turn, 20 m; 1.0 s above this limit for this car during the test");
+  });
+
+  it("formats the ride statistics in metric and imperial units", () => {
+    const metric = formatRideStatistics(statistics, "metric");
+    const imperial = formatRideStatistics(statistics, "imperial");
+
+    expect(metric.airtime).toEqual(["Ejector airtime: 2.3 s", "Floater airtime: 3.5 s", "Airtime moments: 4"]);
+    expect(metric.forces).toContain("Strong positive g: 1.2 s (longest 0.7 s)");
+    expect(metric.forces).toContain("Max negative vertical: −0.8 g");
+    expect(metric.speedAndLayout).toContain("Max speed: 100.8 km/h");
+    expect(metric.speedAndLayout).toContain("Track length: 650 m");
+    expect(metric.speedAndLayout).toContain("Biggest drop: 25 m");
+    expect(metric.speedAndLayout).toContain("Launches: 1 (peak 86.4 km/h)");
+    expect(imperial.speedAndLayout).toContain("Max speed: 62.6 mph");
+    expect(imperial.speedAndLayout).toContain("Track length: 2,133 ft");
+    expect(imperial.speedAndLayout).toContain("Max height: 105 ft");
+    expect(imperial.speedAndLayout).toContain("Launches: 1 (peak 53.7 mph)");
+    expect(formatRideStatistics({ ...statistics, launches: 0 }, "metric").speedAndLayout.at(-1)).toBe("Launches: 0 (peak —)");
+  });
+
   it("uses measured samples when available and otherwise shows the construction estimate", () => {
     expect(overlaySamples(samples, [samples[0]])).toBe(samples);
     const estimate = [samples[1], samples[2]];
@@ -56,7 +181,7 @@ describe("coaster testing overlay", () => {
   it("describes proximity events and calculates their excitement contribution", () => {
     expect(formatProximityEvent(proximityEvents[0])).toBe("Near-miss with the coaster's supports at piece 14, very close");
     expect(formatProximityEvent(proximityEvents[1])).toBe("Dueling trains at piece 8, close");
-    expect(proximityContribution(proximityEvents)).toBeCloseTo(8 * 1.2 / 5.2);
+    expect(proximityContribution(proximityEvents)).toBeCloseTo(0.8 * 1.2 / 5.2);
   });
 
   it("places pickable, theme-coloured markers at each event location", () => {
@@ -86,22 +211,36 @@ describe("coaster testing overlay", () => {
     }
   });
 
+  it("highlights the ribbon segment nearest a selected score location", () => {
+    const quads = buildTestingRibbon(samples, "speed", camera, viewport, style, 1.25);
+    const unselectedQuads = buildTestingRibbon(samples, "speed", camera, viewport, style);
+    const selected = quads[1];
+
+    expect(quads.map(({ id }) => id)).toEqual(["testing-0", "testing-1"]);
+    expect(selected.color).toEqual([33 / 255, 21 / 255, 25 / 255, 1]);
+    const segmentWidth = (quad: typeof selected): number => Math.hypot(
+      quad.vertices[0].x - quad.vertices[3].x,
+      quad.vertices[0].y - quad.vertices[3].y,
+    );
+    expect(segmentWidth(selected)).toBeGreaterThan(segmentWidth(unselectedQuads[1]));
+  });
+
   it("marks force-limit violations on the corresponding force ribbon", () => {
     const limits = { minimumVerticalG: -1, maximumVerticalG: 4, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
     const readings = [{ ...samples[0], verticalG: -2, lateralG: 2 }, samples[1], samples[2]];
-    const vertical = buildTestingRibbon(readings, "verticalG", camera, viewport, style, limits);
-    const lateral = buildTestingRibbon(readings, "lateralG", camera, viewport, style, limits);
+    const vertical = buildTestingRibbon(readings, "verticalG", camera, viewport, style, undefined, limits);
+    const lateral = buildTestingRibbon(readings, "lateralG", camera, viewport, style, undefined, limits);
     expect(vertical[0].color).toEqual([0.85, 0.1, 0.1, 1]);
     expect(lateral[0].color).toEqual(vertical[0].color);
     expect(vertical[1].color).not.toEqual(vertical[0].color);
-    expect(buildTestingRibbon(readings, "speed", camera, viewport, style, limits)[0].color).not.toEqual(vertical[0].color);
-    expect(buildTestingRibbon(readings, "longitudinalG", camera, viewport, style, limits)[0].color).not.toEqual(vertical[0].color);
+    expect(buildTestingRibbon(readings, "speed", camera, viewport, style, undefined, limits)[0].color).not.toEqual(vertical[0].color);
+    expect(buildTestingRibbon(readings, "longitudinalG", camera, viewport, style, undefined, limits)[0].color).not.toEqual(vertical[0].color);
   });
 
   it("colours limit closeness by band and outlines stretches past a limit in ink", () => {
     const limits = { minimumVerticalG: -1.5, maximumVerticalG: 5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
     const at = (distance: number, verticalG: number): TestingSample => ({ ...samples[0], distance, x: 2 + distance, verticalG, lateralG: 0 });
-    const quads = buildTestingRibbon([at(0, 1), at(1, 1), at(2, -1.3), at(3, -1.3), at(4, 6)], "limitCloseness", camera, viewport, style, limits);
+    const quads = buildTestingRibbon([at(0, 1), at(1, 1), at(2, -1.3), at(3, -1.3), at(4, 6)], "limitCloseness", camera, viewport, style, undefined, limits);
     const colorOf = (hex: string): number[] => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255).concat(1);
     expect(quads.map((quad) => quad.color)).toEqual([
       colorOf(LIMIT_BAND_COLORS.comfortable), colorOf(LIMIT_BAND_COLORS.near), colorOf(LIMIT_BAND_COLORS.near),
@@ -113,6 +252,17 @@ describe("coaster testing overlay", () => {
 
   it("does not connect unrecorded parts of the circuit", () => {
     expect(buildTestingRibbon([samples[0], { ...samples[2], distance: 8 }], "speed", camera, viewport, style)).toHaveLength(0);
+  });
+
+  it("does not draw a ribbon segment across the circuit distance wrap", () => {
+    const wrappedSamples = [
+      { ...samples[0], distance: 9 },
+      { ...samples[1], distance: 0 },
+      { ...samples[2], distance: 1 },
+    ];
+
+    expect(buildTestingRibbon(wrappedSamples, "speed", camera, viewport, style).map(({ id }) => id))
+      .toEqual(["testing-1"]);
   });
 
   it("skips stationary samples and describes forces and airtime", () => {
@@ -147,6 +297,10 @@ describe("coaster testing overlay", () => {
   });
 
   it("formats measured values in ride testing notes using the selected units", () => {
+    expect(formatTestingNote(
+      "At Loop (200.0 m along the track), vertical force magnitude was 5.0 g, above the 4.0 g limit. High forces exceeded the estimated ASTM F2291 comfort envelope for 2.4 s total during this car's ride. Lower speeds or gentler transitions can improve comfort.",
+      "imperial",
+    )).toBe("At Loop (656 ft along the track), vertical force magnitude was 5.0 g, above the 4.0 g limit. High forces exceeded the estimated ASTM F2291 comfort envelope for 2.4 s total during this car's ride. Lower speeds or gentler transitions can improve comfort.");
     expect(formatTestingNote(
       "The train could not finish the circuit after travelling 12.0 m. Add a lift or launch, or shorten the circuit.",
       "imperial",

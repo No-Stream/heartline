@@ -29,7 +29,9 @@ use theme_park_sim::park::{DemoCoaster, Park};
 use theme_park_sim::park_guests::ParkGuests;
 #[cfg(test)]
 use theme_park_sim::physics::BlockOperation;
-use theme_park_sim::physics::{Circuit, PhysicsConfig, TestRunRecorder, Train, demo_circuit};
+use theme_park_sim::physics::{
+    Circuit, ConstructionTestRunRecorder, PhysicsConfig, Train, demo_circuit,
+};
 #[cfg(test)]
 use theme_park_sim::track::blocks::ThroughputEstimator;
 use theme_park_sim::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch};

@@ -2,7 +2,8 @@ import { expect, test } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import { readCircuit } from "../player/circuits";
 import { fileURLToPath } from "node:url";
-import { clickCanvas, closeCircuit, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, selectUnits, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
+import { clickCanvas, closeCircuit, legacyRideRating, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, selectUnits, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
+import { expectRideReportExplained } from "../player/ride-report";
 import { parseReplaySession } from "../../src/session-replay";
 
 test("Timber Tumbler player journey @journey", async ({ page }) => {
@@ -143,7 +144,9 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await testRide(page);
   await waitForState(page, async () => (await page.getByRole("region", { name: "Coaster construction" }).getByRole("status").textContent()) === "Train completed a lap.", { ticks: 30_000 });
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
-  await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  await expect(page.locator('[data-score-breakdown="excitement"]')).toContainText("Ejector airtime");
+  const { rating } = await expectRideReportExplained(page);
+  console.log(`Timber Tumbler ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
 

@@ -2,6 +2,21 @@ import { expect, type Locator, type Page } from "@playwright/test";
 
 export type ToolName = "Watch" | "Coaster" | "Paths" | "Landscape" | "Facilities" | "Scenery";
 
+export interface RideRating {
+  readonly excitement: number;
+  readonly intensity: number;
+  readonly nausea: number;
+}
+
+/** Convert the new scores to the previous numeric scale for calibration logs. */
+export function legacyRideRating(rating: RideRating): RideRating {
+  return {
+    excitement: rating.excitement * 10,
+    intensity: rating.intensity * 10,
+    nausea: rating.nausea * 10,
+  };
+}
+
 export async function selectUnits(page: Page, units: "imperial" | "metric"): Promise<void> {
   const toggle = page.getByRole("button", { name: "Units", exact: true });
   if ((await toggle.getAttribute("data-units")) !== units) await toggle.click();

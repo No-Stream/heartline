@@ -18,7 +18,13 @@ pub struct KnownPlace {
     pub kind: PlaceKind,
     pub minimum_height_cm: u8,
     pub intensity: u8,
+    pub nausea: u8,
     pub ride_type: u8,
     pub theme: u8,
     pub price: u16,
+}
+
+pub(crate) fn guest_rating(score: f64) -> u8 {
+    assert!(score.is_finite());
+    (score * 10.0).clamp(0.0, 100.0).round() as u8
 }

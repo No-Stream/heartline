@@ -88,6 +88,8 @@ fn speed_samples(speed: f64, length: usize) -> Vec<TestSample> {
             airtime: false,
             height_m: 0.0,
             inverted: false,
+            roll: 0.0,
+            piece_index: 0,
         })
         .collect()
 }

@@ -154,7 +154,7 @@ let lastFrameAt = performance.now();
 let testingMetric: TestingMetric | null = null;
 let testingReportJson = "";
 let constructionForcePreviewJson = "";
-const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch);
+const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch, () => renderRevision.invalidate());
 const forceOverlay = createForceOverlay(document.querySelector<HTMLElement>("[data-force-overlay]")!);
 /** Hover reaches this many CSS pixels from the coloured track. */
 const FORCE_HOVER_PIXELS = 14;
@@ -1010,6 +1010,7 @@ function frame(now: number): void {
     pathPreview: pathTool.state().preview,
     stationGhost: () => stationTool.ghost(),
     testingMetric,
+    testingHighlightDistance: testingPanel.selectedScoreLocation()?.distance,
     constructionEffects,
     staticTrack,
     builtTrack,

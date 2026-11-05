@@ -1407,10 +1407,13 @@ impl WasmSimulation {
             0.0,
             2.0,
         );
-        self.construction_recorder = Some(TestRunRecorder::for_circuit_with_train(
-            &circuit,
-            &construction.model().train,
-        ));
+        self.construction_recorder = Some(
+            ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+                &circuit,
+                &construction.model().train,
+                construction.model().comfortable_force_limits,
+            ),
+        );
         self.construction_report = None;
         self.construction_train = Some((circuit, train));
         self.recovered_station = None;
@@ -1477,6 +1480,35 @@ impl WasmSimulation {
                 excitement: report.excitement,
                 intensity: report.intensity,
                 nausea: report.nausea,
+            },
+            breakdown: (&report.breakdown).into(),
+            statistics: {
+                let stats = report.statistics;
+                crate::reports::RideStatisticsReport {
+                    ejector_airtime_seconds: stats.ejector_airtime_seconds,
+                    floater_airtime_seconds: stats.floater_airtime_seconds,
+                    airtime_moments: stats.airtime_moments,
+                    strong_positive_g_seconds: stats.strong_positive_g_seconds,
+                    longest_strong_positive_g_seconds: stats.longest_strong_positive_g_seconds,
+                    strong_lateral_g_seconds: stats.strong_lateral_g_seconds,
+                    max_positive_vertical_g: stats.max_positive_vertical_g,
+                    max_negative_vertical_g: stats.max_negative_vertical_g,
+                    max_lateral_g: stats.max_lateral_g,
+                    max_forward_g: stats.max_forward_g,
+                    max_braking_g: stats.max_braking_g,
+                    max_speed: stats.max_speed,
+                    average_speed: stats.average_speed,
+                    duration_seconds: stats.duration_seconds,
+                    track_length: stats.track_length,
+                    max_height: stats.max_height,
+                    biggest_drop: stats.biggest_drop,
+                    steepest_drop_angle_degrees: stats.steepest_drop_angle_degrees,
+                    inversions: stats.inversions,
+                    inverted_seconds: stats.inverted_seconds,
+                    drops: stats.drops,
+                    launches: stats.launches,
+                    launch_peak_speed: stats.launch_peak_speed,
+                }
             },
         })
         .expect("serialize testing report")

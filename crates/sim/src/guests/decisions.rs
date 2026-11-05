@@ -76,6 +76,7 @@ impl GuestBehavior {
             hash.write_u8(place.kind as u8);
             hash.write_u8(place.minimum_height_cm);
             hash.write_u8(place.intensity);
+            hash.write_u8(place.nausea);
             hash.write_u8(place.ride_type);
             hash.write_u8(place.theme);
             hash.write_u16(place.price);
@@ -283,6 +284,7 @@ impl GuestBehavior {
                         180 - (i32::from(guests.intensity(guest)) - i32::from(place.intensity))
                             .abs()
                             - i32::from(self.needs.nausea) * 2
+                            - i32::from(place.nausea.saturating_sub(guests.nausea_tolerance(guest)))
                             + if guests.favourite_ride_types(guest) & (1 << place.ride_type) != 0 {
                                 20
                             } else {
@@ -370,10 +372,7 @@ impl GuestBehavior {
                     Thought::DislikedRide(place.id)
                 };
                 self.rides_completed = self.rides_completed.saturating_add(1);
-                let nausea = place
-                    .intensity
-                    .saturating_sub(guests.nausea_tolerance(guest))
-                    / 4;
+                let nausea = place.nausea.saturating_sub(guests.nausea_tolerance(guest)) / 4;
                 self.needs.nausea = self.needs.nausea.saturating_add(u16::from(nausea)).min(100);
                 guests.record_memory(
                     guest,

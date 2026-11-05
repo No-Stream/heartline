@@ -34,6 +34,7 @@ fn removing_and_rebuilding_path_restores_food_visit() {
             kind: PlaceKind::Food,
             minimum_height_cm: 0,
             intensity: 0,
+            nausea: 0,
             ride_type: 0,
             theme: 0,
             price: 0,

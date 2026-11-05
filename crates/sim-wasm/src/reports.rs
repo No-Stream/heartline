@@ -1,4 +1,5 @@
 use super::*;
+use theme_park_sim::physics::{Contribution, Location, ScoreBreakdown, Term};
 
 /// Each catalog piece's centreline and up vector, in metres, in a frame where the piece enters at
 /// the origin heading along +x, for drawing piece icons.
@@ -100,12 +101,184 @@ pub(crate) struct TestingRating {
 
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RideStatisticsReport {
+    pub ejector_airtime_seconds: f64,
+    pub floater_airtime_seconds: f64,
+    pub airtime_moments: usize,
+    pub strong_positive_g_seconds: f64,
+    pub longest_strong_positive_g_seconds: f64,
+    pub strong_lateral_g_seconds: f64,
+    pub max_positive_vertical_g: f64,
+    pub max_negative_vertical_g: f64,
+    pub max_lateral_g: f64,
+    pub max_forward_g: f64,
+    pub max_braking_g: f64,
+    pub max_speed: f64,
+    pub average_speed: f64,
+    pub duration_seconds: f64,
+    pub track_length: f64,
+    pub max_height: f64,
+    pub biggest_drop: f64,
+    pub steepest_drop_angle_degrees: f64,
+    pub inversions: usize,
+    pub inverted_seconds: f64,
+    pub drops: usize,
+    pub launches: usize,
+    pub launch_peak_speed: f64,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TestingReport {
     pub samples: Vec<TestingSample>,
     pub launches: Vec<LaunchReport>,
     pub notes: Vec<String>,
     pub proximity_events: Vec<ProximityEventReport>,
     pub rating: TestingRating,
+    pub breakdown: ScoreBreakdownReport,
+    pub statistics: RideStatisticsReport,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScoreBreakdownReport {
+    pub excitement: Vec<ScoreContributionReport>,
+    pub intensity: Vec<ScoreContributionReport>,
+    pub nausea: Vec<ScoreContributionReport>,
+}
+
+impl From<&ScoreBreakdown> for ScoreBreakdownReport {
+    fn from(breakdown: &ScoreBreakdown) -> Self {
+        Self {
+            excitement: breakdown.excitement.iter().map(Into::into).collect(),
+            intensity: breakdown.intensity.iter().map(Into::into).collect(),
+            nausea: breakdown.nausea.iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScoreContributionReport {
+    pub term: String,
+    pub value: f64,
+    pub measure: f64,
+    pub unit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub location: Option<ScoreLocationReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub force_detail: Option<ScoreForceDetailReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub force_details: Option<Vec<ScoreForceDetailReport>>,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScoreForceDetailReport {
+    pub axis: String,
+    pub measured_value: f64,
+    pub limit: f64,
+    pub unit: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub duration_seconds: Option<f64>,
+    pub location: ScoreLocationReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub car_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub dangerous_seconds: Option<f64>,
+}
+
+impl From<&Contribution> for ScoreContributionReport {
+    fn from(contribution: &Contribution) -> Self {
+        Self {
+            term: score_term_key(contribution.term).to_owned(),
+            value: contribution.value,
+            measure: contribution.measure,
+            unit: contribution.term.unit().to_owned(),
+            location: contribution.location.map(Into::into),
+            force_detail: contribution.force_detail.as_ref().map(Into::into),
+            force_details: (!contribution.force_details.is_empty())
+                .then(|| contribution.force_details.iter().map(Into::into).collect()),
+        }
+    }
+}
+
+impl From<&theme_park_sim::physics::ForceDetail> for ScoreForceDetailReport {
+    fn from(detail: &theme_park_sim::physics::ForceDetail) -> Self {
+        Self {
+            axis: detail.axis.clone(),
+            measured_value: detail.measured_value,
+            limit: detail.limit,
+            unit: detail.unit.clone(),
+            duration_seconds: detail.duration_seconds,
+            location: detail.location.into(),
+            weight: detail.weight,
+            car_index: detail.car_index,
+            dangerous_seconds: detail.dangerous_seconds,
+        }
+    }
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScoreLocationReport {
+    pub piece_index: usize,
+    pub piece_name: String,
+    pub distance: f64,
+    pub seconds: f64,
+}
+
+impl From<Location> for ScoreLocationReport {
+    fn from(location: Location) -> Self {
+        Self {
+            piece_index: location.piece_index,
+            piece_name: location.piece_name.to_owned(),
+            distance: location.distance_m,
+            seconds: location.seconds_from_start,
+        }
+    }
+}
+
+fn score_term_key(term: Term) -> &'static str {
+    match term {
+        Term::Airtime => "airtime",
+        Term::PositiveForces => "positiveForces",
+        Term::Laterals => "laterals",
+        Term::LongitudinalForces => "longitudinalForces",
+        Term::ExcessiveForces => "excessiveForces",
+        Term::AirtimeMoments => "airtimeMoments",
+        Term::Inversions => "inversions",
+        Term::TopSpeed => "topSpeed",
+        Term::BiggestDrop => "biggestDrop",
+        Term::Pace => "pace",
+        Term::Launch => "launch",
+        Term::Variety => "variety",
+        Term::Whip => "whip",
+        Term::RollRate => "rollRate",
+        Term::FastRolls => "fastRolls",
+        Term::RideTime => "rideTime",
+        Term::ShortRide => "shortRide",
+        Term::Proximity => "proximity",
+        Term::Theming => "theming",
+        Term::DeadTime => "deadTime",
+        Term::Envelope => "envelope",
+        Term::Sickening => "sickening",
+        Term::ExcitementFloor => "excitementFloor",
+        Term::PeakForce => "peakForce",
+        Term::SustainedForce => "sustainedForce",
+        Term::Reversals => "reversals",
+        Term::GreyOut => "greyOut",
+        Term::TimeInverted => "timeInverted",
+    }
 }
 
 #[derive(serde::Serialize, ts_rs::TS)]
@@ -165,7 +338,16 @@ mod wire_tests {
         let output = if std::env::var_os("UPDATE_REPORT_TYPES").is_some() {
             destination.clone()
         } else {
-            std::env::temp_dir().join(format!("theme-park-report-types-{}", std::process::id()))
+            let unique_run_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let output = std::env::temp_dir().join(format!(
+                "theme-park-report-types-{}-{unique_run_id}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&output).unwrap();
+            output
         };
         // Process ids repeat (always, inside sandboxes), so a leftover folder from an earlier run would add stale files.
         if output != destination && output.exists() {
@@ -230,6 +412,49 @@ mod wire_tests {
                 intensity: 2.0,
                 nausea: 3.0,
             },
+            breakdown: ScoreBreakdownReport {
+                excitement: vec![ScoreContributionReport {
+                    term: "airtime".into(),
+                    value: 1.25,
+                    measure: 7.6,
+                    unit: "s".into(),
+                    location: Some(ScoreLocationReport {
+                        piece_index: 6,
+                        piece_name: "Loop".into(),
+                        distance: 200.0,
+                        seconds: 8.0,
+                    }),
+                    force_detail: None,
+                    force_details: None,
+                }],
+                intensity: vec![],
+                nausea: vec![],
+            },
+            statistics: RideStatisticsReport {
+                ejector_airtime_seconds: 0.0,
+                floater_airtime_seconds: 0.0,
+                airtime_moments: 0,
+                strong_positive_g_seconds: 0.0,
+                longest_strong_positive_g_seconds: 0.0,
+                strong_lateral_g_seconds: 0.0,
+                max_positive_vertical_g: 0.0,
+                max_negative_vertical_g: 0.0,
+                max_lateral_g: 0.0,
+                max_forward_g: 0.0,
+                max_braking_g: 0.0,
+                max_speed: 0.0,
+                average_speed: 0.0,
+                duration_seconds: 0.0,
+                track_length: 0.0,
+                max_height: 0.0,
+                biggest_drop: 0.0,
+                steepest_drop_angle_degrees: 0.0,
+                inversions: 0,
+                inverted_seconds: 0.0,
+                drops: 0,
+                launches: 0,
+                launch_peak_speed: 0.0,
+            },
         };
         let value = serde_json::to_value(report).unwrap();
         assert_eq!(value["samples"][0]["verticalG"], 6.0);
@@ -238,5 +463,63 @@ mod wire_tests {
         assert_eq!(value["launches"][0]["exitSpeed"], 42.0);
         assert_eq!(value["proximityEvents"], serde_json::json!([]));
         assert_eq!(value["rating"]["intensity"], 2.0);
+        assert_eq!(value["breakdown"]["excitement"][0]["term"], "airtime");
+        assert_eq!(value["breakdown"]["excitement"][0]["measure"], 7.6);
+        assert_eq!(value["breakdown"]["excitement"][0]["unit"], "s");
+        assert_eq!(
+            value["breakdown"]["excitement"][0]["location"]["pieceIndex"],
+            6
+        );
+        assert_eq!(
+            value["breakdown"]["excitement"][0]["location"]["pieceName"],
+            "Loop"
+        );
+        assert_eq!(value["statistics"]["airtimeMoments"], 0);
+    }
+
+    #[test]
+    fn every_scoring_term_has_a_stable_wire_key() {
+        use theme_park_sim::physics::Term;
+
+        let terms = [
+            (Term::Airtime, "airtime"),
+            (Term::PositiveForces, "positiveForces"),
+            (Term::Laterals, "laterals"),
+            (Term::LongitudinalForces, "longitudinalForces"),
+            (Term::ExcessiveForces, "excessiveForces"),
+            (Term::AirtimeMoments, "airtimeMoments"),
+            (Term::Inversions, "inversions"),
+            (Term::TopSpeed, "topSpeed"),
+            (Term::BiggestDrop, "biggestDrop"),
+            (Term::Pace, "pace"),
+            (Term::Launch, "launch"),
+            (Term::Variety, "variety"),
+            (Term::Whip, "whip"),
+            (Term::RollRate, "rollRate"),
+            (Term::FastRolls, "fastRolls"),
+            (Term::RideTime, "rideTime"),
+            (Term::ShortRide, "shortRide"),
+            (Term::Proximity, "proximity"),
+            (Term::Theming, "theming"),
+            (Term::DeadTime, "deadTime"),
+            (Term::Envelope, "envelope"),
+            (Term::Sickening, "sickening"),
+            (Term::PeakForce, "peakForce"),
+            (Term::SustainedForce, "sustainedForce"),
+            (Term::Reversals, "reversals"),
+            (Term::GreyOut, "greyOut"),
+            (Term::TimeInverted, "timeInverted"),
+        ];
+        for (term, expected) in terms {
+            let contribution = theme_park_sim::physics::Contribution {
+                term,
+                value: 0.0,
+                measure: 0.0,
+                location: None,
+                force_detail: None,
+                force_details: vec![],
+            };
+            assert_eq!(ScoreContributionReport::from(&contribution).term, expected);
+        }
     }
 }

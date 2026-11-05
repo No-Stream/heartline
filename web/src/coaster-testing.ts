@@ -9,8 +9,11 @@ import { LIMIT_BAND_COLORS, LIMIT_BAND_LABELS, limitBand, limitCloseness, type L
 
 import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
+import type { ScoreContributionReport } from "./generated/ScoreContributionReport";
+import type { ScoreForceDetailReport } from "./generated/ScoreForceDetailReport";
 import type { ProximityEventReport as ProximityEvent } from "./generated/ProximityEventReport";
 export type { TestingSample, TestingReport, ProximityEvent };
+export type RideStatistics = TestingReport["statistics"];
 
 export type TestingMetric = "limitCloseness" | SingleTestingMetric;
 type SingleTestingMetric = "speed" | "verticalG" | "lateralG" | "longitudinalG" | "airtime";
@@ -35,10 +38,36 @@ function color(value: number, style: TrackStyle): Triangle["color"] {
   return [mix(1), mix(3), mix(5), 1];
 }
 
+function nearestTestingSegment(samples: readonly TestingSample[], distance: number): number | undefined {
+  let nearestIndex: number | undefined;
+  let nearestDistance = Infinity;
+  for (let index = 0; index + 1 < samples.length; index++) {
+    const startDistance = samples[index].distance;
+    const endDistance = samples[index + 1].distance;
+    if (endDistance <= startDistance || endDistance - startDistance > 1.001) continue;
+    const distanceOnSegment = Math.max(startDistance, Math.min(endDistance, distance));
+    const difference = Math.abs(distance - distanceOnSegment);
+    if (difference < nearestDistance) {
+      nearestIndex = index;
+      nearestDistance = difference;
+    }
+  }
+  return nearestIndex;
+}
+
 /** Colours the sampled track by one metric. Limit closeness needs the model's limits and outlines stretches past them in ink. */
-export function buildTestingRibbon(samples: readonly TestingSample[], metric: TestingMetric, camera: Camera, viewport: Viewport, style: TrackStyle, limits?: ConstructionForcePreview["limits"]): GeometryQuad[] {
+export function buildTestingRibbon(
+  samples: readonly TestingSample[],
+  metric: TestingMetric,
+  camera: Camera,
+  viewport: Viewport,
+  style: TrackStyle,
+  selectedDistance?: number,
+  limits?: ConstructionForcePreview["limits"],
+): GeometryQuad[] {
   if (metric === "limitCloseness" && samples.length && !limits) throw new Error("The limit closeness overlay needs the model's comfortable force limits");
   const quads: GeometryQuad[] = [];
+  const selectedIndex = selectedDistance === undefined ? undefined : nearestTestingSegment(samples, selectedDistance);
   const vertex = (sample: TestingSample): Vertex => projectVertex(camera, viewport, sample, 0.06);
   const exceedsLimit = (sample: TestingSample): boolean => !!limits && (
     metric === "verticalG" ? sample.verticalG < limits.minimumVerticalG || sample.verticalG > limits.maximumVerticalG
@@ -47,12 +76,14 @@ export function buildTestingRibbon(samples: readonly TestingSample[], metric: Te
   );
   const band = (start: TestingSample, end: TestingSample): LimitBand => limitBand(Math.max(limitCloseness(start, limits!), limitCloseness(end, limits!)));
   for (let index = 0; index + 1 < samples.length; index++) {
-    if (samples[index + 1].distance - samples[index].distance > 1.001) continue;
+    const distanceDelta = samples[index + 1].distance - samples[index].distance;
+    if (distanceDelta <= 0 || distanceDelta > 1.001) continue;
     const start = vertex(samples[index]);
     const end = vertex(samples[index + 1]);
     const dx = end.x - start.x, dy = end.y - start.y;
     const length = Math.hypot(dx, dy);
     if (length < 0.01) continue;
+    const selected = index === selectedIndex;
     const strip = (halfWidth: number, stripColor: Triangle["color"], id: string): GeometryQuad => {
       const offsetX = -dy / length * halfWidth, offsetY = dx / length * halfWidth;
       return { vertices: [
@@ -64,16 +95,191 @@ export function buildTestingRibbon(samples: readonly TestingSample[], metric: Te
     };
     if (metric === "limitCloseness") {
       const segmentBand = band(samples[index], samples[index + 1]);
-      if (segmentBand === "past") quads.push(strip(6, hexColor(style.ink), `testing-${index}`));
+      if (selected || segmentBand === "past") quads.push(strip(selected ? 8 : 6, hexColor(style.ink), `testing-${index}`));
       quads.push(strip(segmentBand === "past" ? 4 : 3.5, hexColor(LIMIT_BAND_COLORS[segmentBand]), `testing-${index}`));
       continue;
     }
-    quads.push(strip(4, exceedsLimit(samples[index]) || exceedsLimit(samples[index + 1]) ? [0.85, 0.1, 0.1, 1] : color(metrics[metric].value(samples[index]), style), `testing-${index}`));
+    const violation = exceedsLimit(samples[index]) || exceedsLimit(samples[index + 1]);
+    if (selected) {
+      quads.push(strip(8, hexColor(style.ink), `testing-${index}`));
+      if (violation) quads.push(strip(4, [0.85, 0.1, 0.1, 1], `testing-${index}`));
+    } else {
+      quads.push(strip(4, violation ? [0.85, 0.1, 0.1, 1] : color(metrics[metric].value(samples[index]), style), `testing-${index}`));
+    }
   }
   return quads;
 }
 
 const number = (value: number): string => value.toFixed(1).replace("-", "−");
+const count = (value: number): string => Math.round(value).toLocaleString("en-US");
+const forceDetailCar = (detail: ScoreForceDetailReport): string => detail.carIndex === undefined ? "this car" : `car ${detail.carIndex + 1}`;
+
+export function formatRideRating(rating: TestingReport["rating"]): string {
+  return `Excitement: ${number(rating.excitement)} · Intensity: ${number(rating.intensity)} · Nausea: ${number(rating.nausea)}`;
+}
+
+export const scoreTermLabels: Readonly<Record<string, string>> = {
+  excitementFloor: "Excitement floor",
+  airtime: "Ejector airtime",
+  positiveForces: "Positive forces",
+  laterals: "Lateral forces",
+  longitudinalForces: "Longitudinal forces",
+  excessiveForces: "Excessive forces",
+  airtimeMoments: "Airtime moments",
+  inversions: "Inversions",
+  topSpeed: "Top speed",
+  biggestDrop: "Biggest drop",
+  pace: "Pace",
+  launch: "Launch",
+  variety: "Variety",
+  whip: "Whip",
+  rollRate: "Roll rate",
+  fastRolls: "Fast rolls",
+  rideTime: "Ride time",
+  shortRide: "Short ride",
+  proximity: "Proximity",
+  theming: "Theming",
+  deadTime: "Dead time",
+  envelope: "Forces above the ASTM comfort envelope",
+  sickening: "Nausea",
+  peakForce: "Peak force",
+  sustainedForce: "Sustained force",
+  reversals: "Reversals",
+  greyOut: "Strong positive forces",
+  timeInverted: "Time inverted",
+};
+
+export function formatContribution(contribution: ScoreContributionReport, units: Units): string {
+  const label = scoreTermLabels[contribution.term];
+  if (label === undefined) throw new Error(`Unknown coaster score term: ${contribution.term}`);
+  const score = contribution.value >= 0 ? `+${number(contribution.value)}` : number(contribution.value);
+  if (contribution.term === "topSpeed" || contribution.term === "pace") {
+    return `${label} (${score}): ${formatSpeed(contribution.measure, units)} above the scoring threshold`;
+  }
+  if (contribution.term === "rollRate") {
+    return `${label} (${score}): ${number(contribution.measure)} degrees/s above the scoring threshold`;
+  }
+  if (contribution.term === "inversions") return `${label} (${score}, weighted inversion count ${number(contribution.measure)})`;
+  if (contribution.term === "variety") return `${label} (${score}, ${number(contribution.measure)} additional element types)`;
+  if (contribution.term === "proximity") return `${label} (${score}, total event strength ${number(contribution.measure)})`;
+  if (contribution.term === "whip") return `${label} (${score}, ${number(contribution.measure)} rapid vertical force changes)`;
+  if (contribution.term === "deadTime") {
+    const location = contribution.location ? `; longest section at ${contribution.location.pieceName}, ${formatLength(contribution.location.distance, units)}` : "";
+    return `${label} (${score}, ${number(contribution.measure)} s beyond the allowance for uneventful sections${location})`;
+  }
+  if (contribution.term === "launch") {
+    const detail = contribution.forceDetails?.[0];
+    return detail
+      ? `${label} (${score}): maximum forward force ${number(detail.measuredValue)} g for ${forceDetailCar(detail)} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}`
+      : `${label} (${score}): maximum forward force if the ride has a launch, ${number(contribution.measure)} g`;
+  }
+  const weightedDuration = ["airtime", "positiveForces", "greyOut", "sustainedForce"].includes(contribution.term);
+  const bandDuration = weightedDuration || ["laterals", "longitudinalForces"].includes(contribution.term);
+  if (bandDuration) {
+    const suffix = contribution.term === "sustainedForce" ? " across force bands" : "";
+    const summary = `${label} (${score}, ${number(contribution.measure)} ${weightedDuration ? "weighted seconds" : "s"}${suffix})`;
+    if (!contribution.forceDetails?.length) return summary;
+    const bands: Readonly<Record<string, string>> = {
+      airtimeGood: "good airtime", airtimeGreat: "great airtime",
+      verticalGood: "good positive vertical force", verticalGreat: "great positive vertical force",
+      lateralStrong: "strong or excessive lateral force", longitudinalStrong: "strong longitudinal force",
+    };
+    const details = contribution.forceDetails.map((detail) => {
+      const band = bands[detail.axis];
+      if (band === undefined) throw new Error(`Unknown scoring force band: ${detail.axis}`);
+      if (detail.durationSeconds === undefined) throw new Error(`Missing duration for scoring force band: ${detail.axis}`);
+      const weight = detail.weight !== undefined && detail.weight !== 1 ? ` (${number(detail.weight * 100).replace(/\.0$/, "")}% counts toward the score input)` : "";
+      return `${band} starts above ${number(detail.limit)} ${detail.unit}; peak magnitude ${number(detail.measuredValue)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s in this band for ${forceDetailCar(detail)} during the test${weight}`;
+    });
+    return `${summary}: ${details.join(". ")}`;
+  }
+  if (contribution.term === "peakForce") {
+    const detail = contribution.forceDetails?.[0];
+    if (!detail) return `${label} (${score}, ${number(contribution.measure)} times the scoring reference)`;
+    const axes: Readonly<Record<string, string>> = {
+      peakVertical: "positive vertical force", peakNegativeVertical: "negative vertical force magnitude",
+      peakLateral: "lateral force magnitude", peakForward: "forward force", peakBraking: "braking force magnitude",
+    };
+    const axis = axes[detail.axis];
+    if (axis === undefined) throw new Error(`Unknown peak force axis: ${detail.axis}`);
+    return `${label} (${score}): ${axis} ${number(detail.measuredValue)} ${detail.unit}, scoring reference ${number(detail.limit)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)} for ${forceDetailCar(detail)}`;
+  }
+  if (contribution.term === "excessiveForces" && contribution.forceDetails?.length) {
+    const axes: Readonly<Record<string, string>> = {
+      vertical: "positive vertical force", negativeVertical: "negative vertical force magnitude",
+      lateral: "lateral force magnitude", longitudinal: "longitudinal force magnitude",
+    };
+    const details = contribution.forceDetails.map((detail, index) => {
+      const axis = axes[detail.axis];
+      if (axis === undefined) throw new Error(`Unknown model limit axis: ${detail.axis}`);
+      if (detail.durationSeconds === undefined) throw new Error(`Missing duration for model limit axis: ${detail.axis}`);
+      const description = index === 0 ? axis : axis[0].toUpperCase() + axis.slice(1);
+      const dangerous = detail.dangerousSeconds ? ` (${number(detail.dangerousSeconds)} s in the dangerous band counts twice in scoring)` : "";
+      return `${description} ${number(detail.measuredValue)} ${detail.unit}, limit ${number(detail.limit)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s above this limit for ${forceDetailCar(detail)} during the test${dangerous}`;
+    });
+    return `${label} (${score}): ${details.join(". ")}`;
+  }
+  if (contribution.term === "envelope") {
+    const detail = contribution.forceDetail;
+    if (!detail) return `${label} (${score})`;
+    if (detail.durationSeconds === undefined) throw new Error("Missing duration for comfort envelope");
+    const axes: Readonly<Record<string, string>> = {
+      vertical: "vertical force magnitude", lateral: "lateral force magnitude", longitudinal: "longitudinal force magnitude",
+      verticalLateral: "vertical and lateral force", verticalLongitudinal: "vertical and longitudinal force",
+      lateralLongitudinal: "lateral and longitudinal force", onset: "vertical force increase",
+    };
+    const axis = axes[detail.axis];
+    if (axis === undefined) throw new Error(`Unknown comfort envelope axis: ${detail.axis}`);
+    const unit = detail.unit === "g/s" ? "g per second" : detail.unit;
+    const measured = detail.unit === "ratio"
+      ? `combined ${axis} level ${number(detail.measuredValue / detail.limit)} times its limit (limit ${number(detail.limit)})`
+      : `${axis} ${number(detail.measuredValue)} ${unit}, limit ${number(detail.limit)} ${unit}`;
+    return `${label} (${score}): ${measured} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s above the envelope for ${forceDetailCar(detail)} during the test`;
+  }
+  const measure = `${number(contribution.measure)}${contribution.unit ? ` ${contribution.unit}` : ""}`;
+  const location = contribution.location
+    ? ` at ${contribution.location.pieceName}, ${number(contribution.location.distance)} m`
+    : "";
+  return formatTestingNote(`${label} (${score}, ${measure}${location})`, units);
+}
+
+export interface FormattedRideStatistics {
+  readonly airtime: readonly string[];
+  readonly forces: readonly string[];
+  readonly speedAndLayout: readonly string[];
+}
+
+export function formatRideStatistics(statistics: RideStatistics, units: Units): FormattedRideStatistics {
+  return {
+    airtime: [
+      `Ejector airtime: ${number(statistics.ejectorAirtimeSeconds)} s`,
+      `Floater airtime: ${number(statistics.floaterAirtimeSeconds)} s`,
+      `Airtime moments: ${count(statistics.airtimeMoments)}`,
+    ],
+    forces: [
+      `Strong positive g: ${number(statistics.strongPositiveGSeconds)} s (longest ${number(statistics.longestStrongPositiveGSeconds)} s)`,
+      `Strong laterals: ${number(statistics.strongLateralGSeconds)} s`,
+      `Max positive vertical: ${number(statistics.maxPositiveVerticalG)} g`,
+      `Max negative vertical: ${number(statistics.maxNegativeVerticalG)} g`,
+      `Max lateral: ${number(statistics.maxLateralG)} g`,
+      `Max forward: ${number(statistics.maxForwardG)} g`,
+      `Max braking: ${number(statistics.maxBrakingG)} g`,
+    ],
+    speedAndLayout: [
+      `Max speed: ${formatSpeed(statistics.maxSpeed, units)}`,
+      `Average speed: ${formatSpeed(statistics.averageSpeed, units)}`,
+      `Ride duration: ${number(statistics.durationSeconds)} s`,
+      `Track length: ${formatLength(statistics.trackLength, units)}`,
+      `Max height: ${formatLength(statistics.maxHeight, units)}`,
+      `Biggest drop: ${formatLength(statistics.biggestDrop, units)}`,
+      `Steepest drop: ${number(statistics.steepestDropAngleDegrees)}°`,
+      `Inversions: ${count(statistics.inversions)} (${number(statistics.invertedSeconds)} s inverted)`,
+      `Drops: ${count(statistics.drops)}`,
+      `Launches: ${count(statistics.launches)} (peak ${statistics.launches ? formatSpeed(statistics.launchPeakSpeed, units) : "—"})`,
+    ],
+  };
+}
+
 const proximityLabels: Readonly<Record<string, string>> = {
   nearMiss: "Near-miss with the coaster's supports",
   headchopper: "A headchopper over the track",
@@ -90,7 +296,7 @@ export function formatProximityEvent(event: ProximityEvent): string {
 
 export function proximityContribution(events: readonly ProximityEvent[]): number {
   const strength = events.reduce((total, event) => total + Math.max(0, Math.min(1, event.strength)), 0);
-  return strength === 0 ? 0 : 8 * strength / (strength + 4);
+  return strength === 0 ? 0 : 0.8 * strength / (strength + 4);
 }
 
 const proximityColors: Readonly<Record<string, "steel" | "wood" | "train" | "ink">> = {
@@ -177,6 +383,20 @@ export function formatConstructionEstimate(estimate: ConstructionForcePreview, u
 }
 
 export function formatTestingNote(note: string, units: Units): string {
+  const forceAdvice = /^(At .+ \()([\d.]+) m( along the track\), .+)$/.exec(note);
+  if (forceAdvice) return `${forceAdvice[1]}${formatLength(Number(forceAdvice[2]), units)}${forceAdvice[3]}`;
+  const contribution = /^(.+) \(([+−-][\d.]+), ([\d.]+)(?: ([A-Za-z0-9/-]+))?(?: at (.+), ([\d.]+) m)?\)$/.exec(note);
+  if (contribution) {
+    const [, label, score, rawMeasure, unit = "", pieceName, rawDistance] = contribution;
+    const measure = Number(rawMeasure);
+    const formattedMeasure = unit === "m/s"
+      ? formatSpeed(measure, units)
+      : unit === "m"
+        ? formatLength(measure, units)
+        : `${number(measure)}${unit ? ` ${unit}` : ""}`;
+    const location = pieceName === undefined ? "" : ` at ${pieceName}, ${formatLength(Number(rawDistance), units)}`;
+    return `${label} (${score}, ${formattedMeasure}${location})`;
+  }
   const stalledDistance = /^The train could not finish the circuit after travelling ([\d.]+) m\.(.*)$/.exec(note);
   if (stalledDistance) {
     return `The train could not finish the circuit after travelling ${formatLength(Number(stalledDistance[1]), units)}.${stalledDistance[2]}`;
@@ -201,7 +421,7 @@ function legendBounds(metric: SingleTestingMetric, units: Units): { low: string;
   return metrics[metric];
 }
 
-export function createTestingPanel(container: HTMLElement, style: TrackStyle, dispatch: (action: InputAction) => void): {
+export function createTestingPanel(container: HTMLElement, style: TrackStyle, dispatch: (action: InputAction) => void, onScoreLocationChange: () => void): {
   update(report: TestingReport | null): void;
   updateEstimate(estimate: ConstructionForcePreview | null): void;
   setMetric(metric: TestingMetric | null): void;
@@ -209,8 +429,16 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   setWorld(world: WorldView): void;
   inspect(index: number): void;
   inspectProximity(index: number): void;
+  selectedScoreLocation(): NonNullable<ScoreContributionReport["location"]> | undefined;
 } {
-  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><p data-rating></p><ul data-launch-results aria-label="Launch exit speeds"></ul>
+  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><ul data-launch-results aria-label="Launch exit speeds"></ul><section data-statistics hidden><h4>Scores (about 0–10)</h4><p data-rating></p>
+    <p data-score-averaging>Contributions and their scoring inputs are averaged across cars. Force details show individual cars; car 1 is the front car.</p>
+    <h5>Excitement contributions</h5><ul data-score-breakdown="excitement" aria-label="Excitement contributions"></ul>
+    <h5>Intensity contributions</h5><ul data-score-breakdown="intensity" aria-label="Intensity contributions"></ul>
+    <h5>Nausea contributions</h5><ul data-score-breakdown="nausea" aria-label="Nausea contributions"></ul>
+    <p data-whole-train>Statistics cover the whole train using the worst car.</p>
+    <h4>Airtime</h4><ul data-statistics-airtime></ul><h4>Forces</h4><ul data-statistics-forces></ul>
+    <h4>Speed and layout</h4><ul data-statistics-speed-layout></ul></section>
     <p data-height-summary hidden>Maximum height above ground (sampled): <span data-report-maximum-height></span> · Biggest drop (sampled): <span data-report-drop-height></span></p>
     <p data-construction-estimate hidden></p><label>Track overlay <select data-metric><option value="off">Off</option><option value="limitCloseness">Limit closeness</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
     <div class="testing-band-legend" data-band-legend hidden>${(["comfortable", "near", "past"] as const).map((band) => `<span data-band="${band}"><span class="testing-band-legend__swatch" aria-hidden="true" style="background:${LIMIT_BAND_COLORS[band]}"></span>${LIMIT_BAND_LABELS[band]}</span>`).join("")}</div>
@@ -229,6 +457,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   let activeUnits: Units = "imperial";
   let inspectedSampleIndex: number | undefined;
   let inspectedProximityIndex: number | undefined;
+  let inspectedScoreLocation: ScoreContributionReport["location"];
   const renderInspection = (): void => {
     const samples = overlaySamples(report?.samples ?? null, estimate?.samples ?? null);
     if (inspectedSampleIndex !== undefined && samples[inspectedSampleIndex]) {
@@ -238,6 +467,10 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     if (inspectedProximityIndex !== undefined && report?.proximityEvents[inspectedProximityIndex]) {
       const event = report.proximityEvents[inspectedProximityIndex];
       inspection.textContent = `${formatProximityEvent(event)} · Strength: ${number(event.strength)} · Distance: ${formatLength(event.distance, activeUnits)}`;
+      return;
+    }
+    if (inspectedScoreLocation) {
+      inspection.textContent = `Selected score location: ${inspectedScoreLocation.pieceName} · ${formatLength(inspectedScoreLocation.distance, activeUnits)} · ${number(inspectedScoreLocation.seconds)} s`;
       return;
     }
     inspection.textContent = "Click the coloured track to inspect it.";
@@ -262,9 +495,56 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   const renderReport = (): void => {
     const notes = container.querySelector<HTMLElement>("[data-notes]")!;
     const rating = container.querySelector<HTMLElement>("[data-rating]")!;
+    const statisticsSection = container.querySelector<HTMLElement>("[data-statistics]")!;
     const heightSummary = container.querySelector<HTMLElement>("[data-height-summary]")!;
     notes.textContent = report ? report.notes.map((note) => formatTestingNote(note, activeUnits)).join(" ") || "No concerns were noted during this test." : "Run a test to see the results.";
-    rating.textContent = report?.rating ? `Excitement: ${number(report.rating.excitement)} · Intensity: ${number(report.rating.intensity)} · Nausea: ${number(report.rating.nausea)}` : "";
+    statisticsSection.hidden = !report;
+    rating.textContent = report?.rating ? formatRideRating(report.rating) : "";
+    const statistics = report?.statistics;
+    const formattedStatistics = statistics ? formatRideStatistics(statistics, activeUnits) : null;
+    const renderList = (selector: string, items: readonly string[] | undefined): void => {
+      const list = container.querySelector<HTMLElement>(selector)!;
+      list.replaceChildren();
+      for (const item of items ?? []) {
+        const row = document.createElement("li");
+        row.textContent = item;
+        list.append(row);
+      }
+    };
+    renderList("[data-statistics-airtime]", formattedStatistics?.airtime);
+    renderList("[data-statistics-forces]", formattedStatistics?.forces);
+    renderList("[data-statistics-speed-layout]", formattedStatistics?.speedAndLayout);
+    const renderBreakdown = (score: keyof TestingReport["breakdown"]): void => {
+      const list = container.querySelector<HTMLElement>(`[data-score-breakdown="${score}"]`)!;
+      list.replaceChildren();
+      const contributions = [...(report?.breakdown[score] ?? [])]
+        .sort((left, right) => Math.abs(right.value) - Math.abs(left.value));
+      for (const contribution of contributions) {
+        const row = document.createElement("li");
+        const description = formatContribution(contribution, activeUnits);
+        if (contribution.location) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.scoreContribution = contribution.term;
+          button.textContent = description;
+          button.addEventListener("click", () => {
+            inspectedSampleIndex = undefined;
+            inspectedProximityIndex = undefined;
+            inspectedScoreLocation = contribution.location;
+            renderInspection();
+            onScoreLocationChange();
+            if (select.value === "off") dispatch({ type: "testing-metric-set", metric: "speed" });
+          });
+          row.append(button);
+        } else {
+          row.textContent = description;
+        }
+        list.append(row);
+      }
+    };
+    renderBreakdown("excitement");
+    renderBreakdown("intensity");
+    renderBreakdown("nausea");
     const launchResults = container.querySelector<HTMLElement>("[data-launch-results]")!;
     launchResults.replaceChildren(...(report?.launches ?? []).map((launch) => {
       const item = document.createElement("li");
@@ -316,6 +596,8 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   return {
     update(value) {
       report = value; inspectedSampleIndex = undefined; inspectedProximityIndex = undefined;
+      inspectedScoreLocation = undefined;
+      onScoreLocationChange();
       const metricBefore = select.value;
       renderReport();
       if (select.value !== metricBefore) dispatch({ type: "testing-metric-set", metric: renderMetric() });
@@ -337,15 +619,20 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
       if (overlaySamples(report?.samples ?? null, estimate?.samples ?? null)[index]) {
         inspectedSampleIndex = index;
         inspectedProximityIndex = undefined;
+        inspectedScoreLocation = undefined;
         renderInspection();
+        onScoreLocationChange();
       }
     },
     inspectProximity(index) {
       if (report?.proximityEvents[index]) {
         inspectedProximityIndex = index;
         inspectedSampleIndex = undefined;
+        inspectedScoreLocation = undefined;
         renderInspection();
+        onScoreLocationChange();
       }
     },
+    selectedScoreLocation() { return inspectedScoreLocation; },
   };
 }

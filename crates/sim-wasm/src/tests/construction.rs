@@ -1672,6 +1672,15 @@ fn lift_drop_circuit_completes_lap() {
         if simulation.construction_message() == "Train completed a lap." {
             assert!(!simulation.park.support_render_cache.is_empty());
             assert!(!simulation.park.proximity_supports().is_empty());
+            let report: serde_json::Value =
+                serde_json::from_str(&simulation.construction_test_report_json()).unwrap();
+            let statistics = &report["statistics"];
+            assert!(statistics["durationSeconds"].as_f64().unwrap() > 0.0);
+            assert!(statistics["maxSpeed"].as_f64().unwrap() > 0.0);
+            assert!(statistics["maxHeight"].as_f64().unwrap() > 0.0);
+            assert!(statistics["biggestDrop"].as_f64().unwrap() > 0.0);
+            assert!(statistics["inversions"].as_u64().unwrap() > 0);
+            assert!(statistics["invertedSeconds"].as_f64().unwrap() > 0.0);
             return;
         }
         if simulation.construction_outcome.is_some() {

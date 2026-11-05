@@ -276,6 +276,20 @@
 /* Testing panel, which lives inside the builder. */
 .builder [data-testing] { display: grid; gap: 0.35rem; }
 .builder [data-testing] h3 { margin-top: 0.1rem; }
+.builder [data-testing] h5 { margin: 0.35rem 0 0; }
+.builder [data-score-breakdown] { margin: 0; padding-left: 1.2rem; }
+.builder [data-score-breakdown] li { margin: 0.15rem 0; }
+.builder [data-score-breakdown] button {
+  padding: 0;
+  border: 0;
+  background: var(--transparent);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
 .builder [data-testing] select { flex: 1; width: auto; }
 .builder [data-testing] label { display: flex; align-items: center; gap: 0.5rem; }
 .builder__test-hint { color: var(--ink-soft); font-style: italic; font-size: 0.8rem; }

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readCircuit } from "../player/circuits";
-import { openTool, placeStation, setGameSpeed, startPark, waitForState } from "../player/driver";
+import { legacyRideRating, openTool, placeStation, setGameSpeed, startPark, waitForState } from "../player/driver";
+import { expectRideReportExplained } from "../player/ride-report";
 
 test("Velocity Viper keyboard construction journey @journey", async ({ page }) => {
   test.setTimeout(180_000);
@@ -24,6 +25,7 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   let count = 1;
   for (const piece of circuit) {
     if (piece === "+chain" || piece === "-chain") {
+      await page.locator("canvas").focus();
       await page.keyboard.press("h");
       await expect(page.locator("[data-construction]")).toHaveAttribute("data-chain", String(piece === "+chain"));
       continue;
@@ -59,7 +61,21 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   const crestCount = await page.evaluate(() => window.gameTest.crestBursts().length);
   await page.keyboard.press("t");
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
-  await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  const { rating } = await expectRideReportExplained(page);
+  console.log(`Velocity Viper ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
+  await page.setViewportSize({ width: 1280, height: 1200 });
+  const testingPanel = page.locator("[data-testing]");
+  await expect(testingPanel).toContainText("Scores (about 0–10)");
+  await page.evaluate(() => {
+    const dock = document.querySelector<HTMLElement>("[data-dock]");
+    const testing = document.querySelector<HTMLElement>("[data-testing]");
+    if (!dock || !testing) throw new Error("Coaster testing panel is missing");
+    dock.scrollTop += testing.getBoundingClientRect().top - dock.getBoundingClientRect().top;
+  });
+  const panelHeight = await testingPanel.evaluate((element) => Math.ceil(element.getBoundingClientRect().height));
+  await page.setViewportSize({ width: 1280, height: Math.max(720, panelHeight + 100) });
+  await expect(testingPanel).toHaveScreenshot("coaster-testing-panel.png", { animations: "disabled" });
+  await page.setViewportSize({ width: 1280, height: 720 });
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
   const launchPositions = page.getByRole("region", { name: "Launch positions" }).locator("li");

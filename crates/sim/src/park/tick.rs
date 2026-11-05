@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use super::Park;
 use crate::executor::{Executor, SequentialExecutor};
 use crate::facilities::{FacilityKind, coaster_facility};
+use crate::guests::knowledge::guest_rating;
 use crate::guests::walking::WalkingGuest;
-use crate::physics::CoasterOutcome;
+use crate::physics::{CoasterOutcome, TestRun};
 use crate::track::blocks::{BlockLayout, BlockManualSearch};
 use crate::track::clearance::ClearanceBox;
 use crate::track::construction::track_support_obstacles;
@@ -17,6 +18,38 @@ use crate::track::{Piece, SupportStyle, TrainConfiguration, Vec3};
 use crate::world::World;
 
 pub const COASTER_PLACE_ID: u32 = u32::MAX;
+const METRES_PER_TILE: f64 = 4.0;
+const THEMING_RADIUS_TILES: i32 = 3;
+const THEMING_WEIGHT_PER_SCENERY: f64 = 2.0;
+const THEMING_SCALE_PER_100_METRES: f64 = 12.0;
+
+pub(super) fn track_theming(world: &World, pieces: &[Piece]) -> f64 {
+    let track_length: f64 = pieces.iter().map(Piece::length).sum();
+    assert!(track_length.is_finite() && track_length > 0.0);
+
+    let scenery: Vec<_> = world.scenery().collect();
+    let mut weighted_scenery_samples = 0.0;
+    for piece in pieces {
+        let mut distance = 0.0;
+        while distance < piece.length() {
+            let position = piece.sample(distance).position;
+            let tile_x = (position.x / METRES_PER_TILE).floor() as i32;
+            let tile_y = (position.y / METRES_PER_TILE).floor() as i32;
+            let nearby_count = scenery
+                .iter()
+                .filter(|scenery| {
+                    (i32::from(scenery.position.x) - tile_x).abs() <= THEMING_RADIUS_TILES
+                        && (i32::from(scenery.position.y) - tile_y).abs() <= THEMING_RADIUS_TILES
+                })
+                .count();
+            weighted_scenery_samples += nearby_count as f64 * THEMING_WEIGHT_PER_SCENERY;
+            distance += 1.0;
+        }
+    }
+
+    let weighted_scenery_per_100_metres = weighted_scenery_samples * 100.0 / track_length;
+    1.0 - (-weighted_scenery_per_100_metres / THEMING_SCALE_PER_100_METRES).exp()
+}
 
 pub struct SupportRenderCache {
     obstacles: Vec<SupportObstacle>,
@@ -26,6 +59,13 @@ pub struct SupportRenderCache {
 }
 
 impl Park {
+    pub(super) fn remember_front_car_ratings(&mut self, report: &TestRun) {
+        if report.completed {
+            self.coaster_ratings =
+                Some((guest_rating(report.intensity), guest_rating(report.nausea)));
+        }
+    }
+
     pub fn tick(&mut self) {
         self.tick_with(&SequentialExecutor::new(256));
     }
@@ -44,6 +84,7 @@ impl Park {
                     construction,
                     COASTER_PLACE_ID,
                     self.coaster_price,
+                    self.coaster_ratings,
                 )
             });
             if let Some(facility) = access {
@@ -162,10 +203,12 @@ impl Park {
                     }
                     if self.construction_outcome.is_some() {
                         let recorder = self.construction_recorder.take().expect("test recorder");
-                        self.construction_report = Some(recorder.finish(
+                        let (report, front_car_report) = recorder.finish_with_front_car(
                             self.construction_message == "Train completed a lap.",
                             !train.notes().is_empty(),
-                        ));
+                        );
+                        self.remember_front_car_ratings(&front_car_report);
+                        self.construction_report = Some(report);
                         report_finished = true;
                     }
                 }
@@ -194,6 +237,7 @@ impl Park {
                     );
                     let events = geometry.events_for_run(&report.samples);
                     report.add_proximity_events(&events);
+                    report.set_theming(track_theming(&self.world, construction.pieces()));
                 }
             }
             self.physics_remainder -= 30;
@@ -310,12 +354,15 @@ impl Park {
             &obstacles,
             &supports,
         );
+        let theming = track_theming(&self.world, construction.pieces());
         for report in &mut outcome.reports {
             let events = geometry.events_for_run(&report.samples);
             report.add_proximity_events(&events);
+            report.set_theming(theming);
         }
         let seats_per_car = usize::from(construction.model().train.rows_per_car)
             * usize::from(construction.model().train.seats_per_row);
+        self.remember_front_car_ratings(&outcome.reports[0]);
         let ratings: Vec<_> = (0..riders.len())
             .map(|seat| {
                 let report = &outcome.reports[seat / seats_per_car];

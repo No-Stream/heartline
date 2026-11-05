@@ -445,6 +445,7 @@ mod tests {
             kind: PlaceKind::Ride,
             minimum_height_cm: 0,
             intensity: 50,
+            nausea: 0,
             ride_type: 1,
             theme: 0,
             price: 12,

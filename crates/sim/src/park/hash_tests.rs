@@ -118,6 +118,10 @@ fn state_hash_is_reproducible_and_covers_live_park_state() {
         hybrid_model(),
     ));
     assert_ne!(baseline_hash, construction_changed.state_hash());
+
+    let mut nausea_rating_changed = empty_park();
+    nausea_rating_changed.coaster_ratings = Some((50, 31));
+    assert_ne!(baseline_hash, nausea_rating_changed.state_hash());
 }
 
 #[test]
