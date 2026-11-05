@@ -10,6 +10,27 @@ fn catalog_returns_the_same_static_template_slice() {
 }
 
 #[test]
+fn airtime_rating_matches_the_force_overlay_bands() {
+    use super::models::AirtimeRating;
+
+    let steel_limits = hybrid_model().comfortable_force_limits;
+    assert_eq!(steel_limits.classify_airtime(-0.2), AirtimeRating::Weak);
+    assert_eq!(steel_limits.classify_airtime(-0.200_001), AirtimeRating::Good);
+    assert_eq!(steel_limits.classify_airtime(-0.9), AirtimeRating::Good);
+    assert_eq!(steel_limits.classify_airtime(-0.900_001), AirtimeRating::Great);
+    assert_eq!(steel_limits.classify_airtime(-1.5), AirtimeRating::Great);
+    assert_eq!(steel_limits.classify_airtime(-1.500_001), AirtimeRating::TooMuch);
+    assert_eq!(
+        steel_limits.classify_airtime(-1.3 * -steel_limits.minimum_vertical_g),
+        AirtimeRating::TooMuch
+    );
+    assert_eq!(
+        steel_limits.classify_airtime(-1.300_001 * -steel_limits.minimum_vertical_g),
+        AirtimeRating::Dangerous
+    );
+}
+
+#[test]
 fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
     let expected_hills: [(&str, &[&str]); 17] = [
         ("Ejector hill 4 × 32 m", &["Timber Tumbler", "Velocity Viper"]),

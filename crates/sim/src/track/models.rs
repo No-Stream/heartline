@@ -74,6 +74,35 @@ pub struct ComfortableForceLimits {
     pub maximum_lateral_g: f64,
     pub maximum_longitudinal_g: f64,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AirtimeRating {
+    Weak,
+    Good,
+    Great,
+    TooMuch,
+    Dangerous,
+}
+
+impl ComfortableForceLimits {
+    /// Rates negative vertical force using the airtime bands shown by the force overlay.
+    pub fn classify_airtime(self, vertical_g: f64) -> AirtimeRating {
+        let airtime_g = -vertical_g;
+        let comfortable_airtime_limit_g = -self.minimum_vertical_g;
+        if airtime_g <= 0.2 {
+            AirtimeRating::Weak
+        } else if airtime_g <= 0.9 {
+            AirtimeRating::Good
+        } else if airtime_g <= comfortable_airtime_limit_g {
+            AirtimeRating::Great
+        } else if airtime_g <= 1.3 * comfortable_airtime_limit_g {
+            AirtimeRating::TooMuch
+        } else {
+            AirtimeRating::Dangerous
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LaunchSpeedBounds {
     pub minimum: f64,
