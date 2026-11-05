@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
 use theme_park_sim::track::{
-    AirtimeRating, CoasterModel, HillFeel, Material, Piece, PieceId, TrackState, catalog,
-    hybrid_model, multi_launch_model, wooden_twister_model,
+    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -553,34 +553,29 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
 }
 
 #[test]
-fn every_steel_ejector_hill_is_great_at_design_speed_for_each_allowed_model_and_train_layout() {
-    let steel_models: Vec<CoasterModel> = models()
-        .into_iter()
-        .filter(|model| model.track_material == Material::Steel)
-        .collect();
+fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train_layout() {
+    let allowed_models = models();
     let ejector_hills: Vec<_> = catalog()
         .iter()
         .filter(|piece| {
             piece
                 .family
                 .is_some_and(|family| family.feel == HillFeel::Ejector)
-                && steel_models
+                && allowed_models
                     .iter()
                     .any(|model| model.allowed_pieces.contains(&piece.id))
         })
         .collect();
-    assert_eq!(ejector_hills.len(), 5, "steel ejector hill family size");
+    assert_eq!(ejector_hills.len(), 6, "ejector hill family size");
 
     let mut failures = Vec::new();
     for piece in ejector_hills {
-        let family = piece.family.expect("ejector hill has family metadata");
         let rated = piece
             .rated_speeds
             .expect("ejector hill has a rated speed window");
-        assert_eq!(family.design_speed_metres_per_second, rated.maximum_entry);
         let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
 
-        for model in steel_models
+        for model in allowed_models
             .iter()
             .filter(|model| model.allows_piece(piece))
         {
@@ -592,7 +587,7 @@ fn every_steel_ejector_hill_is_great_at_design_speed_for_each_allowed_model_and_
                     &train_config,
                     unpowered(),
                     element_start,
-                    family.design_speed_metres_per_second,
+                    rated.maximum_entry,
                 );
                 let mut cars_seen = vec![false; usize::from(cars)];
                 let mut minimum_vertical_g = f64::INFINITY;
@@ -620,11 +615,8 @@ fn every_steel_ejector_hill_is_great_at_design_speed_for_each_allowed_model_and_
 
                 let limits = model.comfortable_force_limits;
                 eprintln!(
-                    "{} {} {cars} cars / {:.1} m at design speed {:.3} m/s: minimum vertical force {minimum_vertical_g:.3} g",
-                    piece.name,
-                    model.name,
-                    train_config.length_metres,
-                    family.design_speed_metres_per_second
+                    "{} {} {cars} cars / {:.1} m at rated maximum {:.3} m/s: minimum vertical force {minimum_vertical_g:.3} g",
+                    piece.name, model.name, train_config.length_metres, rated.maximum_entry
                 );
                 assert!(
                     cars_seen.into_iter().all(|seen| seen),

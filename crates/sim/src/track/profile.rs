@@ -194,6 +194,7 @@ pub(super) struct GeneratedHillProfile {
     pub(super) minimum_entry: f64,
     pub(super) minimum_radius: f64,
     pub(super) length: f64,
+    pub(super) endpoint: [f64; 2],
     pub(super) point_count: usize,
     // The first two values are per-sample position deltas, accumulated in f64 at load time.
     pub(super) values: &'static [[f32; 4]],
@@ -219,6 +220,7 @@ pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
             profile.minimum_entry,
             profile.minimum_radius,
             profile.length,
+            profile.endpoint,
             profile.point_count,
             profile.values,
         );
@@ -240,6 +242,7 @@ fn embedded_hill_profile_from_values<T>(
     minimum_entry: f64,
     minimum_radius: f64,
     length: f64,
+    endpoint: [f64; 2],
     point_count: usize,
     values: &[[T; 4]],
 ) -> SolvedProfile
@@ -249,7 +252,7 @@ where
     assert_eq!(point_count, values.len());
     let mut x = 0.0;
     let mut z = 0.0;
-    let points = values
+    let mut points: Vec<Point> = values
         .iter()
         .enumerate()
         .map(|(index, value)| {
@@ -266,6 +269,9 @@ where
             }
         })
         .collect();
+    let last = points.last_mut().expect("hill profile has points");
+    last.x = endpoint[0];
+    last.z = endpoint[1];
     SolvedProfile {
         points,
         cached_minimum_entry: Some(minimum_entry),
@@ -1489,7 +1495,7 @@ mod tests {
         model_radius: f64,
     }
 
-    const HILL_CASES: [HillCase; 16] = [
+    const HILL_CASES: [HillCase; 14] = [
         HillCase {
             name: "EjectorHill8x48",
             height: 8.0,
@@ -1626,26 +1632,6 @@ mod tests {
             span: 48.0,
             design_speed: 24.0,
             flank_angle: 29.0_f64.to_radians(),
-            pull_force: 3.7,
-            crest_force: -0.7,
-            model_radius: 5.0,
-        },
-        HillCase {
-            name: "WoodenEjectorHill8x64",
-            height: 8.0,
-            span: 64.0,
-            design_speed: 27.0,
-            flank_angle: 30.0_f64.to_radians(),
-            pull_force: 3.7,
-            crest_force: -0.7,
-            model_radius: 5.0,
-        },
-        HillCase {
-            name: "WoodenEjectorHill16x80",
-            height: 16.0,
-            span: 80.0,
-            design_speed: 26.0,
-            flank_angle: 48.0_f64.to_radians(),
             pull_force: 3.7,
             crest_force: -0.7,
             model_radius: 5.0,
@@ -1824,11 +1810,12 @@ mod tests {
             let mut previous_position = [0.0; 2];
             writeln!(
                 output,
-            "    GeneratedHillProfile {{ name: {:?}, minimum_entry: {:?}, minimum_radius: {:?}, length: {:?}, point_count: {}, values: &[",
+            "    GeneratedHillProfile {{ name: {:?}, minimum_entry: {:?}, minimum_radius: {:?}, length: {:?}, endpoint: {:?}, point_count: {}, values: &[",
                 entry.name,
                 profile.minimum_entry(),
                 profile.minimum_radius(),
                 profile.length(),
+                profile.endpoint(),
                 point_count,
             )
             .unwrap();
@@ -2126,6 +2113,19 @@ mod tests {
     }
 
     #[test]
+    fn generated_hill_profiles_end_at_their_connectors() {
+        for profile in GENERATED_HILL_PROFILES {
+            let [x, z] = embedded_profile(profile.name).endpoint();
+            assert!(
+                (x - (x / 2.0).round() * 2.0).abs() < 1e-9,
+                "{}: endpoint x {x}",
+                profile.name
+            );
+            assert!(z.abs() < 1e-9, "{}: endpoint z {z}", profile.name);
+        }
+    }
+
+    #[test]
     fn hill_profiles_are_current() {
         assert_eq!(
             GENERATED_HILL_DESIGNS.len(),
@@ -2177,6 +2177,7 @@ mod tests {
                 generated.minimum_entry,
                 generated.minimum_radius,
                 generated.length,
+                generated.endpoint,
                 generated.point_count,
                 &precise_values,
             );

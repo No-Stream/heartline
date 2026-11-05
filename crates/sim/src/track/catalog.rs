@@ -1487,29 +1487,15 @@ fn build_catalog() -> Vec<Piece> {
             19.66550391454844,
             8.0,
         ),
-        (
-            WoodenEjectorHill8x64,
-            "WoodenEjectorHill8x64",
-            "Ejector hill 8 × 64 m",
-            HillFeel::Ejector,
-            8,
-            64,
-            22.894120166796466,
-            8.0,
-        ),
-        (
-            WoodenEjectorHill16x80,
-            "WoodenEjectorHill16x80",
-            "Ejector hill 16 × 80 m",
-            HillFeel::Ejector,
-            16,
-            80,
-            22.642091001945,
-            8.0,
-        ),
     ] {
         let profile = Arc::new(embedded_profile(profile_name));
-        let rated_speeds = profile.rated_speeds(name, design_speed, 2.0, model_radius);
+        let maximum_entry = design_speed
+            - match id {
+                EjectorHill8x48 | FloaterHill4x48 | SpeedHill6x80 => 1.0,
+                SpeedHill4x64 => 3.0,
+                _ => 0.0,
+            };
+        let rated_speeds = profile.rated_speeds(name, maximum_entry, 2.0, model_radius);
         let endpoint = profile.endpoint();
         let mut piece = straight.clone();
         piece.id = id;

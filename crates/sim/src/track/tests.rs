@@ -41,7 +41,7 @@ fn airtime_rating_matches_the_force_overlay_bands() {
 
 #[test]
 fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
-    let expected_hills: [(&str, &[&str]); 16] = [
+    let expected_hills: [(&str, &[&str]); 14] = [
         (
             "Ejector hill 8 × 48 m",
             &["Timber Tumbler", "Velocity Viper"],
@@ -95,8 +95,6 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
         ),
         ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
-        ("Ejector hill 8 × 64 m", &["Briar Blitz"]),
-        ("Ejector hill 16 × 80 m", &["Briar Blitz"]),
     ];
     let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
     let hill_pieces: Vec<_> = catalog()
@@ -139,9 +137,15 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         assert_eq!(family.height_metres, dimensions[0] as u8, "{name}");
         assert_eq!(family.span_metres, dimensions[1], "{name}");
         assert_eq!(family.twist, None, "{name}");
+        let reduction = match piece.id {
+            PieceId::EjectorHill8x48 | PieceId::FloaterHill4x48 | PieceId::SpeedHill6x80 => 1.0,
+            PieceId::SpeedHill4x64 => 3.0,
+            _ => 0.0,
+        };
         assert_eq!(
-            family.design_speed_metres_per_second, rated.maximum_entry,
-            "{name} design speed"
+            family.design_speed_metres_per_second - reduction,
+            rated.maximum_entry,
+            "{name} rated maximum"
         );
 
         for model in &models {

@@ -305,8 +305,6 @@ pub fn wooden_twister_model() -> CoasterModel {
                 SpeedHill4x64,
                 SpeedHill6x80,
                 WoodenEjectorHill6x48,
-                WoodenEjectorHill8x64,
-                WoodenEjectorHill16x80,
                 TightTwisterLeft,
                 TightTwisterRight,
             ]
