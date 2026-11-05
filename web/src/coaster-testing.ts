@@ -4,6 +4,7 @@ import { terrainHeightAt, type GeometryQuad, type Triangle, type Vertex, type Wo
 import type { TrackStyle } from "./render/track/geometry";
 import { formatLength, formatSpeed, speedUnitLabel, type Units } from "./units";
 import type { InputAction } from "./input/actions";
+import type { ConstructionForcePreview } from "./construction-protocol";
 
 import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
@@ -11,6 +12,9 @@ import type { ProximityEventReport as ProximityEvent } from "./generated/Proximi
 export type { TestingSample, TestingReport, ProximityEvent };
 
 export type TestingMetric = "speed" | "verticalG" | "lateralG" | "longitudinalG" | "airtime";
+export function overlaySamples(measured: readonly TestingSample[] | null, estimated: readonly TestingSample[] | null): readonly TestingSample[] {
+  return measured ?? estimated ?? [];
+}
 const metrics: Record<TestingMetric, { label: string; low: string; high: string; value(sample: TestingSample): number }> = {
   speed: { label: "Speed", low: "", high: "", value: (sample) => sample.speed / 30 },
   verticalG: { label: "Vertical force", low: "−1 g", high: "5 g+", value: (sample) => (sample.verticalG + 1) / 6 },
@@ -25,9 +29,14 @@ function color(value: number, style: TrackStyle): Triangle["color"] {
   return [mix(1), mix(3), mix(5), 1];
 }
 
-export function buildTestingRibbon(samples: readonly TestingSample[], metric: TestingMetric, camera: Camera, viewport: Viewport, style: TrackStyle): GeometryQuad[] {
+export function buildTestingRibbon(samples: readonly TestingSample[], metric: TestingMetric, camera: Camera, viewport: Viewport, style: TrackStyle, limits?: ConstructionForcePreview["limits"]): GeometryQuad[] {
   const quads: GeometryQuad[] = [];
   const vertex = (sample: TestingSample): Vertex => projectVertex(camera, viewport, sample, 0.06);
+  const exceedsLimit = (sample: TestingSample): boolean => !!limits && (
+    metric === "verticalG" ? sample.verticalG < limits.minimumVerticalG || sample.verticalG > limits.maximumVerticalG
+      : metric === "lateralG" ? Math.abs(sample.lateralG) > limits.maximumLateralG
+        : metric === "longitudinalG" ? Math.abs(sample.longitudinalG) > limits.maximumLongitudinalG : false
+  );
   for (let index = 0; index + 1 < samples.length; index++) {
     if (samples[index + 1].distance - samples[index].distance > 1.001) continue;
     const start = vertex(samples[index]);
@@ -41,7 +50,7 @@ export function buildTestingRibbon(samples: readonly TestingSample[], metric: Te
       { ...end, x: end.x + offsetX, y: end.y + offsetY },
       { ...end, x: end.x - offsetX, y: end.y - offsetY },
       { ...start, x: start.x - offsetX, y: start.y - offsetY },
-    ], color: color(metrics[metric].value(samples[index]), style), kind: "testing", id: `testing-${index}`,
+    ], color: exceedsLimit(samples[index]) || exceedsLimit(samples[index + 1]) ? [0.85, 0.1, 0.1, 1] : color(metrics[metric].value(samples[index]), style), kind: "testing", id: `testing-${index}`,
     tileX: Math.floor(samples[index].x), tileY: Math.floor(samples[index].y) });
   }
   return quads;
@@ -122,6 +131,34 @@ export function formatSample(sample: TestingSample, units: Units = "imperial"): 
   return formatSampleInUnits(sample, units);
 }
 
+export function formatConstructionEstimate(estimate: ConstructionForcePreview, units: Units): string {
+  const { limits, samples } = estimate;
+  const axesToCheck = [
+    { name: "vertical", value: (sample: TestingSample) => sample.verticalG, excess: (value: number) => Math.max(limits.minimumVerticalG - value, value - limits.maximumVerticalG), limit: (value: number) => `limit ${number(value < limits.minimumVerticalG ? limits.minimumVerticalG : limits.maximumVerticalG)} g` },
+    { name: "lateral", value: (sample: TestingSample) => sample.lateralG, excess: (value: number) => Math.abs(value) - limits.maximumLateralG, limit: () => `absolute limit ${number(limits.maximumLateralG)} g` },
+    { name: "longitudinal", value: (sample: TestingSample) => sample.longitudinalG, excess: (value: number) => Math.abs(value) - limits.maximumLongitudinalG, limit: () => `absolute limit ${number(limits.maximumLongitudinalG)} g` },
+  ];
+  const violations = axesToCheck.flatMap((axis) => {
+    const worst = samples.reduce<TestingSample | null>((current, sample) => axis.excess(axis.value(sample)) > (current ? axis.excess(axis.value(current)) : 0) ? sample : current, null);
+    if (!worst) return [];
+    const value = axis.value(worst);
+    return [{ name: axis.name, detail: `${axis.name} ${number(value)} g at ${formatLength(worst.distance, units)} (${axis.limit(value)})` }];
+  });
+  const exceeded = violations.map((violation) => violation.name);
+  const axes = exceeded.length === 3 ? `${exceeded[0]}, ${exceeded[1]} and ${exceeded[2]}` : exceeded.join(" and ");
+  const warning = axes ? ` Estimated ${axes} forces exceed this model's comfortable limits: ${violations.map((violation) => violation.detail).join("; ")}.` : "";
+  const last = samples.at(-1);
+  const location = last ? ` Last recorded distance: ${formatLength(last.distance, units)}.` : " No distance was recorded.";
+  const stopped = estimate.status === "stalled" ? ` The estimated train stopped.${location}` : estimate.status === "timedOut" ? ` The estimate timed out.${location}` : "";
+  const peak = estimate.lastPlaced;
+  const summary = peak ? `Last placed piece${estimate.completed ? "" : " (reached portion)"}: maximum speed ${formatSpeed(peak.maximumSpeed, units)} · Vertical ${number(peak.minimumVerticalG)}–${number(peak.maximumVerticalG)} g · Maximum lateral ${number(peak.maximumAbsoluteLateralG)} g · Maximum longitudinal ${number(peak.maximumAbsoluteLongitudinalG)} g.` : "The estimated train did not reach the last placed piece.";
+  const launches = estimate.launches.map((launch) => {
+    const force = launch.peakLongitudinalG === null ? "estimated force unavailable: no samples on this launch" : `configured launch's estimated peak longitudinal rider force ${number(launch.peakLongitudinalG)} g`;
+    return ` Launch on piece ${launch.pieceIndex + 1}: approximate maximum speed ${formatSpeed(launch.maximumSpeed, units)} · ${force}.`;
+  }).join("");
+  return `Approximate construction estimate. ${summary}${launches}${warning}${stopped}`;
+}
+
 export function formatTestingNote(note: string, units: Units): string {
   const stalledDistance = /^The train could not finish the circuit after travelling ([\d.]+) m\.(.*)$/.exec(note);
   if (stalledDistance) {
@@ -149,6 +186,7 @@ function legendBounds(metric: TestingMetric, units: Units): { low: string; high:
 
 export function createTestingPanel(container: HTMLElement, style: TrackStyle, dispatch: (action: InputAction) => void): {
   update(report: TestingReport | null): void;
+  updateEstimate(estimate: ConstructionForcePreview | null): void;
   setMetric(metric: TestingMetric | null): void;
   setUnits(units: Units): void;
   setWorld(world: WorldView): void;
@@ -157,21 +195,24 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
 } {
   container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><p data-rating></p><ul data-launch-results aria-label="Launch exit speeds"></ul>
     <p data-height-summary hidden>Maximum height above ground (sampled): <span data-report-maximum-height></span> · Biggest drop (sampled): <span data-report-drop-height></span></p>
-    <label>Track overlay <select data-metric><option value="off">Off</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
-    <div data-legend hidden><span data-low></span> <span data-gradient aria-hidden="true" style="display:inline-block;width:100px;height:10px"></span> <span data-high></span></div>
+    <p data-construction-estimate hidden></p><label>Track overlay <select data-metric><option value="off">Off</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
+    <div data-legend hidden><span data-low></span> <span data-gradient aria-hidden="true" style="display:inline-block;width:100px;height:10px"></span> <span data-high></span><span data-force-warning hidden> · <span aria-hidden="true" style="color:rgb(85% 10% 10%)">■</span> Above comfortable limit</span></div>
     <div data-proximity-events></div><p data-inspection>Click the coloured track to inspect it.</p>`;
   container.querySelector<HTMLElement>("[data-gradient]")!.style.background = `linear-gradient(to right, ${style.train}, ${style.steel})`;
   const select = container.querySelector<HTMLSelectElement>("[data-metric]")!;
   const legend = container.querySelector<HTMLElement>("[data-legend]")!;
   const inspection = container.querySelector<HTMLElement>("[data-inspection]")!;
   let report: TestingReport | null = null;
+  let estimate: ConstructionForcePreview | null = null;
+  let autoSelectedEstimate = false;
   let world: WorldView | undefined;
   let activeUnits: Units = "imperial";
   let inspectedSampleIndex: number | undefined;
   let inspectedProximityIndex: number | undefined;
   const renderInspection = (): void => {
-    if (inspectedSampleIndex !== undefined && report?.samples[inspectedSampleIndex]) {
-      inspection.textContent = formatSampleInUnits(report.samples[inspectedSampleIndex], activeUnits);
+    const samples = overlaySamples(report?.samples ?? null, estimate?.samples ?? null);
+    if (inspectedSampleIndex !== undefined && samples[inspectedSampleIndex]) {
+      inspection.textContent = formatSampleInUnits(samples[inspectedSampleIndex], activeUnits);
       return;
     }
     if (inspectedProximityIndex !== undefined && report?.proximityEvents[inspectedProximityIndex]) {
@@ -183,13 +224,15 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   };
   const renderMetric = (): TestingMetric | null => {
     const metric = select.value === "off" ? null : select.value as TestingMetric;
-    legend.hidden = metric === null || !report?.samples.length;
+    const samples = overlaySamples(report?.samples ?? null, estimate?.samples ?? null);
+    legend.hidden = metric === null || !samples.length;
+    container.querySelector<HTMLElement>("[data-force-warning]")!.hidden = !!report || !estimate || (metric !== "verticalG" && metric !== "lateralG" && metric !== "longitudinalG");
     if (metric) {
       const bounds = legendBounds(metric, activeUnits);
       container.querySelector<HTMLElement>("[data-low]")!.textContent = bounds.low;
       container.querySelector<HTMLElement>("[data-high]")!.textContent = bounds.high;
     }
-    return metric && report?.samples.length ? metric : null;
+    return metric && samples.length ? metric : null;
   };
   select.addEventListener("change", () => dispatch({ type: "testing-metric-set", metric: renderMetric() }));
   const renderReport = (): void => {
@@ -239,17 +282,30 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
       contribution.textContent = `Added ${number(proximityContribution(report.proximityEvents))} excitement from proximity events.`;
       eventList.append(contribution);
     }
-    select.disabled = !report?.samples.length;
+    const estimateText = container.querySelector<HTMLElement>("[data-construction-estimate]")!;
+    estimateText.hidden = !estimate || !!report;
+    estimateText.textContent = estimate && !report ? formatConstructionEstimate(estimate, activeUnits) : "";
+    select.disabled = !overlaySamples(report?.samples ?? null, estimate?.samples ?? null).length;
     renderInspection();
     renderMetric();
   };
   return {
     update(value) { report = value; inspectedSampleIndex = undefined; inspectedProximityIndex = undefined; renderReport(); },
+    updateEstimate(value) {
+      estimate = value;
+      inspectedSampleIndex = undefined;
+      if (!value) autoSelectedEstimate = false;
+      if (value?.samples.length && !report && !autoSelectedEstimate) {
+        autoSelectedEstimate = true;
+        if (select.value === "off") { select.value = "speed"; dispatch({ type: "testing-metric-set", metric: "speed" }); }
+      }
+      renderReport();
+    },
     setMetric(metric) { select.value = metric ?? "off"; renderMetric(); },
     setUnits(units) { activeUnits = units; renderReport(); },
     setWorld(value) { world = value; renderReport(); },
     inspect(index) {
-      if (report?.samples[index]) {
+      if (overlaySamples(report?.samples ?? null, estimate?.samples ?? null)[index]) {
         inspectedSampleIndex = index;
         inspectedProximityIndex = undefined;
         renderInspection();

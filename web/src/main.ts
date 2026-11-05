@@ -130,6 +130,7 @@ let followedPreview = "";
 let lastFrameAt = performance.now();
 let testingMetric: TestingMetric | null = null;
 let testingReportJson = "";
+let constructionForcePreviewJson = "";
 const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch);
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
@@ -676,6 +677,8 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     gameCanvas.dataset.blockBoundaries = String(next.blockReport.sections.length);
     const reportJson = JSON.stringify(next.testingReport ?? null);
     if (reportJson !== testingReportJson) { testingReportJson = reportJson; testingPanel.update(next.testingReport ?? null); }
+    const estimateJson = JSON.stringify(next.constructionForcePreview ?? null);
+    if (estimateJson !== constructionForcePreviewJson) { constructionForcePreviewJson = estimateJson; testingPanel.updateEstimate(next.constructionForcePreview ?? null); }
     if (redraw) renderRevision.invalidate();
   } else if (message.type === "guest-detail") {
     latestGuestDetail = message.detail;

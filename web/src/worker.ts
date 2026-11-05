@@ -3,7 +3,7 @@ import type { Facility, FacilityAction } from "./facilities";
 import init, { WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_wasm.js";
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
-import type { ConstructionAction, ConstructionElement, ConstructionPiece, ConstructionTrack, PieceShape } from "./construction-protocol";
+import type { ConstructionAction, ConstructionElement, ConstructionForcePreview, ConstructionPiece, ConstructionTrack, PieceShape } from "./construction-protocol";
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
@@ -129,12 +129,16 @@ function sendConstruction(complete = true): void {
   const colorNames = JSON.parse(simulation.construction_colors()) as ConstructionColors | null;
   const layoutReport = JSON.parse(simulation.construction_train_layout()) as TrainLayout | null;
   const trainLayout = layoutReport ? parseTrainLayout(layoutReport) : null;
+  const constructionForcePreview = complete
+    ? JSON.parse(simulation.construction_force_preview_json()) as ConstructionForcePreview | null
+    : null;
   sendWorkerMessage(workerScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     selected: selected || null, track,
     canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
     canFinish: simulation.construction_can_finish(), finishReason: simulation.construction_finish_reason(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as TestingReport | null,
+    constructionForcePreview,
     canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), coasterPrice, coasterIncome, stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.refusal || "",
     blockReport: JSON.parse(lastBlockReport) as BlockReport, trainCount: simulation.construction_train_count(),
     previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports, railDistances, blockCandidates,

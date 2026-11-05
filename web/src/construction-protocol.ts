@@ -41,6 +41,11 @@ export type { ConstructionTrackWire as ConstructionTrack } from "./generated/Con
 import type { ConstructionPieceWire as ConstructionPiece } from "./generated/ConstructionPieceWire";
 import type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
 import type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
+import type { ConstructionForcePreviewWire } from "./generated/ConstructionForcePreviewWire";
+
+export type ConstructionForcePreview = Omit<ConstructionForcePreviewWire, "status"> & {
+  readonly status: "reachedEnd" | "stalled" | "timedOut";
+};
 
 export interface PieceShapesMessage {
   readonly type: "piece-shapes";
@@ -75,6 +80,7 @@ export interface ConstructionState {
   readonly blockReport: BlockReport;
   readonly trainCount: number;
   readonly testingReport?: TestingReport | null;
+  readonly constructionForcePreview: ConstructionForcePreview | null;
   readonly placedRails: Float32Array;
   readonly railDistances: Float32Array;
   readonly blockCandidates: Float64Array;

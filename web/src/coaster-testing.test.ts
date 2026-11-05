@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProximityMarkers, buildTestingRibbon, formatProximityEvent, formatSample, formatTestingNote, proximityContribution, summarizeRideHeights, type ProximityEvent, type TestingSample } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, formatConstructionEstimate, formatProximityEvent, formatSample, formatTestingNote, overlaySamples, proximityContribution, summarizeRideHeights, type ProximityEvent, type TestingSample } from "./coaster-testing";
 import type { WorldView } from "./render/scene";
 
 const samples: TestingSample[] = [
@@ -16,6 +16,42 @@ const proximityEvents: ProximityEvent[] = [
 ];
 
 describe("coaster testing overlay", () => {
+  it("uses measured samples when available and otherwise shows the construction estimate", () => {
+    expect(overlaySamples(samples, [samples[0]])).toBe(samples);
+    const estimate = [samples[1], samples[2]];
+    expect(overlaySamples(null, estimate)).toBe(estimate);
+    expect(overlaySamples(null, null)).toEqual([]);
+  });
+  it("describes the latest estimated forces, limit violations, and a stalled train", () => {
+    const limits = { minimumVerticalG: -1, maximumVerticalG: 4, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
+    const estimate = { samples: [samples[0], { ...samples[1], verticalG: -2.5, lateralG: -2 }], completed: false, status: "stalled" as const, limits, launches: [], lastPlaced: { maximumSpeed: 12, minimumVerticalG: -2.5, maximumVerticalG: 1, maximumAbsoluteLateralG: 2, maximumAbsoluteLongitudinalG: 0.1 } };
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("43.2 km/h");
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("−2.5–1.0 g");
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("vertical and lateral");
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("vertical −2.5 g at 1 m (limit −1.0 g)");
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("lateral −2.0 g at 1 m (absolute limit 1.5 g)");
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("stopped. Last recorded distance: 1 m");
+    expect(formatConstructionEstimate({ ...estimate, status: "timedOut" }, "imperial")).toContain("timed out. Last recorded distance: 3 ft");
+    expect(formatConstructionEstimate(estimate, "metric")).toContain("Last placed piece");
+    expect(formatConstructionEstimate({ ...estimate, samples: [samples[0]], completed: true, status: "reachedEnd" }, "metric")).not.toContain("comfortable limits");
+    const laterPeak = { ...samples[2], verticalG: 6, lateralG: 0, longitudinalG: 2 };
+    const warning = formatConstructionEstimate({ ...estimate, samples: [...estimate.samples, laterPeak] }, "metric");
+    expect(warning).toContain("vertical 6.0 g at 2 m (limit 4.0 g)");
+    expect(warning).toContain("longitudinal 2.0 g at 2 m (absolute limit 1.5 g)");
+  });
+  it("shows launch speed capability and the configured launch's estimated force", () => {
+    const estimate = {
+      samples, completed: false, status: "stalled" as const,
+      limits: { minimumVerticalG: -1, maximumVerticalG: 4, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 },
+      lastPlaced: null,
+      launches: [{ pieceIndex: 1, maximumSpeed: 20, peakLongitudinalG: 1.3 }, { pieceIndex: 3, maximumSpeed: 30, peakLongitudinalG: null }],
+    };
+    const text = formatConstructionEstimate(estimate, "metric");
+    expect(text).toContain("Launch on piece 2: approximate maximum speed 72 km/h");
+    expect(text).toContain("configured launch's estimated peak longitudinal rider force 1.3 g");
+    expect(text).toContain("Launch on piece 4: approximate maximum speed 108 km/h");
+    expect(text).toContain("estimated force unavailable: no samples on this launch");
+  });
   it("describes proximity events and calculates their excitement contribution", () => {
     expect(formatProximityEvent(proximityEvents[0])).toBe("Near-miss with the coaster's supports at piece 14, very close");
     expect(formatProximityEvent(proximityEvents[1])).toBe("Dueling trains at piece 8, close");
@@ -47,6 +83,18 @@ describe("coaster testing overlay", () => {
       expect(alternate[0].color).not.toEqual(quads[0].color);
       expect(quads.flatMap((quad) => quad.vertices).every((vertex) => Number.isFinite(vertex.x) && Number.isFinite(vertex.depth))).toBe(true);
     }
+  });
+
+  it("marks force-limit violations on the corresponding force ribbon", () => {
+    const limits = { minimumVerticalG: -1, maximumVerticalG: 4, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
+    const readings = [{ ...samples[0], verticalG: -2, lateralG: 2 }, samples[1], samples[2]];
+    const vertical = buildTestingRibbon(readings, "verticalG", camera, viewport, style, limits);
+    const lateral = buildTestingRibbon(readings, "lateralG", camera, viewport, style, limits);
+    expect(vertical[0].color).toEqual([0.85, 0.1, 0.1, 1]);
+    expect(lateral[0].color).toEqual(vertical[0].color);
+    expect(vertical[1].color).not.toEqual(vertical[0].color);
+    expect(buildTestingRibbon(readings, "speed", camera, viewport, style, limits)[0].color).not.toEqual(vertical[0].color);
+    expect(buildTestingRibbon(readings, "longitudinalG", camera, viewport, style, limits)[0].color).not.toEqual(vertical[0].color);
   });
 
   it("does not connect unrecorded parts of the circuit", () => {

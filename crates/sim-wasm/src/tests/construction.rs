@@ -44,6 +44,85 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     assert_eq!(baseline.events_for_run(&[]), diagonal.events_for_run(&[]));
 }
 
+#[test]
+fn construction_force_preview_reports_placed_track_and_last_piece_peaks() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    assert_eq!(simulation.construction_force_preview_json(), "null");
+
+    simulation.construction_start(100, 100, 20, 0);
+    let station_preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_force_preview_json()).unwrap();
+    assert!(station_preview["lastPlaced"].is_null());
+
+    simulation.construction_set_chain(true);
+    simulation.construction_select("LevelToGentleUp");
+    assert!(simulation.construction_can_append());
+    simulation.construction_append();
+
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_force_preview_json()).unwrap();
+    let samples = preview["samples"].as_array().unwrap();
+    assert!(!samples.is_empty());
+    assert!(samples.iter().all(|sample| {
+        sample["x"].as_f64().is_some()
+            && sample["y"].as_f64().is_some()
+            && sample["z"].as_f64().is_some()
+    }));
+    assert!(samples.windows(2).all(|pair| {
+        pair[1]["distance"].as_f64().unwrap() - pair[0]["distance"].as_f64().unwrap() <= 1.001
+    }));
+    assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
+    assert!(preview["lastPlaced"]["maximumSpeed"].as_f64().is_some());
+    assert!(preview["lastPlaced"]["minimumVerticalG"].as_f64().is_some());
+    assert!(preview["lastPlaced"]["maximumVerticalG"].as_f64().is_some());
+    assert!(
+        preview["lastPlaced"]["maximumAbsoluteLateralG"]
+            .as_f64()
+            .is_some()
+    );
+    assert!(
+        preview["lastPlaced"]["maximumAbsoluteLongitudinalG"]
+            .as_f64()
+            .is_some()
+    );
+}
+
+#[test]
+fn construction_force_preview_reports_launch_capability_and_estimated_force() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_select("model:velocity_viper");
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_select("LaunchShort");
+    simulation.construction_append();
+    assert!(simulation.construction_set_launch_intensity(1, 12.0));
+
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_force_preview_json()).unwrap();
+    let launch = &preview["launches"][0];
+    let track: serde_json::Value = serde_json::from_str(&simulation.construction_track()).unwrap();
+    assert_eq!(launch["pieceIndex"], 1);
+    assert_eq!(launch["maximumSpeed"], track[1]["launchMaximumSpeed"]);
+    assert!(launch["peakLongitudinalG"].as_f64().unwrap() > 0.0);
+    let launch_start = simulation.construction.as_ref().unwrap().pieces()[0].length();
+    let peak = preview["samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|sample| sample["distance"].as_f64().unwrap() >= launch_start)
+        .map(|sample| sample["longitudinalG"].as_f64().unwrap().abs())
+        .fold(0.0_f64, f64::max);
+    assert_eq!(launch["peakLongitudinalG"].as_f64().unwrap(), peak);
+    assert!(simulation.construction_set_launch_intensity(1, 14.0));
+    let stronger: serde_json::Value =
+        serde_json::from_str(&simulation.construction_force_preview_json()).unwrap();
+    assert!(
+        stronger["launches"][0]["peakLongitudinalG"]
+            .as_f64()
+            .unwrap()
+            > peak
+    );
+}
+
 const RETURN_PIECES: [theme_park_sim::track::PieceId; 9] = [
     theme_park_sim::track::PieceId::Straight,
     theme_park_sim::track::PieceId::HalfTileStraight,
