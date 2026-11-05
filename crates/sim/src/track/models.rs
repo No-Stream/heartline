@@ -132,6 +132,15 @@ pub struct CoasterModel {
     pub default_colors: CoasterColors,
 }
 impl CoasterModel {
+    pub fn cars_per_train_range(&self) -> std::ops::RangeInclusive<u8> {
+        match self.name {
+            "Briar Blitz" => 4..=12,
+            "Timber Tumbler" => 4..=8,
+            "Velocity Viper" => 3..=6,
+            _ => panic!("unknown coaster model: {}", self.name),
+        }
+    }
+
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_bytes(self.manufacturer.as_bytes());
         hash.write_bytes(self.name.as_bytes());

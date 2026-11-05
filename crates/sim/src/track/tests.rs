@@ -2137,3 +2137,84 @@ fn barrel_drop_supports_stay_outside_inverted_sections() {
         }
     }
 }
+
+#[test]
+fn configured_train_rolled_inversion_speed_windows_are_physically_valid() {
+    const SAMPLE_SPACING: f64 = 0.05;
+    for id in [
+        PieceId::ZeroGRollFastLeft,
+        PieceId::ZeroGRollCompactLeft,
+        PieceId::StallLeft,
+    ] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let rated = piece.rated_speeds.unwrap();
+        for (cars, car_length) in (3..=8)
+            .map(|cars| (cars, 3.0))
+            .chain((4..=12).map(|cars| (cars, 1.5)))
+        {
+            let length = car_length * f64::from(cars);
+            let steps = ((piece.length() + length) / SAMPLE_SPACING).ceil() as usize;
+            let heights: Vec<_> = (0..=steps)
+                .map(|index| {
+                    piece
+                        .sample((index as f64 * SAMPLE_SPACING).min(piece.length()))
+                        .position
+                        .z
+                })
+                .collect();
+            let initial_height = heights[0];
+            let spacing_steps = (length / f64::from(cars) / SAMPLE_SPACING).round() as usize;
+            let maximum_mean_height = (0..=steps)
+                .map(|front| {
+                    (0..cars)
+                        .map(|car| heights[front.saturating_sub(car as usize * spacing_steps)])
+                        .sum::<f64>()
+                        / f64::from(cars)
+                })
+                .fold(f64::NEG_INFINITY, f64::max);
+            let minimum = (2.0 * crate::physics::GRAVITY * (maximum_mean_height - initial_height)
+                + 36.0)
+                .sqrt();
+            eprintln!(
+                "{id:?} {cars} cars: minimum {minimum:.4}, maximum {:.4}, catalog minimum {:.4}",
+                rated.maximum_entry, rated.minimum_entry
+            );
+            assert!(
+                minimum < rated.maximum_entry,
+                "{id:?} {cars} cars: {minimum} >= {}",
+                rated.maximum_entry
+            );
+            let mut train = hybrid_model().train;
+            train.cars = cars;
+            train.length_metres = length;
+            let actual = super::effective_rated_speeds(piece, &train).unwrap();
+            assert!((actual.minimum_entry - minimum).abs() < 1e-9);
+            assert_eq!(actual.maximum_entry, rated.maximum_entry);
+        }
+    }
+}
+
+#[test]
+fn default_train_uses_exact_catalog_rating_at_any_elevation() {
+    let train = hybrid_model().train;
+    for id in [
+        PieceId::ZeroGRollFastLeft,
+        PieceId::ZeroGRollCompactLeft,
+        PieceId::StallLeft,
+    ] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let placed = piece
+            .at(TrackState {
+                z: 100,
+                ..piece.entry
+            })
+            .unwrap();
+        assert_eq!(
+            super::effective_rated_speeds(&placed, &train)
+                .unwrap()
+                .minimum_entry
+                .to_bits(),
+            piece.rated_speeds.unwrap().minimum_entry.to_bits()
+        );
+    }
+}

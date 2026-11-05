@@ -158,6 +158,7 @@ function sendConstruction(complete = true): void {
     speedMatch: complete ? JSON.parse(simulation.construction_speed_match_json(selected, constructionEndSpeedCache)) as ConstructionSpeedMatch | null : null,
     canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), coasterPrice, coasterIncome, stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.refusal || "",
     blockReport: JSON.parse(lastBlockReport) as BlockReport, trainCount: simulation.construction_train_count(),
+    minCarsPerTrain: simulation.construction_min_cars_per_train(), maxCarsPerTrain: simulation.construction_max_cars_per_train(),
     previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports, railDistances, blockCandidates,
   }, [previewRails.buffer, previewTies.buffer, previewSupports.buffer, placedRails.buffer, placedTies.buffer, placedSupports.buffer, railDistances.buffer, blockCandidates.buffer]);
 }
@@ -551,6 +552,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-auto-blocks": simulation.construction_auto_blocks(); break;
         case "construction-apply-best-blocks": simulation.construction_apply_best_block_sections(); break;
         case "construction-set-train-count": simulation.construction_set_train_count(action.count); break;
+        case "construction-set-cars-per-train": simulation.construction_set_cars_per_train(action.cars); break;
         case "construction-move-block": simulation.construction_move_block_section(action.index, action.boundaryMetres); break;
         case "construction-remove-block": simulation.construction_remove_block_section(action.index); break;
         case "construction-add-block": simulation.construction_add_block_section(action.boundaryMetres); break;

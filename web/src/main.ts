@@ -437,6 +437,11 @@ const coasterAdapter = coasterToolAdapter((action) => {
       const count = steppedTrainCount(construction.trainCount, construction.blockReport.trainCapacity, action.step);
       if (count !== undefined) sendConstructionInput({ type: "construction-set-train-count", count });
     }
+  } else if (action.type === "construction-cars-per-train-step") {
+    if (construction?.active && construction.trainLayout && !construction.isOpen) {
+      const cars = construction.trainLayout.carsPerTrain + action.step;
+      if (cars >= construction.minCarsPerTrain && cars <= construction.maxCarsPerTrain) sendConstructionInput({ type: "construction-set-cars-per-train", cars });
+    }
   } else if (action.type === "construction-delete-mode" || action.type === "delete-mode-toggle") {
     deleteMode = action.type === "delete-mode-toggle" ? !deleteMode : action.enabled;
     panel.setDeleteMode(deleteMode);

@@ -1,5 +1,7 @@
-use theme_park_sim::track::construction::select_speed_matched_variant;
-use theme_park_sim::track::{Piece, PieceId, RatedSpeeds, catalog};
+use theme_park_sim::track::construction::{
+    select_speed_matched_variant, select_speed_matched_variant_for_train,
+};
+use theme_park_sim::track::{Piece, PieceId, RatedSpeeds, catalog, hybrid_model};
 
 fn candidate(id: PieceId, minimum_entry: f64, maximum_entry: f64) -> Piece {
     let mut piece = catalog()
@@ -83,4 +85,28 @@ fn actual_loop_sizes_are_selected_at_their_rated_midpoints() {
         assert_eq!(selected.id, candidate.id);
         assert!(selected.fits);
     }
+}
+
+#[test]
+fn configured_train_changes_rolled_inversion_speed_match() {
+    let candidates = [catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::ZeroGRollCompactLeft)
+        .unwrap()
+        .clone()];
+    let mut train = hybrid_model().train;
+    train.cars = 4;
+    train.length_metres = 12.0;
+    assert!(
+        !select_speed_matched_variant_for_train(&candidates, 16.1, &train)
+            .unwrap()
+            .fits
+    );
+    train.cars = 8;
+    train.length_metres = 24.0;
+    assert!(
+        select_speed_matched_variant_for_train(&candidates, 16.1, &train)
+            .unwrap()
+            .fits
+    );
 }

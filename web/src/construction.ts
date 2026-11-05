@@ -1,3 +1,4 @@
+import { carsPerTrainControl } from "./cars-per-train";
 import { speedMatchMessage } from "./construction-speed-match";
 import { candidateForceReadout } from "./candidate-force-readout";
 import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
@@ -212,6 +213,17 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
           </div>
           <p class="builder__test-hint">Coaster income: <span data-coaster-income>0</span></p>
         </section>
+        <section class="tool-panel__section builder__cars" aria-label="Train length">
+          <div class="builder__train-count">
+            <span class="tool-panel__label" id="cars-per-train-label">Cars per train</span>
+            <div class="stepper stepper--compact" role="group" aria-labelledby="cars-per-train-label">
+              <button type="button" data-cars-per-train-step="-1" aria-label="Remove one car per train">−</button>
+              <span class="stepper__value" data-cars-per-train aria-live="polite"></span>
+              <button type="button" data-cars-per-train-step="1" aria-label="Add one car per train">+</button>
+            </div>
+          </div>
+          <p class="tool-panel__hint" data-train-rider-capacity></p>
+        </section>
         <section class="tool-panel__section builder__blocks" aria-label="Block sections" data-block-panel>
           <div class="builder__block-heading">
             <h3>Block sections</h3>
@@ -281,6 +293,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const blockPanel = element("[data-block-panel]");
   const autoBlocks = element<HTMLButtonElement>("[data-auto-blocks]");
   const applyBestBlocks = element<HTMLButtonElement>("[data-apply-best-blocks]");
+  const carsPerTrain = element("[data-cars-per-train]");
+  const fewerCars = element<HTMLButtonElement>('[data-cars-per-train-step="-1"]');
+  const moreCars = element<HTMLButtonElement>('[data-cars-per-train-step="1"]');
+  const trainRiderCapacity = element("[data-train-rider-capacity]");
   const trainCount = element("[data-train-count]");
   const fewerTrains = element<HTMLButtonElement>('[data-train-count-step="-1"]');
   const moreTrains = element<HTMLButtonElement>('[data-train-count-step="1"]');
@@ -349,6 +365,9 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     applyBestBlocks.textContent = "Using current layout…";
     dispatch({ type: "construction-apply-best-blocks" });
   });
+  for (const [button, step] of [[fewerCars, -1], [moreCars, 1]] as const) {
+    button.addEventListener("click", () => dispatch({ type: "construction-cars-per-train-step", step }));
+  }
   for (const [button, step] of [[fewerTrains, -1], [moreTrains, 1]] as const) {
     button.addEventListener("click", () => {
       dispatch({ type: "construction-train-count-step", step });
@@ -726,6 +745,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   }
 
   function renderBlockPanel(current: ConstructionState): void {
+    const layout = current.trainLayout;
+    if (layout) {
+      const carsControl = carsPerTrainControl(layout.carsPerTrain, current.minCarsPerTrain, current.maxCarsPerTrain, layout.rowsPerCar * layout.seatsPerRow, current.isOpen);
+      carsPerTrain.textContent = String(layout.carsPerTrain);
+      trainRiderCapacity.textContent = carsControl.capacityText;
+      fewerCars.disabled = carsControl.fewerDisabled;
+      moreCars.disabled = carsControl.moreDisabled;
+    }
     const report = current.blockReport;
     if (selectedBlock !== null && !report.sections.some((section) => section.editableIndex === selectedBlock)) selectedBlock = null;
     const view = blockPanelState(report);

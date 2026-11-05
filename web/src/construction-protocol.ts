@@ -25,6 +25,7 @@ export type ConstructionAction =
   | { readonly type: "construction-auto-blocks" }
   | { readonly type: "construction-apply-best-blocks" }
   | { readonly type: "construction-set-train-count"; readonly count: number }
+  | { readonly type: "construction-set-cars-per-train"; readonly cars: number }
   | { readonly type: "construction-move-block"; readonly index: number; readonly boundaryMetres: number }
   | { readonly type: "construction-remove-block"; readonly index: number }
   | { readonly type: "construction-add-block"; readonly boundaryMetres: number };
@@ -81,6 +82,8 @@ export interface ConstructionState {
   readonly message: string;
   readonly blockReport: BlockReport;
   readonly trainCount: number;
+  readonly minCarsPerTrain: number;
+  readonly maxCarsPerTrain: number;
   readonly testingReport?: TestingReport | null;
   readonly constructionForcePreview: ConstructionForcePreview | null;
   readonly candidateForcePreview: CandidateForcePreview | null;

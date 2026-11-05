@@ -40,6 +40,7 @@ export type InputAction =
   | { readonly type: "construction-open-toggle" }
   | { readonly type: "construction-price-step"; readonly step: number }
   | { readonly type: "construction-train-count-step"; readonly step: -1 | 1 }
+  | { readonly type: "construction-cars-per-train-step"; readonly step: -1 | 1 }
   | { readonly type: "game-speed-cycle" | "pause-toggle" | "session-export" }
   | { readonly type: "day-scrub"; readonly phase: number }
   | { readonly type: "day-speed-set"; readonly speed: DaySpeed }

@@ -92,6 +92,11 @@ pub(crate) fn command_error_message(error: CommandError) -> &'static str {
 pub(crate) fn block_error_message(error: BlockCommandError) -> &'static str {
     match error {
         BlockCommandError::InvalidTrainCount => "",
+        BlockCommandError::InvalidCarsPerTrain => {
+            "The car count is outside this model's allowed range."
+        }
+        BlockCommandError::CoasterOpen => "Close the coaster before changing its train length.",
+        BlockCommandError::NoConstruction => "Place a station before changing its train length.",
         BlockCommandError::CompleteCircuitRequired => {
             "A complete circuit is required to open the coaster."
         }

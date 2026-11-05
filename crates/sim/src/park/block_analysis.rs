@@ -22,6 +22,9 @@ use crate::track::blocks::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockCommandError {
     InvalidTrainCount,
+    InvalidCarsPerTrain,
+    CoasterOpen,
+    NoConstruction,
     CompleteCircuitRequired,
     MissingStationAccess,
     ClosedCircuitRequiredForPlacement,
@@ -40,6 +43,44 @@ pub fn block_physics_config() -> PhysicsConfig {
 }
 
 impl Park {
+    pub fn construction_set_cars_per_train(&mut self, cars: u8) -> Result<(), BlockCommandError> {
+        if self.coaster_open {
+            return Err(BlockCommandError::CoasterOpen);
+        }
+        let construction = self
+            .construction
+            .as_ref()
+            .ok_or(BlockCommandError::NoConstruction)?;
+        if !construction.model().cars_per_train_range().contains(&cars) {
+            return Err(BlockCommandError::InvalidCarsPerTrain);
+        }
+        if construction.model().train.cars == cars {
+            return Ok(());
+        }
+        let mut train = construction.model().train.clone();
+        train.length_metres = train.length_metres / f64::from(train.cars) * f64::from(cars);
+        train.cars = cars;
+        let search = match construction.circuit() {
+            Ok(circuit) if circuit.length() > train.length_metres => Some(
+                BlockPlacementSearch::new(circuit, train, block_physics_config())
+                    .map_err(BlockCommandError::Validation)?,
+            ),
+            _ => None,
+        };
+        self.construction.as_mut().unwrap().set_cars_per_train(cars);
+        self.construction_train = None;
+        self.construction_recorder = None;
+        self.construction_report = None;
+        self.construction_outcome = None;
+        self.support_render_cache.clear();
+        self.clear_block_layout();
+        if let Some(search) = search {
+            self.install_block_layout(search.best().clone(), true);
+            self.block_placement_search = Some(search);
+        }
+        Ok(())
+    }
+
     pub fn construction_can_test(&self) -> bool {
         self.construction.as_ref().is_some_and(|construction| {
             construction.is_closed()

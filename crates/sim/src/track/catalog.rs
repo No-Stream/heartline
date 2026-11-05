@@ -47,6 +47,55 @@ fn rolled_inversion_minimum_entry(piece: &Piece) -> f64 {
     (2.0 * GRAVITY * (maximum_mean_height - initial_height) + MINIMUM_SPEED.powi(2)).sqrt()
 }
 
+pub fn effective_rated_speeds(
+    piece: &Piece,
+    train: &super::TrainConfiguration,
+) -> Option<RatedSpeeds> {
+    let mut rated = piece.rated_speeds?;
+    if !matches!(
+        piece.id,
+        PieceId::ZeroGRollFastLeft
+            | PieceId::ZeroGRollFastRight
+            | PieceId::ZeroGRollCompactLeft
+            | PieceId::ZeroGRollCompactRight
+            | PieceId::StallLeft
+            | PieceId::StallRight
+    ) {
+        return Some(rated);
+    }
+    assert!(train.cars > 0 && train.length_metres.is_finite() && train.length_metres > 0.0);
+    // Preserve the catalog value bit-for-bit for existing default-train replays.
+    if train.cars == 6 && train.length_metres == 18.0 {
+        return Some(rated);
+    }
+    const SAMPLE_SPACING: f64 = 0.05;
+    let steps = ((piece.length() + train.length_metres) / SAMPLE_SPACING).ceil() as usize;
+    let heights: Vec<_> = (0..=steps)
+        .map(|index| {
+            piece
+                .sample((index as f64 * SAMPLE_SPACING).min(piece.length()))
+                .position
+                .z
+        })
+        .collect();
+    let spacing_steps =
+        (train.length_metres / f64::from(train.cars) / SAMPLE_SPACING).round() as usize;
+    let maximum_mean_height = (0..=steps)
+        .map(|front| {
+            (0..usize::from(train.cars))
+                .map(|car| heights[front.saturating_sub(car * spacing_steps)])
+                .sum::<f64>()
+                / f64::from(train.cars)
+        })
+        .fold(f64::NEG_INFINITY, f64::max);
+    rated.minimum_entry = (2.0 * GRAVITY * (maximum_mean_height - heights[0]) + 36.0).sqrt();
+    assert!(
+        rated.minimum_entry <= rated.maximum_entry,
+        "configured train has no valid rated speed window"
+    );
+    Some(rated)
+}
+
 fn build_catalog() -> Vec<Piece> {
     use Bank::{Inverted, Left, Level as FlatBank, Right};
     use Heading::{East, North, West};
