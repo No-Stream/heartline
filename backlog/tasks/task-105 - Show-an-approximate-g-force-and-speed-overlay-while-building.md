@@ -4,7 +4,7 @@ title: Show an approximate g-force and speed overlay while building
 status: Done
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-05 06:43'
+updated_date: '2026-11-05 07:05'
 labels: []
 dependencies:
   - TASK-95
@@ -34,5 +34,5 @@ Owner request 2026-11-04. While building a coaster, show approximate speed and g
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-While building, a simulated estimate from the station colours the unfinished track by limit closeness (worst of vertical, lateral, longitudinal g as a share of the model's comfortable limit: blue, amber, crimson with outline), labels past-limit spots and recent peaks with weak/good/great/too much/dangerous ratings (FORCE_RATING_BANDS in web/src/force-overlay.ts), shows all values on hover, reports where the train stalls, and shows each launch's maximum speed and peak force. Single-metric overlays remain selectable. 4-19 ms per update on the player circuits; within 0.15 g of the full test run. Gates: lint, npm test, construction-estimate, construction-controls and audio specs, make journeys 8/8.
+While building, a simulated estimate from the station colours the unfinished track by limit closeness (worst of vertical, lateral, longitudinal g as a share of the model's comfortable limit: blue, amber, crimson with outline), labels past-limit spots and recent peaks with weak/good/great/too much/dangerous ratings (FORCE_RATING_BANDS in web/src/force-overlay.ts), shows all values on hover, reports where the train stalls, and shows each launch's maximum speed and peak force. Single metrics remain selectable. 4-19 ms per update on the player circuits; within 0.15 g of the full test run. Gates on the merged master: lint, npm test, sim lib and wasm tests, overlay/audio/replay specs, make journeys 8/8.
 <!-- SECTION:FINAL_SUMMARY:END -->
