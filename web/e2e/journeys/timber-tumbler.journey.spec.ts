@@ -144,6 +144,7 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await waitForState(page, async () => (await page.getByRole("region", { name: "Coaster construction" }).getByRole("status").textContent()) === "Train completed a lap.", { ticks: 30_000 });
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  await expect(page.locator('[data-score-breakdown="excitement"]')).toContainText("Ejector airtime");
   const rating = await page.evaluate(() => window.gameTest.testingReport()!.rating);
   expect(rating.excitement).toBeGreaterThanOrEqual(4);
   expect(rating.excitement).toBeLessThan(10);

@@ -1,19 +1,11 @@
-use super::comfort::ComfortTracker;
+use super::comfort::{EnvelopeExceedance, EnvelopeTracker};
+use super::features::{PieceSummary, sample_interval};
+use super::scoring::{ForceAxis, ForceBand, ForceBandDurations, ScoreBreakdown, force_band, score};
 use super::{CarReading, Circuit};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
+use crate::track::{ComfortableForceLimits, Piece};
 
-const COMFORT_NOTE: &str = "Excitement was reduced by a game scoring estimate using partial ASTM F2291-06a force limits, including the estimated combined-axis 200 ms limit. This is not a safety assessment.";
-
-const HIGH_FORCE_SECTION_METRES: f64 = 8.0;
-const LONG_SLOW_SECTION_METRES: f64 = 100.0;
-const HIGH_FORCE_VERTICAL_G: f64 = 3.0;
-const HIGH_FORCE_NEGATIVE_VERTICAL_G: f64 = -1.0;
-const HIGH_FORCE_LATERAL_G: f64 = 2.0;
-const HIGH_FORCE_LONGITUDINAL_G: f64 = 1.5;
-const SLOW_SPEED_METRES_PER_SECOND: f64 = 8.0;
-const DROP_SCORE_CALIBRATION_METRES: f64 = 30.0;
-const INVERSION_SCORE_CALIBRATION_PASSAGES: f64 = 3.0;
 // Report the requested ejector and floater bands in rider-frame vertical g.
 const EJECTOR_AIRTIME_MAX_VERTICAL_G: f64 = -1.0;
 const FLOATER_AIRTIME_MAX_VERTICAL_G: f64 = 0.0;
@@ -24,31 +16,6 @@ const STRONG_POSITIVE_G_THRESHOLD: f64 = 3.5;
 // It is not a design or safety limit.
 // https://www.vdv-freizeittechnologie.de/files/bilder-vdv/pdf/Rohde-Accelerationlimits-2nd-edition-2024.pdf
 const STRONG_LATERAL_G_THRESHOLD: f64 = 1.0;
-const VERTICAL_DISCOMFORT_THRESHOLD_G: f64 = 3.5;
-const NEGATIVE_VERTICAL_DISCOMFORT_THRESHOLD_G: f64 = 0.5;
-const LATERAL_DISCOMFORT_THRESHOLD_G: f64 = 1.5;
-const LONGITUDINAL_DISCOMFORT_THRESHOLD_G: f64 = 1.5;
-const DISCOMFORT_VERTICAL_SCALE_G: f64 = 2.0;
-const DISCOMFORT_NEGATIVE_VERTICAL_SCALE_G: f64 = 1.5;
-const DISCOMFORT_LATERAL_SCALE_G: f64 = 1.5;
-const DISCOMFORT_LONGITUDINAL_SCALE_G: f64 = 1.5;
-const MODERATE_FORCE_CALIBRATION: f64 = 7.0;
-const INTENSITY_BASE_SCORE: f64 = 20.0;
-const INTENSITY_VERTICAL_WEIGHT: f64 = 14.0;
-const INTENSITY_LATERAL_WEIGHT: f64 = 18.0;
-const INTENSITY_LONGITUDINAL_WEIGHT: f64 = 10.0;
-const INTENSITY_AIRTIME_WEIGHT: f64 = 8.0;
-const INTENSITY_HIGH_FORCE_WEIGHT: f64 = 10.0;
-const HIGH_FORCE_SCORE_CALIBRATION_METRES: f64 = 20.0;
-const NAUSEA_SCORE_SCALE: f64 = 10.0;
-const EXCITEMENT_BASE_SCORE: f64 = 10.0;
-const EXCITEMENT_SPEED_WEIGHT: f64 = 1.6;
-const EXCITEMENT_AIRTIME_WEIGHT: f64 = 25.0;
-const EXCITEMENT_MODERATE_FORCE_WEIGHT: f64 = 24.0;
-const EXCITEMENT_DROP_WEIGHT: f64 = 15.0;
-const EXCITEMENT_INVERSION_WEIGHT: f64 = 15.0;
-const EXCITEMENT_NAUSEA_WEIGHT: f64 = 0.45;
-
 /// One fixed-distance force and speed sample from a coaster test run.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TestSample {
@@ -60,6 +27,8 @@ pub struct TestSample {
     pub airtime: bool,
     pub height_m: f64,
     pub inverted: bool,
+    pub roll: f64,
+    pub piece_index: usize,
 }
 
 /// A completed or interrupted test run, including advisory ride ratings.
@@ -70,14 +39,172 @@ pub struct TestRun {
     pub excitement: f64,
     pub intensity: f64,
     pub nausea: f64,
+    pub breakdown: ScoreBreakdown,
     pub statistics: RideStatistics,
     pub notes: Vec<String>,
     pub completed: bool,
     pub furthest_distance: f64,
     visited_ranges: Vec<(f64, f64)>,
-    base_excitement: f64,
-    base_intensity: f64,
-    comfort_penalty: f64,
+    rating_inputs: Vec<RatingInput>,
+    rating_notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RatingInput {
+    samples: Vec<TestSample>,
+    pieces: Vec<PieceSummary>,
+    proximity_events: Vec<ProximityEvent>,
+    theming: f64,
+    visited_ranges: Vec<(f64, f64)>,
+    circuit_length: f64,
+    completed: bool,
+    force_limits: ComfortableForceLimits,
+    force_bands: ForceBandDurations,
+    statistics: RideStatistics,
+    envelope: EnvelopeExceedance,
+}
+
+impl RatingInput {
+    fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_len(self.samples.len());
+        for &sample in &self.samples {
+            write_sample(hash, sample);
+        }
+        hash.write_len(self.pieces.len());
+        for piece in &self.pieces {
+            piece.hash_into(hash);
+        }
+        hash.write_len(self.proximity_events.len());
+        for &event in &self.proximity_events {
+            write_proximity_event(hash, event);
+        }
+        hash.write_f64(self.theming);
+        write_ranges(hash, &self.visited_ranges);
+        hash.write_f64(self.circuit_length);
+        hash.write_bool(self.completed);
+        for value in [
+            self.force_limits.minimum_vertical_g,
+            self.force_limits.maximum_vertical_g,
+            self.force_limits.maximum_lateral_g,
+            self.force_limits.maximum_longitudinal_g,
+        ] {
+            hash.write_f64(value);
+        }
+        hash_force_bands(hash, self.force_bands);
+        write_ride_statistics(hash, self.statistics);
+        hash.write_f64(self.envelope.g_seconds);
+        hash.write_f64(self.envelope.seconds);
+        hash.write_option(self.envelope.worst.as_ref(), |hash, worst| {
+            write_location(hash, worst.location);
+            hash.write_u8(worst.axis as u8);
+            hash.write_f64(worst.value);
+            hash.write_f64(worst.allowed);
+            hash.write_f64(worst.ratio);
+        });
+        hash.write_len(self.envelope.stretches.len());
+        for stretch in &self.envelope.stretches {
+            write_location(hash, stretch.location);
+            hash.write_f64(stretch.seconds);
+        }
+    }
+}
+
+fn hash_force_bands(hash: &mut StateHasher, bands: ForceBandDurations) {
+    for value in [
+        bands.airtime_good,
+        bands.airtime_great,
+        bands.vertical_good,
+        bands.vertical_great,
+        bands.lateral_strong,
+        bands.longitudinal_strong,
+        bands.too_much,
+        bands.dangerous,
+    ] {
+        hash.write_f64(value);
+    }
+}
+
+fn write_location(hash: &mut StateHasher, location: super::features::Location) {
+    hash.write_len(location.piece_index);
+    hash.write_bytes(location.piece_name.as_bytes());
+    hash.write_f64(location.distance_m);
+    hash.write_f64(location.seconds_from_start);
+}
+
+fn write_ride_statistics(hash: &mut StateHasher, stats: RideStatistics) {
+    for value in [
+        stats.ejector_airtime_seconds,
+        stats.floater_airtime_seconds,
+        stats.strong_positive_g_seconds,
+        stats.longest_strong_positive_g_seconds,
+        stats.strong_lateral_g_seconds,
+        stats.max_positive_vertical_g,
+        stats.max_negative_vertical_g,
+        stats.max_lateral_g,
+        stats.max_forward_g,
+        stats.max_braking_g,
+        stats.max_speed,
+        stats.average_speed,
+        stats.duration_seconds,
+        stats.track_length,
+        stats.max_height,
+        stats.biggest_drop,
+        stats.steepest_drop_angle_degrees,
+        stats.inverted_seconds,
+        stats.launch_peak_speed,
+    ] {
+        hash.write_f64(value);
+    }
+    for value in [
+        stats.airtime_moments,
+        stats.inversions,
+        stats.drops,
+        stats.launches,
+    ] {
+        hash.write_len(value);
+    }
+}
+
+fn record_force_bands(
+    durations: &mut ForceBandDurations,
+    reading: CarReading,
+    limits: ComfortableForceLimits,
+    seconds: f64,
+) {
+    let vertical_axis = if reading.g.vertical < 0.3 {
+        ForceAxis::Airtime
+    } else {
+        ForceAxis::Vertical
+    };
+    for (axis, value) in [
+        (vertical_axis, reading.g.vertical),
+        (ForceAxis::Lateral, reading.g.lateral),
+        (ForceAxis::Longitudinal, reading.g.longitudinal),
+    ] {
+        match (axis, force_band(axis, value, limits)) {
+            (ForceAxis::Airtime, ForceBand::Good) => durations.airtime_good += seconds,
+            (ForceAxis::Airtime, ForceBand::Great) => durations.airtime_great += seconds,
+            (ForceAxis::Vertical, ForceBand::Good) => durations.vertical_good += seconds,
+            (ForceAxis::Vertical, ForceBand::Great) => durations.vertical_great += seconds,
+            (ForceAxis::Lateral, ForceBand::Strong) => durations.lateral_strong += seconds,
+            (ForceAxis::Longitudinal, ForceBand::Strong) => {
+                durations.longitudinal_strong += seconds
+            }
+            (axis, ForceBand::TooMuch) => {
+                durations.too_much += seconds;
+                if axis == ForceAxis::Lateral {
+                    durations.lateral_strong += seconds;
+                }
+            }
+            (axis, ForceBand::Dangerous) => {
+                durations.dangerous += seconds;
+                if axis == ForceAxis::Lateral {
+                    durations.lateral_strong += seconds;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -109,7 +236,7 @@ pub struct RideStatistics {
 
 impl TestRun {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRun-v3");
+        hash.write_tag(b"TestRun-v5");
         hash.write_len(self.samples.len());
         for sample in &self.samples {
             write_sample(hash, *sample);
@@ -160,34 +287,41 @@ impl TestRun {
         hash.write_bool(self.completed);
         hash.write_f64(self.furthest_distance);
         write_ranges(hash, &self.visited_ranges);
-        hash.write_f64(self.base_excitement);
-        hash.write_f64(self.base_intensity);
-        hash.write_f64(self.comfort_penalty);
+        for contributions in [
+            &self.breakdown.excitement,
+            &self.breakdown.intensity,
+            &self.breakdown.nausea,
+        ] {
+            hash.write_len(contributions.len());
+            for contribution in contributions {
+                hash.write_u8(contribution.term as u8);
+                hash.write_f64(contribution.value);
+                hash.write_f64(contribution.measure);
+                hash.write_option(contribution.location, |hash, location| {
+                    hash.write_len(location.piece_index);
+                    hash.write_bytes(location.piece_name.as_bytes());
+                    hash.write_f64(location.distance_m);
+                    hash.write_f64(location.seconds_from_start);
+                });
+            }
+        }
+        hash.write_len(self.rating_inputs.len());
+        for input in &self.rating_inputs {
+            input.hash_into(hash);
+        }
+        hash.write_len(self.rating_notes.len());
+        for note in &self.rating_notes {
+            hash.write_bytes(note.as_bytes());
+        }
     }
 
     pub(super) fn average_car_ratings(&mut self, reports: &[TestRun]) {
         assert!(!reports.is_empty());
-        let count = reports.len() as f64;
-        self.base_excitement = reports
+        self.rating_inputs = reports
             .iter()
-            .map(|report| report.base_excitement)
-            .sum::<f64>()
-            / count;
-        self.base_intensity = reports
-            .iter()
-            .map(|report| report.base_intensity)
-            .sum::<f64>()
-            / count;
-        self.nausea = reports.iter().map(|report| report.nausea).sum::<f64>() / count;
-        self.comfort_penalty = reports
-            .iter()
-            .map(|report| report.comfort_penalty)
-            .sum::<f64>()
-            / count;
-        if self.comfort_penalty > 0.0 && !self.notes.iter().any(|note| note == COMFORT_NOTE) {
-            self.notes.push(COMFORT_NOTE.to_owned());
-        }
-        self.update_proximity_ratings();
+            .flat_map(|report| report.rating_inputs.iter().cloned())
+            .collect();
+        self.recompute_ratings();
     }
 
     pub fn unfinished_circuit() -> Self {
@@ -197,6 +331,7 @@ impl TestRun {
             excitement: 0.0,
             intensity: 0.0,
             nausea: 0.0,
+            breakdown: ScoreBreakdown::default(),
             statistics: RideStatistics::default(),
             notes: vec![
                 "The circuit is unfinished. Connect the track into a complete loop before testing the train."
@@ -205,15 +340,23 @@ impl TestRun {
             completed: false,
             furthest_distance: 0.0,
             visited_ranges: Vec::new(),
-            base_excitement: 0.0,
-            base_intensity: 0.0,
-            comfort_penalty: 0.0,
+            rating_inputs: Vec::new(),
+            rating_notes: Vec::new(),
         }
     }
 
     /// Add events at positions actually sampled by this car.
     pub fn add_proximity_events(&mut self, events: &[ProximityEvent]) {
         for event in events {
+            for input in &mut self.rating_inputs {
+                if input
+                    .visited_ranges
+                    .iter()
+                    .any(|(start, end)| event.distance >= *start && event.distance <= *end)
+                {
+                    insert_event(&mut input.proximity_events, *event);
+                }
+            }
             if self
                 .visited_ranges
                 .iter()
@@ -222,40 +365,136 @@ impl TestRun {
                 self.insert_proximity_event(*event);
             }
         }
-        self.update_proximity_ratings();
+        self.recompute_ratings();
+    }
+
+    pub fn set_theming(&mut self, theming: f64) {
+        assert!(
+            (0.0..=1.0).contains(&theming),
+            "theming score must be in [0, 1]"
+        );
+        for input in &mut self.rating_inputs {
+            input.theming = theming;
+        }
+        self.recompute_ratings();
     }
 
     fn insert_proximity_event(&mut self, event: ProximityEvent) {
-        if let Some(existing) = self.proximity_events.iter_mut().find(|existing| {
-            existing.kind == event.kind && existing.piece_index == event.piece_index
-        }) {
-            if event.strength > existing.strength {
-                *existing = event;
-            }
-        } else {
-            self.proximity_events.push(event);
-        }
+        insert_event(&mut self.proximity_events, event);
     }
 
-    fn update_proximity_ratings(&mut self) {
-        let mut strengths: Vec<_> = self
-            .proximity_events
+    fn recompute_ratings(&mut self) {
+        if self.rating_inputs.is_empty() {
+            return;
+        }
+        self.notes.retain(|note| !self.rating_notes.contains(note));
+        self.rating_notes.clear();
+        self.breakdown = ScoreBreakdown::default();
+        let count = self.rating_inputs.len() as f64;
+        for input in &self.rating_inputs {
+            let mut features = super::features::ride_features(
+                &input.samples,
+                &input.pieces,
+                &input.proximity_events,
+                input.circuit_length,
+                input.completed,
+            );
+            features.statistics = input.statistics;
+            features.envelope = input.envelope.clone();
+            features.theming = input.theming;
+            let scores = score(&features, &input.force_bands);
+            for note in scoring_notes(&features, scores.intensity, &scores.breakdown.nausea) {
+                if !self.rating_notes.contains(&note) {
+                    self.rating_notes.push(note);
+                }
+            }
+            for (target, source) in [
+                (&mut self.breakdown.excitement, scores.breakdown.excitement),
+                (&mut self.breakdown.intensity, scores.breakdown.intensity),
+                (&mut self.breakdown.nausea, scores.breakdown.nausea),
+            ] {
+                if target.is_empty() {
+                    target.extend(source.into_iter().map(|mut contribution| {
+                        contribution.value /= count;
+                        contribution.measure /= count;
+                        contribution
+                    }));
+                } else {
+                    assert_eq!(target.len(), source.len());
+                    for (total, contribution) in target.iter_mut().zip(source) {
+                        assert_eq!(total.term, contribution.term);
+                        total.value += contribution.value / count;
+                        total.measure += contribution.measure / count;
+                        if total.location.is_none() {
+                            total.location = contribution.location;
+                        }
+                    }
+                }
+            }
+        }
+        self.excitement = self
+            .breakdown
+            .excitement
             .iter()
-            .map(|event| event.strength.clamp(0.0, 1.0))
-            .collect();
-        strengths.sort_by(f64::total_cmp);
-        let total: f64 = strengths.iter().sum();
-        let contribution = total / (total + 4.0);
-        self.excitement = self.base_excitement + 0.8 * contribution;
-        self.intensity = self.base_intensity + 0.2 * contribution;
+            .map(|item| item.value)
+            .sum();
+        self.intensity = self.breakdown.intensity.iter().map(|item| item.value).sum();
+        self.nausea = self.breakdown.nausea.iter().map(|item| item.value).sum();
+        self.notes.extend(self.rating_notes.iter().cloned());
     }
+}
+
+fn insert_event(events: &mut Vec<ProximityEvent>, event: ProximityEvent) {
+    if let Some(existing) = events
+        .iter_mut()
+        .find(|existing| existing.kind == event.kind && existing.piece_index == event.piece_index)
+    {
+        if event.strength > existing.strength {
+            *existing = event;
+        }
+    } else {
+        events.push(event);
+    }
+}
+
+fn scoring_notes(
+    features: &super::features::RideFeatures,
+    intensity: f64,
+    nausea: &[super::scoring::Contribution],
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    if intensity >= 7.0 {
+        notes.push(
+            "This is a very intense ride. A few lower-force sections can make it more comfortable."
+                .to_owned(),
+        );
+    }
+    if nausea
+        .iter()
+        .any(|item| item.term == super::scoring::Term::Laterals && item.value >= 1.5)
+    {
+        notes.push("Some turns pull riders sideways strongly. More banking or wider turns can improve comfort.".to_owned());
+    }
+    if features.dead_excess_seconds >= 8.0 {
+        notes.push(
+            "Long slow stretches reduce excitement. Consider shortening them or adding elements."
+                .to_owned(),
+        );
+    }
+    if let Some(worst) = &features.envelope.worst {
+        notes.push(format!("High forces exceed the ASTM F2291 comfort envelope for {:.1} s, worst at {} ({:?} {:.1} g where {:.1} g is allowed). The scores are reduced; a gentler valley or a slower entry would recover them.", features.envelope.seconds, worst.location.piece_name, worst.axis, worst.value, worst.allowed));
+    }
+    notes
 }
 
 /// Turns per-tick train readings into one interpolated sample per track metre.
 pub struct TestRunRecorder {
     circuit_length: f64,
-    comfort: ComfortTracker,
+    force_limits: ComfortableForceLimits,
+    force_bands: ForceBandDurations,
+    comfort: EnvelopeTracker,
     piece_starts: Vec<f64>,
+    piece_summaries: Vec<PieceSummary>,
     rated_pieces: Vec<Option<RatedPieceSpeedWindow>>,
     launch_ranges: Vec<(f64, f64)>,
     maximum_positive_vertical_g: f64,
@@ -289,12 +528,25 @@ struct RatedPieceSpeedWindow {
 
 impl TestRunRecorder {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRunRecorder-v4");
+        hash.write_tag(b"TestRunRecorder-v6");
         hash.write_f64(self.circuit_length);
+        for value in [
+            self.force_limits.minimum_vertical_g,
+            self.force_limits.maximum_vertical_g,
+            self.force_limits.maximum_lateral_g,
+            self.force_limits.maximum_longitudinal_g,
+        ] {
+            hash.write_f64(value);
+        }
+        hash_force_bands(hash, self.force_bands);
         self.comfort.hash_into(hash);
         hash.write_len(self.piece_starts.len());
         for &piece_start in &self.piece_starts {
             hash.write_f64(piece_start);
+        }
+        hash.write_len(self.piece_summaries.len());
+        for piece in &self.piece_summaries {
+            piece.hash_into(hash);
         }
         hash.write_len(self.rated_pieces.len());
         for rated_piece in &self.rated_pieces {
@@ -347,8 +599,11 @@ impl TestRunRecorder {
         assert!(circuit_length.is_finite() && circuit_length > 0.0);
         Self {
             circuit_length,
-            comfort: ComfortTracker::default(),
+            force_limits: crate::track::hybrid_model().comfortable_force_limits,
+            force_bands: ForceBandDurations::default(),
+            comfort: EnvelopeTracker::default(),
             piece_starts: Vec::new(),
+            piece_summaries: Vec::new(),
             rated_pieces: Vec::new(),
             launch_ranges: Vec::new(),
             maximum_positive_vertical_g: 0.0,
@@ -375,8 +630,30 @@ impl TestRunRecorder {
     }
 
     pub fn for_circuit(circuit: &Circuit) -> Self {
+        Self::for_circuit_with_limits(
+            circuit,
+            crate::track::hybrid_model().comfortable_force_limits,
+        )
+    }
+
+    pub fn for_circuit_with_limits(circuit: &Circuit, limits: ComfortableForceLimits) -> Self {
         let mut recorder = Self::new(circuit.length());
+        recorder.force_limits = limits;
         recorder.piece_starts.clone_from(&circuit.starts);
+        recorder.piece_summaries = circuit
+            .pieces
+            .iter()
+            .map(|piece| PieceSummary {
+                id: piece.id,
+                name: piece.name,
+                kind: piece.kind,
+                shape: piece.shape.clone(),
+                inversion: piece.inversion,
+                heartlining: piece.heartlining,
+                length: piece.length(),
+                turn_angle_radians: piece_turn_angle_radians(piece),
+            })
+            .collect();
         recorder.rated_pieces = circuit
             .pieces
             .iter()
@@ -417,11 +694,41 @@ impl TestRunRecorder {
             }
             assert_eq!(frame.len(), 1, "a test recorder tracks one car");
             let reading = frame[0];
-            self.comfort.record([
-                reading.g.vertical,
-                reading.g.lateral,
-                reading.g.longitudinal,
-            ]);
+            let active = reading.speed > 1.0
+                && (self.piece_summaries.is_empty()
+                    || matches!(
+                        self.piece_summaries[reading.piece_index].kind,
+                        crate::track::PieceKind::Track
+                            | crate::track::PieceKind::Launch
+                            | crate::track::PieceKind::Brakes
+                    ));
+            if active {
+                record_force_bands(
+                    &mut self.force_bands,
+                    reading,
+                    self.force_limits,
+                    super::TIME_STEP,
+                );
+            }
+            let piece_name = self
+                .piece_summaries
+                .get(reading.piece_index)
+                .map_or("Track", |piece| piece.name);
+            self.comfort.record(
+                [
+                    reading.g.vertical,
+                    reading.g.lateral,
+                    reading.g.longitudinal,
+                ],
+                super::TIME_STEP,
+                active,
+                super::features::Location {
+                    piece_index: reading.piece_index,
+                    piece_name,
+                    distance_m: reading.distance.rem_euclid(self.circuit_length),
+                    seconds_from_start: 0.0,
+                },
+            );
             self.maximum_positive_vertical_g =
                 self.maximum_positive_vertical_g.max(reading.g.vertical);
             self.maximum_negative_vertical_g =
@@ -541,14 +848,7 @@ impl TestRunRecorder {
     pub fn finish(self, completed: bool, rolled_back: bool) -> TestRun {
         let circuit_length = self.circuit_length;
         let samples: Vec<_> = self.samples.into_iter().flatten().collect();
-        let (excitement, intensity, nausea, mut notes) = ratings(&samples, circuit_length);
-        let excess = self.comfort.finish();
-        let penalized_excitement = (excitement - 3.0 * excess / (1.0 + excess)).max(0.0);
-        let comfort_penalty = excitement - penalized_excitement;
-        let excitement = penalized_excitement;
-        if comfort_penalty > 0.0 {
-            notes.push(COMFORT_NOTE.to_owned());
-        }
+        let mut notes = Vec::new();
         let mut statistics = ride_statistics(&samples, circuit_length, completed);
         statistics.max_positive_vertical_g = self.maximum_positive_vertical_g;
         statistics.max_negative_vertical_g = self.maximum_negative_vertical_g;
@@ -585,25 +885,53 @@ impl TestRunRecorder {
         if rolled_back {
             notes.push("The train rolled back and was recovered safely.".to_owned());
         }
+        let mut scoring_samples = samples.clone();
+        let pieces = if self.piece_summaries.is_empty() {
+            for sample in &mut scoring_samples {
+                sample.piece_index = 0;
+            }
+            vec![PieceSummary {
+                id: crate::track::PieceId::Straight,
+                name: "Track",
+                kind: crate::track::PieceKind::Track,
+                shape: crate::track::Shape::Plain,
+                inversion: None,
+                heartlining: None,
+                length: circuit_length,
+                turn_angle_radians: 0.0,
+            }]
+        } else {
+            self.piece_summaries
+        };
+        let input = RatingInput {
+            samples: scoring_samples,
+            pieces,
+            proximity_events: self.dueling_events.clone(),
+            theming: 0.0,
+            visited_ranges: self.visited_ranges.clone(),
+            circuit_length,
+            completed,
+            force_limits: self.force_limits,
+            force_bands: self.force_bands,
+            statistics,
+            envelope: self.comfort.finish(),
+        };
         let mut report = TestRun {
             samples,
-            proximity_events: Vec::new(),
-            excitement,
-            intensity,
-            nausea,
+            proximity_events: self.dueling_events,
+            excitement: 0.0,
+            intensity: 0.0,
+            nausea: 0.0,
+            breakdown: ScoreBreakdown::default(),
             statistics,
             notes,
             completed,
             furthest_distance: self.furthest_distance,
             visited_ranges: self.visited_ranges,
-            base_excitement: excitement,
-            base_intensity: intensity,
-            comfort_penalty,
+            rating_inputs: vec![input],
+            rating_notes: Vec::new(),
         };
-        for event in self.dueling_events {
-            report.insert_proximity_event(event);
-        }
-        report.update_proximity_ratings();
+        report.recompute_ratings();
         report
     }
 
@@ -664,6 +992,13 @@ impl TestRunRecorder {
         let distance = distance.rem_euclid(self.circuit_length);
         let index = distance.round() as usize % self.samples.len();
         if self.samples[index].is_none() {
+            let piece_index = if self.piece_starts.is_empty() {
+                reading.piece_index
+            } else {
+                self.piece_starts
+                    .partition_point(|start| *start <= distance)
+                    - 1
+            };
             self.samples[index] = Some(TestSample {
                 distance,
                 speed: reading.speed,
@@ -673,6 +1008,8 @@ impl TestRunRecorder {
                 airtime: reading.g.vertical < 0.0,
                 height_m: reading.height_m,
                 inverted: reading.inverted,
+                roll: reading.roll,
+                piece_index,
             });
         }
     }
@@ -698,6 +1035,31 @@ fn write_sample(hash: &mut StateHasher, sample: TestSample) {
     hash.write_bool(sample.airtime);
     hash.write_f64(sample.height_m);
     hash.write_bool(sample.inverted);
+    hash.write_f64(sample.roll);
+    hash.write_len(sample.piece_index);
+}
+
+fn piece_turn_angle_radians(piece: &Piece) -> f64 {
+    const GEOMETRY_STEPS: usize = 64;
+    const MINIMUM_HORIZONTAL_TANGENT: f64 = 0.1;
+    let mut previous_yaw: Option<f64> = None;
+    let mut turn_angle = 0.0;
+    for step in 0..=GEOMETRY_STEPS {
+        let distance = piece.length() * step as f64 / GEOMETRY_STEPS as f64;
+        let tangent = piece.sample(distance).tangent;
+        if tangent.x.hypot(tangent.y) < MINIMUM_HORIZONTAL_TANGENT {
+            continue;
+        }
+        let yaw = tangent.y.atan2(tangent.x);
+        if let Some(previous_yaw) = previous_yaw {
+            let difference = (yaw - previous_yaw + std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU)
+                - std::f64::consts::PI;
+            turn_angle += difference;
+        }
+        previous_yaw = Some(yaw);
+    }
+    turn_angle
 }
 
 fn write_reading(hash: &mut StateHasher, reading: CarReading) {
@@ -709,6 +1071,8 @@ fn write_reading(hash: &mut StateHasher, reading: CarReading) {
     hash.write_bool(reading.airtime);
     hash.write_f64(reading.height_m);
     hash.write_bool(reading.inverted);
+    hash.write_f64(reading.roll);
+    hash.write_len(reading.piece_index);
 }
 
 fn write_proximity_event(hash: &mut StateHasher, event: crate::track::proximity::ProximityEvent) {
@@ -769,113 +1133,20 @@ fn interpolate_reading(first: CarReading, second: CarReading, fraction: f64) -> 
         } else {
             second.inverted
         },
+        roll: interpolate(first.roll, second.roll),
+        piece_index: if fraction < 0.5 {
+            first.piece_index
+        } else {
+            second.piece_index
+        },
     }
 }
 
-/// Scores use distance-weighted averages from the one-metre record for a soft
-/// 0–10 scale with no upper clamp. Intensity is `(20 +
-/// 14*mean(|vertical_g-1|) + 18*mean(|lateral_g|) +
-/// 10*mean(|longitudinal_g|) + 8*airtime_fraction + 10*min(high_force_run/20m,1))/10`.
-/// Per-sample nausea exposure is `max(vertical_g-3.5,0)/2 +
-/// max(-vertical_g-0.5,0)/1.5 + max(|lateral_g|-1.5,0)/1.5 +
-/// max(|longitudinal_g|-1.5,0)/1.5`; displayed nausea is ten times its mean. Excitement is
-/// `10 + 1.6*mean(speed_m/s) + 25*airtime_fraction + 24*moderate_force +
-/// 15*min(max_downhill_drop/30m,1) + 15*min(inversion_passages/3,1))/10 -
-/// 0.45*nausea`, where `moderate_force = mean(min((|vertical_g-1| + |lateral_g| +
-/// |longitudinal_g|)/7,1))`. These are feedback scores, not safety limits.
-/// Notes require a contiguous 8m high-force section or 100m below 8m/s.
-// Proximity adds 0.8 * strength / (strength + 4) excitement and 0.2 * strength /
-// (strength + 4) intensity, where strength is the sum of event strengths.
-fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<String>) {
-    if samples.is_empty() {
-        return (0.0, 0.0, 0.0, Vec::new());
-    }
-    let count = samples.len() as f64;
-    let mean = |value: fn(&TestSample) -> f64| samples.iter().map(value).sum::<f64>() / count;
-    let mean_speed = mean(|sample| sample.speed);
-    let airtime_fraction = samples.iter().filter(|sample| sample.airtime).count() as f64 / count;
-    let mean_vertical_deviation = mean(|sample| (sample.vertical_g - 1.0).abs());
-    let mean_lateral_load = mean(|sample| sample.lateral_g.abs());
-    let mean_longitudinal_load = mean(|sample| sample.longitudinal_g.abs());
-    let maximum_lateral_load = samples
-        .iter()
-        .map(|sample| sample.lateral_g.abs())
-        .fold(0.0, f64::max);
-    let high_force_run = longest_contiguous_section(samples, circuit_length, |sample| {
-        sample.vertical_g > HIGH_FORCE_VERTICAL_G
-            || sample.vertical_g < HIGH_FORCE_NEGATIVE_VERTICAL_G
-            || sample.lateral_g.abs() > HIGH_FORCE_LATERAL_G
-            || sample.longitudinal_g.abs() > HIGH_FORCE_LONGITUDINAL_G
-    });
-    let long_slow_run = longest_contiguous_section(samples, circuit_length, |sample| {
-        sample.speed < SLOW_SPEED_METRES_PER_SECOND
-    });
-    let maximum_drop = largest_downhill_drop(samples);
-    let inversion_passages = count_inversion_passages(samples);
-    let drop_score = (maximum_drop / DROP_SCORE_CALIBRATION_METRES).clamp(0.0, 1.0);
-    let inversion_score =
-        (inversion_passages as f64 / INVERSION_SCORE_CALIBRATION_PASSAGES).clamp(0.0, 1.0);
-    let discomfort = mean(|sample| {
-        (sample.vertical_g - VERTICAL_DISCOMFORT_THRESHOLD_G).max(0.0) / DISCOMFORT_VERTICAL_SCALE_G
-            + (-sample.vertical_g - NEGATIVE_VERTICAL_DISCOMFORT_THRESHOLD_G).max(0.0)
-                / DISCOMFORT_NEGATIVE_VERTICAL_SCALE_G
-            + (sample.lateral_g.abs() - LATERAL_DISCOMFORT_THRESHOLD_G).max(0.0)
-                / DISCOMFORT_LATERAL_SCALE_G
-            + (sample.longitudinal_g.abs() - LONGITUDINAL_DISCOMFORT_THRESHOLD_G).max(0.0)
-                / DISCOMFORT_LONGITUDINAL_SCALE_G
-    });
-    let moderate_force = mean(|sample| {
-        (((sample.vertical_g - 1.0).abs() + sample.lateral_g.abs() + sample.longitudinal_g.abs())
-            / MODERATE_FORCE_CALIBRATION)
-            .min(1.0)
-    });
-    let intensity = (INTENSITY_BASE_SCORE
-        + INTENSITY_VERTICAL_WEIGHT * mean_vertical_deviation
-        + INTENSITY_LATERAL_WEIGHT * mean_lateral_load
-        + INTENSITY_LONGITUDINAL_WEIGHT * mean_longitudinal_load
-        + INTENSITY_AIRTIME_WEIGHT * airtime_fraction
-        + INTENSITY_HIGH_FORCE_WEIGHT
-            * (high_force_run / HIGH_FORCE_SCORE_CALIBRATION_METRES).clamp(0.0, 1.0))
-        / 10.0;
-    let nausea = NAUSEA_SCORE_SCALE * discomfort;
-    let excitement = ((EXCITEMENT_BASE_SCORE
-        + EXCITEMENT_SPEED_WEIGHT * mean_speed
-        + EXCITEMENT_AIRTIME_WEIGHT * airtime_fraction
-        + EXCITEMENT_MODERATE_FORCE_WEIGHT * moderate_force
-        + EXCITEMENT_DROP_WEIGHT * drop_score
-        + EXCITEMENT_INVERSION_WEIGHT * inversion_score)
-        / 10.0
-        - EXCITEMENT_NAUSEA_WEIGHT * nausea)
-        .max(0.0);
-    let mut notes = Vec::new();
-    if mean_lateral_load >= 1.5 || maximum_lateral_load >= 2.5 {
-        notes.push(
-            "Some turns pull riders sideways strongly. More banking or wider turns can improve comfort."
-                .to_owned(),
-        );
-    }
-    if high_force_run >= HIGH_FORCE_SECTION_METRES {
-        notes.push(
-            "Riders spend at least 8 m in a row under high forces. Add gentler sections between intense elements."
-                .to_owned(),
-        );
-    }
-    if intensity >= 7.0 {
-        notes.push(
-            "This is a very intense ride. A few lower-force sections can make it more comfortable."
-                .to_owned(),
-        );
-    }
-    if long_slow_run >= LONG_SLOW_SECTION_METRES {
-        notes.push(
-            "This layout has at least 100 m in a row below 8 m/s. A taller first drop or a faster section could make it feel livelier."
-                .to_owned(),
-        );
-    }
-    (excitement, intensity, nausea, notes)
-}
-
-fn ride_statistics(samples: &[TestSample], circuit_length: f64, completed: bool) -> RideStatistics {
+pub(super) fn ride_statistics(
+    samples: &[TestSample],
+    circuit_length: f64,
+    completed: bool,
+) -> RideStatistics {
     if samples.is_empty() {
         return RideStatistics {
             track_length: circuit_length,
@@ -946,17 +1217,9 @@ fn ride_statistics(samples: &[TestSample], circuit_length: f64, completed: bool)
     let mut still_at_start = true;
     for (index, sample) in samples.iter().enumerate() {
         let next = samples.get(index + 1).unwrap_or(&samples[0]);
-        let distance = if index + 1 == samples.len() && !completed {
-            0.0
-        } else if next.distance > sample.distance {
-            next.distance - sample.distance
-        } else if index + 1 == samples.len() {
-            (circuit_length - sample.distance + next.distance).max(0.0)
-        } else {
-            1.0
-        };
-        let speed = (sample.speed + next.speed) / 2.0;
-        let seconds = if speed > 0.0 { distance / speed } else { 0.0 };
+        let interval = sample_interval(samples, index, circuit_length, completed);
+        let distance = interval.distance_m;
+        let seconds = interval.seconds;
         total_time += seconds;
         total_distance += distance;
         let ejector = sample.vertical_g < EJECTOR_AIRTIME_MAX_VERTICAL_G;
@@ -1024,43 +1287,6 @@ fn ride_statistics(samples: &[TestSample], circuit_length: f64, completed: bool)
     stats
 }
 
-fn longest_contiguous_section(
-    samples: &[TestSample],
-    circuit_length: f64,
-    matches: impl Fn(&TestSample) -> bool,
-) -> f64 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    let mut previous_distance = 0.0;
-    let mut previous_matches = false;
-    let mut current_length = 0.0;
-    let mut longest_length: f64 = 0.0;
-    for index in 0..samples.len() * 2 {
-        let sample = &samples[index % samples.len()];
-        let distance_delta = if sample.distance > previous_distance || index == 0 {
-            sample.distance - previous_distance
-        } else {
-            circuit_length - previous_distance + sample.distance
-        };
-        let is_contiguous = index > 0 && distance_delta > 0.0 && distance_delta <= 1.000_001;
-        let is_match = matches(sample);
-        if is_match {
-            current_length = if previous_matches && is_contiguous {
-                current_length + distance_delta
-            } else {
-                1.0
-            };
-            longest_length = longest_length.max(current_length);
-        } else {
-            current_length = 0.0;
-        }
-        previous_distance = sample.distance;
-        previous_matches = is_match;
-    }
-    longest_length.min(samples.len() as f64)
-}
-
 fn largest_downhill_drop(samples: &[TestSample]) -> f64 {
     let Some(first) = samples.first() else {
         return 0.0;
@@ -1120,8 +1346,53 @@ fn count_inversion_passages_on_sampled_run(samples: &[TestSample]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physics::{CarReading, GForces, PhysicsConfig, Train, demo_circuit};
+    use crate::physics::{CarReading, GForces, PhysicsConfig, Term, Train, demo_circuit};
     use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
+
+    fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<String>) {
+        let pieces = [PieceSummary {
+            id: PieceId::Straight,
+            name: "Track",
+            kind: PieceKind::Track,
+            shape: crate::track::Shape::Plain,
+            inversion: None,
+            heartlining: None,
+            length: circuit_length,
+            turn_angle_radians: 0.0,
+        }];
+        let features =
+            super::super::features::ride_features(samples, &pieces, &[], circuit_length, true);
+        let limits = hybrid_model().comfortable_force_limits;
+        let mut bands = ForceBandDurations::default();
+        for (index, sample) in samples.iter().enumerate() {
+            if !super::super::features::is_active_sample(sample, &pieces) {
+                continue;
+            }
+            let reading = CarReading {
+                distance: sample.distance,
+                speed: sample.speed,
+                g: GForces {
+                    vertical: sample.vertical_g,
+                    lateral: sample.lateral_g,
+                    longitudinal: sample.longitudinal_g,
+                },
+                airtime: sample.airtime,
+                height_m: sample.height_m,
+                inverted: sample.inverted,
+                roll: sample.roll,
+                piece_index: sample.piece_index,
+            };
+            record_force_bands(
+                &mut bands,
+                reading,
+                limits,
+                sample_interval(samples, index, circuit_length, true).seconds,
+            );
+        }
+        let result = score(&features, &bands);
+        let notes = scoring_notes(&features, result.intensity, &result.breakdown.nausea);
+        (result.excitement, result.intensity, result.nausea, notes)
+    }
 
     #[test]
     fn score_reference_profiles_and_extreme_force_saturation() {
@@ -1135,6 +1406,8 @@ mod tests {
                 airtime: false,
                 height_m: 0.0,
                 inverted: false,
+                roll: 0.0,
+                piece_index: 0,
             })
             .collect();
         let (straight_excitement, straight_intensity, straight_nausea, _) =
@@ -1219,6 +1492,8 @@ mod tests {
                 airtime: true,
                 height_m: 10.0,
                 inverted: false,
+                roll: 0.0,
+                piece_index: 0,
             },
             TestSample {
                 distance: 1.0,
@@ -1229,6 +1504,8 @@ mod tests {
                 airtime: true,
                 height_m: 11.0,
                 inverted: true,
+                roll: 0.0,
+                piece_index: 0,
             },
             TestSample {
                 distance: 2.0,
@@ -1239,6 +1516,8 @@ mod tests {
                 airtime: false,
                 height_m: 9.0,
                 inverted: true,
+                roll: 0.0,
+                piece_index: 0,
             },
             TestSample {
                 distance: 3.0,
@@ -1249,6 +1528,8 @@ mod tests {
                 airtime: false,
                 height_m: 7.0,
                 inverted: false,
+                roll: 0.0,
+                piece_index: 0,
             },
         ];
         let stats = ride_statistics(&samples, 4.0, true);
@@ -1342,6 +1623,8 @@ mod tests {
             airtime: false,
             height_m: 0.0,
             inverted: false,
+            roll: 0.0,
+            piece_index: 0,
         }
     }
 
@@ -1356,6 +1639,8 @@ mod tests {
             airtime: false,
             height_m: 0.0,
             inverted: false,
+            roll: 0.0,
+            piece_index: 0,
         };
         let (_, intensity, _, _) = ratings(&[sample], 10.0);
         assert!(intensity > 10.0);
@@ -1415,10 +1700,10 @@ mod tests {
         all.add_proximity_events(&events);
         let mut reversed = baseline.clone();
         reversed.add_proximity_events(&events.iter().rev().copied().collect::<Vec<_>>());
-        assert!(one.intensity > baseline.intensity);
+        assert_eq!(one.intensity, baseline.intensity);
         assert!(one.excitement - baseline.excitement > two.excitement - one.excitement);
-        assert!(all.excitement - baseline.excitement < 0.8);
-        assert!(all.intensity - baseline.intensity < 0.2);
+        assert!((all.excitement - baseline.excitement - (1.0 - (-5.0_f64).exp())).abs() < 1e-10);
+        assert_eq!(all.intensity, baseline.intensity);
         assert!((all.excitement - reversed.excitement).abs() < 1e-10);
         assert!((all.intensity - reversed.intensity).abs() < 1e-10);
     }
@@ -1477,6 +1762,8 @@ mod tests {
             airtime: vertical < 0.0,
             height_m: 0.0,
             inverted: false,
+            roll: 0.0,
+            piece_index: 0,
         }
     }
 
@@ -1582,6 +1869,28 @@ mod tests {
     }
 
     #[test]
+    fn recorder_interpolates_roll_and_uses_the_nearer_piece() {
+        let first = CarReading {
+            roll: 0.0,
+            piece_index: 2,
+            ..reading(0.0, 10.0, 1.0, 0.0, 0.0)
+        };
+        let second = CarReading {
+            roll: 2.0,
+            piece_index: 3,
+            ..reading(2.0, 10.0, 1.0, 0.0, 0.0)
+        };
+
+        let before_boundary = interpolate_reading(first, second, 0.25);
+        let after_boundary = interpolate_reading(first, second, 0.75);
+
+        assert_eq!(before_boundary.roll, 0.5);
+        assert_eq!(before_boundary.piece_index, 2);
+        assert_eq!(after_boundary.roll, 1.5);
+        assert_eq!(after_boundary.piece_index, 3);
+    }
+
+    #[test]
     fn recorder_interpolates_across_the_circuit_seam() {
         let mut recorder = TestRunRecorder::new(10.0);
         record(&mut recorder, reading(9.5, 10.0, 1.0, 0.0, 0.0));
@@ -1673,11 +1982,19 @@ mod tests {
 
     #[test]
     fn strong_lateral_and_sustained_high_g_produce_advisory_notes() {
-        let mut recorder = TestRunRecorder::new(10.0);
-        for distance in 0..=10 {
+        let mut recorder = TestRunRecorder::new(72.0);
+        for tick in 0..800 {
             record(
                 &mut recorder,
-                reading_with_track(f64::from(distance), 18.0, 5.0, 2.5, 1.0, 0.0, false),
+                reading_with_track(
+                    f64::from(tick) * 18.0 * super::super::TIME_STEP,
+                    18.0,
+                    5.0,
+                    2.5,
+                    1.0,
+                    0.0,
+                    false,
+                ),
             );
         }
         let report = recorder.finish(true, false);
@@ -1739,7 +2056,7 @@ mod tests {
             report
                 .notes
                 .iter()
-                .any(|note| note.to_lowercase().contains("at least 100 m in a row"))
+                .any(|note| note.to_lowercase().contains("long slow stretches"))
         );
     }
 
@@ -1789,10 +2106,65 @@ mod tests {
         );
         assert!(!gentle.samples.iter().any(|sample| sample.inverted));
         assert!(drop_and_loop.samples.iter().any(|sample| sample.inverted));
-        assert!((5.0..=7.0).contains(&drop_and_loop.excitement));
+        assert!(
+            (5.0..=7.0).contains(&drop_and_loop.excitement),
+            "demo excitement was {}",
+            drop_and_loop.excitement
+        );
         assert!((3.0..=6.0).contains(&drop_and_loop.intensity));
         assert!(drop_and_loop.excitement > gentle.excitement);
         assert!(drop_and_loop.samples.len() > gentle.samples.len());
+    }
+
+    #[test]
+    fn demo_lap_records_piece_indices_matching_the_circuit() {
+        let circuit = demo_circuit();
+        let mut train_configuration = hybrid_model().train;
+        train_configuration.cars = 1;
+        train_configuration.length_metres = 4.0;
+        let report = simulate_reference_lap(
+            circuit.clone(),
+            &train_configuration,
+            PhysicsConfig {
+                lift_speed: 5.0,
+                ..PhysicsConfig::default()
+            },
+            2.0,
+        );
+
+        assert!(report.completed, "demo lap notes={:?}", report.notes);
+        for sample in &report.samples {
+            assert_eq!(sample.piece_index, circuit.piece_index(sample.distance));
+        }
+    }
+
+    #[test]
+    fn recorder_preserves_unwrapped_roll_through_a_heartline_roll() {
+        let roll_piece = catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::HeartlineRoll)
+            .expect("catalog has a heartline roll");
+        let mut recorder = TestRunRecorder::new(roll_piece.length());
+        for step in 0..=200 {
+            let distance = roll_piece.length() * f64::from(step) / 200.0;
+            let track_sample = roll_piece.sample(distance);
+            record(
+                &mut recorder,
+                CarReading {
+                    height_m: track_sample.position.z,
+                    inverted: track_sample.up.z < 0.0,
+                    roll: track_sample.roll,
+                    piece_index: 0,
+                    ..reading(distance, 10.0, 1.0, 0.0, 0.0)
+                },
+            );
+        }
+
+        let report = recorder.finish(true, false);
+        let roll_samples: Vec<_> = report.samples.iter().map(|sample| sample.roll).collect();
+        assert!(roll_samples.len() > 2);
+        assert!(roll_samples.windows(2).all(|pair| pair[1] >= pair[0]));
+        assert!(roll_samples.last().unwrap() - roll_samples[0] > std::f64::consts::PI);
     }
 
     #[test]
@@ -2045,5 +2417,103 @@ mod tests {
             report.notes[0],
             "The train entered Loop at 22.5 m/s, below its rated speed band of 24.7–27.5 m/s."
         );
+    }
+
+    #[test]
+    fn score_breakdown_sums_to_report_after_proximity_update() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        for distance in 0..10 {
+            record(
+                &mut recorder,
+                reading(distance as f64, 10.0, -1.0, 0.0, 0.0),
+            );
+        }
+        let mut report = recorder.finish(true, false);
+        report.add_proximity_events(&[crate::track::proximity::ProximityEvent {
+            piece_index: 0,
+            kind: crate::track::proximity::ProximityKind::NearMiss,
+            position: crate::track::Vec3::new(0.0, 0.0, 0.0),
+            strength: 1.0,
+            distance: 1.0,
+        }]);
+        for (score, contributions) in [
+            (report.excitement, &report.breakdown.excitement),
+            (report.intensity, &report.breakdown.intensity),
+            (report.nausea, &report.breakdown.nausea),
+        ] {
+            assert!(
+                (score - contributions.iter().map(|term| term.value).sum::<f64>()).abs() < 1e-10
+            );
+        }
+    }
+
+    #[test]
+    fn theming_recomputes_every_car_before_averaging_the_ride_score() {
+        fn report(vertical_g: f64) -> TestRun {
+            let mut recorder = TestRunRecorder::new(10.0);
+            record(&mut recorder, reading(0.0, 20.0, vertical_g, 0.0, 0.0));
+            record(&mut recorder, reading(1.0, 20.0, vertical_g, 0.0, 0.0));
+            recorder.finish(true, false)
+        }
+
+        let first_car = report(1.0);
+        let second_car = report(3.0);
+        let baseline_average = (first_car.excitement + second_car.excitement) / 2.0;
+        let mut ride_report = first_car.clone();
+        ride_report.average_car_ratings(&[first_car, second_car]);
+        assert!((ride_report.excitement - baseline_average).abs() < 1e-10);
+
+        ride_report.set_theming(0.5);
+
+        let theming_contribution = ride_report
+            .breakdown
+            .excitement
+            .iter()
+            .find(|contribution| contribution.term == Term::Theming)
+            .expect("theming contribution exists")
+            .value;
+        assert!((ride_report.excitement - baseline_average - 0.4).abs() < 1e-10);
+        assert!((theming_contribution - 0.4).abs() < 1e-10);
+    }
+
+    #[test]
+    fn recorder_rates_force_against_its_model_limits() {
+        let mut lenient = TestRunRecorder::new(100.0);
+        let mut strict = TestRunRecorder::new(100.0);
+        strict.force_limits.minimum_vertical_g = -1.0;
+        for tick in 0..800 {
+            let reading = reading(tick as f64 * 0.05, 10.0, -1.2, 0.0, 0.0);
+            record(&mut lenient, reading);
+            record(&mut strict, reading);
+        }
+        let lenient = lenient.finish(false, false);
+        let strict = strict.finish(false, false);
+        assert!(lenient.excitement > strict.excitement);
+        assert!(strict.nausea > lenient.nausea);
+    }
+
+    #[test]
+    fn report_hash_covers_breakdown_and_recomputation_inputs() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        for distance in 0..10 {
+            record(&mut recorder, reading(distance as f64, 10.0, 1.0, 0.0, 0.0));
+        }
+        let report = recorder.finish(true, false);
+        let digest = |report: &TestRun| {
+            let mut hash = StateHasher::new();
+            report.hash_into(&mut hash);
+            hash.finish()
+        };
+        let mut changed_breakdown = report.clone();
+        changed_breakdown.breakdown.excitement[0].measure += 1.0;
+        assert_ne!(digest(&report), digest(&changed_breakdown));
+        let mut changed_input = report.clone();
+        changed_input.rating_inputs[0]
+            .force_limits
+            .minimum_vertical_g -= 0.1;
+        assert_ne!(digest(&report), digest(&changed_input));
+        let mut changed_theming = report.clone();
+        changed_theming.set_theming(0.5);
+        assert_ne!(digest(&report), digest(&changed_theming));
     }
 }

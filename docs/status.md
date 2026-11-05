@@ -1,6 +1,6 @@
 # Project status
 
-Last updated 2026-11-04. The project is now called Heartline and is public at github.com/No-Stream/heartline (MIT). For in-flight work and the order to resume in, see the newest file in `docs/handoffs/` (dated, not committed). The design is in `docs/superpowers/specs/2026-11-02-theme-park-sim-design.md`, the roadmap in `docs/superpowers/plans/2026-11-02-theme-park-sim-roadmap.md`, and the live task list in Backlog.md (`backlog task list --plain`).
+Last updated 2026-11-05. The project is now called Heartline and is public at github.com/No-Stream/heartline (MIT). For in-flight work and the order to resume in, see the newest file in `docs/handoffs/` (dated, not committed). The design is in `docs/superpowers/specs/2026-11-02-theme-park-sim-design.md`, the roadmap in `docs/superpowers/plans/2026-11-02-theme-park-sim-roadmap.md`, and the live task list in Backlog.md (`backlog task list --plain`).
 
 ## What works
 
@@ -22,10 +22,17 @@ On the owner's RTX 5090, the renderer drew 10,000 animated people with terrain a
 
 The builder panel has Build, Colours and Operate tabs, with every way of choosing the next piece on Build. Finish coaster stays available whenever its bounded search finds a connection (within 80 m and five pieces) and says why when it cannot. A short half-tile S-bend helps close circuits near the station. Coaster track carves tunnels automatically when it goes below ground, and undo restores the terrain. Each launch has an adjustable target speed limited by launch technology (1.5 g sustained, 240 km/h, and the launch's length). The game can be paused with Space or the clock button, which also freezes the rendered frame, and the game bar fits itself to the window by hiding parts in a fixed order. A master volume and mute control (key M) and the audio engine core exist, but no sounds play yet. The ground grid is clearer while a building tool is open, night lamp light fades smoothly, and surface lights no longer show in the underground view. Trains now coast onto chain lifts instead of snapping to lift speed, which removed a 286 g force spike.
 
+## Ride score calibration on 2026-11-05
+
+The calibration test retains the exact plan bands and reports misses without widening them. The selected model scores the RMC hybrid at 10.67 excitement, the B&M hyper at 6.62, the Intamin accelerator at 5.78, the Arrow looper at 2.85, and the family wooden profile at 2.81. Four plan bands remain unmet: family nausea, Arrow excitement, B&M nausea, and accelerator nausea. The qualitative ordering checks pass. See [`ride-score-calibration.md`](ride-score-calibration.md) for the full contribution table and the failed band details.
+
+The same model was measured on the game circuits with each model's full train. Demo scored −1.00 excitement, 8.88 intensity and 6.98 nausea. Timber Tumbler scored 0.61, 10.43 and 7.90, with measured peaks of +11.42 g vertical, −13.43 g vertical and 15.79 g lateral. Velocity Viper scored 0.11, 7.24 and 3.56; Briar Blitz scored −0.45, 9.82 and 8.19. These low excitement scores correspond to measured excessive-force and comfort-envelope penalties. Timber Tumbler remains a severe force case and was not tuned upward.
+
 ## Known gaps and open items
 
-- Inversions on master are still physically too strong (a half loop peaks around 19 g). The force-limited redesign (TASK-95) is on branch `forces-fixes` and close to landing; ride statistics and 0-10 scores (TASK-104) wait on it.
-- Many owner requests depend on that branch: the scoring model (TASK-113), top hats (TASK-98), airtime hills and RMC elements (TASK-101), banked straights (TASK-102), a live g-force overlay while building (TASK-105), heartlined and classic inversion groups (TASK-111), physics realism (TASK-112) and the sounds themselves (TASK-28).
+- Inversions on master are still physically too strong (a half loop peaks around 19 g). The calibrated scoring model reports the resulting comfort penalties; force-limited redesign remains open under TASK-95.
+- The score calibration records current outputs, but Demo, Velocity Viper and Briar Blitz have negative or near-zero excitement because of their measured forces. The player circuits need force review before their scores can serve as positive ride expectations. Three legacy scoring assertions still expect the previous formula, and four synthetic plan bands fail; these results are listed in `ride-score-calibration.md`.
+- Other requests remain open: top hats (TASK-98), airtime hills and RMC elements (TASK-101), banked straights (TASK-102), a live g-force overlay while building (TASK-105), heartlined and classic inversion groups (TASK-111), physics realism (TASK-112) and the sounds themselves (TASK-28).
 - GitHub CI fails on 12 browser tests on the slower runner (TASK-118); local gates pass.
 - The park still resets when the dev server reloads (TASK-49, after saving exists). Per-frame scene rebuild cost is still high, and on this WSL machine software WebGL is slow, so smoothness is best judged in the owner's browser.
 - Broader coaster vocabularies remain in TASK-43, and an Intamin-style prefab wooden coaster in TASK-99. Remaining code health work: shared simulation helpers (TASK-52) and typed coaster and block state (TASK-55).

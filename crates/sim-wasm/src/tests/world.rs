@@ -1060,6 +1060,7 @@ fn stalled_baseline_waits_for_active_train_before_reducing_capacity() {
     };
     let baseline = super::block_layout_for_open(&circuit, &train, config).unwrap();
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    build_block_test_construction(&mut simulation);
     simulation.install_block_layout(baseline.clone(), false);
     simulation.coaster_operation = Some(super::BlockOperation::new(baseline));
     simulation.coaster_open = true;
@@ -1128,6 +1129,7 @@ fn baseline_validation_waits_to_adopt_powered_holds_until_the_train_completes() 
     let baseline = super::block_layout_for_open(&circuit, &train, config).unwrap();
     assert!(!baseline.capacity_search_complete());
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    build_block_test_construction(&mut simulation);
     simulation.install_block_layout(baseline.clone(), false);
     simulation.coaster_operation = Some(super::BlockOperation::new(baseline));
     simulation.coaster_open = true;

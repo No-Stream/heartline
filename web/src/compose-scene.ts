@@ -68,6 +68,7 @@ export interface ComposeSceneInput {
   readonly pathPreview: PathToolPreview | null;
   readonly stationGhost: () => Float32Array;
   readonly testingMetric: TestingMetric | null;
+  readonly testingHighlightDistance?: number;
   readonly constructionEffects: { quads(now: number, camera: Camera, viewport: Viewport): GeometryQuad[] };
   readonly staticTrack: (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport) => readonly TrackQuad[];
   readonly builtTrack: (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport) => readonly TrackQuad[];
@@ -174,7 +175,9 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
         }
         return quad;
       }),
-      ...(input.testingMetric && input.construction?.testingReport ? buildTestingRibbon(input.construction.testingReport.samples, input.testingMetric, camera, viewport, trackStyle(atlas)) : []),
+      ...(input.construction?.testingReport && (input.testingMetric || input.testingHighlightDistance !== undefined)
+        ? buildTestingRibbon(input.construction.testingReport.samples, input.testingMetric ?? "speed", camera, viewport, trackStyle(atlas), input.testingHighlightDistance)
+        : []),
       ...(input.construction?.testingReport ? buildProximityMarkers(input.construction.testingReport.proximityEvents, camera, viewport, trackStyle(atlas)) : []),
       ...input.constructionEffects.quads(input.now, camera, viewport),
     ],

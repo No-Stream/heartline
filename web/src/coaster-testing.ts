@@ -7,6 +7,7 @@ import type { InputAction } from "./input/actions";
 
 import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
+import type { ScoreContributionReport } from "./generated/ScoreContributionReport";
 import type { ProximityEventReport as ProximityEvent } from "./generated/ProximityEventReport";
 export type { TestingSample, TestingReport, ProximityEvent };
 export type RideStatistics = TestingReport["statistics"];
@@ -26,23 +27,49 @@ function color(value: number, style: TrackStyle): Triangle["color"] {
   return [mix(1), mix(3), mix(5), 1];
 }
 
-export function buildTestingRibbon(samples: readonly TestingSample[], metric: TestingMetric, camera: Camera, viewport: Viewport, style: TrackStyle): GeometryQuad[] {
+function colorFromHex(hex: string): Triangle["color"] {
+  const channel = (offset: number): number => parseInt(hex.slice(offset, offset + 2), 16) / 255;
+  return [channel(1), channel(3), channel(5), 1];
+}
+
+function nearestTestingSegment(samples: readonly TestingSample[], distance: number): number | undefined {
+  let nearestIndex: number | undefined;
+  let nearestDistance = Infinity;
+  for (let index = 0; index + 1 < samples.length; index++) {
+    const startDistance = samples[index].distance;
+    const endDistance = samples[index + 1].distance;
+    if (endDistance <= startDistance || endDistance - startDistance > 1.001) continue;
+    const distanceOnSegment = Math.max(startDistance, Math.min(endDistance, distance));
+    const difference = Math.abs(distance - distanceOnSegment);
+    if (difference < nearestDistance) {
+      nearestIndex = index;
+      nearestDistance = difference;
+    }
+  }
+  return nearestIndex;
+}
+
+export function buildTestingRibbon(samples: readonly TestingSample[], metric: TestingMetric, camera: Camera, viewport: Viewport, style: TrackStyle, selectedDistance?: number): GeometryQuad[] {
   const quads: GeometryQuad[] = [];
+  const selectedIndex = selectedDistance === undefined ? undefined : nearestTestingSegment(samples, selectedDistance);
   const vertex = (sample: TestingSample): Vertex => projectVertex(camera, viewport, sample, 0.06);
   for (let index = 0; index + 1 < samples.length; index++) {
-    if (samples[index + 1].distance - samples[index].distance > 1.001) continue;
+    const distanceDelta = samples[index + 1].distance - samples[index].distance;
+    if (distanceDelta <= 0 || distanceDelta > 1.001) continue;
     const start = vertex(samples[index]);
     const end = vertex(samples[index + 1]);
     const dx = end.x - start.x, dy = end.y - start.y;
     const length = Math.hypot(dx, dy);
     if (length < 0.01) continue;
-    const offsetX = -dy / length * 4, offsetY = dx / length * 4;
+    const selected = index === selectedIndex;
+    const halfWidth = selected ? 8 : 4;
+    const offsetX = -dy / length * halfWidth, offsetY = dx / length * halfWidth;
     quads.push({ vertices: [
       { ...start, x: start.x + offsetX, y: start.y + offsetY },
       { ...end, x: end.x + offsetX, y: end.y + offsetY },
       { ...end, x: end.x - offsetX, y: end.y - offsetY },
       { ...start, x: start.x - offsetX, y: start.y - offsetY },
-    ], color: color(metrics[metric].value(samples[index]), style), kind: "testing", id: `testing-${index}`,
+    ], color: selected ? colorFromHex(style.ink) : color(metrics[metric].value(samples[index]), style), kind: "testing", id: `testing-${index}`,
     tileX: Math.floor(samples[index].x), tileY: Math.floor(samples[index].y) });
   }
   return quads;
@@ -53,6 +80,47 @@ const count = (value: number): string => Math.round(value).toLocaleString("en-US
 
 export function formatRideRating(rating: TestingReport["rating"]): string {
   return `Excitement: ${number(rating.excitement)} · Intensity: ${number(rating.intensity)} · Nausea: ${number(rating.nausea)}`;
+}
+
+export const scoreTermLabels: Readonly<Record<string, string>> = {
+  airtime: "Ejector airtime",
+  positiveForces: "Positive forces",
+  laterals: "Lateral forces",
+  longitudinalForces: "Longitudinal forces",
+  excessiveForces: "Excessive forces",
+  airtimeMoments: "Airtime moments",
+  inversions: "Inversions",
+  topSpeed: "Top speed",
+  biggestDrop: "Biggest drop",
+  pace: "Pace",
+  launch: "Launch",
+  variety: "Variety",
+  whip: "Whip",
+  rollRate: "Roll rate",
+  fastRolls: "Fast rolls",
+  rideTime: "Ride time",
+  shortRide: "Short ride",
+  proximity: "Proximity",
+  theming: "Theming",
+  deadTime: "Dead time",
+  envelope: "Forces above the ASTM comfort envelope",
+  sickening: "Nausea",
+  peakForce: "Peak force",
+  sustainedForce: "Sustained force",
+  reversals: "Reversals",
+  greyOut: "Strong positive forces",
+  timeInverted: "Time inverted",
+};
+
+export function formatContribution(contribution: ScoreContributionReport, units: Units): string {
+  const label = scoreTermLabels[contribution.term];
+  if (label === undefined) throw new Error(`Unknown coaster score term: ${contribution.term}`);
+  const score = contribution.value >= 0 ? `+${number(contribution.value)}` : number(contribution.value);
+  const measure = `${number(contribution.measure)}${contribution.unit ? ` ${contribution.unit}` : ""}`;
+  const location = contribution.location
+    ? ` at ${contribution.location.pieceName}, ${number(contribution.location.distance)} m`
+    : "";
+  return formatTestingNote(`${label} (${score}, ${measure}${location})`, units);
 }
 
 export interface FormattedRideStatistics {
@@ -167,6 +235,18 @@ export function formatSample(sample: TestingSample, units: Units = "imperial"): 
 }
 
 export function formatTestingNote(note: string, units: Units): string {
+  const contribution = /^(.+) \(([+−-][\d.]+), ([\d.]+)(?: ([A-Za-z0-9/-]+))?(?: at (.+), ([\d.]+) m)?\)$/.exec(note);
+  if (contribution) {
+    const [, label, score, rawMeasure, unit = "", pieceName, rawDistance] = contribution;
+    const measure = Number(rawMeasure);
+    const formattedMeasure = unit === "m/s"
+      ? formatSpeed(measure, units)
+      : unit === "m"
+        ? formatLength(measure, units)
+        : `${number(measure)}${unit ? ` ${unit}` : ""}`;
+    const location = pieceName === undefined ? "" : ` at ${pieceName}, ${formatLength(Number(rawDistance), units)}`;
+    return `${label} (${score}, ${formattedMeasure}${location})`;
+  }
   const stalledDistance = /^The train could not finish the circuit after travelling ([\d.]+) m\.(.*)$/.exec(note);
   if (stalledDistance) {
     return `The train could not finish the circuit after travelling ${formatLength(Number(stalledDistance[1]), units)}.${stalledDistance[2]}`;
@@ -191,15 +271,19 @@ function legendBounds(metric: TestingMetric, units: Units): { low: string; high:
   return metrics[metric];
 }
 
-export function createTestingPanel(container: HTMLElement, style: TrackStyle, dispatch: (action: InputAction) => void): {
+export function createTestingPanel(container: HTMLElement, style: TrackStyle, dispatch: (action: InputAction) => void, onScoreLocationChange: () => void): {
   update(report: TestingReport | null): void;
   setMetric(metric: TestingMetric | null): void;
   setUnits(units: Units): void;
   setWorld(world: WorldView): void;
   inspect(index: number): void;
   inspectProximity(index: number): void;
+  selectedScoreLocation(): NonNullable<ScoreContributionReport["location"]> | undefined;
 } {
   container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><ul data-launch-results aria-label="Launch exit speeds"></ul><section data-statistics hidden><h4>Scores (about 0–10)</h4><p data-rating></p>
+    <h5>Excitement contributions</h5><ul data-score-breakdown="excitement" aria-label="Excitement contributions"></ul>
+    <h5>Intensity contributions</h5><ul data-score-breakdown="intensity" aria-label="Intensity contributions"></ul>
+    <h5>Nausea contributions</h5><ul data-score-breakdown="nausea" aria-label="Nausea contributions"></ul>
     <p data-whole-train>Statistics cover the whole train using the worst car.</p>
     <h4>Airtime</h4><ul data-statistics-airtime></ul><h4>Forces</h4><ul data-statistics-forces></ul>
     <h4>Speed and layout</h4><ul data-statistics-speed-layout></ul></section>
@@ -216,6 +300,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   let activeUnits: Units = "imperial";
   let inspectedSampleIndex: number | undefined;
   let inspectedProximityIndex: number | undefined;
+  let inspectedScoreLocation: ScoreContributionReport["location"];
   const renderInspection = (): void => {
     if (inspectedSampleIndex !== undefined && report?.samples[inspectedSampleIndex]) {
       inspection.textContent = formatSampleInUnits(report.samples[inspectedSampleIndex], activeUnits);
@@ -224,6 +309,10 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     if (inspectedProximityIndex !== undefined && report?.proximityEvents[inspectedProximityIndex]) {
       const event = report.proximityEvents[inspectedProximityIndex];
       inspection.textContent = `${formatProximityEvent(event)} · Strength: ${number(event.strength)} · Distance: ${formatLength(event.distance, activeUnits)}`;
+      return;
+    }
+    if (inspectedScoreLocation) {
+      inspection.textContent = `Selected score location: ${inspectedScoreLocation.pieceName} · ${formatLength(inspectedScoreLocation.distance, activeUnits)} · ${number(inspectedScoreLocation.seconds)} s`;
       return;
     }
     inspection.textContent = "Click the coloured track to inspect it.";
@@ -261,6 +350,37 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     renderList("[data-statistics-airtime]", formattedStatistics?.airtime);
     renderList("[data-statistics-forces]", formattedStatistics?.forces);
     renderList("[data-statistics-speed-layout]", formattedStatistics?.speedAndLayout);
+    const renderBreakdown = (score: keyof TestingReport["breakdown"]): void => {
+      const list = container.querySelector<HTMLElement>(`[data-score-breakdown="${score}"]`)!;
+      list.replaceChildren();
+      const contributions = [...(report?.breakdown[score] ?? [])]
+        .sort((left, right) => Math.abs(right.value) - Math.abs(left.value));
+      for (const contribution of contributions) {
+        const row = document.createElement("li");
+        const description = formatContribution(contribution, activeUnits);
+        if (contribution.location) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.scoreContribution = contribution.term;
+          button.textContent = description;
+          button.addEventListener("click", () => {
+            inspectedSampleIndex = undefined;
+            inspectedProximityIndex = undefined;
+            inspectedScoreLocation = contribution.location;
+            renderInspection();
+            onScoreLocationChange();
+            if (select.value === "off") dispatch({ type: "testing-metric-set", metric: "speed" });
+          });
+          row.append(button);
+        } else {
+          row.textContent = description;
+        }
+        list.append(row);
+      }
+    };
+    renderBreakdown("excitement");
+    renderBreakdown("intensity");
+    renderBreakdown("nausea");
     const launchResults = container.querySelector<HTMLElement>("[data-launch-results]")!;
     launchResults.replaceChildren(...(report?.launches ?? []).map((launch) => {
       const item = document.createElement("li");
@@ -307,7 +427,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     renderMetric();
   };
   return {
-    update(value) { report = value; inspectedSampleIndex = undefined; inspectedProximityIndex = undefined; renderReport(); },
+    update(value) { report = value; inspectedSampleIndex = undefined; inspectedProximityIndex = undefined; inspectedScoreLocation = undefined; onScoreLocationChange(); renderReport(); },
     setMetric(metric) { select.value = metric ?? "off"; renderMetric(); },
     setUnits(units) { activeUnits = units; renderReport(); },
     setWorld(value) { world = value; renderReport(); },
@@ -315,15 +435,20 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
       if (report?.samples[index]) {
         inspectedSampleIndex = index;
         inspectedProximityIndex = undefined;
+        inspectedScoreLocation = undefined;
         renderInspection();
+        onScoreLocationChange();
       }
     },
     inspectProximity(index) {
       if (report?.proximityEvents[index]) {
         inspectedProximityIndex = index;
         inspectedSampleIndex = undefined;
+        inspectedScoreLocation = undefined;
         renderInspection();
+        onScoreLocationChange();
       }
     },
+    selectedScoreLocation() { return inspectedScoreLocation; },
   };
 }

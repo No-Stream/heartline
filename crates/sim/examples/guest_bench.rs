@@ -82,6 +82,7 @@ fn main() {
             kind,
             minimum_height_cm: 0,
             intensity: 20,
+            nausea: if kind == PlaceKind::Ride { 10 } else { 0 },
             ride_type: 0,
             theme: 0,
             price: 0,

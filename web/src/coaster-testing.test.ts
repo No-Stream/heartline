@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProximityMarkers, buildTestingRibbon, formatProximityEvent, formatRideRating, formatRideStatistics, formatSample, formatTestingNote, proximityContribution, summarizeRideHeights, type ProximityEvent, type RideStatistics, type TestingSample } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, formatContribution, formatProximityEvent, formatRideRating, formatRideStatistics, formatSample, formatTestingNote, proximityContribution, scoreTermLabels, summarizeRideHeights, type ProximityEvent, type RideStatistics, type TestingSample } from "./coaster-testing";
 import type { WorldView } from "./render/scene";
 
 const samples: TestingSample[] = [
@@ -45,6 +45,25 @@ describe("coaster testing overlay", () => {
     expect(formatRideRating({ excitement: 5.14, intensity: 7.06, nausea: 0.34 })).toBe(
       "Excitement: 5.1 · Intensity: 7.1 · Nausea: 0.3",
     );
+  });
+
+  it("labels every score term and formats contribution units and locations", () => {
+    const terms = [
+      "airtime", "positiveForces", "laterals", "longitudinalForces", "excessiveForces", "airtimeMoments",
+      "inversions", "topSpeed", "biggestDrop", "pace", "launch", "variety", "whip", "rollRate", "fastRolls",
+      "rideTime", "shortRide", "proximity", "theming", "deadTime", "envelope", "sickening", "peakForce",
+      "sustainedForce", "reversals", "greyOut", "timeInverted",
+    ];
+    for (const term of terms) expect(scoreTermLabels).toHaveProperty(term);
+
+    expect(formatContribution({ term: "airtime", value: 2.1, measure: 7.6, unit: "s", location: undefined }, "metric"))
+      .toBe("Ejector airtime (+2.1, 7.6 s)");
+    expect(formatContribution({ term: "topSpeed", value: 0.7, measure: 20, unit: "m/s", location: undefined }, "imperial"))
+      .toBe("Top speed (+0.7, 44.7 mph)");
+    expect(formatContribution({
+      term: "envelope", value: -1.2, measure: 0.5, unit: "g-s",
+      location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 },
+    }, "imperial")).toBe("Forces above the ASTM comfort envelope (−1.2, 0.5 g-s at Loop, 656 ft)");
   });
 
   it("formats the ride statistics in metric and imperial units", () => {
@@ -98,8 +117,33 @@ describe("coaster testing overlay", () => {
     }
   });
 
+  it("highlights the ribbon segment nearest a selected score location", () => {
+    const quads = buildTestingRibbon(samples, "speed", camera, viewport, style, 1.25);
+    const unselectedQuads = buildTestingRibbon(samples, "speed", camera, viewport, style);
+    const selected = quads[1];
+
+    expect(quads.map(({ id }) => id)).toEqual(["testing-0", "testing-1"]);
+    expect(selected.color).toEqual([33 / 255, 21 / 255, 25 / 255, 1]);
+    const segmentWidth = (quad: typeof selected): number => Math.hypot(
+      quad.vertices[0].x - quad.vertices[3].x,
+      quad.vertices[0].y - quad.vertices[3].y,
+    );
+    expect(segmentWidth(selected)).toBeGreaterThan(segmentWidth(unselectedQuads[1]));
+  });
+
   it("does not connect unrecorded parts of the circuit", () => {
     expect(buildTestingRibbon([samples[0], { ...samples[2], distance: 8 }], "speed", camera, viewport, style)).toHaveLength(0);
+  });
+
+  it("does not draw a ribbon segment across the circuit distance wrap", () => {
+    const wrappedSamples = [
+      { ...samples[0], distance: 9 },
+      { ...samples[1], distance: 0 },
+      { ...samples[2], distance: 1 },
+    ];
+
+    expect(buildTestingRibbon(wrappedSamples, "speed", camera, viewport, style).map(({ id }) => id))
+      .toEqual(["testing-1"]);
   });
 
   it("skips stationary samples and describes forces and airtime", () => {

@@ -129,3 +129,88 @@ estimates. These choices approximate the penalty and can miss or undercount
 exposure. Single-axis scoring saturates above 32 g and pair scoring above a
 normalized magnitude of 16; reported force peaks remain uncapped. Airtime
 statistics classify vertical force below −1 g as ejector and −1 to 0 g as floater.
+
+## 2026-11-05 calibration
+
+The synthetic archetypes were scored from explicit `RideFeatures` and force-band
+durations. The first candidate used the existing scoring weights and treated the
+family ride's 0.5 g lateral as strong, and omitted the Arrow profile's one
+airtime moment. The printed breakdown showed that the planned Arrow intensity
+ordering was missed by 0.16 points: its envelope contribution pushed it just
+above the accelerator and RMC. I made one scoring adjustment: the intensity
+weight for envelope exceedance changed from 1.5 to 1.0 because that same exposure
+already reduces excitement and raises nausea, and the launch contribution weight
+changed from 0.8 to 1.0. The latter applies to both excitement and intensity. I
+also corrected the two archetype inputs to match the described profiles. Force
+limits, force-band boundaries, rated speed windows, and test tolerances did not
+change.
+
+The selected candidate returns these archetype scores. The calibration test keeps
+the plan's exact score bands and reports out-of-band scores; it does not widen
+the bands around the measured output. Four plan bands remain unmet.
+
+| Synthetic archetype | Excitement score | Plan band | Intensity score | Plan band | Nausea score | Plan band |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Family wooden coaster | 2.81 | 1.5–3.0 | 2.57 | 2.0–3.5 | 0.00 | 0.3–1.5 **miss** |
+| Classic Arrow looper | 2.85 | 4.0–6.0 **miss** | 7.24 | 6.0–7.5 | 5.53 | 4.5–7.0 |
+| B&M hyper | 6.62 | 6.5–8.5 | 6.31 | 5.0–6.5 | 0.53 | 1.0–2.5 **miss** |
+| RMC hybrid | 10.67 | 8.5–11.0 | 7.26 | 7.0–8.5 | 3.55 | 3.5–5.5 |
+| Intamin accelerator | 5.78 | 5.5–7.0 | 7.39 | 6.5–8.0 | 0.18 | 0.8–2.5 **miss** |
+
+The selected scores preserve the proposed qualitative orderings: excitement is
+RMC, hyper, accelerator, Arrow, then family; intensity is accelerator and RMC,
+then Arrow, hyper, and family; nausea is Arrow, RMC, hyper, accelerator, then
+family. The four missed bands are family nausea, Arrow excitement, hyper nausea
+and accelerator nausea. The Arrow profile spends 1.5 s at 5.5 g positive
+vertical and another 2.5 s in the great positive-force band, with 0.45 g-s above
+the comfort envelope and 6 s of dead-time excess. Those penalties lower its
+excitement below the original 4–6 band. The family profile's 0.5 g lateral does
+not enter the strong-force band, so the scorer returns zero nausea. The lower
+nausea results for the hyper and accelerator reflect their shorter and milder
+exposures in the specified synthetic inputs. These conflicts remain visible in
+the failing calibration assertion for owner review.
+
+The model does not use rider-survey data, so these values are calibrated
+regression anchors rather than predictions of passenger response.
+
+The game circuits were then measured with the existing player-circuit fixture
+construction and the full model train. The player fixtures use the same
+construction helper as `crates/sim/tests/known_circuit_statistics.rs`, initial
+speed 2 m/s, and lift speed 5 m/s; Demo uses its existing closed circuit and the
+hybrid train with the same speeds. Every run completed. The table reports the
+average car ratings and the most extreme per-car statistics.
+
+| Circuit | Excitement | Intensity | Nausea | Peak +vertical g | Peak −vertical g | Peak lateral g | Peak speed m/s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Demo | −1.00 | 8.88 | 6.98 | 4.70 | 0.00 | 6.12 | 27.79 |
+| Timber Tumbler | 0.61 | 10.43 | 7.90 | 11.42 | −13.43 | 15.79 | 44.08 |
+| Velocity Viper | 0.11 | 7.24 | 3.56 | 3.18 | 0.00 | 3.81 | 21.38 |
+| Briar Blitz | −0.45 | 9.82 | 8.19 | 4.42 | −0.14 | 7.78 | 26.73 |
+
+The detailed contributions printed by `calibration_table` show why these
+circuits score poorly. Demo has a −2.13 excitement envelope contribution and
+−1.35 from excessive forces; Velocity Viper has −1.26 from excessive forces
+and −0.72 from the envelope; Briar Blitz has −1.50 from excessive forces and
+−2.77 from the envelope. Timber Tumbler scores 0.61 excitement with 10.43
+intensity and 7.90 nausea. Its peaks and speed remain far outside the
+comfortable range, so I did not tune its score upward.
+
+The three game-circuit excitement estimates from the earlier plan (Demo 2.5–4.5,
+Velocity Viper 3–5, Briar Blitz 4–6) are not supported by these measured forces.
+The test prints the measured game-circuit scores but does not assert score bands
+for these rides. Their prior positive estimates are unmet, and the current
+negative or near-zero values are not evidence that the rides meet a
+comfortable-ride target. Their layouts need force review before these circuits
+can anchor positive player-ride expectations. The ±0.75 frozen tolerance applies
+to the synthetic archetype scores above.
+
+Three existing assertions in `physics::testing::tests` still fail against this
+model: `ratings_use_a_soft_ten_point_scale_without_an_upper_cap`,
+`score_reference_profiles_and_extreme_force_saturation`, and
+`reference_oval_and_drop_loop_produce_distinct_ratings`. They expect old score
+levels from the previous formula: a single extreme sample above 10 intensity,
+the straight-profile 2–3 excitement band, and Demo excitement 5–7. The calibrated
+archetypes and the current Demo measurement contradict those expectations. I
+left their assertions and tolerances unchanged. The new calibration test also
+fails the four plan bands listed above; no tests are skipped or thresholds
+relaxed. Review of these model and design conflicts remains open.

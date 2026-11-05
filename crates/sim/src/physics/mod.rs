@@ -6,6 +6,8 @@ use crate::track::{
 };
 
 #[cfg(test)]
+mod calibration_tests;
+#[cfg(test)]
 mod tests;
 
 pub const GRAVITY: f64 = 9.81;
@@ -15,6 +17,10 @@ pub const TIME_STEP: f64 = 0.005;
 mod comfort;
 mod construction_run;
 pub use construction_run::ConstructionTestRunRecorder;
+mod features;
+mod scoring;
+pub use features::Location;
+pub use scoring::{Contribution, ScoreBreakdown, Term};
 mod testing;
 pub use testing::{TestRun, TestRunRecorder, TestSample};
 mod coaster_run;
@@ -337,6 +343,8 @@ pub struct CarReading {
     pub airtime: bool,
     pub height_m: f64,
     pub inverted: bool,
+    pub roll: f64,
+    pub piece_index: usize,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Note {
@@ -359,7 +367,7 @@ pub struct Train {
 }
 impl Train {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"Train-v1");
+        hash.write_tag(b"Train-v2");
         hash.write_f64(self.distance);
         hash.write_f64(self.speed);
         hash.write_len(self.cars);
@@ -394,6 +402,8 @@ impl Train {
                 hash.write_bool(reading.airtime);
                 hash.write_f64(reading.height_m);
                 hash.write_bool(reading.inverted);
+                hash.write_f64(reading.roll);
+                hash.write_len(reading.piece_index);
             }
         }
         hash.write_len(self.notes.len());
@@ -697,6 +707,8 @@ impl Train {
                             airtime: g.vertical < 0.0,
                             height_m: track_sample.position.z,
                             inverted: track_sample.up.z < 0.0,
+                            roll: track_sample.roll,
+                            piece_index: index,
                         }
                     })
                     .collect(),

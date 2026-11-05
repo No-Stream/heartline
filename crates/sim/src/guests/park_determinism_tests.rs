@@ -152,7 +152,7 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
         .build_path_route(queue_entry, queue.position, PathKind::Queue, 0)
         .unwrap();
 
-    let facility = coaster_facility(&world, &construction, COASTER_PLACE_ID, 0).unwrap();
+    let facility = coaster_facility(&world, &construction, COASTER_PLACE_ID, 0, None).unwrap();
     let roster_size = 64;
     let mut simulation = ParkGuests::new(42, roster_size, &world, queue_entry, roster_size);
     simulation.open_with_guests(&[facility]);

@@ -68,7 +68,7 @@ pub struct BehaviorSimulation {
 
 impl BehaviorSimulation {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"BehaviorSimulation-v1");
+        hash.write_tag(b"BehaviorSimulation-v2");
         hash.write_len(self.guests.len());
         for guest in &self.guests {
             guest.hash_into(hash);
@@ -320,15 +320,15 @@ impl BehaviorSimulation {
                 assert!(excitement.is_finite() && intensity.is_finite() && nausea.is_finite());
                 // Ride ratings use a soft 0-10 scale; guest traits and needs remain 0-100.
                 let excitement = excitement * 10.0;
-                let intensity = intensity * 10.0;
-                let nausea = nausea * 10.0;
+                let intensity_for_enjoyment = intensity * 10.0;
                 let enjoyment = (excitement
-                    - (intensity - f64::from(guests.intensity(guest))).abs()
+                    - (intensity_for_enjoyment - f64::from(guests.intensity(guest))).abs()
                     - f64::from(self.guests[index].needs.nausea)
                     + f64::from(self.scenery_scores[index]))
                 .clamp(-100.0, 100.0) as i8;
                 let mut place = facility.place;
-                place.intensity = nausea.clamp(0.0, 100.0).round() as u8;
+                place.intensity = super::knowledge::guest_rating(intensity);
+                place.nausea = super::knowledge::guest_rating(nausea);
                 self.guests[index].complete_paid(place, self.tick, enjoyment, guests, guest);
                 let mut kinds = Vec::new();
                 for event in &proximity_events[seat] {
@@ -877,6 +877,7 @@ mod tests {
             kind,
             minimum_height_cm: 0,
             intensity: 50,
+            nausea: 0,
             ride_type: 0,
             theme: 0,
             price: 0,
@@ -1052,6 +1053,108 @@ mod tests {
         assert_eq!(
             simulation.guests[0].choose(&guests, guest),
             Some(higher_rated)
+        );
+    }
+
+    #[test]
+    fn nausea_rating_reduces_ride_choice_without_refusing_the_ride() {
+        let seed = (0..100)
+            .find(|&seed| generate_guests(seed, 1).nausea_tolerance(GuestId(0)) < 70)
+            .expect("a seed with room for a nausea willingness penalty");
+        let guests = generate_guests(seed, 1);
+        let guest = GuestId(0);
+        let intensity = guests.intensity(guest);
+        let comfortable = KnownPlace {
+            intensity: intensity.saturating_add(5),
+            nausea: 0,
+            ..place(1, PlaceKind::Ride)
+        };
+        let nauseating = KnownPlace {
+            id: 2,
+            intensity,
+            nausea: 100,
+            ..comfortable
+        };
+        let mut behavior = GuestBehavior::default();
+        behavior.observe(comfortable);
+        behavior.observe(nauseating);
+
+        assert_eq!(behavior.choose(&guests, guest), Some(comfortable));
+
+        let mut no_alternative = GuestBehavior::default();
+        no_alternative.observe(nauseating);
+        assert_eq!(no_alternative.choose(&guests, guest), Some(nauseating));
+    }
+
+    #[test]
+    fn known_place_hash_includes_its_nausea_rating() {
+        use crate::state_hash::StateHasher;
+
+        let digest = |behavior: &BehaviorSimulation| {
+            let mut hash = StateHasher::new();
+            behavior.hash_into(&mut hash);
+            hash.finish()
+        };
+        let safe = place(1, PlaceKind::Ride);
+        let nauseating = KnownPlace { nausea: 1, ..safe };
+        let mut first = BehaviorSimulation::new(1);
+        let mut second = BehaviorSimulation::new(1);
+        first.guests[0].observe(safe);
+        second.guests[0].observe(nauseating);
+
+        assert_ne!(digest(&first), digest(&second));
+    }
+
+    #[test]
+    fn coaster_uses_each_cars_nausea_rating_for_the_riders_memory() {
+        let seed = (0..100)
+            .find(|&seed| {
+                let guests = generate_guests(seed, 2);
+                guests.nausea_tolerance(GuestId(0)) < 40 && guests.nausea_tolerance(GuestId(1)) < 40
+            })
+            .expect("a seed with guests below maximum nausea tolerance");
+        let mut guests = generate_guests(seed, 2);
+        let ride = place(1, PlaceKind::Ride);
+        let facility = Facility {
+            place: ride,
+            capacity: 2,
+            duration_ticks: 1,
+            exit_position: Some(ride.position),
+        };
+        let mut simulation = BehaviorSimulation::new(2);
+        simulation
+            .coaster_riders
+            .insert((ride.id, 7), vec![GuestId(0), GuestId(1)]);
+
+        simulation.finish_coaster_train(
+            &facility,
+            7,
+            &mut guests,
+            &[(5.0, 8.0, 0.0), (5.0, 1.0, 4.2)],
+            &[vec![], vec![]],
+            false,
+        );
+
+        assert_eq!(
+            guests.memory(GuestId(0)).iter().last().unwrap().nausea,
+            0,
+            "high intensity alone must not cause nausea"
+        );
+        assert_eq!(
+            guests.memory(GuestId(1)).iter().last().unwrap().nausea,
+            (42_u8.saturating_sub(guests.nausea_tolerance(GuestId(1)))) / 4
+        );
+        assert_eq!(
+            guests.memory(GuestId(0)).iter().last().unwrap().enjoyment,
+            (50_i16 - (80_i16 - i16::from(guests.intensity(GuestId(0)))).abs()) as i8
+        );
+        assert_eq!(
+            guests.memory(GuestId(1)).iter().last().unwrap().enjoyment,
+            (50_i16 - (10_i16 - i16::from(guests.intensity(GuestId(1)))).abs()) as i8
+        );
+        assert!(
+            guests.memory(GuestId(1)).iter().last().unwrap().nausea
+                > guests.memory(GuestId(0)).iter().last().unwrap().nausea
         );
     }
 

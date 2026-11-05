@@ -2,7 +2,8 @@
 import type { LaunchReport } from "./LaunchReport";
 import type { ProximityEventReport } from "./ProximityEventReport";
 import type { RideStatisticsReport } from "./RideStatisticsReport";
+import type { ScoreBreakdownReport } from "./ScoreBreakdownReport";
 import type { TestingRating } from "./TestingRating";
 import type { TestingSample } from "./TestingSample";
 
-export type TestingReport = { samples: Array<TestingSample>, launches: Array<LaunchReport>, notes: Array<string>, proximityEvents: Array<ProximityEventReport>, rating: TestingRating, statistics: RideStatisticsReport, };
+export type TestingReport = { samples: Array<TestingSample>, launches: Array<LaunchReport>, notes: Array<string>, proximityEvents: Array<ProximityEventReport>, rating: TestingRating, breakdown: ScoreBreakdownReport, statistics: RideStatisticsReport, };

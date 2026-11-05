@@ -51,5 +51,5 @@ panel.update(state);
 Object.assign(window, { constructionActions: actions, setConstructionState, setConstructionUnits: (units: "metric" | "imperial") => panel.setUnits(units), selectConstructionBlock: (index: number | null) => panel.setSelectedBlock(index) });
 
 const testingPanel = createTestingPanel(document.querySelector<HTMLElement>("[data-testing]")!,
-  { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 }, () => {});
-Object.assign(window, { setTestingReport: (report: TestingReport | null) => testingPanel.update(report) });
+  { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 }, () => {}, () => {});
+Object.assign(window, { setTestingReport: (report: TestingReport | null) => testingPanel.update(report), selectedScoreLocation: () => testingPanel.selectedScoreLocation() });

@@ -1,9 +1,9 @@
 use super::{Circuit, CoasterOutcome, CoasterRun, PhysicsConfig, Train};
 use crate::state_hash::StateHasher;
-use crate::track::PieceKind;
 use crate::track::TrainConfiguration;
 use crate::track::blocks::BlockLayout;
 use crate::track::proximity::TrainPosition;
+use crate::track::{ComfortableForceLimits, PieceKind};
 
 #[cfg(test)]
 mod powered_hold_tests;
@@ -23,6 +23,7 @@ pub struct BlockOperation {
     trains: Vec<OperatingTrain>,
     next_id: u64,
     record_reports: bool,
+    force_limits: Option<ComfortableForceLimits>,
     interlock_triggered: bool,
     #[cfg(test)]
     panic_on_interlock: bool,
@@ -36,7 +37,7 @@ impl BlockOperation {
     }
 
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"BlockOperation-v1");
+        hash.write_tag(b"BlockOperation-v2");
         self.circuit.hash_into(hash);
         self.configuration.hash_into(hash);
         self.config.hash_into(hash);
@@ -53,19 +54,33 @@ impl BlockOperation {
         }
         hash.write_u64(self.next_id);
         hash.write_bool(self.record_reports);
+        hash.write_option(self.force_limits, |hash, limits| {
+            hash.write_f64(limits.minimum_vertical_g);
+            hash.write_f64(limits.maximum_vertical_g);
+            hash.write_f64(limits.maximum_lateral_g);
+            hash.write_f64(limits.maximum_longitudinal_g);
+        });
         hash.write_bool(self.interlock_triggered);
     }
 
     pub fn new(layout: BlockLayout) -> Self {
-        Self::with_reports(layout, true)
+        Self::with_reports(layout, true, None)
+    }
+
+    pub fn new_with_limits(layout: BlockLayout, limits: ComfortableForceLimits) -> Self {
+        Self::with_reports(layout, true, Some(limits))
     }
 
     /// Run the same block operation without collecting per-rider ride reports.
     pub fn new_without_reports(layout: BlockLayout) -> Self {
-        Self::with_reports(layout, false)
+        Self::with_reports(layout, false, None)
     }
 
-    fn with_reports(layout: BlockLayout, record_reports: bool) -> Self {
+    fn with_reports(
+        layout: BlockLayout,
+        record_reports: bool,
+        force_limits: Option<ComfortableForceLimits>,
+    ) -> Self {
         let circuit = layout.circuit();
         let station = circuit
             .pieces
@@ -82,6 +97,7 @@ impl BlockOperation {
             trains: Vec::new(),
             next_id: 0,
             record_reports,
+            force_limits,
             interlock_triggered: false,
             #[cfg(test)]
             panic_on_interlock: false,
@@ -210,7 +226,15 @@ impl BlockOperation {
     pub fn dispatch(&mut self) -> u64 {
         assert!(self.can_dispatch());
         let run = if self.record_reports {
-            CoasterRun::new(&self.circuit, &self.configuration, self.config)
+            match self.force_limits {
+                Some(limits) => CoasterRun::new_with_limits(
+                    &self.circuit,
+                    &self.configuration,
+                    self.config,
+                    limits,
+                ),
+                None => CoasterRun::new(&self.circuit, &self.configuration, self.config),
+            }
         } else {
             CoasterRun::new_without_reports(&self.circuit, &self.configuration, self.config)
         };
@@ -373,9 +397,35 @@ impl BlockOperation {
 #[cfg(test)]
 mod state_hash_tests {
     use super::BlockOperation;
-    use crate::physics::{PhysicsConfig, demo_circuit};
+    use crate::physics::{CoasterRun, PhysicsConfig, demo_circuit};
+    use crate::state_hash::StateHasher;
     use crate::track::blocks::BlockLayout;
     use crate::track::hybrid_model;
+
+    #[test]
+    fn dispatched_recorders_use_the_operation_force_limits() {
+        let circuit = demo_circuit();
+        let model = hybrid_model();
+        let config = PhysicsConfig::default();
+        let layout = BlockLayout::unverified_baseline(&circuit, &model.train, config).unwrap();
+        let limits = model.comfortable_force_limits;
+        let mut operation = BlockOperation::new_with_limits(layout, limits);
+        operation.dispatch();
+        let expected = CoasterRun::new_with_limits(&circuit, &model.train, config, limits);
+        let mut actual_hash = StateHasher::new();
+        operation.trains[0].run.hash_into(&mut actual_hash);
+        let mut expected_hash = StateHasher::new();
+        expected.hash_into(&mut expected_hash);
+        let actual_hash = actual_hash.finish();
+        assert_eq!(actual_hash, expected_hash.finish());
+
+        let mut changed_limits = limits;
+        changed_limits.maximum_lateral_g += 1.0;
+        let changed = CoasterRun::new_with_limits(&circuit, &model.train, config, changed_limits);
+        let mut changed_hash = StateHasher::new();
+        changed.hash_into(&mut changed_hash);
+        assert_ne!(actual_hash, changed_hash.finish());
+    }
 
     #[test]
     fn state_hash_covers_report_mode_and_dispatched_trains() {

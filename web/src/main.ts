@@ -136,7 +136,7 @@ let followedPreview = "";
 let lastFrameAt = performance.now();
 let testingMetric: TestingMetric | null = null;
 let testingReportJson = "";
-const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch);
+const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch, () => renderRevision.invalidate());
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
 const guestPanel = createGuestPanel(gameCanvas, { dispatch });
@@ -790,6 +790,7 @@ function frame(now: number): void {
     pathPreview: pathTool.state().preview,
     stationGhost: () => stationTool.ghost(),
     testingMetric,
+    testingHighlightDistance: testingPanel.selectedScoreLocation()?.distance,
     constructionEffects,
     staticTrack,
     builtTrack,

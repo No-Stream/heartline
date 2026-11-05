@@ -10,10 +10,22 @@ pub struct ConstructionTestRunRecorder {
 
 impl ConstructionTestRunRecorder {
     pub fn for_circuit(circuit: &Circuit, car_count: usize) -> Self {
+        Self::for_circuit_with_limits(
+            circuit,
+            car_count,
+            crate::track::hybrid_model().comfortable_force_limits,
+        )
+    }
+
+    pub fn for_circuit_with_limits(
+        circuit: &Circuit,
+        car_count: usize,
+        limits: crate::track::ComfortableForceLimits,
+    ) -> Self {
         assert!(car_count > 0);
         Self {
             cars: (0..car_count)
-                .map(|_| TestRunRecorder::for_circuit(circuit))
+                .map(|_| TestRunRecorder::for_circuit_with_limits(circuit, limits))
                 .collect(),
         }
     }
@@ -62,12 +74,17 @@ impl ConstructionTestRunRecorder {
     }
 
     pub fn finish(self, completed: bool, rolled_back: bool) -> TestRun {
+        self.finish_with_front_car(completed, rolled_back).0
+    }
+
+    pub fn finish_with_front_car(self, completed: bool, rolled_back: bool) -> (TestRun, TestRun) {
         let reports: Vec<_> = self
             .cars
             .into_iter()
             .map(|car| car.finish(completed, rolled_back))
             .collect();
-        let mut report = reports[0].clone();
+        let front_car_report = reports[0].clone();
+        let mut report = front_car_report.clone();
         report.average_car_ratings(&reports);
         report.statistics = reports
             .iter()
@@ -75,7 +92,7 @@ impl ConstructionTestRunRecorder {
             .reduce(merge_worst_car_statistics)
             .expect("train has cars");
         report.notes.push("Ratings average all cars. The track ribbon, proximity events and ride advice describe the front car; statistics report the most extreme value across cars.".to_owned());
-        report
+        (report, front_car_report)
     }
 }
 
@@ -96,6 +113,8 @@ mod tests {
             airtime: vertical < 0.0,
             height_m: 0.0,
             inverted: false,
+            roll: 0.0,
+            piece_index: 0,
         }
     }
 
@@ -160,8 +179,8 @@ mod tests {
             strength: 1.0,
             distance: 1.0,
         }]);
-        assert!((report.excitement - excitement - 0.16).abs() < 1e-10);
-        assert!((report.intensity - intensity - 0.04).abs() < 1e-10);
+        assert!((report.excitement - excitement - (1.0 - (-0.5_f64).exp())).abs() < 1e-10);
+        assert!((report.intensity - intensity).abs() < 1e-10);
     }
 
     #[test]

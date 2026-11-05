@@ -1,3 +1,5 @@
+use super::features::Location;
+
 #[cfg(test)]
 mod tests {
     use super::combined_axis_excess;
@@ -38,14 +40,19 @@ mod tests {
 // The base-case longitudinal curve assumes a headrest and backrest.
 // This partial game estimate is not an evaluation of the full standard.
 // https://ia800607.us.archive.org/34/items/gov.law.astm.f2291.2006/astm.f2291.2006.pdf
+#[cfg(test)]
 const SAMPLE_RATE_HZ: f64 = 200.0;
+#[cfg(test)]
 const MINIMUM_SUSTAINED_INTERVALS: usize = 40;
+#[cfg(test)]
 type DurationCurve = (usize, f64, &'static [(f64, f64)]);
 
+#[cfg(test)]
 struct LowPass {
     stages: [Biquad; 2],
 }
 
+#[cfg(test)]
 struct Biquad {
     b0: f64,
     b1: f64,
@@ -56,6 +63,7 @@ struct Biquad {
     state2: f64,
 }
 
+#[cfg(test)]
 impl Biquad {
     fn new(quality: f64, initial: f64) -> Self {
         let k = (std::f64::consts::PI * 5.0 / SAMPLE_RATE_HZ).tan();
@@ -84,6 +92,7 @@ impl Biquad {
     }
 }
 
+#[cfg(test)]
 impl LowPass {
     fn new(initial: f64) -> Self {
         Self {
@@ -109,6 +118,7 @@ impl LowPass {
 /// Pair slices use normalized increments of 0.01, 0.1, then 1, up to 16.
 /// The maximum across summed axis and pair exposures approximates the penalty.
 /// The positive vertical plateau is extrapolated beyond the chart's 40 s marker.
+#[cfg(test)]
 pub(super) struct ComfortTracker {
     filters: Option<[LowPass; 3]>,
     durations: [[u32; 87]; 6],
@@ -119,6 +129,7 @@ pub(super) struct ComfortTracker {
     axis_total: f64,
 }
 
+#[cfg(test)]
 impl Default for ComfortTracker {
     fn default() -> Self {
         Self {
@@ -133,6 +144,7 @@ impl Default for ComfortTracker {
     }
 }
 
+#[cfg(test)]
 impl ComfortTracker {
     pub(super) fn record(&mut self, reading: [f64; 3]) {
         let filters = self
@@ -520,5 +532,422 @@ mod optimization_tests {
             reference.hash_into(&mut expected);
             assert_eq!(actual.finish(), expected.finish());
         }
+    }
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::evaluate_envelope;
+    use crate::physics::TestSample;
+    use crate::physics::features::PieceSummary;
+    use crate::track::{PieceId, PieceKind, Shape};
+
+    fn evaluate(readings: &[(usize, f64, f64, f64)]) -> super::EnvelopeExceedance {
+        let mut samples = Vec::new();
+        for &(count, vertical_g, lateral_g, longitudinal_g) in readings {
+            for _ in 0..count {
+                samples.push(TestSample {
+                    distance: samples.len() as f64,
+                    speed: 10.0,
+                    vertical_g,
+                    lateral_g,
+                    longitudinal_g,
+                    airtime: false,
+                    height_m: 0.0,
+                    inverted: false,
+                    roll: 0.0,
+                    piece_index: 0,
+                });
+            }
+        }
+        let piece = PieceSummary {
+            id: PieceId::Loop,
+            name: "Loop",
+            kind: PieceKind::Track,
+            shape: Shape::Plain,
+            inversion: None,
+            heartlining: None,
+            length: samples.len() as f64,
+            turn_angle_radians: 0.0,
+        };
+        evaluate_envelope(&samples, &[piece], samples.len() as f64, true)
+    }
+
+    #[test]
+    fn streaming_tracks_stationary_forces_and_matches_sample_intervals() {
+        let mut tracker = super::EnvelopeTracker::default();
+        for index in 0..30 {
+            tracker.record(
+                [5.0, 0.0, 0.0],
+                0.1,
+                true,
+                super::Location {
+                    piece_index: 0,
+                    piece_name: "Loop",
+                    distance_m: index as f64,
+                    seconds_from_start: 0.0,
+                },
+            );
+        }
+        assert_eq!(tracker.finish(), evaluate(&[(30, 5.0, 0.0, 0.0)]));
+        let mut stationary = super::EnvelopeTracker::default();
+        for _ in 0..400 {
+            stationary.record(
+                [5.0, 0.0, 0.0],
+                0.005,
+                true,
+                super::Location {
+                    piece_index: 0,
+                    piece_name: "Loop",
+                    distance_m: 12.0,
+                    seconds_from_start: 0.0,
+                },
+            );
+        }
+        assert!(stationary.finish().g_seconds > 0.0);
+        assert_eq!(stationary.finish().worst.unwrap().location.distance_m, 12.0);
+    }
+
+    #[test]
+    fn onset_detects_smooth_fast_ramp_but_not_slow_ramp() {
+        let ramp = |step_g: f64| {
+            let mut tracker = super::EnvelopeTracker::default();
+            for step in 0..=(2.0 / step_g).ceil() as usize {
+                tracker.record(
+                    [step as f64 * step_g, 0.0, 0.0],
+                    0.005,
+                    true,
+                    super::Location {
+                        piece_index: 0,
+                        piece_name: "Loop",
+                        distance_m: step as f64,
+                        seconds_from_start: 0.0,
+                    },
+                );
+            }
+            tracker.finish()
+        };
+        let fast = ramp(0.1);
+        assert_eq!(fast.worst.unwrap().axis, super::EnvelopeAxis::Onset);
+        assert!(fast.g_seconds > 0.0);
+        assert_eq!(ramp(0.05).g_seconds, 0.0);
+    }
+
+    #[test]
+    fn duration_curves_and_combined_axes() {
+        assert_eq!(evaluate(&[(8, 5.0, 0.0, 0.0)]).g_seconds, 0.0);
+        assert!(evaluate(&[(30, 5.0, 0.0, 0.0)]).g_seconds > 0.0);
+        assert_eq!(evaluate(&[(50, -1.3, 0.0, 0.0)]).g_seconds, 0.0);
+        assert!(evaluate(&[(80, -1.3, 0.0, 0.0)]).g_seconds > 0.0);
+        assert_eq!(evaluate(&[(15, 1.0, 2.5, 0.0)]).g_seconds, 0.0);
+        assert!(evaluate(&[(30, 1.0, 2.5, 0.0)]).g_seconds > 0.0);
+        assert_eq!(evaluate(&[(10, 4.0, 2.5, 0.0)]).g_seconds, 0.0);
+        assert!(evaluate(&[(10, 5.0, 2.5, 0.0)]).g_seconds > 0.0);
+    }
+
+    #[test]
+    fn reversal_push_pull_onset_and_locations() {
+        let reversal = evaluate(&[(3, 1.0, 2.5, 0.0), (3, 1.0, -2.5, 0.0)]);
+        assert!(reversal.g_seconds > 0.0);
+        let push_pull = evaluate(&[(40, -0.5, 0.0, 0.0), (10, 3.0, 0.0, 0.0)]);
+        assert!(push_pull.g_seconds > 0.0);
+        let worst = push_pull.worst.unwrap();
+        assert_eq!(worst.location.piece_name, "Loop");
+        assert!(worst.location.distance_m >= 40.0);
+        assert!(!push_pull.stretches.is_empty());
+        assert!(evaluate(&[(1, 0.0, 0.0, 0.0), (1, 3.0, 0.0, 0.0)]).g_seconds > 0.0);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EnvelopeAxis {
+    Vertical,
+    Lateral,
+    Longitudinal,
+    VerticalLateral,
+    VerticalLongitudinal,
+    LateralLongitudinal,
+    Onset,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct EnvelopeWorst {
+    pub(super) location: Location,
+    pub(super) axis: EnvelopeAxis,
+    pub(super) value: f64,
+    pub(super) allowed: f64,
+    pub(super) ratio: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct EnvelopeStretch {
+    pub(super) location: Location,
+    pub(super) seconds: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct EnvelopeExceedance {
+    pub(super) g_seconds: f64,
+    pub(super) seconds: f64,
+    pub(super) worst: Option<EnvelopeWorst>,
+    pub(super) stretches: Vec<EnvelopeStretch>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct EnvelopeTracker {
+    result: EnvelopeExceedance,
+    clocks: [f64; 6],
+    last_sign_times: [[Option<f64>; 2]; 2],
+    negative_seconds: f64,
+    push_pull_until: f64,
+    onset_start: Option<(f64, f64)>,
+    elapsed: f64,
+    stretch: Option<EnvelopeStretch>,
+}
+
+impl EnvelopeTracker {
+    pub(super) fn record(
+        &mut self,
+        reading: [f64; 3],
+        dt: f64,
+        active: bool,
+        mut location: Location,
+    ) {
+        assert!(dt.is_finite() && dt >= 0.0);
+        assert!(reading.into_iter().all(f64::is_finite));
+        if !active || dt == 0.0 {
+            self.clocks = [0.0; 6];
+            self.last_sign_times = [[None; 2]; 2];
+            self.negative_seconds = 0.0;
+            self.push_pull_until = 0.0;
+            self.onset_start = None;
+            finish_stretch(&mut self.result.stretches, self.stretch.take());
+            self.elapsed += dt;
+            return;
+        }
+        location.seconds_from_start = self.elapsed;
+        const CURVES: [&[(f64, f64)]; 6] = [
+            &[
+                (0.2, 6.0),
+                (1.0, 6.0),
+                (2.0, 4.0),
+                (4.0, 4.0),
+                (5.0, 3.0),
+                (11.8, 3.0),
+                (12.0, 2.0),
+            ],
+            &[(0.2, 2.0), (0.5, 1.5), (4.0, 1.5), (7.0, 1.1)],
+            &[(0.2, 3.0), (1.0, 3.0), (2.0, 2.0)],
+            &[(0.2, 3.0), (1.0, 3.0), (2.0, 2.0)],
+            &[
+                (0.2, 6.0),
+                (1.0, 6.0),
+                (2.0, 4.0),
+                (4.0, 4.0),
+                (5.0, 3.0),
+                (11.8, 3.0),
+                (12.0, 2.5),
+            ],
+            &[(0.2, 2.0), (0.5, 1.5)],
+        ];
+        let plateaus = [2.0, 1.1, 2.0, 2.0, 2.5, 1.5];
+        let axes = [
+            EnvelopeAxis::Vertical,
+            EnvelopeAxis::Vertical,
+            EnvelopeAxis::Lateral,
+            EnvelopeAxis::Lateral,
+            EnvelopeAxis::Longitudinal,
+            EnvelopeAxis::Longitudinal,
+        ];
+        let pairs = [
+            (0, 1, EnvelopeAxis::VerticalLateral),
+            (0, 2, EnvelopeAxis::VerticalLongitudinal),
+            (1, 2, EnvelopeAxis::LateralLongitudinal),
+        ];
+        let [vertical, lateral, longitudinal] = reading;
+        if vertical >= 0.0 && self.negative_seconds > 3.0 {
+            self.push_pull_until = self.elapsed + 6.0;
+        }
+        self.negative_seconds = if vertical < 0.0 {
+            self.negative_seconds + dt
+        } else {
+            0.0
+        };
+        let mut reversed = [false; 2];
+        for (axis, value) in [lateral, longitudinal].into_iter().enumerate() {
+            if value.abs() >= 0.5 {
+                let sign = usize::from(value >= 0.0);
+                reversed[axis] = self.last_sign_times[axis][1 - sign]
+                    .is_some_and(|time| self.elapsed - time < 0.2);
+                self.last_sign_times[axis][sign] = Some(self.elapsed);
+            }
+        }
+        let magnitudes = [
+            vertical,
+            -vertical,
+            lateral,
+            -lateral,
+            longitudinal,
+            -longitudinal,
+        ];
+        let mut candidate = |axis, value: f64, allowed: f64, ratio: f64| {
+            if ratio > 0.0
+                && self
+                    .result
+                    .worst
+                    .as_ref()
+                    .is_none_or(|worst| ratio > worst.ratio)
+            {
+                self.result.worst = Some(EnvelopeWorst {
+                    location,
+                    axis,
+                    value,
+                    allowed,
+                    ratio,
+                });
+            }
+        };
+        let mut max_ratio: f64 = 0.0;
+        for axis in 0..6 {
+            if magnitudes[axis] > plateaus[axis] {
+                self.clocks[axis] += dt;
+            } else {
+                self.clocks[axis] = 0.0;
+            }
+            let mut limit = curve_limit(CURVES[axis], self.clocks[axis].max(0.2));
+            if axis == 0 && self.elapsed < self.push_pull_until {
+                limit = limit.min(2.0);
+            }
+            if (axis == 2 || axis == 3) && reversed[0] || (axis == 4 || axis == 5) && reversed[1] {
+                limit *= 0.5;
+            }
+            let ratio = (magnitudes[axis] / limit - 1.0).max(0.0);
+            candidate(axes[axis], magnitudes[axis], limit, ratio);
+            max_ratio = max_ratio.max(ratio);
+        }
+        let normalized = [
+            vertical / if vertical >= 0.0 { 6.6 } else { 2.2 },
+            lateral / 3.3,
+            longitudinal / if longitudinal >= 0.0 { 6.6 } else { 2.2 },
+        ];
+        for (left, right, axis) in pairs {
+            let value = normalized[left].hypot(normalized[right]);
+            let ratio = (value - 1.0).max(0.0);
+            candidate(axis, value, 1.0, ratio);
+            max_ratio = max_ratio.max(ratio);
+        }
+        if vertical <= 0.0 {
+            self.onset_start = Some((vertical, self.elapsed));
+        } else if vertical >= 2.0
+            && let Some((start_vertical, start_time)) = self.onset_start.take()
+        {
+            let onset_rate = (vertical - start_vertical) / (self.elapsed - start_time);
+            if onset_rate > 15.0 {
+                candidate(EnvelopeAxis::Onset, onset_rate, 15.0, 0.5);
+                max_ratio = max_ratio.max(0.5);
+            }
+        }
+        if max_ratio > 0.0 {
+            self.result.g_seconds += max_ratio * dt;
+            self.result.seconds += dt;
+            self.stretch
+                .get_or_insert(EnvelopeStretch {
+                    location,
+                    seconds: 0.0,
+                })
+                .seconds += dt;
+        } else {
+            finish_stretch(&mut self.result.stretches, self.stretch.take());
+        }
+        self.elapsed += dt;
+    }
+
+    pub(super) fn finish(&self) -> EnvelopeExceedance {
+        let mut result = self.result.clone();
+        finish_stretch(&mut result.stretches, self.stretch.clone());
+        result
+            .stretches
+            .sort_by(|left, right| right.seconds.total_cmp(&left.seconds));
+        result
+    }
+
+    pub(super) fn hash_into(&self, hash: &mut crate::state_hash::StateHasher) {
+        for value in self.clocks {
+            hash.write_f64(value);
+        }
+        for axis in self.last_sign_times {
+            for value in axis {
+                hash.write_option(value, |hash, value| hash.write_f64(value));
+            }
+        }
+        hash.write_f64(self.negative_seconds);
+        hash.write_f64(self.push_pull_until);
+        hash.write_option(self.onset_start, |hash, (value, time)| {
+            hash.write_f64(value);
+            hash.write_f64(time);
+        });
+        hash.write_f64(self.elapsed);
+        hash.write_f64(self.result.g_seconds);
+        hash.write_f64(self.result.seconds);
+        hash.write_option(self.result.worst.as_ref(), |hash, worst| {
+            hash_location(hash, &worst.location);
+            hash.write_u8(worst.axis as u8);
+            hash.write_f64(worst.value);
+            hash.write_f64(worst.allowed);
+            hash.write_f64(worst.ratio);
+        });
+        hash.write_len(self.result.stretches.len());
+        for stretch in &self.result.stretches {
+            hash_stretch(hash, stretch);
+        }
+        hash.write_option(self.stretch.as_ref(), hash_stretch);
+    }
+}
+
+fn hash_location(hash: &mut crate::state_hash::StateHasher, location: &Location) {
+    hash.write_len(location.piece_index);
+    hash.write_bytes(location.piece_name.as_bytes());
+    hash.write_f64(location.distance_m);
+    hash.write_f64(location.seconds_from_start);
+}
+
+fn hash_stretch(hash: &mut crate::state_hash::StateHasher, stretch: &EnvelopeStretch) {
+    hash_location(hash, &stretch.location);
+    hash.write_f64(stretch.seconds);
+}
+
+/// Evaluates the scoring model's approximate comfort envelope over sampled track intervals.
+#[allow(dead_code)]
+pub(super) fn evaluate_envelope(
+    samples: &[super::TestSample],
+    pieces: &[super::features::PieceSummary],
+    circuit_length: f64,
+    completed: bool,
+) -> EnvelopeExceedance {
+    use super::features::{is_active_sample, sample_interval};
+    let mut tracker = EnvelopeTracker::default();
+    for (index, sample) in samples.iter().enumerate() {
+        let dt = sample_interval(samples, index, circuit_length, completed).seconds;
+        let location = Location {
+            piece_index: sample.piece_index,
+            piece_name: pieces[sample.piece_index].name,
+            distance_m: sample.distance,
+            seconds_from_start: 0.0,
+        };
+        tracker.record(
+            [sample.vertical_g, sample.lateral_g, sample.longitudinal_g],
+            dt,
+            is_active_sample(sample, pieces),
+            location,
+        );
+    }
+    tracker.finish()
+}
+
+fn finish_stretch(stretches: &mut Vec<EnvelopeStretch>, stretch: Option<EnvelopeStretch>) {
+    if let Some(stretch) = stretch
+        && stretch.seconds > 0.2
+    {
+        stretches.push(stretch);
     }
 }

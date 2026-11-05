@@ -934,9 +934,10 @@ impl WasmSimulation {
             0.0,
             2.0,
         );
-        self.construction_recorder = Some(ConstructionTestRunRecorder::for_circuit(
+        self.construction_recorder = Some(ConstructionTestRunRecorder::for_circuit_with_limits(
             &circuit,
             usize::from(construction.model().train.cars),
+            construction.model().comfortable_force_limits,
         ));
         self.construction_report = None;
         self.construction_train = Some((circuit, train));
@@ -1005,6 +1006,7 @@ impl WasmSimulation {
                 intensity: report.intensity,
                 nausea: report.nausea,
             },
+            breakdown: (&report.breakdown).into(),
             statistics: {
                 let stats = report.statistics;
                 crate::reports::RideStatisticsReport {

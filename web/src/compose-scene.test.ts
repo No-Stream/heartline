@@ -129,4 +129,34 @@ describe("composeScene", () => {
     expect(preview.length).toBeGreaterThan(0);
     expect(preview.every((quad) => quad.color[0] > quad.color[1] && quad.color[1] > quad.color[2])).toBe(true);
   });
+
+  it("passes a selected score location into the testing ribbon", () => {
+    const construction = {
+      pieces: [],
+      elements: [],
+      colors: { track: "teal", supports: "cream", trains: "plum" },
+      canAppend: false,
+      previewRails: new Float32Array(),
+      previewTies: new Float32Array(),
+      previewSupports: new Float32Array(),
+      testingReport: {
+        samples: [
+          { distance: 0, x: 1, y: 2, z: 0, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+          { distance: 1, x: 2, y: 2, z: 0, speed: 12, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+          { distance: 2, x: 3, y: 2, z: 0, speed: 14, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+        ],
+        proximityEvents: [],
+      },
+    } as unknown as ConstructionState;
+
+    const quads = composeScene(sceneInput({
+      construction,
+      testingMetric: "speed",
+      testingHighlightDistance: 1.25,
+    })).geometryPasses[5](camera, viewport, atlas, "1");
+
+    const highlighted = quads.find(({ id }) => id === "testing-1");
+    expect(highlighted).toBeDefined();
+    expect(highlighted?.color).toEqual([58 / 255, 46 / 255, 88 / 255, 1]);
+  });
 });

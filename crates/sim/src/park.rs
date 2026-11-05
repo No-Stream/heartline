@@ -6,6 +6,8 @@ pub mod tick;
 
 #[cfg(test)]
 mod hash_tests;
+#[cfg(test)]
+mod theming_tests;
 
 use crate::facilities::ParkFacilities;
 use crate::guests::GuestId;
@@ -50,6 +52,7 @@ pub struct Park {
     pub coaster_operation: Option<BlockOperation>,
     pub coaster_riders: BTreeMap<u64, Vec<GuestId>>,
     pub coaster_facility: Option<Facility>,
+    pub coaster_ratings: Option<(u8, u8)>,
     pub block_layout: Option<BlockLayout>,
     pub desired_train_count: Option<usize>,
     pub block_placement_search: Option<BlockPlacementSearch>,
@@ -115,6 +118,7 @@ impl Park {
             coaster_operation: None,
             coaster_riders: BTreeMap::new(),
             coaster_facility: None,
+            coaster_ratings: None,
             block_layout: None,
             desired_train_count: None,
             block_placement_search: None,
@@ -144,7 +148,7 @@ impl Park {
     /// Stable fingerprint of all live park state, excluding rebuildable render caches.
     pub fn state_hash(&self) -> u64 {
         let mut hash = StateHasher::new();
-        hash.write_tag(b"Park-v1");
+        hash.write_tag(b"Park-v2");
         hash.write_u64(self.world.state_hash());
         hash.write_u64(self.facilities.state_hash());
         hash.write_u64(self.simulation.state_hash());
@@ -210,6 +214,10 @@ impl Park {
         hash.write_option(self.coaster_facility, |hash, facility| {
             write_facility(hash, facility);
         });
+        hash.write_option(self.coaster_ratings, |hash, (intensity, nausea)| {
+            hash.write_u8(intensity);
+            hash.write_u8(nausea);
+        });
         hash.write_option(self.block_layout.as_ref(), |hash, layout| {
             layout.hash_into(hash);
         });
@@ -258,6 +266,7 @@ fn write_facility(hash: &mut StateHasher, facility: Facility) {
     hash.write_u8(facility.place.kind as u8);
     hash.write_u8(facility.place.minimum_height_cm);
     hash.write_u8(facility.place.intensity);
+    hash.write_u8(facility.place.nausea);
     hash.write_u8(facility.place.ride_type);
     hash.write_u8(facility.place.theme);
     hash.write_u16(facility.place.price);

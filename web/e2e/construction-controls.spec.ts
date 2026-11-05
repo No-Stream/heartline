@@ -327,7 +327,7 @@ test("testing panel shows an all-clear for a report without notes", async ({ pag
     maxLateralG: 0, maxForwardG: 0, maxBrakingG: 0, maxSpeed: 0, averageSpeed: 0, durationSeconds: 0,
     trackLength: 0, maxHeight: 0, biggestDrop: 0, steepestDropAngleDegrees: 0, inversions: 0,
     invertedSeconds: 0, drops: 0, launches: 0, launchPeakSpeed: 0,
-  } }));
+  }, breakdown: { excitement: [], intensity: [], nausea: [] } }));
   await expect(page.locator("[data-notes]")).toHaveText("No concerns were noted during this test.");
   await expect(page.locator("[data-rating]")).toHaveText("Excitement: 2.0 · Intensity: 3.0 · Nausea: 0.5");
 });
@@ -341,7 +341,7 @@ test("testing panel groups proximity events and shows their excitement contribut
       maxLateralG: 0, maxForwardG: 0, maxBrakingG: 0, maxSpeed: 0, averageSpeed: 0, durationSeconds: 0,
       trackLength: 0, maxHeight: 0, biggestDrop: 0, steepestDropAngleDegrees: 0, inversions: 0,
       invertedSeconds: 0, drops: 0, launches: 0, launchPeakSpeed: 0,
-    }, proximityEvents: [
+    }, breakdown: { excitement: [{ term: "proximity", value: 0.2, measure: 1.7, unit: "", location: undefined }], intensity: [], nausea: [] }, proximityEvents: [
       { kind: "nearMiss", pieceIndex: 13, distance: 14, x: 2, y: 3, z: 1, strength: 0.8 },
       { kind: "nearMiss", pieceIndex: 8, distance: 9, x: 3, y: 3, z: 1, strength: 0.5 },
       { kind: "dueling", pieceIndex: 7, distance: 8, x: 4, y: 3, z: 1, strength: 0.4 },
@@ -365,4 +365,37 @@ test("testing panel groups proximity events and shows their excitement contribut
     "Floater airtime: 0.0 s",
     "Airtime moments: 0",
   ]);
+});
+
+test("testing panel sorts score contributions and inspects a located penalty @fast", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({
+    samples: [], notes: [], proximityEvents: [],
+    rating: { excitement: 4.2, intensity: 3.1, nausea: 0.8 },
+    statistics: {
+      ejectorAirtimeSeconds: 0, floaterAirtimeSeconds: 0, airtimeMoments: 0, strongPositiveGSeconds: 0,
+      longestStrongPositiveGSeconds: 0, strongLateralGSeconds: 0, maxPositiveVerticalG: 0, maxNegativeVerticalG: 0,
+      maxLateralG: 0, maxForwardG: 0, maxBrakingG: 0, maxSpeed: 0, averageSpeed: 0, durationSeconds: 0,
+      trackLength: 0, maxHeight: 0, biggestDrop: 0, steepestDropAngleDegrees: 0, inversions: 0,
+      invertedSeconds: 0, drops: 0, launches: 0, launchPeakSpeed: 0,
+    },
+    breakdown: {
+      excitement: [
+        { term: "airtime", value: 0.5, measure: 1.2, unit: "s", location: undefined },
+        { term: "envelope", value: -1.2, measure: 0.5, unit: "g-s", location: { pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 } },
+      ],
+      intensity: [],
+      nausea: [],
+    },
+  }));
+
+  const excitement = page.locator('[data-score-breakdown="excitement"]');
+  await expect(excitement.locator("li")).toHaveText([
+    "Forces above the ASTM comfort envelope (−1.2, 0.5 g-s at Loop, 656 ft)",
+    "Ejector airtime (+0.5, 1.2 s)",
+  ]);
+  await excitement.getByRole("button").first().click();
+  await expect(page.locator("[data-inspection]")).toHaveText("Selected score location: Loop · 656 ft · 8.0 s");
+  expect(await page.evaluate(() => (window as unknown as { selectedScoreLocation(): object }).selectedScoreLocation()))
+    .toEqual({ pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 });
 });
