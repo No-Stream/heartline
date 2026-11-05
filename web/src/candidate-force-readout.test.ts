@@ -3,6 +3,7 @@ import { candidateForceReadout } from "./candidate-force-readout";
 
 const preview = {
   status: "reachedEnd" as const,
+  outerBank: false,
   entrySpeed: 20,
   ratedSpeed: { minimumEntry: 19, maximumEntry: 21 },
   peaks: { maximumSpeed: 22, minimumVerticalG: -0.5, maximumVerticalG: 3.4, maximumAbsoluteLateralG: 0.3, maximumAbsoluteLongitudinalG: 0.2 },
@@ -19,6 +20,16 @@ describe("candidate force readout", () => {
       "Estimated lateral force: 0.3 g (fine); longitudinal force: 0.2 g (fine)",
     ]);
     expect(candidateForceReadout(preview, "imperial")[1]).toBe("Estimated entry speed: 44.7 mph (within rated range 42.5–47 mph)");
+  });
+
+  it("labels outer-bank lateral force alongside the vertical force bands", () => {
+    expect(candidateForceReadout({ ...preview, outerBank: true }, "metric")).toEqual([
+      "Front-car force estimates (sampled along the track)",
+      "Estimated entry speed: 72 km/h (within rated range 68.4–75.6 km/h)",
+      "Estimated minimum vertical force: −0.5 g (good airtime)",
+      "Estimated maximum vertical force: 3.4 g (great)",
+      "Estimated outer-bank lateral force: 0.3 g (fine); longitudinal force: 0.2 g (fine)",
+    ]);
   });
 
   it("reports when no size fits or the train cannot reach the piece", () => {

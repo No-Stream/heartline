@@ -1,5 +1,7 @@
 use std::sync::{Arc, LazyLock, OnceLock};
 
+use crate::physics::GRAVITY;
+
 use super::profile::{GENERATED_HILL_DESIGNS, SolvedProfile, embedded_profile};
 use super::roll::{RollGeometry, Twist};
 use super::{
@@ -11,6 +13,38 @@ use super::{
 pub fn catalog() -> &'static [Piece] {
     static CATALOG: LazyLock<Vec<Piece>> = LazyLock::new(build_catalog);
     &CATALOG
+}
+
+fn rolled_inversion_minimum_entry(piece: &Piece) -> f64 {
+    const SAMPLE_SPACING: f64 = 0.05;
+    const TRAIN_LENGTH: f64 = 18.0;
+    const MINIMUM_SPEED: f64 = 6.0;
+
+    let length = piece.length();
+    let steps = ((length + TRAIN_LENGTH) / SAMPLE_SPACING).ceil() as usize;
+    let heights: Vec<_> = (0..=steps)
+        .map(|index| {
+            piece
+                .sample((index as f64 * SAMPLE_SPACING).min(length))
+                .position
+                .z
+        })
+        .collect();
+    let initial_height = heights[0];
+    let maximum_mean_height = [6, 12]
+        .into_iter()
+        .flat_map(|cars| {
+            let car_spacing_steps = (TRAIN_LENGTH / cars as f64 / SAMPLE_SPACING).round() as usize;
+            let heights = &heights;
+            (0..=steps).map(move |front| {
+                (0..cars)
+                    .map(|car| heights[front.saturating_sub(car * car_spacing_steps)])
+                    .sum::<f64>()
+                    / cars as f64
+            })
+        })
+        .fold(f64::NEG_INFINITY, f64::max);
+    (2.0 * GRAVITY * (maximum_mean_height - initial_height) + MINIMUM_SPEED.powi(2)).sqrt()
 }
 
 fn build_catalog() -> Vec<Piece> {
@@ -1617,7 +1651,10 @@ fn build_catalog() -> Vec<Piece> {
             );
             piece.family.as_mut().unwrap().twist = Some(twist);
             piece.heartlining = Some(Heartlining::Heartlined);
-            piece.rated_speeds = None;
+            let rated = piece.rated_speeds.as_mut().unwrap();
+            // The train needs more entry energy when its rear cars are below a steep crest.
+            rated.minimum_entry += 1.0;
+            assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
             piece.clear_arc_table();
             pieces.push(piece);
         }
@@ -1637,8 +1674,8 @@ fn build_catalog() -> Vec<Piece> {
             ZeroGRollCompactRight,
             "ZeroGRollCompact",
             HillFeel::ZeroGRoll,
-            8,
-            60,
+            10,
+            80,
             false,
         ),
         (
@@ -1664,10 +1701,10 @@ fn build_catalog() -> Vec<Piece> {
             let mut piece = straight.clone();
             piece.id = id;
             piece.name = match (is_stall, mirrored) {
-                (true, false) => "Stall left",
-                (true, true) => "Stall right",
-                (false, false) => "Zero-g roll left",
-                (false, true) => "Zero-g roll right",
+                (true, false) => "Stall left (heartlined)",
+                (true, true) => "Stall right (heartlined)",
+                (false, false) => "Zero-g roll left (heartlined)",
+                (false, true) => "Zero-g roll right (heartlined)",
             };
             piece.exit.x = (endpoint[0] / 2.0).round() as i32;
             piece.exit.z = (endpoint[1] / 2.0).round() as i32;
@@ -1677,15 +1714,17 @@ fn build_catalog() -> Vec<Piece> {
                 if is_stall {
                     Twist::Stall {
                         ramp: 0.25,
-                        hold: 0.5,
+                        hold: 0.1,
                         start: design.crest_start,
                         end: design.crest_end,
                     }
                 } else {
+                    let fast = matches!(id, ZeroGRollFastLeft | ZeroGRollFastRight);
+                    let extension = if fast { 0.10 } else { 0.05 } * profile.length();
                     Twist::ZeroGRoll {
-                        ramp: 0.25,
-                        start: design.crest_start,
-                        end: design.crest_end,
+                        ramp: if fast { 0.40 } else { 0.25 },
+                        start: (design.crest_start - extension).max(0.0),
+                        end: (design.crest_end + extension).min(profile.length()),
                     }
                 },
             );
@@ -1700,6 +1739,10 @@ fn build_catalog() -> Vec<Piece> {
             });
             piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
             piece.clear_arc_table();
+            let mut rated = profile.rated_speeds(profile_name, design.design_speed, 2.0, 8.0);
+            rated.minimum_entry = rolled_inversion_minimum_entry(&piece);
+            assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
+            piece.rated_speeds = Some(rated);
             pieces.push(piece);
         }
     }

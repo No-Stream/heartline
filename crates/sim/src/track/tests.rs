@@ -368,18 +368,22 @@ fn end_state_after_allowed_pieces(model: &CoasterModel, ids: &[PieceId]) -> Trac
 #[test]
 fn inversion_pieces_identify_their_heartlining() {
     for piece in catalog() {
-        assert_eq!(
-            piece.inversion.is_some(),
-            piece.heartlining.is_some(),
-            "{:?}",
-            piece.id
-        );
-        if let Some(heartlining) = piece.heartlining {
+        if piece.inversion.is_some() {
+            let heartlining = piece.heartlining.expect("inversions identify heartlining");
             let label = match heartlining {
                 Heartlining::Heartlined => "(heartlined)",
                 Heartlining::NotHeartlined => "(not heartlined)",
             };
             assert!(piece.name.contains(label), "{:?}: {}", piece.id, piece.name);
+        } else if piece.heartlining.is_some() {
+            assert!(
+                piece.family.is_some_and(|family| matches!(
+                    family.twist,
+                    Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                )) && piece.heartlining == Some(Heartlining::Heartlined),
+                "{:?}: unexpected heartlining on a non-inversion",
+                piece.id
+            );
         }
     }
 }

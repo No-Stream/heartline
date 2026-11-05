@@ -412,7 +412,10 @@ impl SolvedProfile {
         (position, first, second)
     }
 
-    pub(crate) fn sample_with_third(&self, distance: f64) -> ([f64; 2], [f64; 2], [f64; 2], [f64; 2]) {
+    pub(crate) fn sample_with_third(
+        &self,
+        distance: f64,
+    ) -> ([f64; 2], [f64; 2], [f64; 2], [f64; 2]) {
         let index = self
             .points
             .partition_point(|point| point.distance < distance)
@@ -1666,7 +1669,7 @@ mod tests {
             name: "ZeroGRollCompact",
             design_speed: 20.0,
             flank_angle: 40.0_f64.to_radians(),
-            pull_force: 4.2,
+            pull_force: 2.5,
             target_crest_time: 2.4,
         },
         CrestTimeCase {
