@@ -147,31 +147,35 @@ test.describe("tool switching", () => {
     await expect(deleteMode).toBeChecked();
   });
 
-  test("fits the game bar across window widths with clock controls showing and while paused", async ({ page }) => {
+  test("fits the game bar across available widths with clock controls showing and while paused", async ({ page }) => {
     test.setTimeout(120_000);
     await startGame(page);
     // A long-running park's tick count, so the readout is as wide as it gets in an evening's play.
     await page.getByTestId("tick-count").evaluate((output) => { output.textContent = "1234567"; });
+    const gameBar = page.locator(".game-bar");
+    const barItemsFit = async (): Promise<boolean> => gameBar.evaluate((bar) => {
+      const boxes = [...bar.children]
+        .map((item) => ({ box: item.getBoundingClientRect(), contentWidth: item.scrollWidth }))
+        .filter(({ box }) => box.width > 0)
+        // The toolbar may shrink below its buttons, so its content width counts rather than its own box.
+        .map(({ box, contentWidth }) => ({ left: box.left, right: Math.max(box.right, box.left + contentWidth) }));
+      const barRight = bar.getBoundingClientRect().right;
+      return boxes.every((box, index) => box.left >= (index === 0 ? 0 : boxes[index - 1]!.right) && box.right <= barRight);
+    });
     const assertFitsAtEveryWidth = async (): Promise<void> => {
       for (let width = 760; width <= 1920; width += 20) {
         await page.setViewportSize({ width, height: 600 });
-        await page.waitForTimeout(20);
-        const boxes = await page.locator(".game-bar > *").evaluateAll((items) => items
-          .map((item) => ({ box: item.getBoundingClientRect(), contentWidth: item.scrollWidth }))
-          .filter(({ box }) => box.width > 0)
-          // The toolbar may shrink below its buttons, so its content width counts rather than its own box.
-          .map(({ box, contentWidth }) => ({ left: box.left, right: Math.max(box.right, box.left + contentWidth) })));
-        for (const [index, box] of boxes.entries()) {
-          expect(box.left, `item ${index} at ${width}px`).toBeGreaterThanOrEqual(index === 0 ? 0 : boxes[index - 1].right);
-          expect(box.right, `item ${index} at ${width}px`).toBeLessThanOrEqual(width);
-        }
+        await expect.poll(barItemsFit, { message: `game bar fits at ${width}px` }).toBe(true);
         if (width >= 1200) await expect(page.locator(".toolbar__tool span").first()).toBeVisible();
       }
     };
     await assertFitsAtEveryWidth();
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await expect.poll(barItemsFit).toBe(true);
     await page.getByRole("button", { name: "Pause" }).click();
     await expect(page.locator("[data-paused-indicator]")).toBeVisible();
     await assertFitsAtEveryWidth();
+    await page.setViewportSize({ width: 1280, height: 600 });
   });
 
   test("resizes the world with the window", async ({ page }) => {

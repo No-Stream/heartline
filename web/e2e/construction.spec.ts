@@ -71,6 +71,7 @@ test("closes a compact circuit with short straights and full-tile offsets @fast"
   ];
 
   await expect(track).toHaveCount(1);
+  await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   await expect(closeCircuit).toBeDisabled();
   for (const [index, piece] of pieces.entries()) {
     const choice = choices.locator(`[data-piece="${piece}"]`);
@@ -80,6 +81,7 @@ test("closes a compact circuit with short straights and full-tile offsets @fast"
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
     await page.getByRole("button", { name: "Place piece" }).click();
     await expect(track).toHaveCount(index + 2);
+    await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
     if (index < pieces.length - 1) await expect(closeCircuit).toBeDisabled();
   }
 

@@ -468,8 +468,8 @@ mod tests {
             },
         );
         original.tick(&world, &[], 0, Some(1));
-        let bytes = bincode::serialize(&original).unwrap();
-        let mut restored: ParkGuests = bincode::deserialize(&bytes).unwrap();
+        let bytes = postcard::to_allocvec(&original).unwrap();
+        let mut restored: ParkGuests = postcard::from_bytes(&bytes).unwrap();
         restored.rebind_world(&world);
         assert_eq!(
             original.walking.traits().memory(GuestId(0)),
@@ -560,14 +560,14 @@ mod tests {
             original_train.step(&original_circuit);
         }
         let bytes = crate::track::curves::with_snapshot_arc_tables(|| {
-            bincode::serialize(&(&original_guests, &original_circuit, &original_train))
+            postcard::to_allocvec(&(&original_guests, &original_circuit, &original_train))
         })
         .unwrap();
         let (mut restored_guests, restored_circuit, mut restored_train): (
             ParkGuests,
             crate::physics::Circuit,
             Train,
-        ) = crate::track::curves::with_snapshot_arc_tables(|| bincode::deserialize(&bytes))
+        ) = crate::track::curves::with_snapshot_arc_tables(|| postcard::from_bytes(&bytes))
             .unwrap();
         restored_guests.rebind_world(&world);
         for _ in 0..20 {

@@ -62,8 +62,8 @@ fn placement_search_round_trip_preserves_continuation() {
     .unwrap();
     for steps in [0, 1, 50, 500] {
         original.advance(steps);
-        let encoded = bincode::serialize(&original).unwrap();
-        let mut restored: BlockPlacementSearch = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_allocvec(&original).unwrap();
+        let mut restored: BlockPlacementSearch = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(placement_hash(&original), placement_hash(&restored));
         for _ in 0..5 {
             original.advance(1_000);
@@ -82,8 +82,8 @@ fn manual_search_round_trip_preserves_continuation() {
         BlockManualSearch::new(circuit, train, PhysicsConfig::default(), vec![boundary]).unwrap();
     for steps in [0, 1, 50, 500] {
         original.advance(steps);
-        let encoded = bincode::serialize(&original).unwrap();
-        let mut restored: BlockManualSearch = bincode::deserialize(&encoded).unwrap();
+        let encoded = postcard::to_allocvec(&original).unwrap();
+        let mut restored: BlockManualSearch = postcard::from_bytes(&encoded).unwrap();
         assert_eq!(manual_hash(&original), manual_hash(&restored));
         for _ in 0..5 {
             original.advance(1_000);
@@ -97,7 +97,7 @@ fn manual_search_round_trip_preserves_continuation() {
 fn binary_search_snapshots_round_trip() {
     let circuit = demo_circuit();
     let restored_circuit: crate::physics::Circuit =
-        bincode::deserialize(&bincode::serialize(&circuit).unwrap()).unwrap();
+        postcard::from_bytes(&postcard::to_allocvec(&circuit).unwrap()).unwrap();
     for (index, (first, second)) in circuit
         .pieces()
         .iter()
@@ -123,7 +123,7 @@ fn binary_search_snapshots_round_trip() {
     .unwrap();
     placement.advance(100);
     let restored: BlockPlacementSearch =
-        bincode::deserialize(&bincode::serialize(&placement).unwrap()).unwrap();
+        postcard::from_bytes(&postcard::to_allocvec(&placement).unwrap()).unwrap();
     assert_eq!(placement_hash(&placement), placement_hash(&restored));
 
     let mut manual = BlockManualSearch::new(
@@ -135,7 +135,7 @@ fn binary_search_snapshots_round_trip() {
     .unwrap();
     manual.advance(100);
     let restored: BlockManualSearch =
-        bincode::deserialize(&bincode::serialize(&manual).unwrap()).unwrap();
+        postcard::from_bytes(&postcard::to_allocvec(&manual).unwrap()).unwrap();
     assert_eq!(manual_hash(&manual), manual_hash(&restored));
 }
 
@@ -157,6 +157,7 @@ fn search_snapshot_rejects_work_after_completion() {
         work_completed: search.work_completed() + 1,
     };
     assert!(
-        bincode::deserialize::<BlockManualSearch>(&bincode::serialize(&invalid).unwrap()).is_err()
+        postcard::from_bytes::<BlockManualSearch>(&postcard::to_allocvec(&invalid).unwrap())
+            .is_err()
     );
 }
