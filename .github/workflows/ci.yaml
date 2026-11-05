@@ -94,7 +94,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [feature, journey, smoothness]
+        include:
+          # The feature project takes about 13 minutes locally and longer on hosted runners, so it is split in three.
+          - { project: feature, shard: 1/3 }
+          - { project: feature, shard: 2/3 }
+          - { project: feature, shard: 3/3 }
+          - { project: journey, shard: 1/1 }
+          - { project: smoothness, shard: 1/1 }
     steps:
       - uses: actions/checkout@v5
       - run: rustup show active-toolchain || rustup toolchain install
@@ -111,11 +117,11 @@ jobs:
         with:
           name: e2e-build
           path: web/
-      - run: npm run e2e -- --project=${{ matrix.project }}
+      - run: npm run e2e -- --project=${{ matrix.project }} --shard=${{ matrix.shard }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report-${{ matrix.project }}
+          name: playwright-report-${{ matrix.project }}-${{ strategy.job-index }}
           path: |
             playwright-report/
             test-results/
