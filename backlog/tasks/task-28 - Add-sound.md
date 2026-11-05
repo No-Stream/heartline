@@ -4,7 +4,7 @@ title: Add sound
 status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-04 21:34'
+updated_date: '2026-11-05 06:33'
 labels:
   - audio
 milestone: m-3
@@ -38,4 +38,6 @@ Owner approved all four plan decisions on 2026-11-04 (fast-forward silences one-
 2026-11-04: plan work items 2 and 3 merged (master volume and mute in the game bar, key M; audio engine core with offline test harness). Tool names in the game bar now hide below 1120 px instead of 1020 px to make room for the mute button; the volume slider hides below 1180 px. Remaining items start after TASK-95.
 
 When sound families land: the player pause (Space) must silence train and event sounds; main.ts passes gameSpeed separately from gamePause.isPaused().
+
+2026-11-04: plan item 8 (build and interface sounds: placement thunk by material, build, undo, error, finish flourish) and item 1 (per-train state in snapshots) merged to master. Next: items 4-5 (mapping, train sounds).
 <!-- SECTION:NOTES:END -->
