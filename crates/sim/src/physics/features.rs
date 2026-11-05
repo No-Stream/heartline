@@ -120,6 +120,8 @@ pub(super) struct ProximityCounts {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct RideFeatures {
     pub(super) statistics: RideStatistics,
+    pub(super) active_airtime_moments: usize,
+    pub(super) active_inverted_seconds: f64,
     pub(super) ride_seconds: f64,
     pub(super) active_average_speed: f64,
     pub(super) inversion_passages: Vec<(Inversion, Heartlining)>,
@@ -149,6 +151,7 @@ struct SampleFrame {
 
 #[derive(Clone, Debug)]
 struct DeadRun {
+    start_index: usize,
     end_index: usize,
     location: Location,
     seconds: f64,
@@ -167,6 +170,12 @@ pub(super) fn ride_features(
     let ride_seconds: f64 = frames
         .iter()
         .filter(|frame| frame.active)
+        .map(|frame| frame.interval.seconds)
+        .sum();
+    let active_airtime_moments = active_airtime_moments(samples, &frames, completed);
+    let active_inverted_seconds = frames
+        .iter()
+        .filter(|frame| frame.active && samples[frame.index].inverted)
         .map(|frame| frame.interval.seconds)
         .sum();
     let active_distance: f64 = frames
@@ -212,6 +221,8 @@ pub(super) fn ride_features(
 
     RideFeatures {
         statistics,
+        active_airtime_moments,
+        active_inverted_seconds,
         ride_seconds,
         active_average_speed,
         inversion_passages,
@@ -228,6 +239,30 @@ pub(super) fn ride_features(
         theming: 0.0,
         envelope,
     }
+}
+
+fn active_airtime_moments(
+    samples: &[TestSample],
+    frames: &[SampleFrame],
+    completed: bool,
+) -> usize {
+    let mut previous_airtime = completed
+        && frames.last().is_some_and(|frame| {
+            frame.active && samples[frame.index].vertical_g < 0.0
+        });
+    let mut moments = 0;
+    for frame in frames {
+        if !frame.active {
+            previous_airtime = false;
+            continue;
+        }
+        let airtime = samples[frame.index].vertical_g < 0.0;
+        if airtime && !previous_airtime {
+            moments += 1;
+        }
+        previous_airtime = airtime;
+    }
+    moments
 }
 
 fn sample_frames(
@@ -472,6 +507,7 @@ fn dead_runs(samples: &[TestSample], frames: &[SampleFrame]) -> Vec<DeadRun> {
     for frame in frames {
         if frame.active && !is_eventful(&samples[frame.index]) {
             let run = current.get_or_insert(DeadRun {
+                start_index: frame.index,
                 end_index: frame.index,
                 location: frame.location,
                 seconds: 0.0,
@@ -498,25 +534,19 @@ fn final_dead_run_before_station(
         .iter()
         .find(|frame| pieces[frame.location.piece_index].kind == PieceKind::Station)?
         .index;
-    if completed {
-        runs.iter()
-            .enumerate()
-            .map(|(index, run)| {
-                (
-                    index,
-                    (station_index + frames.len() - run.end_index) % frames.len(),
-                )
-            })
-            .filter(|(_, distance)| *distance > 0)
-            .min_by_key(|(_, distance)| *distance)
-            .map(|(index, _)| index)
+    let predecessor = if station_index > 0 {
+        station_index - 1
+    } else if completed {
+        frames.len() - 1
     } else {
-        runs.iter()
-            .enumerate()
-            .filter(|(_, run)| run.end_index < station_index)
-            .max_by_key(|(_, run)| run.end_index)
-            .map(|(index, _)| index)
-    }
+        return None;
+    };
+    runs.iter().position(|run| {
+        run.end_index == predecessor
+            && frames[run.start_index..=run.end_index]
+                .iter()
+                .any(|frame| pieces[frame.location.piece_index].kind == PieceKind::Brakes)
+    })
 }
 
 fn highlights(
@@ -1003,6 +1033,24 @@ mod tests {
         let (location, seconds) = features.longest_dead_run.unwrap();
         assert_eq!(location.piece_index, 0);
         assert!(seconds > 4.5);
+    }
+
+    #[test]
+    fn pacing_penalizes_dead_runs_separated_from_station_or_without_brakes() {
+        let pieces = [
+            piece(PieceId::Straight, PieceKind::Track),
+            piece(PieceId::Brakes, PieceKind::Brakes),
+            piece(PieceId::Station, PieceKind::Station),
+        ];
+        let mut samples: Vec<_> = (0..52).map(|index| sample(index, 10.0)).collect();
+        samples[50].vertical_g = 2.0;
+        samples[51].piece_index = 2;
+        let separated = ride_features(&samples, &pieces, &[], 52.0, true);
+        assert!(separated.dead_excess_seconds > 1.5);
+
+        samples[50].vertical_g = 1.0;
+        let without_brakes = ride_features(&samples, &pieces, &[], 52.0, true);
+        assert!(without_brakes.dead_excess_seconds > 1.5);
     }
 
     #[test]

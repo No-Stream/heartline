@@ -1,8 +1,8 @@
 use super::comfort::{EnvelopeExceedance, EnvelopeWorst};
 use super::features::{ElementClass, Location, RideFeatures, ride_features};
-use super::scoring::{ForceBandDurations, Scores, score};
+use super::scoring::{ForceBandDurations, Scores, Term, score};
 use super::testing::RideStatistics;
-use super::{ConstructionTestRunRecorder, PhysicsConfig, Train, demo_circuit};
+use super::{CarReading, ConstructionTestRunRecorder, GForces, PhysicsConfig, Train, demo_circuit};
 use crate::track::construction::Construction;
 use crate::track::{
     CoasterModel, Heading, Heartlining, Inversion, PieceId, TrackState, catalog, hybrid_model,
@@ -40,12 +40,15 @@ fn empty_features() -> RideFeatures {
 fn score_family_wooden() -> Archetype {
     let mut features = empty_features();
     features.ride_seconds = 40.0;
+    features.active_airtime_moments = 3;
+    features.active_inverted_seconds = 0.0;
     features.active_average_speed = 18.0;
     features.statistics = RideStatistics {
         floater_airtime_seconds: 1.5,
         airtime_moments: 3,
         max_positive_vertical_g: 2.0,
-        max_lateral_g: 0.5,
+        // Assume a 1 g peak to make the specified strong lateral exposure possible.
+        max_lateral_g: 1.0,
         max_speed: 18.0,
         average_speed: 18.0,
         duration_seconds: 40.0,
@@ -55,7 +58,8 @@ fn score_family_wooden() -> Archetype {
     };
     features.element_classes = BTreeSet::from([
         ElementClass::FloaterHill,
-        ElementClass::BigDrop,
+        // The plan specifies three classes but a 15 m drop is not a BigDrop.
+        ElementClass::Helix,
         ElementClass::BankedTurn,
     ]);
     Archetype {
@@ -63,6 +67,7 @@ fn score_family_wooden() -> Archetype {
         features,
         bands: ForceBandDurations {
             airtime_good: 1.5,
+            lateral_strong: 0.5,
             ..ForceBandDurations::default()
         },
     }
@@ -77,6 +82,8 @@ fn score_classic_arrow_looper() -> Archetype {
     };
     let mut features = empty_features();
     features.ride_seconds = 60.0;
+    features.active_airtime_moments = 1;
+    features.active_inverted_seconds = 0.0;
     features.active_average_speed = 19.0;
     features.inversion_passages = vec![
         (Inversion::VerticalLoop, Heartlining::NotHeartlined),
@@ -135,6 +142,8 @@ fn score_classic_arrow_looper() -> Archetype {
 fn score_b_and_m_hyper() -> Archetype {
     let mut features = empty_features();
     features.ride_seconds = 70.0;
+    features.active_airtime_moments = 7;
+    features.active_inverted_seconds = 0.0;
     features.active_average_speed = 30.0;
     features.element_classes = BTreeSet::from([
         ElementClass::EjectorHill,
@@ -173,6 +182,8 @@ fn score_b_and_m_hyper() -> Archetype {
 fn score_rmc_hybrid() -> Archetype {
     let mut features = empty_features();
     features.ride_seconds = 100.0;
+    features.active_airtime_moments = 15;
+    features.active_inverted_seconds = 0.0;
     features.active_average_speed = 27.0;
     features.inversion_passages = vec![
         (Inversion::VerticalLoop, Heartlining::Heartlined),
@@ -225,6 +236,8 @@ fn score_rmc_hybrid() -> Archetype {
 fn score_intamin_accelerator() -> Archetype {
     let mut features = empty_features();
     features.ride_seconds = 20.0;
+    features.active_airtime_moments = 0;
+    features.active_inverted_seconds = 0.0;
     features.active_average_speed = 30.0;
     features.element_classes = BTreeSet::from([
         ElementClass::EjectorHill,
@@ -375,26 +388,30 @@ fn calibration_table_prints_synthetic_archetype_scores_and_breakdowns() {
         (rmc, rmc_intensity, rmc_nausea),
         (accelerator, accelerator_intensity, accelerator_nausea),
     ] = measured;
-    assert!(
-        rmc > hyper && hyper > accelerator && accelerator > arrow && arrow > family,
-        "archetype excitement order must put the airtime rich hybrid highest"
-    );
-    assert!(
-        rmc_intensity > arrow_intensity
-            && accelerator_intensity > arrow_intensity
-            && arrow_intensity > hyper_intensity,
-        "intensity order must put the high force Arrow below the RMC and accelerator"
-    );
-    assert!(
-        arrow_nausea > rmc_nausea
-            && rmc_nausea > hyper_nausea
-            && hyper_nausea > accelerator_nausea
-            && accelerator_nausea > family_nausea,
-        "nausea order must follow the specified force and inversion exposure"
-    );
+    if !(rmc > hyper && hyper > accelerator && accelerator > arrow && arrow > family) {
+        band_failures
+            .push("archetype excitement order must put the airtime rich hybrid highest".to_owned());
+    }
+    if !(rmc_intensity > arrow_intensity
+        && accelerator_intensity > arrow_intensity
+        && arrow_intensity > hyper_intensity)
+    {
+        band_failures.push(
+            "intensity order must put the high force Arrow below the RMC and accelerator"
+                .to_owned(),
+        );
+    }
+    if !(arrow_nausea > rmc_nausea
+        && rmc_nausea > hyper_nausea
+        && hyper_nausea > accelerator_nausea
+        && accelerator_nausea > family_nausea)
+    {
+        band_failures
+            .push("nausea order must follow the specified force and inversion exposure".to_owned());
+    }
     assert!(
         band_failures.is_empty(),
-        "selected SCORING candidate misses the plan's archetype bands:\n{}",
+        "selected SCORING candidate misses the plan's archetype requirements:\n{}",
         band_failures.join("\n")
     );
 }
@@ -495,6 +512,54 @@ fn build_player_circuit(name: &str, entries: &[String]) -> (CoasterModel, super:
     )
 }
 
+#[test]
+fn calibration_table_recorder_uses_each_model_force_limits() {
+    let circuit = demo_circuit();
+    let scores = [hybrid_model(), wooden_twister_model()].map(|model| {
+        let mut recorder = calibration_recorder(&circuit, &model);
+        for _ in 0..400 {
+            let reading = CarReading {
+                distance: circuit.starts[10],
+                speed: 10.0,
+                g: GForces {
+                    vertical: 4.2,
+                    lateral: 0.0,
+                    longitudinal: 0.0,
+                },
+                airtime: false,
+                height_m: 0.0,
+                inverted: false,
+                roll: 0.0,
+                piece_index: 10,
+            };
+            recorder.record(&[vec![reading; usize::from(model.train.cars)]]);
+        }
+        recorder.finish(false, false)
+    });
+    let excessive = |report: &super::TestRun| {
+        report
+            .breakdown
+            .nausea
+            .iter()
+            .find(|item| item.term == Term::ExcessiveForces)
+            .unwrap()
+            .value
+    };
+    assert_eq!(excessive(&scores[0]), 0.0);
+    assert!(excessive(&scores[1]) > 0.0);
+}
+
+fn calibration_recorder(
+    circuit: &super::Circuit,
+    model: &CoasterModel,
+) -> ConstructionTestRunRecorder {
+    ConstructionTestRunRecorder::for_circuit_with_limits(
+        circuit,
+        usize::from(model.train.cars),
+        model.comfortable_force_limits,
+    )
+}
+
 fn run_lap(circuit: &super::Circuit, model: &CoasterModel, initial_speed: f64) -> super::TestRun {
     let mut train = Train::new(
         circuit,
@@ -506,8 +571,7 @@ fn run_lap(circuit: &super::Circuit, model: &CoasterModel, initial_speed: f64) -
         0.0,
         initial_speed,
     );
-    let mut recorder =
-        ConstructionTestRunRecorder::for_circuit(circuit, usize::from(model.train.cars));
+    let mut recorder = calibration_recorder(circuit, model);
     let mut completed = false;
     for _ in 0..60_000 {
         train.step(circuit);

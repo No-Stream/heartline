@@ -24,14 +24,17 @@ The builder panel has Build, Colours and Operate tabs, with every way of choosin
 
 ## Ride score calibration on 2026-11-05
 
-The calibration test retains the exact plan bands and reports misses without widening them. The selected model scores the RMC hybrid at 10.67 excitement, the B&M hyper at 6.62, the Intamin accelerator at 5.78, the Arrow looper at 2.85, and the family wooden profile at 2.81. Four plan bands remain unmet: family nausea, Arrow excitement, B&M nausea, and accelerator nausea. The qualitative ordering checks pass. See [`ride-score-calibration.md`](ride-score-calibration.md) for the full contribution table and the failed band details.
+The circuit measurements in the calibration document predate fixes to dead-time
+exemptions and active-only airtime and inversion scoring and need remeasurement.
 
-The same model was measured on the game circuits with each model's full train. Demo scored −1.00 excitement, 8.88 intensity and 6.98 nausea. Timber Tumbler scored 0.61, 10.43 and 7.90, with measured peaks of +11.42 g vertical, −13.43 g vertical and 15.79 g lateral. Velocity Viper scored 0.11, 7.24 and 3.56; Briar Blitz scored −0.45, 9.82 and 8.19. These low excitement scores correspond to measured excessive-force and comfort-envelope penalties. Timber Tumbler remains a severe force case and was not tuned upward.
+The calibration test retains the exact plan bands and reports misses without widening them. The selected model scores the RMC hybrid at 10.67 excitement, the B&M hyper at 6.62, the Intamin accelerator at 5.78, the Arrow looper at 2.85, and the family wooden profile at 2.96. Three plan bands remain unmet: Arrow excitement, B&M nausea, and accelerator nausea. The excitement and nausea orderings also fail. See [`ride-score-calibration.md`](ride-score-calibration.md) for the full contribution table and the failed band details.
+
+The same model was measured on the game circuits with each model's full train. Demo scored −1.00 excitement, 8.88 intensity and 6.98 nausea. Timber Tumbler scored 0.61, 10.43 and 7.90, with measured peaks of +11.42 g vertical, −13.43 g vertical and 15.79 g lateral. Velocity Viper scored 0.11, 7.24 and 3.56; Briar Blitz scored −0.45, 9.83 and 8.21. These low excitement scores correspond to measured excessive-force and comfort-envelope penalties. Timber Tumbler remains a severe force case and was not tuned upward.
 
 ## Known gaps and open items
 
 - Inversions on master are still physically too strong (a half loop peaks around 19 g). The calibrated scoring model reports the resulting comfort penalties; force-limited redesign remains open under TASK-95.
-- The score calibration records current outputs, but Demo, Velocity Viper and Briar Blitz have negative or near-zero excitement because of their measured forces. The player circuits need force review before their scores can serve as positive ride expectations. Three legacy scoring assertions still expect the previous formula, and four synthetic plan bands fail; these results are listed in `ride-score-calibration.md`.
+- The score calibration records current outputs, but Demo, Velocity Viper and Briar Blitz have negative or near-zero excitement because of their measured forces. The player circuits need force review before their scores can serve as positive ride expectations. Three legacy scoring assertions still expect the previous formula, and three synthetic plan bands and two orderings fail; these results are listed in `ride-score-calibration.md`.
 - Other requests remain open: top hats (TASK-98), airtime hills and RMC elements (TASK-101), banked straights (TASK-102), a live g-force overlay while building (TASK-105), heartlined and classic inversion groups (TASK-111), physics realism (TASK-112) and the sounds themselves (TASK-28).
 - GitHub CI fails on 12 browser tests on the slower runner (TASK-118); local gates pass.
 - The park still resets when the dev server reloads (TASK-49, after saving exists). Per-frame scene rebuild cost is still high, and on this WSL machine software WebGL is slow, so smoothness is best judged in the owner's browser.

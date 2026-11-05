@@ -111,7 +111,9 @@ mod tests {
 #[cfg(test)]
 mod score_tests {
     use super::*;
-    use crate::physics::features::ride_features;
+    use crate::physics::features::{PieceSummary, ride_features};
+    use crate::physics::TestSample;
+    use crate::track::{PieceId, PieceKind, Shape};
 
     #[test]
     fn breakdowns_sum_and_overlay_bands_change_scores() {
@@ -142,9 +144,9 @@ mod score_tests {
     fn airtime_moments_keep_paying_and_envelope_penalty_keeps_location() {
         use crate::physics::comfort::{EnvelopeAxis, EnvelopeWorst};
         let mut features = ride_features(&[], &[], &[], 0.0, false);
-        features.statistics.airtime_moments = 10;
+        features.active_airtime_moments = 10;
         let ten = score(&features, &ForceBandDurations::default());
-        features.statistics.airtime_moments = 20;
+        features.active_airtime_moments = 20;
         let twenty = score(&features, &ForceBandDurations::default());
         assert!(twenty.excitement - ten.excitement > 0.2);
         let location = Location {
@@ -170,6 +172,90 @@ mod score_tests {
             .unwrap();
         assert!((contribution.value + 1.087).abs() < 0.01);
         assert_eq!(contribution.location, Some(location));
+    }
+
+    #[test]
+    fn score_timing_uses_active_track_while_statistics_keep_the_full_run() {
+        let pieces = [
+            PieceSummary {
+                id: PieceId::Station,
+                name: "Station",
+                kind: PieceKind::Station,
+                shape: Shape::Plain,
+                inversion: None,
+                heartlining: None,
+                length: 3.0,
+                turn_angle_radians: 0.0,
+            },
+            PieceSummary {
+                id: PieceId::GentleUp,
+                name: "Lift",
+                kind: PieceKind::Lift,
+                shape: Shape::Plain,
+                inversion: None,
+                heartlining: None,
+                length: 3.0,
+                turn_angle_radians: 0.0,
+            },
+            PieceSummary {
+                id: PieceId::Straight,
+                name: "Track",
+                kind: PieceKind::Track,
+                shape: Shape::Plain,
+                inversion: None,
+                heartlining: None,
+                length: 6.0,
+                turn_angle_radians: 0.0,
+            },
+        ];
+        let samples: Vec<_> = (0..12)
+            .map(|index| {
+                let piece_index = if index < 3 {
+                    0
+                } else if index < 6 {
+                    1
+                } else {
+                    2
+                };
+                let vertical_g = if matches!(index, 1 | 4 | 7) {
+                    -1.0
+                } else {
+                    1.0
+                };
+                TestSample {
+                    distance: index as f64,
+                    speed: [2.0, 4.0, 10.0][piece_index],
+                    vertical_g,
+                    lateral_g: 0.0,
+                    longitudinal_g: 0.0,
+                    airtime: false,
+                    height_m: 0.0,
+                    inverted: matches!(index, 1 | 4 | 7),
+                    roll: 0.0,
+                    piece_index,
+                }
+            })
+            .collect();
+
+        let features = ride_features(&samples, &pieces, &[], 12.0, false);
+        let scores = score(&features, &ForceBandDurations::default());
+        let airtime_moments = scores
+            .breakdown
+            .excitement
+            .iter()
+            .find(|item| item.term == Term::AirtimeMoments)
+            .unwrap();
+        let time_inverted = scores
+            .breakdown
+            .nausea
+            .iter()
+            .find(|item| item.term == Term::TimeInverted)
+            .unwrap();
+
+        assert_eq!(features.statistics.airtime_moments, 3);
+        assert!((features.statistics.inverted_seconds - 0.85).abs() < 1e-12);
+        assert_eq!(airtime_moments.measure, 1.0);
+        assert!((time_inverted.measure - 0.1).abs() < 1e-12);
     }
 
     #[test]
@@ -546,7 +632,7 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
     add_soft(
         n,
         Term::TimeInverted,
-        stats.inverted_seconds,
+        features.active_inverted_seconds,
         SCORING.n_inverted,
         None,
     );
@@ -631,7 +717,7 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
     add_soft(
         e,
         Term::AirtimeMoments,
-        stats.airtime_moments as f64,
+        features.active_airtime_moments as f64,
         SCORING.moments,
         None,
     );
