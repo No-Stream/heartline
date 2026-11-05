@@ -149,6 +149,45 @@ fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
     assert_ride_force_bound("demo", &circuit, &model);
 }
 
+#[test]
+fn velocity_viper_construction_test_keeps_raw_longitudinal_force_bounded() {
+    let model = multi_launch_model();
+    let circuit = build_player_circuit("Velocity Viper", model.clone());
+    let mut train = theme_park_sim::physics::Train::new(
+        &circuit,
+        &model.train,
+        PhysicsConfig {
+            lift_speed: 5.0,
+            ..PhysicsConfig::default()
+        },
+        0.0,
+        2.0,
+    );
+    let mut completed = false;
+    for _ in 0..60_000 {
+        let previous_speed = train.speed();
+        train.step(&circuit);
+        let piece_index = circuit.piece_index(train.distance());
+        for frame in train.take_readings() {
+            for reading in frame {
+                assert!(
+                    reading.g.longitudinal.abs() <= 2.5,
+                    "Velocity Viper: {:.3} g on piece {piece_index} {:?}, speed {previous_speed:.6} -> {:.6} m/s",
+                    reading.g.longitudinal,
+                    circuit.pieces()[piece_index].kind,
+                    train.speed()
+                );
+            }
+        }
+        assert!(train.notes().is_empty(), "Velocity Viper train recovered");
+        if train.distance() >= circuit.length() {
+            completed = true;
+            break;
+        }
+    }
+    assert!(completed, "Velocity Viper test ride did not finish");
+}
+
 fn assert_ride_force_bound(
     name: &str,
     circuit: &theme_park_sim::physics::Circuit,
