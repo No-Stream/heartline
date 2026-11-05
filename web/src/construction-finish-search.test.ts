@@ -7,6 +7,7 @@ describe("construction finish search triggers", () => {
     const actions: WorkerAction[] = [
       { type: "construction-start", x: 1, y: 2, z: 3, heading: 0 },
       { type: "construction-set-chain", enabled: true },
+      { type: "construction-set-cars-per-train", cars: 4 },
       { type: "construction-append" },
       { type: "construction-undo" },
       { type: "construction-delete", id: 0 },

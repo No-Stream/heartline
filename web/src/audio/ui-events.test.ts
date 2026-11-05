@@ -9,7 +9,7 @@ const state = (update: Partial<ConstructionState>): ConstructionState => ({
   type: "construction-state", complete: true, active: true, chain: false, colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "wooden_twister", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }, pieces: [], elements: [], selected: "Straight", track: [piece(0)],
   canAppend: true, canClose: false, finishPreview: false, canFinish: false, finishReason: "", canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [], message: "",
   blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
-  trainCount: 1, placedRails: rails, railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
+  trainCount: 1, minCarsPerTrain: 4, maxCarsPerTrain: 8, placedRails: rails, railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
   previewRails: rails, previewTies: new Float32Array(), previewSupports: new Float32Array(), constructionForcePreview: null, candidateForcePreview: null, speedMatch: null, hillOptions: [], ...update,
 });
 

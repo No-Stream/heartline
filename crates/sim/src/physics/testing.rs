@@ -150,7 +150,7 @@ impl TestRun {
 }
 
 /// Turns per-tick train readings into one interpolated sample per track metre.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TestRunRecorder {
     circuit_length: f64,
     piece_starts: Vec<f64>,
@@ -244,13 +244,29 @@ impl TestRunRecorder {
     }
 
     pub fn for_circuit(circuit: &Circuit) -> Self {
+        Self::for_circuit_with_windows(circuit, |piece| piece.rated_speeds)
+    }
+
+    pub fn for_circuit_with_train(
+        circuit: &Circuit,
+        train: &crate::track::TrainConfiguration,
+    ) -> Self {
+        Self::for_circuit_with_windows(circuit, |piece| {
+            crate::track::effective_rated_speeds(piece, train)
+        })
+    }
+
+    fn for_circuit_with_windows(
+        circuit: &Circuit,
+        rated_speeds: impl Fn(&crate::track::Piece) -> Option<crate::track::RatedSpeeds>,
+    ) -> Self {
         let mut recorder = Self::new(circuit.length());
         recorder.piece_starts.clone_from(&circuit.starts);
         recorder.rated_pieces = circuit
             .pieces
             .iter()
             .map(|piece| {
-                piece.rated_speeds.map(|speeds| RatedPieceSpeedWindow {
+                rated_speeds(piece).map(|speeds| RatedPieceSpeedWindow {
                     name: piece.name,
                     minimum_entry: speeds.minimum_entry,
                     maximum_entry: speeds.maximum_entry,
@@ -1354,6 +1370,32 @@ mod tests {
             report.notes[0],
             "The train entered Loop at 35.0 m/s, above its rated speed band of 24.7–27.5 m/s."
         );
+    }
+
+    #[test]
+    fn configured_train_changes_rolled_inversion_speed_note() {
+        let piece = crate::track::catalog()
+            .iter()
+            .find(|piece| piece.id == crate::track::PieceId::ZeroGRollCompactLeft)
+            .unwrap()
+            .clone();
+        let circuit = Circuit {
+            length: piece.length(),
+            pieces: vec![piece],
+            starts: vec![0.0],
+            open: true,
+        };
+        let mut train = crate::track::hybrid_model().train;
+        train.cars = 4;
+        train.length_metres = 12.0;
+        let mut short = TestRunRecorder::for_circuit_with_train(&circuit, &train);
+        short.record_rated_speed_band(0, 16.1);
+        assert_eq!(short.speed_band_notes.len(), 1);
+        train.cars = 8;
+        train.length_metres = 24.0;
+        let mut long = TestRunRecorder::for_circuit_with_train(&circuit, &train);
+        long.record_rated_speed_band(0, 16.1);
+        assert!(long.speed_band_notes.is_empty());
     }
 
     #[test]

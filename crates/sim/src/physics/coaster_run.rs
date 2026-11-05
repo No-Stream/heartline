@@ -69,15 +69,14 @@ impl CoasterRun {
         assert!(capacity > 0);
         Self {
             train: Train::new(circuit, configuration, config, station_distance, 0.0),
-            recorders: Some(
-                (0..if record_reports {
-                    configuration.cars
-                } else {
-                    0
-                })
-                    .map(|_| TestRunRecorder::for_circuit(circuit))
-                    .collect(),
-            ),
+            recorders: Some(if record_reports {
+                vec![
+                    TestRunRecorder::for_circuit_with_train(circuit, configuration);
+                    usize::from(configuration.cars)
+                ]
+            } else {
+                Vec::new()
+            }),
             station_distance,
             circuit_length: circuit.length(),
             capacity,

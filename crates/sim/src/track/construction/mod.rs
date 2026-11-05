@@ -72,10 +72,28 @@ pub fn select_speed_matched_variant(
     candidates: &[Piece],
     entry_speed: f64,
 ) -> Option<SpeedMatchedVariant> {
+    select_speed_matched_variant_with_windows(candidates, entry_speed, |piece| piece.rated_speeds)
+}
+
+pub fn select_speed_matched_variant_for_train(
+    candidates: &[Piece],
+    entry_speed: f64,
+    train: &super::TrainConfiguration,
+) -> Option<SpeedMatchedVariant> {
+    select_speed_matched_variant_with_windows(candidates, entry_speed, |piece| {
+        super::effective_rated_speeds(piece, train)
+    })
+}
+
+fn select_speed_matched_variant_with_windows(
+    candidates: &[Piece],
+    entry_speed: f64,
+    rated_speeds: impl Fn(&Piece) -> Option<super::RatedSpeeds>,
+) -> Option<SpeedMatchedVariant> {
     assert!(entry_speed.is_finite() && entry_speed >= 0.0);
     let mut best: Option<(SpeedMatchedVariant, f64)> = None;
     for piece in candidates {
-        let Some(window) = piece.rated_speeds else {
+        let Some(window) = rated_speeds(piece) else {
             continue;
         };
         assert!(window.minimum_entry.is_finite() && window.maximum_entry.is_finite());
@@ -235,6 +253,19 @@ impl Construction {
     }
     pub fn model(&self) -> &CoasterModel {
         &self.model
+    }
+
+    pub fn set_cars_per_train(&mut self, cars: u8) {
+        assert!(self.model.cars_per_train_range().contains(&cars));
+        let train = &mut self.model.train;
+        if train.cars == cars {
+            return;
+        }
+        train.length_metres = train.length_metres / f64::from(train.cars) * f64::from(cars);
+        train.cars = cars;
+        *self.validation_cache.get_mut() = None;
+        *self.choices_cache.get_mut() = None;
+        *self.element_choices_cache.get_mut() = None;
     }
 
     pub fn next_piece_id(&self) -> usize {
