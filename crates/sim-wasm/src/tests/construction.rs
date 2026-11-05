@@ -514,11 +514,25 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
         (super::PieceId::TerrainFall, "special"),
         (super::PieceId::ShortOffsetLeft, "straight"),
         (super::PieceId::ShortOffsetRight, "straight"),
+        (super::PieceId::BankedStraightLeft, "straight"),
+        (super::PieceId::BankedStraightRight, "straight"),
+        (super::PieceId::RolloutLeft, "bank"),
+        (super::PieceId::RolloutRight, "bank"),
     ];
 
     for (id, expected_group) in expected_groups {
         let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
         assert_eq!(super::piece_group(piece), expected_group, "{id:?}");
+    }
+
+    for (id, expected_name) in [
+        (super::PieceId::BankedStraightLeft, "Left-banked straight"),
+        (super::PieceId::BankedStraightRight, "Right-banked straight"),
+        (super::PieceId::RolloutLeft, "Roll out from left bank"),
+        (super::PieceId::RolloutRight, "Roll out from right bank"),
+    ] {
+        let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
+        assert_eq!(piece.name, expected_name, "{id:?}");
     }
 
     let mut turn_named_straight = catalog
