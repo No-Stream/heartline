@@ -115,3 +115,17 @@ it("builds the larger buffer promptly after increasing speed", () => {
   }
   expect(held).toBe(true);
 });
+
+it("freezes the displayed frame while paused and resumes without a time jump", () => {
+  const clock = new RenderClock<Snapshot>(30);
+  clock.push({ tickCount: 0, position: 0 });
+  clock.push({ tickCount: 30, position: 30 });
+  clock.frame(0);
+  const beforePause = clock.frame(200)!.tick;
+  clock.setPaused(true);
+  clock.push({ tickCount: 31, position: 31 });
+  expect(clock.frame(1200)!.tick).toBe(beforePause);
+  clock.setPaused(false);
+  expect(clock.frame(1210)!.tick).toBe(beforePause);
+  expect(clock.frame(1310)!.tick).toBeGreaterThan(beforePause);
+});
