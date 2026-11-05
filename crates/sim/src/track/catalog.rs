@@ -759,9 +759,10 @@ fn build_catalog() -> Vec<Piece> {
                                 - 2.0 * 9.81 * SIXTY_PULL.endpoint()[1])
                                 .sqrt(),
                         }),
+                        // The next 1 m/s scan step exceeds the longitudinal limit.
                         SixtyToSteepDown => Some(RatedSpeeds {
                             minimum_entry: 2.0,
-                            maximum_entry: 27.0,
+                            maximum_entry: 28.0,
                         }),
                         Loop => Some(LOOP_PROFILE.rated_speeds("Loop", 27.5, 1.5, 5.0)),
                         HalfLoopUp => Some(RatedSpeeds {
