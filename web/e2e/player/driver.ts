@@ -249,6 +249,27 @@ export async function waitForState(page: Page, predicate: () => Promise<boolean>
   }
 }
 
+export async function advanceUntilState(page: Page, predicate: () => Promise<boolean>, options: { ticks: number }): Promise<void> {
+  const advance = async (count: number): Promise<void> => {
+    await page.evaluate((ticks) => window.gameTest.advanceTicks(ticks), count);
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      const waitForFrame = (): void => {
+        if (window.gameTest.ready) resolve();
+        else requestAnimationFrame(waitForFrame);
+      };
+      waitForFrame();
+    }));
+  };
+  await advance(0);
+  const initialTick = await page.evaluate(() => window.gameTest.tickCount());
+  for (;;) {
+    if (await predicate()) return;
+    const elapsedTicks = await page.evaluate(() => window.gameTest.tickCount()) - initialTick;
+    if (elapsedTicks >= options.ticks) throw new Error(`Condition not met within ${options.ticks} simulation ticks`);
+    await advance(Math.min(64, options.ticks - elapsedTicks));
+  }
+}
+
 export async function layQueue(page: Page, start: Tile, end: Tile): Promise<void> {
   await layPath(page, start, end, "queue");
 }

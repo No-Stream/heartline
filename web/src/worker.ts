@@ -23,6 +23,7 @@ import type { GuestDetail } from "./guest-panel/protocol";
 const tickRate = 30;
 const finishSearchSliceMs = 4;
 let manualBlockAnalysis = false;
+let testMode = false;
 let simulationPaused = false;
 let gamePaused = false;
 let gameSpeed = 1;
@@ -247,6 +248,7 @@ workerScope.addEventListener("message", (event) => {
   if (action.type === "init") {
     if (initialized) throw new Error("Worker already initialized");
     manualBlockAnalysis = action.manualBlockAnalysis;
+    testMode = action.frozen;
     simulationPaused = action.frozen;
     initialized = init().then(() => {
       simulation = new WasmSimulation(action.seed, action.guestCount, action.park);
@@ -311,9 +313,11 @@ workerScope.addEventListener("message", (event) => {
       return;
     }
     if (action.type === "test-advance") {
-      if (!Number.isInteger(action.count) || action.count < 1 || action.count > 100000) throw new RangeError("Invalid test tick count");
+      if (!testMode || (!simulationPaused && !gamePaused)) throw new Error("Test tick advance requires a paused test simulation");
+      if (!Number.isInteger(action.count) || action.count < 0 || action.count > 100000) throw new RangeError("Invalid test tick count");
       for (let tick = 0; tick < action.count; tick++) tickSimulation();
-      wake();
+      wake(true);
+      if (selectedGuestId !== undefined) sendGuestDetail();
       sendFacilities("", false, true);
       sendWorkerMessage(workerScope, { type: "test-advanced" });
       return;

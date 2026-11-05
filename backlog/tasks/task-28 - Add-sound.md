@@ -4,7 +4,7 @@ title: Add sound
 status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-05 06:33'
+updated_date: '2026-11-05 07:39'
 labels:
   - audio
 milestone: m-3
@@ -40,4 +40,6 @@ Owner approved all four plan decisions on 2026-11-04 (fast-forward silences one-
 When sound families land: the player pause (Space) must silence train and event sounds; main.ts passes gameSpeed separately from gamePause.isPaused().
 
 2026-11-04: plan item 8 (build and interface sounds: placement thunk by material, build, undo, error, finish flourish) and item 1 (per-train state in snapshots) merged to master. Next: items 4-5 (mapping, train sounds).
+
+2026-11-04: plan items 4 (game-state mapping) and 5 (train sounds: steel roar with whine, wooden rhythmic rumble, hybrid mix, chain clack and motor, launch whoosh, brake hiss, station release and dispatch chime) merged. Owner listening pass still needed. Next: items 6-7 (screams, crowd and ambience).
 <!-- SECTION:NOTES:END -->

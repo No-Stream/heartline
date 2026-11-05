@@ -10,6 +10,17 @@ function position(clock: RenderClock<Snapshot>, now: number): number {
 }
 
 describe("simulation render clock", () => {
+  it("shows an explicitly advanced snapshot while paused and resumes from it", () => {
+    const clock = new RenderClock<Snapshot>(30);
+    clock.push({ tickCount: 0, position: 0 });
+    clock.frame(0);
+    clock.setPaused(true);
+    clock.snap({ tickCount: 100, position: 100 });
+    expect(position(clock, 1000)).toBe(100);
+    clock.setPaused(false);
+    clock.push({ tickCount: 110, position: 110 });
+    expect(position(clock, 1100)).toBeGreaterThanOrEqual(100);
+  });
   it.each([16, 25, 37])("tracks a steady train with irregular arrivals at %i ms frame intervals", (frameInterval) => {
     const clock = new RenderClock<Snapshot>(30);
     const arrivals = Array.from({ length: 400 }, (_, tickCount) => ({

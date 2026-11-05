@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { canvasToPage, flattenTerrainTiles, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
+import { advanceUntilState, canvasToPage, flattenTerrainTiles, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
 import { queuedGuests } from "../player/state";
 import { parseReplaySession } from "../../src/session-replay";
 
@@ -106,9 +106,9 @@ test("selects each visible queued guest with the guest panel open and closed @jo
 
   await openTool(page, "Watch");
   await setGameSpeed(page, 16);
-  await expect.poll(async () => (await queuedGuests(page)).length, { timeout: 45_000 }).toBeGreaterThanOrEqual(3);
   await page.getByRole("button", { name: "Pause" }).click();
   await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "true");
+  await advanceUntilState(page, async () => (await queuedGuests(page)).length >= 3, { ticks: 21_600 });
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 241.5, centerY: 253.5, zoom: 1.5, rotation: 0 }));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);

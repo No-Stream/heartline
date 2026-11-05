@@ -17,6 +17,10 @@ test("audio unlocks on a gesture and mute suspends it @fast", async ({ page }) =
   expect(await page.evaluate(() => window.gameTest.audio.state())).toBe("locked");
   await page.locator("canvas").click();
   await expect.poll(() => page.evaluate(() => window.gameTest.audio.state())).toBe("running");
+  await expect.poll(() => page.evaluate(() => window.gameTest.audio.activeVoices().trains), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await page.keyboard.press("Space");
+  await expect.poll(() => page.evaluate(() => window.gameTest.audio.activeVoices().trains)).toBe(0);
+  await page.keyboard.press("Space");
   await page.keyboard.press("m");
   await expect.poll(() => page.evaluate(() => window.gameTest.audio.state())).toBe("suspended");
   await expect(page.getByRole("button", { name: "Sound", exact: true })).toHaveAttribute("data-sound", "off");
@@ -39,6 +43,18 @@ test("frozen mode stays locked and offline empty frames are silent @fast", async
   }
   await page.evaluate(() => window.gameTest.audio.unlock());
   await expect.poll(() => page.evaluate(() => window.gameTest.audio.state())).toBe("running");
+});
+
+test("pausing silences an interface sound already playing @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  const result = await renderOffline(page, { duration: 1, volume: 1, includeSamples: true, frames: [
+    { time: 0, frame: quietFrame([{ sound: "finish" }]) },
+    { time: 0.1, frame: { ...quietFrame(), paused: true, eventsMuted: true } },
+  ] });
+  const samples = result.channels[0]!.samples!;
+  expect(Math.max(...samples.slice(0, 2400).map(Math.abs))).toBeGreaterThan(0.01);
+  expect(Math.max(...samples.slice(24000, 36000).map(Math.abs))).toBeLessThan(0.0001);
 });
 
 test("each build and interface sound peaks within 50 ms of its event, the error stays low, and a fast run stays below clipping @fast", async ({ page }) => {
