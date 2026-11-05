@@ -188,7 +188,7 @@ mod tests {
                 reading(distance as f64, 4.0, 0.0),
                 reading(distance as f64, 1.0, 3.0),
             ];
-            construction.record(&[frame.clone()]);
+            construction.record(std::slice::from_ref(&frame));
             for (recorder, car) in cars.iter_mut().zip(frame) {
                 recorder.record(&[vec![car]]);
             }
