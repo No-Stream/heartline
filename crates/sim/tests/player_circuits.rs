@@ -135,8 +135,8 @@ fn build_player_circuit(
 
 #[test]
 fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
-    // Timber Tumbler's Airtime Hill is excluded pending the force-designed replacement in TASK-101.
     let circuits = [
+        ("Timber Tumbler", hybrid_model()),
         ("Velocity Viper", multi_launch_model()),
         ("Briar Blitz", wooden_twister_model()),
     ];
