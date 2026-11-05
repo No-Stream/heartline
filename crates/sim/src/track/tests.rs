@@ -634,14 +634,14 @@ fn hybrid_model_offers_linear_motor_launches() {
 }
 
 #[test]
-fn signature_pieces_are_exclusive_to_their_coaster_models() {
+fn signature_pieces_are_available_to_their_coaster_models() {
     let hybrid = hybrid_model();
     let multi_launch = multi_launch_model();
     let wooden_twister = wooden_twister_model();
 
     for piece in [PieceId::HybridOverbankLeft, PieceId::HybridOverbankRight] {
         assert!(hybrid.allowed_pieces.contains(&piece));
-        assert!(!multi_launch.allowed_pieces.contains(&piece));
+        assert!(multi_launch.allowed_pieces.contains(&piece));
         assert!(!wooden_twister.allowed_pieces.contains(&piece));
     }
 
