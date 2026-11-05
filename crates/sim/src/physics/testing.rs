@@ -1,6 +1,9 @@
+use super::comfort::ComfortTracker;
 use super::{CarReading, Circuit};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
+
+const COMFORT_NOTE: &str = "Excitement was reduced by a game scoring estimate using partial ASTM F2291-06a force limits, including the estimated combined-axis 200 ms limit. This is not a safety assessment.";
 
 const HIGH_FORCE_SECTION_METRES: f64 = 8.0;
 const LONG_SLOW_SECTION_METRES: f64 = 100.0;
@@ -11,12 +14,9 @@ const HIGH_FORCE_LONGITUDINAL_G: f64 = 1.5;
 const SLOW_SPEED_METRES_PER_SECOND: f64 = 8.0;
 const DROP_SCORE_CALIBRATION_METRES: f64 = 30.0;
 const INVERSION_SCORE_CALIBRATION_PASSAGES: f64 = 3.0;
-// Airtime categories have no standard threshold; Väisänen (2018) uses a -0.5 g ejector split:
-// https://nl2docs.arborarcade.com/resources/master_V%C3%A4is%C3%A4nen_Antti_2018.pdf
-const EJECTOR_AIRTIME_MAX_VERTICAL_G: f64 = -0.5;
-// TIME describes +0.2 g as near-weightless; use -0.5 to +0.2 g for this report's floater band:
-// https://time.com/2906000/roller-coaster-goliath-science/
-const FLOATER_AIRTIME_MAX_VERTICAL_G: f64 = 0.2;
+// Report the requested ejector and floater bands in rider-frame vertical g.
+const EJECTOR_AIRTIME_MAX_VERTICAL_G: f64 = -1.0;
+const FLOATER_AIRTIME_MAX_VERTICAL_G: f64 = 0.0;
 // 3.5 g is a published peak example for a modern coaster, used as a reporting threshold, not a limit.
 // https://time.com/2906000/roller-coaster-goliath-science/
 const STRONG_POSITIVE_G_THRESHOLD: f64 = 3.5;
@@ -77,6 +77,7 @@ pub struct TestRun {
     visited_ranges: Vec<(f64, f64)>,
     base_excitement: f64,
     base_intensity: f64,
+    comfort_penalty: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -108,7 +109,7 @@ pub struct RideStatistics {
 
 impl TestRun {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRun-v2");
+        hash.write_tag(b"TestRun-v3");
         hash.write_len(self.samples.len());
         for sample in &self.samples {
             write_sample(hash, *sample);
@@ -161,6 +162,32 @@ impl TestRun {
         write_ranges(hash, &self.visited_ranges);
         hash.write_f64(self.base_excitement);
         hash.write_f64(self.base_intensity);
+        hash.write_f64(self.comfort_penalty);
+    }
+
+    pub(super) fn average_car_ratings(&mut self, reports: &[TestRun]) {
+        assert!(!reports.is_empty());
+        let count = reports.len() as f64;
+        self.base_excitement = reports
+            .iter()
+            .map(|report| report.base_excitement)
+            .sum::<f64>()
+            / count;
+        self.base_intensity = reports
+            .iter()
+            .map(|report| report.base_intensity)
+            .sum::<f64>()
+            / count;
+        self.nausea = reports.iter().map(|report| report.nausea).sum::<f64>() / count;
+        self.comfort_penalty = reports
+            .iter()
+            .map(|report| report.comfort_penalty)
+            .sum::<f64>()
+            / count;
+        if self.comfort_penalty > 0.0 && !self.notes.iter().any(|note| note == COMFORT_NOTE) {
+            self.notes.push(COMFORT_NOTE.to_owned());
+        }
+        self.update_proximity_ratings();
     }
 
     pub fn unfinished_circuit() -> Self {
@@ -180,6 +207,7 @@ impl TestRun {
             visited_ranges: Vec::new(),
             base_excitement: 0.0,
             base_intensity: 0.0,
+            comfort_penalty: 0.0,
         }
     }
 
@@ -226,6 +254,7 @@ impl TestRun {
 /// Turns per-tick train readings into one interpolated sample per track metre.
 pub struct TestRunRecorder {
     circuit_length: f64,
+    comfort: ComfortTracker,
     piece_starts: Vec<f64>,
     rated_pieces: Vec<Option<RatedPieceSpeedWindow>>,
     launch_ranges: Vec<(f64, f64)>,
@@ -260,8 +289,9 @@ struct RatedPieceSpeedWindow {
 
 impl TestRunRecorder {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRunRecorder-v3");
+        hash.write_tag(b"TestRunRecorder-v4");
         hash.write_f64(self.circuit_length);
+        self.comfort.hash_into(hash);
         hash.write_len(self.piece_starts.len());
         for &piece_start in &self.piece_starts {
             hash.write_f64(piece_start);
@@ -317,6 +347,7 @@ impl TestRunRecorder {
         assert!(circuit_length.is_finite() && circuit_length > 0.0);
         Self {
             circuit_length,
+            comfort: ComfortTracker::default(),
             piece_starts: Vec::new(),
             rated_pieces: Vec::new(),
             launch_ranges: Vec::new(),
@@ -375,46 +406,33 @@ impl TestRunRecorder {
         recorder
     }
 
-    /// Records force and speed envelopes across the train at each physics step.
+    /// Records readings for one car at each physics step.
     ///
     /// Readings are sampled at 200 Hz, so interpolation at crossed metre marks
     /// stays close to the simulated motion while keeping the overlay compact.
     pub fn record(&mut self, frames: &[Vec<CarReading>]) {
         for frame in frames {
-            let Some(front_reading) = frame.first().copied() else {
+            if frame.is_empty() {
                 continue;
-            };
-            let mut reading = front_reading;
-            let mut vertical_deviation = (front_reading.g.vertical - 1.0).abs();
-            for car in frame.iter().copied().skip(1) {
-                let car_vertical_deviation = (car.g.vertical - 1.0).abs();
-                if car_vertical_deviation > vertical_deviation {
-                    reading.g.vertical = car.g.vertical;
-                    vertical_deviation = car_vertical_deviation;
-                }
-                if car.g.lateral.abs() > reading.g.lateral.abs() {
-                    reading.g.lateral = car.g.lateral;
-                }
-                if car.g.longitudinal.abs() > reading.g.longitudinal.abs() {
-                    reading.g.longitudinal = car.g.longitudinal;
-                }
-                reading.speed = reading.speed.max(car.speed);
-                reading.height_m = reading.height_m.max(car.height_m);
-                reading.inverted |= car.inverted;
             }
-            for car in frame {
-                self.maximum_positive_vertical_g =
-                    self.maximum_positive_vertical_g.max(car.g.vertical);
-                self.maximum_negative_vertical_g =
-                    self.maximum_negative_vertical_g.min(car.g.vertical);
-                self.maximum_lateral_g = self.maximum_lateral_g.max(car.g.lateral.abs());
-                self.maximum_forward_g = self.maximum_forward_g.max(car.g.longitudinal.max(0.0));
-                self.maximum_braking_g = self.maximum_braking_g.max((-car.g.longitudinal).max(0.0));
-                self.maximum_speed = self.maximum_speed.max(car.speed);
-                self.maximum_height = self.maximum_height.max(car.height_m);
-            }
-            reading.distance = front_reading.distance;
-            reading.airtime = reading.g.vertical < 0.0;
+            assert_eq!(frame.len(), 1, "a test recorder tracks one car");
+            let reading = frame[0];
+            self.comfort.record([
+                reading.g.vertical,
+                reading.g.lateral,
+                reading.g.longitudinal,
+            ]);
+            self.maximum_positive_vertical_g =
+                self.maximum_positive_vertical_g.max(reading.g.vertical);
+            self.maximum_negative_vertical_g =
+                self.maximum_negative_vertical_g.min(reading.g.vertical);
+            self.maximum_lateral_g = self.maximum_lateral_g.max(reading.g.lateral.abs());
+            self.maximum_forward_g = self.maximum_forward_g.max(reading.g.longitudinal.max(0.0));
+            self.maximum_braking_g = self
+                .maximum_braking_g
+                .max((-reading.g.longitudinal).max(0.0));
+            self.maximum_speed = self.maximum_speed.max(reading.speed);
+            self.maximum_height = self.maximum_height.max(reading.height_m);
             let wrapped_distance = reading.distance.rem_euclid(self.circuit_length);
             if !self.piece_starts.is_empty() {
                 let piece_index = self
@@ -524,6 +542,13 @@ impl TestRunRecorder {
         let circuit_length = self.circuit_length;
         let samples: Vec<_> = self.samples.into_iter().flatten().collect();
         let (excitement, intensity, nausea, mut notes) = ratings(&samples, circuit_length);
+        let excess = self.comfort.finish();
+        let penalized_excitement = (excitement - 3.0 * excess / (1.0 + excess)).max(0.0);
+        let comfort_penalty = excitement - penalized_excitement;
+        let excitement = penalized_excitement;
+        if comfort_penalty > 0.0 {
+            notes.push(COMFORT_NOTE.to_owned());
+        }
         let mut statistics = ride_statistics(&samples, circuit_length, completed);
         statistics.max_positive_vertical_g = self.maximum_positive_vertical_g;
         statistics.max_negative_vertical_g = self.maximum_negative_vertical_g;
@@ -573,6 +598,7 @@ impl TestRunRecorder {
             visited_ranges: self.visited_ranges,
             base_excitement: excitement,
             base_intensity: intensity,
+            comfort_penalty,
         };
         for event in self.dueling_events {
             report.insert_proximity_event(event);
@@ -755,8 +781,8 @@ fn interpolate_reading(first: CarReading, second: CarReading, fraction: f64) -> 
 /// max(|longitudinal_g|-1.5,0)/1.5`; displayed nausea is ten times its mean. Excitement is
 /// `10 + 1.6*mean(speed_m/s) + 25*airtime_fraction + 24*moderate_force +
 /// 15*min(max_downhill_drop/30m,1) + 15*min(inversion_passages/3,1))/10 -
-/// 0.45*nausea`, where `moderate_force = min(mean(|vertical_g-1| + |lateral_g| +
-/// |longitudinal_g|)/7,1)`. These are feedback scores, not safety limits.
+/// 0.45*nausea`, where `moderate_force = mean(min((|vertical_g-1| + |lateral_g| +
+/// |longitudinal_g|)/7,1))`. These are feedback scores, not safety limits.
 /// Notes require a contiguous 8m high-force section or 100m below 8m/s.
 // Proximity adds 0.8 * strength / (strength + 4) excitement and 0.2 * strength /
 // (strength + 4) intensity, where strength is the sum of event strengths.
@@ -798,10 +824,11 @@ fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<S
             + (sample.longitudinal_g.abs() - LONGITUDINAL_DISCOMFORT_THRESHOLD_G).max(0.0)
                 / DISCOMFORT_LONGITUDINAL_SCALE_G
     });
-    let moderate_force = (mean(|sample| {
-        (sample.vertical_g - 1.0).abs() + sample.lateral_g.abs() + sample.longitudinal_g.abs()
-    }) / MODERATE_FORCE_CALIBRATION)
-        .clamp(0.0, 1.0);
+    let moderate_force = mean(|sample| {
+        (((sample.vertical_g - 1.0).abs() + sample.lateral_g.abs() + sample.longitudinal_g.abs())
+            / MODERATE_FORCE_CALIBRATION)
+            .min(1.0)
+    });
     let intensity = (INTENSITY_BASE_SCORE
         + INTENSITY_VERTICAL_WEIGHT * mean_vertical_deviation
         + INTENSITY_LATERAL_WEIGHT * mean_lateral_load
@@ -1097,12 +1124,96 @@ mod tests {
     use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
 
     #[test]
+    fn score_reference_profiles_and_extreme_force_saturation() {
+        let straight: Vec<_> = (0..100)
+            .map(|distance| TestSample {
+                distance: distance as f64,
+                speed: 10.0,
+                vertical_g: 1.0,
+                lateral_g: 0.0,
+                longitudinal_g: 0.0,
+                airtime: false,
+                height_m: 0.0,
+                inverted: false,
+            })
+            .collect();
+        let (straight_excitement, straight_intensity, straight_nausea, _) =
+            ratings(&straight, 100.0);
+        assert!((2.0..=3.0).contains(&straight_excitement));
+        assert!((1.0..=3.0).contains(&straight_intensity));
+        assert_eq!(straight_nausea, 0.0);
+
+        let mut moderate = straight.clone();
+        for sample in &mut moderate[20..40] {
+            sample.speed = 20.0;
+            sample.vertical_g = 3.5;
+            sample.lateral_g = 1.0;
+        }
+        let (moderate_excitement, moderate_intensity, moderate_nausea, _) =
+            ratings(&moderate, 100.0);
+        assert!((3.0..=4.0).contains(&moderate_excitement));
+        assert!((3.0..=5.0).contains(&moderate_intensity));
+        assert_eq!(moderate_nausea, 0.0);
+
+        let mut extreme = moderate.clone();
+        for sample in &mut extreme[20..40] {
+            sample.vertical_g = 5.0;
+            sample.lateral_g = 3.0;
+        }
+        let (extreme_excitement, _, extreme_nausea, _) = ratings(&extreme, 100.0);
+        assert!(extreme_excitement < moderate_excitement);
+        assert!(extreme_nausea > moderate_nausea);
+
+        let mut thrilling = straight.clone();
+        for (index, sample) in thrilling.iter_mut().enumerate() {
+            sample.speed = 30.0;
+            sample.vertical_g = if index < 20 { -0.1 } else { 1.6 };
+            sample.airtime = index < 20;
+            sample.height_m = (50.0 - index as f64).max(0.0);
+            sample.inverted =
+                (20..30).contains(&index) || (40..50).contains(&index) || (60..70).contains(&index);
+        }
+        let (thrilling_excitement, _, thrilling_nausea, _) = ratings(&thrilling, 100.0);
+        assert!((9.0..=10.0).contains(&thrilling_excitement));
+        assert_eq!(thrilling_nausea, 0.0);
+
+        let mut higher_force = extreme.clone();
+        for sample in &mut extreme[20..40] {
+            sample.vertical_g = 8.0;
+            sample.lateral_g = 0.0;
+        }
+        for sample in &mut higher_force[20..40] {
+            sample.vertical_g = 9.0;
+            sample.lateral_g = 0.0;
+        }
+        let (excitement, _, nausea, _) = ratings(&extreme, 100.0);
+        let (higher_excitement, _, higher_nausea, _) = ratings(&higher_force, 100.0);
+        assert!(higher_nausea > nausea);
+        assert!(
+            (excitement + 0.45 * nausea - higher_excitement - 0.45 * higher_nausea).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn airtime_statistics_use_requested_force_boundaries() {
+        let samples: Vec<_> = [-1.2, -1.0, -0.8, 0.0, 0.1]
+            .into_iter()
+            .enumerate()
+            .map(|(distance, vertical)| sample_for_statistics(distance as f64, 10.0, vertical))
+            .collect();
+        let statistics = ride_statistics(&samples, 5.0, true);
+        assert!((statistics.ejector_airtime_seconds - 0.1).abs() < 1e-9);
+        assert!((statistics.floater_airtime_seconds - 0.2).abs() < 1e-9);
+        assert_eq!(statistics.airtime_moments, 1);
+    }
+
+    #[test]
     fn statistics_measure_airtime_forces_speed_and_inversions() {
         let samples = [
             TestSample {
                 distance: 0.0,
                 speed: 10.0,
-                vertical_g: -0.8,
+                vertical_g: -1.2,
                 lateral_g: 1.2,
                 longitudinal_g: 0.4,
                 airtime: true,
@@ -1148,7 +1259,7 @@ mod tests {
         assert!((stats.longest_strong_positive_g_seconds - 0.2).abs() < 1e-9);
         assert!((stats.strong_lateral_g_seconds - 0.2).abs() < 1e-9);
         assert_eq!(stats.max_positive_vertical_g, 4.2);
-        assert_eq!(stats.max_negative_vertical_g, -0.8);
+        assert_eq!(stats.max_negative_vertical_g, -1.2);
         assert_eq!(stats.max_lateral_g, 1.5);
         assert_eq!(stats.max_forward_g, 1.1);
         assert_eq!(stats.max_braking_g, 1.4);
@@ -1257,19 +1368,6 @@ mod tests {
         };
         let (excitement, _, _, _) = ratings(&[speed_record], 10.0);
         assert!(excitement > 10.0);
-    }
-
-    #[test]
-    fn recorder_reports_force_extremes_across_the_whole_train() {
-        let mut recorder = TestRunRecorder::new(10.0);
-        let front = reading(0.0, 10.0, 1.0, 0.1, 0.0);
-        let rear = reading(0.0, 12.0, -1.2, -1.8, -0.4);
-        recorder.record(&[vec![front, rear]]);
-        recorder.record(&[vec![reading(1.0, 10.0, 1.0, 0.0, 0.0)]]);
-        let report = recorder.finish(false, false);
-        assert_eq!(report.statistics.max_negative_vertical_g, -1.2);
-        assert_eq!(report.statistics.max_lateral_g, 1.8);
-        assert_eq!(report.statistics.max_speed, 12.0);
     }
 
     #[test]
@@ -1440,7 +1538,10 @@ mod tests {
             start_distance,
             initial_speed,
         );
-        let mut recorder = TestRunRecorder::for_circuit(&circuit);
+        let mut recorder = super::super::ConstructionTestRunRecorder::for_circuit(
+            &circuit,
+            usize::from(train_configuration.cars),
+        );
         let mut completed = false;
         for _ in 0..60_000 {
             train.step(&circuit);
@@ -1739,6 +1840,20 @@ mod tests {
             "launch ride notes={:?}",
             report.notes
         );
+    }
+
+    #[test]
+    fn reference_lap_records_a_multi_car_train() {
+        let configuration = hybrid_model().train;
+        assert!(configuration.cars > 1);
+        let report = simulate_reference_lap(
+            demo_circuit(),
+            &configuration,
+            PhysicsConfig::default(),
+            2.0,
+        );
+        assert!(!report.samples.is_empty());
+        assert!(report.statistics.max_speed > 0.0);
     }
 
     #[test]

@@ -934,7 +934,10 @@ impl WasmSimulation {
             0.0,
             2.0,
         );
-        self.construction_recorder = Some(TestRunRecorder::for_circuit(&circuit));
+        self.construction_recorder = Some(ConstructionTestRunRecorder::for_circuit(
+            &circuit,
+            usize::from(construction.model().train.cars),
+        ));
         self.construction_report = None;
         self.construction_train = Some((circuit, train));
         self.recovered_station = None;

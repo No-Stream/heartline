@@ -12,6 +12,9 @@ pub const GRAVITY: f64 = 9.81;
 /// 200 Hz keeps integration error small while remaining inexpensive for game simulation.
 pub const TIME_STEP: f64 = 0.005;
 
+mod comfort;
+mod construction_run;
+pub use construction_run::ConstructionTestRunRecorder;
 mod testing;
 pub use testing::{TestRun, TestRunRecorder, TestSample};
 mod coaster_run;

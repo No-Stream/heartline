@@ -11,7 +11,7 @@ use crate::facilities::ParkFacilities;
 use crate::guests::GuestId;
 use crate::guests::behavior::Facility;
 use crate::guests::park::ParkGuests;
-use crate::physics::{BlockOperation, Circuit, TestRun, TestRunRecorder, Train};
+use crate::physics::{BlockOperation, Circuit, ConstructionTestRunRecorder, TestRun, Train};
 use crate::state_hash::StateHasher;
 use crate::track::blocks::{
     BlockLayout, BlockManualSearch, BlockPlacementSearch, ThroughputEstimator,
@@ -43,7 +43,7 @@ pub struct Park {
     pub construction_message: String,
     pub construction_slow_steps: u32,
     pub construction_outcome: Option<String>,
-    pub construction_recorder: Option<TestRunRecorder>,
+    pub construction_recorder: Option<ConstructionTestRunRecorder>,
     pub construction_report: Option<TestRun>,
     pub coaster_open: bool,
     pub coaster_price: u16,

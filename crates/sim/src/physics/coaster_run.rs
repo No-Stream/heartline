@@ -180,7 +180,7 @@ impl CoasterRun {
     }
 }
 
-fn merge_worst_car_statistics(
+pub(super) fn merge_worst_car_statistics(
     first: super::testing::RideStatistics,
     second: super::testing::RideStatistics,
 ) -> super::testing::RideStatistics {

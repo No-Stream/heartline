@@ -60,8 +60,8 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
   const rating = await page.evaluate(() => window.gameTest.testingReport()!.rating);
-  expect(rating.excitement).toBeGreaterThanOrEqual(0.2);
-  expect(rating.excitement).toBeLessThan(1);
+  expect(rating.excitement).toBeGreaterThanOrEqual(2);
+  expect(rating.excitement).toBeLessThanOrEqual(5);
   expect(rating.intensity).toBeGreaterThan(0);
   expect(rating.intensity).toBeLessThan(12);
   console.log(`Velocity Viper ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
