@@ -10,6 +10,7 @@ import type { Theme } from "../theme";
 import type { Tool } from "../toolbar";
 import type { Units } from "../units";
 import type { CoasterPart } from "../coaster-colors";
+import type { UndergroundCutawayMode } from "../underground-cutaway";
 
 export interface ScreenPoint {
   readonly x: number;
@@ -55,6 +56,7 @@ export type InputAction =
   | { readonly type: "underground-view-toggle" }
   | { readonly type: "underground-view-level"; readonly level: number }
   | { readonly type: "underground-view-style"; readonly style: UndergroundStyle }
+  | { readonly type: "underground-cutaway-mode-set"; readonly mode: UndergroundCutawayMode }
   | { readonly type: "facility-place-mode"; readonly kind: FacilityKind; readonly rotation: number }
   | { readonly type: "facility-remove-mode" | "facility-cancel" }
   | { readonly type: "facility-price"; readonly id: number; readonly price: number }

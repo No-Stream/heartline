@@ -59,7 +59,7 @@ export function createLandscapingPanel(
     </div>
     <div class="tool-panel__section landscaping__underground">
       <div class="landscaping__underground-heading"><h3>Underground view</h3><button type="button" data-underground-toggle aria-pressed="false">Show underground</button></div>
-      <label><span class="tool-panel__label">Show</span><select data-underground-style aria-label="Underground view style"><option value="cut">Whole view cut</option><option value="cutaway">Cutaway window</option></select></label>
+      <label><span class="tool-panel__label">Show</span><select data-underground-style aria-label="Underground view style"><option value="cut">Whole view cut</option><option value="cutaway" selected>Cutaway window</option></select></label>
       <label><span class="tool-panel__label">Cut level</span><input data-underground-level aria-label="Underground cut level" type="range" min="-32" max="128" step="1" value="8"><output data-underground-output>8</output></label>
       <p class="tool-panel__hint" data-underground-hint>Cut away ground above this height.</p>
     </div>
@@ -146,9 +146,6 @@ export function createLandscapingPanel(
   });
 
   undergroundButton.addEventListener("click", () => {
-    undergroundEnabled = !undergroundEnabled;
-    undergroundButton.textContent = undergroundEnabled ? "Show surface" : "Show underground";
-    undergroundButton.setAttribute("aria-pressed", String(undergroundEnabled));
     dispatch({ type: "underground-view-toggle" });
   });
 

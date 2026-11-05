@@ -51,6 +51,7 @@ test.describe("day and night", () => {
     await showDemoParkAt(page, 0.95);
     await openTool(page, "Landscape");
     const landscaping = page.getByRole("region", { name: "Landscaping" });
+    await landscaping.getByLabel("Underground view style").selectOption("cut");
     await landscaping.getByLabel("Underground cut level").fill("4");
     await landscaping.locator("[data-underground-toggle]").click();
     await expect(landscaping.locator("[data-underground-toggle]")).toHaveText("Show surface");

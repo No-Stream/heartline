@@ -69,6 +69,8 @@ test("sculpts a hill, carves a tunnel and builds an underground path @slow", asy
     await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
     await clickCanvas(page, point);
     await expect(landscaping.locator(".landscaping__status")).toHaveText("Terrain updated", { timeout: 10_000 });
+    await landscaping.locator("[data-landscape-cancel]").click();
+    await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   }
   const tunnelSpans = await page.evaluate(() => window.gameTest.carvedSpans()
     .filter(([x, y]) => y === 150 && x >= 149 && x <= 155));
@@ -82,6 +84,7 @@ test("sculpts a hill, carves a tunnel and builds an underground path @slow", asy
     [155, 150, 4, 8],
   ]);
 
+  await landscaping.getByLabel("Underground view style").selectOption("cut");
   await landscaping.getByLabel("Underground cut level").fill("7");
   await landscaping.locator("[data-underground-toggle]").click();
   await expect(landscaping.locator("[data-underground-toggle]")).toHaveText("Show surface");
