@@ -1,10 +1,10 @@
 ---
 id: TASK-129
 title: Autosave the park with rotating slots
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-05 19:44'
-updated_date: '2026-11-05 22:27'
+updated_date: '2026-11-05 23:15'
 labels:
   - saving
   - ui
@@ -24,3 +24,9 @@ Owner request 2026-11-05: autosave with sensible defaults, about once every few 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-05: implemented on branch autosave (387a9df, master merged): every 5 minutes of active play, 30 rotating slots, Park menu list with load and delete, interval and count settings. Unit and feature gates passed on the branch; journeys were running at handoff. Snapshot serialisation briefly pauses the worker; measure on a large park.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Autosave every 5 minutes of active, unpaused, changed play into 30 rotating slots separate from manual saves; the Park menu lists them with time and park age, load and delete, and interval and count settings. Serialisation runs in the worker and writes are asynchronous; on a full store the oldest autosaves go first with a message. Gates: unit, full feature 187/187, journeys 9/9 on the branch; autosave and saving specs on merged master.
+<!-- SECTION:FINAL_SUMMARY:END -->
