@@ -92,7 +92,8 @@ let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
 const renderClock = new RenderClock<CoasterSnapshot>(30);
-let frozen = new URLSearchParams(location.search).has("test");
+const testMode = new URLSearchParams(location.search).has("test");
+let frozen = testMode;
 const frameLogEnabled = new URLSearchParams(location.search).get("frameLog") === "1";
 const frameLogEntries: FrameLogEntry[] = [];
 const snapshotArrivalEntries: SnapshotArrivalEntry[] = [];
@@ -266,6 +267,7 @@ function openTool(tool: Tool, activatePanel = true): void {
   if (tool === activeTool) return;
   endInputModes();
   activeTool = tool;
+  renderRevision.invalidate();
   if (tool === "coaster") coasterAdapter.activate(undefined); else coasterAdapter.deactivate();
   toolbar.setActive(tool);
   dayClock.setControlsVisible(tool === "none");
@@ -331,7 +333,7 @@ const gameTest: GameTest = {
   },
   replaySession: replayLiveSession,
   advanceTicks(count) {
-    if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
+    if ((!frozen && !(testMode && gamePause.isPaused())) || advanceTicksComplete || !Number.isInteger(count) || count < 0 || count > 100000) throw new Error("Invalid test tick advance");
     return new Promise<void>((resolve) => { advanceTicksComplete = resolve; sendWorkerAction(worker, { type: "test-advance", count }); });
   },
   advanceBlockAnalysis(budget) {
@@ -607,6 +609,7 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
     moveCamera(action);
     if (action.type !== "rotate") followPoints = undefined;
+    renderRevision.invalidate();
   }
 }
 function isConstructionAction(action: InputAction): action is Extract<InputAction, WorkerAction> {
@@ -716,7 +719,10 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     validateTrainStates(message.trainStates);
     validateTrainStates(message.constructionTrainStates);
     if (frameLogEnabled) snapshotArrivalEntries.push({ now: performance.now(), sentAt: message.sentAt, tickCount: message.tickCount });
-    if (!frozen && !renderClock.push(message)) return;
+    if (!frozen && advanceTicksComplete) {
+      renderClock.snap(message);
+      renderRevision.invalidate();
+    } else if (!frozen && !renderClock.push(message)) return;
     previous = current;
     if (!frozen || !current || current.guestIds.length === 0 || advanceTicksComplete) current = message;
     if (!frozen) observeTick(message);
@@ -772,7 +778,7 @@ function forceOverlayVisible(): boolean {
 
 function frame(now: number): void {
   if (!world || replayInProgress) return;
-  if (frozen && gameTest.ready) return;
+  if (gameTest.ready && (frozen || (testMode && gamePause.isPaused() && !followPoints))) return;
   const renderFrame = frozen ? undefined : renderClock.frame(now);
   const renderPrevious = frozen ? previous : renderFrame?.previous;
   const renderCurrent = frozen ? current : renderFrame?.current;

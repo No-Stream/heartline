@@ -87,6 +87,17 @@ describe("world scene", () => {
     appendGeometry(scene, [outside], viewport);
     expect(scene.triangles).toHaveLength(before);
   });
+  test("keeps raster-tolerant subpixel picks ahead of overlapping lower geometry", () => {
+    const vertices = [[10.516, 0], [10.696, 0], [10.696, 20], [10.516, 20]].map(([x, y]) => ({ x, y, depth: 1, height: 2, u: 0, v: 0 })) as GeometryQuad["vertices"];
+    const scene = { triangles: [] };
+    const backgroundVertices = [[0, 0], [20, 0], [20, 20], [0, 20]].map(([x, y]) => ({ x, y, depth: 0, height: 1, u: 0, v: 0 })) as GeometryQuad["vertices"];
+    appendGeometry(scene, [
+      { vertices: backgroundVertices, kind: "fixture", id: "background", tileX: 1, tileY: 1, color: [1, 1, 1, 1] },
+      { vertices, kind: "fixture", id: "thin", tileX: 0, tileY: 0, color: [1, 1, 1, 1] },
+    ]);
+    expect(pickScene(scene, 10.5, 10)).toMatchObject({ kind: "fixture", id: "background" });
+    expect(pickScene(scene, 10.5, 10, 0.125)).toEqual({ kind: "fixture", id: "thin", x: 0, y: 0, height: 2 });
+  });
   test("resolves a rasterized subpixel edge to the selected geometry", () => {
     const vertices = [[10.516, 0], [10.696, 0], [10.696, 20], [10.516, 20]].map(([x, y]) => ({ x, y, depth: 1, height: 2, u: 0, v: 0 })) as GeometryQuad["vertices"];
     const scene = { triangles: [] };
