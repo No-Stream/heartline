@@ -10,6 +10,95 @@ fn catalog_returns_the_same_static_template_slice() {
 }
 
 #[test]
+fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
+    let expected_hills: [(&str, &[&str]); 17] = [
+        ("Ejector hill 4 × 32 m", &["Timber Tumbler", "Velocity Viper"]),
+        ("Ejector hill 8 × 48 m", &["Timber Tumbler", "Velocity Viper"]),
+        ("Ejector hill 12 × 64 m", &["Timber Tumbler", "Velocity Viper"]),
+        ("Ejector hill 8 × 64 m", &["Timber Tumbler", "Velocity Viper"]),
+        ("Ejector hill 12 × 80 m", &["Timber Tumbler", "Velocity Viper"]),
+        ("Ejector hill 16 × 96 m", &["Timber Tumbler", "Velocity Viper"]),
+        ("Floater hill 4 × 48 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+        ("Floater hill 8 × 64 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+        ("Floater hill 12 × 80 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+        ("Floater hill 6 × 64 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+        ("Floater hill 12 × 96 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+        ("Floater hill 16 × 112 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+        ("Speed hill 4 × 64 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+        ("Speed hill 6 × 80 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+        ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
+        ("Ejector hill 8 × 64 m", &["Briar Blitz"]),
+        ("Ejector hill 16 × 80 m", &["Briar Blitz"]),
+    ];
+    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    let hill_pieces: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| expected_hills.iter().any(|(name, _)| piece.name == *name))
+        .collect();
+    assert_eq!(hill_pieces.len(), expected_hills.len());
+
+    for (name, expected_models) in expected_hills {
+        let piece = hill_pieces
+            .iter()
+            .find(|piece| {
+                piece.name == name
+                    && expected_models.iter().all(|model_name| {
+                        models
+                            .iter()
+                            .find(|model| model.name == *model_name)
+                            .unwrap()
+                            .allowed_pieces
+                            .contains(&piece.id)
+                    })
+            })
+            .unwrap_or_else(|| panic!("catalog is missing {name}"));
+        assert!(matches!(piece.shape, Shape::Profile(_)), "{name}");
+        let rated = piece.rated_speeds.expect("hill has a rated speed window");
+        assert!(rated.maximum_entry - rated.minimum_entry >= 2.0, "{name}");
+        let family = piece.family.expect("hill has family metadata");
+        let dimensions: Vec<u16> = name
+            .split_whitespace()
+            .filter_map(|word| word.parse().ok())
+            .collect();
+        let expected_feel = if name.starts_with("Floater") {
+            HillFeel::Floater
+        } else if name.starts_with("Speed") {
+            HillFeel::Speed
+        } else {
+            HillFeel::Ejector
+        };
+        assert_eq!(family.feel, expected_feel, "{name}");
+        assert_eq!(family.height_metres, dimensions[0] as u8, "{name}");
+        assert_eq!(family.span_metres, dimensions[1], "{name}");
+        assert_eq!(family.twist, None, "{name}");
+        assert_eq!(
+            family.design_speed_metres_per_second,
+            rated.maximum_entry,
+            "{name} design speed"
+        );
+
+        for model in &models {
+            let should_be_allowed = expected_models.contains(&model.name);
+            assert_eq!(
+                model.allowed_pieces.contains(&piece.id),
+                should_be_allowed,
+                "{} availability for {name}",
+                model.name
+            );
+            assert_eq!(
+                model
+                    .available_pieces(TrackState::origin())
+                    .iter()
+                    .any(|candidate| candidate.id == piece.id),
+                should_be_allowed,
+                "{} reachable entry connector for {name}",
+                model.name
+            );
+        }
+    }
+}
+
+#[test]
 fn half_loop_has_grid_aligned_forward_displacement() {
     let pieces = catalog();
     for (id, expected_x) in [(PieceId::HalfLoopUp, 14), (PieceId::HalfLoopDown, -14)] {

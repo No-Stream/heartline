@@ -538,6 +538,51 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
 }
 
 #[test]
+fn steel_ejector_hill_is_rated_great_at_design_speed() {
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.name == "Ejector hill 12 × 80 m")
+        .expect("catalog contains the steel ejector hill");
+    let rated = piece.rated_speeds.expect("hill has a rated speed window");
+    let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
+    let model = hybrid_model();
+    let mut train = Train::new(
+        &circuit,
+        &model.train,
+        unpowered(),
+        element_start,
+        rated.maximum_entry,
+    );
+    let mut minimum_vertical_g = f64::INFINITY;
+
+    for _ in 0..100_000 {
+        train.step(&circuit);
+        for frame in train.take_readings() {
+            for reading in frame {
+                if (element_start..element_end).contains(&reading.distance) {
+                    minimum_vertical_g = minimum_vertical_g.min(reading.g.vertical);
+                }
+            }
+        }
+        if train.distance() >= element_end + model.train.length_metres {
+            break;
+        }
+        assert!(train.speed() > 0.0, "ejector hill stalled at design speed");
+        assert!(train.notes().is_empty(), "ejector hill rolled back at design speed");
+    }
+
+    eprintln!(
+        "{} at design speed {:.3} m/s: minimum vertical force {minimum_vertical_g:.3} g",
+        piece.name, rated.maximum_entry
+    );
+    assert!(
+        (-1.3..=-1.0).contains(&minimum_vertical_g),
+        "design speed {:.3} m/s produced {minimum_vertical_g:.3} g at the heart, outside the great-airtime band",
+        rated.maximum_entry
+    );
+}
+
+#[test]
 fn every_tilted_roll_and_drop_variant_passes_full_train_at_both_window_ends() {
     use PieceId::*;
 

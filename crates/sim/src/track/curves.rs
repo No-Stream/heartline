@@ -317,6 +317,23 @@ pub enum PieceId {
     BankedStraightRight,
     RolloutLeft,
     RolloutRight,
+    EjectorHill4x32,
+    EjectorHill8x48,
+    EjectorHill12x64,
+    EjectorHill8x64,
+    EjectorHill12x80,
+    EjectorHill16x96,
+    FloaterHill4x48,
+    FloaterHill8x64,
+    FloaterHill12x80,
+    FloaterHill6x64,
+    FloaterHill12x96,
+    FloaterHill16x112,
+    SpeedHill4x64,
+    SpeedHill6x80,
+    WoodenEjectorHill6x48,
+    WoodenEjectorHill8x64,
+    WoodenEjectorHill16x80,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -372,6 +389,36 @@ pub struct RatedSpeeds {
     pub maximum_entry: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HillFeel {
+    Ejector,
+    Floater,
+    Speed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HillTwist {
+    OuterBankLeft,
+    OuterBankRight,
+    LeftRoll,
+    RightRoll,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HillFamily {
+    pub feel: HillFeel,
+    pub height_metres: u8,
+    pub span_metres: u16,
+    pub twist: Option<HillTwist>,
+    pub design_speed_metres_per_second: f64,
+}
+
+impl HillFamily {
+    pub fn same_recommendation_family(self, other: Self) -> bool {
+        self.feel == other.feel && self.twist == other.twist
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ArcLengthTable {
     lengths: Vec<f64>,
@@ -390,6 +437,7 @@ pub struct Piece {
     pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
     pub rated_speeds: Option<RatedSpeeds>,
+    pub family: Option<HillFamily>,
     pub entry: TrackState,
     pub exit: TrackState,
     pub(crate) shape: Shape,
@@ -472,6 +520,14 @@ impl Piece {
         self.shape.hash_into(hash);
         hash.write_f64(self.tangent_scale);
         hash.write_bool(self.mirrored);
+        if let Some(family) = self.family {
+            hash.write_u8(1);
+            hash.write_u8(family.feel as u8);
+            hash.write_u8(family.height_metres);
+            hash.write_u16(family.span_metres);
+            hash.write_u8(family.twist.map_or(0, |twist| twist as u8 + 1));
+            hash.write_f64(family.design_speed_metres_per_second);
+        }
         let arc_table = self.arc_table();
         hash.write_f64(arc_table.maximum_curvature);
         hash.write_len(arc_table.lengths.len());
@@ -1035,6 +1091,7 @@ mod shape_tests {
             heartlining: None::<Heartlining>,
             structure_material: None,
             rated_speeds: None,
+            family: None,
             entry,
             exit: TrackState {
                 x: 8,
