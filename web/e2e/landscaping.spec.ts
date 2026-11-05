@@ -101,6 +101,8 @@ test("sculpts a hill, carves a tunnel and builds an underground path @slow", asy
   await page.getByRole("region", { name: "Paths" }).getByRole("button", { name: "Cancel" }).click();
   await openTool(page, "Landscape");
   await landscaping.locator("[data-landscape-cancel]").click();
+  await page.evaluate(() => window.gameTest.setTimeOfDay(0.95));
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await expect(page.locator("canvas")).toHaveScreenshot("landscaping-underground.png", {
     animations: "disabled",
     threshold: 0.1,

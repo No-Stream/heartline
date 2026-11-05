@@ -19,7 +19,7 @@ export interface Vertex { x: number; y: number; depth: number; height: number; u
 /** `page` is an atlas page, or one of `SHAPE_PAGES` for an untextured fill. `light` is how much the surface keeps its own colour at night (see `gradeColor`). */
 export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: string; tileX: number; tileY: number; height: number; id?: string; light?: number }
 export interface Scene { triangles: Triangle[] }
-export interface GeometryQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; page?: number; color: Triangle["color"]; kind: string; id: string; tileX: number; tileY: number; light?: number }
+export interface GeometryQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; page?: number; color: Triangle["color"]; kind: string; id: string; tileX: number; tileY: number; light?: number; lightSourceHeight?: number }
 /** Untextured fills. Round shapes are drawn inside the unit square given by the vertices' u and v. */
 export const SHAPE_PAGES = { flat: -1, glow: -2, disc: -3, softDisc: -4, lightPool: -5 } as const;
 /** Drawn but never picked: lights and the dashed path preview. */

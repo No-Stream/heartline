@@ -1,6 +1,7 @@
 import type { Camera, Viewport } from "../camera";
 import { gradeColor, lightingAt, NOON, type Lighting, type Rgb } from "./daylight";
 import type { Glow } from "./effects";
+import { clipNightLightsAboveLevel } from "./effects";
 import { createRenderResources, FLOATS_PER_QUAD } from "./resources";
 import { buildGridQuads } from "./grid";
 import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, SHAPE_PAGES, UNDERGROUND_CONTENT_DEPTH_BIAS, UNPICKABLE_KINDS, type Atlas, type GeometryQuad, type Pick, type Scene, type Triangle, type Vertex, type WorldView } from "./scene";
@@ -309,8 +310,11 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       scene = buildScene(world, camera, viewport, atlas, activeScale, waterFrame);
       atmosphere = atmospherePass?.(camera, viewport, atlas, activeScale);
       const clip = (geometry: readonly GeometryQuad[]) => world.undergroundLevel === undefined ? geometry : clipGeometryAboveLevel(geometry, world.undergroundLevel, UNDERGROUND_CONTENT_DEPTH_BIAS);
+      const nightLights = atmosphere && world.undergroundLevel !== undefined
+        ? clipNightLightsAboveLevel({ bulbs: [...atmosphere.lights], pools: [...atmosphere.pools], glows: [...atmosphere.glows] }, world.undergroundLevel, UNDERGROUND_CONTENT_DEPTH_BIAS)
+        : undefined;
       for (const geometryPass of geometryPasses) appendGeometry(scene, clip(geometryPass(camera, viewport, atlas, activeScale)), viewport);
-      appendGeometry(scene, clip(atmosphere?.lights ?? []), viewport);
+      appendGeometry(scene, nightLights?.bulbs ?? clip(atmosphere?.lights ?? []), viewport);
       if (scene.triangles.length / 2 >= 0xffffff) throw new Error("Too many visible objects for picking");
       surfaceScene = { triangles: scene.triangles.filter(({ kind }) => kind === "terrain" || kind === "carved-floor" || kind === "path") };
       facilityScene = { triangles: scene.triangles.filter(({ kind, id }) => kind === "terrain" || kind === "carved-floor" || kind === "path" || kind === "facility" || (kind === "sprite" && id?.startsWith("facility-"))) };
@@ -322,10 +326,10 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       gridBatches = showBuildGrid ? encode(buildGridQuads(scene.triangles, gridInk).map(fromGeometry)) : [];
       skyBatches = encode((atmosphere?.sky ?? []).map(fromGeometry));
       decalBatches = encode(clip(atmosphere?.decals ?? []).map(fromGeometry));
-      poolBatches = encode((atmosphere?.pools ?? []).map(fromGeometry));
+      poolBatches = encode((nightLights?.pools ?? atmosphere?.pools ?? []).map(fromGeometry));
       overlayBatches = encode((atmosphere?.overlay ?? []).map(fromGeometry));
       sparkBatches = encode((atmosphere?.sparks ?? []).map(fromGeometry));
-      glowBatches = encode((atmosphere?.glows ?? []).map((glow) => ({
+      glowBatches = encode((nightLights?.glows ?? atmosphere?.glows ?? []).map((glow) => ({
         vertices: ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([across, down]) => ({ x: glow.x + across * glow.radius, y: glow.y + down * glow.radius, depth: 0, height: 0, u: (across + 1) / 2, v: (down + 1) / 2 })),
         page: SHAPE_PAGES.glow, color: [...glow.color, glow.intensity] as const, light: 1, pickId: 0,
       })));

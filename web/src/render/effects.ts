@@ -6,10 +6,10 @@ import { projectVertex } from "./projection";
 import { projectWorld, type Camera, type Viewport } from "../camera";
 import { carouselPoint, facilityBuildings, facilityFootprint, ferrisWheelPoint, rideAngle, type Facility } from "../facilities";
 import { hexColor, type Backdrop, type Lighting, type Rgb, type Sun } from "./daylight";
-import { SHAPE_PAGES, type Atlas, type GeometryQuad, type Vertex, type WorldSprite } from "./scene";
+import { clipGeometryAboveLevel, SHAPE_PAGES, type Atlas, type GeometryQuad, type Vertex, type WorldSprite } from "./scene";
 
 /** A soft additive light, in canvas pixels, drawn into the low-resolution glow layer. */
-export interface Glow { x: number; y: number; radius: number; color: Rgb; intensity: number }
+export interface Glow { x: number; y: number; radius: number; color: Rgb; intensity: number; height?: number }
 export interface CrestBurst { x: number; y: number; z: number; tick: number }
 export interface CrestTracker { climbing: boolean; climbStartTick: number; climbStartZ: number }
 /** The area fireworks are launched over, in tiles; `ground` is the height of the park in tiles. */
@@ -105,9 +105,9 @@ const trackColors = [LIGHT_INK.mustard, LIGHT_INK.paper, LIGHT_INK.coral];
 const rideColors = [LIGHT_INK.mustard, LIGHT_INK.coral, LIGHT_INK.paper, LIGHT_INK.teal];
 
 /** A soft disc of light on the ground, as a lamp throws it, drawn into the pool layer that relights the world. */
-function groundPool(camera: Camera, viewport: Viewport, x: number, y: number, z: number, radius: number, color: Rgb, intensity: number, id: string): GeometryQuad {
+function groundPool(camera: Camera, viewport: Viewport, x: number, y: number, z: number, radius: number, color: Rgb, intensity: number, id: string, lightSourceHeight: number): GeometryQuad {
   const vertices = ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([across, down]) => ({ ...project(camera, viewport, x + across * radius, y + down * radius, z), u: (across + 1) / 2, v: (down + 1) / 2 })) as GeometryQuad["vertices"];
-  return { vertices, page: SHAPE_PAGES.lightPool, color: [color[0], color[1], color[2], intensity], kind: "pool", id, tileX: Math.floor(x), tileY: Math.floor(y), light: 1 };
+  return { vertices, page: SHAPE_PAGES.lightPool, color: [color[0], color[1], color[2], intensity], kind: "pool", id, tileX: Math.floor(x), tileY: Math.floor(y), light: 1, lightSourceHeight };
 }
 
 export interface NightLights {
@@ -117,6 +117,15 @@ export interface NightLights {
   glows: Glow[];
   /** Lamp light on the ground and on lit fronts, drawn into the pool layer; see `lightInPool`. */
   pools: GeometryQuad[];
+}
+
+/** Applies the underground cut to every world-space light and to screen-space halos using their source height. */
+export function clipNightLightsAboveLevel(lights: NightLights, level: number, depthBias = 0): NightLights {
+  return {
+    bulbs: clipGeometryAboveLevel(lights.bulbs, level, depthBias),
+    pools: lights.pools.filter((pool) => pool.lightSourceHeight === undefined || pool.lightSourceHeight <= level),
+    glows: lights.glows.filter((glow) => glow.height === undefined || glow.height <= level),
+  };
 }
 
 /**
@@ -133,8 +142,8 @@ export function buildLights(sources: LightSources, lighting: Lighting, tick: num
   // Pools only show once the land is dark enough for lamplight to matter; at dusk the lamps glow but light nothing yet.
   const poolLight = on * Math.min(1, Math.max(0, (on - POOLS_FROM_LIGHTS_ON) / (1 - POOLS_FROM_LIGHTS_ON)));
   /** A pool is kept only when some of it can reach the screen; `reach` is its radius in tiles. */
-  const pool = (x: number, y: number, z: number, reach: number, color: Rgb, intensity: number, id: string): void => {
-    if (poolLight > 0 && onScreen(viewport, project(camera, viewport, x, y, z), reach * 64 * zoom)) pools.push(groundPool(camera, viewport, x, y, z, reach, color, intensity * poolLight, id));
+  const pool = (x: number, y: number, z: number, reach: number, color: Rgb, intensity: number, id: string, lightSourceHeight: number): void => {
+    if (poolLight > 0 && onScreen(viewport, project(camera, viewport, x, y, z), reach * 64 * zoom)) pools.push(groundPool(camera, viewport, x, y, z, reach, color, intensity * poolLight, id, lightSourceHeight));
   };
   const bulbRadius = Math.max(1.2, 1.7 * zoom);
   const bulb = (x: number, y: number, z: number, color: Rgb, id: string, glowRadius: number, glowIntensity: number): void => {
@@ -159,24 +168,26 @@ export function buildLights(sources: LightSources, lighting: Lighting, tick: num
     if (facility.kind === "ferris_wheel") {
       for (let index = 0; index < 16; index++) bulb(...ferrisWheelPoint(facility, index * Math.PI / 8 + turned, 0.9), rideColors[index % rideColors.length], id, 10 * zoom, 0.35);
       const hub = project(camera, viewport, ...ferrisWheelPoint(facility, 0, 0));
-      glows.push({ x: hub.x, y: hub.y, radius: 60 * zoom, color: LIGHT_INK.warm, intensity: 0.22 * on });
-      pool(facility.x + 1, facility.y + 1, facility.z / 4, 2.2, LIGHT_INK.lamp, 0.9, id);
+      glows.push({ x: hub.x, y: hub.y, radius: 60 * zoom, color: LIGHT_INK.warm, intensity: 0.22 * on, height: hub.height });
+      const sourceHeight = Math.max(...Array.from({ length: 16 }, (_, index) => ferrisWheelPoint(facility, index * Math.PI / 8 + turned, 0.9)[2] * 4));
+      pool(facility.x + 1, facility.y + 1, facility.z / 4, 2.2, LIGHT_INK.lamp, 0.9, id, sourceHeight);
     } else if (facility.kind === "carousel") {
       for (let index = 0; index < 12; index++) bulb(...carouselPoint(facility, index * Math.PI / 6 + turned, 1.5, 1), rideColors[index % rideColors.length], id, 10 * zoom, 0.35);
       const inside = project(camera, viewport, ...carouselPoint(facility, 0, 0.9, 0));
-      glows.push({ x: inside.x, y: inside.y, radius: 55 * zoom, color: LIGHT_INK.warm, intensity: 0.45 * on });
-      pool(facility.x + 1, facility.y + 1, facility.z / 4, 2.4, LIGHT_INK.lamp, 1, id);
+      glows.push({ x: inside.x, y: inside.y, radius: 55 * zoom, color: LIGHT_INK.warm, intensity: 0.45 * on, height: inside.height });
+      const sourceHeight = Math.max(...Array.from({ length: 12 }, (_, index) => carouselPoint(facility, index * Math.PI / 6 + turned, 1.5, 1)[2] * 4));
+      pool(facility.x + 1, facility.y + 1, facility.z / 4, 2.4, LIGHT_INK.lamp, 1, id, sourceHeight);
     } else if (facilityBuildings[facility.kind]) {
       // Windows light up on the walls that face the camera, where depth grows towards the viewer.
       const { width, height } = facilityFootprint(facility);
       const centre = { x: facility.x + width / 2, y: facility.y + height / 2 };
       // A lit shop throws light from its counter and windows over its front and the ground around it.
-      pool(centre.x, centre.y, facility.z / 4, Math.max(width, height) / 2 + 1.3, LIGHT_INK.sign, 1, id);
+      pool(centre.x, centre.y, facility.z / 4, Math.max(width, height) / 2 + 1.3, LIGHT_INK.sign, 1, id, facility.z + 1.8);
       for (const [normalX, normalY] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
         const facing = [normalX + normalY, normalX - normalY, -normalX - normalY, -normalX + normalY][camera.rotation];
         if (facing <= 0) continue;
         const wall = project(camera, viewport, centre.x + normalX * width / 2, centre.y + normalY * height / 2, facility.z / 4 + 0.45);
-        if (onScreen(viewport, wall, 30 * zoom)) glows.push({ x: wall.x, y: wall.y, radius: 20 * zoom, color: LIGHT_INK.warm, intensity: 0.5 * on });
+        if (onScreen(viewport, wall, 30 * zoom)) glows.push({ x: wall.x, y: wall.y, radius: 20 * zoom, color: LIGHT_INK.warm, intensity: 0.5 * on, height: wall.height });
       }
     }
   }
@@ -187,8 +198,9 @@ export function buildLights(sources: LightSources, lighting: Lighting, tick: num
     if (!frame) throw new Error(`Missing atlas frame for lamp ${sprite.id}`);
     const anchor = projectWorld(camera, viewport, { x: sprite.x, y: sprite.y, z: sprite.height / 4 });
     const head = { x: anchor.x, y: anchor.y - (frame.anchor.y - 8) * zoom * (sprite.scale ?? 1) };
-    if (onScreen(viewport, head, 40 * zoom)) glows.push({ ...head, radius: 36 * zoom, color: LIGHT_INK.warm, intensity: 0.65 * on });
-    pool(sprite.x, sprite.y, sprite.height / 4, LAMP_POOL_RADIUS, LIGHT_INK.lamp, 1, `lamp-pool-${sprite.id}`);
+    const sourceHeight = sprite.height + frame.height * (sprite.scale ?? 1) / 8;
+    if (onScreen(viewport, head, 40 * zoom)) glows.push({ ...head, radius: 36 * zoom, color: LIGHT_INK.warm, intensity: 0.65 * on, height: sourceHeight });
+    pool(sprite.x, sprite.y, sprite.height / 4, LAMP_POOL_RADIUS, LIGHT_INK.lamp, 1, `lamp-pool-${sprite.id}`, sourceHeight);
   }
   return { bulbs, glows, pools };
 }
