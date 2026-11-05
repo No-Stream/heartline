@@ -114,6 +114,35 @@ pub(super) fn unverified_layout(park: &Park) -> BlockLayout {
 }
 
 #[test]
+fn test_placement_advance_uses_exact_work_independent_of_throughput() {
+    let mut park = block_test_park();
+    park.install_block_layout(unverified_layout(&park), false);
+    expect_command_success(park.construction_auto_blocks());
+    let throughput_before = park
+        .block_throughput_estimator
+        .as_ref()
+        .unwrap()
+        .work_steps_completed();
+
+    park.construction_advance_block_placement_for_test(200);
+
+    assert_eq!(
+        park.block_placement_search
+            .as_ref()
+            .unwrap()
+            .work_completed(),
+        200
+    );
+    assert_eq!(
+        park.block_throughput_estimator
+            .as_ref()
+            .unwrap()
+            .work_steps_completed(),
+        throughput_before
+    );
+}
+
+#[test]
 fn manual_validation_and_throughput_share_the_requested_work_budget() {
     let mut park = block_test_park();
     let (circuit, train) = construction_inputs(&park);

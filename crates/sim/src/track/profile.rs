@@ -112,6 +112,36 @@ impl ProfileSpec {
             ..Self::half_loop(maximum_entry, bottom, top)
         }
     }
+    pub(crate) fn hill(
+        design_speed: f64,
+        pull_force: f64,
+        crest_force: f64,
+        flank_angle: f64,
+    ) -> Self {
+        assert!(design_speed > 0.0);
+        assert!(flank_angle > 0.0 && flank_angle < PI / 2.0);
+        Self {
+            segments: vec![
+                Segment::Arc {
+                    angle: flank_angle,
+                    schedule: Schedule::Constant(pull_force),
+                },
+                Segment::Arc {
+                    angle: -flank_angle,
+                    schedule: Schedule::Constant(crest_force),
+                },
+            ],
+            maximum_entry: design_speed,
+            fixed_speed: false,
+            mirror_apex: true,
+            start_angle: 0.0,
+            taper_angle: None,
+            name: "airtime hill",
+        }
+    }
+    pub(crate) fn zero_g_hill(design_speed: f64, pull_force: f64, flank_angle: f64) -> Self {
+        Self::hill(design_speed, pull_force, 0.0, flank_angle).named("zero-g hill")
+    }
     #[cfg(test)]
     fn arc(angle: f64, force: f64, speed: f64) -> Self {
         Self {
@@ -156,22 +186,120 @@ pub(crate) struct SolvedProfile {
 }
 
 include!("profiles.generated.rs");
+include!("hills.generated.rs");
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct GeneratedHillProfile {
+    pub(super) name: &'static str,
+    pub(super) minimum_entry: f64,
+    pub(super) minimum_radius: f64,
+    pub(super) length: f64,
+    pub(super) endpoint: [f64; 2],
+    pub(super) point_count: usize,
+    // The first two values are per-sample position deltas, accumulated in f64 at load time.
+    pub(super) values: &'static [[f32; 4]],
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(super) struct GeneratedHillDesign {
+    pub(super) name: &'static str,
+    pub(super) design_speed: f64,
+    pub(super) flank_angle: f64,
+    pub(super) insert: f64,
+    pub(super) crest_start: f64,
+    pub(super) crest_end: f64,
+}
 
 pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
+    if let Some(profile) = GENERATED_HILL_PROFILES
+        .iter()
+        .find(|profile| profile.name == name)
+    {
+        return embedded_hill_profile_from_values(
+            profile.minimum_entry,
+            profile.minimum_radius,
+            profile.length,
+            profile.endpoint,
+            profile.point_count,
+            profile.values,
+        );
+    }
     let (_, minimum_entry, minimum_radius, length, values) = GENERATED_PROFILES
         .iter()
         .find(|(profile_name, _, _, _, _)| *profile_name == name)
         .unwrap_or_else(|| panic!("missing generated profile {name}"));
+    embedded_profile_from_values(
+        *minimum_entry,
+        *minimum_radius,
+        *length,
+        values.len(),
+        values,
+    )
+}
+
+fn embedded_hill_profile_from_values<T>(
+    minimum_entry: f64,
+    minimum_radius: f64,
+    length: f64,
+    endpoint: [f64; 2],
+    point_count: usize,
+    values: &[[T; 4]],
+) -> SolvedProfile
+where
+    T: Copy + Into<f64>,
+{
+    assert_eq!(point_count, values.len());
+    let mut x = 0.0;
+    let mut z = 0.0;
+    let mut points: Vec<Point> = values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            x += value[0].into();
+            z += value[1].into();
+            let curvature: f64 = value[3].into();
+            Point {
+                distance: length * index as f64 / (point_count - 1) as f64,
+                x,
+                z,
+                angle: value[2].into(),
+                heart_curvature: curvature / (1.0 - HEART_HEIGHT_METRES * curvature),
+                curvature,
+            }
+        })
+        .collect();
+    let last = points.last_mut().expect("hill profile has points");
+    last.x = endpoint[0];
+    last.z = endpoint[1];
+    SolvedProfile {
+        points,
+        cached_minimum_entry: Some(minimum_entry),
+        cached_minimum_radius: Some(minimum_radius),
+    }
+}
+
+fn embedded_profile_from_values<T>(
+    minimum_entry: f64,
+    minimum_radius: f64,
+    length: f64,
+    point_count: usize,
+    values: &[[T; 4]],
+) -> SolvedProfile
+where
+    T: Copy + Into<f64>,
+{
+    assert_eq!(point_count, values.len());
     let points = values
         .iter()
         .enumerate()
         .map(|(index, value)| {
-            let curvature = value[3];
+            let curvature = value[3].into();
             Point {
-                distance: *length * index as f64 / (values.len() - 1) as f64,
-                x: value[0],
-                z: value[1],
-                angle: value[2],
+                distance: length * index as f64 / (point_count - 1) as f64,
+                x: value[0].into(),
+                z: value[1].into(),
+                angle: value[2].into(),
                 heart_curvature: curvature / (1.0 - HEART_HEIGHT_METRES * curvature),
                 curvature,
             }
@@ -179,8 +307,8 @@ pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
         .collect();
     SolvedProfile {
         points,
-        cached_minimum_entry: Some(*minimum_entry),
-        cached_minimum_radius: Some(*minimum_radius),
+        cached_minimum_entry: Some(minimum_entry),
+        cached_minimum_radius: Some(minimum_radius),
     }
 }
 
@@ -830,6 +958,395 @@ pub(crate) fn snap_full_loop(spec: &ProfileSpec) -> SolvedProfile {
 }
 
 #[cfg(test)]
+#[derive(Clone, Debug)]
+struct SnappedHill {
+    profile: SolvedProfile,
+    design_speed: f64,
+    flank_angle: f64,
+    insert: f64,
+    crest_start: f64,
+    crest_end: f64,
+}
+
+#[cfg(test)]
+fn hill_spec_at(spec: &ProfileSpec, design_speed: f64, flank_angle: f64) -> ProfileSpec {
+    assert_eq!(
+        spec.segments.len(),
+        2,
+        "{}: hill requires two arcs",
+        spec.name
+    );
+    let [
+        Segment::Arc { schedule: pull, .. },
+        Segment::Arc {
+            schedule: crest, ..
+        },
+    ] = spec.segments.as_slice()
+    else {
+        panic!("{}: hill requires pull and crest arcs", spec.name);
+    };
+    let mut adjusted = ProfileSpec::hill(
+        design_speed,
+        match pull {
+            Schedule::Constant(force) => *force,
+            Schedule::Loop { .. } => panic!("{}: hill pull must be constant", spec.name),
+        },
+        match crest {
+            Schedule::Constant(force) => *force,
+            Schedule::Loop { .. } => panic!("{}: hill crest must be constant", spec.name),
+        },
+        flank_angle,
+    );
+    adjusted.name = spec.name;
+    adjusted
+}
+
+#[cfg(test)]
+fn hill_half(spec: &ProfileSpec, insert: f64, steps: usize) -> SolvedProfile {
+    let mut adjusted = spec.clone();
+    adjusted.segments.insert(0, Segment::Insert(insert));
+    solve_with_steps(&adjusted, steps)
+}
+
+#[cfg(test)]
+fn hill_crest_start(profile: &SolvedProfile, flank_angle: f64, name: &str) -> f64 {
+    profile
+        .points
+        .iter()
+        .find(|point| (point.angle - flank_angle).abs() < 1e-12)
+        .unwrap_or_else(|| panic!("{name}: missing pull-to-crest boundary"))
+        .distance
+}
+
+#[cfg(test)]
+fn reflect_hill(half: &SolvedProfile) -> SolvedProfile {
+    let apex = *half.points.last().unwrap();
+    let mut profile = half.clone();
+    profile
+        .points
+        .extend(half.points.iter().rev().skip(1).map(|point| Point {
+            distance: 2.0 * apex.distance - point.distance,
+            x: 2.0 * apex.x - point.x,
+            z: point.z,
+            angle: 2.0 * PI - point.angle,
+            heart_curvature: point.heart_curvature,
+            curvature: point.curvature,
+        }));
+    profile.cached_minimum_entry = None;
+    profile.cached_minimum_radius = None;
+    profile
+}
+
+#[cfg(test)]
+fn hill_outputs(spec: &ProfileSpec, design_speed: f64, flank_angle: f64, steps: usize) -> [f64; 2] {
+    let adjusted = hill_spec_at(spec, design_speed, flank_angle);
+    let half = hill_half(&adjusted, 0.0, steps);
+    [half.endpoint()[1], 2.0 * half.endpoint()[0]]
+}
+
+#[cfg(test)]
+fn refine_hill_design(
+    spec: &ProfileSpec,
+    target_height: f64,
+    target_span: f64,
+    mut design_speed: f64,
+    mut flank_angle: f64,
+    steps: usize,
+) -> Option<(f64, f64)> {
+    const HEIGHT_TOLERANCE: f64 = 1e-10;
+    const SPAN_TOLERANCE: f64 = 1e-10;
+    const MINIMUM_FLANK_ANGLE: f64 = 10.0_f64.to_radians();
+    const MAXIMUM_FLANK_ANGLE: f64 = 55.0_f64.to_radians();
+    for _ in 0..24 {
+        let [height, span] = hill_outputs(spec, design_speed, flank_angle, steps);
+        let height_error = target_height - height;
+        let span_error = target_span - span;
+        if height_error.abs() <= HEIGHT_TOLERANCE && span_error.abs() <= SPAN_TOLERANCE {
+            return Some((design_speed, flank_angle));
+        }
+
+        const SPEED_PERTURBATION: f64 = 0.05;
+        const ANGLE_PERTURBATION: f64 = 1e-4;
+        let [speed_height, speed_span] =
+            hill_outputs(spec, design_speed + SPEED_PERTURBATION, flank_angle, steps);
+        let [angle_height, angle_span] =
+            hill_outputs(spec, design_speed, flank_angle + ANGLE_PERTURBATION, steps);
+        let height_speed_derivative = (speed_height - height) / SPEED_PERTURBATION;
+        let span_speed_derivative = (speed_span - span) / SPEED_PERTURBATION;
+        let height_angle_derivative = (angle_height - height) / ANGLE_PERTURBATION;
+        let span_angle_derivative = (angle_span - span) / ANGLE_PERTURBATION;
+        let determinant = height_speed_derivative * span_angle_derivative
+            - height_angle_derivative * span_speed_derivative;
+        assert!(
+            determinant.abs() > 1e-12,
+            "{}: hill target Jacobian is singular",
+            spec.name
+        );
+        let speed_update = ((height_error * span_angle_derivative
+            - height_angle_derivative * span_error)
+            / determinant)
+            .clamp(-4.0, 4.0);
+        let angle_update = ((height_speed_derivative * span_error
+            - height_error * span_speed_derivative)
+            / determinant)
+            .clamp(-0.15, 0.15);
+        design_speed += speed_update;
+        flank_angle += angle_update;
+        assert!(
+            (8.0..=60.0).contains(&design_speed),
+            "{}: hill design speed left the supported range: {design_speed}",
+            spec.name
+        );
+        if !(MINIMUM_FLANK_ANGLE..=MAXIMUM_FLANK_ANGLE).contains(&flank_angle) {
+            return None;
+        }
+    }
+
+    panic!("{}: hill target solve did not converge", spec.name)
+}
+
+#[cfg(test)]
+fn hill_design_at_height_and_angle(
+    spec: &ProfileSpec,
+    target_height: f64,
+    flank_angle: f64,
+    mut design_speed: f64,
+    steps: usize,
+) -> (f64, f64) {
+    for _ in 0..16 {
+        let [height, span] = hill_outputs(spec, design_speed, flank_angle, steps);
+        let height_error = target_height - height;
+        if height_error.abs() <= 1e-10 {
+            return (design_speed, span);
+        }
+        const SPEED_PERTURBATION: f64 = 0.05;
+        let [perturbed_height, _] =
+            hill_outputs(spec, design_speed + SPEED_PERTURBATION, flank_angle, steps);
+        let derivative = (perturbed_height - height) / SPEED_PERTURBATION;
+        design_speed += (height_error / derivative).clamp(-4.0, 4.0);
+        assert!(
+            (8.0..=60.0).contains(&design_speed),
+            "{}: hill design speed left the supported range: {design_speed}",
+            spec.name
+        );
+    }
+    panic!("{}: fixed-angle height solve did not converge", spec.name)
+}
+
+#[cfg(test)]
+fn solve_hill_at_design(
+    spec: &ProfileSpec,
+    design_speed: f64,
+    flank_angle: f64,
+    insert: f64,
+) -> SnappedHill {
+    let adjusted = hill_spec_at(spec, design_speed, flank_angle);
+    let half = hill_half(&adjusted, insert, 2048);
+    assert_design_force_schedule(&adjusted, &half);
+    let crest_start = hill_crest_start(&half, flank_angle, spec.name);
+    let crest_end = 2.0 * half.length() - crest_start;
+    let profile = reflect_hill(&half);
+    SnappedHill {
+        profile,
+        design_speed,
+        flank_angle,
+        insert,
+        crest_start,
+        crest_end,
+    }
+}
+
+#[cfg(test)]
+fn snap_hill(spec: &ProfileSpec, target_height: f64, target_span: f64) -> SnappedHill {
+    assert!(target_height > 0.0 && target_span > 0.0);
+    let initial_angle = match spec.segments.first() {
+        Some(Segment::Arc { angle, .. }) => *angle,
+        _ => panic!("{}: hill requires a pull arc", spec.name),
+    };
+    let coarse_design = refine_hill_design(
+        spec,
+        target_height,
+        target_span,
+        spec.maximum_entry,
+        initial_angle,
+        512,
+    );
+    let refined_design = coarse_design.and_then(|(design_speed, flank_angle)| {
+        refine_hill_design(
+            spec,
+            target_height,
+            target_span,
+            design_speed,
+            flank_angle,
+            2048,
+        )
+    });
+    let (design_speed, flank_angle, insert) =
+        if let Some((design_speed, flank_angle)) = refined_design {
+            (design_speed, flank_angle, 0.0)
+        } else {
+            const MINIMUM_FLANK_ANGLE: f64 = 10.0_f64.to_radians();
+            const MAXIMUM_FLANK_ANGLE: f64 = 55.0_f64.to_radians();
+            let mut candidates = Vec::new();
+            for flank_angle in [MINIMUM_FLANK_ANGLE, MAXIMUM_FLANK_ANGLE] {
+                let (coarse_speed, _) = hill_design_at_height_and_angle(
+                    spec,
+                    target_height,
+                    flank_angle,
+                    spec.maximum_entry,
+                    512,
+                );
+                let (design_speed, core_span) = hill_design_at_height_and_angle(
+                    spec,
+                    target_height,
+                    flank_angle,
+                    coarse_speed,
+                    2048,
+                );
+                let total_insert = target_span - core_span;
+                if (0.0..=2.0).contains(&total_insert) {
+                    candidates.push((total_insert, design_speed, flank_angle));
+                }
+            }
+            candidates.sort_by(|left, right| left.0.total_cmp(&right.0));
+            let (total_insert, design_speed, flank_angle) = candidates
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| panic!("{}: no feasible snapped hill design", spec.name));
+            (design_speed, flank_angle, total_insert / 2.0)
+        };
+    let solved = solve_hill_at_design(spec, design_speed, flank_angle, insert);
+    let height = solved
+        .profile
+        .points
+        .iter()
+        .map(|point| point.z)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let span = solved.profile.endpoint()[0];
+    assert!(
+        (height - target_height).abs() <= 1e-9,
+        "{}: hill height {height} != {target_height}",
+        spec.name
+    );
+    assert!(
+        (span - target_span).abs() <= 1e-9,
+        "{}: hill span {span} != {target_span}",
+        spec.name
+    );
+    assert!(solved.crest_start < solved.crest_end);
+    assert!((0.0..=1.0).contains(&solved.insert));
+    assert!(
+        design_speed - solved.profile.minimum_entry() >= 2.0,
+        "{}: speed window is too narrow",
+        spec.name
+    );
+    solved
+}
+
+#[cfg(test)]
+fn hill_crest_time(spec: &ProfileSpec, flank_angle: f64, half: &SolvedProfile) -> Option<f64> {
+    let crest_start = hill_crest_start(half, flank_angle, spec.name);
+    let profile = reflect_hill(half);
+    let crest_end = 2.0 * half.length() - crest_start;
+    let first_crest_index = profile
+        .points
+        .partition_point(|point| point.distance < crest_start)
+        .min(profile.points.len() - 1);
+    let last_crest_index = profile
+        .points
+        .partition_point(|point| point.distance < crest_end)
+        .min(profile.points.len() - 1);
+    let mut durations = Vec::with_capacity(2);
+    for cars in [6, 12] {
+        let mut duration = 0.0;
+        for pair in profile.points[first_crest_index..=last_crest_index].windows(2) {
+            let midpoint_distance = (pair[0].distance + pair[1].distance) / 2.0;
+            let train_mean_height = train_mean_height(&profile, midpoint_distance, cars);
+            let speed_squared = spec.maximum_entry.powi(2) - 2.0 * GRAVITY * train_mean_height;
+            if !speed_squared.is_finite() || speed_squared <= 0.0 {
+                return None;
+            }
+            duration += (pair[1].distance - pair[0].distance) / speed_squared.sqrt();
+        }
+        durations.push(duration);
+    }
+    // The roll-rate limit must hold for the fastest supported train layout.
+    durations.into_iter().reduce(f64::min)
+}
+
+#[cfg(test)]
+fn solve_zero_g_hill_at_design(
+    spec: &ProfileSpec,
+    design_speed: f64,
+    flank_angle: f64,
+    insert: f64,
+) -> SnappedHill {
+    solve_hill_at_design(spec, design_speed, flank_angle, insert)
+}
+
+#[cfg(test)]
+fn snap_zero_g_hill(spec: &ProfileSpec, target_crest_time: f64) -> SnappedHill {
+    assert!(target_crest_time > 0.0);
+    const MINIMUM_FLANK_ANGLE: f64 = 10.0_f64.to_radians();
+    const MAXIMUM_FLANK_ANGLE: f64 = 55.0_f64.to_radians();
+    let duration_at = |angle: f64, steps: usize| {
+        let adjusted = hill_spec_at(spec, spec.maximum_entry, angle);
+        let half = hill_half(&adjusted, 0.0, steps);
+        hill_crest_time(&adjusted, angle, &half).unwrap_or(f64::INFINITY)
+    };
+    let duration_at_minimum = duration_at(MINIMUM_FLANK_ANGLE, 512);
+    let duration_at_maximum = duration_at(MAXIMUM_FLANK_ANGLE, 512);
+    assert!(
+        (duration_at_minimum..=duration_at_maximum).contains(&target_crest_time),
+        "{}: requested crest time {target_crest_time} s is outside {}..{} s",
+        spec.name,
+        duration_at_minimum,
+        duration_at_maximum
+    );
+    let mut low = MINIMUM_FLANK_ANGLE;
+    let mut high = MAXIMUM_FLANK_ANGLE;
+    for _ in 0..40 {
+        let flank_angle = (low + high) / 2.0;
+        if duration_at(flank_angle, 512) < target_crest_time {
+            low = flank_angle;
+        } else {
+            high = flank_angle;
+        }
+    }
+    low = MINIMUM_FLANK_ANGLE;
+    high = MAXIMUM_FLANK_ANGLE;
+    for _ in 0..40 {
+        let flank_angle = (low + high) / 2.0;
+        if duration_at(flank_angle, 2048) < target_crest_time {
+            low = flank_angle;
+        } else {
+            high = flank_angle;
+        }
+    }
+    let flank_angle = (low + high) / 2.0;
+    let adjusted = hill_spec_at(spec, spec.maximum_entry, flank_angle);
+    let half = hill_half(&adjusted, 0.0, 2048);
+    let crest_time = hill_crest_time(&adjusted, flank_angle, &half).unwrap();
+    assert!((crest_time - target_crest_time).abs() <= 1e-8);
+    let core_span = 2.0 * half.endpoint()[0];
+    let nearest_grid_span = (core_span / 2.0).round() * 2.0;
+    let snapped_span = if (nearest_grid_span - core_span).abs() <= 1e-9 {
+        nearest_grid_span
+    } else {
+        (core_span / 2.0).ceil() * 2.0
+    };
+    let total_insert = snapped_span - core_span;
+    assert!((0.0..2.0).contains(&total_insert));
+    let insert = total_insert / 2.0;
+    let solved = solve_zero_g_hill_at_design(spec, spec.maximum_entry, flank_angle, insert);
+    let half_with_insert = hill_half(&adjusted, insert, 2048);
+    let snapped_crest_time = hill_crest_time(&adjusted, flank_angle, &half_with_insert).unwrap();
+    assert!((snapped_crest_time - target_crest_time).abs() <= 1e-8);
+    assert!((solved.profile.endpoint()[0] - snapped_span).abs() <= 1e-9);
+    solved
+}
+
+#[cfg(test)]
 pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
     let Segment::Arc { angle, .. } = spec.segments[0] else {
         panic!("pull requires one arc");
@@ -958,6 +1475,213 @@ mod tests {
     const MAXIMUM_PROFILE_POSITION_ERROR_METRES: f64 = 0.001;
     const MAXIMUM_PROFILE_CURVATURE_ERROR: f64 = 2e-4;
 
+    fn hill_profile_point_count(name: &str) -> usize {
+        if name == "ZeroGRollCompact" {
+            1024
+        } else {
+            512
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct HillCase {
+        name: &'static str,
+        height: f64,
+        span: f64,
+        design_speed: f64,
+        flank_angle: f64,
+        pull_force: f64,
+        crest_force: f64,
+        model_radius: f64,
+    }
+
+    const HILL_CASES: [HillCase; 14] = [
+        HillCase {
+            name: "EjectorHill8x48",
+            height: 8.0,
+            span: 48.0,
+            design_speed: 23.0,
+            flank_angle: 40.0_f64.to_radians(),
+            pull_force: 4.2,
+            crest_force: -1.0,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "EjectorHill12x64",
+            height: 12.0,
+            span: 64.0,
+            design_speed: 26.0,
+            flank_angle: 45.0_f64.to_radians(),
+            pull_force: 4.2,
+            crest_force: -1.05,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "EjectorHill8x64",
+            height: 8.0,
+            span: 64.0,
+            design_speed: 30.0,
+            flank_angle: 30.0_f64.to_radians(),
+            pull_force: 4.2,
+            crest_force: -1.2,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "EjectorHill12x80",
+            height: 12.0,
+            span: 80.0,
+            design_speed: 31.0,
+            flank_angle: 36.0_f64.to_radians(),
+            pull_force: 4.2,
+            crest_force: -1.2,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "EjectorHill16x96",
+            height: 16.0,
+            span: 96.0,
+            design_speed: 33.0,
+            flank_angle: 40.0_f64.to_radians(),
+            pull_force: 4.2,
+            crest_force: -1.2,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "FloaterHill4x48",
+            height: 4.0,
+            span: 48.0,
+            design_speed: 22.0,
+            flank_angle: 29.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -0.3,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "FloaterHill8x64",
+            height: 8.0,
+            span: 64.0,
+            design_speed: 26.0,
+            flank_angle: 29.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -0.3,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "FloaterHill12x80",
+            height: 12.0,
+            span: 80.0,
+            design_speed: 27.0,
+            flank_angle: 35.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -0.3,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "FloaterHill6x64",
+            height: 6.0,
+            span: 64.0,
+            design_speed: 29.0,
+            flank_angle: 22.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -0.3,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "FloaterHill12x96",
+            height: 12.0,
+            span: 96.0,
+            design_speed: 31.0,
+            flank_angle: 29.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -0.3,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "FloaterHill16x112",
+            height: 16.0,
+            span: 112.0,
+            design_speed: 32.0,
+            flank_angle: 33.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -0.3,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "SpeedHill4x64",
+            height: 4.0,
+            span: 64.0,
+            design_speed: 28.0,
+            flank_angle: 15.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: 0.3,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "SpeedHill6x80",
+            height: 6.0,
+            span: 80.0,
+            design_speed: 29.0,
+            flank_angle: 17.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: 0.3,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "WoodenEjectorHill6x48",
+            height: 6.0,
+            span: 48.0,
+            design_speed: 24.0,
+            flank_angle: 29.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -0.7,
+            model_radius: 5.0,
+        },
+    ];
+
+    #[derive(Clone, Copy)]
+    struct CrestTimeCase {
+        name: &'static str,
+        design_speed: f64,
+        flank_angle: f64,
+        pull_force: f64,
+        target_crest_time: f64,
+    }
+
+    const CREST_TIME_CASES: [CrestTimeCase; 3] = [
+        CrestTimeCase {
+            name: "ZeroGRollFast",
+            design_speed: 27.0,
+            flank_angle: 32.0_f64.to_radians(),
+            pull_force: 4.2,
+            target_crest_time: 2.4,
+        },
+        CrestTimeCase {
+            name: "ZeroGRollCompact",
+            design_speed: 20.0,
+            flank_angle: 40.0_f64.to_radians(),
+            pull_force: 4.2,
+            target_crest_time: 2.4,
+        },
+        CrestTimeCase {
+            name: "Stall",
+            design_speed: 27.0,
+            flank_angle: 45.0_f64.to_radians(),
+            pull_force: 4.2,
+            target_crest_time: 3.0,
+        },
+    ];
+
+    #[derive(Clone, Debug)]
+    struct HillTableEntry {
+        name: &'static str,
+        profile: SolvedProfile,
+        design_speed: f64,
+        flank_angle: f64,
+        insert: f64,
+        crest_start: f64,
+        crest_end: f64,
+    }
+
     fn catalog_profiles() -> Vec<(&'static str, SolvedProfile)> {
         vec![
             (
@@ -995,6 +1719,148 @@ mod tests {
                 ),
             ),
         ]
+    }
+
+    fn hill_spec(case: HillCase) -> ProfileSpec {
+        ProfileSpec::hill(
+            case.design_speed,
+            case.pull_force,
+            case.crest_force,
+            case.flank_angle,
+        )
+        .named(case.name)
+    }
+
+    fn crest_time_spec(case: CrestTimeCase) -> ProfileSpec {
+        ProfileSpec::zero_g_hill(case.design_speed, case.pull_force, case.flank_angle)
+            .named(case.name)
+    }
+
+    fn hill_template(name: &str) -> ProfileSpec {
+        if let Some(case) = HILL_CASES.iter().find(|case| case.name == name) {
+            hill_spec(*case)
+        } else {
+            let case = CREST_TIME_CASES
+                .iter()
+                .find(|case| case.name == name)
+                .unwrap_or_else(|| panic!("missing hill case {name}"));
+            crest_time_spec(*case)
+        }
+    }
+
+    fn hill_entries_from_generated_designs() -> Vec<HillTableEntry> {
+        GENERATED_HILL_DESIGNS
+            .iter()
+            .map(|design| {
+                let table = GENERATED_HILL_PROFILES
+                    .iter()
+                    .find(|table| table.name == design.name)
+                    .unwrap();
+                let spec = hill_template(design.name);
+                let solved = solve_hill_at_design(
+                    &spec,
+                    design.design_speed,
+                    design.flank_angle,
+                    design.insert,
+                );
+                assert_eq!(table.point_count, hill_profile_point_count(design.name));
+                assert_eq!(
+                    table.values.len(),
+                    table.point_count,
+                    "{} table length",
+                    design.name
+                );
+                assert!(
+                    (table.minimum_entry - solved.profile.minimum_entry()).abs() < 1e-12,
+                    "{} minimum entry",
+                    design.name
+                );
+                assert!(
+                    (table.minimum_radius - solved.profile.minimum_radius()).abs() < 1e-12,
+                    "{} minimum radius",
+                    design.name
+                );
+                assert!(
+                    (table.length - solved.profile.length()).abs() < 1e-12,
+                    "{} length",
+                    design.name
+                );
+                assert!((design.crest_start - solved.crest_start).abs() < 1e-12);
+                assert!((design.crest_end - solved.crest_end).abs() < 1e-12);
+                HillTableEntry {
+                    name: design.name,
+                    profile: solved.profile,
+                    design_speed: design.design_speed,
+                    flank_angle: design.flank_angle,
+                    insert: design.insert,
+                    crest_start: design.crest_start,
+                    crest_end: design.crest_end,
+                }
+            })
+            .collect()
+    }
+
+    fn generated_hill_source(entries: &[HillTableEntry]) -> String {
+        let mut output = String::from(
+            "// Generated by the hill_profiles_are_current test.\n#[allow(clippy::approx_constant)]\npub(super) const GENERATED_HILL_PROFILES: &[GeneratedHillProfile] = &[\n",
+        );
+        for entry in entries {
+            let profile = &entry.profile;
+            let point_count = hill_profile_point_count(entry.name);
+            let mut previous_position = [0.0; 2];
+            writeln!(
+                output,
+            "    GeneratedHillProfile {{ name: {:?}, minimum_entry: {:?}, minimum_radius: {:?}, length: {:?}, endpoint: {:?}, point_count: {}, values: &[",
+                entry.name,
+                profile.minimum_entry(),
+                profile.minimum_radius(),
+                profile.length(),
+                profile.endpoint(),
+                point_count,
+            )
+            .unwrap();
+            for index in 0..point_count {
+                let distance = profile.length() * index as f64 / (point_count - 1) as f64;
+                let (position, tangent, _) = profile.sample(distance);
+                let position_delta = [
+                    position[0] - previous_position[0],
+                    position[1] - previous_position[1],
+                ];
+                previous_position = position;
+                let curvature = reference_curvature(profile, distance);
+                let values = [
+                    format!("{:.9e}", position_delta[0]).parse::<f32>().unwrap(),
+                    format!("{:.9e}", position_delta[1]).parse::<f32>().unwrap(),
+                    format!("{:.9e}", tangent[1].atan2(tangent[0]))
+                        .parse::<f32>()
+                        .unwrap(),
+                    format!("{:.9e}", curvature).parse::<f32>().unwrap(),
+                ];
+                writeln!(
+                    output,
+                    "        [{:?}f32, {:?}f32, {:?}f32, {:?}f32],",
+                    values[0], values[1], values[2], values[3]
+                )
+                .unwrap();
+            }
+            output.push_str("    ] },\n");
+        }
+        output.push_str("];\n\n#[cfg(test)]\n#[allow(clippy::approx_constant)]\npub(super) const GENERATED_HILL_DESIGNS: &[GeneratedHillDesign] = &[\n");
+        for entry in entries {
+            writeln!(
+                output,
+                "    GeneratedHillDesign {{ name: {:?}, design_speed: {:?}, flank_angle: {:?}, insert: {:?}, crest_start: {:?}, crest_end: {:?} }},",
+                entry.name,
+                entry.design_speed,
+                entry.flank_angle,
+                entry.insert,
+                entry.crest_start,
+                entry.crest_end,
+            )
+            .unwrap();
+        }
+        output.push_str("];\n");
+        output
     }
 
     #[test]
@@ -1113,6 +1979,267 @@ mod tests {
                 "{name}: maximum position error {maximum_position_error} m, maximum curvature error {maximum_curvature_error} 1/m"
             );
         }
+    }
+
+    #[test]
+    fn hills_solve_to_their_dimensions_and_rate_limits() {
+        let mut entries = Vec::with_capacity(HILL_CASES.len() + CREST_TIME_CASES.len());
+        for case in HILL_CASES {
+            let spec = hill_spec(case);
+            let solved = snap_hill(&spec, case.height, case.span);
+            let height = solved
+                .profile
+                .points
+                .iter()
+                .map(|point| point.z)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let span = solved.profile.endpoint()[0];
+            let rated =
+                solved
+                    .profile
+                    .rated_speeds(case.name, solved.design_speed, 2.0, case.model_radius);
+            assert!(
+                (height - case.height).abs() <= 1e-9,
+                "{} height {height}",
+                case.name
+            );
+            assert!(
+                (span - case.span).abs() <= 1e-9,
+                "{} span {span}",
+                case.name
+            );
+            assert!(
+                (0.0..=1.0).contains(&solved.insert),
+                "{} equal connector inserts: {} m",
+                case.name,
+                solved.insert
+            );
+            assert!(
+                solved.crest_start < solved.crest_end,
+                "{} crest range",
+                case.name
+            );
+            assert!(
+                (span / 2.0 - (span / 2.0).round()).abs() < 1e-9,
+                "{} grid span",
+                case.name
+            );
+            eprintln!(
+                "{}: height {:.6} m, span {:.6} m, flank {:.3} deg, rated {:.3}..{:.3} m/s, minimum radius {:.3} m",
+                case.name,
+                height,
+                span,
+                solved.flank_angle.to_degrees(),
+                rated.minimum_entry,
+                rated.maximum_entry,
+                solved.profile.minimum_radius()
+            );
+            entries.push(HillTableEntry {
+                name: case.name,
+                profile: solved.profile,
+                design_speed: solved.design_speed,
+                flank_angle: solved.flank_angle,
+                insert: solved.insert,
+                crest_start: solved.crest_start,
+                crest_end: solved.crest_end,
+            });
+        }
+
+        const MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND: f64 = 200.0;
+        const ROLL_SCHEDULE_PEAK_FACTOR: f64 = 4.0 / 3.0;
+        for case in CREST_TIME_CASES {
+            let spec = crest_time_spec(case);
+            let solved = snap_zero_g_hill(&spec, case.target_crest_time);
+            let adjusted = hill_spec_at(&spec, solved.design_speed, solved.flank_angle);
+            let half = hill_half(&adjusted, solved.insert, 2048);
+            let crest_time = hill_crest_time(&adjusted, solved.flank_angle, &half).unwrap();
+            let peak_roll_rate = 360.0 * ROLL_SCHEDULE_PEAK_FACTOR / crest_time;
+            let rated = solved
+                .profile
+                .rated_speeds(case.name, solved.design_speed, 2.0, 8.0);
+            assert!(
+                (crest_time - case.target_crest_time).abs() <= 1e-8,
+                "{} crest time {crest_time}",
+                case.name
+            );
+            assert!(
+                peak_roll_rate <= MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND + 1e-6,
+                "{} peak roll rate {peak_roll_rate} degrees/s",
+                case.name
+            );
+            assert!(
+                (0.0..=1.0).contains(&solved.insert),
+                "{} insert {} m",
+                case.name,
+                solved.insert
+            );
+            let span = solved.profile.endpoint()[0];
+            assert!(
+                (span / 2.0 - (span / 2.0).round()).abs() < 1e-9,
+                "{} grid span {span}",
+                case.name
+            );
+            eprintln!(
+                "{}: height {:.6} m, span {:.6} m, flank {:.3} deg, crest time {:.6} s, roll rate {:.3} deg/s, rated {:.3}..{:.3} m/s, minimum radius {:.3} m",
+                case.name,
+                solved
+                    .profile
+                    .points
+                    .iter()
+                    .map(|point| point.z)
+                    .fold(f64::NEG_INFINITY, f64::max),
+                solved.profile.endpoint()[0],
+                solved.flank_angle.to_degrees(),
+                crest_time,
+                peak_roll_rate,
+                rated.minimum_entry,
+                rated.maximum_entry,
+                solved.profile.minimum_radius()
+            );
+            entries.push(HillTableEntry {
+                name: case.name,
+                profile: solved.profile,
+                design_speed: solved.design_speed,
+                flank_angle: solved.flank_angle,
+                insert: solved.insert,
+                crest_start: solved.crest_start,
+                crest_end: solved.crest_end,
+            });
+        }
+        if std::env::var_os("UPDATE_SOLVED_PROFILES").is_some() {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/track/hills.generated.rs");
+            std::fs::write(path, generated_hill_source(&entries)).unwrap();
+        }
+    }
+
+    #[test]
+    fn generated_hill_profiles_end_at_their_connectors() {
+        for profile in GENERATED_HILL_PROFILES {
+            let [x, z] = embedded_profile(profile.name).endpoint();
+            assert!(
+                (x - (x / 2.0).round() * 2.0).abs() < 1e-9,
+                "{}: endpoint x {x}",
+                profile.name
+            );
+            assert!(z.abs() < 1e-9, "{}: endpoint z {z}", profile.name);
+        }
+    }
+
+    #[test]
+    fn hill_profiles_are_current() {
+        assert_eq!(
+            GENERATED_HILL_DESIGNS.len(),
+            HILL_CASES.len() + CREST_TIME_CASES.len()
+        );
+        let entries = hill_entries_from_generated_designs();
+        let mut acceptance_failures = Vec::new();
+        for entry in entries {
+            let actual = embedded_profile(entry.name);
+            let generated = GENERATED_HILL_PROFILES
+                .iter()
+                .find(|profile| profile.name == entry.name)
+                .unwrap();
+            let design = GENERATED_HILL_DESIGNS
+                .iter()
+                .find(|design| design.name == entry.name)
+                .unwrap();
+            assert_eq!(
+                generated.point_count,
+                hill_profile_point_count(entry.name),
+                "{} point count",
+                entry.name
+            );
+            assert!((design.design_speed - entry.design_speed).abs() < 1e-12);
+            assert!((design.flank_angle - entry.flank_angle).abs() < 1e-12);
+            assert!((design.insert - entry.insert).abs() < 1e-12);
+            assert!((design.crest_start - entry.crest_start).abs() < 1e-12);
+            assert!((design.crest_end - entry.crest_end).abs() < 1e-12);
+            let mut previous_position = [0.0; 2];
+            let precise_values: Vec<[f64; 4]> = (0..generated.point_count)
+                .map(|index| {
+                    let distance =
+                        generated.length * index as f64 / (generated.point_count - 1) as f64;
+                    let (position, tangent, _) = entry.profile.sample(distance);
+                    let position_delta = [
+                        position[0] - previous_position[0],
+                        position[1] - previous_position[1],
+                    ];
+                    previous_position = position;
+                    [
+                        position_delta[0],
+                        position_delta[1],
+                        tangent[1].atan2(tangent[0]),
+                        reference_curvature(&entry.profile, distance),
+                    ]
+                })
+                .collect();
+            let precise = embedded_hill_profile_from_values(
+                generated.minimum_entry,
+                generated.minimum_radius,
+                generated.length,
+                generated.endpoint,
+                generated.point_count,
+                &precise_values,
+            );
+            let mut maximum_position_error = 0.0_f64;
+            let mut maximum_curvature_error = 0.0_f64;
+            let mut maximum_f32_curvature_delta = 0.0_f64;
+            let mut check = |distance: f64| {
+                let (expected_position, _, _) = entry.profile.sample(distance);
+                let (actual_position, tangent, second) = actual.sample(distance);
+                let (_, precise_tangent, precise_second) = precise.sample(distance);
+                let position_error = (expected_position[0] - actual_position[0])
+                    .hypot(expected_position[1] - actual_position[1]);
+                let curvature_error = (reference_curvature(&entry.profile, distance)
+                    - profile_curvature_from_derivatives(tangent, second))
+                .abs();
+                let f32_curvature_delta = (profile_curvature_from_derivatives(tangent, second)
+                    - profile_curvature_from_derivatives(precise_tangent, precise_second))
+                .abs();
+                maximum_position_error = maximum_position_error.max(position_error);
+                maximum_curvature_error = maximum_curvature_error.max(curvature_error);
+                maximum_f32_curvature_delta = maximum_f32_curvature_delta.max(f32_curvature_delta);
+            };
+            let length = entry.profile.length();
+            for index in 0..=16_381 {
+                check(length * index as f64 / 16_381.0);
+            }
+            for point in entry.profile.points.iter().chain(&actual.points) {
+                for offset in [-1e-9, 0.0, 1e-9] {
+                    check((point.distance + offset * length).clamp(0.0, length));
+                }
+            }
+            eprintln!(
+                "{}: maximum position error {:.9} m, maximum curvature error {:.9} 1/m, f32 curvature delta {:.9} 1/m",
+                entry.name,
+                maximum_position_error,
+                maximum_curvature_error,
+                maximum_f32_curvature_delta
+            );
+            if maximum_position_error > MAXIMUM_PROFILE_POSITION_ERROR_METRES {
+                acceptance_failures.push(format!(
+                    "{} position error {:.9} m",
+                    entry.name, maximum_position_error
+                ));
+            }
+            if maximum_curvature_error > MAXIMUM_PROFILE_CURVATURE_ERROR {
+                acceptance_failures.push(format!(
+                    "{} curvature error {:.9} 1/m",
+                    entry.name, maximum_curvature_error
+                ));
+            }
+            assert!(
+                maximum_f32_curvature_delta <= 1e-5,
+                "{} f32 storage adds {:.9} 1/m geometric curvature error",
+                entry.name,
+                maximum_f32_curvature_delta
+            );
+        }
+        assert!(
+            acceptance_failures.is_empty(),
+            "{}",
+            acceptance_failures.join(", ")
+        );
     }
 
     #[test]

@@ -160,9 +160,9 @@ describe("coaster testing overlay", () => {
       "imperial",
     )).toBe("This layout has at least 328 ft in a row below 17.9 mph. A taller first drop or a faster section could make it feel livelier.");
     expect(formatTestingNote(
-      "The train entered Steel-structure loop (not heartlined) at 30.2 m/s, above its rated speed band of 25.2–27.0 m/s.",
+      "The train entered Steel-structure loop at 30.2 m/s, above its rated speed band of 25.2–27.0 m/s.",
       "imperial",
-    )).toBe("The train entered Steel-structure loop (not heartlined) at 67.6 mph, above its rated speed band of 56.4–60.4 mph.");
+    )).toBe("The train entered Steel-structure loop at 67.6 mph, above its rated speed band of 56.4–60.4 mph.");
     expect(formatTestingNote(
       "The train entered Vertical loop at 20.0 m/s, below its rated speed band of 24.7–27.5 m/s.",
       "metric",

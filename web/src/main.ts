@@ -350,6 +350,11 @@ const gameTest: GameTest = {
     validateBlockAnalysisBudget(budget);
     return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; sendWorkerAction(worker, { type: "test-advance-block-analysis", budget }); });
   },
+  advanceBlockPlacement(budget) {
+    if (!manualBlockAnalysis || advanceBlockAnalysisComplete) throw new Error("Invalid test block placement advance");
+    validateBlockAnalysisBudget(budget);
+    return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; sendWorkerAction(worker, { type: "test-advance-block-placement", budget }); });
+  },
   setCamera(value) { camera = value; followPoints = undefined; renderRevision.invalidate(); },
   cutaway() { return renderedCutaway ?? null; },
   setSurface(x, y, corners) { sendWorkerAction(worker, { type: "set-surface", x, y, corners: new Int16Array(corners) }); },

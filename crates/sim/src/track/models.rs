@@ -74,6 +74,35 @@ pub struct ComfortableForceLimits {
     pub maximum_lateral_g: f64,
     pub maximum_longitudinal_g: f64,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AirtimeRating {
+    Weak,
+    Good,
+    Great,
+    TooMuch,
+    Dangerous,
+}
+
+impl ComfortableForceLimits {
+    /// Rates negative vertical force using the airtime bands shown by the force overlay.
+    pub fn classify_airtime(self, vertical_g: f64) -> AirtimeRating {
+        let airtime_g = -vertical_g;
+        let comfortable_airtime_limit_g = -self.minimum_vertical_g;
+        if airtime_g <= 0.2 {
+            AirtimeRating::Weak
+        } else if airtime_g <= 0.9 {
+            AirtimeRating::Good
+        } else if airtime_g <= comfortable_airtime_limit_g {
+            AirtimeRating::Great
+        } else if airtime_g <= 1.3 * comfortable_airtime_limit_g {
+            AirtimeRating::TooMuch
+        } else {
+            AirtimeRating::Dangerous
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LaunchSpeedBounds {
     pub minimum: f64,
@@ -267,6 +296,15 @@ pub fn wooden_twister_model() -> CoasterModel {
                 TwisterHelixLeft,
                 TwisterHelixRight,
                 AirtimeHill,
+                FloaterHill4x48,
+                FloaterHill8x64,
+                FloaterHill12x80,
+                FloaterHill6x64,
+                FloaterHill12x96,
+                FloaterHill16x112,
+                SpeedHill4x64,
+                SpeedHill6x80,
+                WoodenEjectorHill6x48,
                 TightTwisterLeft,
                 TightTwisterRight,
             ]
@@ -423,6 +461,19 @@ pub fn hybrid_model() -> CoasterModel {
                 TerrainRise,
                 TerrainFall,
                 AirtimeHill,
+                EjectorHill8x48,
+                EjectorHill12x64,
+                EjectorHill8x64,
+                EjectorHill12x80,
+                EjectorHill16x96,
+                FloaterHill4x48,
+                FloaterHill8x64,
+                FloaterHill12x80,
+                FloaterHill6x64,
+                FloaterHill12x96,
+                FloaterHill16x112,
+                SpeedHill4x64,
+                SpeedHill6x80,
                 HybridOverbankLeft,
                 HybridOverbankRight,
                 TwistedDropLeft,
@@ -591,6 +642,19 @@ pub fn multi_launch_model() -> CoasterModel {
                 TerrainRise,
                 TerrainFall,
                 AirtimeHill,
+                EjectorHill8x48,
+                EjectorHill12x64,
+                EjectorHill8x64,
+                EjectorHill12x80,
+                EjectorHill16x96,
+                FloaterHill4x48,
+                FloaterHill8x64,
+                FloaterHill12x80,
+                FloaterHill6x64,
+                FloaterHill12x96,
+                FloaterHill16x112,
+                SpeedHill4x64,
+                SpeedHill6x80,
             ]
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],

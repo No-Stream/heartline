@@ -418,8 +418,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (tile) select(tile.dataset.piece);
   });
   elements.addEventListener("click", (event) => {
-    const tile = (event.target as Element).closest<HTMLElement>("[data-element]");
-    if (tile) select(tile.dataset.element);
+    const tile = (event.target as Element).closest<HTMLElement>("[data-track-choice]");
+    if (tile) select(tile.dataset.trackChoice);
   });
   palette.addEventListener("keydown", (event) => {
     const tile = (event.target as Element).closest<HTMLElement>("[data-piece]");
@@ -462,22 +462,76 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }));
   }
 
-  function renderElements(choices: readonly ConstructionElement[]): void {
-    elements.replaceChildren(...choices.map((choice) => {
+  function renderElements(choices: readonly ConstructionElement[], pieces: readonly ConstructionPiece[]): void {
+    const renderElement = (choice: {
+      id: string;
+      pieceId: string;
+      slope: string;
+      name: string;
+      heartlined: boolean | null;
+      elementId?: string;
+      refusal?: string;
+    }): HTMLButtonElement => {
       const shape = shapeOf(choice.pieceId, choice.slope);
       const button = document.createElement("button");
       button.type = "button";
       button.className = "builder__element";
-      button.dataset.element = choice.id;
+      button.dataset.trackChoice = choice.id;
+      if (choice.elementId) button.dataset.element = choice.elementId;
+      if (choice.refusal) button.title = choice.refusal;
       button.setAttribute("aria-pressed", String(choice.id === state?.selected));
       button.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}<span></span>`;
       button.querySelector("span")!.textContent = choice.name;
       return button;
+    };
+    const ordinaryElements = choices.filter((choice) => choice.heartlined === null).map((choice) => renderElement({
+      id: choice.id,
+      elementId: choice.id,
+      pieceId: choice.pieceId,
+      slope: choice.slope,
+      name: choice.name,
+      heartlined: null,
     }));
+    const inversionChoices = [
+      ...choices.filter((choice) => choice.heartlined !== null).map((choice) => ({
+        id: choice.id,
+        elementId: choice.id,
+        pieceId: choice.pieceId,
+        slope: choice.slope,
+        name: choice.name,
+        heartlined: choice.heartlined,
+      })),
+      ...pieces.filter((piece) => piece.heartlined !== null).map((piece) => ({
+        id: piece.id,
+        pieceId: piece.id,
+        slope: piece.slope,
+        name: pieceDisplayName(piece),
+        heartlined: piece.heartlined,
+        refusal: piece.refusal,
+      })),
+    ];
+    const inversionGroups = [
+      { heartlined: true, label: "Modern inversions (heartlined)" },
+      { heartlined: false, label: "Classic inversions (not heartlined)" },
+    ].flatMap(({ heartlined, label }) => {
+      const members = inversionChoices.filter((choice) => choice.heartlined === heartlined);
+      if (members.length === 0) return [];
+      const group = document.createElement("section");
+      group.className = "builder__element-group";
+      group.dataset.heartlinedGroup = String(heartlined);
+      const heading = document.createElement("h4");
+      heading.textContent = label;
+      const groupElements = document.createElement("div");
+      groupElements.className = "builder__element-group-items";
+      groupElements.append(...members.map(renderElement));
+      group.append(heading, groupElements);
+      return [group];
+    });
+    elements.replaceChildren(...ordinaryElements, ...inversionGroups);
   }
 
   function renderSelection(current: ConstructionState, focusInPalette: boolean): void {
-    for (const tile of elements.querySelectorAll<HTMLElement>("[data-element]")) tile.setAttribute("aria-pressed", String(tile.dataset.element === current.selected));
+    for (const tile of elements.querySelectorAll<HTMLElement>("[data-track-choice]")) tile.setAttribute("aria-pressed", String(tile.dataset.trackChoice === current.selected));
     for (const tile of palette.querySelectorAll<HTMLElement>("[data-piece]")) {
       const checked = tile.dataset.piece === current.selected;
       tile.setAttribute("aria-checked", String(checked));
@@ -810,8 +864,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       const focusInPalette = palette.contains(document.activeElement);
       const nextPaletteKey = next.pieces.map(({ id, refusal }) => `${id}:${refusal}`).join("|");
       if (nextPaletteKey !== paletteKey) { paletteKey = nextPaletteKey; renderPalette(next.pieces); }
-      const nextElementsKey = JSON.stringify(next.elements);
-      if (nextElementsKey !== elementsKey) { elementsKey = nextElementsKey; renderElements(next.elements); }
+      const nextElementsKey = JSON.stringify([next.elements, next.pieces]);
+      if (nextElementsKey !== elementsKey) { elementsKey = nextElementsKey; renderElements(next.elements, next.pieces); }
       renderSelection(next, focusInPalette);
       const nextTrackKey = next.track.map(({ id, label, kind, launchTargetSpeed }) => `${id}:${label}:${kind}:${launchTargetSpeed}`).join("|");
       if (nextTrackKey !== trackKey) { trackKey = nextTrackKey; renderTrack(next, event === "placed"); }

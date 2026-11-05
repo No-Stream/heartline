@@ -642,6 +642,9 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
         let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
         assert_eq!(super::piece_group(piece), expected_group, "{id:?}");
     }
+    for piece in catalog.iter().filter(|piece| piece.family.is_some()) {
+        assert_eq!(super::piece_group(piece), "special", "{:?}", piece.id);
+    }
 
     for (id, expected_name) in [
         (super::PieceId::BankedStraightLeft, "Left-banked straight"),
@@ -1812,6 +1815,52 @@ fn construction_lists_are_structured_and_preserve_selection_ids() {
             .iter()
             .any(|element| element["id"] == "element:climb-60")
     );
+}
+
+#[test]
+fn construction_reports_include_nullable_heartlining_metadata() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(200, 200, 20, 0);
+
+    let choices: serde_json::Value =
+        serde_json::from_str(&simulation.construction_choices()).unwrap();
+    let choices = choices.as_array().unwrap();
+    let choice_for = |id: &str| {
+        choices
+            .iter()
+            .find(|choice| choice["id"] == id)
+            .unwrap_or_else(|| panic!("missing construction choice {id}"))
+    };
+    assert_eq!(choice_for("Loop")["heartlined"], false);
+    assert_eq!(choice_for("HeartlineRoll")["heartlined"], true);
+    assert_eq!(
+        choice_for("Straight")["heartlined"],
+        serde_json::Value::Null
+    );
+    assert!(
+        choices
+            .iter()
+            .all(|choice| { choice["heartlined"].is_boolean() || choice["heartlined"].is_null() })
+    );
+
+    let elements: serde_json::Value =
+        serde_json::from_str(&simulation.construction_elements()).unwrap();
+    let elements = elements.as_array().unwrap();
+    let element_for = |id: &str| {
+        elements
+            .iter()
+            .find(|element| element["id"] == id)
+            .unwrap_or_else(|| panic!("missing construction element {id}"))
+    };
+    assert_eq!(element_for("element:immelmann-left")["heartlined"], false);
+    assert_eq!(
+        element_for("element:climb-60")["heartlined"],
+        serde_json::Value::Null
+    );
+    assert!(elements.iter().all(|element| {
+        (element["heartlined"].is_boolean() || element["heartlined"].is_null())
+            && !element["name"].as_str().unwrap().contains("heartlined")
+    }));
 }
 
 fn track_rows(json: &str) -> Vec<serde_json::Value> {

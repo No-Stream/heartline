@@ -182,11 +182,42 @@ impl Park {
         &mut self,
         work_steps: u32,
     ) -> (bool, Option<BlockCommandError>) {
+        self.advance_block_analysis(work_steps, false)
+    }
+
+    /// Advance only automatic placement by 1..=1,000 steps for frozen-mode tests.
+    pub fn construction_advance_block_placement_for_test(&mut self, work_steps: u32) {
+        assert!(
+            (1..=1_000).contains(&work_steps),
+            "invalid test placement budget"
+        );
+        assert!(
+            self.block_placement_search.is_some(),
+            "automatic placement must be searching"
+        );
+        assert!(
+            !self.block_apply_best_requested,
+            "automatic placement must not be stopping"
+        );
+        assert!(
+            self.block_manual_search.is_none(),
+            "manual validation must not be active"
+        );
+        self.advance_block_analysis(work_steps, true);
+    }
+
+    fn advance_block_analysis(
+        &mut self,
+        work_steps: u32,
+        placement_only: bool,
+    ) -> (bool, Option<BlockCommandError>) {
         let mut validation_error = None;
         let budget = work_steps.min(1_000) as usize;
         let has_layout_search =
             self.block_manual_search.is_some() || self.block_placement_search.is_some();
-        let search_budget = if has_layout_search && self.block_throughput_estimator.is_some() {
+        let search_budget = if placement_only {
+            budget
+        } else if has_layout_search && self.block_throughput_estimator.is_some() {
             let extra_to_throughput = self.block_analysis_extra_to_throughput && budget % 2 == 1;
             if budget % 2 == 1 {
                 self.block_analysis_extra_to_throughput = !self.block_analysis_extra_to_throughput;
@@ -270,7 +301,7 @@ impl Park {
                 }
             }
         }
-        if let Some(mut estimator) = self.block_throughput_estimator.take() {
+        if !placement_only && let Some(mut estimator) = self.block_throughput_estimator.take() {
             if let Some(result) = estimator.advance(budget - search_steps) {
                 let estimate = match result {
                     Ok(throughput) => (throughput, String::new()),

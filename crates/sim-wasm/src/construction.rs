@@ -3,6 +3,7 @@ use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
 use theme_park_sim::track::Bank;
 use theme_park_sim::track::ComfortableForceLimits;
+use theme_park_sim::track::Heartlining;
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -11,6 +12,7 @@ pub struct ConstructionPieceWire {
     id: &'static str,
     label: &'static str,
     group: &'static str,
+    heartlined: Option<bool>,
     heading: &'static str,
     slope: &'static str,
     bank: &'static str,
@@ -23,6 +25,7 @@ pub struct ConstructionElementWire {
     id: String,
     name: &'static str,
     piece_id: &'static str,
+    heartlined: Option<bool>,
     slope: &'static str,
     kind: &'static str,
     would_tunnel: bool,
@@ -228,6 +231,10 @@ fn element_representative(element: &ElementChoice) -> &Piece {
         })
         .or_else(|| element.geometry.first())
         .expect("an element choice contains at least one piece")
+}
+
+fn heartlined(heartlining: Option<Heartlining>) -> Option<bool> {
+    heartlining.map(|heartlining| heartlining == Heartlining::Heartlined)
 }
 
 fn slope_rank(slope: Slope) -> u8 {
@@ -603,6 +610,7 @@ impl WasmSimulation {
                         id: wire_pieceid(piece.id),
                         label: piece.name,
                         group: piece_group(&piece),
+                        heartlined: heartlined(piece.heartlining),
                         heading: wire_heading(piece.exit.heading),
                         slope: wire_slope(piece.exit.slope),
                         bank: wire_bank(piece.exit.bank),
@@ -634,6 +642,7 @@ impl WasmSimulation {
                             id: format!("element:{}", element.id),
                             name: element.name,
                             piece_id: wire_pieceid(representative.id),
+                            heartlined: heartlined(element.heartlining),
                             slope: wire_slope(representative.exit.slope),
                             kind: wire_piecekind(representative.kind),
                             would_tunnel: element.would_tunnel,
@@ -1661,6 +1670,22 @@ define_piece_id_wire_names!(
     RavenRollRightDown,
     LargeLoop,
     LargeLoopRight,
+    EjectorHill8x48,
+    EjectorHill12x64,
+    EjectorHill8x64,
+    EjectorHill12x80,
+    EjectorHill16x96,
+    FloaterHill4x48,
+    FloaterHill8x64,
+    FloaterHill12x80,
+    FloaterHill6x64,
+    FloaterHill12x96,
+    FloaterHill16x112,
+    SpeedHill4x64,
+    SpeedHill6x80,
+    WoodenEjectorHill6x48,
+    WoodenEjectorHill8x64,
+    WoodenEjectorHill16x80,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

@@ -65,6 +65,7 @@ export interface GameTest {
   replaySession(session: ReplaySession): Promise<void>;
   advanceTicks(count: number): Promise<void>;
   advanceBlockAnalysis(budget: number): Promise<void>;
+  advanceBlockPlacement(budget: number): Promise<void>;
   setCamera(camera: Camera): void;
   /** The cutaway window drawn in the last frame, in canvas pixels, while the underground view uses it. */
   cutaway(): Cutaway | null;
