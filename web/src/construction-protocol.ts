@@ -7,6 +7,7 @@ export type ConstructionAction =
   | { readonly type: "construction-start"; readonly x: number; readonly y: number; readonly z: number; readonly heading: number }
   | { readonly type: "construction-select"; readonly piece: string }
   | { readonly type: "construction-set-chain"; readonly enabled: boolean }
+  | { readonly type: "construction-set-launch-intensity"; readonly id: number; readonly targetSpeed: number }
   | { readonly type: "construction-append" }
   | { readonly type: "construction-undo" }
   | { readonly type: "construction-delete"; readonly id: number }

@@ -46,6 +46,22 @@ test.describe("day and night", () => {
     await expect(page.locator("canvas")).toHaveScreenshot("park-edge-night.png", { animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001 });
   });
 
+  test("surface lamps are hidden in the underground view at night", async ({ page }) => {
+    await startPaused(page);
+    await showDemoParkAt(page, 0.95);
+    await openTool(page, "Landscape");
+    const landscaping = page.getByRole("region", { name: "Landscaping" });
+    await landscaping.getByLabel("Underground cut level").fill("4");
+    await landscaping.locator("[data-underground-toggle]").click();
+    await expect(landscaping.locator("[data-underground-toggle]")).toHaveText("Show surface");
+    await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+    await expect(page.locator("canvas")).toHaveScreenshot("demo-park-underground-night.png", {
+      animations: "disabled",
+      threshold: 0.1,
+      maxDiffPixelRatio: 0.001,
+    });
+  });
+
   test("test mode holds noon until a test sets the time", async ({ page }) => {
     await startPaused(page);
     expect(await page.evaluate(() => window.gameTest.timeOfDay())).toBe(0.5);
@@ -66,6 +82,7 @@ test.describe("day and night", () => {
   });
 
   test("the Watch tool can scrub the day and change its speed @fast", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 750 });
     await startPaused(page);
     const scrub = page.getByRole("slider", { name: "Set the time of day" });
     await scrub.fill("1290");

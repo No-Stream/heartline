@@ -463,6 +463,7 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
     ];
     let allowed_models = models();
     for piece in catalog().iter().filter(|piece| {
+        // TASK-98 has not assigned TopHat a rated speed window yet.
         piece.id != TopHat
             && (piece.inversion.is_some()
                 || sixty_transitions.contains(&piece.id)

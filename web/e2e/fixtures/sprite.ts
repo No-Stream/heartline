@@ -38,7 +38,7 @@ window.spriteFixture = async (rotation) => {
     { id: "controlled-agent", sprite: "people/test", x: 0.5, y: 0.5, height: 0, view: guestViewForRotation(rotation), animation: "idle", frame: 0 },
   ] };
   const camera = { centerX: 0.5, centerY: 0.5, zoom: 3, rotation };
-  renderer.render(world, camera);
+  renderer.render({ world: world, camera: camera });
   const anchor = projectWorld(camera, canvas, { x: 0.5, y: 0.5, z: 0 });
   const visible = renderer.pick(anchor.x - 10, anchor.y - 4);
   const transparent = renderer.pick(anchor.x + 10, anchor.y - 4);

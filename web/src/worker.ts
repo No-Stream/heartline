@@ -11,6 +11,7 @@ import { pathPreviewMessage } from "./render/path-ghost";
 import { SessionRecorder } from "./session-recording";
 import { parseCoasterColors } from "./coaster-colors";
 import { parseTrainLayout, type TrainLayout } from "./train-layout";
+import { shouldInvalidateConstructionFinishSearch } from "./construction-finish-search";
 
 import { sendWorkerMessage, assertNever, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition } from "./protocol";
 import type { BlockReport } from "./construction-protocol";
@@ -18,8 +19,10 @@ import type { TestingReport } from "./coaster-testing";
 import type { GuestDetail } from "./guest-panel/protocol";
 
 const tickRate = 30;
+const finishSearchSliceMs = 4;
 let manualBlockAnalysis = false;
 let simulationPaused = false;
+let gamePaused = false;
 let gameSpeed = 1;
 const workerScope = self as unknown as {
   postMessage(message: WorkerMessage, transfer?: Transferable[]): void;
@@ -72,7 +75,7 @@ function wake(forceSnapshot = false): void {
   const result = advanceSimulation(clock, now - lastWakeup, gameSpeed);
   lastWakeup = now;
   clock = result.clock;
-  if (!simulationPaused) {
+  if (!simulationPaused && !gamePaused) {
     for (let tick = 0; tick < result.ticksToRun; tick += 1) tickSimulation();
   }
 
@@ -93,7 +96,7 @@ function wake(forceSnapshot = false): void {
   if (simulation.construction_active() && (message !== lastConstructionMessage || simulation.construction_block_report_json() !== lastBlockReport || constructionEconomy !== lastConstructionEconomy)) sendConstruction();
   if (selectedGuestId !== undefined && now - lastGuestDetailSentAt >= 500) sendGuestDetail();
   if (simulation.facilities_json() !== lastFacilitiesJson || String(simulation.facility_revenue()) !== lastFacilityRevenue) sendFacilities();
-  if (simulationPaused) return;
+  if (simulationPaused || gamePaused) return;
   setTimeout(wake, Math.max(0, clock.tickDurationMs - clock.accumulatorMs));
 }
 
@@ -150,7 +153,12 @@ function scheduleFinishSearch(): void {
     sendConstruction();
     const advance = (): void => {
       if (generation !== finishSearchGeneration) return;
-      if (simulation.construction_finish_search_advance()) {
+      const deadline = performance.now() + finishSearchSliceMs;
+      let complete = false;
+      do {
+        complete = simulation.construction_finish_search_advance();
+      } while (!complete && performance.now() < deadline);
+      if (complete) {
         finishSearchPending = false;
         sendConstruction();
         if (finishSearchAwaited) {
@@ -250,7 +258,7 @@ workerScope.addEventListener("message", (event) => {
       else sendWorkerMessage(workerScope, { type: "construction-finish-ready" });
       return;
     }
-    if (!["test-resume", "test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode", "construction-finish-preview", "construction-finish-confirm", "construction-finish-cancel"].includes(action.type)) {
+    if (shouldInvalidateConstructionFinishSearch(action)) {
       simulation.construction_finish_invalidate();
       scheduleFinishSearch();
     }
@@ -260,6 +268,7 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "test-resume") {
       if (!simulationPaused || !manualBlockAnalysis) throw new Error("Test resume requires a frozen worker with manual block analysis");
       simulationPaused = false;
+      gamePaused = false;
       manualBlockAnalysis = false;
       clock = createSimulationClock(tickRate, 4);
       lastWakeup = performance.now();
@@ -271,6 +280,13 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "set-speed") {
       if (!Number.isInteger(action.speed) || action.speed < 1 || action.speed > 16) throw new RangeError("Invalid game speed");
       gameSpeed = action.speed;
+      return;
+    }
+    if (action.type === "set-paused") {
+      gamePaused = action.paused;
+      lastWakeup = performance.now();
+      if (!gamePaused) clock = createSimulationClock(tickRate, 4);
+      wake(true);
       return;
     }
     if (action.type === "test-advance-block-analysis") {
@@ -400,6 +416,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-start": simulation.construction_start(action.x * 2, action.y * 2, action.z / 2, action.heading * 2); break;
         case "construction-select": simulation.construction_select(action.piece); break;
         case "construction-set-chain": simulation.construction_set_chain(action.enabled); break;
+        case "construction-set-launch-intensity": simulation.construction_set_launch_intensity(action.id, action.targetSpeed); break;
         case "construction-append": simulation.construction_append(); break;
         case "construction-undo": simulation.construction_undo(); break;
         case "construction-delete": simulation.construction_delete(action.id); break;

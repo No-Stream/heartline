@@ -79,6 +79,7 @@ pub struct WasmSimulation {
     construction_completion_available: Option<Completion>,
     construction_completion_search: Option<CompletionSearch>,
     construction_completion_checked: bool,
+    construction_completion_unavailable_reason: Option<&'static str>,
     construction_preview_supports_cache: Vec<f32>,
     construction_placed_supports_cache: Vec<f32>,
     recovered_station: Option<Piece>,
@@ -156,7 +157,8 @@ impl WasmSimulation {
     }
 
     fn facility_obstacles(&self) -> Vec<SupportObstacle> {
-        self.park
+        let mut obstacles: Vec<_> = self
+            .park
             .facilities
             .buildings()
             .iter()
@@ -175,7 +177,14 @@ impl WasmSimulation {
                     ),
                 }
             })
-            .collect()
+            .collect();
+        if let Some(coaster) = &self.park.demo_coaster {
+            obstacles.extend(track_support_obstacles(
+                coaster.circuit.pieces(),
+                &coaster.train_configuration,
+            ));
+        }
+        obstacles
     }
     fn select_compatible_piece(&mut self) {
         self.selected_element = None;
@@ -407,16 +416,25 @@ fn construction_error(error: theme_park_sim::track::construction::ConstructionEr
         ConstructionError::ChainNotAllowed => "No chain lift on this piece",
         ConstructionError::NoSupportRoute => "Supports cannot be placed here.",
         ConstructionError::InvalidIndex => "That track piece does not exist.",
+        ConstructionError::InvalidLaunchIntensity => {
+            "Launch speed must be within the limits for this launch section."
+        }
         ConstructionError::NotClosed => "Close the circuit first.",
         ConstructionError::InvalidCircuit => "The track must connect back to its station.",
         ConstructionError::Clearance(ClearanceCollision::Terrain) => {
             "The train would collide with terrain."
         }
+        ConstructionError::Clearance(ClearanceCollision::TerrainDepth) => {
+            "The track would go below the minimum terrain depth."
+        }
+        ConstructionError::Clearance(ClearanceCollision::Water) => {
+            "Track cannot tunnel through water."
+        }
         ConstructionError::Clearance(ClearanceCollision::Path) => {
             "The train would collide with a path."
         }
         ConstructionError::Clearance(ClearanceCollision::Scenery) => {
-            "The train would collide with scenery."
+            "The train would collide with scenery, a facility, or another ride."
         }
         ConstructionError::Clearance(ClearanceCollision::Track) => {
             "The train would collide with track."

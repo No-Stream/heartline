@@ -32,14 +32,23 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
       await expect(selected, "turn left should offer the climbing turn").toHaveAttribute("data-piece", piece);
     } else if (piece === "GentleUpToLevel") {
       await selectWithKeyboard("GentleUp");
+      await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Gentle up 27°");
       await page.keyboard.press("s");
       await expect(selected, "slope down should select the level-out piece").toHaveAttribute("data-piece", piece);
+      await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");
+    } else if (piece === "GentleDownToLevel") {
+      await selectWithKeyboard("GentleDown");
+      await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Gentle down 27°");
+      await page.keyboard.press("w");
+      await expect(selected, "slope up should select the level-out piece").toHaveAttribute("data-piece", piece);
+      await expect(page.locator('[data-stepper-value="slope"]')).toHaveText("Level");
     } else {
       await selectWithKeyboard(piece);
     }
     await expect(page.getByRole("button", { name: "Place piece" }), `cannot place ${piece}`).toBeEnabled();
     await page.keyboard.press("b");
     await expect(page.locator("[data-track] li")).toHaveCount(++count);
+    await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   }
   await page.keyboard.press("c");
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
@@ -68,5 +77,19 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   await expect(testingPanel).toHaveScreenshot("coaster-testing-panel.png", { animations: "disabled" });
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
+  const launchPositions = page.getByRole("region", { name: "Launch positions" }).locator("li");
+  await expect(launchPositions).toHaveCount(2);
+  const launchCentres = (await launchPositions.allTextContents()).map((text) => {
+    const match = /(\d+(?:\.\d+)?) m from station/.exec(text);
+    if (!match) throw new Error(`Launch position has no distance: ${text}`);
+    return Number(match[1]);
+  });
+  const launchSpeeds = await page.evaluate((centres) => {
+    const samples = window.gameTest.testingReport()!.samples;
+    return centres.map((centre) => samples.reduce((closest, sample) =>
+      Math.abs(sample.distance - centre) < Math.abs(closest.distance - centre) ? sample : closest).speed);
+  }, launchCentres);
+  expect(launchSpeeds).toHaveLength(2);
+  for (const speed of launchSpeeds) expect(speed).toBeGreaterThan(2);
   expect(await page.evaluate(() => window.gameTest.crestBursts().length)).toBeGreaterThan(crestCount);
 });

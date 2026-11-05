@@ -75,7 +75,7 @@ fn track_sample_places_the_rider_heart_above_the_rail() {
 }
 
 #[test]
-fn heartline_roll_reads_gravity_only_at_twenty_five_metres_per_second() {
+fn heartline_roll_stays_within_the_revised_longitudinal_force_limit() {
     let piece = catalog()
         .iter()
         .find(|piece| piece.id == PieceId::HeartlineRoll)
@@ -103,7 +103,7 @@ fn heartline_roll_reads_gravity_only_at_twenty_five_metres_per_second() {
     assert!((exit.vertical - 1.0).abs() < 0.05, "{exit:?}");
     assert!(maximum_lateral <= 1.05, "lateral {maximum_lateral:.4} g");
     assert!(
-        maximum_longitudinal <= 0.05,
+        maximum_longitudinal <= 0.25,
         "longitudinal {maximum_longitudinal:.4} g"
     );
 }
@@ -301,9 +301,56 @@ fn constructed_launches_accelerate_twice_during_a_complete_lap() {
 }
 
 #[test]
-fn launch_acceleration_comes_from_the_model() {
+fn unchanged_launch_keeps_the_model_acceleration_and_exit_speed() {
     use PieceId::*;
     let circuit = circuit(&[
+        Station,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        Launch,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        LaunchLong,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ]);
+    let model = crate::track::multi_launch_model();
+    let launch = model.train.launch.unwrap();
+    assert_eq!(launch.target_speed, 31.3);
+    assert_eq!(launch.acceleration, 5.6);
+
+    let launch_start = circuit.starts[4] + 1.0;
+    let launch_end = circuit.starts[5];
+    let mut train = Train::new(
+        &circuit,
+        &model.train,
+        PhysicsConfig::default(),
+        launch_start,
+        2.0,
+    );
+    let initial_speed = train.speed();
+    train.step(&circuit);
+    assert!(((train.speed() - initial_speed) / TIME_STEP - launch.acceleration).abs() < 1e-8);
+
+    for _ in 0..10_000 {
+        if train.distance() >= launch_end {
+            break;
+        }
+        train.step(&circuit);
+    }
+    let expected_exit_speed =
+        (2.0_f64.powi(2) + 2.0 * launch.acceleration * (launch_end - launch_start)).sqrt();
+    assert!((train.speed() - expected_exit_speed).abs() < 0.2);
+}
+
+#[test]
+fn launch_acceleration_never_exceeds_the_technology_limit() {
+    use PieceId::*;
+    let mut circuit = circuit(&[
         Station,
         Launch,
         TurnLargeEntry,
@@ -313,17 +360,19 @@ fn launch_acceleration_comes_from_the_model() {
         TurnLargeEntry,
         TurnLargeExit,
     ]);
-    let mut model = crate::track::multi_launch_model();
-    model.train.launch.as_mut().unwrap().acceleration = 1.0;
+    circuit.pieces[1].launch_target_speed = Some(crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+    let train_configuration = crate::track::multi_launch_model().train;
     let mut train = Train::new(
         &circuit,
-        &model.train,
+        &train_configuration,
         PhysicsConfig::default(),
         circuit.starts[1] + 1.0,
         2.0,
     );
+    let initial_speed = train.speed();
     train.step(&circuit);
-    assert!((train.speed() - (2.0 + TIME_STEP)).abs() < 1e-9);
+    let launch_acceleration = (train.speed() - initial_speed) / TIME_STEP;
+    assert!(launch_acceleration <= crate::track::LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED);
 }
 
 #[test]

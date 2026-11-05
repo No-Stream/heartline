@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build, preview, type PreviewServer } from "vite";
 import { expect, test } from "@playwright/test";
-import { choosePiece, closeCircuit, openRide, placePiece, placeStation, startPark, testRide } from "./player/driver";
+import { choosePiece, closeCircuit, openRide, placePiece, placeStation, showBuilderTab, startPark, testRide } from "./player/driver";
 
 let server: PreviewServer;
 let outDir: string;
@@ -182,6 +182,7 @@ test("block boundaries display and dispatch in the selected units", async ({ pag
     } });
     fixture.setConstructionUnits("imperial");
   });
+  await showBuilderTab(page, "Operate");
   const input = page.getByLabel("Block 1 boundary in feet");
   await expect(input).toHaveValue("33");
   await input.fill("66");
@@ -257,6 +258,65 @@ test("the whole build loop runs from the keyboard with the panel focused", async
   await expect(page.getByRole("radio", { name: "Small left turn" })).toBeFocused();
   await page.keyboard.press("Enter");
   expect((await recorded(page)).slice(-2)).toEqual([{ type: "construction-select", piece: "TurnSmallStandalone" }, { type: "construction-append" }]);
+});
+
+test("the builder keeps every piece choice on the Build tab and settings on Colours and Operate @fast", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const tab = (name: string) => page.getByRole("tab", { name, exact: true });
+  const build = page.getByRole("tabpanel", { name: "Build" });
+  await expect(tab("Build")).toHaveAttribute("aria-selected", "true");
+  const choices = build.getByRole("region", { name: "Piece choices" });
+  for (const control of [
+    build.getByRole("group", { name: "Next piece turn" }),
+    build.getByRole("button", { name: "Chain lift", exact: true }),
+    build.getByRole("button", { name: "Place piece" }),
+    choices.getByRole("radiogroup", { name: "Next piece" }),
+    build.getByRole("button", { name: "Close circuit" }),
+    build.getByRole("button", { name: "Test coaster" }),
+    build.getByRole("button", { name: "Open coaster" }),
+  ]) await expect(control).toBeVisible();
+  // The named track elements share the piece choices region; the fixture model has none to list.
+  await expect(choices.locator("[data-elements]")).toBeAttached();
+  await expect(page.getByRole("radiogroup", { name: "Track colour" })).toBeHidden();
+  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toBeHidden();
+
+  // Arrow keys move between tabs and stay out of the game's pan shortcuts.
+  await tab("Build").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(tab("Colours")).toBeFocused();
+  await expect(page.getByRole("radiogroup", { name: "Track colour" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Place piece" })).toBeHidden();
+  await page.keyboard.press("ArrowRight");
+  await expect(tab("Operate")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("spinbutton", { name: "Coaster ticket price" })).toBeVisible();
+  await expect(page.locator("[data-block-panel-hint]")).toBeVisible();
+  await page.keyboard.press("ArrowRight");
+  await expect(tab("Build")).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(tab("Operate")).toBeFocused();
+  expect(await recorded(page)).toEqual([]);
+
+  // Build shortcuts keep working while another tab is shown.
+  await page.keyboard.press("b");
+  expect(await recorded(page)).toEqual([{ type: "construction-append" }]);
+
+  // A block picked in the world shows Operate, and a new build session starts on Build.
+  await showBuilderTab(page, "Colours");
+  await page.evaluate(() => {
+    const fixture = window as unknown as Window & { selectConstructionBlock(index: number | null): void };
+    fixture.setConstructionState({ canTest: true, blockReport: {
+      sections: [{ boundaryMetres: 10, brakeStartMetres: 8, brakePieceIndices: [], poweredHoldStartMetres: null, poweredHoldPieceIndices: [], editable: true, editableIndex: 0, reason: "", trackKind: "blockBrake" }],
+      trainCapacity: 2, capacitySearchComplete: true, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "manual", placementSearchComplete: true, reasons: [], notes: [], suggestions: [],
+    } });
+    fixture.selectConstructionBlock(0);
+  });
+  await expect(tab("Operate")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("region", { name: "Block sections" })).toBeVisible();
+  await expect(page.locator("[data-block-panel-hint]")).toBeHidden();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ active: false }));
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ active: true }));
+  await expect(tab("Build")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("button", { name: "Place piece" })).toBeVisible();
 });
 
 test("testing panel shows an all-clear for a report without notes", async ({ page }) => {

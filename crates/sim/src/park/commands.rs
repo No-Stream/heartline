@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
 
 use super::Park;
@@ -8,13 +8,13 @@ use crate::facilities::{
     validate_facility_path_access,
 };
 use crate::physics::Circuit;
-use crate::track::clearance::{ClearanceBox, ClearanceCollision, check_clearance};
+use crate::track::clearance::{ClearanceBox, ClearanceCollision, TunnelPlan, check_clearance};
 use crate::track::construction::{Construction, track_support_obstacles};
 use crate::track::supports::SupportObstacle;
 use crate::track::{Piece, PieceId, TrainConfiguration, hybrid_model};
 use crate::world::{
-    Direction, PathBuildError, PathKind, PathPreviewTile, Position, Scenery, SceneryPlacementError,
-    TerrainCommand, TerrainEditError, TerrainEditResult, TerrainTile, World,
+    CellEditError, Direction, Ground, PathBuildError, PathKind, PathPreviewTile, Position, Scenery,
+    SceneryPlacementError, TerrainCommand, TerrainEditError, TerrainEditResult, TerrainTile, World,
 };
 
 #[cfg(test)]
@@ -45,6 +45,26 @@ impl Display for ParkCommandError {
 }
 
 impl std::error::Error for ParkCommandError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TunnelCarveError {
+    InvalidPlan,
+    PathObstructed,
+    SceneryUnsupported,
+}
+
+impl Display for TunnelCarveError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidPlan => "The tunnel plan is no longer valid.",
+            Self::PathObstructed => "The tunnel would cut through a path.",
+            Self::SceneryUnsupported => "The tunnel would undermine scenery.",
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl std::error::Error for TunnelCarveError {}
 
 impl Park {
     pub fn place_facility(
@@ -253,8 +273,160 @@ impl Park {
             .apply_terrain(command)
             .expect("validated terrain command remains valid");
         assert_eq!(result, candidate_result, "terrain preflight result changed");
+        self.note_manual_tunnel_edit(command);
         self.support_render_cache.clear();
         Ok(result)
+    }
+
+    pub fn construction_tunnel_generation(&self) -> u64 {
+        self.construction_tunnel_generation
+    }
+
+    pub fn next_construction_tunnel_generation(&self) -> u64 {
+        self.construction_tunnel_generation
+            .checked_add(1)
+            .expect("construction tunnel generation overflow")
+    }
+
+    pub fn carve_for_construction(
+        &mut self,
+        plans: &[(usize, TunnelPlan)],
+    ) -> Result<(), TunnelCarveError> {
+        self.carve_for_construction_at(self.construction_tunnel_generation, plans)
+    }
+
+    pub fn carve_for_construction_at(
+        &mut self,
+        generation: u64,
+        plans: &[(usize, TunnelPlan)],
+    ) -> Result<(), TunnelCarveError> {
+        let carve_cells: std::collections::BTreeSet<_> = plans
+            .iter()
+            .flat_map(|(_, plan)| plan.carve_cells.iter().copied())
+            .collect();
+        let cells: Vec<_> = carve_cells
+            .iter()
+            .map(|cell| (cell.x, cell.y, cell.height))
+            .collect();
+        if !cells.is_empty() {
+            let mut candidate = self.world.clone();
+            let invalidated_paths = candidate.carve_cells(&cells).map_err(|error| match error {
+                CellEditError::InvalidCell => TunnelCarveError::InvalidPlan,
+                CellEditError::UnsupportedScenery => TunnelCarveError::SceneryUnsupported,
+            })?;
+            if !invalidated_paths.is_empty() {
+                return Err(TunnelCarveError::PathObstructed);
+            }
+            self.world.commit_candidate(candidate);
+        }
+        for (piece_id, plan) in plans {
+            let owner = super::TunnelOwner {
+                generation,
+                piece_id: *piece_id,
+            };
+            for cell in &plan.swept_cells {
+                if carve_cells.contains(cell) || self.automatic_tunnel_owners.contains_key(cell) {
+                    self.automatic_tunnel_owners
+                        .entry(*cell)
+                        .or_default()
+                        .insert(owner);
+                }
+            }
+        }
+        self.support_render_cache.clear();
+        Ok(())
+    }
+
+    pub fn activate_construction_tunnel_generation(&mut self, generation: u64) {
+        assert!(
+            generation >= self.construction_tunnel_generation,
+            "construction tunnel generations must increase"
+        );
+        self.construction_tunnel_generation = generation;
+        self.restore_tunnel_owners(|owner| owner.generation < generation);
+    }
+
+    pub fn restore_tunnel_piece(&mut self, piece_id: usize) {
+        let generation = self.construction_tunnel_generation;
+        self.restore_tunnel_owners(|owner| {
+            owner.generation == generation && owner.piece_id == piece_id
+        });
+    }
+
+    pub fn restore_tunnel_piece_at(&mut self, generation: u64, piece_id: usize) {
+        self.restore_tunnel_owners(|owner| {
+            owner.generation == generation && owner.piece_id == piece_id
+        });
+    }
+
+    fn restore_tunnel_owners(&mut self, mut remove_owner: impl FnMut(super::TunnelOwner) -> bool) {
+        let mut cells_to_restore = Vec::new();
+        let mut cells_without_owners = Vec::new();
+        for (cell, owners) in &mut self.automatic_tunnel_owners {
+            owners.retain(|owner| !remove_owner(*owner));
+            if owners.is_empty() {
+                cells_without_owners.push(*cell);
+                if !self.manual_tunnel_cells.contains(cell)
+                    && self.world.ground(cell.x, cell.y, cell.height) == Ground::Carved
+                {
+                    cells_to_restore.push(*cell);
+                }
+            }
+        }
+        for cell in cells_without_owners {
+            self.automatic_tunnel_owners.remove(&cell);
+        }
+        let cells: Vec<_> = cells_to_restore
+            .iter()
+            .map(|cell| (cell.x, cell.y, cell.height))
+            .collect();
+        if !cells.is_empty() {
+            let mut candidate = self.world.clone();
+            match candidate.fill_cells(&cells) {
+                Ok(invalidated_paths) if invalidated_paths.is_empty() => {
+                    self.world.commit_candidate(candidate);
+                }
+                Ok(_) | Err(CellEditError::UnsupportedScenery) => {
+                    self.manual_tunnel_cells.extend(cells_to_restore);
+                }
+                Err(CellEditError::InvalidCell) => {
+                    panic!("stored tunnel ownership contains an invalid terrain cell")
+                }
+            }
+        }
+        self.support_render_cache.clear();
+    }
+
+    fn note_manual_tunnel_edit(&mut self, command: TerrainCommand) {
+        let (area, bottom, top, carve) = match command {
+            TerrainCommand::Carve { area, bottom, top } => (area, bottom, top, true),
+            TerrainCommand::Fill { area, bottom, top } => (area, bottom, top, false),
+            _ => return,
+        };
+        let candidate_cells: BTreeSet<_> = self
+            .automatic_tunnel_owners
+            .keys()
+            .chain(self.manual_tunnel_cells.iter())
+            .copied()
+            .collect();
+        for cell in candidate_cells {
+            let in_edit = cell.x >= area.x
+                && cell.x < area.x + u16::from(area.size)
+                && cell.y >= area.y
+                && cell.y < area.y + u16::from(area.size)
+                && bottom <= cell.height
+                && cell.height < top;
+            if !in_edit {
+                continue;
+            }
+            if carve {
+                if self.automatic_tunnel_owners.contains_key(&cell) {
+                    self.manual_tunnel_cells.insert(cell);
+                }
+            } else {
+                self.manual_tunnel_cells.remove(&cell);
+            }
+        }
     }
 
     fn reject_terrain_that_blocks_track(

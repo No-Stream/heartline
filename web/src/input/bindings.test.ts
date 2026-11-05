@@ -14,6 +14,14 @@ function event(type: string, properties: Record<string, number | string | boolea
 }
 
 describe("input bindings", () => {
+  it("toggles pause with Space when the game surface owns focus", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    surface.dispatchEvent(event("keydown", { key: " ", repeat: false }));
+    surface.dispatchEvent(event("keydown", { key: " ", repeat: true }));
+    expect(actions).toEqual([{ type: "pause-toggle" }]);
+  });
   it("toggles the chain with H once per key press", () => {
     const surface = new Surface();
     const actions: InputAction[] = [];
@@ -98,6 +106,15 @@ describe("input bindings", () => {
     bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
     surface.dispatchEvent(event("keydown", { key: "u", repeat: false }));
     expect(actions).toEqual([{ type: "underground-view-toggle" }]);
+  });
+
+  it("toggles sound mute with M once per key press", () => {
+    const surface = new Surface();
+    const actions: InputAction[] = [];
+    bindInput(surface as unknown as HTMLCanvasElement, (action) => actions.push(action));
+    surface.dispatchEvent(event("keydown", { key: "m", repeat: false }));
+    surface.dispatchEvent(event("keydown", { key: "M", repeat: true }));
+    expect(actions).toEqual([{ type: "sound-mute-toggle" }]);
   });
 
   it("reports pointer movement and exit through the action layer", () => {

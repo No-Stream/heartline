@@ -17,6 +17,7 @@ export type WorkerAction =
   | { type: "export-session"; requestId: number }
   | { type: "construction-finish-await" } | { type: "test-resume" } | { type: "guest-detail-close" }
   | { type: "set-speed"; speed: number }
+  | { type: "set-paused"; paused: boolean }
   | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | FacilityAction
   | { type: "guest-detail-request"; guestId: string }
   | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number }

@@ -1,5 +1,6 @@
+import { projectVertex } from "../projection";
 import { BRIDGE_LAYOUTS } from "../../bridge-layouts";
-import { projectWorld, type Camera, type Viewport } from "../../camera";
+import type { Camera, Viewport } from "../../camera";
 import { COASTER_COLORS, RUNNING_RAIL_HEX, type CoasterColorScheme } from "../../coaster-colors";
 import type { Atlas, Triangle, Vertex } from "../scene";
 
@@ -110,10 +111,8 @@ export function createQuadBuilder(camera: Camera, viewport: Viewport, ink: strin
     });
   };
   const inkColor = color(ink);
-  const depthAxis = ([[1,1], [1,-1], [-1,-1], [-1,1]] as const)[camera.rotation];
   const project = (point: Vec): Vertex => {
-    const screen = projectWorld(camera, viewport, { x: point[0], y: point[1], z: point[2] });
-    return { x: screen.x, y: screen.y, depth: point[0]*depthAxis[0] + point[1]*depthAxis[1] + point[2], height: point[2]*4, u: 0, v: 0 };
+    return projectVertex(camera, viewport, { x: point[0], y: point[1], z: point[2] });
   };
   /** The projection is affine, so a weighted blend of projected corners projects the same blend of world points. */
   const blend = (vertices: readonly Vertex[], weights: readonly number[]): Vertex => {

@@ -43,9 +43,16 @@ TurnLargeStandalone
 Straight
 Straight
 Straight
+Straight
+Straight
+TurnSmallStandalone
+OneTileStraight
+TurnLargeStandalone
+TurnLargeStandalone
+TurnSmallStandalone
 
 [Velocity Viper]
-LaunchLong
+LaunchShort
 +chain
 LevelToGentleUp
 TurnSmallStandalone
@@ -54,7 +61,7 @@ GentleUpToLevel
 LevelToGentleDown
 TurnSmallStandalone
 GentleDownToLevel
-LaunchLong
+LaunchShort
 Straight
 TurnSmallStandalone
 Straight
@@ -75,6 +82,7 @@ BankLeft
 BankedTurnStandalone
 UnbankLeft
 GentleDownToLevel
+SteelLoop
 TightTwisterLeft
 Straight
 Straight
@@ -83,3 +91,6 @@ TurnLargeStandalone
 TurnSmallStandalone
 TurnSmallStandalone
 TightTwisterRight
+OffsetLeft
+OffsetLeft
+Straight

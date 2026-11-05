@@ -1,4 +1,5 @@
-import { projectWorld, type Camera, type Viewport } from "./camera";
+import { projectVertex } from "./render/projection";
+import type { Camera, Viewport } from "./camera";
 import type { GeometryQuad, Triangle, Vertex, WorldSprite } from "./render/scene";
 import type { TrackStyle } from "./render/track/geometry";
 
@@ -52,7 +53,7 @@ export function buildFacilityGeometry(facilities: readonly Facility[], camera: C
     if (facility.kind !== "carousel" && facility.kind !== "ferris_wheel") continue;
     const x = facility.x + 1, y = facility.y + 1, z = facility.z / 4;
     const turned = rideAngle(facility);
-    const project = ([px, py, pz]: Point): Vertex => ({ ...projectWorld(camera, viewport, { x: px, y: py, z: pz }), depth: [px + py, px - py, -px - py, -px + py][camera.rotation] + pz, height: pz * 4, u: 0, v: 0 });
+    const project = ([px, py, pz]: Point): Vertex => projectVertex(camera, viewport, { x: px, y: py, z: pz });
     const quad = (points: [Point, Point, Point, Point], fill: string) => quads.push({ vertices: points.map(project) as GeometryQuad["vertices"], color: color(fill), kind: "facility", id: `facility-${facility.id}`, tileX: facility.x, tileY: facility.y });
     if (facility.kind === "carousel") {
       const count = 12;

@@ -1,4 +1,4 @@
-import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick } from "./world-picking";
+import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick, facilityTileFromPicks, stationTileFromSurfacePick } from "./world-picking";
 import { createStationTool } from "./station-tool";
 import { createFacilityTool } from "./facility-tool";
 import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
@@ -18,6 +18,7 @@ import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from
 import { advanceDayPhase, NOON, START_PHASE } from "./render/daylight";
 import { CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
+import { fitGameBar } from "./game-bar-fit";
 import { trackStyle } from "./render/track/geometry";
 import type { TrainLayout } from "./train-layout";
 import type { CoasterColorScheme } from "./coaster-colors";
@@ -43,10 +44,14 @@ import { createToolbar, type Tool } from "./toolbar";
 import { createThemeToggle } from "./theme";
 import type { WorkerRecording } from "./session-recording";
 import { parseReplaySession, type ReplaySession } from "./session-replay";
+import { createGamePauseState } from "./game-pause";
 import { replaySessionIntoWorker } from "./session-replay-worker";
 import { constructionHeights } from "./height-markers";
 import { formatLength, type Units } from "./units";
 import { createUnitsSetting } from "./units-setting";
+import { createLiveAudio, renderOffline } from "./audio/engine";
+import { soundFrame } from "./audio/mapping";
+import { createSoundSetting } from "./sound-setting";
 
 declare const __GIT_HASH__: string;
 
@@ -185,12 +190,15 @@ const dock = document.querySelector<HTMLElement>("[data-dock]");
 const toolbarContainer = document.querySelector<HTMLElement>("[data-toolbar]");
 if (!dock || !toolbarContainer) throw new Error("Tool dock or toolbar is missing");
 const toolDock = dock;
+const tunnelPreview = document.querySelector<HTMLElement>("[data-tunnel-preview]")!;
 const toolPanels: Record<Exclude<Tool, "none">, HTMLElement> = { coaster: panelContainer, paths: pathContainer, landscape: landscapingContainer, facilities: facilityContainer, scenery: sceneryContainer };
 const toolbar = createToolbar(toolbarContainer, (tool) => dispatch({ type: "tool-select", tool }));
 let activeTool: Tool = "none";
 /** The time of day follows simulation ticks, so it pauses with the game. Test mode holds it at noon unless a test sets it. */
 let dayPhase = frozen ? NOON : START_PHASE;
 let daySpeed: DaySpeed = 1;
+const gamePause = createGamePauseState();
+let gameSpeed = 1;
 let dayTick: number | undefined;
 let demoCrests = createCrestTracker();
 let constructionCrests = createCrestTracker();
@@ -204,6 +212,10 @@ function setTimeOfDay(phase: number): void {
 const dayClockContainer = document.querySelector<HTMLElement>("[data-day-clock]");
 if (!dayClockContainer) throw new Error("Day clock is missing");
 const dayClock = createDayClock(dayClockContainer, dispatch);
+const gameBar = document.querySelector<HTMLElement>(".game-bar");
+if (!gameBar) throw new Error("Game bar is missing");
+fitGameBar(gameBar);
+dayClock.setPaused(gamePause.isPaused());
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
   const bounds = gameCanvas.getBoundingClientRect();
@@ -246,6 +258,7 @@ function openTool(tool: Tool, activatePanel = true): void {
   dayClock.setControlsVisible(tool === "none");
   toolDock.hidden = tool === "none";
   for (const [owner, element] of Object.entries(toolPanels)) element.hidden = owner !== tool;
+  tunnelPreview.hidden = tool !== "coaster" || tunnelPreview.textContent === "";
   toolDock.scrollTop = 0;
   // Resize now rather than on the next observer callback, so the world is projected onto the new canvas size at once.
   fitCanvas();
@@ -258,6 +271,7 @@ let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
 let renderedRiders: { id: string; left: number; right: number; top: number; bottom: number }[] = [];
 const gameTest: GameTest = {
+  audio: { state: () => audio.state(), unlock: () => audio.unlock(), activeVoices: () => audio.activeVoices(), renderOffline },
   get ready() { return renderRevision.ready(); },
   tickCount() { return current?.tickCount ?? 0; },
   frameLog() { return frameLogEnabled ? frameLogEntries.map((entry) => ({ ...entry })) : []; },
@@ -329,6 +343,10 @@ function applyUnits(units: Units): void {
 }
 const unitsSetting = createUnitsSetting(unitsContainer, dispatch);
 applyUnits(unitsSetting.units());
+const soundContainer = document.querySelector<HTMLElement>("[data-sound-setting]")!;
+const soundSetting = createSoundSetting(soundContainer, dispatch);
+const audio = createLiveAudio({ testMode: frozen, onLockChange: (locked) => soundSetting.setLocked(locked) });
+audio.setVolume(soundSetting.volume, soundSetting.muted);
 gameCanvas.addEventListener("webglcontextlost", () => { renderRevision.invalidate(); });
 gameCanvas.addEventListener("webglcontextrestored", () => { renderRevision.invalidate(); });
 toolbar.setActive(activeTool);
@@ -394,8 +412,14 @@ function dispatch(action: InputAction): void {
     sendWorkerAction(worker, { type: "export-session", requestId });
   } else if (action.type === "game-speed-cycle") {
     const speed = dayClock.cycleGameSpeed();
+    gameSpeed = speed;
     renderClock.setSpeed(speed);
     sendWorkerAction(worker, { type: "set-speed", speed });
+  } else if (action.type === "pause-toggle") {
+    const paused = gamePause.toggle();
+    renderClock.setPaused(paused);
+    dayClock.setPaused(paused);
+    sendWorkerAction(worker, { type: "set-paused", paused });
   } else if (action.type === "tool-select") {
     openTool(action.tool);
   } else if (action.type === "day-scrub") {
@@ -413,6 +437,12 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "units-set") {
     unitsSetting.setUnits(action.units);
     applyUnits(action.units);
+  } else if (action.type === "sound-mute-toggle") {
+    soundSetting.setMuted(!soundSetting.muted);
+    audio.setVolume(soundSetting.volume, soundSetting.muted);
+  } else if (action.type === "sound-volume") {
+    soundSetting.setVolume(action.volume);
+    audio.setVolume(soundSetting.volume, soundSetting.muted);
   } else if (action.type === "guest-select") {
     selectedGuestId = action.guestId;
     sendWorkerAction(worker, { type: "guest-detail-request", guestId: action.guestId });
@@ -503,15 +533,18 @@ function dispatch(action: InputAction): void {
   } else if (stationTool.state().active && (action.type === "hover" || action.type === "select")) {
     const position = action.position;
     const selection = position ? renderer.pick(position.x, position.y) : null;
-    const tile = selection?.kind === "terrain" || selection?.kind === "carved-floor" ? selection : null;
+    const surface = position ? renderer.pickSurface(position.x, position.y) : null;
+    const tile = stationTileFromSurfacePick(surface);
     const preserve = !!selection && "id" in selection && selection.id.startsWith("preview-");
     const pointer = { position, tile, preserve, project: (point: WorldPoint) => projectWorld(screenCamera(), viewport, point) };
     if (action.type === "hover") stationAdapter.pointerMove(pointer);
     else stationAdapter.click(pointer);
   } else if (facilityTool.state().mode !== "inactive" && (action.type === "hover" || action.type === "select")) {
     const position = action.position;
-    const selection = position ? (action.type === "hover" ? renderer.pickSurface(position.x, position.y) : renderer.pick(position.x, position.y)) : null;
-    const tile = selection?.kind === "terrain" || selection?.kind === "carved-floor" ? selection : null;
+    const selection = position ? renderer.pick(position.x, position.y) : null;
+    const surface = position ? renderer.pickSurface(position.x, position.y) : null;
+    const facility = position ? renderer.pickFacilityPlacement(position.x, position.y) : null;
+    const tile = facilityTileFromPicks(surface, facility);
     const pointer = { tile, id: facilityIdFromPick(selection) };
     if (action.type === "hover") {
       if (facilityTool.state().mode === "place" && !tile) facilityPanel.previewDirection(undefined);
@@ -635,6 +668,10 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     followedPreview = previewKey;
     construction = next;
     panel.update(next);
+    const selectedWouldTunnel = next.pieces.some((piece) => piece.id === next.selected && piece.wouldTunnel)
+      || next.elements.some((element) => element.id === next.selected && element.wouldTunnel);
+    tunnelPreview.textContent = selectedWouldTunnel ? "This selection will tunnel through terrain." : "";
+    tunnelPreview.hidden = activeTool !== "coaster" || !selectedWouldTunnel;
     if (selectedBlock !== null && !next.blockReport.sections.some((section) => section.editableIndex === selectedBlock)) selectBlock(null);
     gameCanvas.dataset.blockBoundaries = String(next.blockReport.sections.length);
     const reportJson = JSON.stringify(next.testingReport ?? null);
@@ -752,9 +789,10 @@ function frame(now: number): void {
     renderTick: renderFrame?.tick,
     setGuestAnchor: (point) => guestPanel.setAnchor(point),
   });
+  audio.apply(soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts }));
   renderedGuests = scene.guests;
   renderedRiders = scene.riders;
-  renderer.render(scene.view, scene.camera, scene.waterFrame, scene.geometryPasses, scene.atmospherePass);
+  renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none" });
   const trainPoses = scene.view.trainPoses;
   if (frameLogEnabled && renderCurrent && trainPoses.length >= 11) {
     frameLogEntries.push({

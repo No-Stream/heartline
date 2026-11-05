@@ -6,7 +6,7 @@ function shape(id: string, turn: number, kind = "Track"): PieceShape {
   return { id, name: id, kind, turn, entrySlope: "Level", exitSlope: "Level", entryBank: "Level", exitBank: "Level", points: [] };
 }
 function piece(id: string, group: string, slope = "Level", bank = "Level", refusal = ""): ConstructionPiece {
-  return { id, label: id, group, heading: "East", slope, bank, refusal };
+  return { id, label: id, group, heading: "East", slope, bank, refusal, wouldTunnel: false };
 }
 
 const shapes = new Map([

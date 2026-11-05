@@ -22,7 +22,7 @@ window.renderGuestFixture = async () => {
   const renderer = createWorldRenderer(canvas, atlas, images);
   const guests = buildPeople(undefined, { guestIds: simulation.guest_ids(), guests: simulation.snapshot(), appearances: simulation.guest_appearances() }, 1, 0, atlas);
   const camera = { centerX: 231, centerY: 256.5, zoom: 1.5, rotation: 0 as const };
-  renderer.render({ ...captureWorldSnapshot(simulation).message, sprites: guests }, camera);
+  renderer.render({ world: { ...captureWorldSnapshot(simulation).message, sprites: guests }, camera: camera });
   renderer.waitForGpu();
   return guests.filter((guest) => {
     const frame = atlas.frames[`${guest.sprite}/${guest.view}/${guest.animation}/${guest.frame}`];

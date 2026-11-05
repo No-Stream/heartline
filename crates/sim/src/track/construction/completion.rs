@@ -1,9 +1,14 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "completion_tests.rs"]
+mod tests;
+
 const MAX_DISTANCE_METRES: f64 = 80.0;
 const MAX_PIECES: usize = 5;
 const BEAM_WIDTH: usize = 12;
 const CANDIDATES_PER_NODE: usize = 16;
+const MIN_PIECE_SCORE: f64 = 1.0;
 
 #[derive(Clone, Debug)]
 pub struct Completion {
@@ -90,13 +95,15 @@ impl Construction {
         {
             return None;
         }
+        let mut construction = self.copy_for_completion();
+        construction.set_chain(false);
         Some(CompletionSearch {
             target: self.start,
             construction_hash: self.state_hash(),
             original_length: self.pieces.len(),
             depth: 0,
             beam: vec![SearchNode {
-                construction: self.copy_for_completion(),
+                construction,
                 pieces: Vec::new(),
                 score: 0.0,
                 rank: 0.0,
@@ -132,7 +139,10 @@ impl Construction {
         if self.state_hash() != completion.construction_hash {
             return Err(ConstructionError::InvalidCircuit);
         }
-        let mut updated = self.append_sequence(&completion.pieces, world, obstacles)?;
+        let mut unchained = self.copy_for_completion();
+        unchained.set_chain(false);
+        let mut updated = unchained.append_sequence(&completion.pieces, world, obstacles)?;
+        updated.set_chain(self.chain);
         updated.close()?;
         *self = updated;
         Ok(())
@@ -166,11 +176,18 @@ impl CompletionSearch {
         loop {
             if let Some((piece, added_score)) = self.candidates.pop() {
                 let node = self.current.as_ref().expect("candidate has a node");
+                let score = node.score + added_score;
+                if self
+                    .best
+                    .as_ref()
+                    .is_some_and(|best| piece.exit != self.target || score >= best.score)
+                {
+                    continue;
+                }
                 let mut construction = node.construction.copy_for_completion();
                 if construction.append(piece.id, world, obstacles).is_ok() {
                     let mut pieces = node.pieces.clone();
                     pieces.push(piece.id);
-                    let score = node.score + added_score;
                     if construction.end() == self.target && construction.close().is_ok() {
                         if self.best.as_ref().is_none_or(|best| score < best.score) {
                             self.best = Some(Completion {
@@ -193,6 +210,15 @@ impl CompletionSearch {
                 return CompletionSearchProgress::Pending;
             }
             if let Some(node) = self.beam.pop() {
+                // Every added piece costs at least MIN_PIECE_SCORE, so this node cannot improve
+                // a completion already found at the same depth.
+                if self
+                    .best
+                    .as_ref()
+                    .is_some_and(|best| node.score + MIN_PIECE_SCORE >= best.score)
+                {
+                    continue;
+                }
                 let mut seen = HashSet::new();
                 let mut candidates: Vec<_> = templates()
                     .iter()
@@ -201,10 +227,12 @@ impl CompletionSearch {
                             return None;
                         }
                         let template = template_for(base.id, node.construction.end());
-                        let piece = node.construction.model_placeable(template).ok()?;
-                        if piece.kind != PieceKind::Track || !matches!(&piece.shape, Shape::Plain) {
+                        if template.kind != PieceKind::Track
+                            || !matches!(template.shape, Shape::Plain)
+                        {
                             return None;
                         }
+                        let piece = node.construction.model_placeable_geometry(template).ok()?;
                         let score = piece_score(&piece);
                         Some((piece, score))
                     })
@@ -273,7 +301,8 @@ fn heuristic(from: TrackState, target: TrackState) -> f64 {
 }
 
 fn piece_score(piece: &Piece) -> f64 {
-    1.0 + piece.length() * piece.maximum_curvature()
+    MIN_PIECE_SCORE
+        + piece.length() * piece.maximum_curvature()
         + piece.entry.slope.gradient().abs()
         + piece.exit.slope.gradient().abs()
         + (piece.exit.slope.gradient() - piece.entry.slope.gradient()).abs()

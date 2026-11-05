@@ -1,10 +1,10 @@
 ---
 id: TASK-76
 title: Prune unit tests that restate implementation
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-03 20:05'
-updated_date: '2026-11-04 13:09'
+updated_date: '2026-11-04 19:38'
 labels:
   - test
 dependencies: []

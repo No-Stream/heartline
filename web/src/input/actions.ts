@@ -35,12 +35,14 @@ export type InputAction =
   | { readonly type: "piece-group"; readonly group: string }
   | { readonly type: "delete-mode-toggle" }
   | { readonly type: "chain-toggle" }
-  | { readonly type: "game-speed-cycle" | "session-export" }
+  | { readonly type: "game-speed-cycle" | "pause-toggle" | "session-export" }
   | { readonly type: "day-scrub"; readonly phase: number }
   | { readonly type: "day-speed-set"; readonly speed: DaySpeed }
   | { readonly type: "testing-metric-set"; readonly metric: TestingMetric | null }
   | { readonly type: "theme-set"; readonly theme: Theme }
   | { readonly type: "units-set"; readonly units: Units }
+  | { readonly type: "sound-mute-toggle" }
+  | { readonly type: "sound-volume"; readonly volume: number }
   | { readonly type: "guest-select"; readonly guestId: string }
   | { readonly type: "guest-close" }
   | { readonly type: "landscaping-activate"; readonly selection: LandscapingSelection }

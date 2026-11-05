@@ -84,6 +84,9 @@ const noGeometry = new Float32Array();
 
 /** Assemble the world view and every render pass from the state available at the start of a frame. */
 export function composeScene(input: ComposeSceneInput): SceneComposition {
+  const previewWouldTunnel = input.construction?.pieces.find((piece) => piece.id === input.construction?.selected)?.wouldTunnel
+    ?? input.construction?.elements.find((element) => element.id === input.construction?.selected)?.wouldTunnel
+    ?? false;
   const occupants = input.current ? riderAppearances(input.current, input.current.constructionRiders, input.atlas) : new Map();
   const ridingIds = new Set([...occupants.values()].map((occupant) => occupant.id));
   const people = input.current
@@ -151,7 +154,7 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
         : input.builtTrack(input.construction.placedRails, input.construction.placedTies, input.construction.placedSupports, input.construction.colors, camera, viewport)).map((quad) => ({ ...quad, id: `construction-${quad.id}` })) : []),
       ...(input.construction && input.activeTool === "coaster" ? buildBlockBoundaryQuads(input.construction.placedRails, input.construction.railDistances, input.construction.blockReport.sections, camera, viewport, trackStyle(atlas)) : []),
       ...buildGhostQuads(input.stationGhost(), noGeometry, noGeometry, true, camera, viewport, trackStyle(atlas)).map((quad) => ({ ...quad, color: [0.25, 0.55, 0.85, 0.55] as const })),
-      ...(input.construction ? buildGhostQuads(input.construction.previewRails, input.construction.previewTies, input.construction.previewSupports, input.construction.canAppend, camera, viewport, trackStyle(atlas)) : []),
+      ...(input.construction ? buildGhostQuads(input.construction.previewRails, input.construction.previewTies, input.construction.previewSupports, input.construction.canAppend, camera, viewport, trackStyle(atlas), previewWouldTunnel) : []),
       ...(input.world.coasterColors && input.world.coasterTrain ? buildTrainQuads(trainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.world.coasterColors), input.world.coasterTrain) : []),
       ...(input.construction?.colors && input.construction.trainLayout ? buildTrainQuads(constructionTrainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors), input.construction.trainLayout) : []),
       ...(input.world.coasterTrain ? buildRiderQuads(trainPoses, camera, viewport, atlas, scale, input.world.coasterTrain) : []),

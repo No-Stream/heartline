@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { projectWorld, type Camera, type Viewport } from "../camera";
 import type { Facility } from "../facilities";
-import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst, type CrestTracker } from "./effects";
+import { buildConfetti, buildFireworks, buildLights, buildShadows, buildSky, clipNightLightsAboveLevel, CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, parkBounds, type CrestBurst, type CrestTracker, type NightLights } from "./effects";
 import { BACKDROPS, lightingAt, sunAt } from "./daylight";
 import type { Atlas } from "./scene";
 
@@ -120,6 +120,37 @@ describe("night lights", () => {
     const lampCentre = projectWorld(camera, viewport, { x: 21, y: 21, z: 2 });
     expect(lamp.vertices.reduce((sum, vertex) => sum + vertex.x, 0) / 4).toBeCloseTo(lampCentre.x, 3);
     expect(lamp.vertices.reduce((sum, vertex) => sum + vertex.y, 0) / 4).toBeCloseTo(lampCentre.y, 3);
+  });
+
+  it("filters surface pools and glows at the underground cut while keeping underground lights", () => {
+    const quad = (height: number, id: string) => ({
+      vertices: Array.from({ length: 4 }, () => ({ x: 0, y: 0, depth: 0, height, u: 0, v: 0 })) as NightLights["pools"][number]["vertices"],
+      color: [1, 1, 1, 1] as const, kind: "pool", id, tileX: 0, tileY: 0, lightSourceHeight: height,
+    });
+    const lights: NightLights = {
+      bulbs: [
+        { ...quad(8, "surface-bulb"), kind: "light" },
+        { ...quad(2, "underground-bulb"), kind: "light" },
+      ],
+      pools: [quad(8, "surface"), quad(2, "underground")],
+      glows: [
+        { x: 0, y: 0, radius: 4, color: [1, 1, 1], intensity: 1, height: 8 },
+        { x: 0, y: 0, radius: 4, color: [1, 1, 1], intensity: 1, height: 2 },
+      ],
+    };
+    const filtered = clipNightLightsAboveLevel(lights, 3);
+    expect(filtered.bulbs.map(({ id }) => id)).toEqual(["underground-bulb"]);
+    expect(filtered.pools.map(({ id }) => id)).toEqual(["underground"]);
+    expect(filtered.glows.map(({ height }) => height)).toEqual([2]);
+  });
+
+  it("assigns track bulbs and halos their source height before underground clipping", () => {
+    const trackOnly = { ...input, facilities: [], sprites: [], rails: [rails(4)] };
+    const { bulbs, glows } = buildLights(trackOnly, night, 0, camera, viewport);
+    expect(bulbs.length).toBeGreaterThan(0);
+    expect(bulbs.every(({ vertices }) => vertices.every(({ height }) => height > 12))).toBe(true);
+    expect(glows.every(({ height }) => height > 12)).toBe(true);
+    expect(clipNightLightsAboveLevel({ bulbs, pools: [], glows }, 4)).toEqual({ bulbs: [], pools: [], glows: [] });
   });
 
   it("chase along the track over time", () => {

@@ -1,6 +1,6 @@
 use std::f64::consts::FRAC_PI_4;
 use std::ops::{Add, Div, Mul, Sub};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::Material;
 use super::roll::RollGeometry;
@@ -248,6 +248,8 @@ pub enum PieceId {
     BankedTurn,
     OffsetLeft,
     OffsetRight,
+    ShortOffsetLeft,
+    ShortOffsetRight,
     Loop,
     Corkscrew,
     HeartlineRoll,
@@ -366,11 +368,20 @@ pub struct RatedSpeeds {
     pub maximum_entry: f64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ArcLengthTable {
+    lengths: Vec<f64>,
+    speeds: Vec<f64>,
+    maximum_curvature: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct Piece {
     pub id: PieceId,
     pub name: &'static str,
     pub kind: PieceKind,
+    /// Per-piece launch target speed in metres per second, or `None` for model defaults.
+    pub launch_target_speed: Option<f64>,
     pub inversion: Option<Inversion>,
     pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
@@ -380,9 +391,7 @@ pub struct Piece {
     pub(crate) shape: Shape,
     pub(crate) tangent_scale: f64,
     pub(crate) mirrored: bool,
-    pub(crate) arc_lengths: Vec<f64>,
-    pub(crate) arc_speeds: Vec<f64>,
-    pub(crate) maximum_curvature: f64,
+    pub(super) arc_table: Arc<OnceLock<ArcLengthTable>>,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct TrackSample {
@@ -437,6 +446,10 @@ impl Piece {
         hash.write_u8(self.id as u8);
         hash.write_bytes(self.name.as_bytes());
         hash.write_u8(self.kind as u8);
+        if let Some(speed) = self.launch_target_speed {
+            hash.write_u8(1);
+            hash.write_f64(speed);
+        }
         hash.write_option(self.inversion, |hash, inversion| {
             hash.write_u8(inversion as u8);
         });
@@ -455,13 +468,14 @@ impl Piece {
         self.shape.hash_into(hash);
         hash.write_f64(self.tangent_scale);
         hash.write_bool(self.mirrored);
-        hash.write_f64(self.maximum_curvature);
-        hash.write_len(self.arc_lengths.len());
-        for &length in &self.arc_lengths {
+        let arc_table = self.arc_table();
+        hash.write_f64(arc_table.maximum_curvature);
+        hash.write_len(arc_table.lengths.len());
+        for &length in &arc_table.lengths {
             hash.write_f64(length);
         }
-        hash.write_len(self.arc_speeds.len());
-        for &speed in &self.arc_speeds {
+        hash.write_len(arc_table.speeds.len());
+        for &speed in &arc_table.speeds {
             hash.write_f64(speed);
         }
     }
@@ -636,39 +650,56 @@ impl Piece {
         }
         (p, d, dd)
     }
+    #[cfg(test)]
     pub(crate) fn rebuild_arc(&mut self) {
         self.rebuild_arc_with_steps(ARC_STEPS);
     }
+    #[cfg(test)]
     fn rebuild_arc_with_steps(&mut self, steps: usize) {
-        self.arc_lengths = Vec::with_capacity(steps + 1);
-        self.arc_speeds = Vec::with_capacity(steps + 1);
-        self.arc_lengths.push(0.0);
+        self.arc_table = Arc::new(OnceLock::from(self.calculate_arc_table(steps)));
+    }
+    pub(crate) fn clear_arc_table(&mut self) {
+        self.arc_table = Arc::new(OnceLock::new());
+    }
+    fn arc_table(&self) -> &ArcLengthTable {
+        self.arc_table
+            .get_or_init(|| self.calculate_arc_table(ARC_STEPS))
+    }
+    fn calculate_arc_table(&self, steps: usize) -> ArcLengthTable {
+        let mut lengths = Vec::with_capacity(steps + 1);
+        let mut speeds = Vec::with_capacity(steps + 1);
+        lengths.push(0.0);
         let (_, initial_velocity, initial_acceleration) = self.raw(0.0);
         let mut previous = initial_velocity.length();
         let mut maximum_curvature = curvature(initial_velocity, initial_acceleration);
-        self.arc_speeds.push(previous);
+        speeds.push(previous);
         let mut total = 0.0;
         for index in 1..=steps {
             let (_, velocity, acceleration) = self.raw(index as f64 / steps as f64);
             let speed = velocity.length();
-            self.arc_speeds.push(speed);
+            speeds.push(speed);
             total += (previous + speed) / (2.0 * steps as f64);
-            self.arc_lengths.push(total);
+            lengths.push(total);
             previous = speed;
             maximum_curvature = maximum_curvature.max(curvature(velocity, acceleration));
         }
-        self.maximum_curvature = if steps == ARC_STEPS {
+        let maximum_curvature = if steps == ARC_STEPS {
             maximum_curvature
         } else {
             self.calculate_maximum_curvature()
         };
+        ArcLengthTable {
+            lengths,
+            speeds,
+            maximum_curvature,
+        }
     }
     pub fn length(&self) -> f64 {
-        *self.arc_lengths.last().expect("arc table")
+        *self.arc_table().lengths.last().expect("arc table")
     }
     /// The maximum curvature sampled at the arc table's parameter points.
     pub fn maximum_curvature(&self) -> f64 {
-        self.maximum_curvature
+        self.arc_table().maximum_curvature
     }
     fn calculate_maximum_curvature(&self) -> f64 {
         (0..=ARC_STEPS)
@@ -686,17 +717,18 @@ impl Piece {
         if distance == self.length() {
             return 1.0;
         }
-        let steps = self.arc_lengths.len() - 1;
-        let index = self
-            .arc_lengths
+        let arc_table = self.arc_table();
+        let steps = arc_table.lengths.len() - 1;
+        let index = arc_table
+            .lengths
             .partition_point(|length| *length < distance)
             .min(steps);
         if index == 0 {
             0.0
         } else {
-            let low = self.arc_lengths[index - 1];
-            let start_speed = self.arc_speeds[index - 1];
-            let end_speed = self.arc_speeds[index];
+            let low = arc_table.lengths[index - 1];
+            let start_speed = arc_table.speeds[index - 1];
+            let end_speed = arc_table.speeds[index];
             let scaled_distance = (distance - low) * steps as f64;
             let discriminant =
                 start_speed.powi(2) + 2.0 * (end_speed - start_speed) * scaled_distance;
@@ -817,7 +849,7 @@ impl Piece {
                 / (self.exit.position() - self.entry.position()).length();
         }
         if rotation % 2 != 0 {
-            piece.rebuild_arc();
+            piece.clear_arc_table();
         }
         Some(piece)
     }
@@ -825,7 +857,7 @@ impl Piece {
 
 #[cfg(test)]
 mod shape_tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
 
     use super::{
         Bank, Heading, Heartlining, HorizontalCurvature, Piece, PieceId, PieceKind, Shape,
@@ -835,6 +867,21 @@ mod shape_tests {
     use crate::track::{Slope, TrackState, VerticalCurvature};
 
     #[test]
+    fn arc_length_table_is_built_on_first_geometry_query() {
+        let mut piece = crate::track::catalog::catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::HeartlineRoll)
+            .unwrap()
+            .clone();
+        piece.clear_arc_table();
+        assert!(piece.arc_table.get().is_none());
+
+        assert!(piece.length() > 0.0);
+
+        assert!(piece.arc_table.get().is_some());
+    }
+
+    #[test]
     fn arc_length_inversion_has_continuous_speed_at_table_boundaries() {
         let piece = crate::track::catalog::catalog()
             .iter()
@@ -842,7 +889,7 @@ mod shape_tests {
             .unwrap();
         let delta = 1e-5;
         for index in (1..super::ARC_STEPS).step_by(11) {
-            let distance = piece.arc_lengths[index];
+            let distance = piece.arc_table().lengths[index];
             let parameter = index as f64 / super::ARC_STEPS as f64;
             let expected = 1.0 / piece.raw(parameter).1.length();
             let before = (parameter - piece.parameter_at_distance(distance - delta)) / delta;
@@ -869,12 +916,15 @@ mod shape_tests {
         state.heading = Heading::NorthEast;
         let placed = piece.at(state).unwrap();
         for candidate in [piece, &cloned, &placed] {
-            assert_eq!(candidate.arc_speeds.len(), candidate.arc_lengths.len());
-            let steps = candidate.arc_speeds.len() - 1;
-            for (index, speed) in candidate.arc_speeds.iter().enumerate() {
-                assert_eq!(
-                    *speed,
-                    candidate.raw(index as f64 / steps as f64).1.length()
+            let arc_table = candidate.arc_table();
+            assert_eq!(arc_table.speeds.len(), arc_table.lengths.len());
+            let steps = arc_table.speeds.len() - 1;
+            for (index, speed) in arc_table.speeds.iter().enumerate() {
+                let raw_speed = candidate.raw(index as f64 / steps as f64).1.length();
+                // Debug and release builds round the cached and raw paths differently (about 4e-10 here).
+                assert!(
+                    (*speed - raw_speed).abs() < 1e-8,
+                    "boundary {index}: cached speed {speed} != raw speed {raw_speed}"
                 );
             }
         }
@@ -895,16 +945,13 @@ mod shape_tests {
             })
             .unwrap();
 
-        assert_eq!(placed.arc_lengths, piece.arc_lengths);
-        assert_eq!(placed.arc_speeds, piece.arc_speeds);
-        assert_eq!(placed.maximum_curvature, piece.maximum_curvature);
+        assert_eq!(placed.arc_table(), piece.arc_table());
         let expected_maximum_curvature = (0..=super::ARC_STEPS)
             .map(|index| {
                 let (_, velocity, acceleration) = piece.raw(index as f64 / super::ARC_STEPS as f64);
                 super::curvature(velocity, acceleration)
             })
             .fold(0.0, f64::max);
-        assert_eq!(piece.maximum_curvature, expected_maximum_curvature);
         assert_eq!(piece.maximum_curvature(), expected_maximum_curvature);
     }
 
@@ -936,10 +983,9 @@ mod shape_tests {
             })
             .fold(0.0, f64::max);
 
-        assert_ne!(placed.arc_lengths, piece.arc_lengths);
-        assert_eq!(placed.arc_lengths, expected.arc_lengths);
-        assert_eq!(placed.arc_speeds, expected.arc_speeds);
-        assert_eq!(placed.maximum_curvature, expected_maximum_curvature);
+        assert_ne!(placed.arc_table(), piece.arc_table());
+        assert_eq!(placed.arc_table(), expected.arc_table());
+        assert_eq!(placed.maximum_curvature(), expected_maximum_curvature);
     }
 
     #[test]
@@ -999,9 +1045,8 @@ mod shape_tests {
             shape: Shape::Plain,
             tangent_scale: 16.0,
             mirrored: false,
-            arc_lengths: Vec::new(),
-            arc_speeds: Vec::new(),
-            maximum_curvature: 0.0,
+            launch_target_speed: None,
+            arc_table: Arc::new(OnceLock::new()),
         };
 
         for heading in [

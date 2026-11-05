@@ -1742,6 +1742,56 @@ mod tests {
     }
 
     #[test]
+    fn stronger_hybrid_launches_raise_speed_and_rescue_a_rollback() {
+        let base_circuit = super::super::demo_circuit();
+        let train = hybrid_model().train;
+        let with_launch_speed = |speed: f64| {
+            let mut pieces = base_circuit.pieces().to_vec();
+            for piece in &mut pieces {
+                if piece.kind == PieceKind::Lift {
+                    piece.kind = PieceKind::Launch;
+                    piece.launch_target_speed = Some(speed);
+                }
+            }
+            crate::physics::Circuit::new(pieces).unwrap()
+        };
+        let low = simulate_reference_lap(
+            with_launch_speed(0.0),
+            &train,
+            PhysicsConfig::default(),
+            0.0,
+        );
+        let high = simulate_reference_lap(
+            with_launch_speed(35.0),
+            &train,
+            PhysicsConfig::default(),
+            0.0,
+        );
+
+        let low_peak_speed = low
+            .samples
+            .iter()
+            .map(|sample| sample.speed)
+            .fold(0.0, f64::max);
+        let high_peak_speed = high
+            .samples
+            .iter()
+            .map(|sample| sample.speed)
+            .fold(0.0, f64::max);
+        assert!(
+            high_peak_speed > low_peak_speed,
+            "low={low_peak_speed} high={high_peak_speed}"
+        );
+        assert!(!low.completed, "low speed notes={:?}", low.notes);
+        assert!(
+            low.notes.iter().any(|note| note.contains("rolled back")),
+            "low speed notes={:?}",
+            low.notes
+        );
+        assert!(high.completed, "high speed notes={:?}", high.notes);
+    }
+
+    #[test]
     fn simulated_stall_note_reports_the_forward_distance_before_recovery() {
         let circuit = circuit_from_ids(&[
             PieceId::Station,

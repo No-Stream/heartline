@@ -18,8 +18,10 @@ pub use curves::{
     PieceId, PieceKind, RatedSpeeds, Slope, TrackSample, TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
-    CoasterModel, ComfortableForceLimits, LaunchParameters, LaunchType, LiftRules, Material,
-    SupportStyle, TrainConfiguration, hybrid_model, multi_launch_model, wooden_twister_model,
+    CoasterModel, ComfortableForceLimits, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules,
+    Material, SupportStyle, TrainConfiguration, hybrid_model, multi_launch_model,
+    wooden_twister_model,
 };
 
 #[cfg(test)]

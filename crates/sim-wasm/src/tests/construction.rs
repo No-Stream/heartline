@@ -1,3 +1,7 @@
+use std::collections::{HashSet, VecDeque};
+
+use super::WasmSimulation;
+
 #[test]
 fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let simulation = super::WasmSimulation::new(42, 0, String::from("demo"));
@@ -39,7 +43,131 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     );
     assert_eq!(baseline.events_for_run(&[]), diagonal.events_for_run(&[]));
 }
-use super::WasmSimulation;
+
+const RETURN_PIECES: [theme_park_sim::track::PieceId; 9] = [
+    theme_park_sim::track::PieceId::Straight,
+    theme_park_sim::track::PieceId::HalfTileStraight,
+    theme_park_sim::track::PieceId::OneTileStraight,
+    theme_park_sim::track::PieceId::TurnSmallStandalone,
+    theme_park_sim::track::PieceId::TurnSmallRightStandalone,
+    theme_park_sim::track::PieceId::TurnLargeStandalone,
+    theme_park_sim::track::PieceId::TurnLargeRightStandalone,
+    theme_park_sim::track::PieceId::OffsetLeft,
+    theme_park_sim::track::PieceId::OffsetRight,
+];
+
+fn state_key(state: theme_park_sim::track::TrackState) -> (i32, i32, i32, u8, u8, u8, u8, u8) {
+    (
+        state.x,
+        state.y,
+        state.z,
+        state.heading as u8,
+        state.slope as u8,
+        state.bank as u8,
+        state.horizontal_curvature as u8,
+        state.vertical_curvature as u8,
+    )
+}
+
+fn return_path(
+    start: theme_park_sim::track::TrackState,
+    target: theme_park_sim::track::TrackState,
+    model: &theme_park_sim::track::CoasterModel,
+) -> Vec<theme_park_sim::track::PieceId> {
+    let templates = theme_park_sim::track::catalog();
+    let mut queue = VecDeque::from([(start, Vec::new())]);
+    let mut visited = HashSet::from([state_key(start)]);
+    while let Some((state, path)) = queue.pop_front() {
+        if state == target {
+            return path;
+        }
+        if path.len() >= 80 {
+            continue;
+        }
+        for id in RETURN_PIECES {
+            let template = templates.iter().find(|piece| piece.id == id).unwrap();
+            if !model.allows_piece(template) {
+                continue;
+            }
+            let Some(next_piece) = template.at(state) else {
+                continue;
+            };
+            let next_state = next_piece.exit;
+            if next_state.x.abs() > 500 || next_state.y.abs() > 500 || next_state.z.abs() > 300 {
+                continue;
+            }
+            if !visited.insert(state_key(next_state)) {
+                continue;
+            }
+            let mut next_path = path.clone();
+            next_path.push(id);
+            queue.push_back((next_state, next_path));
+        }
+    }
+    panic!("no bounded return path from {start:?} to {target:?}");
+}
+
+fn append_return_path(simulation: &mut WasmSimulation) {
+    let construction = simulation.construction.as_ref().unwrap();
+    let route = return_path(
+        construction.end(),
+        construction.start(),
+        construction.model(),
+    );
+    for id in route {
+        simulation.construction_set_chain(false);
+        simulation.construction_select(crate::construction::wire_pieceid(id));
+        simulation.construction_append();
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{id:?}: {}",
+            simulation.construction_message()
+        );
+    }
+    simulation.construction_close();
+    assert!(simulation.construction_message().is_empty());
+    assert!(simulation.construction.as_ref().unwrap().is_closed());
+}
+
+fn append_lift_drop_fixture(simulation: &mut WasmSimulation) {
+    simulation.construction_start(100, 100, 40, 0);
+    for (piece, chain) in [
+        ("LevelToGentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUpToLevel", true),
+        ("TurnLargeEntry", true),
+        ("TurnLargeExit", false),
+        ("OneTileStraight", false),
+        ("OffsetLeft", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
+        ("LevelToGentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDownToLevel", false),
+        ("Loop", false),
+        ("OffsetRight", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
+    ] {
+        simulation.construction_set_chain(chain);
+        simulation.construction_select(piece);
+        simulation.construction_append();
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{piece}: {}",
+            simulation.construction_message()
+        );
+    }
+    append_return_path(simulation);
+}
 
 #[test]
 fn wire_piece_names_round_trip_without_catalog_lookup() {
@@ -99,6 +227,207 @@ fn station_height_used_by_browser_can_start_construction() {
     assert!(simulation.construction_message().is_empty());
 }
 
+fn tunnel_construction(surface_height: i16, track_height: i32) -> WasmSimulation {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.world = theme_park_sim::world::World::new(
+        128,
+        128,
+        theme_park_sim::world::Surface {
+            corners: [surface_height; 4],
+            water: None,
+        },
+    );
+    simulation.park.construction = Some(theme_park_sim::track::construction::Construction::new(
+        super::TrackState {
+            x: 50,
+            y: 50,
+            z: track_height,
+            ..super::TrackState::origin()
+        },
+        super::hybrid_model(),
+    ));
+    simulation
+}
+
+#[test]
+fn browser_route_can_append_gentle_down_after_transition() {
+    let mut simulation = WasmSimulation::new(2027, 12, String::from("new"));
+    assert!(simulation.terrain_apply("flatten", vec![66, 63, 9, 0, 0, 20, 0, 0]));
+
+    simulation.construction_start(100, 100, 6, 0);
+    assert!(
+        simulation.construction_active(),
+        "{}",
+        simulation.construction_message()
+    );
+    simulation.construction_set_chain(true);
+    for piece in [
+        "LevelToGentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUpToLevel",
+        "Straight",
+    ] {
+        simulation.construction_select(piece);
+        assert!(
+            simulation.construction_can_append(),
+            "{piece}: {}",
+            simulation.construction_preview_reason()
+        );
+        simulation.construction_append();
+        for _ in 0..8 {
+            simulation.tick();
+        }
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{piece}: {}",
+            simulation.construction_message()
+        );
+    }
+    simulation.construction_set_chain(false);
+    for piece in [
+        "OneTileStraight",
+        "OneTileStraight",
+        "OffsetLeft",
+        "TurnLargeEntry",
+        "TurnLargeExit",
+        "LevelToGentleDown",
+    ] {
+        simulation.construction_select(piece);
+        assert!(
+            simulation.construction_can_append(),
+            "{piece}: {}",
+            simulation.construction_preview_reason()
+        );
+        simulation.construction_append();
+        for _ in 0..8 {
+            simulation.tick();
+        }
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{piece}: {}",
+            simulation.construction_message()
+        );
+    }
+
+    let transition_exit = simulation.construction.as_ref().unwrap().end();
+    assert_eq!(transition_exit.x, 180, "{transition_exit:?}");
+    assert_eq!(transition_exit.y, 133, "{transition_exit:?}");
+    assert_eq!(transition_exit.z, 28, "{transition_exit:?}");
+
+    let descending_choice = simulation
+        .construction
+        .as_ref()
+        .unwrap()
+        .choices(&simulation.world, &[])
+        .into_iter()
+        .find(|choice| choice.id == theme_park_sim::track::PieceId::GentleDown)
+        .unwrap();
+    assert_eq!(descending_choice.result, Ok(()), "{descending_choice:?}");
+    simulation.construction_select("GentleDown");
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_preview_reason()
+    );
+    simulation.construction_append();
+    for _ in 0..8 {
+        simulation.tick();
+    }
+    assert!(simulation.construction_message().is_empty());
+
+    let mut descents_will_tunnel = descending_choice.would_tunnel;
+    for (piece, piece_id) in [
+        ("GentleDown", theme_park_sim::track::PieceId::GentleDown),
+        ("GentleDown", theme_park_sim::track::PieceId::GentleDown),
+        ("GentleDown", theme_park_sim::track::PieceId::GentleDown),
+        ("GentleDown", theme_park_sim::track::PieceId::GentleDown),
+        (
+            "GentleDownToLevel",
+            theme_park_sim::track::PieceId::GentleDownToLevel,
+        ),
+    ] {
+        let choice = simulation
+            .construction
+            .as_ref()
+            .unwrap()
+            .choices(&simulation.world, &[])
+            .into_iter()
+            .find(|choice| choice.id == piece_id)
+            .unwrap();
+        assert_eq!(
+            choice.result,
+            Ok(()),
+            "{piece} from {:?}: {choice:?}",
+            simulation.construction.as_ref().unwrap().end(),
+        );
+        descents_will_tunnel |= choice.would_tunnel;
+
+        let terrain_before_preview = simulation.world_state_hash();
+        simulation.construction_select(piece);
+        assert_eq!(simulation.construction_selected(), piece);
+        assert_eq!(simulation.world_state_hash(), terrain_before_preview);
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{piece} preview supports: {}; choice={choice:?}",
+            simulation.construction_message(),
+        );
+        assert!(
+            simulation.construction_can_append(),
+            "{piece}: {}",
+            simulation.construction_preview_reason()
+        );
+        if piece == "GentleDownToLevel" {
+            let _ = simulation.construction_choices();
+            let _ = simulation.construction_elements();
+            let _ = simulation.construction_track();
+            let _ = simulation.construction_rails();
+            let _ = simulation.construction_ties();
+            let _ = simulation.construction_supports();
+            let _ = simulation.construction_placed_rails();
+            let _ = simulation.construction_rail_distances();
+            let _ = simulation.construction_block_candidates();
+            let _ = simulation.construction_placed_ties();
+            let _ = simulation.construction_placed_supports();
+            let _ = simulation.construction_block_report_json();
+            let _ = simulation.construction_coaster_price();
+            let _ = simulation.construction_coaster_income();
+            let _ = simulation.construction_colors();
+            let _ = simulation.construction_train_layout();
+            let _ = simulation.construction_finish_preview_active();
+            let _ = simulation.construction_can_close();
+            let _ = simulation.construction_can_finish();
+            let _ = simulation.construction_finish_reason();
+            let _ = simulation.construction_test_report_json();
+            let _ = simulation.construction_can_test();
+            let _ = simulation.construction_is_open();
+            let _ = simulation.construction_station_positions();
+            let _ = simulation.construction_train_count();
+        }
+        if choice.would_tunnel {
+            assert!(
+                !simulation.construction_supports().is_empty(),
+                "{piece} tunnel preview must include its support geometry"
+            );
+        }
+        let terrain_before_append = simulation.world_state_hash();
+        simulation.construction_append();
+        for _ in 0..8 {
+            simulation.tick();
+        }
+        if choice.would_tunnel {
+            assert_ne!(simulation.world_state_hash(), terrain_before_append);
+        }
+    }
+    assert!(
+        descents_will_tunnel,
+        "the downhill run should preview a tunnel"
+    );
+}
+
 #[test]
 fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
@@ -116,6 +445,8 @@ fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     let before = simulation.construction_track();
     simulation.construction_finish_search_start();
     while !simulation.construction_finish_search_advance() {}
+    simulation.construction_select("Straight");
+    assert!(simulation.construction_can_finish());
     simulation.construction_finish_preview();
     assert!(
         simulation.construction_finish_preview_active(),
@@ -128,6 +459,19 @@ fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     assert!(!simulation.construction_finish_preview_active());
     assert!(simulation.construction.as_ref().unwrap().is_closed());
     assert_ne!(simulation.construction_track(), before);
+}
+
+#[test]
+fn finish_search_reports_when_the_station_is_missing() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_delete(0);
+    simulation.construction_finish_search_start();
+    assert!(simulation.construction_finish_search_advance());
+    assert_eq!(
+        simulation.construction_finish_reason(),
+        "Place a station before finishing the coaster."
+    );
 }
 
 #[test]
@@ -168,6 +512,8 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
         (super::PieceId::Launch, "special"),
         (super::PieceId::TerrainRise, "special"),
         (super::PieceId::TerrainFall, "special"),
+        (super::PieceId::ShortOffsetLeft, "straight"),
+        (super::PieceId::ShortOffsetRight, "straight"),
     ];
 
     for (id, expected_group) in expected_groups {
@@ -411,6 +757,35 @@ fn model_selection_controls_new_construction_and_launch_choices() {
 }
 
 #[test]
+fn launch_intensity_changes_hash_and_replays_to_the_same_track_state() {
+    fn built_viper() -> WasmSimulation {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+        simulation.construction_select("model:velocity_viper");
+        simulation.construction_start(200, 200, 20, 0);
+        simulation.construction_select("LaunchShort");
+        simulation.construction_append();
+        assert!(simulation.construction_message().is_empty());
+        simulation
+    }
+
+    let mut simulation = built_viper();
+    let before = simulation.state_hash();
+    assert!(simulation.construction_set_launch_intensity(1, 12.0));
+    assert_ne!(simulation.state_hash(), before);
+    assert!(
+        simulation
+            .construction_track()
+            .contains("\"launchTargetSpeed\":12.0")
+    );
+    let replay_hash = simulation.state_hash();
+    assert!(!simulation.construction_set_launch_intensity(1, 15.4));
+
+    let mut replay = built_viper();
+    assert!(replay.construction_set_launch_intensity(1, 12.0));
+    assert_eq!(replay.state_hash(), replay_hash);
+}
+
+#[test]
 fn rail_distances_follow_placed_rail_intervals_across_pieces() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert!(simulation.construction_rail_distances().is_empty());
@@ -544,20 +919,20 @@ fn construction_commands_validate_and_preview_without_mutating_on_failure() {
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     assert!(!simulation.construction_placed_rails().is_empty());
     simulation.construction_select("GentleUp");
     simulation.construction_append();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":1,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     assert!(!simulation.construction_message().is_empty());
     simulation.construction_undo();
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
 }
 
@@ -573,15 +948,189 @@ fn deleting_middle_piece_preserves_and_identifies_retained_track() {
     simulation.construction_delete(1);
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"},{\"id\":2,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null},{\"id\":2,\"label\":\"Straight\",\"name\":\"Straight\",\"group\":\"straight\",\"slope\":\"Level\",\"kind\":\"Track\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
     let rails = simulation.construction_placed_rails();
     assert!(rails.chunks_exact(19).any(|rail| rail[0] == 2.0));
     simulation.construction_delete(2);
     assert_eq!(
         simulation.construction_track(),
-        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\"}]"
+        "[{\"id\":0,\"label\":\"Station\",\"name\":\"Station\",\"group\":\"special\",\"slope\":\"Level\",\"kind\":\"Station\",\"launchTargetSpeed\":null,\"launchMinimumSpeed\":null,\"launchMaximumSpeed\":null}]"
     );
+}
+
+#[test]
+fn placing_track_into_a_hill_carves_it_and_undo_restores_terrain() {
+    let mut simulation = tunnel_construction(20, 10);
+    simulation.construction_select("LevelToGentleDown");
+    let piece = simulation
+        .construction_preview()
+        .into_iter()
+        .next()
+        .expect("selected track has preview geometry");
+    let tunnel_plan = theme_park_sim::track::clearance::tunnel_plan(
+        &simulation.world,
+        &piece,
+        &simulation.construction.as_ref().unwrap().model().train,
+    )
+    .expect("selected piece has a tunnel plan");
+    let midpoint = piece.sample(piece.length() / 2.0).position;
+    assert!(
+        tunnel_plan.would_tunnel(),
+        "tunnel plan: {tunnel_plan:?}; midpoint: {midpoint:?}; tile surface: {:?}",
+        simulation
+            .world
+            .surface((midpoint.x / 4.0) as u16, (midpoint.y / 4.0) as u16)
+    );
+
+    let terrain_before_piece = simulation.world_state_hash();
+    let mut expected_world = simulation.world.clone();
+    for cell in &tunnel_plan.carve_cells {
+        expected_world.carve(cell.x, cell.y, cell.height, cell.height + 1);
+    }
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_preview_reason()
+    );
+    simulation.construction_append();
+
+    assert_eq!(simulation.construction.as_ref().unwrap().pieces().len(), 1);
+    assert_eq!(simulation.world_state_hash(), expected_world.state_hash());
+    assert_ne!(simulation.world_state_hash(), terrain_before_piece);
+    simulation.construction_undo();
+    assert!(
+        simulation
+            .construction
+            .as_ref()
+            .unwrap()
+            .pieces()
+            .is_empty()
+    );
+    assert_eq!(simulation.world_state_hash(), terrain_before_piece);
+}
+
+#[test]
+fn deleting_a_middle_piece_restores_only_cells_no_remaining_piece_needs() {
+    let mut simulation = tunnel_construction(20, 10);
+    let terrain_before_pieces = simulation.world.clone();
+    for (index, piece) in ["LevelToGentleDown", "GentleDown", "GentleDownToLevel"]
+        .into_iter()
+        .enumerate()
+    {
+        simulation.construction_select(piece);
+        simulation.construction_append();
+        assert_eq!(
+            simulation.construction.as_ref().unwrap().pieces().len(),
+            index + 1
+        );
+    }
+
+    simulation.construction_delete(1);
+
+    let construction = simulation.construction.as_ref().unwrap();
+    let retained: Vec<_> = construction
+        .piece_ids()
+        .iter()
+        .zip(construction.pieces())
+        .chain(
+            construction
+                .disconnected_segments()
+                .iter()
+                .flat_map(|segment| segment.ids.iter().zip(&segment.pieces)),
+        )
+        .map(|(_, piece)| piece)
+        .collect();
+    let mut expected_world = terrain_before_pieces.clone();
+    let train = construction.model().train.clone();
+    let cells: std::collections::BTreeSet<_> = retained
+        .iter()
+        .flat_map(|piece| {
+            theme_park_sim::track::clearance::tunnel_plan(&terrain_before_pieces, piece, &train)
+                .expect("retained piece has a tunnel plan")
+                .carve_cells
+        })
+        .collect();
+    for cell in cells {
+        expected_world.carve(cell.x, cell.y, cell.height, cell.height + 1);
+    }
+    assert_eq!(simulation.world_state_hash(), expected_world.state_hash());
+}
+
+#[test]
+fn undo_preserves_space_the_player_carved_by_hand() {
+    let mut simulation = tunnel_construction(20, 10);
+    simulation.construction_select("LevelToGentleDown");
+    let piece = simulation
+        .construction_preview()
+        .into_iter()
+        .next()
+        .expect("selected track has preview geometry");
+    let train = simulation
+        .construction
+        .as_ref()
+        .unwrap()
+        .model()
+        .train
+        .clone();
+    let manual_cell =
+        theme_park_sim::track::clearance::tunnel_plan(&simulation.world, &piece, &train)
+            .expect("track has a tunnel plan")
+            .carve_cells
+            .into_iter()
+            .next()
+            .expect("hill intersects the selected track");
+    assert!(simulation.terrain_apply(
+        "carve",
+        vec![
+            i32::from(manual_cell.x),
+            i32::from(manual_cell.y),
+            1,
+            0,
+            0,
+            0,
+            i32::from(manual_cell.height),
+            i32::from(manual_cell.height + 1),
+        ]
+    ));
+    let terrain_with_manual_cavern = simulation.world_state_hash();
+
+    simulation.construction_append();
+    assert_eq!(simulation.construction.as_ref().unwrap().pieces().len(), 1);
+    simulation.construction_undo();
+
+    assert_eq!(simulation.world_state_hash(), terrain_with_manual_cavern);
+}
+
+#[test]
+fn tunnelled_element_undo_restores_its_whole_sequence() {
+    let mut simulation = tunnel_construction(20, 10);
+    let terrain_before_element = simulation.world_state_hash();
+    simulation.construction_select("element:descend-gentle");
+    assert_eq!(simulation.world_state_hash(), terrain_before_element);
+    let element_geometry = simulation.construction_preview();
+    assert!(!element_geometry.is_empty());
+    assert!(
+        simulation.construction_message().is_empty(),
+        "element preview supports: {}",
+        simulation.construction_message()
+    );
+    assert!(!simulation.construction_supports().is_empty());
+
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_preview_reason()
+    );
+    simulation.construction_append();
+
+    assert_eq!(
+        simulation.construction.as_ref().unwrap().pieces().len(),
+        element_geometry.len()
+    );
+    assert_ne!(simulation.world_state_hash(), terrain_before_element);
+    simulation.construction_undo();
+    assert_eq!(simulation.world_state_hash(), terrain_before_element);
 }
 
 #[test]
@@ -914,47 +1463,7 @@ fn coaster_colours_replay_to_the_same_state() {
 #[test]
 fn lift_drop_circuit_completes_lap() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    simulation.construction_start(100, 100, 40, 0);
-    for (piece, chain) in [
-        ("LevelToGentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUpToLevel", true),
-        ("Straight", true),
-        ("OneTileStraight", false),
-        ("OneTileStraight", false),
-        ("OffsetLeft", false),
-        ("TurnLargeEntry", false),
-        ("TurnLargeExit", false),
-        ("LevelToGentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDownToLevel", false),
-        ("Loop", false),
-        ("OffsetRight", false),
-        ("TurnLargeEntry", false),
-        ("TurnLargeExit", false),
-        ("Straight", false),
-        ("OneTileStraight", false),
-        ("OneTileStraight", false),
-    ] {
-        simulation.construction_set_chain(chain);
-        simulation.construction_select(piece);
-        simulation.construction_append();
-        assert!(
-            simulation.construction_message().is_empty(),
-            "{piece}: {}",
-            simulation.construction_message()
-        );
-    }
-    assert!(simulation.construction_can_close());
-    simulation.construction_close();
+    append_lift_drop_fixture(&mut simulation);
     assert!(!simulation.park.support_render_cache.is_empty());
     simulation.construction_test();
     for _ in 0..9000 {
@@ -990,47 +1499,7 @@ fn lift_drop_circuit_completes_lap() {
 #[test]
 fn opening_after_a_completed_test_clears_the_report() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    simulation.construction_start(100, 100, 40, 0);
-    for (piece, chain) in [
-        ("LevelToGentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUpToLevel", true),
-        ("Straight", true),
-        ("OneTileStraight", false),
-        ("OneTileStraight", false),
-        ("OffsetLeft", false),
-        ("TurnLargeEntry", false),
-        ("TurnLargeExit", false),
-        ("LevelToGentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDownToLevel", false),
-        ("Loop", false),
-        ("OffsetRight", false),
-        ("TurnLargeEntry", false),
-        ("TurnLargeExit", false),
-        ("Straight", false),
-        ("OneTileStraight", false),
-        ("OneTileStraight", false),
-    ] {
-        simulation.construction_set_chain(chain);
-        simulation.construction_select(piece);
-        simulation.construction_append();
-        assert!(
-            simulation.construction_message().is_empty(),
-            "{piece}: {}",
-            simulation.construction_message()
-        );
-    }
-    assert!(simulation.construction_can_close());
-    simulation.construction_close();
+    append_lift_drop_fixture(&mut simulation);
     simulation.construction_test();
     for _ in 0..9000 {
         simulation.tick();

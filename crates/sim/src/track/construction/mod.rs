@@ -1,20 +1,21 @@
 use crate::physics::Circuit;
 use crate::state_hash::StateHasher;
 use crate::track::clearance::{
-    ClearanceBox, ClearanceCollision, ClearanceIndex, check_clearance_indexed,
-    check_reverse_track_clearance,
+    ClearanceBox, ClearanceCollision, ClearanceIndex, TunnelPlan, check_clearance_indexed,
+    check_reverse_track_clearance, tunnel_plan,
 };
 use crate::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle,
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterColors, CoasterModel, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState,
-    TrainConfiguration, Vec3, catalog,
+    CoasterColors, CoasterModel, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape,
+    SupportStyle, TrackState, TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 #[cfg(test)]
 mod tests;
@@ -38,6 +39,7 @@ pub enum ConstructionError {
     AmbiguousConnection,
     NoSupportRoute,
     InvalidIndex,
+    InvalidLaunchIntensity,
     NotClosed,
     InvalidCircuit,
 }
@@ -46,6 +48,13 @@ pub enum ConstructionError {
 pub struct PieceChoice {
     pub id: PieceId,
     pub result: Result<(), ConstructionError>,
+    pub would_tunnel: bool,
+}
+
+#[derive(Clone)]
+struct PieceValidation {
+    supports: Vec<Vec<Support>>,
+    tunnel_plan: TunnelPlan,
 }
 
 pub struct TrackSegment {
@@ -57,7 +66,7 @@ pub struct TrackSegment {
 struct AvailableChoice {
     piece: Piece,
     choice: PieceChoice,
-    supports: Option<Vec<Vec<Support>>>,
+    validation: Option<PieceValidation>,
 }
 
 #[derive(Clone)]
@@ -75,6 +84,7 @@ struct ValidationCache {
     world_revision: u64,
     obstacles: Vec<SupportObstacle>,
     existing: Vec<Piece>,
+    existing_tunnel_plans: Vec<TunnelPlan>,
     clearance_index: ClearanceIndex,
     track_obstacles: Vec<Vec<SupportObstacle>>,
     supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
@@ -151,6 +161,10 @@ impl Construction {
         &self.model
     }
 
+    pub fn next_piece_id(&self) -> usize {
+        self.next_id
+    }
+
     /// Stable fingerprint of the editable track state, excluding derived validation caches.
     pub fn state_hash(&self) -> u64 {
         let mut hash = StateHasher::new();
@@ -198,7 +212,8 @@ impl Construction {
         for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
             let template = template_for(base.id, self.end());
             let placed = self.model_placeable_geometry(template);
-            let (result, supports) = if self.closed {
+            let mut would_tunnel = false;
+            let (result, validation) = if self.closed {
                 (Err(ConstructionError::Closed), None)
             } else {
                 match placed.as_ref().map_err(|error| *error).and_then(|piece| {
@@ -216,10 +231,14 @@ impl Construction {
                             .iter()
                             .find(|previous| same_geometry(&previous.piece, piece))
                         {
-                            (previous.choice.result, previous.supports.clone())
+                            would_tunnel = previous.choice.would_tunnel;
+                            (previous.choice.result, previous.validation.clone())
                         } else {
                             match self.validate_piece(piece, world, obstacles) {
-                                Ok(supports) => (Ok(()), Some(supports)),
+                                Ok(validation) => {
+                                    would_tunnel = validation.tunnel_plan.would_tunnel();
+                                    (Ok(()), Some(validation))
+                                }
                                 Err(error) => (Err(error), None),
                             }
                         }
@@ -229,6 +248,7 @@ impl Construction {
             let choice = PieceChoice {
                 id: template.id,
                 result,
+                would_tunnel,
             };
             if let Ok(mut piece) = placed {
                 if self.chain && self.model.allows_chain(&piece) {
@@ -237,7 +257,7 @@ impl Construction {
                 available_choices.push(AvailableChoice {
                     piece,
                     choice,
-                    supports,
+                    validation,
                 });
             }
             choices.push(choice);
@@ -345,15 +365,15 @@ impl Construction {
                         .available_choices
                         .iter()
                         .find(|candidate| candidate.piece.id == id)
-                        .map(|candidate| (candidate.piece.clone(), candidate.supports.clone()));
+                        .map(|candidate| (candidate.piece.clone(), candidate.validation.clone()));
                     (result, candidate)
                 })
             })
         };
         if let Some((result, candidate)) = cached {
             result?;
-            if let Some((piece, Some(supports))) = candidate {
-                self.append_validated_piece(piece, supports);
+            if let Some((piece, Some(validation))) = candidate {
+                self.append_validated_piece(piece, validation);
                 return Ok(());
             }
             return Err(ConstructionError::Unavailable);
@@ -370,6 +390,31 @@ impl Construction {
         let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
         self.validate_piece(&piece, world, obstacles).map(|_| ())
+    }
+
+    pub fn tunnel_plan(
+        &self,
+        id: PieceId,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<TunnelPlan, ConstructionError> {
+        let template = template_for(id, self.end());
+        let piece = self.placeable(template)?;
+        self.validate_piece(&piece, world, obstacles)
+            .map(|validation| validation.tunnel_plan)
+    }
+
+    pub fn tunnel_plans_for_geometry(
+        &self,
+        pieces: &[Piece],
+        world: &World,
+    ) -> Result<Vec<TunnelPlan>, ConstructionError> {
+        pieces
+            .iter()
+            .map(|piece| {
+                tunnel_plan(world, piece, &self.model.train).map_err(ConstructionError::Clearance)
+            })
+            .collect()
     }
 
     fn placeable(&self, template: &Piece) -> Result<Piece, ConstructionError> {
@@ -403,12 +448,86 @@ impl Construction {
         Ok(piece)
     }
 
+    pub fn set_launch_intensity(
+        &mut self,
+        id: usize,
+        target_speed: f64,
+    ) -> Result<(), ConstructionError> {
+        let index = self
+            .ids
+            .iter()
+            .position(|piece_id| *piece_id == id)
+            .ok_or(ConstructionError::InvalidIndex)?;
+        if self.pieces[index].kind != PieceKind::Launch {
+            return Err(ConstructionError::ModelForbidden);
+        }
+        let bounds = self.launch_speed_bounds(id).expect("launch bounds exist");
+        if !target_speed.is_finite()
+            || target_speed < bounds.minimum
+            || target_speed > bounds.maximum
+        {
+            return Err(ConstructionError::InvalidLaunchIntensity);
+        }
+        self.pieces[index].launch_target_speed = Some(target_speed);
+        *self.validation_cache.get_mut() = None;
+        *self.choices_cache.get_mut() = None;
+        *self.element_choices_cache.get_mut() = None;
+        Ok(())
+    }
+
+    pub fn launch_speed_bounds(&self, id: usize) -> Option<LaunchSpeedBounds> {
+        let index = self.ids.iter().position(|piece_id| *piece_id == id)?;
+        let piece = &self.pieces[index];
+        if piece.kind != PieceKind::Launch {
+            return None;
+        }
+        let entry_speed = self.predicted_speed_at(index);
+        let maximum = (entry_speed.powi(2)
+            + 2.0 * LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED * piece.length())
+        .sqrt()
+        .min(LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+        Some(LaunchSpeedBounds {
+            minimum: (entry_speed + 3.0).min(maximum),
+            maximum,
+        })
+    }
+
+    fn predicted_speed_at(&self, piece_index: usize) -> f64 {
+        let mut speed: f64 = 0.0;
+        let mut previous_height = self.start.position().z;
+        for piece in &self.pieces[..piece_index] {
+            speed = (speed.powi(2) - 2.0 * 9.81 * (piece.exit.position().z - previous_height))
+                .max(0.0)
+                .sqrt();
+            match piece.kind {
+                PieceKind::Launch => {
+                    if let Some(target_speed) = piece.launch_target_speed {
+                        speed = target_speed;
+                    } else {
+                        let launch = self
+                            .model
+                            .train
+                            .launch
+                            .expect("launch pieces require model launch parameters");
+                        speed = (speed.powi(2) + 2.0 * launch.acceleration * piece.length())
+                            .sqrt()
+                            .min(launch.target_speed);
+                    }
+                }
+                PieceKind::Lift => speed = 3.0,
+                _ => {}
+            }
+            previous_height = piece.exit.position().z;
+        }
+        speed
+    }
+
     fn validate_piece(
         &self,
         piece: &Piece,
         world: &World,
         obstacles: &[SupportObstacle],
-    ) -> Result<Vec<Vec<Support>>, ConstructionError> {
+    ) -> Result<PieceValidation, ConstructionError> {
         let scenery: Vec<_> = obstacles
             .iter()
             .map(|obstacle| ClearanceBox {
@@ -429,6 +548,13 @@ impl Construction {
                 .chain(self.disconnected.iter().flat_map(|segment| &segment.pieces))
                 .cloned()
                 .collect();
+            let existing_tunnel_plans = existing
+                .iter()
+                .map(|piece| {
+                    tunnel_plan(world, piece, &self.model.train)
+                        .map_err(ConstructionError::Clearance)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let track_obstacles: Vec<_> = existing
                 .iter()
                 .map(|piece| {
@@ -442,23 +568,47 @@ impl Construction {
                 obstacles: obstacles.to_vec(),
                 clearance_index: ClearanceIndex::new(&existing),
                 existing,
+                existing_tunnel_plans,
                 track_obstacles,
                 supports,
             });
         }
         let cache = cache.as_mut().expect("validation cache initialized");
-        let clearance_index = &cache.clearance_index;
+        let mut all_pieces = cache.existing.clone();
+        all_pieces.push(piece.clone());
+        let piece_tunnel_plan =
+            tunnel_plan(world, piece, &self.model.train).map_err(ConstructionError::Clearance)?;
+        let mut carve_cells: BTreeSet<_> = cache
+            .existing_tunnel_plans
+            .iter()
+            .flat_map(|plan| plan.carve_cells.iter().copied())
+            .collect();
+        carve_cells.extend(piece_tunnel_plan.carve_cells.iter().copied());
+        let mut carved_world = None;
+        if !carve_cells.is_empty() {
+            let mut candidate_world = world.clone();
+            let cells = carve_cells
+                .iter()
+                .map(|cell| (cell.x, cell.y, cell.height))
+                .collect::<Vec<_>>();
+            let invalidated = candidate_world
+                .carve_cells(&cells)
+                .map_err(|_| ConstructionError::Clearance(ClearanceCollision::Scenery))?;
+            if !invalidated.is_empty() {
+                return Err(ConstructionError::Clearance(ClearanceCollision::Path));
+            }
+            carved_world = Some(candidate_world);
+        }
+        let candidate_world = carved_world.as_ref().unwrap_or(world);
         check_clearance_indexed(
-            world,
+            candidate_world,
             piece,
             &self.model.train,
-            clearance_index,
+            &cache.clearance_index,
             None,
             &scenery,
         )
         .map_err(ConstructionError::Clearance)?;
-        let mut all_pieces = cache.existing.clone();
-        all_pieces.push(piece.clone());
         let mut end = piece.exit;
         let mut connected = Vec::new();
         loop {
@@ -480,32 +630,20 @@ impl Construction {
             end = segment.pieces.last().expect("nonempty segment").exit;
         }
         if connected.is_empty() {
-            check_reverse_track_clearance(clearance_index, piece, &self.model.train)
+            check_reverse_track_clearance(&cache.clearance_index, piece, &self.model.train)
                 .map_err(ConstructionError::Clearance)?;
         } else {
             let index_for_recheck = ClearanceIndex::new(&all_pieces);
             for (index, retained_piece) in all_pieces.iter().enumerate() {
-                if index < cache.existing.len() {
-                    check_clearance_indexed(
-                        world,
-                        retained_piece,
-                        &self.model.train,
-                        &index_for_recheck,
-                        Some(index),
-                        &scenery,
-                    )
-                    .map_err(ConstructionError::Clearance)?;
-                } else {
-                    check_clearance_indexed(
-                        world,
-                        retained_piece,
-                        &self.model.train,
-                        clearance_index,
-                        None,
-                        &scenery,
-                    )
-                    .map_err(ConstructionError::Clearance)?;
-                }
+                check_clearance_indexed(
+                    candidate_world,
+                    retained_piece,
+                    &self.model.train,
+                    &index_for_recheck,
+                    Some(index),
+                    &scenery,
+                )
+                .map_err(ConstructionError::Clearance)?;
             }
         }
         let candidate_bounds =
@@ -519,6 +657,33 @@ impl Construction {
             } else {
                 generate_supports
             };
+            if !carve_cells.is_empty() {
+                let mut support_obstacles = obstacles.to_vec();
+                let region = support_search_region(supported_piece);
+                for (other_index, other_bounds) in cache.track_obstacles.iter().enumerate() {
+                    if index != other_index {
+                        support_obstacles.extend(
+                            other_bounds
+                                .iter()
+                                .copied()
+                                .filter(|bounds| region.overlaps(bounds)),
+                        );
+                    }
+                }
+                if index < cache.existing.len() {
+                    support_obstacles.extend(
+                        candidate_bounds
+                            .iter()
+                            .copied()
+                            .filter(|bounds| region.overlaps(bounds)),
+                    );
+                }
+                validated_supports.push(
+                    route_supports(supported_piece, candidate_world, &support_obstacles)
+                        .map_err(construction_support_error)?,
+                );
+                continue;
+            }
             if index < cache.existing.len() && cache.supports[index].is_none() {
                 let mut bounds = obstacles.to_vec();
                 let region = support_search_region(supported_piece);
@@ -577,7 +742,10 @@ impl Construction {
                 .map_err(construction_support_error)?;
             validated_supports.push(supports);
         }
-        Ok(validated_supports)
+        Ok(PieceValidation {
+            supports: validated_supports,
+            tunnel_plan: piece_tunnel_plan,
+        })
     }
 
     pub fn append(
@@ -588,25 +756,27 @@ impl Construction {
     ) -> Result<(), ConstructionError> {
         let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
-        let supports = self.validate_piece(&piece, world, obstacles)?;
-        self.append_validated_piece(piece, supports);
+        let validation = self.validate_piece(&piece, world, obstacles)?;
+        self.append_validated_piece(piece, validation);
         Ok(())
     }
 
-    fn append_validated_piece(&mut self, piece: Piece, supports: Vec<Vec<Support>>) {
+    fn append_validated_piece(&mut self, piece: Piece, validation: PieceValidation) {
         if self.disconnected.is_empty() {
             let cache = self
                 .validation_cache
                 .get_mut()
                 .as_mut()
                 .expect("validation cache initialized");
+            cache.existing_tunnel_plans.push(validation.tunnel_plan);
             cache.track_obstacles.push(track_support_obstacles(
                 std::slice::from_ref(&piece),
                 &self.model.train,
             ));
             cache.existing.push(piece.clone());
             cache.clearance_index.push(&piece);
-            cache.supports = supports
+            cache.supports = validation
+                .supports
                 .into_iter()
                 .map(|support| Some(Ok(support)))
                 .collect();
@@ -732,6 +902,10 @@ impl Construction {
             .iter()
             .map(|&index| cache.track_obstacles[index].clone())
             .collect();
+        cache.existing_tunnel_plans = indices
+            .iter()
+            .map(|&index| cache.existing_tunnel_plans[index].clone())
+            .collect();
         cache.supports = indices
             .iter()
             .map(|&index| cache.supports[index].clone())
@@ -759,7 +933,6 @@ fn same_geometry(first: &Piece, second: &Piece) -> bool {
         && first.shape == second.shape
         && first.tangent_scale == second.tangent_scale
         && first.mirrored == second.mirrored
-        && first.arc_lengths == second.arc_lengths
 }
 
 fn construction_support_error(error: SupportError) -> ConstructionError {

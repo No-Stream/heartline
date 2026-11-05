@@ -1,18 +1,21 @@
+#[cfg(test)]
 use std::f64::consts::PI;
 
 use crate::state_hash::StateHasher;
-use crate::track::curves::HEART_HEIGHT_METRES;
-use crate::track::curves::RatedSpeeds;
-
-const GRAVITY: f64 = 9.81;
+use crate::track::curves::{HEART_HEIGHT_METRES, RatedSpeeds};
+#[cfg(test)]
 const HEART_HEIGHT: f64 = HEART_HEIGHT_METRES;
 
+const GRAVITY: f64 = 9.81;
+
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 enum Schedule {
     Constant(f64),
     Loop { bottom: f64, top: f64, hold: f64 },
 }
 
+#[cfg(test)]
 impl Schedule {
     fn force(self, angle: f64) -> f64 {
         match self {
@@ -28,12 +31,14 @@ impl Schedule {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 enum Segment {
     Arc { angle: f64, schedule: Schedule },
     Insert(f64),
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub(crate) struct ProfileSpec {
     segments: Vec<Segment>,
@@ -45,6 +50,7 @@ pub(crate) struct ProfileSpec {
     name: &'static str,
 }
 
+#[cfg(test)]
 impl ProfileSpec {
     pub(crate) fn half_loop(maximum_entry: f64, bottom: f64, top: f64) -> Self {
         Self {
@@ -145,6 +151,37 @@ struct Point {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SolvedProfile {
     points: Vec<Point>,
+    cached_minimum_entry: Option<f64>,
+    cached_minimum_radius: Option<f64>,
+}
+
+include!("profiles.generated.rs");
+
+pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
+    let (_, minimum_entry, minimum_radius, length, values) = GENERATED_PROFILES
+        .iter()
+        .find(|(profile_name, _, _, _, _)| *profile_name == name)
+        .unwrap_or_else(|| panic!("missing generated profile {name}"));
+    let points = values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let curvature = value[3];
+            Point {
+                distance: *length * index as f64 / (values.len() - 1) as f64,
+                x: value[0],
+                z: value[1],
+                angle: value[2],
+                heart_curvature: curvature / (1.0 - HEART_HEIGHT_METRES * curvature),
+                curvature,
+            }
+        })
+        .collect();
+    SolvedProfile {
+        points,
+        cached_minimum_entry: Some(*minimum_entry),
+        cached_minimum_radius: Some(*minimum_radius),
+    }
 }
 
 impl SolvedProfile {
@@ -192,6 +229,9 @@ impl SolvedProfile {
         [p.x, p.z]
     }
     pub(crate) fn minimum_radius(&self) -> f64 {
+        if let Some(minimum_radius) = self.cached_minimum_radius {
+            return minimum_radius;
+        }
         self.points
             .iter()
             .map(|p| p.curvature.abs())
@@ -199,6 +239,9 @@ impl SolvedProfile {
             .recip()
     }
     pub(crate) fn minimum_entry(&self) -> f64 {
+        if let Some(minimum_entry) = self.cached_minimum_entry {
+            return minimum_entry;
+        }
         let max_mean_height_during_piece = self
             .points
             .iter()
@@ -284,6 +327,12 @@ impl SolvedProfile {
     }
 }
 
+#[cfg(test)]
+fn profile_curvature_from_derivatives(tangent: [f64; 2], second: [f64; 2]) -> f64 {
+    (tangent[0] * second[1] - tangent[1] * second[0]) / tangent[0].hypot(tangent[1]).powi(3)
+}
+
+#[cfg(test)]
 fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize) -> SolvedProfile {
     let mut points = vec![Point {
         distance: 0.0,
@@ -392,19 +441,36 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                     let heart_curvature =
                         GRAVITY * (schedule.force(angle) - angle.cos()) * end_taper
                             / end_speed_squared;
-                    points.push(Point {
+                    let point = Point {
                         distance,
                         x: heart_x + HEART_HEIGHT * angle.sin(),
                         z: heart_z - HEART_HEIGHT * angle.cos(),
                         angle,
                         heart_curvature,
                         curvature: heart_curvature / (1.0 + HEART_HEIGHT * heart_curvature),
-                    });
+                    };
+                    const MINIMUM_POINT_SPACING: f64 = 0.001_000_001;
+                    if distance - points.last().unwrap().distance < MINIMUM_POINT_SPACING {
+                        if index + 1 == steps {
+                            assert!(
+                                points.len() > 1,
+                                "arc is shorter than minimum point spacing"
+                            );
+                            points.pop();
+                        } else {
+                            continue;
+                        }
+                    }
+                    points.push(point);
                 }
             }
         }
     }
-    SolvedProfile { points }
+    SolvedProfile {
+        points,
+        cached_minimum_entry: None,
+        cached_minimum_radius: None,
+    }
 }
 
 fn train_mean_height(profile: &SolvedProfile, front_distance: f64, cars: usize) -> f64 {
@@ -415,6 +481,7 @@ fn train_mean_height(profile: &SolvedProfile, front_distance: f64, cars: usize) 
         / cars as f64
 }
 
+#[cfg(test)]
 fn minimum_mean_height(profile: &SolvedProfile, distance: f64, mirror: bool) -> f64 {
     let (six_car_means, twelve_car_means) = train_mean_heights(profile, distance, mirror);
     six_car_means
@@ -462,6 +529,7 @@ fn train_mean_heights(
     (six_car_means, twelve_car_means)
 }
 
+#[cfg(test)]
 fn worst_speed_squared(
     profile: &SolvedProfile,
     distance: f64,
@@ -487,12 +555,14 @@ fn rail_height(profile: &SolvedProfile, distance: f64, mirror: bool) -> f64 {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn solve(spec: &ProfileSpec) -> SolvedProfile {
     let profile = solve_with_steps(spec, 2048);
     assert_design_force_schedule(spec, &profile);
     profile
 }
 
+#[cfg(test)]
 fn solve_with_steps(spec: &ProfileSpec, steps: usize) -> SolvedProfile {
     let mut profile = integrate(spec, None, steps);
     for _ in 0..12 {
@@ -511,6 +581,7 @@ fn solve_with_steps(spec: &ProfileSpec, steps: usize) -> SolvedProfile {
     );
 }
 
+#[cfg(test)]
 fn assert_design_force_schedule(spec: &ProfileSpec, profile: &SolvedProfile) {
     for point in &profile.points {
         let Some(design_force) = schedule_force_at(spec, point.angle) else {
@@ -543,6 +614,7 @@ fn assert_design_force_schedule(spec: &ProfileSpec, profile: &SolvedProfile) {
     }
 }
 
+#[cfg(test)]
 fn schedule_force_at(spec: &ProfileSpec, angle: f64) -> Option<f64> {
     let mut segment_start_angle = spec.start_angle;
     for segment in &spec.segments {
@@ -563,10 +635,12 @@ fn schedule_force_at(spec: &ProfileSpec, angle: f64) -> Option<f64> {
     None
 }
 
+#[cfg(test)]
 pub(crate) fn snap_half_loop(spec: &ProfileSpec) -> SolvedProfile {
     snap_half_loop_with_hold_range(spec, 100.0_f64.to_radians(), 140.0_f64.to_radians())
 }
 
+#[cfg(test)]
 fn snap_half_loop_with_hold_range(
     spec: &ProfileSpec,
     mut low: f64,
@@ -656,6 +730,7 @@ fn snap_half_loop_with_hold_range(
     profile
 }
 
+#[cfg(test)]
 fn snap_half_loop_with_vertical_insert(spec: &ProfileSpec) -> SolvedProfile {
     let Segment::Arc { angle, schedule } = spec.segments[0] else {
         panic!("{}: half loop requires an arc", spec.name);
@@ -725,6 +800,7 @@ fn snap_half_loop_with_vertical_insert(spec: &ProfileSpec) -> SolvedProfile {
     profile
 }
 
+#[cfg(test)]
 pub(crate) fn snap_full_loop(spec: &ProfileSpec) -> SolvedProfile {
     let mut profile = solve(spec);
     let apex = *profile.points.last().unwrap();
@@ -753,6 +829,7 @@ pub(crate) fn snap_full_loop(spec: &ProfileSpec) -> SolvedProfile {
     profile
 }
 
+#[cfg(test)]
 pub(crate) fn snap_pull(spec: &ProfileSpec) -> SolvedProfile {
     let Segment::Arc { angle, .. } = spec.segments[0] else {
         panic!("pull requires one arc");
@@ -875,6 +952,208 @@ pub(crate) fn test_profile() -> SolvedProfile {
 mod tests {
     use super::*;
     use std::f64::consts::FRAC_PI_2;
+    use std::fmt::Write as _;
+
+    const GENERATED_PROFILE_POINTS: usize = 512;
+    const MAXIMUM_PROFILE_POSITION_ERROR_METRES: f64 = 0.001;
+    const MAXIMUM_PROFILE_CURVATURE_ERROR: f64 = 2e-4;
+
+    fn catalog_profiles() -> Vec<(&'static str, SolvedProfile)> {
+        vec![
+            (
+                "HalfLoop",
+                snap_half_loop(&ProfileSpec::half_loop(31.3, 4.2, 1.5)),
+            ),
+            (
+                "Loop",
+                snap_full_loop(&ProfileSpec::full_loop(27.5, 4.2, 1.5).named("Loop")),
+            ),
+            (
+                "LargeLoop",
+                snap_full_loop(&ProfileSpec::full_loop(31.3, 4.2, 1.5).named("LargeLoop")),
+            ),
+            (
+                "SteelLoop",
+                snap_full_loop(&ProfileSpec::full_loop(27.0, 3.7, 1.0).named("SteelLoop")),
+            ),
+            (
+                "SixtyPull",
+                snap_pull(&ProfileSpec::pull(0.0, PI / 3.0, 34.0, 4.2).named("LevelToSixtyUp")),
+            ),
+            (
+                "SixtyCrest",
+                snap_pull(
+                    &ProfileSpec::crest(PI / 3.0, 0.0, 30.0, -1.45)
+                        .with_taper_angle(0.1)
+                        .named("SixtyUpToLevel"),
+                ),
+            ),
+            (
+                "FifteenPull",
+                snap_pull(
+                    &ProfileSpec::pull(PI / 4.0, PI / 3.0, 34.0, 4.2).named("SteepToSixtyUp"),
+                ),
+            ),
+        ]
+    }
+
+    #[test]
+    fn catalog_profiles_have_no_intervals_shorter_than_one_millimetre() {
+        for (name, profile) in catalog_profiles() {
+            for points in profile.points.windows(2) {
+                let interval = points[1].distance - points[0].distance;
+                assert!(interval >= 0.001, "{name}: interval {interval}");
+            }
+        }
+    }
+
+    fn reference_curvature(profile: &SolvedProfile, distance: f64) -> f64 {
+        let index = profile
+            .points
+            .partition_point(|point| point.distance < distance)
+            .clamp(1, profile.points.len() - 1);
+        let start = profile.points[index - 1];
+        let end = profile.points[index];
+        let fraction = (distance - start.distance) / (end.distance - start.distance);
+        start.curvature + fraction * (end.curvature - start.curvature)
+    }
+
+    fn generated_source(profiles: &[(&str, SolvedProfile)]) -> String {
+        let mut output = String::from(
+            "// Generated by the solved_profiles_are_current test.\n#[allow(clippy::excessive_precision, clippy::approx_constant, clippy::type_complexity)]\npub(super) const GENERATED_PROFILES: &[(&str, f64, f64, f64, &[[f64; 4]])] = &[\n",
+        );
+        for (name, profile) in profiles {
+            writeln!(
+                output,
+                "    ({name:?}, {:.17}, {:.17}, {:.17}, &[",
+                profile.minimum_entry(),
+                profile.minimum_radius(),
+                profile.length()
+            )
+            .unwrap();
+            for index in 0..GENERATED_PROFILE_POINTS {
+                let distance =
+                    profile.length() * index as f64 / (GENERATED_PROFILE_POINTS - 1) as f64;
+                let (position, tangent, _) = profile.sample(distance);
+                let curvature = reference_curvature(profile, distance);
+                writeln!(
+                    output,
+                    "        [{:.17}, {:.17}, {:.17}, {:.17}],",
+                    position[0],
+                    position[1],
+                    tangent[1].atan2(tangent[0]),
+                    curvature
+                )
+                .unwrap();
+            }
+            output.push_str("    ]),\n");
+        }
+        output.push_str("];\n");
+        output
+    }
+
+    #[test]
+    fn solved_profiles_are_current() {
+        let profiles = catalog_profiles();
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/track/profiles.generated.rs"
+        );
+        if std::env::var_os("UPDATE_SOLVED_PROFILES").is_some() {
+            std::fs::write(path, generated_source(&profiles)).unwrap();
+            return;
+        }
+        for (name, expected) in profiles {
+            let (_, generated_minimum_entry, generated_minimum_radius, _, values) =
+                GENERATED_PROFILES
+                    .iter()
+                    .find(|(profile_name, _, _, _, _)| *profile_name == name)
+                    .unwrap();
+            assert_eq!(values.len(), GENERATED_PROFILE_POINTS, "{name} point count");
+            let actual = embedded_profile(name);
+            assert!(
+                (generated_minimum_entry - expected.minimum_entry()).abs() < 1e-12,
+                "{name} minimum entry"
+            );
+            assert!(
+                (generated_minimum_radius - expected.minimum_radius()).abs() < 1e-12,
+                "{name} minimum radius"
+            );
+            let mut maximum_position_error = 0.0_f64;
+            let mut maximum_curvature_error = 0.0_f64;
+            let mut check = |distance: f64| {
+                let (expected_position, _, _) = expected.sample(distance);
+                let (actual_position, tangent, second) = actual.sample(distance);
+                let position_error = (expected_position[0] - actual_position[0])
+                    .hypot(expected_position[1] - actual_position[1]);
+                let curvature_error = (reference_curvature(&expected, distance)
+                    - profile_curvature_from_derivatives(tangent, second))
+                .abs();
+                maximum_position_error = maximum_position_error.max(position_error);
+                maximum_curvature_error = maximum_curvature_error.max(curvature_error);
+                assert!(
+                    position_error <= MAXIMUM_PROFILE_POSITION_ERROR_METRES,
+                    "{name} position error {position_error} at {distance}"
+                );
+                assert!(
+                    curvature_error <= MAXIMUM_PROFILE_CURVATURE_ERROR,
+                    "{name} curvature error {curvature_error} at {distance}"
+                );
+            };
+            let length = expected.length();
+            for index in 0..=16_381 {
+                check(length * index as f64 / 16_381.0);
+            }
+            for point in expected.points.iter().chain(&actual.points) {
+                for offset in [-1e-9, 0.0, 1e-9] {
+                    check((point.distance + offset * length).clamp(0.0, length));
+                }
+            }
+            eprintln!(
+                "{name}: maximum position error {maximum_position_error} m, maximum curvature error {maximum_curvature_error} 1/m"
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_curvature_matches_tangent_derivative() {
+        for (name, _) in catalog_profiles() {
+            let profile = embedded_profile(name);
+            for pair in profile.points.windows(2) {
+                for fraction in [0.0, 0.0001, 0.25, 0.5, 0.75, 0.9999, 1.0] {
+                    let distance =
+                        pair[0].distance + fraction * (pair[1].distance - pair[0].distance);
+                    let step = 1e-5;
+                    let (_, tangent, second) = profile.sample(distance);
+                    let (_, before, _) = profile.sample(distance - step);
+                    let (_, after, _) = profile.sample(distance + step);
+                    let finite_difference = [
+                        (after[0] - before[0]) / (2.0 * step),
+                        (after[1] - before[1]) / (2.0 * step),
+                    ];
+                    let reported = profile_curvature_from_derivatives(tangent, second);
+                    let measured = profile_curvature_from_derivatives(tangent, finite_difference);
+                    assert!(
+                        (reported - measured).abs() < 1e-7,
+                        "{name}: curvature at {distance}: reported {reported}, tangent derivative {measured}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn profile_hash_includes_embedded_curvature() {
+        let first = embedded_profile("HalfLoop");
+        let mut second = first.clone();
+        second.points[1].curvature += 1.0e-6;
+        let mut first_hash = StateHasher::new();
+        first.hash_into(&mut first_hash);
+        let mut second_hash = StateHasher::new();
+        second.hash_into(&mut second_hash);
+
+        assert_ne!(first_hash.finish(), second_hash.finish());
+    }
 
     #[test]
     fn constant_speed_arc_matches_curvature_equation() {

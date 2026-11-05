@@ -1,4 +1,5 @@
-import { projectWorld, type Camera, type Viewport } from "../camera";
+import { projectVertex as projectWorldVertex } from "../render/projection";
+import type { Camera, Viewport } from "../camera";
 import type { Atlas, GeometryQuad, Vertex, WorldSprite } from "../render/scene";
 
 const SEGMENTS = 24;
@@ -20,15 +21,7 @@ function projectVertex(
   y: number,
 ): Vertex {
   const z = guest.height / 4 + 0.015;
-  const projected = projectWorld(camera, viewport, { x, y, z });
-  const rotatedX = [x + y, x - y, -x - y, -x + y][camera.rotation];
-  return {
-    ...projected,
-    depth: rotatedX + z,
-    height: guest.height,
-    u: 0,
-    v: 0,
-  };
+  return { ...projectWorldVertex(camera, viewport, { x, y, z }), height: guest.height };
 }
 
 /** Builds a theme-ink ring that stays on the selected guest's ground position. */
