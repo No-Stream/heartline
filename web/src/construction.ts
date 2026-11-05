@@ -1,8 +1,8 @@
 import { speedMatchMessage } from "./construction-speed-match";
 import { candidateForceReadout } from "./candidate-force-readout";
-import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, repaint, type CoasterPart } from "./coaster-colors";
+import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
 import { constructionEvent } from "./construction-effects";
-import { availableBlockBoundaries, blockPanelState, steppedTrainCount } from "./block-panel-state";
+import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
 import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPieceSelection, stepperOptions, type PieceStep, type StepAttribute } from "./construction-choices";
 import type { BlockReport, ConstructionElement, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
@@ -22,6 +22,7 @@ export interface ConstructionPanel {
   setSelectedBlock(index: number | null): void;
   setUnits(units: Units): void;
   setHeightMarkers(track: string, station: string): void;
+  setQueueNotice(notice: string): void;
 }
 
 const groupNames: Record<string, string> = { straight: "Straight", turn: "Turns", slope: "Slopes", bank: "Banks", inversion: "Inversions", special: "Special" };
@@ -101,6 +102,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       <p class="tool-panel__hint">Choose a tile, then point and click to choose the station direction.</p>
     </div>
     <p role="status" class="tool-panel__status" data-message></p>
+    <p aria-live="polite" class="tool-panel__status" data-construction-queue></p>
     <div data-editor hidden>
       <div class="builder__tabs" role="tablist" aria-label="Coaster builder sections" data-builder-tabs>${builderTabs.map(({ id, label }, index) => `
         <button type="button" role="tab" id="builder-tab-${id}" aria-controls="builder-tabpanel-${id}" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}" data-builder-tab="${id}">${label}</button>`).join("")}
@@ -313,7 +315,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (!shape) throw new Error(`Missing shape for piece ${id}`);
     return shape;
   };
-  const select = (piece: string | undefined): void => { if (piece && piece !== state?.selected) dispatch({ type: "construction-select", piece }); };
+  const select = (piece: string | undefined): void => { if (piece) dispatch({ type: "construction-select", piece }); };
   const stepSelection = (attribute: PieceStep, step: -1 | 1): void => {
     if (!state) return;
     const action = steppedPieceSelection(state.pieces, shapes, state.selected, attribute, step);
@@ -349,9 +351,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   });
   for (const [button, step] of [[fewerTrains, -1], [moreTrains, 1]] as const) {
     button.addEventListener("click", () => {
-      if (!state) return;
-      const count = steppedTrainCount(state.trainCount, state.blockReport.trainCapacity, step);
-      if (count !== undefined) dispatch({ type: "construction-set-train-count", count });
+      dispatch({ type: "construction-train-count-step", step });
     });
   }
   addBlock.addEventListener("click", () => {
@@ -382,7 +382,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   confirmFinish.addEventListener("click", () => dispatch({ type: "construction-finish-confirm" }));
   cancelFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cancel" }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
-  open.addEventListener("click", () => dispatch({ type: "construction-set-open", open: !state?.isOpen }));
+  open.addEventListener("click", () => dispatch({ type: "construction-open-toggle" }));
   const setCoasterPrice = (price: number): void => {
     if (!Number.isInteger(price) || price < 0 || price > 65535) throw new RangeError("Invalid coaster ticket price");
     coasterPrice.value = String(price);
@@ -393,23 +393,23 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   });
   const coasterPriceButtons = [...container.querySelectorAll<HTMLButtonElement>("[data-coaster-price-step]")];
   coasterPriceButtons.forEach((button) => button.addEventListener("click", () => {
-    setCoasterPrice(Number(coasterPrice.value) + Number(button.dataset.coasterPriceStep));
+    dispatch({ type: "construction-price-step", step: Number(button.dataset.coasterPriceStep) });
   }));
-  chainToggle.addEventListener("click", () => { if (state) dispatch({ type: "construction-set-chain", enabled: !state.chain }); });
+  chainToggle.addEventListener("click", () => dispatch({ type: "chain-toggle" }));
   const colorRows = COASTER_PARTS.map((part) => ({ part, row: element(`[data-coaster-color-part="${part}"]`) }));
   for (const { part, row } of colorRows) {
     row.addEventListener("click", (event) => {
       const swatch = (event.target as Element).closest<HTMLElement>("[data-coaster-color]");
-      if (swatch && state?.colors) dispatch({ type: "construction-set-colors", colors: repaint(state.colors, part, swatch.dataset.coasterColor!) });
+      if (swatch && state?.colors) dispatch({ type: "construction-color-select", part, color: swatch.dataset.coasterColor! });
     });
   }
   deleteMode.addEventListener("change", () => dispatch({ type: "construction-delete-mode", enabled: deleteMode.checked }));
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
-    element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => { stepSelection(attribute, step); });
+    element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => dispatch({ type: "piece-step", attribute, step }));
   }
   element("[data-speed-match-variants]").addEventListener("click", (event) => {
     const button = (event.target as Element).closest<HTMLButtonElement>("[data-speed-match-variant]");
-    if (button && button.dataset.speedMatchVariant !== state?.selected) {
+    if (button) {
       dispatch({ type: "construction-select", piece: button.dataset.speedMatchVariant!, exact: true });
     }
   });
@@ -431,7 +431,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const step = ({ ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 } as Record<string, -1 | 1 | undefined>)[event.key];
     if (!step || !state) return;
     event.preventDefault();
-    stepSelection("piece", step);
+    dispatch({ type: "piece-step", attribute: "piece", step });
   });
 
   function renderPalette(pieces: readonly ConstructionPiece[]): void {
@@ -530,8 +530,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         void value.offsetWidth;
         value.classList.add("stepper__value--changed");
       }
-      element<HTMLButtonElement>(`[data-stepper="${attribute}--1"]`).disabled = !options || options.index <= 0;
-      element<HTMLButtonElement>(`[data-stepper="${attribute}-1"]`).disabled = !options || options.index >= options.values.length - 1;
+      element<HTMLButtonElement>(`[data-stepper="${attribute}--1"]`).disabled = current.complete && (!options || options.index <= 0);
+      element<HTMLButtonElement>(`[data-stepper="${attribute}-1"]`).disabled = current.complete && (!options || options.index >= options.values.length - 1);
     }
   }
 
@@ -753,9 +753,12 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     },
     choose(action) {
       if (!state?.active || !state.complete) return;
-      if (action.type === "piece-group") select(pieceInGroup(state.pieces, action.group));
-      else stepSelection(action.attribute, action.step);
+      if (action.type === "piece-group") {
+        const piece = pieceInGroup(state.pieces, action.group);
+        if (piece !== state.selected) select(piece);
+      } else stepSelection(action.attribute, action.step);
     },
+    setQueueNotice(notice) { element("[data-construction-queue]").textContent = notice; },
     setDeleteMode(enabled) { deleteMode.checked = enabled; },
     setSelectedBlock(index) {
       if (index !== null && !state?.blockReport.sections.some((section) => section.editableIndex === index)) {
@@ -769,7 +772,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     update(next) {
       const previous = state;
       state = next;
-      editor.inert = !next.complete;
       editor.setAttribute("aria-busy", String(!next.complete));
       editor.hidden = !next.active;
       if (next.active && !previous?.active) showTab("build", false);
@@ -800,7 +802,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       finish.classList.toggle("tool-panel__action--primary", next.canFinish && !next.canClose);
       append.classList.toggle("tool-panel__action--primary", !next.canClose && !next.canFinish);
       finish.hidden = closed || next.finishPreview;
-      finish.disabled = !next.canFinish;
+      finish.disabled = next.complete && !next.canFinish;
       finishReason.textContent = next.finishReason;
       finishReason.hidden = closed || next.canFinish || next.finishPreview;
       finishConfirmation.hidden = closed || !next.finishPreview;
@@ -813,11 +815,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       renderSelection(next, focusInPalette);
       const nextTrackKey = next.track.map(({ id, label, kind, launchTargetSpeed }) => `${id}:${label}:${kind}:${launchTargetSpeed}`).join("|");
       if (nextTrackKey !== trackKey) { trackKey = nextTrackKey; renderTrack(next, event === "placed"); }
-      append.disabled = !next.canAppend;
-      undo.disabled = next.track.length === 0;
-      close.disabled = !next.canClose;
-      test.disabled = !next.canTest;
-      open.disabled = !next.canTest && !next.isOpen;
+      append.disabled = next.complete && !next.canAppend;
+      undo.disabled = next.complete && next.track.length === 0;
+      close.disabled = next.complete && !next.canClose;
+      test.disabled = next.complete && !next.canTest;
+      open.disabled = next.complete && !next.canTest && !next.isOpen;
       open.textContent = next.isOpen ? "Close coaster" : "Open coaster";
       if (document.activeElement !== coasterPrice) coasterPrice.value = String(next.coasterPrice);
       for (const button of coasterPriceButtons) {

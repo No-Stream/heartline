@@ -145,6 +145,9 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
     const choice = choices.locator(`[data-piece="${piece}"]`);
     await expect(choice).toBeVisible();
     await choice.click();
+    if (piece === "Loop") {
+      await page.locator('[data-speed-match-variant="Loop"]').click();
+    }
     await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
     const refusal = await choice.locator(".piece-tile__tip span").textContent();
     await expect(page.getByRole("button", { name: "Place piece" }), `Cannot place ${piece} at step ${index + 1}: ${refusal}`).toBeEnabled();

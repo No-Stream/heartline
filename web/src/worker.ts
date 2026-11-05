@@ -265,6 +265,10 @@ workerScope.addEventListener("message", (event) => {
   }
   if (!initialized) throw new Error("Worker must be initialized first");
   void initialized.then(() => {
+    if (action.type === "construction-input-barrier") {
+      sendWorkerMessage(workerScope, { type: "construction-input-barrier" });
+      return;
+    }
     if (action.type === "export-session") {
       sendWorkerMessage(workerScope, { type: "session-export", requestId: action.requestId, recording: recorder.snapshot(Number(simulation.tick_count())) });
       return;
