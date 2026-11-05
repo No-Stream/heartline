@@ -25,15 +25,31 @@ test.afterAll(async () => {
 type Window = { constructionActions: unknown[]; setConstructionState(state: object): void; setConstructionUnits(units: "metric" | "imperial"): void };
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
 
-test("construction controls wait for complete worker state", async ({ page }) => {
+test("busy construction controls remain interactive and accept button input", async ({ page }) => {
   await page.goto(fixtureUrl);
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: false }));
-  await expect(page.locator("[data-editor]")).toHaveAttribute("inert", "");
-  await expect(page.locator("[data-editor]")).toHaveAttribute("aria-busy", "true");
+  const editor = page.locator("[data-editor]");
+  const append = page.getByRole("button", { name: "Place piece" });
+  await expect(editor).toHaveAttribute("aria-busy", "true");
+  await expect(editor).not.toHaveAttribute("inert", "");
+  await expect(append).toBeEnabled();
+  await append.click();
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: true }));
-  await expect(page.locator("[data-editor]")).not.toHaveAttribute("inert", "");
   await page.getByRole("radio", { name: "Small left turn" }).click();
-  expect(await recorded(page)).toContainEqual({ type: "construction-select", piece: "TurnSmallStandalone" });
+  expect(await recorded(page)).toEqual([
+    { type: "construction-append" },
+    { type: "construction-select", piece: "TurnSmallStandalone" },
+  ]);
+});
+
+test("choosing the already-selected piece group does not dispatch another selection", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const actionsBefore = await recorded(page);
+  await page.getByRole("button", { name: "Undo last piece" }).focus();
+  await page.keyboard.press("1");
+  const actionsAfter = await recorded(page);
+  expect(actionsAfter.filter((action) => (action as { type?: string }).type === "construction-select"))
+    .toEqual(actionsBefore.filter((action) => (action as { type?: string }).type === "construction-select"));
 });
 
 test("player driver places a station in the live park", async ({ page }) => {
@@ -94,7 +110,10 @@ test("keyboard shortcuts queue in order while live construction validation is bu
   const track = page.locator("[data-track] li");
   const queueNotice = page.locator("[data-construction-queue]");
   await expect(editor).toHaveAttribute("aria-busy", "true");
-  for (const key of ["h", "b", "h", "b"]) await page.keyboard.press(key);
+  for (const key of ["h", "b"]) await page.keyboard.press(key);
+  await page.locator("[data-chain-toggle]").click();
+  await page.locator("canvas").focus();
+  await page.keyboard.press("b");
   await expect(queueNotice).toHaveText("4 actions queued");
   await page.evaluate(() => (window as unknown as { constructionMessageGate: { release(): void } }).constructionMessageGate.release());
   await expect(queueNotice).toHaveText("");
@@ -113,7 +132,7 @@ test("player driver uses the construction steppers and actions", async ({ page }
   await testRide(page);
   await openRide(page);
   expect(await recorded(page)).toEqual([
-    { type: "piece-step", attribute: "turn", step: 1 },
+    { type: "piece-step", attribute: "turn", step: -1 },
     { type: "construction-select", piece: "TurnSmallStandalone", exact: true },
     { type: "construction-append" },
     { type: "construction-close" },
