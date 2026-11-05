@@ -20,7 +20,11 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await expect(track.locator("li")).toHaveCount(1);
   const pieces = ["LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight", "OneTileStraight", "OneTileStraight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit", "Straight", "OneTileStraight", "OneTileStraight"];
   for (const [index, piece] of pieces.entries()) {
-    if (index === 0 || index === 8) await page.keyboard.press("h");
+    if (index === 0 || index === 8) {
+      const chainLift = page.getByRole("button", { name: "Chain lift" });
+      await chainLift.click();
+      await expect(chainLift).toHaveAttribute("aria-pressed", index === 0 ? "true" : "false");
+    }
     await choices.locator(`[data-piece="${piece}"]`).click();
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
     await page.getByRole("button", { name: "Place piece" }).click();

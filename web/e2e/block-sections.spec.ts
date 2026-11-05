@@ -202,6 +202,9 @@ async function buildBlockCircuit(
     }
     const choice = choices.locator(`[data-piece="${piece}"]`);
     await choice.click();
+    if (piece === "Loop") {
+      await page.getByRole("group", { name: "Element size" }).locator('[data-speed-match-variant="Loop"]').click();
+    }
     await expect(choice).toHaveAttribute("aria-checked", "true");
     const placePiece = page.getByRole("button", { name: "Place piece" });
     if (!(await placePiece.isEnabled())) {
