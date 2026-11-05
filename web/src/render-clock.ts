@@ -26,6 +26,13 @@ export class RenderClock<Snapshot extends { tickCount: number }> {
     this.lastFrameTime = undefined;
   }
 
+  snap(snapshot: Snapshot): void {
+    this.snapshots = [snapshot];
+    this.renderTick = snapshot.tickCount;
+    this.bufferingAfterSpeedIncrease = false;
+    this.lastFrameTime = undefined;
+  }
+
   push(snapshot: Snapshot): boolean {
     const latest = this.snapshots.at(-1);
     if (latest && snapshot.tickCount <= latest.tickCount) return false;
