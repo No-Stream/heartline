@@ -556,6 +556,7 @@ fn every_steel_ejector_hill_is_great_at_design_speed_for_each_allowed_model_and_
         .collect();
     assert_eq!(ejector_hills.len(), 6, "steel ejector hill family size");
 
+    let mut failures = Vec::new();
     for piece in ejector_hills {
         let family = piece.family.expect("ejector hill has family metadata");
         let rated = piece.rated_speeds.expect("ejector hill has a rated speed window");
@@ -619,25 +620,22 @@ fn every_steel_ejector_hill_is_great_at_design_speed_for_each_allowed_model_and_
                     piece.name,
                     model.name
                 );
-                assert!(
-                    minimum_vertical_g >= limits.minimum_vertical_g,
-                    "{} {} {cars} cars at {:.3} m/s: minimum vertical force {minimum_vertical_g:.3} g passed the comfortable floor {:.3} g",
-                    piece.name,
-                    model.name,
-                    family.design_speed_metres_per_second,
-                    limits.minimum_vertical_g
-                );
-                assert_eq!(
-                    limits.classify_airtime(minimum_vertical_g),
-                    AirtimeRating::Great,
-                    "{} {} {cars} cars at {:.3} m/s: minimum vertical force {minimum_vertical_g:.3} g",
-                    piece.name,
-                    model.name,
-                    family.design_speed_metres_per_second
-                );
+                if minimum_vertical_g < limits.minimum_vertical_g {
+                    failures.push(format!(
+                        "{} {} {cars} cars: {minimum_vertical_g:.3} g below floor {:.3} g",
+                        piece.name, model.name, limits.minimum_vertical_g
+                    ));
+                }
+                if limits.classify_airtime(minimum_vertical_g) != AirtimeRating::Great {
+                    failures.push(format!(
+                        "{} {} {cars} cars: {minimum_vertical_g:.3} g is not Great",
+                        piece.name, model.name
+                    ));
+                }
             }
         }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
