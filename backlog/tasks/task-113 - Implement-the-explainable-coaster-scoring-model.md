@@ -4,6 +4,7 @@ title: Implement the explainable coaster scoring model
 status: To Do
 assignee: []
 created_date: '2026-11-04 22:18'
+updated_date: '2026-11-05 01:41'
 labels: []
 dependencies:
   - TASK-104
@@ -24,3 +25,9 @@ Plan: docs/superpowers/plans/2026-11-04-coaster-scoring.md (eight work items, on
 - [ ] #3 Calibration test on the game's circuits and synthetic layouts within agreed bands
 - [ ] #4 Guests choose and react to rides from the real ratings
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner decisions 2026-11-04: scores may exceed 10, but 10 should mean very high or excellent (calibrate so only outstanding rides reach it); the nausea tolerance rule is loose and soft (nausea above tolerance lowers willingness gradually, no hard refusal); theming counts all scenery equally for now.
+<!-- SECTION:NOTES:END -->
