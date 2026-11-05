@@ -2,7 +2,7 @@ use super::*;
 use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
 use theme_park_sim::track::ComfortableForceLimits;
-use theme_park_sim::track::{Bank, HillTwist};
+use theme_park_sim::track::{Bank, Heartlining, HillTwist};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -11,6 +11,7 @@ pub struct ConstructionPieceWire {
     id: &'static str,
     label: &'static str,
     group: &'static str,
+    heartlined: Option<bool>,
     heading: &'static str,
     slope: &'static str,
     bank: &'static str,
@@ -23,6 +24,7 @@ pub struct ConstructionElementWire {
     id: String,
     name: &'static str,
     piece_id: &'static str,
+    heartlined: Option<bool>,
     slope: &'static str,
     kind: &'static str,
     would_tunnel: bool,
@@ -229,6 +231,10 @@ fn element_representative(element: &ElementChoice) -> &Piece {
         })
         .or_else(|| element.geometry.first())
         .expect("an element choice contains at least one piece")
+}
+
+fn heartlined(heartlining: Option<Heartlining>) -> Option<bool> {
+    heartlining.map(|heartlining| heartlining == Heartlining::Heartlined)
 }
 
 fn slope_rank(slope: Slope) -> u8 {
@@ -611,6 +617,7 @@ impl WasmSimulation {
                         id: wire_pieceid(piece.id),
                         label: piece.name,
                         group: piece_group(&piece),
+                        heartlined: heartlined(piece.heartlining),
                         heading: wire_heading(piece.exit.heading),
                         slope: wire_slope(piece.exit.slope),
                         bank: wire_bank(piece.exit.bank),
@@ -642,6 +649,7 @@ impl WasmSimulation {
                             id: format!("element:{}", element.id),
                             name: element.name,
                             piece_id: wire_pieceid(representative.id),
+                            heartlined: heartlined(element.heartlining),
                             slope: wire_slope(representative.exit.slope),
                             kind: wire_piecekind(representative.kind),
                             would_tunnel: element.would_tunnel,
