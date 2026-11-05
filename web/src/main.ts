@@ -21,10 +21,12 @@ import { createDayClock, type DaySpeed } from "./day-clock";
 import { fitGameBar } from "./game-bar-fit";
 import { trackStyle } from "./render/track/geometry";
 import type { TrainLayout } from "./train-layout";
-import type { CoasterColorScheme } from "./coaster-colors";
+import { repaint, type CoasterColorScheme } from "./coaster-colors";
+import { steppedTrainCount } from "./block-panel-state";
 import { createStaticTrackCache } from "./render/track/cache";
 import { RenderClock } from "./render-clock";
 import { createConstructionPanel } from "./construction";
+import { createConstructionInputQueue } from "./construction-input-queue";
 import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
 import { followTrackEnd, railPoints } from "./construction-camera";
 import { createConstructionEffects } from "./construction-effects";
@@ -266,6 +268,7 @@ function endInputModes(): void {
 /** Every input mode belongs to one tool, so opening another tool ends it and only the open tool's mode can be active. */
 function openTool(tool: Tool, activatePanel = true): void {
   if (tool === activeTool) return;
+  if (activeTool === "coaster") constructionInputQueue.cancel();
   endInputModes();
   activeTool = tool;
   renderRevision.invalidate();
@@ -410,10 +413,23 @@ function handleCoasterPointer(action: InputAction): boolean {
   return true;
 }
 const coasterAdapter = coasterToolAdapter((action) => {
-  if (construction && !construction.complete) return true;
   if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") return handleCoasterPointer(action);
   if (action.type === "chain-toggle") {
-    if (construction?.active) sendWorkerAction(worker, { type: "construction-set-chain", enabled: !construction.chain });
+    if (construction?.active) sendConstructionInput({ type: "construction-set-chain", enabled: !construction.chain });
+  } else if (action.type === "construction-color-select") {
+    if (construction?.colors) sendConstructionInput({ type: "construction-set-colors", colors: repaint(construction.colors, action.part, action.color) });
+  } else if (action.type === "construction-open-toggle") {
+    if (construction?.active) sendConstructionInput({ type: "construction-set-open", open: !construction.isOpen });
+  } else if (action.type === "construction-price-step") {
+    if (construction?.active) {
+      const price = construction.coasterPrice + action.step;
+      if (price >= 0 && price <= 65535) sendConstructionInput({ type: "construction-set-coaster-price", price });
+    }
+  } else if (action.type === "construction-train-count-step") {
+    if (construction?.active) {
+      const count = steppedTrainCount(construction.trainCount, construction.blockReport.trainCapacity, action.step);
+      if (count !== undefined) sendConstructionInput({ type: "construction-set-train-count", count });
+    }
   } else if (action.type === "construction-delete-mode" || action.type === "delete-mode-toggle") {
     deleteMode = action.type === "delete-mode-toggle" ? !deleteMode : action.enabled;
     panel.setDeleteMode(deleteMode);
@@ -421,18 +437,33 @@ const coasterAdapter = coasterToolAdapter((action) => {
   } else if (action.type === "piece-step" || action.type === "piece-group") {
     panel.choose(action);
   } else if (action.type === "construction-set-model") {
-    sendWorkerAction(worker, { type: "construction-select", piece: `model:${action.model}` });
+    sendConstructionInput({ type: "construction-select", piece: `model:${action.model}` });
   } else if (isConstructionAction(action)) {
-    sendWorkerAction(worker, action);
+    sendConstructionInput(action);
   } else return false;
   return true;
 }, handleCoasterPointer);
+
+let executingConstructionInput = false;
+let constructionInputSent = false;
+function sendConstructionInput(action: Extract<InputAction, WorkerAction>): void {
+  constructionInputSent = true;
+  sendWorkerAction(worker, action);
+}
+const constructionInputQueue = createConstructionInputQueue((action) => {
+  constructionInputSent = false;
+  executingConstructionInput = true;
+  try { coasterAdapter.key(action); } finally { executingConstructionInput = false; }
+  if (constructionInputSent) sendWorkerAction(worker, { type: "construction-input-barrier" });
+  return constructionInputSent;
+}, (notice) => panel.setQueueNotice(notice));
 
 function dispatch(action: InputAction): void {
   inputLog.push({ action: structuredClone(action), time: performance.now(), tick: current?.tickCount ?? 0, viewport: { ...viewport }, camera: { ...camera } });
   // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
   if (coasterActions.has(action.type) || action.type.startsWith("construction-")) {
-    coasterAdapter.key(action);
+    if (executingConstructionInput) coasterAdapter.key(action);
+    else if (activeTool === "coaster") constructionInputQueue.submit(action, construction?.track.length ?? 0);
     return;
   }
   if (action.type === "session-export") {
@@ -707,6 +738,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     followedPreview = previewKey;
     construction = next;
     panel.update(next);
+    if (message.type === "construction-state") constructionInputQueue.setBusy(!next.complete, next.track.length);
     const selectedWouldTunnel = next.pieces.some((piece) => piece.id === next.selected && piece.wouldTunnel)
       || next.elements.some((element) => element.id === next.selected && element.wouldTunnel);
     tunnelPreview.textContent = selectedWouldTunnel ? "This selection will tunnel through terrain." : "";
@@ -735,6 +767,8 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     else if (advanceTicksComplete) observeCrests(message);
     output.value = String(message.tickCount);
     gameCanvas.dataset.agentCount = String(current?.guestIds.length ?? 0);
+  } else if (message.type === "construction-input-barrier") {
+    constructionInputQueue.complete(construction?.track.length ?? 0, construction?.active ?? false);
   } else if (message.type === "surface-edited" || message.type === "test-resumed" || message.type === "construction-finish-ready") {
     // These replies are consumed by test and replay listeners.
   } else {

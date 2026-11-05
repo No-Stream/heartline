@@ -184,7 +184,14 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
     await openTool(page, "Coaster");
   }
 
+  const estimateBeforeDeletion = await page.evaluate(() => window.gameTest.constructionForcePreview());
   await page.getByRole("button", { name: "Delete Gentle climb, piece 3" }).click();
+  await expect(page.locator("[data-track] li")).toHaveCount(48);
+  await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeDisabled();
-  await expect(page.getByLabel("Track overlay")).toBeDisabled();
+  expect(await page.evaluate(() => window.gameTest.testingReport())).toBeNull();
+  const estimateAfterDeletion = await page.evaluate(() => window.gameTest.constructionForcePreview());
+  expect(estimateAfterDeletion?.samples.length).toBeGreaterThan(0);
+  expect(estimateAfterDeletion).not.toEqual(estimateBeforeDeletion);
+  await expect(page.getByLabel("Track overlay")).toBeEnabled();
 });

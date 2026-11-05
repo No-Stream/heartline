@@ -9,6 +9,7 @@ import type { TestingMetric } from "../coaster-testing";
 import type { Theme } from "../theme";
 import type { Tool } from "../toolbar";
 import type { Units } from "../units";
+import type { CoasterPart } from "../coaster-colors";
 
 export interface ScreenPoint {
   readonly x: number;
@@ -35,6 +36,10 @@ export type InputAction =
   | { readonly type: "piece-group"; readonly group: string }
   | { readonly type: "delete-mode-toggle" }
   | { readonly type: "chain-toggle" }
+  | { readonly type: "construction-color-select"; readonly part: CoasterPart; readonly color: string }
+  | { readonly type: "construction-open-toggle" }
+  | { readonly type: "construction-price-step"; readonly step: number }
+  | { readonly type: "construction-train-count-step"; readonly step: -1 | 1 }
   | { readonly type: "game-speed-cycle" | "pause-toggle" | "session-export" }
   | { readonly type: "day-scrub"; readonly phase: number }
   | { readonly type: "day-speed-set"; readonly speed: DaySpeed }

@@ -287,7 +287,6 @@ export async function placeStation(page: Page, options: { tile: Tile; direction:
   await clickCanvas(page, station);
   await clickCanvas(page, direction);
   await expect(page.locator("[data-track] li")).toHaveCount(1);
-  await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
 }
 
 type PieceStep =
