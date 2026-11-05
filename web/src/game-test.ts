@@ -1,6 +1,7 @@
 import type { ActiveVoices, OfflineResult, OfflineScript } from "./audio/engine";
 import type { UiSound } from "./audio/mapping";
 import type { TestingReport } from "./coaster-testing";
+import type { ConstructionForcePreview } from "./construction-protocol";
 import type { GuestDetail } from "./guest-panel/protocol";
 import type { Facility } from "./facilities";
 import type { Camera, WorldPoint } from "./camera";
@@ -58,6 +59,7 @@ export interface GameTest {
   requestGuestDetail(id: string): void;
   guestDetail(): GuestDetail | null;
   testingReport(): TestingReport | null;
+  constructionForcePreview(): ConstructionForcePreview | null;
   constructionTrainPoses(): readonly number[];
   trainStates(): { coaster: readonly TrainState[]; construction: readonly TrainState[] };
   replaySession(session: ReplaySession): Promise<void>;

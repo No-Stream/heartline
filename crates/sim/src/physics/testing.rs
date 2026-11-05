@@ -261,8 +261,7 @@ impl TestRunRecorder {
 
     /// Records the front car from each physics step in a batch.
     ///
-    /// Readings are sampled at 200 Hz, so interpolation at crossed metre marks
-    /// stays close to the simulated motion while keeping the overlay compact.
+    /// Interpolation at crossed metre marks keeps the overlay compact.
     pub fn record(&mut self, frames: &[Vec<CarReading>]) {
         for frame in frames {
             let Some(reading) = frame.first().copied() else {

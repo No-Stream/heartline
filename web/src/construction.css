@@ -325,3 +325,8 @@
 [data-proximity-events] li {
   margin: 0.15rem 0;
 }
+.builder [data-testing] .testing-band-legend { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; font-size: 0.8rem; color: var(--ink-soft); }
+.builder [data-testing] .testing-band-legend[hidden] { display: none; }
+.testing-band-legend > span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.testing-band-legend__swatch { display: inline-block; width: 18px; height: 8px; border-radius: 2px; }
+.testing-band-legend [data-band="past"] .testing-band-legend__swatch { outline: 2px solid var(--ink); outline-offset: 0; }

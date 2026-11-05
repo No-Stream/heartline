@@ -78,6 +78,15 @@ function sceneInput(overrides: Partial<ComposeSceneInput> = {}): ComposeSceneInp
 }
 
 describe("composeScene", () => {
+  it("draws the live construction estimate as a pickable track ribbon", () => {
+    const samples = [
+      { distance: 0, x: 1, y: 1, z: 1, speed: 4, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+      { distance: 1, x: 2, y: 1, z: 1, speed: 8, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+    ];
+    const construction = { constructionForcePreview: { samples }, testingReport: null, pieces: [], elements: [], previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array() } as unknown as ConstructionState;
+    const scene = composeScene(sceneInput({ construction, testingMetric: "speed" }));
+    expect(scene.geometryPasses[5](camera, viewport, atlas, "1").some((quad) => quad.id === "testing-0")).toBe(true);
+  });
   it("uses the world's train layout to render the model and its riders", () => {
     const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };
     const riderAtlas: Atlas = { ...atlas, pages: { "1": [{ file: "test.png", width: 40, height: 60 }] }, frames: Object.fromEntries(["maya", "otis", "priya", "gus"].map((name) => [`people/${name}/se/idle/0`, frame])), sprites: Object.fromEntries(["maya", "otis", "priya", "gus"].map((name) => [`people/${name}`, { appearance: { skinToneGroup: "deep", hairGroup: "curly", clothingPaletteGroup: "red", bodyShape: "slender", ageGroup: "child" } }])) } as Atlas;

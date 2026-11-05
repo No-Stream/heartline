@@ -110,6 +110,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_placed_supports() { return new Float32Array(); }
     construction_can_close() { return false; }
     construction_test_report_json() { return "null"; }
+    construction_force_preview_json() { return "null"; }
     construction_can_test() { return false; }
     construction_finish_preview_active() { return false; }
     construction_can_finish() { return wasmMock.finishAvailable; }

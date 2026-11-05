@@ -47,6 +47,7 @@ import { parseReplaySession, type ReplaySession } from "./session-replay";
 import { createGamePauseState } from "./game-pause";
 import { replaySessionIntoWorker } from "./session-replay-worker";
 import { constructionHeights } from "./height-markers";
+import { createForceOverlay, nearestSampleIndex, type ScreenBox } from "./force-overlay";
 import { formatLength, type Units } from "./units";
 import { createUnitsSetting } from "./units-setting";
 import { createLiveAudio, renderOffline } from "./audio/engine";
@@ -137,7 +138,11 @@ let followedPreview = "";
 let lastFrameAt = performance.now();
 let testingMetric: TestingMetric | null = null;
 let testingReportJson = "";
+let constructionForcePreviewJson = "";
 const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch);
+const forceOverlay = createForceOverlay(document.querySelector<HTMLElement>("[data-force-overlay]")!);
+/** Hover reaches this many CSS pixels from the coloured track. */
+const FORCE_HOVER_PIXELS = 14;
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
 const guestPanel = createGuestPanel(gameCanvas, { dispatch });
@@ -316,6 +321,7 @@ const gameTest: GameTest = {
   requestGuestDetail(id) { sendWorkerAction(worker, { type: "guest-detail-request", guestId: id }); },
   guestDetail() { return latestGuestDetail; },
   testingReport() { return construction?.testingReport ?? null; },
+  constructionForcePreview() { return construction?.constructionForcePreview ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
   trainStates() {
     return {
@@ -353,6 +359,7 @@ function applyUnits(units: Units): void {
   landscapingPanel.setUnits(units);
   guestPanel.setUnits(units);
   testingPanel.setUnits(units);
+  forceOverlay.setEstimate(construction?.constructionForcePreview ?? null, units);
   renderRevision.invalidate();
 }
 const unitsSetting = createUnitsSetting(unitsContainer, dispatch);
@@ -569,6 +576,10 @@ function dispatch(action: InputAction): void {
     coasterAdapter.drag(phase, action);
   } else if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") {
     coasterAdapter.key(action);
+  } else if (action.type === "hover" && activeTool === "coaster") {
+    const estimateSamples = forceOverlayVisible() ? construction?.constructionForcePreview?.samples ?? [] : [];
+    const points = estimateSamples.map((sample) => projectWorld(screenCamera(), viewport, sample));
+    if (forceOverlay.setHover(action.position ? nearestSampleIndex(points, action.position, FORCE_HOVER_PIXELS * pixelRatio) : null)) renderRevision.invalidate();
   } else if (action.type === "select") {
     const selection = renderer.pick(action.position.x, action.position.y);
     gameCanvas.dataset.selection = JSON.stringify(selection);
@@ -695,6 +706,8 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     gameCanvas.dataset.blockBoundaries = String(next.blockReport.sections.length);
     const reportJson = JSON.stringify(next.testingReport ?? null);
     if (reportJson !== testingReportJson) { testingReportJson = reportJson; testingPanel.update(next.testingReport ?? null); }
+    const estimateJson = JSON.stringify(next.constructionForcePreview ?? null);
+    if (estimateJson !== constructionForcePreviewJson) { constructionForcePreviewJson = estimateJson; testingPanel.updateEstimate(next.constructionForcePreview ?? null); forceOverlay.setEstimate(next.constructionForcePreview ?? null, unitsSetting.units()); }
     if (redraw) renderRevision.invalidate();
   } else if (message.type === "guest-detail") {
     latestGuestDetail = message.detail;
@@ -752,6 +765,11 @@ function observeCrests(snapshot: CoasterSnapshot): void {
   crestBursts = [...crestBursts, ...newBursts].filter((burst) => snapshot.tickCount - burst.tick < CONFETTI_LIFE_TICKS);
 }
 
+/** Force labels and the hover readout belong to the estimate of an unfinished coaster, not to test-run reports. */
+function forceOverlayVisible(): boolean {
+  return activeTool === "coaster" && !!construction?.active && !construction.testingReport && !!construction.constructionForcePreview && testingMetric !== null;
+}
+
 function frame(now: number): void {
   if (!world || replayInProgress) return;
   if (frozen && gameTest.ready) return;
@@ -777,6 +795,11 @@ function frame(now: number): void {
     heightMarkers.style.left = `${anchor.x}px`;
     heightMarkers.style.top = `${anchor.y}px`;
   }
+  const heightMarkerBox: ScreenBox[] = heights ? [{
+    left: parseFloat(heightMarkers.style.left) + 12 - 14, top: parseFloat(heightMarkers.style.top) - 12 - heightMarkers.offsetHeight,
+    width: heightMarkers.offsetWidth + 14, height: heightMarkers.offsetHeight + 14,
+  }] : [];
+  forceOverlay.render(forceOverlayVisible(), (sample) => projectWorld(camera, cssViewport(), sample), cssViewport(), heightMarkerBox);
   constructionEffects.active(now);
   dayClock.update(dayPhase);
   const scene = composeScene({
