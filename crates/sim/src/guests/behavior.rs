@@ -318,13 +318,17 @@ impl BehaviorSimulation {
             if !recovered {
                 let (excitement, intensity, nausea) = ratings[seat];
                 assert!(excitement.is_finite() && intensity.is_finite() && nausea.is_finite());
+                // Ride ratings use a soft 0-10 scale; guest traits and needs remain 0-100.
+                let excitement = excitement * 10.0;
+                let intensity = intensity * 10.0;
+                let nausea = nausea * 10.0;
                 let enjoyment = (excitement
                     - (intensity - f64::from(guests.intensity(guest))).abs()
                     - f64::from(self.guests[index].needs.nausea)
                     + f64::from(self.scenery_scores[index]))
                 .clamp(-100.0, 100.0) as i8;
                 let mut place = facility.place;
-                place.intensity = nausea.clamp(0.0, 100.0) as u8;
+                place.intensity = nausea.clamp(0.0, 100.0).round() as u8;
                 self.guests[index].complete_paid(place, self.tick, enjoyment, guests, guest);
                 let mut kinds = Vec::new();
                 for event in &proximity_events[seat] {
@@ -959,7 +963,7 @@ mod tests {
         simulation.finish_coaster(
             &facility,
             &mut guests,
-            &[(50.0, f64::from(facility.place.intensity), 0.0)],
+            &[(5.0, f64::from(facility.place.intensity) / 10.0, 0.0)],
             &[vec![]],
             false,
         );
@@ -999,6 +1003,56 @@ mod tests {
         behavior.observe(second);
         behavior.complete(first, 0, 80, &mut guests, guest);
         assert_eq!(behavior.choose(&guests, guest), Some(second));
+    }
+
+    #[test]
+    fn guest_prefers_the_ride_with_the_higher_test_rating() {
+        let mut guests = generate_guests(31, 1);
+        let guest = GuestId(0);
+        let intensity = guests.intensity(guest);
+        let higher_rated = KnownPlace {
+            intensity,
+            ..place(1, PlaceKind::Ride)
+        };
+        let lower_rated = KnownPlace {
+            id: 2,
+            ..higher_rated
+        };
+        let facility = |place| Facility {
+            place,
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: Some(place.position),
+        };
+        let mut simulation = BehaviorSimulation::new(1);
+        simulation.guests[0].observe(higher_rated);
+        simulation.guests[0].observe(lower_rated);
+
+        simulation
+            .coaster_riders
+            .insert((higher_rated.id, 0), vec![guest]);
+        simulation.finish_coaster(
+            &facility(higher_rated),
+            &mut guests,
+            &[(3.0, 5.0, 0.0)],
+            &[vec![]],
+            false,
+        );
+        simulation
+            .coaster_riders
+            .insert((lower_rated.id, 0), vec![guest]);
+        simulation.finish_coaster(
+            &facility(lower_rated),
+            &mut guests,
+            &[(1.0, 5.0, 0.0)],
+            &[vec![]],
+            false,
+        );
+
+        assert_eq!(
+            simulation.guests[0].choose(&guests, guest),
+            Some(higher_rated)
+        );
     }
 
     #[test]
@@ -1113,7 +1167,7 @@ mod tests {
         simulation.finish_coaster(
             &facility,
             &mut guests,
-            &[(100.0, 10.0, 0.0), (10.0, 100.0, 100.0)],
+            &[(10.0, 1.0, 0.0), (1.0, 10.0, 10.0)],
             &[vec![event, event], vec![]],
             false,
         );
@@ -1144,6 +1198,7 @@ mod tests {
         );
         let first = *guests.memory(GuestId(0)).iter().last().unwrap();
         let second = *guests.memory(GuestId(1)).iter().last().unwrap();
+        assert!(first.enjoyment > second.enjoyment);
         assert_ne!(first.enjoyment, second.enjoyment);
         assert!(second.nausea > first.nausea);
         assert_eq!(
@@ -1195,7 +1250,7 @@ mod tests {
                 &facility,
                 22,
                 &mut guests,
-                &[(50.0, 20.0, 0.0)],
+                &[(5.0, 2.0, 0.0)],
                 &[vec![]],
                 false,
             ),

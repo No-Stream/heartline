@@ -11,6 +11,19 @@ const HIGH_FORCE_LONGITUDINAL_G: f64 = 1.5;
 const SLOW_SPEED_METRES_PER_SECOND: f64 = 8.0;
 const DROP_SCORE_CALIBRATION_METRES: f64 = 30.0;
 const INVERSION_SCORE_CALIBRATION_PASSAGES: f64 = 3.0;
+// Airtime categories have no standard threshold; Väisänen (2018) uses a -0.5 g ejector split:
+// https://nl2docs.arborarcade.com/resources/master_V%C3%A4is%C3%A4nen_Antti_2018.pdf
+const EJECTOR_AIRTIME_MAX_VERTICAL_G: f64 = -0.5;
+// TIME describes +0.2 g as near-weightless; use -0.5 to +0.2 g for this report's floater band:
+// https://time.com/2906000/roller-coaster-goliath-science/
+const FLOATER_AIRTIME_MAX_VERTICAL_G: f64 = 0.2;
+// 3.5 g is a published peak example for a modern coaster, used as a reporting threshold, not a limit.
+// https://time.com/2906000/roller-coaster-goliath-science/
+const STRONG_POSITIVE_G_THRESHOLD: f64 = 3.5;
+// 1.0 g is a rounded reporting threshold above the 0.7 g sustained lateral case discussed by Rohde.
+// It is not a design or safety limit.
+// https://www.vdv-freizeittechnologie.de/files/bilder-vdv/pdf/Rohde-Accelerationlimits-2nd-edition-2024.pdf
+const STRONG_LATERAL_G_THRESHOLD: f64 = 1.0;
 const VERTICAL_DISCOMFORT_THRESHOLD_G: f64 = 3.5;
 const NEGATIVE_VERTICAL_DISCOMFORT_THRESHOLD_G: f64 = 0.5;
 const LATERAL_DISCOMFORT_THRESHOLD_G: f64 = 1.5;
@@ -27,7 +40,7 @@ const INTENSITY_LONGITUDINAL_WEIGHT: f64 = 10.0;
 const INTENSITY_AIRTIME_WEIGHT: f64 = 8.0;
 const INTENSITY_HIGH_FORCE_WEIGHT: f64 = 10.0;
 const HIGH_FORCE_SCORE_CALIBRATION_METRES: f64 = 20.0;
-const NAUSEA_SCORE_SCALE: f64 = 100.0;
+const NAUSEA_SCORE_SCALE: f64 = 10.0;
 const EXCITEMENT_BASE_SCORE: f64 = 10.0;
 const EXCITEMENT_SPEED_WEIGHT: f64 = 1.6;
 const EXCITEMENT_AIRTIME_WEIGHT: f64 = 25.0;
@@ -57,6 +70,7 @@ pub struct TestRun {
     pub excitement: f64,
     pub intensity: f64,
     pub nausea: f64,
+    pub statistics: RideStatistics,
     pub notes: Vec<String>,
     pub completed: bool,
     pub furthest_distance: f64,
@@ -65,9 +79,36 @@ pub struct TestRun {
     base_intensity: f64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RideStatistics {
+    pub ejector_airtime_seconds: f64,
+    pub floater_airtime_seconds: f64,
+    pub airtime_moments: usize,
+    pub strong_positive_g_seconds: f64,
+    pub longest_strong_positive_g_seconds: f64,
+    pub strong_lateral_g_seconds: f64,
+    pub max_positive_vertical_g: f64,
+    pub max_negative_vertical_g: f64,
+    pub max_lateral_g: f64,
+    pub max_forward_g: f64,
+    pub max_braking_g: f64,
+    pub max_speed: f64,
+    pub average_speed: f64,
+    pub duration_seconds: f64,
+    pub track_length: f64,
+    pub max_height: f64,
+    pub biggest_drop: f64,
+    pub steepest_drop_angle_degrees: f64,
+    pub inversions: usize,
+    pub inverted_seconds: f64,
+    pub drops: usize,
+    pub launches: usize,
+    pub launch_peak_speed: f64,
+}
+
 impl TestRun {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRun-v1");
+        hash.write_tag(b"TestRun-v2");
         hash.write_len(self.samples.len());
         for sample in &self.samples {
             write_sample(hash, *sample);
@@ -79,6 +120,38 @@ impl TestRun {
         hash.write_f64(self.excitement);
         hash.write_f64(self.intensity);
         hash.write_f64(self.nausea);
+        let stats = self.statistics;
+        for value in [
+            stats.ejector_airtime_seconds,
+            stats.floater_airtime_seconds,
+            stats.strong_positive_g_seconds,
+            stats.longest_strong_positive_g_seconds,
+            stats.strong_lateral_g_seconds,
+            stats.max_positive_vertical_g,
+            stats.max_negative_vertical_g,
+            stats.max_lateral_g,
+            stats.max_forward_g,
+            stats.max_braking_g,
+            stats.max_speed,
+            stats.average_speed,
+            stats.duration_seconds,
+            stats.track_length,
+            stats.max_height,
+            stats.biggest_drop,
+            stats.steepest_drop_angle_degrees,
+            stats.inverted_seconds,
+            stats.launch_peak_speed,
+        ] {
+            hash.write_f64(value);
+        }
+        for value in [
+            stats.airtime_moments,
+            stats.inversions,
+            stats.drops,
+            stats.launches,
+        ] {
+            hash.write_len(value);
+        }
         hash.write_len(self.notes.len());
         for note in &self.notes {
             hash.write_bytes(note.as_bytes());
@@ -97,6 +170,7 @@ impl TestRun {
             excitement: 0.0,
             intensity: 0.0,
             nausea: 0.0,
+            statistics: RideStatistics::default(),
             notes: vec![
                 "The circuit is unfinished. Connect the track into a complete loop before testing the train."
                     .to_owned(),
@@ -144,8 +218,8 @@ impl TestRun {
         strengths.sort_by(f64::total_cmp);
         let total: f64 = strengths.iter().sum();
         let contribution = total / (total + 4.0);
-        self.excitement = (self.base_excitement + 8.0 * contribution).min(100.0);
-        self.intensity = (self.base_intensity + 2.0 * contribution).min(100.0);
+        self.excitement = self.base_excitement + 0.8 * contribution;
+        self.intensity = self.base_intensity + 0.2 * contribution;
     }
 }
 
@@ -154,6 +228,14 @@ pub struct TestRunRecorder {
     circuit_length: f64,
     piece_starts: Vec<f64>,
     rated_pieces: Vec<Option<RatedPieceSpeedWindow>>,
+    launch_ranges: Vec<(f64, f64)>,
+    maximum_positive_vertical_g: f64,
+    maximum_negative_vertical_g: f64,
+    maximum_lateral_g: f64,
+    maximum_forward_g: f64,
+    maximum_braking_g: f64,
+    maximum_speed: f64,
+    maximum_height: f64,
     last_piece_index: Option<usize>,
     noted_rated_pieces: Vec<bool>,
     speed_band_notes: Vec<String>,
@@ -178,7 +260,7 @@ struct RatedPieceSpeedWindow {
 
 impl TestRunRecorder {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRunRecorder-v2");
+        hash.write_tag(b"TestRunRecorder-v3");
         hash.write_f64(self.circuit_length);
         hash.write_len(self.piece_starts.len());
         for &piece_start in &self.piece_starts {
@@ -191,6 +273,18 @@ impl TestRunRecorder {
                 hash.write_f64(window.minimum_entry);
                 hash.write_f64(window.maximum_entry);
             });
+        }
+        write_ranges(hash, &self.launch_ranges);
+        for value in [
+            self.maximum_positive_vertical_g,
+            self.maximum_negative_vertical_g,
+            self.maximum_lateral_g,
+            self.maximum_forward_g,
+            self.maximum_braking_g,
+            self.maximum_speed,
+            self.maximum_height,
+        ] {
+            hash.write_f64(value);
         }
         hash.write_option(self.last_piece_index, |hash, index| hash.write_len(index));
         hash.write_len(self.noted_rated_pieces.len());
@@ -225,6 +319,14 @@ impl TestRunRecorder {
             circuit_length,
             piece_starts: Vec::new(),
             rated_pieces: Vec::new(),
+            launch_ranges: Vec::new(),
+            maximum_positive_vertical_g: 0.0,
+            maximum_negative_vertical_g: 0.0,
+            maximum_lateral_g: 0.0,
+            maximum_forward_g: 0.0,
+            maximum_braking_g: 0.0,
+            maximum_speed: 0.0,
+            maximum_height: 0.0,
             last_piece_index: None,
             noted_rated_pieces: Vec::new(),
             speed_band_notes: Vec::new(),
@@ -255,19 +357,64 @@ impl TestRunRecorder {
                 })
             })
             .collect();
+        for (index, piece) in circuit.pieces.iter().enumerate() {
+            if piece.kind != crate::track::PieceKind::Launch {
+                continue;
+            }
+            let start = circuit.starts[index];
+            let end = start + piece.length();
+            if let Some((_, previous_end)) = recorder.launch_ranges.last_mut()
+                && (*previous_end - start).abs() < 1e-9
+            {
+                *previous_end = end;
+            } else {
+                recorder.launch_ranges.push((start, end));
+            }
+        }
         recorder.noted_rated_pieces = vec![false; circuit.pieces.len()];
         recorder
     }
 
-    /// Records the front car from each physics step in a batch.
+    /// Records force and speed envelopes across the train at each physics step.
     ///
     /// Readings are sampled at 200 Hz, so interpolation at crossed metre marks
     /// stays close to the simulated motion while keeping the overlay compact.
     pub fn record(&mut self, frames: &[Vec<CarReading>]) {
         for frame in frames {
-            let Some(reading) = frame.first().copied() else {
+            let Some(front_reading) = frame.first().copied() else {
                 continue;
             };
+            let mut reading = front_reading;
+            let mut vertical_deviation = (front_reading.g.vertical - 1.0).abs();
+            for car in frame.iter().copied().skip(1) {
+                let car_vertical_deviation = (car.g.vertical - 1.0).abs();
+                if car_vertical_deviation > vertical_deviation {
+                    reading.g.vertical = car.g.vertical;
+                    vertical_deviation = car_vertical_deviation;
+                }
+                if car.g.lateral.abs() > reading.g.lateral.abs() {
+                    reading.g.lateral = car.g.lateral;
+                }
+                if car.g.longitudinal.abs() > reading.g.longitudinal.abs() {
+                    reading.g.longitudinal = car.g.longitudinal;
+                }
+                reading.speed = reading.speed.max(car.speed);
+                reading.height_m = reading.height_m.max(car.height_m);
+                reading.inverted |= car.inverted;
+            }
+            for car in frame {
+                self.maximum_positive_vertical_g =
+                    self.maximum_positive_vertical_g.max(car.g.vertical);
+                self.maximum_negative_vertical_g =
+                    self.maximum_negative_vertical_g.min(car.g.vertical);
+                self.maximum_lateral_g = self.maximum_lateral_g.max(car.g.lateral.abs());
+                self.maximum_forward_g = self.maximum_forward_g.max(car.g.longitudinal.max(0.0));
+                self.maximum_braking_g = self.maximum_braking_g.max((-car.g.longitudinal).max(0.0));
+                self.maximum_speed = self.maximum_speed.max(car.speed);
+                self.maximum_height = self.maximum_height.max(car.height_m);
+            }
+            reading.distance = front_reading.distance;
+            reading.airtime = reading.g.vertical < 0.0;
             let wrapped_distance = reading.distance.rem_euclid(self.circuit_length);
             if !self.piece_starts.is_empty() {
                 let piece_index = self
@@ -377,6 +524,32 @@ impl TestRunRecorder {
         let circuit_length = self.circuit_length;
         let samples: Vec<_> = self.samples.into_iter().flatten().collect();
         let (excitement, intensity, nausea, mut notes) = ratings(&samples, circuit_length);
+        let mut statistics = ride_statistics(&samples, circuit_length, completed);
+        statistics.max_positive_vertical_g = self.maximum_positive_vertical_g;
+        statistics.max_negative_vertical_g = self.maximum_negative_vertical_g;
+        statistics.max_lateral_g = self.maximum_lateral_g;
+        statistics.max_forward_g = self.maximum_forward_g;
+        statistics.max_braking_g = self.maximum_braking_g;
+        statistics.max_speed = self.maximum_speed.max(statistics.max_speed);
+        statistics.max_height = self.maximum_height.max(statistics.max_height);
+        statistics.launches = self
+            .launch_ranges
+            .iter()
+            .filter(|(start, end)| {
+                samples
+                    .iter()
+                    .any(|sample| sample.distance >= *start && sample.distance <= *end)
+            })
+            .count();
+        statistics.launch_peak_speed = samples
+            .iter()
+            .filter(|sample| {
+                self.launch_ranges
+                    .iter()
+                    .any(|(start, end)| sample.distance >= *start && sample.distance <= *end)
+            })
+            .map(|sample| sample.speed)
+            .fold(0.0, f64::max);
         notes.extend(self.speed_band_notes);
         if !completed {
             notes.push(format!(
@@ -393,6 +566,7 @@ impl TestRunRecorder {
             excitement,
             intensity,
             nausea,
+            statistics,
             notes,
             completed,
             furthest_distance: self.furthest_distance,
@@ -572,18 +746,19 @@ fn interpolate_reading(first: CarReading, second: CarReading, fraction: f64) -> 
     }
 }
 
-/// Scores use distance-weighted averages from the one-metre record and clamp to
-/// 0–100. Intensity is `20 + 14*mean(|vertical_g-1|) + 18*mean(|lateral_g|) +
-/// 10*mean(|longitudinal_g|) + 8*airtime_fraction + 10*min(high_force_run/20m,1)`.
+/// Scores use distance-weighted averages from the one-metre record for a soft
+/// 0–10 scale with no upper clamp. Intensity is `(20 +
+/// 14*mean(|vertical_g-1|) + 18*mean(|lateral_g|) +
+/// 10*mean(|longitudinal_g|) + 8*airtime_fraction + 10*min(high_force_run/20m,1))/10`.
 /// Per-sample nausea exposure is `max(vertical_g-3.5,0)/2 +
 /// max(-vertical_g-0.5,0)/1.5 + max(|lateral_g|-1.5,0)/1.5 +
-/// max(|longitudinal_g|-1.5,0)/1.5`; nausea is 100 times its mean. Excitement is
+/// max(|longitudinal_g|-1.5,0)/1.5`; displayed nausea is ten times its mean. Excitement is
 /// `10 + 1.6*mean(speed_m/s) + 25*airtime_fraction + 24*moderate_force +
-/// 15*min(max_downhill_drop/30m,1) + 15*min(inversion_passages/3,1) - 0.45*nausea`,
-/// where `moderate_force = min(mean(|vertical_g-1| + |lateral_g| +
+/// 15*min(max_downhill_drop/30m,1) + 15*min(inversion_passages/3,1))/10 -
+/// 0.45*nausea`, where `moderate_force = min(mean(|vertical_g-1| + |lateral_g| +
 /// |longitudinal_g|)/7,1)`. These are feedback scores, not safety limits.
 /// Notes require a contiguous 8m high-force section or 100m below 8m/s.
-// Proximity adds 8 * strength / (strength + 4) excitement and 2 * strength /
+// Proximity adds 0.8 * strength / (strength + 4) excitement and 0.2 * strength /
 // (strength + 4) intensity, where strength is the sum of event strengths.
 fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<String>) {
     if samples.is_empty() {
@@ -634,16 +809,17 @@ fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<S
         + INTENSITY_AIRTIME_WEIGHT * airtime_fraction
         + INTENSITY_HIGH_FORCE_WEIGHT
             * (high_force_run / HIGH_FORCE_SCORE_CALIBRATION_METRES).clamp(0.0, 1.0))
-    .clamp(0.0, 100.0);
-    let nausea = (NAUSEA_SCORE_SCALE * discomfort).clamp(0.0, 100.0);
-    let excitement = (EXCITEMENT_BASE_SCORE
+        / 10.0;
+    let nausea = NAUSEA_SCORE_SCALE * discomfort;
+    let excitement = ((EXCITEMENT_BASE_SCORE
         + EXCITEMENT_SPEED_WEIGHT * mean_speed
         + EXCITEMENT_AIRTIME_WEIGHT * airtime_fraction
         + EXCITEMENT_MODERATE_FORCE_WEIGHT * moderate_force
         + EXCITEMENT_DROP_WEIGHT * drop_score
-        + EXCITEMENT_INVERSION_WEIGHT * inversion_score
+        + EXCITEMENT_INVERSION_WEIGHT * inversion_score)
+        / 10.0
         - EXCITEMENT_NAUSEA_WEIGHT * nausea)
-        .clamp(0.0, 100.0);
+        .max(0.0);
     let mut notes = Vec::new();
     if mean_lateral_load >= 1.5 || maximum_lateral_load >= 2.5 {
         notes.push(
@@ -657,7 +833,7 @@ fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<S
                 .to_owned(),
         );
     }
-    if intensity >= 70.0 {
+    if intensity >= 7.0 {
         notes.push(
             "This is a very intense ride. A few lower-force sections can make it more comfortable."
                 .to_owned(),
@@ -670,6 +846,155 @@ fn ratings(samples: &[TestSample], circuit_length: f64) -> (f64, f64, f64, Vec<S
         );
     }
     (excitement, intensity, nausea, notes)
+}
+
+fn ride_statistics(samples: &[TestSample], circuit_length: f64, completed: bool) -> RideStatistics {
+    if samples.is_empty() {
+        return RideStatistics {
+            track_length: circuit_length,
+            ..RideStatistics::default()
+        };
+    }
+    let mut stats = RideStatistics {
+        track_length: circuit_length,
+        max_positive_vertical_g: samples
+            .iter()
+            .map(|sample| sample.vertical_g)
+            .fold(0.0, f64::max),
+        max_negative_vertical_g: samples
+            .iter()
+            .map(|sample| sample.vertical_g)
+            .fold(0.0, f64::min),
+        max_lateral_g: samples
+            .iter()
+            .map(|sample| sample.lateral_g.abs())
+            .fold(0.0, f64::max),
+        max_forward_g: samples
+            .iter()
+            .map(|sample| sample.longitudinal_g.max(0.0))
+            .fold(0.0, f64::max),
+        max_braking_g: samples
+            .iter()
+            .map(|sample| (-sample.longitudinal_g).max(0.0))
+            .fold(0.0, f64::max),
+        max_speed: samples
+            .iter()
+            .map(|sample| sample.speed)
+            .fold(0.0, f64::max),
+        average_speed: samples.iter().map(|sample| sample.speed).sum::<f64>()
+            / samples.len() as f64,
+        max_height: samples
+            .iter()
+            .map(|sample| sample.height_m)
+            .fold(f64::NEG_INFINITY, f64::max),
+        biggest_drop: if completed {
+            largest_downhill_drop(samples)
+        } else {
+            largest_downhill_drop_on_sampled_run(samples)
+        },
+        inversions: if completed {
+            count_inversion_passages(samples)
+        } else {
+            count_inversion_passages_on_sampled_run(samples)
+        },
+        ..RideStatistics::default()
+    };
+    let mut previous_airtime = if completed {
+        samples
+            .last()
+            .is_some_and(|sample| sample.vertical_g < FLOATER_AIRTIME_MAX_VERTICAL_G)
+    } else {
+        samples[0].vertical_g < FLOATER_AIRTIME_MAX_VERTICAL_G
+    };
+    let mut positive_run = 0.0;
+    let mut previous_height_delta = if completed {
+        samples[0].height_m - samples[samples.len() - 1].height_m
+    } else {
+        0.0
+    };
+    let mut total_time = 0.0;
+    let mut total_distance = 0.0;
+    let mut leading_positive_run = 0.0;
+    let mut trailing_positive_run = 0.0;
+    let mut still_at_start = true;
+    for (index, sample) in samples.iter().enumerate() {
+        let next = samples.get(index + 1).unwrap_or(&samples[0]);
+        let distance = if index + 1 == samples.len() && !completed {
+            0.0
+        } else if next.distance > sample.distance {
+            next.distance - sample.distance
+        } else if index + 1 == samples.len() {
+            (circuit_length - sample.distance + next.distance).max(0.0)
+        } else {
+            1.0
+        };
+        let speed = (sample.speed + next.speed) / 2.0;
+        let seconds = if speed > 0.0 { distance / speed } else { 0.0 };
+        total_time += seconds;
+        total_distance += distance;
+        let ejector = sample.vertical_g < EJECTOR_AIRTIME_MAX_VERTICAL_G;
+        let floater = sample.vertical_g >= EJECTOR_AIRTIME_MAX_VERTICAL_G
+            && sample.vertical_g < FLOATER_AIRTIME_MAX_VERTICAL_G;
+        stats.ejector_airtime_seconds += if ejector { seconds } else { 0.0 };
+        stats.floater_airtime_seconds += if floater { seconds } else { 0.0 };
+        let airtime = sample.vertical_g < FLOATER_AIRTIME_MAX_VERTICAL_G;
+        if airtime && !previous_airtime {
+            stats.airtime_moments += 1;
+        }
+        previous_airtime = airtime;
+        if sample.vertical_g > STRONG_POSITIVE_G_THRESHOLD {
+            stats.strong_positive_g_seconds += seconds;
+            positive_run += seconds;
+            trailing_positive_run += seconds;
+            if still_at_start {
+                leading_positive_run += seconds;
+            }
+            stats.longest_strong_positive_g_seconds =
+                stats.longest_strong_positive_g_seconds.max(positive_run);
+        } else {
+            positive_run = 0.0;
+            trailing_positive_run = 0.0;
+            still_at_start = false;
+        }
+        if sample.lateral_g.abs() > STRONG_LATERAL_G_THRESHOLD {
+            stats.strong_lateral_g_seconds += seconds;
+        }
+        if sample.inverted {
+            stats.inverted_seconds += seconds;
+        }
+        if index + 1 == samples.len() && !completed {
+            continue;
+        }
+        let height_delta = next.height_m - sample.height_m;
+        if previous_height_delta > 0.0 && height_delta <= 0.0 {
+            stats.drops += 1;
+        }
+        if height_delta < 0.0 {
+            let angle = (-height_delta / distance.max(1e-9))
+                .clamp(-1.0, 1.0)
+                .asin()
+                .to_degrees();
+            stats.steepest_drop_angle_degrees = stats.steepest_drop_angle_degrees.max(angle);
+        }
+        previous_height_delta = height_delta;
+    }
+    stats.duration_seconds = total_time;
+    if total_time > 0.0 {
+        stats.average_speed = total_distance / total_time;
+    }
+    if completed {
+        let all_intervals_are_strong = samples
+            .iter()
+            .all(|sample| sample.vertical_g > STRONG_POSITIVE_G_THRESHOLD);
+        if all_intervals_are_strong {
+            stats.longest_strong_positive_g_seconds = total_time;
+        } else {
+            stats.longest_strong_positive_g_seconds = stats
+                .longest_strong_positive_g_seconds
+                .max(leading_positive_run + trailing_positive_run);
+        }
+    }
+    stats
 }
 
 fn longest_contiguous_section(
@@ -722,6 +1047,19 @@ fn largest_downhill_drop(samples: &[TestSample]) -> f64 {
     largest_drop
 }
 
+fn largest_downhill_drop_on_sampled_run(samples: &[TestSample]) -> f64 {
+    let Some(first) = samples.first() else {
+        return 0.0;
+    };
+    let mut highest_point = first.height_m;
+    let mut largest_drop: f64 = 0.0;
+    for sample in samples {
+        largest_drop = largest_drop.max(highest_point - sample.height_m);
+        highest_point = highest_point.max(sample.height_m);
+    }
+    largest_drop
+}
+
 fn count_inversion_passages(samples: &[TestSample]) -> usize {
     if samples.is_empty() {
         return 0;
@@ -737,11 +1075,202 @@ fn count_inversion_passages(samples: &[TestSample]) -> usize {
     passages
 }
 
+fn count_inversion_passages_on_sampled_run(samples: &[TestSample]) -> usize {
+    let Some(first) = samples.first() else {
+        return 0;
+    };
+    let mut previous_inverted = first.inverted;
+    let mut passages = 0;
+    for sample in samples.iter().skip(1) {
+        if sample.inverted && !previous_inverted {
+            passages += 1;
+        }
+        previous_inverted = sample.inverted;
+    }
+    passages
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::physics::{CarReading, GForces, PhysicsConfig, Train, demo_circuit};
     use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
+
+    #[test]
+    fn statistics_measure_airtime_forces_speed_and_inversions() {
+        let samples = [
+            TestSample {
+                distance: 0.0,
+                speed: 10.0,
+                vertical_g: -0.8,
+                lateral_g: 1.2,
+                longitudinal_g: 0.4,
+                airtime: true,
+                height_m: 10.0,
+                inverted: false,
+            },
+            TestSample {
+                distance: 1.0,
+                speed: 10.0,
+                vertical_g: -0.2,
+                lateral_g: 0.0,
+                longitudinal_g: -0.7,
+                airtime: true,
+                height_m: 11.0,
+                inverted: true,
+            },
+            TestSample {
+                distance: 2.0,
+                speed: 10.0,
+                vertical_g: 4.0,
+                lateral_g: -1.5,
+                longitudinal_g: 1.1,
+                airtime: false,
+                height_m: 9.0,
+                inverted: true,
+            },
+            TestSample {
+                distance: 3.0,
+                speed: 10.0,
+                vertical_g: 4.2,
+                lateral_g: 0.2,
+                longitudinal_g: -1.4,
+                airtime: false,
+                height_m: 7.0,
+                inverted: false,
+            },
+        ];
+        let stats = ride_statistics(&samples, 4.0, true);
+        assert!((stats.ejector_airtime_seconds - 0.1).abs() < 1e-9);
+        assert!((stats.floater_airtime_seconds - 0.1).abs() < 1e-9);
+        assert_eq!(stats.airtime_moments, 1);
+        assert!((stats.strong_positive_g_seconds - 0.2).abs() < 1e-9);
+        assert!((stats.longest_strong_positive_g_seconds - 0.2).abs() < 1e-9);
+        assert!((stats.strong_lateral_g_seconds - 0.2).abs() < 1e-9);
+        assert_eq!(stats.max_positive_vertical_g, 4.2);
+        assert_eq!(stats.max_negative_vertical_g, -0.8);
+        assert_eq!(stats.max_lateral_g, 1.5);
+        assert_eq!(stats.max_forward_g, 1.1);
+        assert_eq!(stats.max_braking_g, 1.4);
+        assert_eq!(stats.max_speed, 10.0);
+        assert_eq!(stats.average_speed, 10.0);
+        assert!((stats.duration_seconds - 0.4).abs() < 1e-9);
+        assert_eq!(stats.track_length, 4.0);
+        assert_eq!(stats.max_height, 11.0);
+        assert_eq!(stats.biggest_drop, 4.0);
+        assert!((stats.steepest_drop_angle_degrees - 90.0).abs() < 1e-9);
+        assert_eq!(stats.drops, 1);
+        assert_eq!(stats.inversions, 1);
+        assert!((stats.inverted_seconds - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn complete_run_counts_a_drop_at_the_circuit_seam() {
+        let samples = [
+            TestSample {
+                distance: 0.0,
+                height_m: 10.0,
+                ..sample_for_statistics(10.0, 1.0, 1.0)
+            },
+            TestSample {
+                distance: 1.0,
+                height_m: 8.0,
+                ..sample_for_statistics(10.0, 1.0, 1.0)
+            },
+            TestSample {
+                distance: 2.0,
+                height_m: 9.0,
+                ..sample_for_statistics(10.0, 1.0, 1.0)
+            },
+        ];
+
+        assert_eq!(ride_statistics(&samples, 3.0, true).drops, 1);
+    }
+
+    #[test]
+    fn longest_strong_positive_run_includes_the_circuit_seam() {
+        let samples = [
+            TestSample {
+                distance: 0.0,
+                ..sample_for_statistics(0.0, 10.0, 4.0)
+            },
+            TestSample {
+                distance: 1.0,
+                ..sample_for_statistics(0.0, 10.0, 1.0)
+            },
+            TestSample {
+                distance: 2.0,
+                ..sample_for_statistics(0.0, 10.0, 4.0)
+            },
+        ];
+
+        let stats = ride_statistics(&samples, 3.0, true);
+        assert!((stats.strong_positive_g_seconds - 0.2).abs() < 1e-9);
+        assert!((stats.longest_strong_positive_g_seconds - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn average_speed_is_distance_divided_by_elapsed_time() {
+        let samples = [
+            sample_for_statistics(0.0, 5.0, 1.0),
+            sample_for_statistics(1.0, 10.0, 1.0),
+            sample_for_statistics(2.0, 20.0, 1.0),
+        ];
+
+        let stats = ride_statistics(&samples, 3.0, true);
+        assert!((stats.average_speed - 3.0 / 0.28).abs() < 1e-9);
+    }
+
+    fn sample_for_statistics(distance: f64, speed: f64, vertical_g: f64) -> TestSample {
+        TestSample {
+            distance,
+            speed,
+            vertical_g,
+            lateral_g: 0.0,
+            longitudinal_g: 0.0,
+            airtime: false,
+            height_m: 0.0,
+            inverted: false,
+        }
+    }
+
+    #[test]
+    fn ratings_use_a_soft_ten_point_scale_without_an_upper_cap() {
+        let sample = TestSample {
+            distance: 0.0,
+            speed: 30.0,
+            vertical_g: 8.0,
+            lateral_g: 2.0,
+            longitudinal_g: 1.0,
+            airtime: false,
+            height_m: 0.0,
+            inverted: false,
+        };
+        let (_, intensity, _, _) = ratings(&[sample], 10.0);
+        assert!(intensity > 10.0);
+        let speed_record = TestSample {
+            speed: 100.0,
+            vertical_g: 1.0,
+            lateral_g: 0.0,
+            longitudinal_g: 0.0,
+            ..sample
+        };
+        let (excitement, _, _, _) = ratings(&[speed_record], 10.0);
+        assert!(excitement > 10.0);
+    }
+
+    #[test]
+    fn recorder_reports_force_extremes_across_the_whole_train() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        let front = reading(0.0, 10.0, 1.0, 0.1, 0.0);
+        let rear = reading(0.0, 12.0, -1.2, -1.8, -0.4);
+        recorder.record(&[vec![front, rear]]);
+        recorder.record(&[vec![reading(1.0, 10.0, 1.0, 0.0, 0.0)]]);
+        let report = recorder.finish(false, false);
+        assert_eq!(report.statistics.max_negative_vertical_g, -1.2);
+        assert_eq!(report.statistics.max_lateral_g, 1.8);
+        assert_eq!(report.statistics.max_speed, 12.0);
+    }
 
     #[test]
     fn proximity_events_only_reward_sections_the_car_reached() {
@@ -790,8 +1319,8 @@ mod tests {
         reversed.add_proximity_events(&events.iter().rev().copied().collect::<Vec<_>>());
         assert!(one.intensity > baseline.intensity);
         assert!(one.excitement - baseline.excitement > two.excitement - one.excitement);
-        assert!(all.excitement - baseline.excitement < 8.0);
-        assert!(all.intensity - baseline.intensity < 2.0);
+        assert!(all.excitement - baseline.excitement < 0.8);
+        assert!(all.intensity - baseline.intensity < 0.2);
         assert!((all.excitement - reversed.excitement).abs() < 1e-10);
         assert!((all.intensity - reversed.intensity).abs() < 1e-10);
     }
@@ -989,11 +1518,9 @@ mod tests {
         assert!(uncomfortable.intensity > comfortable.intensity);
         assert!(uncomfortable.nausea > comfortable.nausea);
         assert!(uncomfortable.excitement < comfortable.excitement);
-        assert!(
-            (0.0..=100.0).contains(&uncomfortable.excitement)
-                && (0.0..=100.0).contains(&uncomfortable.intensity)
-                && (0.0..=100.0).contains(&uncomfortable.nausea)
-        );
+        assert!(uncomfortable.excitement.is_finite());
+        assert!(uncomfortable.intensity.is_finite());
+        assert!(uncomfortable.nausea.is_finite());
     }
 
     #[test]
@@ -1053,7 +1580,7 @@ mod tests {
             );
         }
         let report = recorder.finish(true, false);
-        assert!(report.intensity >= 70.0);
+        assert!(report.intensity >= 7.0);
         assert!(report.nausea > 0.0);
         assert!(
             report
@@ -1161,6 +1688,8 @@ mod tests {
         );
         assert!(!gentle.samples.iter().any(|sample| sample.inverted));
         assert!(drop_and_loop.samples.iter().any(|sample| sample.inverted));
+        assert!((5.0..=7.0).contains(&drop_and_loop.excitement));
+        assert!((3.0..=6.0).contains(&drop_and_loop.intensity));
         assert!(drop_and_loop.excitement > gentle.excitement);
         assert!(drop_and_loop.samples.len() > gentle.samples.len());
     }
@@ -1197,8 +1726,10 @@ mod tests {
         assert!(report.completed, "launch ride notes={:?}", report.notes);
         assert!(!report.samples.is_empty());
         assert!(report.samples.iter().any(|sample| sample.speed > 4.0));
+        assert_eq!(report.statistics.launches, 2);
+        assert!(report.statistics.launch_peak_speed > 4.0);
         for rating in [report.excitement, report.intensity, report.nausea] {
-            assert!(rating.is_finite() && (0.0..=100.0).contains(&rating));
+            assert!(rating.is_finite() && rating >= 0.0);
         }
         assert!(
             report

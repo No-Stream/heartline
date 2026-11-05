@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readCircuit } from "../player/circuits";
 import { fileURLToPath } from "node:url";
-import { closeCircuit, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
+import { closeCircuit, legacyRideRating, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
 
 test("Timber Tumbler player journey @journey", async ({ page }) => {
   test.setTimeout(180_000);
@@ -139,6 +139,12 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await testRide(page);
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  const rating = await page.evaluate(() => window.gameTest.testingReport()!.rating);
+  expect(rating.excitement).toBeGreaterThanOrEqual(4);
+  expect(rating.excitement).toBeLessThan(10);
+  expect(rating.intensity).toBeGreaterThan(0);
+  expect(rating.intensity).toBeLessThan(12);
+  console.log(`Timber Tumbler ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
 

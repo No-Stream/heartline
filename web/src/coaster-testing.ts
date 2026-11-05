@@ -8,6 +8,7 @@ import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
 import type { ProximityEventReport as ProximityEvent } from "./generated/ProximityEventReport";
 export type { TestingSample, TestingReport, ProximityEvent };
+export type RideStatistics = TestingReport["statistics"];
 
 export type TestingMetric = "speed" | "verticalG" | "lateralG" | "longitudinalG" | "airtime";
 const metrics: Record<TestingMetric, { label: string; low: string; high: string; value(sample: TestingSample): number }> = {
@@ -49,6 +50,49 @@ export function buildTestingRibbon(samples: readonly TestingSample[], metric: Te
 }
 
 const number = (value: number): string => value.toFixed(1).replace("-", "−");
+const count = (value: number): string => Math.round(value).toLocaleString("en-US");
+
+export function formatRideRating(rating: TestingReport["rating"]): string {
+  return `Excitement: ${number(rating.excitement)} · Intensity: ${number(rating.intensity)} · Nausea: ${number(rating.nausea)}`;
+}
+
+export interface FormattedRideStatistics {
+  readonly airtime: readonly string[];
+  readonly forces: readonly string[];
+  readonly speedAndLayout: readonly string[];
+}
+
+export function formatRideStatistics(statistics: RideStatistics, units: Units): FormattedRideStatistics {
+  return {
+    airtime: [
+      `Ejector airtime: ${number(statistics.ejectorAirtimeSeconds)} s`,
+      `Floater airtime: ${number(statistics.floaterAirtimeSeconds)} s`,
+      `Airtime moments: ${count(statistics.airtimeMoments)}`,
+    ],
+    forces: [
+      `Strong positive g: ${number(statistics.strongPositiveGSeconds)} s (longest ${number(statistics.longestStrongPositiveGSeconds)} s)`,
+      `Strong laterals: ${number(statistics.strongLateralGSeconds)} s`,
+      `Max positive vertical: ${number(statistics.maxPositiveVerticalG)} g`,
+      `Max negative vertical: ${number(statistics.maxNegativeVerticalG)} g`,
+      `Max lateral: ${number(statistics.maxLateralG)} g`,
+      `Max forward: ${number(statistics.maxForwardG)} g`,
+      `Max braking: ${number(statistics.maxBrakingG)} g`,
+    ],
+    speedAndLayout: [
+      `Max speed: ${formatSpeed(statistics.maxSpeed, units)}`,
+      `Average speed: ${formatSpeed(statistics.averageSpeed, units)}`,
+      `Ride duration: ${number(statistics.durationSeconds)} s`,
+      `Track length: ${formatLength(statistics.trackLength, units)}`,
+      `Max height: ${formatLength(statistics.maxHeight, units)}`,
+      `Biggest drop: ${formatLength(statistics.biggestDrop, units)}`,
+      `Steepest drop: ${number(statistics.steepestDropAngleDegrees)}°`,
+      `Inversions: ${count(statistics.inversions)} (${number(statistics.invertedSeconds)} s inverted)`,
+      `Drops: ${count(statistics.drops)}`,
+      `Launches: ${count(statistics.launches)} (peak ${statistics.launches ? formatSpeed(statistics.launchPeakSpeed, units) : "—"})`,
+    ],
+  };
+}
+
 const proximityLabels: Readonly<Record<string, string>> = {
   nearMiss: "Near-miss with the coaster's supports",
   headchopper: "A headchopper over the track",
@@ -65,7 +109,7 @@ export function formatProximityEvent(event: ProximityEvent): string {
 
 export function proximityContribution(events: readonly ProximityEvent[]): number {
   const strength = events.reduce((total, event) => total + Math.max(0, Math.min(1, event.strength)), 0);
-  return strength === 0 ? 0 : 8 * strength / (strength + 4);
+  return strength === 0 ? 0 : 0.8 * strength / (strength + 4);
 }
 
 const proximityColors: Readonly<Record<string, "steel" | "wood" | "train" | "ink">> = {
@@ -157,7 +201,10 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   inspect(index: number): void;
   inspectProximity(index: number): void;
 } {
-  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><p data-rating></p>
+  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><section data-statistics hidden><h4>Scores (about 0–10)</h4><p data-rating></p>
+    <p data-whole-train>Statistics cover the whole train using the worst car.</p>
+    <h4>Airtime</h4><ul data-statistics-airtime></ul><h4>Forces</h4><ul data-statistics-forces></ul>
+    <h4>Speed and layout</h4><ul data-statistics-speed-layout></ul></section>
     <p data-height-summary hidden>Maximum height above ground (sampled): <span data-report-maximum-height></span> · Biggest drop (sampled): <span data-report-drop-height></span></p>
     <label>Track overlay <select data-metric><option value="off">Off</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
     <div data-legend hidden><span data-low></span> <span data-gradient aria-hidden="true" style="display:inline-block;width:100px;height:10px"></span> <span data-high></span></div>
@@ -197,9 +244,25 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   const renderReport = (): void => {
     const notes = container.querySelector<HTMLElement>("[data-notes]")!;
     const rating = container.querySelector<HTMLElement>("[data-rating]")!;
+    const statisticsSection = container.querySelector<HTMLElement>("[data-statistics]")!;
     const heightSummary = container.querySelector<HTMLElement>("[data-height-summary]")!;
     notes.textContent = report ? report.notes.map((note) => formatTestingNote(note, activeUnits)).join(" ") || "No concerns were noted during this test." : "Run a test to see the results.";
-    rating.textContent = report?.rating ? `Excitement: ${number(report.rating.excitement)} · Intensity: ${number(report.rating.intensity)} · Nausea: ${number(report.rating.nausea)}` : "";
+    statisticsSection.hidden = !report;
+    rating.textContent = report?.rating ? formatRideRating(report.rating) : "";
+    const statistics = report?.statistics;
+    const formattedStatistics = statistics ? formatRideStatistics(statistics, activeUnits) : null;
+    const renderList = (selector: string, items: readonly string[] | undefined): void => {
+      const list = container.querySelector<HTMLElement>(selector)!;
+      list.replaceChildren();
+      for (const item of items ?? []) {
+        const row = document.createElement("li");
+        row.textContent = item;
+        list.append(row);
+      }
+    };
+    renderList("[data-statistics-airtime]", formattedStatistics?.airtime);
+    renderList("[data-statistics-forces]", formattedStatistics?.forces);
+    renderList("[data-statistics-speed-layout]", formattedStatistics?.speedAndLayout);
     let summary: RideHeightSummary | null = null;
     if (report?.samples.length) {
       if (!world) throw new Error("Ride testing report requires a world snapshot");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProximityMarkers, buildTestingRibbon, formatProximityEvent, formatSample, formatTestingNote, proximityContribution, summarizeRideHeights, type ProximityEvent, type TestingSample } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, formatProximityEvent, formatRideRating, formatRideStatistics, formatSample, formatTestingNote, proximityContribution, summarizeRideHeights, type ProximityEvent, type RideStatistics, type TestingSample } from "./coaster-testing";
 import type { WorldView } from "./render/scene";
 
 const samples: TestingSample[] = [
@@ -14,12 +14,61 @@ const proximityEvents: ProximityEvent[] = [
   { kind: "nearMiss", pieceIndex: 13, distance: 14, x: 2, y: 3, z: 1, strength: 0.8 },
   { kind: "dueling", pieceIndex: 7, distance: 8, x: 3, y: 3, z: 1, strength: 0.4 },
 ];
+const statistics: RideStatistics = {
+  ejectorAirtimeSeconds: 2.25,
+  floaterAirtimeSeconds: 3.5,
+  airtimeMoments: 4,
+  strongPositiveGSeconds: 1.2,
+  longestStrongPositiveGSeconds: 0.7,
+  strongLateralGSeconds: 0.4,
+  maxPositiveVerticalG: 4.1,
+  maxNegativeVerticalG: -0.8,
+  maxLateralG: 1.4,
+  maxForwardG: 1.1,
+  maxBrakingG: 0.6,
+  maxSpeed: 28,
+  averageSpeed: 14,
+  durationSeconds: 42.5,
+  trackLength: 650,
+  maxHeight: 32,
+  biggestDrop: 25,
+  steepestDropAngleDegrees: 52.3,
+  inversions: 2,
+  invertedSeconds: 3.1,
+  drops: 5,
+  launches: 1,
+  launchPeakSpeed: 24,
+};
 
 describe("coaster testing overlay", () => {
+  it("formats ride scores with one decimal on the soft ten-point scale", () => {
+    expect(formatRideRating({ excitement: 5.14, intensity: 7.06, nausea: 0.34 })).toBe(
+      "Excitement: 5.1 · Intensity: 7.1 · Nausea: 0.3",
+    );
+  });
+
+  it("formats the ride statistics in metric and imperial units", () => {
+    const metric = formatRideStatistics(statistics, "metric");
+    const imperial = formatRideStatistics(statistics, "imperial");
+
+    expect(metric.airtime).toEqual(["Ejector airtime: 2.3 s", "Floater airtime: 3.5 s", "Airtime moments: 4"]);
+    expect(metric.forces).toContain("Strong positive g: 1.2 s (longest 0.7 s)");
+    expect(metric.forces).toContain("Max negative vertical: −0.8 g");
+    expect(metric.speedAndLayout).toContain("Max speed: 100.8 km/h");
+    expect(metric.speedAndLayout).toContain("Track length: 650 m");
+    expect(metric.speedAndLayout).toContain("Biggest drop: 25 m");
+    expect(metric.speedAndLayout).toContain("Launches: 1 (peak 86.4 km/h)");
+    expect(imperial.speedAndLayout).toContain("Max speed: 62.6 mph");
+    expect(imperial.speedAndLayout).toContain("Track length: 2,133 ft");
+    expect(imperial.speedAndLayout).toContain("Max height: 105 ft");
+    expect(imperial.speedAndLayout).toContain("Launches: 1 (peak 53.7 mph)");
+    expect(formatRideStatistics({ ...statistics, launches: 0 }, "metric").speedAndLayout.at(-1)).toBe("Launches: 0 (peak —)");
+  });
+
   it("describes proximity events and calculates their excitement contribution", () => {
     expect(formatProximityEvent(proximityEvents[0])).toBe("Near-miss with the coaster's supports at piece 14, very close");
     expect(formatProximityEvent(proximityEvents[1])).toBe("Dueling trains at piece 8, close");
-    expect(proximityContribution(proximityEvents)).toBeCloseTo(8 * 1.2 / 5.2);
+    expect(proximityContribution(proximityEvents)).toBeCloseTo(0.8 * 1.2 / 5.2);
   });
 
   it("places pickable, theme-coloured markers at each event location", () => {

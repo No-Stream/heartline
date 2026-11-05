@@ -100,11 +100,40 @@ pub(crate) struct TestingRating {
 
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RideStatisticsReport {
+    pub ejector_airtime_seconds: f64,
+    pub floater_airtime_seconds: f64,
+    pub airtime_moments: usize,
+    pub strong_positive_g_seconds: f64,
+    pub longest_strong_positive_g_seconds: f64,
+    pub strong_lateral_g_seconds: f64,
+    pub max_positive_vertical_g: f64,
+    pub max_negative_vertical_g: f64,
+    pub max_lateral_g: f64,
+    pub max_forward_g: f64,
+    pub max_braking_g: f64,
+    pub max_speed: f64,
+    pub average_speed: f64,
+    pub duration_seconds: f64,
+    pub track_length: f64,
+    pub max_height: f64,
+    pub biggest_drop: f64,
+    pub steepest_drop_angle_degrees: f64,
+    pub inversions: usize,
+    pub inverted_seconds: f64,
+    pub drops: usize,
+    pub launches: usize,
+    pub launch_peak_speed: f64,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TestingReport {
     pub samples: Vec<TestingSample>,
     pub notes: Vec<String>,
     pub proximity_events: Vec<ProximityEventReport>,
     pub rating: TestingRating,
+    pub statistics: RideStatisticsReport,
 }
 
 #[derive(serde::Serialize, ts_rs::TS)]
@@ -157,7 +186,16 @@ mod wire_tests {
         let output = if std::env::var_os("UPDATE_REPORT_TYPES").is_some() {
             destination.clone()
         } else {
-            std::env::temp_dir().join(format!("theme-park-report-types-{}", std::process::id()))
+            let unique_run_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let output = std::env::temp_dir().join(format!(
+                "theme-park-report-types-{}-{unique_run_id}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&output).unwrap();
+            output
         };
         crate::TrainLayoutReport::export_all_to(&output).unwrap();
         BlockReport::export_all_to(&output).unwrap();
@@ -184,6 +222,7 @@ mod wire_tests {
                     expected.display()
                 );
             }
+            std::fs::remove_dir_all(output).unwrap();
         }
     }
 
@@ -208,11 +247,37 @@ mod wire_tests {
                 intensity: 2.0,
                 nausea: 3.0,
             },
+            statistics: RideStatisticsReport {
+                ejector_airtime_seconds: 0.0,
+                floater_airtime_seconds: 0.0,
+                airtime_moments: 0,
+                strong_positive_g_seconds: 0.0,
+                longest_strong_positive_g_seconds: 0.0,
+                strong_lateral_g_seconds: 0.0,
+                max_positive_vertical_g: 0.0,
+                max_negative_vertical_g: 0.0,
+                max_lateral_g: 0.0,
+                max_forward_g: 0.0,
+                max_braking_g: 0.0,
+                max_speed: 0.0,
+                average_speed: 0.0,
+                duration_seconds: 0.0,
+                track_length: 0.0,
+                max_height: 0.0,
+                biggest_drop: 0.0,
+                steepest_drop_angle_degrees: 0.0,
+                inversions: 0,
+                inverted_seconds: 0.0,
+                drops: 0,
+                launches: 0,
+                launch_peak_speed: 0.0,
+            },
         };
         let value = serde_json::to_value(report).unwrap();
         assert_eq!(value["samples"][0]["verticalG"], 6.0);
         assert_eq!(value["notes"][0], "quoted \"note\"\n");
         assert_eq!(value["proximityEvents"], serde_json::json!([]));
         assert_eq!(value["rating"]["intensity"], 2.0);
+        assert_eq!(value["statistics"]["airtimeMoments"], 0);
     }
 }

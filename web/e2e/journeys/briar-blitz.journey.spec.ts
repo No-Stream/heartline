@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readCircuit } from "../player/circuits";
-import { closeCircuit, openTool, placePiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
+import { closeCircuit, legacyRideRating, openTool, placePiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
 
 test("Briar Blitz player journey @journey", async ({ page }) => {
   test.setTimeout(180_000);
@@ -75,6 +75,12 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
   await testRide(page);
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  const rating = await page.evaluate(() => window.gameTest.testingReport()!.rating);
+  expect(rating.excitement).toBeGreaterThanOrEqual(1.5);
+  expect(rating.excitement).toBeLessThan(3);
+  expect(rating.intensity).toBeGreaterThan(0);
+  expect(rating.intensity).toBeLessThan(12);
+  console.log(`Briar Blitz ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
   expect(await page.evaluate(() => window.gameTest.crestBursts().length)).toBeGreaterThan(crestCount);
