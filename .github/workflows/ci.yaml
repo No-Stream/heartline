@@ -39,12 +39,31 @@ jobs:
           node-version: "22"
           cache: npm
       - run: make install
-      # make test rasterizes the sprite atlas through headless Chrome.
+      # make test-web rasterizes the sprite atlas through headless Chrome.
       - run: npx playwright install --with-deps chrome
       - run: make build
-      - run: make test
+      - run: make test-rust
+      - run: make test-web
 
-  e2e:
+  test-threads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: make test-threads
+
+  test-flexibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: make test-flexibility
+
+  e2e-build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -57,11 +76,46 @@ jobs:
           cache: npm
       - run: make install
       - run: npx playwright install --with-deps chrome
-      - run: make e2e
+      - run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-build
+          path: |
+            web/art/atlas/
+            web/src/wasm/
+            web/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  e2e:
+    needs: e2e-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [feature, journey, smoothness]
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup show active-toolchain || rustup toolchain install
+        if: matrix.project == 'feature'
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.project == 'feature'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: make install
+      - run: npx playwright install --with-deps chrome
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-build
+          path: web/
+      - run: npm run e2e -- --project=${{ matrix.project }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.project }}
           path: |
             playwright-report/
             test-results/

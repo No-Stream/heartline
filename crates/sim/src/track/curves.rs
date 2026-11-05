@@ -1126,10 +1126,10 @@ mod shape_tests {
         translated.exit.x += 100;
         assert!(Arc::ptr_eq(&piece.arc_table, &translated.arc_table));
         assert!(piece.arc_table.get().is_none());
-        let bytes =
-            super::with_snapshot_arc_tables(|| bincode::serialize(&(piece, translated))).unwrap();
+        let bytes = super::with_snapshot_arc_tables(|| postcard::to_allocvec(&(piece, translated)))
+            .unwrap();
         let (first, second): (Piece, Piece) =
-            super::with_snapshot_arc_tables(|| bincode::deserialize(&bytes)).unwrap();
+            super::with_snapshot_arc_tables(|| postcard::from_bytes(&bytes)).unwrap();
         assert!(Arc::ptr_eq(&first.arc_table, &second.arc_table));
         assert!(first.arc_table.get().is_none());
         first.length();

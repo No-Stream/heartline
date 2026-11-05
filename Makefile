@@ -7,7 +7,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-player-circuits generate-report-types check-report-types generate-profiles
+.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-player-circuits generate-report-types check-report-types generate-profiles
 
 install:
 	npm ci
@@ -39,10 +39,18 @@ check: build
 	npm run typecheck
 	PLAYWRIGHT_PORT=$${PLAYWRIGHT_PORT:-4271} npm run e2e -- --grep @fast
 
-test: art
+test: test-rust test-threads test-flexibility test-web
+
+test-rust:
 	$(CARGO) test --workspace -- --skip track::construction::walk_tests::seeded_
+
+test-threads:
 	$(CARGO) test -p theme-park-sim --features threads -- --skip track::construction::walk_tests::seeded_
+
+test-flexibility:
 	FLEXIBILITY_WALKS=256 $(CARGO) test --release -p theme-park-sim --lib track::construction::walk_tests::seeded_
+
+test-web: art
 	npm test
 	npm run test:art
 
@@ -57,6 +65,15 @@ serve:
 
 e2e: build
 	npm run e2e
+
+e2e-feature: build
+	npm run e2e -- --project=feature
+
+e2e-journey: build
+	npm run e2e -- --project=journey
+
+e2e-smoothness: build
+	npm run e2e -- --project=smoothness
 
 e2e-slow: build
 	npm run e2e -- --grep @slow

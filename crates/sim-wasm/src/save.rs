@@ -1,10 +1,43 @@
-use bincode::Options;
 use wasm_bindgen::prelude::*;
 
 use crate::WasmSimulation;
 
-const SAVE_HEADER: &[u8] = b"TPSAVE\x01";
+const SAVE_HEADER: &[u8] = b"TPSAVE\x02";
 const MAX_SAVE_BYTES: u64 = 256 * 1024 * 1024;
+
+struct LimitedBytes {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl LimitedBytes {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+        }
+    }
+}
+
+impl postcard::ser_flavors::Flavor for LimitedBytes {
+    type Output = Vec<u8>;
+
+    fn try_push(&mut self, byte: u8) -> postcard::Result<()> {
+        self.try_extend(&[byte])
+    }
+
+    fn try_extend(&mut self, bytes: &[u8]) -> postcard::Result<()> {
+        if bytes.len() > self.limit - self.bytes.len() {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn finalize(self) -> postcard::Result<Self::Output> {
+        Ok(self.bytes)
+    }
+}
 
 fn checksum(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
@@ -12,7 +45,7 @@ fn checksum(bytes: &[u8]) -> u64 {
     })
 }
 
-fn checked_payload(bytes: &[u8]) -> Result<&[u8], &'static str> {
+pub(super) fn checked_payload(bytes: &[u8]) -> Result<&[u8], &'static str> {
     let data = bytes
         .strip_prefix(SAVE_HEADER)
         .ok_or("Unsupported or invalid park save version")?;
@@ -29,10 +62,7 @@ impl WasmSimulation {
     pub fn save_state(&self) -> Result<Vec<u8>, JsValue> {
         let mut bytes = SAVE_HEADER.to_vec();
         let payload = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-            bincode::DefaultOptions::new()
-                .with_fixint_encoding()
-                .with_limit(MAX_SAVE_BYTES)
-                .serialize(self)
+            postcard::serialize_with_flavor(self, LimitedBytes::new(MAX_SAVE_BYTES as usize))
         })
         .map_err(|error| JsValue::from_str(&format!("Could not save park: {error}")))?;
         bytes.extend(checksum(&payload).to_le_bytes());
@@ -43,11 +73,13 @@ impl WasmSimulation {
     pub fn load_state(bytes: &[u8]) -> Result<WasmSimulation, JsValue> {
         let payload = checked_payload(bytes).map_err(JsValue::from_str)?;
         let mut simulation: Self = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-            bincode::DefaultOptions::new()
-                .with_fixint_encoding()
-                .with_limit(MAX_SAVE_BYTES)
-                .reject_trailing_bytes()
-                .deserialize(payload)
+            postcard::take_from_bytes(payload).and_then(|(simulation, remaining)| {
+                if remaining.is_empty() {
+                    Ok(simulation)
+                } else {
+                    Err(postcard::Error::DeserializeBadEncoding)
+                }
+            })
         })
         .map_err(|error| JsValue::from_str(&format!("Could not load park: {error}")))?;
         simulation.park.rebind_world_after_loading();
@@ -61,6 +93,12 @@ impl WasmSimulation {
 #[cfg(test)]
 mod tests {
     use super::{SAVE_HEADER, checked_payload, checksum};
+
+    #[test]
+    fn serialization_stops_at_the_size_limit() {
+        let result = postcard::serialize_with_flavor(&vec![1_u8; 10], super::LimitedBytes::new(5));
+        assert_eq!(result, Err(postcard::Error::SerializeBufferFull));
+    }
 
     #[test]
     fn save_rejects_corruption_and_unsupported_versions() {
