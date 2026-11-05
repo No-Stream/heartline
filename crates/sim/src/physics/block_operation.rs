@@ -8,12 +8,14 @@ use crate::track::proximity::TrainPosition;
 #[cfg(test)]
 mod powered_hold_tests;
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct OperatingTrain {
     id: u64,
     run: CoasterRun,
     reserved: Vec<usize>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct BlockOperation {
     circuit: Circuit,
     configuration: TrainConfiguration,

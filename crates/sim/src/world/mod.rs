@@ -19,7 +19,11 @@ pub use terrain::{
 
 static NEXT_WORLD_ID: AtomicUsize = AtomicUsize::new(1);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+fn next_world_id() -> usize {
+    NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Surface {
     /// Corner heights in northwest, northeast, southeast, southwest order.
     pub corners: [i16; 4],
@@ -42,7 +46,9 @@ pub enum CellEditError {
     UnsupportedScenery,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct Position {
     pub x: u16,
     pub y: u16,
@@ -50,7 +56,7 @@ pub struct Position {
     pub height: i16,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Direction {
     North,
     East,
@@ -58,7 +64,7 @@ pub enum Direction {
     West,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Path {
     pub position: Position,
     /// A slope rises one height step towards this edge.
@@ -92,25 +98,27 @@ impl Path {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Span {
     bottom: i16,
     top: i16,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Column {
     carved: Vec<Span>,
     paths: Vec<Path>,
     path_edges: Vec<u8>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct World {
     scenery: BTreeMap<(u16, u16, i16, u8), Scenery>,
     path_metadata: BTreeMap<Position, PathMetadata>,
     width: u16,
     height: u16,
     revision: u64,
+    #[serde(skip, default = "next_world_id")]
     instance_id: usize,
     surfaces: Vec<Surface>,
     columns: Vec<Option<Box<Column>>>,

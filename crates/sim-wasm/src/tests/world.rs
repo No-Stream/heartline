@@ -1487,6 +1487,52 @@ fn simulation_with_two_occupied_coaster_trains() -> WasmSimulation {
 }
 
 #[test]
+fn save_round_trip_preserves_a_live_park_with_riders_and_a_queue() {
+    use theme_park_sim::guests::ActivityKind;
+
+    let mut original = simulation_with_two_occupied_coaster_trains();
+    let has_queued_guest = |simulation: &WasmSimulation| {
+        simulation.simulation.walking().traits().ids().any(|guest| {
+            let activity = simulation.simulation.behaviors().activity_detail(guest);
+            activity.kind == ActivityKind::Queuing
+                && activity.place_id == Some(super::COASTER_PLACE_ID)
+        })
+    };
+    for _ in 0..10_000 {
+        if !original.coaster_riders.is_empty() && has_queued_guest(&original) {
+            break;
+        }
+        original.tick();
+    }
+    assert!(
+        !original.coaster_riders.is_empty(),
+        "expected riders on the coaster"
+    );
+    assert!(
+        has_queued_guest(&original),
+        "expected guests in the coaster queue"
+    );
+    assert!(
+        original
+            .coaster_operation
+            .as_ref()
+            .unwrap()
+            .trains()
+            .any(|(_, train)| train.distance() > 0.0)
+    );
+    let bytes = original.save_state().unwrap();
+    let mut restored = WasmSimulation::load_state(&bytes).unwrap();
+    assert_eq!(original.state_hash(), restored.state_hash());
+    assert_eq!(original.coaster_riders, restored.coaster_riders);
+    assert!(has_queued_guest(&restored));
+    for _ in 0..30 {
+        original.tick();
+        restored.tick();
+        assert_eq!(original.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
 fn deleting_coaster_track_recovers_passengers_from_two_live_trains() {
     let mut simulation = simulation_with_two_occupied_coaster_trains();
     let occupied_train_ids: Vec<_> = simulation.coaster_riders.keys().copied().collect();

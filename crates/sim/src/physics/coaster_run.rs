@@ -4,6 +4,7 @@ use crate::track::proximity::TrainPosition;
 use crate::track::{PieceKind, TrainConfiguration};
 
 /// A single dispatched train, from the station through one circuit or recovery.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct CoasterRun {
     train: Train,
     recorders: Option<Vec<TestRunRecorder>>,

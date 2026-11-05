@@ -5,7 +5,7 @@
 
 use crate::state_hash::StateHasher;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CoasterColor {
     Coral,
     Mustard,
@@ -60,7 +60,7 @@ impl CoasterColor {
 }
 
 /// One coaster's colour scheme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CoasterColors {
     pub track: CoasterColor,
     pub supports: CoasterColor,

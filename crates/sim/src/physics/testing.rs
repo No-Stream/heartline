@@ -37,7 +37,7 @@ const EXCITEMENT_INVERSION_WEIGHT: f64 = 15.0;
 const EXCITEMENT_NAUSEA_WEIGHT: f64 = 0.45;
 
 /// One fixed-distance force and speed sample from a coaster test run.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TestSample {
     pub distance: f64,
     pub speed: f64,
@@ -50,7 +50,7 @@ pub struct TestSample {
 }
 
 /// A completed or interrupted test run, including advisory ride ratings.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TestRun {
     pub samples: Vec<TestSample>,
     pub proximity_events: Vec<ProximityEvent>,
@@ -150,6 +150,7 @@ impl TestRun {
 }
 
 /// Turns per-tick train readings into one interpolated sample per track metre.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct TestRunRecorder {
     circuit_length: f64,
     piece_starts: Vec<f64>,
@@ -169,9 +170,10 @@ pub struct TestRunRecorder {
     visited_ranges: Vec<(f64, f64)>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 struct RatedPieceSpeedWindow {
-    name: &'static str,
+    #[serde(with = "crate::save::catalog_text")]
+    name: crate::save::CatalogText,
     minimum_entry: f64,
     maximum_entry: f64,
 }

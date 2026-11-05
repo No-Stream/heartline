@@ -29,7 +29,7 @@ pub struct OwnedSupportSegment {
     pub segment: SupportSegment,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ProximityKind {
     NearMiss,
     Headchopper,
@@ -38,7 +38,7 @@ pub enum ProximityKind {
     TerrainHugging,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ProximityEvent {
     pub piece_index: usize,
     pub kind: ProximityKind,
