@@ -148,17 +148,9 @@ struct Point {
     curvature: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct CurvatureSample {
-    distance: f64,
-    curvature: f64,
-    slope: f64,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SolvedProfile {
     points: Vec<Point>,
-    curvature_samples: Option<Vec<CurvatureSample>>,
     cached_minimum_entry: Option<f64>,
     cached_minimum_radius: Option<f64>,
 }
@@ -166,41 +158,20 @@ pub(crate) struct SolvedProfile {
 include!("profiles.generated.rs");
 
 pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
-    let (
-        _,
-        minimum_entry,
-        minimum_radius,
-        curvature_scale,
-        slope_scale,
-        values,
-        curvature_distances,
-        curvatures,
-        slopes,
-    ) = GENERATED_PROFILES
+    let (_, minimum_entry, minimum_radius, length, values) = GENERATED_PROFILES
         .iter()
-        .find(|(profile_name, _, _, _, _, _, _, _, _)| *profile_name == name)
+        .find(|(profile_name, _, _, _, _)| *profile_name == name)
         .unwrap_or_else(|| panic!("missing generated profile {name}"));
-    assert_eq!(curvature_distances.len(), curvatures.len());
-    assert_eq!(curvature_distances.len(), slopes.len());
-    let curvature_samples = curvature_distances
-        .iter()
-        .zip(curvatures.iter().zip(slopes.iter()))
-        .map(|(distance, (curvature, slope))| CurvatureSample {
-            distance: f64::from(*distance),
-            curvature: f64::from(*curvature) * *curvature_scale,
-            slope: f64::from(*slope) * *slope_scale,
-        })
-        .collect::<Vec<_>>();
     let points = values
         .iter()
-        .map(|value| {
-            let distance = value[0];
-            let curvature = interpolate_curvature(&curvature_samples, distance);
+        .enumerate()
+        .map(|(index, value)| {
+            let curvature = value[3];
             Point {
-                distance,
-                x: value[1],
-                z: value[2],
-                angle: value[3],
+                distance: *length * index as f64 / (values.len() - 1) as f64,
+                x: value[0],
+                z: value[1],
+                angle: value[2],
                 heart_curvature: curvature / (1.0 - HEART_HEIGHT_METRES * curvature),
                 curvature,
             }
@@ -208,26 +179,9 @@ pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
         .collect();
     SolvedProfile {
         points,
-        curvature_samples: Some(curvature_samples),
         cached_minimum_entry: Some(*minimum_entry),
         cached_minimum_radius: Some(*minimum_radius),
     }
-}
-
-fn interpolate_curvature(samples: &[CurvatureSample], distance: f64) -> f64 {
-    let sample_index = samples
-        .partition_point(|sample| sample.distance < distance)
-        .clamp(1, samples.len() - 1);
-    let start = samples[sample_index - 1];
-    let end = samples[sample_index];
-    let interval = end.distance - start.distance;
-    let parameter = ((distance - start.distance) / interval).clamp(0.0, 1.0);
-    let parameter_squared = parameter * parameter;
-    let parameter_cubed = parameter_squared * parameter;
-    (2.0 * parameter_cubed - 3.0 * parameter_squared + 1.0) * start.curvature
-        + (parameter_cubed - 2.0 * parameter_squared + parameter) * interval * start.slope
-        + (-2.0 * parameter_cubed + 3.0 * parameter_squared) * end.curvature
-        + (parameter_cubed - parameter_squared) * interval * end.slope
 }
 
 impl SolvedProfile {
@@ -266,14 +220,6 @@ impl SolvedProfile {
                 hash.write_f64(if value == 0.0 { 0.0 } else { value });
             }
         }
-        hash.write_option(self.curvature_samples.as_ref(), |hash, samples| {
-            hash.write_len(samples.len());
-            for sample in samples {
-                for value in [sample.distance, sample.curvature, sample.slope] {
-                    hash.write_f64(if value == 0.0 { 0.0 } else { value });
-                }
-            }
-        });
     }
     pub(crate) fn length(&self) -> f64 {
         self.points.last().unwrap().distance
@@ -377,97 +323,13 @@ impl SolvedProfile {
             first[axis] = ((((5.0 * a * u + 4.0 * b) * u + 3.0 * c) * u + n0) * u + m0) / length;
             second[axis] = (((20.0 * a * u + 12.0 * b) * u + 6.0 * c) * u + n0) / length.powi(2);
         }
-        if let Some(curvature_samples) = &self.curvature_samples {
-            let curvature = interpolate_curvature(curvature_samples, distance);
-            let speed = first[0].hypot(first[1]);
-            second = [-first[1] * curvature * speed, first[0] * curvature * speed];
-        }
         (position, first, second)
     }
 }
 
 #[cfg(test)]
-fn profile_curvature(profile: &SolvedProfile, distance: f64) -> f64 {
-    let (_, tangent, second) = profile.sample(distance);
-    profile_curvature_from_derivatives(tangent, second)
-}
-
-#[cfg(test)]
 fn profile_curvature_from_derivatives(tangent: [f64; 2], second: [f64; 2]) -> f64 {
     (tangent[0] * second[1] - tangent[1] * second[0]) / tangent[0].hypot(tangent[1]).powi(3)
-}
-
-#[cfg(test)]
-fn profile_curvature_slope(profile: &SolvedProfile, distance: f64) -> f64 {
-    const STEP: f64 = 0.05;
-    if distance < 2.0 * STEP {
-        let values = std::array::from_fn::<_, 5, _>(|index| {
-            profile_curvature(profile, distance + index as f64 * STEP)
-        });
-        (-25.0 * values[0] + 48.0 * values[1] - 36.0 * values[2] + 16.0 * values[3]
-            - 3.0 * values[4])
-            / (12.0 * STEP)
-    } else if distance > profile.length() - 2.0 * STEP {
-        let values = std::array::from_fn::<_, 5, _>(|index| {
-            profile_curvature(profile, distance - index as f64 * STEP)
-        });
-        (25.0 * values[0] - 48.0 * values[1] + 36.0 * values[2] - 16.0 * values[3]
-            + 3.0 * values[4])
-            / (12.0 * STEP)
-    } else {
-        let values = [
-            profile_curvature(profile, distance - 2.0 * STEP),
-            profile_curvature(profile, distance - STEP),
-            profile_curvature(profile, distance + STEP),
-            profile_curvature(profile, distance + 2.0 * STEP),
-        ];
-        (values[0] - 8.0 * values[1] + 8.0 * values[2] - values[3]) / (12.0 * STEP)
-    }
-}
-
-#[cfg(test)]
-fn profile_curvature_samples(profile: &SolvedProfile) -> Vec<CurvatureSample> {
-    const MAXIMUM_ERROR: f64 = 0.8e-4;
-    const MAXIMUM_SAMPLE_COUNT: usize = 2048;
-    let mut samples = [0.0, profile.length()]
-        .into_iter()
-        .map(|distance| CurvatureSample {
-            distance,
-            curvature: profile_curvature(profile, distance),
-            slope: profile_curvature_slope(profile, distance),
-        })
-        .collect::<Vec<_>>();
-    loop {
-        let mut maximum_error = 0.0_f64;
-        let mut worst_distance = 0.0_f64;
-        for index in 1..8192 {
-            let distance = profile.length() * index as f64 / 8192.0;
-            let error = (profile_curvature(profile, distance)
-                - interpolate_curvature(&samples, distance))
-            .abs();
-            if error > maximum_error {
-                maximum_error = error;
-                worst_distance = distance;
-            }
-        }
-        if maximum_error <= MAXIMUM_ERROR {
-            return samples;
-        }
-        assert!(
-            samples.len() < MAXIMUM_SAMPLE_COUNT,
-            "{} curvature interpolation error {maximum_error} at {worst_distance} m exceeds {MAXIMUM_ERROR} with {MAXIMUM_SAMPLE_COUNT} knots",
-            profile.points.len()
-        );
-        let insertion_index = samples.partition_point(|sample| sample.distance < worst_distance);
-        samples.insert(
-            insertion_index,
-            CurvatureSample {
-                distance: worst_distance,
-                curvature: profile_curvature(profile, worst_distance),
-                slope: profile_curvature_slope(profile, worst_distance),
-            },
-        );
-    }
 }
 
 #[cfg(test)]
@@ -579,21 +441,33 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                     let heart_curvature =
                         GRAVITY * (schedule.force(angle) - angle.cos()) * end_taper
                             / end_speed_squared;
-                    points.push(Point {
+                    let point = Point {
                         distance,
                         x: heart_x + HEART_HEIGHT * angle.sin(),
                         z: heart_z - HEART_HEIGHT * angle.cos(),
                         angle,
                         heart_curvature,
                         curvature: heart_curvature / (1.0 + HEART_HEIGHT * heart_curvature),
-                    });
+                    };
+                    const MINIMUM_POINT_SPACING: f64 = 0.001_000_001;
+                    if distance - points.last().unwrap().distance < MINIMUM_POINT_SPACING {
+                        if index + 1 == steps {
+                            assert!(
+                                points.len() > 1,
+                                "arc is shorter than minimum point spacing"
+                            );
+                            points.pop();
+                        } else {
+                            continue;
+                        }
+                    }
+                    points.push(point);
                 }
             }
         }
     }
     SolvedProfile {
         points,
-        curvature_samples: None,
         cached_minimum_entry: None,
         cached_minimum_radius: None,
     }
@@ -1080,10 +954,9 @@ mod tests {
     use std::f64::consts::FRAC_PI_2;
     use std::fmt::Write as _;
 
-    const MAXIMUM_GENERATED_PROFILE_POINTS: usize = 256;
-    const MAXIMUM_PROFILE_POSITION_ERROR_METRES: f64 = 0.00095;
-    const MAXIMUM_PROFILE_CURVATURE_ERROR: f64 = 0.9e-4;
-    const MAXIMUM_PROFILE_DATA_BYTES: usize = 145_000;
+    const GENERATED_PROFILE_POINTS: usize = 512;
+    const MAXIMUM_PROFILE_POSITION_ERROR_METRES: f64 = 0.001;
+    const MAXIMUM_PROFILE_CURVATURE_ERROR: f64 = 2e-4;
 
     fn catalog_profiles() -> Vec<(&'static str, SolvedProfile)> {
         vec![
@@ -1124,282 +997,59 @@ mod tests {
         ]
     }
 
+    #[test]
+    fn catalog_profiles_have_no_intervals_shorter_than_one_millimetre() {
+        for (name, profile) in catalog_profiles() {
+            for points in profile.points.windows(2) {
+                let interval = points[1].distance - points[0].distance;
+                assert!(interval >= 0.001, "{name}: interval {interval}");
+            }
+        }
+    }
+
+    fn reference_curvature(profile: &SolvedProfile, distance: f64) -> f64 {
+        let index = profile
+            .points
+            .partition_point(|point| point.distance < distance)
+            .clamp(1, profile.points.len() - 1);
+        let start = profile.points[index - 1];
+        let end = profile.points[index];
+        let fraction = (distance - start.distance) / (end.distance - start.distance);
+        start.curvature + fraction * (end.curvature - start.curvature)
+    }
+
     fn generated_source(profiles: &[(&str, SolvedProfile)]) -> String {
         let mut output = String::from(
-            "// Generated by the solved_profiles_are_current test.\n#[allow(clippy::excessive_precision, clippy::approx_constant, clippy::type_complexity)]\npub(super) const GENERATED_PROFILES: &[(&str, f64, f64, f64, f64, &[[f64; 4]], &[f32], &[i16], &[i16])] = &[\n",
+            "// Generated by the solved_profiles_are_current test.\n#[allow(clippy::excessive_precision, clippy::approx_constant, clippy::type_complexity)]\npub(super) const GENERATED_PROFILES: &[(&str, f64, f64, f64, &[[f64; 4]])] = &[\n",
         );
-        let mut profile_data_bytes = 0;
-
         for (name, profile) in profiles {
-            let curvature_samples = profile_curvature_samples(profile);
-            let maximum_curvature = curvature_samples
-                .iter()
-                .map(|sample| sample.curvature.abs())
-                .fold(0.0_f64, f64::max);
-            let maximum_slope = curvature_samples
-                .iter()
-                .map(|sample| sample.slope.abs())
-                .fold(0.0_f64, f64::max);
-            let curvature_scale = maximum_curvature / f64::from(i16::MAX);
-            let slope_scale = maximum_slope / f64::from(i16::MAX);
-            assert!(curvature_scale.is_finite() && curvature_scale > 0.0);
-            assert!(slope_scale.is_finite() && slope_scale > 0.0);
-            let mut encoded_curvature_samples = curvature_samples
-                .iter()
-                .map(|sample| {
-                    let curvature = (sample.curvature / curvature_scale)
-                        .round()
-                        .clamp(f64::from(i16::MIN), f64::from(i16::MAX))
-                        as i16;
-                    let slope = (sample.slope / slope_scale)
-                        .round()
-                        .clamp(f64::from(i16::MIN), f64::from(i16::MAX))
-                        as i16;
-                    (sample.distance as f32, curvature, slope)
-                })
-                .collect::<Vec<_>>();
-            let mut distinct_curvature_samples =
-                Vec::with_capacity(encoded_curvature_samples.len());
-            for sample in encoded_curvature_samples {
-                if distinct_curvature_samples
-                    .last()
-                    .is_some_and(|previous: &(f32, i16, i16)| previous.0 == sample.0)
-                {
-                    *distinct_curvature_samples.last_mut().unwrap() = sample;
-                } else {
-                    distinct_curvature_samples.push(sample);
-                }
-            }
-            encoded_curvature_samples = distinct_curvature_samples;
-            assert!(
-                encoded_curvature_samples
-                    .windows(2)
-                    .all(|pair| pair[0].0 < pair[1].0)
-            );
-            let decoded_curvature_samples = encoded_curvature_samples
-                .iter()
-                .map(|(distance, curvature, slope)| CurvatureSample {
-                    distance: f64::from(*distance),
-                    curvature: f64::from(*curvature) * curvature_scale,
-                    slope: f64::from(*slope) * slope_scale,
-                })
-                .collect::<Vec<_>>();
-            let mut maximum_curvature_error = 0.0_f64;
-            let mut maximum_curvature_error_location = 0.0_f64;
-            for index in 1..8192 {
-                let distance = profile.length() * index as f64 / 8192.0;
-                let curvature_error = (profile_curvature(profile, distance)
-                    - interpolate_curvature(&decoded_curvature_samples, distance))
-                .abs();
-                if curvature_error > maximum_curvature_error {
-                    maximum_curvature_error = curvature_error;
-                    maximum_curvature_error_location = distance;
-                }
-            }
-            assert!(
-                maximum_curvature_error <= MAXIMUM_PROFILE_CURVATURE_ERROR,
-                "{name}: curvature table error {maximum_curvature_error} at {maximum_curvature_error_location} m"
-            );
-
-            let mut sampled_points = (0..64)
-                .map(|index| point_at_distance(profile, profile.length() * index as f64 / 63.0))
-                .collect::<Vec<_>>();
-            sampled_points.extend(profile.points.windows(3).filter_map(|points| {
-                let curvature_transition = points[1].curvature == 0.0
-                    && (points[0].curvature != 0.0 || points[2].curvature != 0.0);
-                let entering_straight =
-                    points[0].angle != points[1].angle && points[1].angle == points[2].angle;
-                let leaving_straight =
-                    points[0].angle == points[1].angle && points[1].angle != points[2].angle;
-                let angle_extremum = (points[1].angle >= points[0].angle
-                    && points[1].angle > points[2].angle)
-                    || (points[1].angle <= points[0].angle && points[1].angle < points[2].angle);
-                let half_turn_alignment =
-                    (points[1].angle / PI - (points[1].angle / PI).round()).abs() < 1e-12;
-                (curvature_transition
-                    || entering_straight
-                    || leaving_straight
-                    || angle_extremum
-                    || half_turn_alignment)
-                    .then_some(points[1])
-            }));
-            sampled_points.sort_by(|left, right| left.distance.total_cmp(&right.distance));
-            sampled_points.dedup_by(|left, right| (left.distance - right.distance).abs() < 1e-7);
-            let maximum_error = |points: &[Point]| {
-                let candidate_points = points
-                    .iter()
-                    .map(|point| {
-                        let curvature =
-                            interpolate_curvature(&decoded_curvature_samples, point.distance);
-                        Point {
-                            distance: point.distance,
-                            x: point.x,
-                            z: point.z,
-                            angle: point.angle,
-                            heart_curvature: curvature / (1.0 - HEART_HEIGHT_METRES * curvature),
-                            curvature,
-                        }
-                    })
-                    .collect();
-                let candidate = SolvedProfile {
-                    points: candidate_points,
-                    curvature_samples: Some(decoded_curvature_samples.clone()),
-                    cached_minimum_entry: None,
-                    cached_minimum_radius: None,
-                };
-                let mut maximum_position_error = 0.0_f64;
-                let mut position_error_location = 0.0;
-                let mut maximum_curvature_error = 0.0_f64;
-                let mut curvature_error_location = 0.0;
-
-                for index in 1..8192 {
-                    let distance = profile.length() * index as f64 / 8192.0;
-                    let (expected_position, expected_tangent, expected_second) =
-                        profile.sample(distance);
-                    let (actual_position, actual_tangent, actual_second) =
-                        candidate.sample(distance);
-                    let position_error = (expected_position[0] - actual_position[0])
-                        .hypot(expected_position[1] - actual_position[1]);
-                    let curvature_error =
-                        (profile_curvature_from_derivatives(expected_tangent, expected_second)
-                            - profile_curvature_from_derivatives(actual_tangent, actual_second))
-                        .abs();
-                    if position_error > maximum_position_error {
-                        maximum_position_error = position_error;
-                        position_error_location = distance;
-                    }
-                    if curvature_error > maximum_curvature_error {
-                        maximum_curvature_error = curvature_error;
-                        curvature_error_location = distance;
-                    }
-                }
-                (
-                    maximum_position_error,
-                    position_error_location,
-                    maximum_curvature_error,
-                    curvature_error_location,
-                )
-            };
-
-            loop {
-                let (position_error, position_location, curvature_error, curvature_location) =
-                    maximum_error(&sampled_points);
-                if position_error <= MAXIMUM_PROFILE_POSITION_ERROR_METRES
-                    && curvature_error <= MAXIMUM_PROFILE_CURVATURE_ERROR
-                {
-                    break;
-                }
-                let curvature_error_index = sampled_points
-                    .partition_point(|point| point.distance < curvature_location)
-                    .clamp(1, sampled_points.len() - 1);
-                let curvature_error_start = sampled_points[curvature_error_index - 1];
-                let curvature_error_end = sampled_points[curvature_error_index];
-                assert!(
-                    sampled_points.len() < MAXIMUM_GENERATED_PROFILE_POINTS,
-                    "{name} profile needs more than {MAXIMUM_GENERATED_PROFILE_POINTS} samples: {position_error} m at {position_location} m, {curvature_error} 1/m at {curvature_location} m within [{}, {}] (curvatures [{}, {}])",
-                    curvature_error_start.distance,
-                    curvature_error_end.distance,
-                    curvature_error_start.curvature,
-                    curvature_error_end.curvature,
-                );
-                let error_distance = if position_error / MAXIMUM_PROFILE_POSITION_ERROR_METRES
-                    >= curvature_error / MAXIMUM_PROFILE_CURVATURE_ERROR
-                {
-                    position_location
-                } else {
-                    curvature_location
-                };
-                let insertion_index =
-                    sampled_points.partition_point(|point| point.distance < error_distance);
-                let left_distance = sampled_points[insertion_index - 1].distance;
-                let right_distance = sampled_points[insertion_index].distance;
-                let distance = (left_distance + right_distance) / 2.0;
-                assert!(
-                    distance > left_distance && distance < right_distance,
-                    "{name} profile cannot meet its position tolerance between {left_distance} m and {right_distance} m"
-                );
-                let point = point_at_distance(profile, distance);
-                sampled_points.insert(insertion_index, point);
-            }
-
-            profile_data_bytes += sampled_points.len() * 4 * std::mem::size_of::<f64>();
-            profile_data_bytes += encoded_curvature_samples.len()
-                * (std::mem::size_of::<f32>() + 2 * std::mem::size_of::<i16>());
-            assert!(
-                profile_data_bytes <= MAXIMUM_PROFILE_DATA_BYTES,
-                "embedded profile data needs {profile_data_bytes} bytes, limit is {MAXIMUM_PROFILE_DATA_BYTES}"
-            );
-
             writeln!(
                 output,
-                "    ({name:?}, {:.17}, {:.17}, {:.17}, {:.17}, &[",
+                "    ({name:?}, {:.17}, {:.17}, {:.17}, &[",
                 profile.minimum_entry(),
                 profile.minimum_radius(),
-                curvature_scale,
-                slope_scale,
+                profile.length()
             )
             .unwrap();
-            for point in &sampled_points {
+            for index in 0..GENERATED_PROFILE_POINTS {
+                let distance =
+                    profile.length() * index as f64 / (GENERATED_PROFILE_POINTS - 1) as f64;
+                let (position, tangent, _) = profile.sample(distance);
+                let curvature = reference_curvature(profile, distance);
                 writeln!(
                     output,
                     "        [{:.17}, {:.17}, {:.17}, {:.17}],",
-                    point.distance, point.x, point.z, point.angle
+                    position[0],
+                    position[1],
+                    tangent[1].atan2(tangent[0]),
+                    curvature
                 )
                 .unwrap();
-            }
-            output.push_str("    ], &[\n");
-            for chunk in encoded_curvature_samples.chunks(8) {
-                output.push_str("        ");
-                for (index, (distance, _, _)) in chunk.iter().enumerate() {
-                    if index > 0 {
-                        output.push(' ');
-                    }
-                    write!(output, "{distance:.9e}f32,").unwrap();
-                }
-                output.push('\n');
-            }
-            output.push_str("    ], &[\n");
-            for chunk in encoded_curvature_samples.chunks(16) {
-                output.push_str("        ");
-                for (index, (_, curvature, _)) in chunk.iter().enumerate() {
-                    if index > 0 {
-                        output.push(' ');
-                    }
-                    write!(output, "{curvature},").unwrap();
-                }
-                output.push('\n');
-            }
-            output.push_str("    ], &[\n");
-            for chunk in encoded_curvature_samples.chunks(16) {
-                output.push_str("        ");
-                for (index, (_, _, slope)) in chunk.iter().enumerate() {
-                    if index > 0 {
-                        output.push(' ');
-                    }
-                    write!(output, "{slope},").unwrap();
-                }
-                output.push('\n');
             }
             output.push_str("    ]),\n");
         }
         output.push_str("];\n");
-        eprintln!("embedded solved profile data: {profile_data_bytes} bytes");
         output
-    }
-
-    fn point_at_distance(profile: &SolvedProfile, distance: f64) -> Point {
-        let (position, tangent, acceleration) = profile.sample(distance);
-        let speed = tangent[0].hypot(tangent[1]);
-        let curvature =
-            (tangent[0] * acceleration[1] - tangent[1] * acceleration[0]) / speed.powi(3);
-        Point {
-            distance,
-            x: position[0],
-            z: position[1],
-            angle: tangent[1].atan2(tangent[0]),
-            heart_curvature: curvature / (1.0 - HEART_HEIGHT * curvature),
-            curvature,
-        }
     }
 
     #[test]
@@ -1414,64 +1064,89 @@ mod tests {
             return;
         }
         for (name, expected) in profiles {
-            let (_, generated_minimum_entry, generated_minimum_radius, _, _, values, _, _, _) =
+            let (_, generated_minimum_entry, generated_minimum_radius, _, values) =
                 GENERATED_PROFILES
                     .iter()
-                    .find(|(profile_name, _, _, _, _, _, _, _, _)| *profile_name == name)
+                    .find(|(profile_name, _, _, _, _)| *profile_name == name)
                     .unwrap();
-            assert!(
-                values.len() <= MAXIMUM_GENERATED_PROFILE_POINTS,
-                "{name} generated too many points"
-            );
+            assert_eq!(values.len(), GENERATED_PROFILE_POINTS, "{name} point count");
             let actual = embedded_profile(name);
             assert!(
-                (actual.minimum_entry() - expected.minimum_entry()).abs() < 1e-12,
+                (generated_minimum_entry - expected.minimum_entry()).abs() < 1e-12,
                 "{name} minimum entry"
             );
             assert!(
-                (*generated_minimum_entry - expected.minimum_entry()).abs() < 1e-12,
-                "{name} generated minimum entry"
-            );
-            assert!(
-                (actual.minimum_radius() - expected.minimum_radius()).abs() < 1e-12,
+                (generated_minimum_radius - expected.minimum_radius()).abs() < 1e-12,
                 "{name} minimum radius"
             );
-            assert!(
-                (*generated_minimum_radius - expected.minimum_radius()).abs() < 1e-12,
-                "{name} generated minimum radius"
+            let mut maximum_position_error = 0.0_f64;
+            let mut maximum_curvature_error = 0.0_f64;
+            let mut check = |distance: f64| {
+                let (expected_position, _, _) = expected.sample(distance);
+                let (actual_position, tangent, second) = actual.sample(distance);
+                let position_error = (expected_position[0] - actual_position[0])
+                    .hypot(expected_position[1] - actual_position[1]);
+                let curvature_error = (reference_curvature(&expected, distance)
+                    - profile_curvature_from_derivatives(tangent, second))
+                .abs();
+                maximum_position_error = maximum_position_error.max(position_error);
+                maximum_curvature_error = maximum_curvature_error.max(curvature_error);
+                assert!(
+                    position_error <= MAXIMUM_PROFILE_POSITION_ERROR_METRES,
+                    "{name} position error {position_error} at {distance}"
+                );
+                assert!(
+                    curvature_error <= MAXIMUM_PROFILE_CURVATURE_ERROR,
+                    "{name} curvature error {curvature_error} at {distance}"
+                );
+            };
+            let length = expected.length();
+            for index in 0..=16_381 {
+                check(length * index as f64 / 16_381.0);
+            }
+            for point in expected.points.iter().chain(&actual.points) {
+                for offset in [-1e-9, 0.0, 1e-9] {
+                    check((point.distance + offset * length).clamp(0.0, length));
+                }
+            }
+            eprintln!(
+                "{name}: maximum position error {maximum_position_error} m, maximum curvature error {maximum_curvature_error} 1/m"
             );
-            for index in 0..=4096 {
-                let distance = expected.length() * index as f64 / 4096.0;
-                let (expected_position, expected_tangent, expected_curvature) =
-                    expected.sample(distance);
-                let (actual_position, actual_tangent, actual_curvature) = actual.sample(distance);
-                assert!(
-                    (expected_position[0] - actual_position[0])
-                        .hypot(expected_position[1] - actual_position[1])
-                        <= MAXIMUM_PROFILE_POSITION_ERROR_METRES,
-                    "{name} position at {distance}"
-                );
-                let curvature_from = |tangent: [f64; 2], second: [f64; 2]| {
-                    (tangent[0] * second[1] - tangent[1] * second[0])
-                        / tangent[0].hypot(tangent[1]).powi(3)
-                };
-                let expected_curvature_value = curvature_from(expected_tangent, expected_curvature);
-                let actual_curvature_value = curvature_from(actual_tangent, actual_curvature);
-                let curvature_difference =
-                    (expected_curvature_value - actual_curvature_value).abs();
-                assert!(
-                    curvature_difference <= MAXIMUM_PROFILE_CURVATURE_ERROR,
-                    "{name} curvature at {distance}: {curvature_difference}, expected {expected_curvature_value}, actual {actual_curvature_value}"
-                );
+        }
+    }
+
+    #[test]
+    fn embedded_curvature_matches_tangent_derivative() {
+        for (name, _) in catalog_profiles() {
+            let profile = embedded_profile(name);
+            for pair in profile.points.windows(2) {
+                for fraction in [0.0, 0.0001, 0.25, 0.5, 0.75, 0.9999, 1.0] {
+                    let distance =
+                        pair[0].distance + fraction * (pair[1].distance - pair[0].distance);
+                    let step = 1e-5;
+                    let (_, tangent, second) = profile.sample(distance);
+                    let (_, before, _) = profile.sample(distance - step);
+                    let (_, after, _) = profile.sample(distance + step);
+                    let finite_difference = [
+                        (after[0] - before[0]) / (2.0 * step),
+                        (after[1] - before[1]) / (2.0 * step),
+                    ];
+                    let reported = profile_curvature_from_derivatives(tangent, second);
+                    let measured = profile_curvature_from_derivatives(tangent, finite_difference);
+                    assert!(
+                        (reported - measured).abs() < 1e-7,
+                        "{name}: curvature at {distance}: reported {reported}, tangent derivative {measured}"
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn profile_hash_includes_embedded_curvature_samples() {
+    fn profile_hash_includes_embedded_curvature() {
         let first = embedded_profile("HalfLoop");
         let mut second = first.clone();
-        second.curvature_samples.as_mut().unwrap()[1].slope += 1.0e-6;
+        second.points[1].curvature += 1.0e-6;
         let mut first_hash = StateHasher::new();
         first.hash_into(&mut first_hash);
         let mut second_hash = StateHasher::new();

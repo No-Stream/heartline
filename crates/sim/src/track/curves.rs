@@ -921,8 +921,8 @@ mod shape_tests {
             let steps = arc_table.speeds.len() - 1;
             for (index, speed) in arc_table.speeds.iter().enumerate() {
                 let raw_speed = candidate.raw(index as f64 / steps as f64).1.length();
-                assert!(
-                    (*speed - raw_speed).abs() < 1e-8,
+                assert_eq!(
+                    *speed, raw_speed,
                     "boundary {index}: cached speed {speed} != raw speed {raw_speed}"
                 );
             }
