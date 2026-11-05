@@ -27,21 +27,21 @@ pub const HAIR_STYLE_COUNT: u8 = 12;
 pub const CLOTHING_STYLE_COUNT: u8 = 16;
 pub const BODY_SHAPE_COUNT: u8 = 5;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum AgeGroup {
     Child,
     Adult,
     Senior,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SpendingLevel {
     Budget,
     Regular,
     Premium,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GroupKind {
     Single,
     Couple,
@@ -49,10 +49,10 @@ pub enum GroupKind {
     Friends,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GuestId(pub u32);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Appearance {
     pub skin_tone: u8,
     pub hair_style: u8,

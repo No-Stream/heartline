@@ -2,6 +2,7 @@ use crate::state_hash::StateHasher;
 use crate::world::{Path, PathKind, Position, World};
 use std::collections::{BTreeMap, VecDeque};
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct Graph {
     pub(crate) paths: Vec<Path>,
     pub(crate) normal: Vec<bool>,

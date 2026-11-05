@@ -11,6 +11,7 @@ pub enum SceneryTheme {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum SceneryKind {
     TreeOval = 0,
     BushFlowering = 1,
@@ -59,7 +60,7 @@ impl SceneryKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Scenery {
     pub kind: SceneryKind,
     pub position: Position,
