@@ -1,9 +1,10 @@
 ---
 id: TASK-115
 title: Hide lamp light and glows in the underground view
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-04 23:33'
+updated_date: '2026-11-05 01:37'
 labels: []
 dependencies: []
 priority: high
@@ -18,6 +19,6 @@ Owner playtest 2026-11-04: lamp glows and light pools are visible from the under
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Surface lamp light does not render in the underground view
-- [ ] #2 Covered by a test
+- [x] #1 Surface lamp light does not render in the underground view
+- [x] #2 Covered by a test
 <!-- AC:END -->
