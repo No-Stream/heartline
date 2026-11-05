@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-05 11:10'
+updated_date: '2026-11-05 13:43'
 labels: []
 dependencies:
   - TASK-95
@@ -41,4 +41,6 @@ Owner approved the airtime hill interface on 2026-11-04: one parameterised 'Airt
 2026-11-04 owner: wants force-vector-design style building. Elements are sized for the incoming speed by default: when the player picks a loop or camelback, the builder preselects the grid size whose design speed matches the predicted entry speed (from the TASK-105 construction estimate), so a loop gives strong but reasonable positives and an ejector camelback gives 'great' airtime (about -1.1 g) by default. The preview shows the expected forces with their rating band, and says so when no size fits. Feel is the primary hill setting; height and length remain tweakable. Do not name real rides in the UI.
 
 2026-11-05: plan tasks 1-2 merged to master. 14 straight hills (ejector, floater, speed, wooden ejector) with measured rated windows; deferred: 4 x 32 m steel ejector (2.1 g longitudinal), 8 x 64 and 16 x 80 m wooden ejectors, 2 x 38 m speed hill (solver does not converge). Hill tables are f32 deltas, wasm +180 KB.
+
+2026-11-05: plan task 3 merged. 22 outer-banked hills (own family: floater-level vertical plus outward lateral, rated within all force limits), four zero-g rolls and two stalls (peak roll rates 178-192 deg/s; the stall's inverted hold is 10% of its roll window to stay under 200 deg/s; the fast zero-g roll passes longitudinal by 0.002 g). Next: task 4 (wave turn and rated overbank turn).
 <!-- SECTION:NOTES:END -->
