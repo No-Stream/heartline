@@ -35,3 +35,6 @@ pub mod proximity;
 
 mod profile;
 mod roll;
+
+mod hill_forces;
+pub use hill_forces::{PredictedHillForces, predicted_hill_forces};

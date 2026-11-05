@@ -349,6 +349,17 @@ impl SolvedProfile {
             }
         }
     }
+    pub(super) fn force_samples(&self) -> impl Iterator<Item = (f64, f64, f64, f64, f64)> + '_ {
+        self.points.iter().map(|point| {
+            (
+                point.distance,
+                point.z,
+                point.angle,
+                point.heart_curvature,
+                point.curvature,
+            )
+        })
+    }
     pub(crate) fn length(&self) -> f64 {
         self.points.last().unwrap().distance
     }

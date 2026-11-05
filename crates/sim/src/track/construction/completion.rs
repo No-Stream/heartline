@@ -44,6 +44,7 @@ impl Construction {
             next_id: self.next_id,
             closed: self.closed,
             chain: self.chain,
+            selected_hill_variant: self.selected_hill_variant,
             colors: self.colors,
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),

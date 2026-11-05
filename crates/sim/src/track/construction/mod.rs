@@ -9,9 +9,10 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterColors, CoasterModel, Heartlining, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
-    LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape,
-    SupportStyle, TrackState, TrainConfiguration, Vec3, catalog,
+    CoasterColors, CoasterModel, Heartlining, HillFeel,
+    LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
+    LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState,
+    TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
 #[cfg(test)]
@@ -26,10 +27,12 @@ mod completion;
 mod elements;
 #[cfg(test)]
 mod flexibility_tests;
+mod speed_estimate;
 #[cfg(test)]
 mod walk_tests;
 pub use completion::{Completion, CompletionSearch, CompletionSearchProgress};
 pub use elements::ElementChoice;
+pub use speed_estimate::{EndSpeedEstimate, EndSpeedSource};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstructionError {
@@ -60,8 +63,11 @@ pub struct SpeedMatchedVariant {
 }
 
 /// Select the rated candidate with the largest margin to either window edge.
-/// If no window contains the speed, select the nearest window instead. Ties
-/// preserve the order supplied by the caller.
+/// Ejector, floater and speed hills are the exception: a hill gives its named
+/// feel only near the top of its window, so among the windows that contain the
+/// speed they select the one with the least headroom to its top. If no window
+/// contains the speed, select the nearest window instead. Ties preserve the
+/// order supplied by the caller.
 pub fn select_speed_matched_variant(
     candidates: &[Piece],
     entry_speed: f64,
@@ -92,16 +98,27 @@ fn select_speed_matched_variant_with_windows(
         };
         assert!(window.minimum_entry.is_finite() && window.maximum_entry.is_finite());
         assert!(window.minimum_entry >= 0.0 && window.minimum_entry <= window.maximum_entry);
-        let margin = (entry_speed - window.minimum_entry).min(window.maximum_entry - entry_speed);
-        let choice = SpeedMatchedVariant {
-            id: piece.id,
-            fits: margin >= 0.0,
+        let headroom = window.maximum_entry - entry_speed;
+        let margin = (entry_speed - window.minimum_entry).min(headroom);
+        let fits = margin >= 0.0;
+        let rides_best_near_top = piece.family.is_some_and(|family| {
+            matches!(
+                family.feel,
+                HillFeel::Ejector | HillFeel::Floater | HillFeel::Speed
+            )
+        });
+        // Fitting windows score at least zero and outrank every window that does not fit.
+        let score = if fits && rides_best_near_top {
+            1.0 / (1.0 + headroom)
+        } else {
+            margin
         };
+        let choice = SpeedMatchedVariant { id: piece.id, fits };
         if best
             .as_ref()
-            .is_none_or(|(_, best_margin)| margin > *best_margin)
+            .is_none_or(|(_, best_score)| score > *best_score)
         {
-            best = Some((choice, margin));
+            best = Some((choice, score));
         }
     }
     best.map(|(choice, _)| choice)
@@ -128,6 +145,7 @@ struct AvailableChoice {
 
 #[derive(Clone)]
 struct ChoicesCache {
+    state_hash: u64,
     world_id: usize,
     world_revision: u64,
     obstacles: Vec<SupportObstacle>,
@@ -157,6 +175,8 @@ pub struct Construction {
     next_id: usize,
     closed: bool,
     chain: bool,
+    #[serde(default = "default_hill_variant")]
+    selected_hill_variant: PieceId,
     colors: CoasterColors,
     #[serde(skip)]
     validation_cache: RefCell<Option<ValidationCache>>,
@@ -168,6 +188,10 @@ pub struct Construction {
     support_cache_misses: Cell<usize>,
     #[cfg(test)]
     validation_cache_rebuilds: Cell<usize>,
+}
+
+fn default_hill_variant() -> PieceId {
+    PieceId::FloaterHill8x64
 }
 
 impl Construction {
@@ -182,6 +206,7 @@ impl Construction {
             next_id: 0,
             closed: false,
             chain: false,
+            selected_hill_variant: default_hill_variant(),
             colors,
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
@@ -281,17 +306,42 @@ impl Construction {
 
     pub fn choices(&self, world: &World, obstacles: &[SupportObstacle]) -> Vec<PieceChoice> {
         if let Some(cache) = self.choices_cache.borrow().as_ref() {
-            if cache.world_id == world.instance_id()
+            if cache.state_hash == self.state_hash()
+                && cache.world_id == world.instance_id()
                 && cache.world_revision == world.revision()
                 && same_obstacles(&cache.obstacles, obstacles)
+                && cache
+                    .choices
+                    .iter()
+                    .any(|choice| choice.id == self.selected_hill_variant)
             {
-                return cache.choices.clone();
+                return self.visible_choices(&cache.choices);
             }
         }
-        let mut choices = Vec::new();
-        let mut available_choices: Vec<AvailableChoice> = Vec::new();
+        let previous_cache = self
+            .choices_cache
+            .borrow()
+            .as_ref()
+            .filter(|cache| {
+                cache.state_hash == self.state_hash()
+                    && cache.world_id == world.instance_id()
+                    && cache.world_revision == world.revision()
+                    && same_obstacles(&cache.obstacles, obstacles)
+            })
+            .cloned();
+        let mut choices = previous_cache
+            .as_ref()
+            .map_or_else(Vec::new, |cache| cache.choices.clone());
+        let mut available_choices =
+            previous_cache.map_or_else(Vec::new, |cache| cache.available_choices);
         let mut seen_ids = HashSet::new();
         for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
+            if base.family.is_some() && base.id != self.selected_hill_variant {
+                continue;
+            }
+            if choices.iter().any(|choice| choice.id == base.id) {
+                continue;
+            }
             let template = template_for(base.id, self.end());
             let placed = self.model_placeable_geometry(template);
             let mut would_tunnel = false;
@@ -345,13 +395,48 @@ impl Construction {
             choices.push(choice);
         }
         *self.choices_cache.borrow_mut() = Some(ChoicesCache {
+            state_hash: self.state_hash(),
             world_id: world.instance_id(),
             world_revision: world.revision(),
             obstacles: obstacles.to_vec(),
             choices: choices.clone(),
             available_choices,
         });
+        self.visible_choices(&choices)
+    }
+
+    fn visible_choices(&self, choices: &[PieceChoice]) -> Vec<PieceChoice> {
         choices
+            .iter()
+            .copied()
+            .filter(|choice| {
+                choice.id == self.selected_hill_variant
+                    || !templates()
+                        .iter()
+                        .any(|piece| piece.id == choice.id && piece.family.is_some())
+            })
+            .collect()
+    }
+
+    pub fn selected_hill_variant(&self) -> PieceId {
+        self.selected_hill_variant
+    }
+
+    pub fn select_hill_variant(
+        &mut self,
+        id: PieceId,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<(), ConstructionError> {
+        if !templates()
+            .iter()
+            .any(|piece| piece.id == id && piece.family.is_some())
+        {
+            return Err(ConstructionError::Unavailable);
+        }
+        self.selected_hill_variant = id;
+        self.choices(world, obstacles);
+        Ok(())
     }
 
     /// Returns model-compatible placed pieces with their construction validation results.
@@ -367,6 +452,9 @@ impl Construction {
             .expect("choices cache initialized")
             .available_choices
             .iter()
+            .filter(|candidate| {
+                candidate.piece.family.is_none() || candidate.piece.id == self.selected_hill_variant
+            })
             .map(|candidate| (candidate.piece.clone(), candidate.choice))
             .collect()
     }
@@ -433,23 +521,20 @@ impl Construction {
         let cached = {
             let cache = self.choices_cache.borrow();
             cache.as_ref().and_then(|cache| {
-                (cache.world_id == world.instance_id()
+                (cache.state_hash == self.state_hash()
+                    && cache.world_id == world.instance_id()
                     && cache.world_revision == world.revision()
                     && same_obstacles(&cache.obstacles, obstacles))
                 .then(|| {
-                    let result = cache
-                        .choices
-                        .iter()
-                        .find(|choice| choice.id == id)
-                        .expect("catalog contains every piece id")
-                        .result;
+                    let result = cache.choices.iter().find(|choice| choice.id == id)?.result;
                     let candidate = cache
                         .available_choices
                         .iter()
                         .find(|candidate| candidate.piece.id == id)
                         .map(|candidate| (candidate.piece.clone(), candidate.validation.clone()));
-                    (result, candidate)
+                    Some((result, candidate))
                 })
+                .flatten()
             })
         };
         if let Some((result, candidate)) = cached {

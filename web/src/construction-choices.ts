@@ -1,4 +1,5 @@
-import type { ConstructionPiece, PieceShape } from "./construction-protocol";
+import type { ConstructionHillOption, ConstructionPiece, PieceShape } from "./construction-protocol";
+import { formatLength, metresToDisplay, unitLabel, type Units } from "./units";
 
 export type StepAttribute = "turn" | "slope" | "bank";
 export type PieceStep = StepAttribute | "piece";
@@ -113,4 +114,106 @@ export function pieceInGroup(pieces: readonly ConstructionPiece[], group: string
 export function steppedPieceSelection(pieces: readonly ConstructionPiece[], shapes: ReadonlyMap<string, PieceShape>, selectedId: string | null, name: PieceStep, step: -1 | 1): { type: "construction-select"; piece: string; exact: true } | undefined {
   const piece = steppedPiece(pieces, shapes, selectedId, name, step);
   return piece && piece !== selectedId ? { type: "construction-select", piece, exact: true } : undefined;
+}
+
+export type HillAttribute = "feel" | "height" | "span" | "twist";
+
+const hillFeelOrder = ["ejector", "floater", "speed", "zeroGRoll", "stall"];
+/** Left-hand twists sit on the "previous" side, as on the bank stepper. */
+const hillTwistOrder = ["outerLeft", "none", "outerRight", "left", "right"];
+export const hillFeelLabels: Readonly<Record<string, string>> = { ejector: "Ejector", floater: "Floater", speed: "Speed hill", zeroGRoll: "Zero-g roll", stall: "Stall" };
+export const hillTwistLabels: Readonly<Record<string, string>> = { none: "Upright", outerLeft: "Outer bank left", outerRight: "Outer bank right", left: "Roll left", right: "Roll right" };
+
+function orderRank(order: readonly string[], value: string): number {
+  const rank = order.indexOf(value);
+  if (rank < 0) throw new Error(`Unknown hill value ${value}`);
+  return rank;
+}
+
+function hillRank(option: ConstructionHillOption, attribute: HillAttribute): number {
+  switch (attribute) {
+    case "feel": return orderRank(hillFeelOrder, option.feel);
+    case "twist": return orderRank(hillTwistOrder, option.twist);
+    case "height": return option.height;
+    case "span": return option.span;
+  }
+}
+
+/** Every feel is one step away; twists are those of the selected feel; sizes are those of the selected feel and twist. */
+function hillCandidates(options: readonly ConstructionHillOption[], selected: ConstructionHillOption, attribute: HillAttribute): ConstructionHillOption[] {
+  if (attribute === "feel") return [...options];
+  if (attribute === "twist") return options.filter((option) => option.feel === selected.feel);
+  return options.filter((option) => option.feel === selected.feel && option.twist === selected.twist);
+}
+
+function hillRanks(candidates: readonly ConstructionHillOption[], attribute: HillAttribute): number[] {
+  return [...new Set(candidates.map((option) => hillRank(option, attribute)))].sort((first, second) => first - second);
+}
+
+function twistSide(twist: string): string {
+  return twist === "outerLeft" || twist === "left" ? "left" : twist === "outerRight" || twist === "right" ? "right" : "none";
+}
+
+/** The option most like the reference: the same twist (or at least the same side), then the closest height, then the closest length. */
+function nearestHill(candidates: readonly ConstructionHillOption[], reference: ConstructionHillOption): ConstructionHillOption {
+  const cost = (option: ConstructionHillOption): number[] => [
+    option.twist === reference.twist ? 0 : twistSide(option.twist) === twistSide(reference.twist) ? 1 : 2,
+    Math.abs(option.height - reference.height),
+    Math.abs(option.span - reference.span),
+  ];
+  const cheaper = (first: number[], second: number[]): boolean => {
+    const difference = first.findIndex((value, index) => value !== second[index]);
+    return difference >= 0 && first[difference] < second[difference];
+  };
+  return candidates.reduce((best, option) => cheaper(cost(option), cost(best)) ? option : best);
+}
+
+export function hillLabel(option: Pick<ConstructionHillOption, "feel" | "height" | "span">, units: Units): string {
+  return `${hillFeelLabels[option.feel] ?? option.feel} · ${formatHillSize(option.height, option.span, units)}`;
+}
+
+export function formatHillSize(height: number, span: number, units: Units): string {
+  const value = (metres: number): string => new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(metresToDisplay(metres, units));
+  return `${value(height)} × ${value(span)} ${unitLabel(units)}`;
+}
+
+function hillValueLabel(option: ConstructionHillOption, attribute: HillAttribute, units: Units): string {
+  switch (attribute) {
+    case "feel": return hillFeelLabels[option.feel] ?? option.feel;
+    case "twist": return hillTwistLabels[option.twist] ?? option.twist;
+    case "height": return formatLength(option.height, units, 0);
+    case "span": return formatLength(option.span, units, 0);
+  }
+}
+
+export function hillStepperOptions(options: readonly ConstructionHillOption[], selectedId: string | null, attribute: HillAttribute, units: Units): { values: string[]; index: number } | undefined {
+  const selected = options.find(({ id }) => id === selectedId);
+  if (!selected) return undefined;
+  const candidates = hillCandidates(options, selected, attribute);
+  const ranks = hillRanks(candidates, attribute);
+  const values = ranks.map((rank) => hillValueLabel(candidates.find((option) => hillRank(option, attribute) === rank)!, attribute, units));
+  return { values, index: ranks.indexOf(hillRank(selected, attribute)) };
+}
+
+/**
+ * The selection one hill stepper step away, clamped at the ends. A new feel or twist is a new kind of hill, so the
+ * worker picks its size for the predicted entry speed; a height or length step is the player's own size and is exact.
+ */
+export function steppedHillSelection(options: readonly ConstructionHillOption[], selectedId: string | null, attribute: HillAttribute, step: -1 | 1): { type: "construction-select"; piece: string; exact: boolean } | undefined {
+  const selected = options.find(({ id }) => id === selectedId);
+  if (!selected) return undefined;
+  const candidates = hillCandidates(options, selected, attribute);
+  const ranks = hillRanks(candidates, attribute);
+  const nextRank = ranks[ranks.indexOf(hillRank(selected, attribute)) + step];
+  if (nextRank === undefined) return undefined;
+  const next = nearestHill(candidates.filter((option) => hillRank(option, attribute) === nextRank), selected);
+  return { type: "construction-select", piece: next.id, exact: attribute === "height" || attribute === "span" };
+}
+
+/** The hill to select when the player opens the hill section: the current variant, or the most similar hill of the preferred feel. */
+export function hillToOpen(options: readonly ConstructionHillOption[], pieces: readonly ConstructionPiece[], preferredFeel: string | null): string | undefined {
+  const current = options.find((option) => pieces.some(({ id }) => id === option.id)) ?? options[0];
+  if (!current) return undefined;
+  const preferred = options.filter((option) => option.feel === preferredFeel);
+  return (preferred.length > 0 ? nearestHill(preferred, current) : current).id;
 }

@@ -1934,3 +1934,64 @@ fn catalog_selection_ids_match_recorded_session_names() {
         );
     }
 }
+
+#[test]
+fn hill_options_follow_model_and_select_variants_by_parameters() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(200, 200, 20, 0);
+    let options: Vec<serde_json::Value> =
+        serde_json::from_str(&simulation.construction_hill_options()).unwrap();
+    let hill = options
+        .iter()
+        .find(|option| option["id"] == "EjectorHill12x64OuterLeft")
+        .unwrap();
+    assert_eq!(hill["feel"], "ejector");
+    assert_eq!(hill["height"], 12);
+    assert_eq!(hill["span"], 64);
+    assert_eq!(hill["twist"], "outerLeft");
+    assert!(hill["ratedSpeed"]["minimumEntry"].is_number());
+    simulation.construction_select("hill:ejector:12x64:outerLeft");
+    assert_eq!(
+        simulation.construction_selected(),
+        "EjectorHill12x64OuterLeft"
+    );
+    let choices: Vec<serde_json::Value> =
+        serde_json::from_str(&simulation.construction_choices()).unwrap();
+    let selected = choices
+        .iter()
+        .find(|choice| choice["id"] == "EjectorHill12x64OuterLeft")
+        .unwrap();
+    assert!(selected["hillEstimate"]["entrySpeed"].is_number());
+    assert!(selected["hillEstimate"]["ratedSpeed"].is_object());
+    assert!(selected["hillEstimate"]["limits"]["minimumVerticalG"].is_number());
+    simulation.construction_select("model:wooden_twister");
+    simulation.construction_start(200, 200, 20, 0);
+    let wooden: Vec<serde_json::Value> =
+        serde_json::from_str(&simulation.construction_hill_options()).unwrap();
+    assert!(!wooden.iter().any(|option| option["feel"] == "zeroGRoll"));
+}
+
+#[test]
+fn hill_estimate_uses_supplied_preview_status() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_select("EjectorHill12x64");
+    for (status, speed, expected_speed, source) in [
+        ("reachedEnd", Some(22.0), Some(22.0), "simulated"),
+        ("stalled", None, Some(0.0), "stalled"),
+        ("timedOut", None, None, "timedOut"),
+    ] {
+        let choices: Vec<serde_json::Value> =
+            serde_json::from_str(&simulation.construction_choices_with_preview(speed, status))
+                .unwrap();
+        let estimate = &choices
+            .iter()
+            .find(|choice| choice["id"] == "EjectorHill12x64")
+            .unwrap()["hillEstimate"];
+        assert_eq!(estimate["entrySpeed"].as_f64(), expected_speed);
+        assert_eq!(estimate["source"], source);
+        if status != "reachedEnd" {
+            assert!(estimate["minimumVerticalG"].is_null());
+        }
+    }
+}
