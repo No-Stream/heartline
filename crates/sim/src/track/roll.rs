@@ -20,6 +20,7 @@ enum RollPath {
         ramp: f64,
         turns: f64,
         positions: Vec<Vec3>,
+        tangents: Vec<Vec3>,
         unwrapped_roll: Vec<f64>,
     },
 }
@@ -176,6 +177,11 @@ impl RollGeometry {
                 ramp: 0.25,
                 turns: 1.0,
                 positions: helix_positions(curvature, torsion, 0.25, 1.0),
+                tangents: (0..=1024)
+                    .map(|index| {
+                        helix_frame(curvature, torsion, 0.25, 1.0, f64::from(index) / 1024.0).0
+                    })
+                    .collect(),
                 unwrapped_roll: helix_roll_knots(curvature, torsion, 0.25, 1.0),
             },
         }
@@ -219,14 +225,13 @@ impl RollGeometry {
         tangent_scale: f64,
         t: f64,
     ) -> RollSample {
-        let heart = self.heart_position(entry, exit, mirrored, tangent_scale, t);
+        let (heart, heart_tangent, _) =
+            self.heart_kinematics(entry, exit, mirrored, tangent_scale, t);
         let roll = self.roll_angle(entry, exit, mirrored, t);
-        let heart_tangent = self
-            .heart_kinematics(entry, exit, mirrored, tangent_scale, t)
-            .1;
         let desired_up = self.desired_up(entry, heart_tangent, roll, mirrored, t);
         let position = heart - desired_up * HEART_HEIGHT_METRES;
-        let (first, second) = self.rail_derivatives(entry, exit, mirrored, tangent_scale, t);
+        let (first, second) =
+            self.rail_derivatives(entry, exit, mirrored, tangent_scale, t, position);
         let tangent = first.unit();
         let up = (desired_up - tangent * desired_up.dot(tangent)).unit();
 
@@ -247,6 +252,7 @@ impl RollGeometry {
         mirrored: bool,
         tangent_scale: f64,
         t: f64,
+        position: Vec3,
     ) -> (Vec3, Vec3) {
         let step = DIFFERENCE_STEP;
         let rail = |parameter| self.rail_position(entry, exit, mirrored, tangent_scale, parameter);
@@ -257,14 +263,14 @@ impl RollGeometry {
             return (first, Vec3::new(0.0, 0.0, 0.0));
         }
         if t < step {
-            let at_start = rail(t);
+            let at_start = position;
             let one_step = rail(t + step);
             let two_steps = rail(t + 2.0 * step);
             let first = (at_start * -3.0 + one_step * 4.0 - two_steps) / (2.0 * step);
             let second = (at_start - one_step * 2.0 + two_steps) / step.powi(2);
             (first, second)
         } else if 1.0 - t < step {
-            let at_end = rail(t);
+            let at_end = position;
             let one_step = rail(t - step);
             let two_steps = rail(t - 2.0 * step);
             let first = (at_end * 3.0 - one_step * 4.0 + two_steps) / (2.0 * step);
@@ -272,7 +278,7 @@ impl RollGeometry {
             (first, second)
         } else {
             let previous = rail(t - step);
-            let current = rail(t);
+            let current = position;
             let next = rail(t + step);
             (
                 (next - previous) / (2.0 * step),
@@ -289,11 +295,11 @@ impl RollGeometry {
         tangent_scale: f64,
         t: f64,
     ) -> Vec3 {
-        let heart = self.heart_position(entry, exit, mirrored, tangent_scale, t);
-        let tangent = self
-            .heart_kinematics(entry, exit, mirrored, tangent_scale, t)
-            .1;
-        let roll = self.roll_angle(entry, exit, mirrored, t);
+        let (heart, tangent, _) = self.heart_kinematics(entry, exit, mirrored, tangent_scale, t);
+        let roll = match self.path {
+            RollPath::Spline { .. } => self.roll_angle(entry, exit, mirrored, t),
+            RollPath::GeneralHelix { .. } => 0.0,
+        };
         let up = self.desired_up(entry, tangent, roll, mirrored, t);
         heart - up * HEART_HEIGHT_METRES
     }
@@ -324,18 +330,6 @@ impl RollGeometry {
                 transform_frame(entry, normal, mirrored)
             }
         }
-    }
-
-    fn heart_position(
-        &self,
-        entry: TrackState,
-        exit: TrackState,
-        mirrored: bool,
-        tangent_scale: f64,
-        t: f64,
-    ) -> Vec3 {
-        self.heart_kinematics(entry, exit, mirrored, tangent_scale, t)
-            .0
     }
 
     fn heart_kinematics(
@@ -384,6 +378,7 @@ impl RollGeometry {
                 ramp,
                 turns,
                 positions,
+                tangents,
                 ..
             } => {
                 let omega = curvature.hypot(*torsion);
@@ -392,15 +387,8 @@ impl RollGeometry {
                 let scaled = t.clamp(0.0, 1.0) * 1024.0;
                 let index = (scaled.floor() as usize).min(1023);
                 let u = scaled - index as f64;
-                let (tangent0, _) =
-                    helix_frame(*curvature, *torsion, *ramp, *turns, index as f64 / 1024.0);
-                let (tangent1, _) = helix_frame(
-                    *curvature,
-                    *torsion,
-                    *ramp,
-                    *turns,
-                    (index + 1) as f64 / 1024.0,
-                );
+                let tangent0 = tangents[index];
+                let tangent1 = tangents[index + 1];
                 let h = 1.0 / 1024.0;
                 let position = positions[index] * scale * (2.0 * u.powi(3) - 3.0 * u.powi(2) + 1.0)
                     + tangent0 * (length * h * (u.powi(3) - 2.0 * u.powi(2) + u))
@@ -705,6 +693,36 @@ mod tests {
     use super::{RollGeometry, RollPath};
 
     const GRAVITY: f64 = 9.81;
+
+    #[test]
+    fn rail_position_matches_heart_offset_for_both_roll_paths() {
+        let entry = TrackState::origin();
+        let exit = TrackState {
+            x: 14,
+            y: 8,
+            ..entry
+        };
+        let scale = (exit.position() - entry.position()).length();
+        for geometry in [
+            RollGeometry::spline_turns(1.0),
+            RollGeometry::general_helix_for_connector(),
+        ] {
+            for mirrored in [false, true] {
+                for index in 0..=1000 {
+                    let t = f64::from(index) / 1000.0;
+                    let heart = geometry.heart_kinematics(entry, exit, mirrored, scale, t).0;
+                    let tangent = geometry.heart_kinematics(entry, exit, mirrored, scale, t).1;
+                    let roll = geometry.roll_angle(entry, exit, mirrored, t);
+                    let up = geometry.desired_up(entry, tangent, roll, mirrored, t);
+                    let expected = heart - up * super::HEART_HEIGHT_METRES;
+                    assert_eq!(
+                        geometry.rail_position(entry, exit, mirrored, scale, t),
+                        expected
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn classic_corkscrew_lands_at_the_sideways_connector() {

@@ -27,7 +27,7 @@ export type WorkerAction =
   | { type: "facility-price"; id: number; price: number };
 
 export type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array; coasterColors?: CoasterColorScheme | null; coasterTrain?: TrainLayout | null };
-export type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array; constructionRiders: Uint32Array };
+export type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array; trainStates: Float32Array; constructionTrainStates: Float32Array; constructionRiders: Uint32Array };
 export type WorkerMessage =
   | { type: "session-export"; requestId: number; recording: WorkerRecording }
   | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)

@@ -7,7 +7,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction generate-report-types check-report-types generate-profiles
+.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-player-circuits generate-report-types check-report-types generate-profiles
 
 install:
 	npm ci
@@ -76,6 +76,9 @@ bench-construction:
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements multi_launch
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements wooden
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- per-piece
+
+bench-player-circuits:
+	$(CARGO) run --release -p theme-park-sim --example player_circuit_preview_bench
 
 bench-guests: wasm-bindgen
 	$(CARGO) run --release -p theme-park-sim --features threads --example guest_bench

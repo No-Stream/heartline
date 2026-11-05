@@ -51,6 +51,42 @@ pub struct PieceChoice {
     pub would_tunnel: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpeedMatchedVariant {
+    pub id: PieceId,
+    pub fits: bool,
+}
+
+/// Select the rated candidate with the largest margin to either window edge.
+/// If no window contains the speed, select the nearest window instead. Ties
+/// preserve the order supplied by the caller.
+pub fn select_speed_matched_variant(
+    candidates: &[Piece],
+    entry_speed: f64,
+) -> Option<SpeedMatchedVariant> {
+    assert!(entry_speed.is_finite() && entry_speed >= 0.0);
+    let mut best: Option<(SpeedMatchedVariant, f64)> = None;
+    for piece in candidates {
+        let Some(window) = piece.rated_speeds else {
+            continue;
+        };
+        assert!(window.minimum_entry.is_finite() && window.maximum_entry.is_finite());
+        assert!(window.minimum_entry >= 0.0 && window.minimum_entry <= window.maximum_entry);
+        let margin = (entry_speed - window.minimum_entry).min(window.maximum_entry - entry_speed);
+        let choice = SpeedMatchedVariant {
+            id: piece.id,
+            fits: margin >= 0.0,
+        };
+        if best
+            .as_ref()
+            .is_none_or(|(_, best_margin)| margin > *best_margin)
+        {
+            best = Some((choice, margin));
+        }
+    }
+    best.map(|(choice, _)| choice)
+}
+
 #[derive(Clone)]
 struct PieceValidation {
     supports: Vec<Vec<Support>>,

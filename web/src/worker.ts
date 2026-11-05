@@ -1,9 +1,11 @@
+import { constructionEndSpeed, speedMatchedSelection, type ConstructionSpeedMatch } from "./construction-speed-match";
+import type { CandidateForcePreview } from "./candidate-force-readout";
 import type { ConstructionColorsWire as ConstructionColors } from "./generated/ConstructionColorsWire";
 import type { Facility, FacilityAction } from "./facilities";
 import init, { WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_wasm.js";
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
-import type { ConstructionAction, ConstructionElement, ConstructionPiece, ConstructionTrack, PieceShape } from "./construction-protocol";
+import type { ConstructionAction, ConstructionElement, ConstructionForcePreview, ConstructionPiece, ConstructionTrack, PieceShape } from "./construction-protocol";
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
@@ -21,6 +23,7 @@ import type { GuestDetail } from "./guest-panel/protocol";
 const tickRate = 30;
 const finishSearchSliceMs = 4;
 let manualBlockAnalysis = false;
+let testMode = false;
 let simulationPaused = false;
 let gamePaused = false;
 let gameSpeed = 1;
@@ -84,11 +87,14 @@ function wake(forceSnapshot = false): void {
     const guests = simulation.snapshot();
     const appearances = simulation.guest_appearances();
     const trainPoses = simulation.coaster_train_poses();
-    const constructionTrainPoses = simulation.construction_active() ? simulation.construction_train_poses() : new Float32Array();
+    const trainStates = simulation.coaster_train_states();
+    const constructionActive = simulation.construction_active();
+    const constructionTrainPoses = constructionActive ? simulation.construction_train_poses() : new Float32Array();
+    const constructionTrainStates = constructionActive ? simulation.construction_train_states() : new Float32Array();
     const constructionRiders = simulation.construction_riders();
     sendWorkerMessage(workerScope,
-      { type: "snapshot", sentAt: performance.now(), tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, constructionRiders },
-      [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, constructionRiders.buffer],
+      { type: "snapshot", sentAt: performance.now(), tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, trainStates, constructionTrainStates, constructionRiders },
+      [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, trainStates.buffer, constructionTrainStates.buffer, constructionRiders.buffer],
     );
   }
   const message = simulation.construction_message();
@@ -106,6 +112,8 @@ function sendGuestDetail(guestId = selectedGuestId): void {
   sendWorkerMessage(workerScope, { type: "guest-detail", guestId: `guest-${guestId}`, detail });
   lastGuestDetailSentAt = performance.now();
 }
+
+let constructionEndSpeedCache: number | undefined;
 
 function sendConstruction(complete = true): void {
   const pieces = JSON.parse(simulation.construction_choices()) as ConstructionPiece[];
@@ -129,12 +137,19 @@ function sendConstruction(complete = true): void {
   const colorNames = JSON.parse(simulation.construction_colors()) as ConstructionColors | null;
   const layoutReport = JSON.parse(simulation.construction_train_layout()) as TrainLayout | null;
   const trainLayout = layoutReport ? parseTrainLayout(layoutReport) : null;
+  const constructionForcePreview = complete
+    ? JSON.parse(simulation.construction_force_preview_json()) as ConstructionForcePreview | null
+    : null;
+  if (complete) constructionEndSpeedCache = constructionEndSpeed(constructionForcePreview);
   sendWorkerMessage(workerScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     selected: selected || null, track,
     canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
     canFinish: simulation.construction_can_finish(), finishReason: simulation.construction_finish_reason(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as TestingReport | null,
+    constructionForcePreview,
+    candidateForcePreview: complete ? JSON.parse(simulation.construction_candidate_force_preview_json()) as CandidateForcePreview | null : null,
+    speedMatch: complete ? JSON.parse(simulation.construction_speed_match_json(selected, constructionEndSpeedCache)) as ConstructionSpeedMatch | null : null,
     canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), coasterPrice, coasterIncome, stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.refusal || "",
     blockReport: JSON.parse(lastBlockReport) as BlockReport, trainCount: simulation.construction_train_count(),
     previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports, railDistances, blockCandidates,
@@ -233,6 +248,7 @@ workerScope.addEventListener("message", (event) => {
   if (action.type === "init") {
     if (initialized) throw new Error("Worker already initialized");
     manualBlockAnalysis = action.manualBlockAnalysis;
+    testMode = action.frozen;
     simulationPaused = action.frozen;
     initialized = init().then(() => {
       simulation = new WasmSimulation(action.seed, action.guestCount, action.park);
@@ -297,9 +313,11 @@ workerScope.addEventListener("message", (event) => {
       return;
     }
     if (action.type === "test-advance") {
-      if (!Number.isInteger(action.count) || action.count < 1 || action.count > 100000) throw new RangeError("Invalid test tick count");
+      if (!testMode || (!simulationPaused && !gamePaused)) throw new Error("Test tick advance requires a paused test simulation");
+      if (!Number.isInteger(action.count) || action.count < 0 || action.count > 100000) throw new RangeError("Invalid test tick count");
       for (let tick = 0; tick < action.count; tick++) tickSimulation();
-      wake();
+      wake(true);
+      if (selectedGuestId !== undefined) sendGuestDetail();
       sendFacilities("", false, true);
       sendWorkerMessage(workerScope, { type: "test-advanced" });
       return;
@@ -413,9 +431,14 @@ workerScope.addEventListener("message", (event) => {
       return;
     }
     if (action.type !== "set-surface") {
+      if (action.type !== "construction-select") constructionEndSpeedCache = undefined;
       switch (action.type) {
         case "construction-start": simulation.construction_start(action.x * 2, action.y * 2, action.z / 2, action.heading * 2); break;
-        case "construction-select": simulation.construction_select(action.piece); break;
+        case "construction-select": {
+          const match = action.exact ? null : JSON.parse(simulation.construction_speed_match_json(action.piece, constructionEndSpeedCache)) as ConstructionSpeedMatch | null;
+          simulation.construction_select(speedMatchedSelection(action.piece, match, action.exact ?? false));
+          break;
+        }
         case "construction-set-chain": simulation.construction_set_chain(action.enabled); break;
         case "construction-set-launch-intensity": simulation.construction_set_launch_intensity(action.id, action.targetSpeed); break;
         case "construction-append": simulation.construction_append(); break;

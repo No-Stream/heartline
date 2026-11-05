@@ -6,6 +6,186 @@ use crate::track::{PieceId, TrackState, catalog, hybrid_model};
 use crate::world::{Surface, World};
 
 #[test]
+fn lead_car_forces_match_recorded_forces_and_do_not_change_state_hash() {
+    let circuit = demo_circuit();
+    let mut train = Train::new(
+        &circuit,
+        &hybrid_model().train,
+        PhysicsConfig::default(),
+        0.0,
+        0.0,
+    );
+    for _ in 0..100 {
+        train.step(&circuit);
+        let actual = train.lead_car_forces(&circuit);
+        let expected = train.readings().last().unwrap()[0].g;
+        assert_eq!(actual.vertical, expected.vertical);
+        assert_eq!(actual.lateral, expected.lateral);
+        assert_eq!(actual.longitudinal, expected.longitudinal);
+    }
+    let hash = train.state_hash();
+    let mut full_hash = StateHasher::new();
+    train.hash_into(&mut full_hash);
+    train.last_acceleration += 1.0;
+    assert_eq!(train.state_hash(), hash);
+    let mut changed_hash = StateHasher::new();
+    train.hash_into(&mut changed_hash);
+    assert_eq!(full_hash.finish(), changed_hash.finish());
+}
+
+#[test]
+fn open_track_preview_matches_closed_run_until_the_open_end() {
+    let circuit = demo_circuit();
+    let configuration = hybrid_model().train;
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let preview =
+        preview::preview_at_step(circuit.pieces(), &configuration, config, 200_000, TIME_STEP)
+            .unwrap();
+    assert_eq!(preview.status, PreviewStatus::ReachedEnd);
+    let preview = preview.report;
+    let mut run = CoasterRun::new(&circuit, &configuration, config);
+    let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+    for sample in &preview.samples {
+        let recorded = outcome.reports[0]
+            .samples
+            .iter()
+            .find(|other| other.distance == sample.distance)
+            .unwrap();
+        assert_eq!(sample, recorded);
+    }
+    assert!(!preview.samples.is_empty());
+}
+
+#[test]
+fn open_track_prefix_matches_closed_run_until_its_end() {
+    let circuit = demo_circuit();
+    let configuration = hybrid_model().train;
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let pieces = &circuit.pieces()[..circuit.pieces().len() - 1];
+    let preview =
+        preview::preview_at_step(pieces, &configuration, config, 200_000, TIME_STEP).unwrap();
+    assert_eq!(preview.status, PreviewStatus::ReachedEnd);
+    let preview = preview.report;
+    let mut run = CoasterRun::new(&circuit, &configuration, config);
+    let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+    for sample in &preview.samples {
+        let recorded = outcome.reports[0]
+            .samples
+            .iter()
+            .find(|other| other.distance == sample.distance)
+            .unwrap();
+        assert_eq!(sample, recorded);
+    }
+    assert!(!preview.samples.is_empty());
+}
+
+#[test]
+fn approximate_open_preview_stays_close_to_closed_demo_run() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let preview = preview_open_track(
+        &circuit.pieces()[..circuit.pieces().len() - 1],
+        &model.train,
+        config,
+    )
+    .unwrap();
+    let mut run = CoasterRun::new(&circuit, &model.train, config);
+    let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+    assert_eq!(preview.status, PreviewStatus::ReachedEnd);
+    let mut maximum_differences = [0.0_f64; 4];
+    for sample in &preview.report.samples {
+        let recorded = outcome.reports[0]
+            .samples
+            .iter()
+            .find(|other| other.distance == sample.distance)
+            .unwrap();
+        for (maximum, difference) in maximum_differences.iter_mut().zip([
+            (sample.speed - recorded.speed).abs(),
+            (sample.vertical_g - recorded.vertical_g).abs(),
+            (sample.lateral_g - recorded.lateral_g).abs(),
+            (sample.longitudinal_g - recorded.longitudinal_g).abs(),
+        ]) {
+            *maximum = maximum.max(difference);
+        }
+    }
+    eprintln!(
+        "maximum differences [speed m/s, vertical g, lateral g, longitudinal g]: {maximum_differences:?}"
+    );
+    assert!(
+        maximum_differences[0] < 0.5
+            && maximum_differences[1..]
+                .iter()
+                .all(|difference| *difference < 0.3)
+    );
+}
+
+#[test]
+fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
+    let circuit = demo_circuit();
+    let configuration = hybrid_model().train;
+    let preview = preview_open_track(
+        &circuit.pieces()[..1],
+        &configuration,
+        PhysicsConfig {
+            powered_sections: false,
+            ..PhysicsConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(preview.status, PreviewStatus::Stalled);
+    let preview = preview.report;
+    assert!(
+        preview
+            .samples
+            .iter()
+            .all(|sample| sample.distance < circuit.pieces()[0].length())
+    );
+    assert!(preview.furthest_distance < circuit.pieces()[0].length());
+    assert!(preview_open_track(&[], &configuration, PhysicsConfig::default()).is_none());
+}
+
+#[test]
+fn open_track_preview_does_not_extrapolate_past_an_uphill_stall() {
+    let circuit = demo_circuit();
+    let mut pieces = circuit.pieces()[..7].to_vec();
+    for piece in &mut pieces[1..] {
+        piece.kind = PieceKind::Track;
+    }
+    let preview =
+        preview_open_track(&pieces, &hybrid_model().train, PhysicsConfig::default()).unwrap();
+    let length: f64 = pieces.iter().map(Piece::length).sum();
+    assert_eq!(preview.status, PreviewStatus::Stalled);
+    let preview = preview.report;
+    assert!(!preview.samples.is_empty());
+    assert!(preview.samples.last().unwrap().distance < length - 1.0);
+}
+
+#[test]
+fn open_track_preview_distinguishes_timeout_from_stall() {
+    let circuit = demo_circuit();
+    let preview = preview::preview_at_step(
+        &circuit.pieces()[..2],
+        &hybrid_model().train,
+        PhysicsConfig::default(),
+        1,
+        TIME_STEP,
+    )
+    .unwrap();
+    assert_eq!(preview.status, PreviewStatus::TimedOut);
+    assert!(!preview.report.completed);
+}
+
+#[test]
 fn straight_level_track_reads_one_vertical_g_and_no_other_forces() {
     let piece = catalog()
         .iter()

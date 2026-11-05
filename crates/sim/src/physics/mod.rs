@@ -16,6 +16,8 @@ mod testing;
 pub use testing::{TestRun, TestRunRecorder, TestSample};
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};
+mod preview;
+pub use preview::{PreviewStatus, TrackPreview, preview_open_track};
 mod block_operation;
 pub use block_operation::BlockOperation;
 
@@ -24,6 +26,7 @@ pub struct Circuit {
     pieces: Vec<Piece>,
     starts: Vec<f64>,
     length: f64,
+    open: bool,
 }
 
 impl Circuit {
@@ -49,6 +52,7 @@ impl Circuit {
             pieces,
             starts,
             length,
+            open: false,
         })
     }
     pub fn length(&self) -> f64 {
@@ -61,8 +65,12 @@ impl Circuit {
         self.locate(distance).0
     }
     fn locate(&self, distance: f64) -> (usize, f64) {
-        let distance = distance.rem_euclid(self.length);
-        let distance = if distance == self.length {
+        let distance = if self.open {
+            distance.clamp(0.0, self.length)
+        } else {
+            distance.rem_euclid(self.length)
+        };
+        let distance = if distance == self.length && !self.open {
             0.0
         } else {
             distance
@@ -344,6 +352,7 @@ pub enum Note {
 pub struct Train {
     distance: f64,
     speed: f64,
+    last_acceleration: f64,
     cars: usize,
     spacing: f64,
     config: PhysicsConfig,
@@ -438,10 +447,11 @@ impl Train {
             .all(|value| value.is_finite() && *value >= 0.0)
         );
         let cars = usize::from(train.cars);
-        assert!(train.length_metres < circuit.length());
+        assert!(circuit.open || train.length_metres < circuit.length());
         Self {
             distance,
             speed,
+            last_acceleration: 0.0,
             cars,
             spacing: train.length_metres / cars as f64,
             config,
@@ -473,6 +483,15 @@ impl Train {
     }
     pub fn speed(&self) -> f64 {
         self.speed
+    }
+    pub fn lead_car_forces(&self, circuit: &Circuit) -> GForces {
+        let (index, local) = circuit.locate(self.distance);
+        rider_g(
+            &circuit.pieces[index],
+            local,
+            self.speed,
+            self.last_acceleration,
+        )
     }
     pub fn readings(&self) -> &[Vec<CarReading>] {
         &self.readings
@@ -519,7 +538,7 @@ impl Train {
     }
     /// Apply installed block brakes over the given track pieces.
     pub fn step_block_brake(&mut self, circuit: &Circuit, brake_pieces: &[usize], hold: bool) {
-        self.step_block_brake_impl(circuit, brake_pieces, hold, true);
+        self.step_block_brake_impl(circuit, brake_pieces, hold, self.cars, TIME_STEP);
     }
     /// Advance the same motion without producing rider force readings.
     pub fn step_block_brake_without_readings(
@@ -528,14 +547,18 @@ impl Train {
         brake_pieces: &[usize],
         hold: bool,
     ) {
-        self.step_block_brake_impl(circuit, brake_pieces, hold, false);
+        self.step_block_brake_impl(circuit, brake_pieces, hold, 0, TIME_STEP);
+    }
+    fn step_preview(&mut self, circuit: &Circuit, time_step: f64) {
+        self.step_block_brake_impl(circuit, &[], false, 1, time_step);
     }
     fn step_block_brake_impl(
         &mut self,
         circuit: &Circuit,
         brake_pieces: &[usize],
         hold: bool,
-        record_readings: bool,
+        reading_count: usize,
+        time_step: f64,
     ) {
         if self.recovered {
             return;
@@ -550,11 +573,11 @@ impl Train {
             self.acceleration_with_gravity(initial_gravity, self.speed)
         };
         let mut next_distance =
-            self.distance + self.speed * TIME_STEP + 0.5 * acceleration * TIME_STEP * TIME_STEP;
-        let estimate = self.speed + acceleration * TIME_STEP;
+            self.distance + self.speed * time_step + 0.5 * acceleration * time_step * time_step;
+        let estimate = self.speed + acceleration * time_step;
         let downhill = self.gravity_acceleration(circuit, next_distance);
         let next_acceleration = self.acceleration_with_gravity(downhill, estimate);
-        let mut next_speed = self.speed + 0.5 * (acceleration + next_acceleration) * TIME_STEP;
+        let mut next_speed = self.speed + 0.5 * (acceleration + next_acceleration) * time_step;
         if downhill.abs() <= resistance && previous_speed * next_speed <= 0.0 {
             next_speed = 0.0;
         }
@@ -573,7 +596,7 @@ impl Train {
                 next_speed = next_speed.max(
                     (previous_speed
                         + acceleration.min(LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED)
-                            * TIME_STEP)
+                            * time_step)
                         .min(target_speed),
                 );
             } else {
@@ -583,7 +606,7 @@ impl Train {
                         if next_speed < self.config.lift_speed {
                             let lift_acceleration =
                                 self.config.drive_acceleration + (-initial_gravity).max(0.0);
-                            next_speed = (previous_speed + lift_acceleration * TIME_STEP)
+                            next_speed = (previous_speed + lift_acceleration * time_step)
                                 .min(self.config.lift_speed);
                         }
                     }
@@ -597,16 +620,16 @@ impl Train {
                             let remaining_distance = (circuit.starts[index]
                                 + circuit.pieces[index].length()
                                 - self.distance)
-                                .max(TIME_STEP * self.speed.max(1.0));
+                                .max(time_step * self.speed.max(1.0));
                             let acceleration = ((target_speed.powi(2) - previous_speed.powi(2))
                                 .max(0.0)
                                 / (2.0 * remaining_distance))
                                 .min(LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED);
                             next_speed = next_speed
-                                .max((previous_speed + acceleration * TIME_STEP).min(target_speed));
+                                .max((previous_speed + acceleration * time_step).min(target_speed));
                         } else {
                             next_speed = next_speed.max(
-                                (previous_speed + launch.acceleration * TIME_STEP)
+                                (previous_speed + launch.acceleration * time_step)
                                     .min(launch.target_speed),
                             );
                         }
@@ -618,12 +641,12 @@ impl Train {
                             self.config.station_speed
                         };
                         if circuit.pieces[index].kind == PieceKind::Station && next_speed < target {
-                            next_speed = (next_speed + self.config.drive_acceleration * TIME_STEP)
+                            next_speed = (next_speed + self.config.drive_acceleration * time_step)
                                 .min(target);
                         }
                         if next_speed > target {
                             next_speed = (next_speed
-                                - self.config.braking_acceleration * TIME_STEP)
+                                - self.config.braking_acceleration * time_step)
                                 .max(target);
                         }
                     }
@@ -643,12 +666,12 @@ impl Train {
             let target = if hold { 0.0 } else { self.config.brake_speed };
             if next_speed > target {
                 next_speed =
-                    (next_speed - self.config.braking_acceleration * TIME_STEP).max(target);
+                    (next_speed - self.config.braking_acceleration * time_step).max(target);
             } else if next_speed < target {
                 let speed_before_drive = next_speed;
-                next_speed = (next_speed + self.config.drive_acceleration * TIME_STEP).min(target);
+                next_speed = (next_speed + self.config.drive_acceleration * time_step).min(target);
                 if !hold && initial_gravity < 0.0 {
-                    next_distance += 0.5 * (next_speed - speed_before_drive) * TIME_STEP;
+                    next_distance += 0.5 * (next_speed - speed_before_drive) * time_step;
                 }
             }
             if brake_can_hold && next_speed <= 0.0 {
@@ -663,20 +686,20 @@ impl Train {
                 let net_acceleration =
                     self.config.drive_acceleration + initial_gravity - resistance;
                 if net_acceleration > 0.0 {
-                    next_distance = self.distance + 0.5 * net_acceleration * TIME_STEP * TIME_STEP;
-                    next_speed = net_acceleration * TIME_STEP;
+                    next_distance = self.distance + 0.5 * net_acceleration * time_step * time_step;
+                    next_speed = net_acceleration * time_step;
                 }
             }
         }
         self.distance = next_distance;
         self.speed = next_speed;
+        self.last_acceleration = (self.speed - previous_speed) / time_step;
         if previous_speed >= 0.0 && self.speed < 0.0 {
             self.rolled_back = true;
         }
-        if record_readings {
-            let longitudinal_acceleration = (self.speed - previous_speed) / TIME_STEP;
+        if reading_count > 0 {
             self.readings.push(
-                (0..self.cars)
+                (0..reading_count)
                     .map(|car| {
                         let distance = self.distance - car as f64 * self.spacing;
                         let (index, local) = circuit.locate(distance);
@@ -685,10 +708,14 @@ impl Train {
                             &circuit.pieces[index],
                             local,
                             self.speed,
-                            longitudinal_acceleration,
+                            self.last_acceleration,
                         );
                         CarReading {
-                            distance: distance.rem_euclid(circuit.length),
+                            distance: if circuit.open {
+                                distance.clamp(0.0, circuit.length)
+                            } else {
+                                distance.rem_euclid(circuit.length)
+                            },
                             speed: self.speed.abs(),
                             g,
                             airtime: g.vertical < 0.0,
@@ -713,6 +740,7 @@ impl Train {
                 .expect("rollback recovery requires a station");
             self.distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
             self.speed = 0.0;
+            self.last_acceleration = 0.0;
             self.recovered = true;
             self.notes.push(Note::RecoveredAfterRollback);
         }

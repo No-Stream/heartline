@@ -3,6 +3,45 @@ use std::collections::{HashSet, VecDeque};
 use super::WasmSimulation;
 
 #[test]
+fn candidate_force_preview_reports_selected_track_without_placing_it() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    assert_eq!(
+        simulation.construction_candidate_force_preview_json(),
+        "null"
+    );
+    simulation.construction_start(100, 100, 20, 0);
+    simulation.construction_select("Straight");
+    let before = simulation.construction_track();
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_candidate_force_preview_json()).unwrap();
+    assert_eq!(preview["status"], "reachedEnd");
+    assert!(preview["entrySpeed"].as_f64().unwrap() > 0.0);
+    assert!(preview["peaks"]["maximumVerticalG"].as_f64().is_some());
+    assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
+    assert_eq!(simulation.construction_track(), before);
+}
+
+#[test]
+fn candidate_force_preview_does_not_invent_peaks_beyond_a_stall() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(100, 100, 20, 0);
+    simulation.construction_select("LevelToGentleUp");
+    assert!(simulation.construction_can_append());
+    simulation.construction_append();
+    for _ in 0..4 {
+        simulation.construction_select("GentleUp");
+        assert!(simulation.construction_can_append());
+        simulation.construction_append();
+    }
+    simulation.construction_select("GentleUp");
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_candidate_force_preview_json()).unwrap();
+    assert_eq!(preview["status"], "stalled");
+    assert!(preview["entrySpeed"].is_null());
+    assert!(preview["peaks"].is_null());
+}
+
+#[test]
 fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let simulation = super::WasmSimulation::new(42, 0, String::from("demo"));
     let piece = simulation
@@ -42,6 +81,85 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
         }],
     );
     assert_eq!(baseline.events_for_run(&[]), diagonal.events_for_run(&[]));
+}
+
+#[test]
+fn construction_force_preview_reports_placed_track_and_last_piece_peaks() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    assert_eq!(simulation.construction_force_preview_json(), "null");
+
+    simulation.construction_start(100, 100, 20, 0);
+    let station_preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_force_preview_json()).unwrap();
+    assert!(station_preview["lastPlaced"].is_null());
+
+    simulation.construction_set_chain(true);
+    simulation.construction_select("LevelToGentleUp");
+    assert!(simulation.construction_can_append());
+    simulation.construction_append();
+
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_force_preview_json()).unwrap();
+    let samples = preview["samples"].as_array().unwrap();
+    assert!(!samples.is_empty());
+    assert!(samples.iter().all(|sample| {
+        sample["x"].as_f64().is_some()
+            && sample["y"].as_f64().is_some()
+            && sample["z"].as_f64().is_some()
+    }));
+    assert!(samples.windows(2).all(|pair| {
+        pair[1]["distance"].as_f64().unwrap() - pair[0]["distance"].as_f64().unwrap() <= 1.001
+    }));
+    assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
+    assert!(preview["lastPlaced"]["maximumSpeed"].as_f64().is_some());
+    assert!(preview["lastPlaced"]["minimumVerticalG"].as_f64().is_some());
+    assert!(preview["lastPlaced"]["maximumVerticalG"].as_f64().is_some());
+    assert!(
+        preview["lastPlaced"]["maximumAbsoluteLateralG"]
+            .as_f64()
+            .is_some()
+    );
+    assert!(
+        preview["lastPlaced"]["maximumAbsoluteLongitudinalG"]
+            .as_f64()
+            .is_some()
+    );
+}
+
+#[test]
+fn construction_force_preview_reports_launch_capability_and_estimated_force() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.construction_select("model:velocity_viper");
+    simulation.construction_start(200, 200, 20, 0);
+    simulation.construction_select("LaunchShort");
+    simulation.construction_append();
+    assert!(simulation.construction_set_launch_intensity(1, 12.0));
+
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_force_preview_json()).unwrap();
+    let launch = &preview["launches"][0];
+    let track: serde_json::Value = serde_json::from_str(&simulation.construction_track()).unwrap();
+    assert_eq!(launch["pieceIndex"], 1);
+    assert_eq!(launch["maximumSpeed"], track[1]["launchMaximumSpeed"]);
+    assert!(launch["peakLongitudinalG"].as_f64().unwrap() > 0.0);
+    let launch_start = simulation.construction.as_ref().unwrap().pieces()[0].length();
+    let peak = preview["samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|sample| sample["distance"].as_f64().unwrap() >= launch_start)
+        .map(|sample| sample["longitudinalG"].as_f64().unwrap().abs())
+        .fold(0.0_f64, f64::max);
+    assert_eq!(launch["peakLongitudinalG"].as_f64().unwrap(), peak);
+    assert!(simulation.construction_set_launch_intensity(1, 14.0));
+    let stronger: serde_json::Value =
+        serde_json::from_str(&simulation.construction_force_preview_json()).unwrap();
+    assert!(
+        stronger["launches"][0]["peakLongitudinalG"]
+            .as_f64()
+            .unwrap()
+            > peak
+    );
 }
 
 const RETURN_PIECES: [theme_park_sim::track::PieceId; 9] = [
@@ -514,11 +632,25 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
         (super::PieceId::TerrainFall, "special"),
         (super::PieceId::ShortOffsetLeft, "straight"),
         (super::PieceId::ShortOffsetRight, "straight"),
+        (super::PieceId::BankedStraightLeft, "straight"),
+        (super::PieceId::BankedStraightRight, "straight"),
+        (super::PieceId::RolloutLeft, "bank"),
+        (super::PieceId::RolloutRight, "bank"),
     ];
 
     for (id, expected_group) in expected_groups {
         let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
         assert_eq!(super::piece_group(piece), expected_group, "{id:?}");
+    }
+
+    for (id, expected_name) in [
+        (super::PieceId::BankedStraightLeft, "Left-banked straight"),
+        (super::PieceId::BankedStraightRight, "Right-banked straight"),
+        (super::PieceId::RolloutLeft, "Roll out from left bank"),
+        (super::PieceId::RolloutRight, "Roll out from right bank"),
+    ] {
+        let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
+        assert_eq!(piece.name, expected_name, "{id:?}");
     }
 
     let mut turn_named_straight = catalog
@@ -612,18 +744,17 @@ fn construction_selects_the_sixty_degree_continuation_after_steep_to_sixty_trans
 fn construction_falls_back_to_the_first_valid_piece_without_a_straight_continuation() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
-    simulation.construction_select("BankLeft");
+    simulation.construction_select("TurnSmallEntry");
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_message()
+    );
     simulation.construction_append();
 
     let choices: serde_json::Value =
         serde_json::from_str(&simulation.construction_choices()).unwrap();
     let choices = choices.as_array().unwrap();
-    assert!(!choices.iter().any(|choice| {
-        choice["heading"] == "East"
-            && choice["slope"] == "Level"
-            && choice["bank"] == "Left"
-            && choice["refusal"].as_str().unwrap().is_empty()
-    }));
     let first_valid = choices
         .iter()
         .find(|choice| choice["refusal"].as_str().unwrap().is_empty())
@@ -633,8 +764,17 @@ fn construction_falls_back_to_the_first_valid_piece_without_a_straight_continuat
 
     assert_eq!(simulation.construction_selected(), first_valid);
     let construction = simulation.park.construction.as_ref().unwrap();
+    let end = construction.end();
+    assert_eq!((end.x, end.y, end.z), (216, 208, 20));
     let candidates =
         construction.available_choices(&simulation.park.world, &simulation.facility_obstacles());
+    assert!(!candidates.iter().any(|(piece, choice)| {
+        choice.result.is_ok()
+            && piece.inversion.is_none()
+            && matches!(piece.kind, super::PieceKind::Track | super::PieceKind::Lift)
+            && super::same_track_orientation(piece.entry, construction.end())
+            && super::same_track_orientation(piece.exit, construction.end())
+    }));
     assert_eq!(
         simulation.selected,
         super::default_construction_piece_from_choices(&candidates, construction.end())
@@ -1615,6 +1755,8 @@ fn construction_closes_and_runs_physics_deterministically() {
     assert_eq!(recovered_train.speed(), 0.0);
     let recovered_poses = simulation.construction_train_poses();
     let station = &simulation.construction.as_ref().unwrap().pieces()[0];
+    let recovered_state = simulation.construction_train_states();
+    assert_eq!(recovered_state, vec![0.0, 0.0, 4.0, 1.0, 0.0, 0.0]);
     assert_eq!(recovered_train.distance(), station.length());
     let config = &simulation.construction.as_ref().unwrap().model().train;
     assert_eq!(recovered_poses.len(), usize::from(config.cars) * 11);

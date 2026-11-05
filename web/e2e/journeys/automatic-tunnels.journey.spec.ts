@@ -36,6 +36,9 @@ test("a coaster tunnels through a hill and completes a test ride @journey", asyn
     const choice = choices.locator(`[data-piece="${piece}"]`);
     await expect(choice).toBeVisible();
     await choice.click();
+    if (piece === "Loop") {
+      await page.getByRole("group", { name: "Element size" }).locator('[data-speed-match-variant="Loop"]').click();
+    }
     const choiceRefusal = await choice.locator("[role='tooltip']").textContent();
     const choiceChecked = await choice.getAttribute("aria-checked");
     const builderMessage = await page.locator("[data-message]").textContent();

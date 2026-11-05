@@ -14,7 +14,7 @@ import { buildSelectionRing } from "./guest-panel/selection-ring";
 import { buildPathGhostQuads, decodePathPreview } from "./render/path-ghost";
 import { buildLandscapingGhostQuads, type LandscapingPreview } from "./landscaping-tool";
 import { buildSceneryGhostQuads, scenerySprites, type Scenery, type SceneryPreview } from "./scenery-tool";
-import { buildProximityMarkers, buildTestingRibbon, type TestingMetric } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, overlaySamples, type TestingMetric } from "./coaster-testing";
 import type { Atlas, GeometryQuad, WorldSprite, WorldView } from "./render/scene";
 import type { AtmospherePass, GeometryPass } from "./render/index";
 import type { CoasterSnapshot } from "./protocol";
@@ -174,7 +174,7 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
         }
         return quad;
       }),
-      ...(input.testingMetric && input.construction?.testingReport ? buildTestingRibbon(input.construction.testingReport.samples, input.testingMetric, camera, viewport, trackStyle(atlas)) : []),
+      ...(input.testingMetric ? buildTestingRibbon(overlaySamples(input.construction?.testingReport?.samples ?? null, input.construction?.constructionForcePreview?.samples ?? null), input.testingMetric, camera, viewport, trackStyle(atlas), input.construction?.testingReport ? undefined : input.construction?.constructionForcePreview?.limits) : []),
       ...(input.construction?.testingReport ? buildProximityMarkers(input.construction.testingReport.proximityEvents, camera, viewport, trackStyle(atlas)) : []),
       ...input.constructionEffects.quads(input.now, camera, viewport),
     ],

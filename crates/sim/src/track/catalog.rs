@@ -1340,7 +1340,57 @@ fn build_catalog() -> Vec<Piece> {
         LargeRightBankedTurnExit,
         LargeRightBankedTurnStandalone,
     ];
-    let bank_transition_ids = [BankLeft, UnbankLeft, BankRight, UnbankRight];
+    let straight = pieces
+        .iter()
+        .find(|piece| piece.id == Straight)
+        .unwrap()
+        .clone();
+    for (id, name, bank) in [
+        (BankedStraightLeft, "Left-banked straight", Left),
+        (BankedStraightRight, "Right-banked straight", Right),
+    ] {
+        let mut piece = straight.clone();
+        piece.id = id;
+        piece.name = name;
+        piece.entry.bank = bank;
+        piece.exit.bank = bank;
+        piece.rated_speeds = Some(RatedSpeeds {
+            minimum_entry: 5.0,
+            maximum_entry: 30.0,
+        });
+        pieces.push(piece);
+    }
+    for (source, id, name) in [
+        (UnbankLeft, RolloutLeft, "Roll out from left bank"),
+        (UnbankRight, RolloutRight, "Roll out from right bank"),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == source)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        piece.exit.x = 16;
+        piece.tangent_scale *= 2.0;
+        piece.shape = Shape::Roll(Arc::new(RollGeometry::spline()));
+        piece.rated_speeds = Some(RatedSpeeds {
+            minimum_entry: 5.0,
+            maximum_entry: 30.0,
+        });
+        piece.clear_arc_table();
+        pieces.push(piece);
+    }
+    let bank_transition_ids = [
+        BankLeft,
+        UnbankLeft,
+        BankRight,
+        UnbankRight,
+        BankedStraightLeft,
+        BankedStraightRight,
+        RolloutLeft,
+        RolloutRight,
+    ];
     let sloped_bank_transitions: Vec<_> = pieces
         .iter()
         .filter(|piece| bank_transition_ids.contains(&piece.id))
@@ -1349,7 +1399,23 @@ fn build_catalog() -> Vec<Piece> {
                 let mut transition = piece.clone();
                 transition.entry.slope = slope;
                 transition.exit.slope = slope;
-                transition.exit.z = if slope == UpGentle { 4 } else { -4 };
+                let rise = if matches!(piece.id, RolloutLeft | RolloutRight) {
+                    8
+                } else {
+                    4
+                };
+                transition.exit.z = if slope == UpGentle { rise } else { -rise };
+                if slope == UpGentle {
+                    match piece.id {
+                        BankedStraightLeft | BankedStraightRight => {
+                            transition.rated_speeds.as_mut().unwrap().minimum_entry = 20.0
+                        }
+                        RolloutLeft | RolloutRight => {
+                            transition.rated_speeds.as_mut().unwrap().minimum_entry = 22.0
+                        }
+                        _ => {}
+                    }
+                }
                 transition.clear_arc_table();
                 transition
             })

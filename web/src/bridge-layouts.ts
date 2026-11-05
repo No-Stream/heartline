@@ -26,6 +26,7 @@ export const BRIDGE_LAYOUTS = {
   TIE: ["piece_index", "start_x", "start_y", "start_z", "end_x", "end_y", "end_z", "up_x", "up_y", "up_z", "tangent_x", "tangent_y", "tangent_z"],
   SUPPORT: ["piece_index", "start_x", "start_y", "start_z", "end_x", "end_y", "end_z"],
   TRAIN_POSE: ["car_index", "x", "y", "z", "tangent_x", "tangent_y", "tangent_z", "up_x", "up_y", "up_z", "occupied_seat_mask"],
+  TRAIN_STATE: ["train_index", "speed", "piece_kind", "vertical_g", "lateral_g", "occupied"],
   RIDER: ["car_index", "seat_index", "guest_id"],
   RAIL_DISTANCE: ["start_metres", "end_metres"],
   BLOCK_CANDIDATE: ["distance_metres"],

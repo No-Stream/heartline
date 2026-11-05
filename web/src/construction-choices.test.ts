@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConstructionPiece, PieceShape } from "./construction-protocol";
-import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions } from "./construction-choices";
+import { speedMatchedSelection } from "./construction-speed-match";
+import { steppedPieceSelection, groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions } from "./construction-choices";
 
 function shape(id: string, turn: number, kind = "Track"): PieceShape {
   return { id, name: id, kind, turn, entrySlope: "Level", exitSlope: "Level", entryBank: "Level", exitBank: "Level", points: [] };
@@ -182,4 +183,37 @@ describe("construction steppers", () => {
     expect(pieceInGroup(pieces, "inversion")).toBe("Loop");
     expect(pieceInGroup(pieces, "unknown")).toBeUndefined();
   });
+
+  it("shows banked straights with straight pieces and roll-outs with bank transitions", () => {
+    const bankedContinuations = [
+      { ...piece("BankedStraightLeft", "straight", "Level", "Left"), label: "Left-banked straight" },
+      { ...piece("BankedStraightRight", "straight", "Level", "Right"), label: "Right-banked straight" },
+      { ...piece("RolloutLeft", "bank", "Level", "Level"), label: "Roll out from left bank" },
+      { ...piece("RolloutRight", "bank", "Level", "Level"), label: "Roll out from right bank" },
+    ];
+
+    const groups = groupedPieces(bankedContinuations);
+
+    expect(groups.map(({ group, pieces: members }) => [group, members.map(({ id }) => id)])).toEqual([
+      ["straight", ["BankedStraightLeft", "BankedStraightRight"]],
+      ["bank", ["RolloutLeft", "RolloutRight"]],
+    ]);
+    expect(bankedContinuations.map(pieceDisplayName)).toEqual([
+      "Left-banked straight",
+      "Right-banked straight",
+      "Roll out from left bank",
+      "Roll out from right bank",
+    ]);
+  });
+});
+
+it("cycles past speed-matched variants without redirecting to a previous size", () => {
+  const palette = [piece("Loop", "inversion"), piece("HeartlineRoll", "inversion"), piece("LargeLoop", "inversion"), piece("LaunchShort", "special")];
+  let selected = "Loop";
+  for (let index = 0; index < 3; index++) {
+    const action = steppedPieceSelection(palette, shapes, selected, "piece", 1)!;
+    expect(action.exact).toBe(true);
+    selected = speedMatchedSelection(action.piece, { entrySpeed: 10, recommendedId: "Loop", fits: true, variants: [] }, action.exact);
+  }
+  expect(selected).toBe("LaunchShort");
 });

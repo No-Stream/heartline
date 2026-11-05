@@ -1,6 +1,7 @@
 mod blocks;
 mod command_errors;
 mod construction;
+mod construction_speed_match;
 mod facilities;
 mod guest_benchmark;
 mod guest_report;
@@ -644,6 +645,31 @@ fn append_train_poses(
             .min(seats_per_car);
         result.push(((1_u32 << occupied) - 1) as f32);
     }
+}
+
+fn append_train_state(
+    result: &mut Vec<f32>,
+    circuit: &Circuit,
+    train: &Train,
+    train_id: u64,
+    occupied: bool,
+) {
+    let kind = match circuit.pieces()[circuit.piece_index(train.distance())].kind {
+        PieceKind::Track => 0.0,
+        PieceKind::Lift => 1.0,
+        PieceKind::Launch => 2.0,
+        PieceKind::Brakes => 3.0,
+        PieceKind::Station => 4.0,
+    };
+    let forces = train.lead_car_forces(circuit);
+    result.extend_from_slice(&[
+        train_id as f32,
+        train.speed().abs() as f32,
+        kind,
+        forces.vertical as f32,
+        forces.lateral as f32,
+        f32::from(occupied),
+    ]);
 }
 
 #[cfg(test)]

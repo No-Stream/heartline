@@ -1,19 +1,30 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { canvasToPage, flattenTerrainTiles, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed, waitForState } from "../player/driver";
+import { advanceUntilState, canvasToPage, flattenTerrainTiles, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
 import { queuedGuests, revenue, riders } from "../player/state";
 import { parseReplaySession } from "../../src/session-replay";
+
+async function coasterQueuingGuests(page: Page): Promise<readonly string[]> {
+  const queuingIds: string[] = [];
+  for (const id of await queuedGuests(page)) {
+    await page.evaluate((guestId) => window.gameTest.requestGuestDetail(guestId), id);
+    await page.evaluate(() => window.gameTest.advanceTicks(0));
+    const detail = await page.evaluate(() => window.gameTest.guestDetail());
+    if (detail?.id !== id) throw new Error(`Guest detail for ${id} was not received`);
+    if (detail.activity.kind === "queuing" && detail.activity.placeId === 0xffff_ffff) queuingIds.push(id);
+  }
+  return queuingIds;
+}
 
 async function selectQueuedGuest(page: Page): Promise<string> {
   await page.getByRole("toolbar", { name: "Tools" }).getByRole("button", { name: "Watch", exact: true }).click();
   await setGameSpeed(page, 16);
-  await expect.poll(() => queuedGuests(page), { timeout: 45_000 }).not.toHaveLength(0);
   await setGameSpeed(page, 1);
-  await expect.poll(() => queuedGuests(page), { timeout: 5_000 }).not.toHaveLength(0);
+  await page.getByRole("button", { name: "Pause" }).click();
+  await advanceUntilState(page, async () => (await coasterQueuingGuests(page)).length > 0, { ticks: 21_600 });
   const seenIds = new Set<string>();
   for (;;) {
-    await page.getByRole("button", { name: "Pause" }).click();
-    const queuedIds = await queuedGuests(page);
+    const queuedIds = await coasterQueuingGuests(page);
     for (const id of queuedIds) seenIds.add(id);
     for (const id of queuedIds) {
       const guest = await page.evaluate((guestId) => window.gameTest.guests().find((entry) => entry.id === guestId), id);
@@ -62,10 +73,7 @@ async function selectQueuedGuest(page: Page): Promise<string> {
       await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
       return id;
     }
-    await page.getByRole("button", { name: "Resume" }).click();
-    await setGameSpeed(page, 16);
-    await expect.poll(async () => (await queuedGuests(page)).some((id) => !seenIds.has(id)), { timeout: 45_000 }).toBe(true);
-    await setGameSpeed(page, 1);
+    await advanceUntilState(page, async () => (await coasterQueuingGuests(page)).some((id) => !seenIds.has(id)), { ticks: 21_600 });
   }
 }
 
@@ -114,9 +122,10 @@ test("Timber Tumbler operating journey @journey", async ({ page }) => {
   phase("guest selection");
   await expect(page.getByTestId("guest-panel")).toBeVisible();
   await setGameSpeed(page, 16);
-  await waitForState(page, async () => (await riders(page)).some(({ id }) => id === guestId), { ticks: 90_000 });
+  await page.getByRole("button", { name: "Pause" }).click();
+  await advanceUntilState(page, async () => (await riders(page)).some(({ id }) => id === guestId), { ticks: 90_000 });
   phase("boarding");
-  await waitForState(page, async () => {
+  await advanceUntilState(page, async () => {
     const income = Number(await page.locator("[data-coaster-income]").textContent());
     const detail = await page.evaluate(() => window.gameTest.guestDetail());
     return income > 0 && await revenue(page) > revenueBeforeOpening

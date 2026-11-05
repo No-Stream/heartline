@@ -47,12 +47,14 @@ import { parseReplaySession, type ReplaySession } from "./session-replay";
 import { createGamePauseState } from "./game-pause";
 import { replaySessionIntoWorker } from "./session-replay-worker";
 import { constructionHeights } from "./height-markers";
+import { createForceOverlay, nearestSampleIndex, type ScreenBox } from "./force-overlay";
 import { formatLength, type Units } from "./units";
 import { createUnitsSetting } from "./units-setting";
 import { createLiveAudio, renderOffline } from "./audio/engine";
-import { soundFrame, type UiEvent } from "./audio/mapping";
+import { soundFrame, type MappingMemory, type UiEvent } from "./audio/mapping";
 import { constructionUiEvents, createUiEventQueue, pathUiEvent, placementUiEvent, terrainUiEvent } from "./audio/ui-events";
 import { createSoundSetting } from "./sound-setting";
+import { parseTrainStates, validateTrainStates } from "./train-states";
 
 declare const __GIT_HASH__: string;
 
@@ -90,7 +92,8 @@ let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
 const renderClock = new RenderClock<CoasterSnapshot>(30);
-let frozen = new URLSearchParams(location.search).has("test");
+const testMode = new URLSearchParams(location.search).has("test");
+let frozen = testMode;
 const frameLogEnabled = new URLSearchParams(location.search).get("frameLog") === "1";
 const frameLogEntries: FrameLogEntry[] = [];
 const snapshotArrivalEntries: SnapshotArrivalEntry[] = [];
@@ -136,7 +139,11 @@ let followedPreview = "";
 let lastFrameAt = performance.now();
 let testingMetric: TestingMetric | null = null;
 let testingReportJson = "";
+let constructionForcePreviewJson = "";
 const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch);
+const forceOverlay = createForceOverlay(document.querySelector<HTMLElement>("[data-force-overlay]")!);
+/** Hover reaches this many CSS pixels from the coloured track. */
+const FORCE_HOVER_PIXELS = 14;
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
 const guestPanel = createGuestPanel(gameCanvas, { dispatch });
@@ -210,6 +217,7 @@ let dayTick: number | undefined;
 let demoCrests = createCrestTracker();
 let constructionCrests = createCrestTracker();
 let crestBursts: CrestBurst[] = [];
+let soundMemory: MappingMemory | undefined;
 /** Every crest burst since the page loaded, for tests. */
 const crestHistory: CrestBurst[] = [];
 function setTimeOfDay(phase: number): void {
@@ -260,6 +268,7 @@ function openTool(tool: Tool, activatePanel = true): void {
   if (tool === activeTool) return;
   endInputModes();
   activeTool = tool;
+  renderRevision.invalidate();
   if (tool === "coaster") coasterAdapter.activate(undefined); else coasterAdapter.deactivate();
   toolbar.setActive(tool);
   dayClock.setControlsVisible(tool === "none");
@@ -315,10 +324,17 @@ const gameTest: GameTest = {
   requestGuestDetail(id) { sendWorkerAction(worker, { type: "guest-detail-request", guestId: id }); },
   guestDetail() { return latestGuestDetail; },
   testingReport() { return construction?.testingReport ?? null; },
+  constructionForcePreview() { return construction?.constructionForcePreview ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
+  trainStates() {
+    return {
+      coaster: parseTrainStates(current?.trainStates ?? new Float32Array()),
+      construction: parseTrainStates(current?.constructionTrainStates ?? new Float32Array()),
+    };
+  },
   replaySession: replayLiveSession,
   advanceTicks(count) {
-    if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
+    if ((!frozen && !(testMode && gamePause.isPaused())) || advanceTicksComplete || !Number.isInteger(count) || count < 0 || count > 100000) throw new Error("Invalid test tick advance");
     return new Promise<void>((resolve) => { advanceTicksComplete = resolve; sendWorkerAction(worker, { type: "test-advance", count }); });
   },
   advanceBlockAnalysis(budget) {
@@ -346,6 +362,7 @@ function applyUnits(units: Units): void {
   landscapingPanel.setUnits(units);
   guestPanel.setUnits(units);
   testingPanel.setUnits(units);
+  forceOverlay.setEstimate(construction?.constructionForcePreview ?? null, units);
   renderRevision.invalidate();
 }
 const unitsSetting = createUnitsSetting(unitsContainer, dispatch);
@@ -562,6 +579,10 @@ function dispatch(action: InputAction): void {
     coasterAdapter.drag(phase, action);
   } else if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") {
     coasterAdapter.key(action);
+  } else if (action.type === "hover" && activeTool === "coaster") {
+    const estimateSamples = forceOverlayVisible() ? construction?.constructionForcePreview?.samples ?? [] : [];
+    const points = estimateSamples.map((sample) => projectWorld(screenCamera(), viewport, sample));
+    if (forceOverlay.setHover(action.position ? nearestSampleIndex(points, action.position, FORCE_HOVER_PIXELS * pixelRatio) : null)) renderRevision.invalidate();
   } else if (action.type === "select") {
     const selection = renderer.pick(action.position.x, action.position.y);
     gameCanvas.dataset.selection = JSON.stringify(selection);
@@ -589,6 +610,7 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
     moveCamera(action);
     if (action.type !== "rotate") followPoints = undefined;
+    renderRevision.invalidate();
   }
 }
 function isConstructionAction(action: InputAction): action is Extract<InputAction, WorkerAction> {
@@ -688,13 +710,20 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     gameCanvas.dataset.blockBoundaries = String(next.blockReport.sections.length);
     const reportJson = JSON.stringify(next.testingReport ?? null);
     if (reportJson !== testingReportJson) { testingReportJson = reportJson; testingPanel.update(next.testingReport ?? null); }
+    const estimateJson = JSON.stringify(next.constructionForcePreview ?? null);
+    if (estimateJson !== constructionForcePreviewJson) { constructionForcePreviewJson = estimateJson; testingPanel.updateEstimate(next.constructionForcePreview ?? null); forceOverlay.setEstimate(next.constructionForcePreview ?? null, unitsSetting.units()); }
     if (redraw) renderRevision.invalidate();
   } else if (message.type === "guest-detail") {
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
   } else if (message.type === "snapshot") {
+    validateTrainStates(message.trainStates);
+    validateTrainStates(message.constructionTrainStates);
     if (frameLogEnabled) snapshotArrivalEntries.push({ now: performance.now(), sentAt: message.sentAt, tickCount: message.tickCount });
-    if (!frozen && !renderClock.push(message)) return;
+    if (!frozen && advanceTicksComplete) {
+      renderClock.snap(message);
+      renderRevision.invalidate();
+    } else if (!frozen && !renderClock.push(message)) return;
     previous = current;
     if (!frozen || !current || current.guestIds.length === 0 || advanceTicksComplete) current = message;
     if (!frozen) observeTick(message);
@@ -743,9 +772,14 @@ function observeCrests(snapshot: CoasterSnapshot): void {
   crestBursts = [...crestBursts, ...newBursts].filter((burst) => snapshot.tickCount - burst.tick < CONFETTI_LIFE_TICKS);
 }
 
+/** Force labels and the hover readout belong to the estimate of an unfinished coaster, not to test-run reports. */
+function forceOverlayVisible(): boolean {
+  return activeTool === "coaster" && !!construction?.active && !construction.testingReport && !!construction.constructionForcePreview && testingMetric !== null;
+}
+
 function frame(now: number): void {
   if (!world || replayInProgress) return;
-  if (frozen && gameTest.ready) return;
+  if (gameTest.ready && (frozen || (testMode && gamePause.isPaused() && !followPoints))) return;
   const renderFrame = frozen ? undefined : renderClock.frame(now);
   const renderPrevious = frozen ? previous : renderFrame?.previous;
   const renderCurrent = frozen ? current : renderFrame?.current;
@@ -768,6 +802,11 @@ function frame(now: number): void {
     heightMarkers.style.left = `${anchor.x}px`;
     heightMarkers.style.top = `${anchor.y}px`;
   }
+  const heightMarkerBox: ScreenBox[] = heights ? [{
+    left: parseFloat(heightMarkers.style.left) + 12 - 14, top: parseFloat(heightMarkers.style.top) - 12 - heightMarkers.offsetHeight,
+    width: heightMarkers.offsetWidth + 14, height: heightMarkers.offsetHeight + 14,
+  }] : [];
+  forceOverlay.render(forceOverlayVisible(), (sample) => projectWorld(camera, cssViewport(), sample), cssViewport(), heightMarkerBox);
   constructionEffects.active(now);
   dayClock.update(dayPhase);
   const scene = composeScene({
@@ -801,7 +840,9 @@ function frame(now: number): void {
     renderTick: renderFrame?.tick,
     setGuestAnchor: (point) => guestPanel.setAnchor(point),
   });
-  audio.apply(soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts, ui: uiEvents.drain() }));
+  const sound = soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts, ui: uiEvents.drain(), paused: gamePause.isPaused(), timeSeconds: now / 1000 }, soundMemory);
+  soundMemory = sound.memory;
+  audio.apply(sound.frame);
   renderedGuests = scene.guests;
   renderedRiders = scene.riders;
   renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none" });

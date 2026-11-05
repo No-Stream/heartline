@@ -500,9 +500,12 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
 
 export function pickScene(scene: Scene, x: number, y: number, rasterTolerance = 0): Pick | null {
   let selected: Triangle | undefined; let selectedDepth = -Infinity; let selectedHeight = 0;
+  const padding = Math.max(0, rasterTolerance);
   for (const triangle of scene.triangles) {
     if (UNPICKABLE_KINDS.has(triangle.kind)) continue;
     const [a,b,c] = triangle.vertices;
+    if (x < Math.min(a.x, b.x, c.x) - padding || x > Math.max(a.x, b.x, c.x) + padding
+      || y < Math.min(a.y, b.y, c.y) - padding || y > Math.max(a.y, b.y, c.y) + padding) continue;
     const denominator = (b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);
     if (denominator === 0) continue;
     let first = ((b.y-c.y)*(x-c.x)+(c.x-b.x)*(y-c.y))/denominator;
