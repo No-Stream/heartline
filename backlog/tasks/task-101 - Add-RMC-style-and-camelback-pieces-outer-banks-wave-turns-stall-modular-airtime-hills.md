@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-05 01:41'
+updated_date: '2026-11-05 05:06'
 labels: []
 dependencies:
   - TASK-95
@@ -33,4 +33,6 @@ Owner request 2026-11-04. Add Rocky Mountain Construction style elements to Timb
 Owner 2026-11-04: variety in airtime moments is key, especially for RMC-style coasters. Proposed interface: one 'Airtime hill' element with an inspector (feel: ejector / floater / speed hill / stall; height stepper; length; twist: none / banked / outer bank / wave turn; live predicted airtime g and seconds), solved to the target force by the TASK-95 profile solver, chainable into camelback runs (repeat-last-hill key or a run preset). Awaiting owner confirmation of the interface direction.
 
 Owner approved the airtime hill interface on 2026-11-04: one parameterised 'Airtime hill' element (feel: ejector / floater / speed hill / stall; height; length; twist: none / banked / outer bank / wave turn; live predicted airtime g and seconds), solved to the target force by the TASK-95 profile solver, chainable into camelback runs (repeat-last-hill key or run preset).
+
+2026-11-04 owner: make elements modular with a strong default; players can tweak an element, and every element shows its predicted forces and speeds before placing. Fable's six plan questions take their defaults (200 deg/s roll cap, drop the constant-lean banked hill, 110 deg outer bank, one stall, skip the step-up under-flip, upright hills only on Briar Blitz).
 <!-- SECTION:NOTES:END -->
