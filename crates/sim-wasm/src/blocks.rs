@@ -2,6 +2,11 @@ use super::*;
 
 #[wasm_bindgen]
 impl WasmSimulation {
+    pub fn construction_advance_block_placement_for_test(&mut self, work_steps: u32) {
+        self.park
+            .construction_advance_block_placement_for_test(work_steps);
+    }
+
     /// Advance pending block analysis by at most the requested number of physics steps.
     /// Returns true once analysis has finished. Large requests are capped per call.
     pub fn construction_advance_block_analysis(&mut self, work_steps: u32) -> bool {

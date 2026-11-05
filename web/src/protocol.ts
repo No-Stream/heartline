@@ -24,6 +24,7 @@ export type WorkerAction =
   | { type: "facility-remove"; id: number }
   | { type: "test-advance"; count: number }
   | { type: "test-advance-block-analysis"; budget: number }
+  | { type: "test-advance-block-placement"; budget: number }
   | { type: "facility-price"; id: number; price: number };
 
 export type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Array; coasterRails?: Float32Array; coasterTies?: Float32Array; coasterSupports: Float32Array; coasterColors?: CoasterColorScheme | null; coasterTrain?: TrainLayout | null };
