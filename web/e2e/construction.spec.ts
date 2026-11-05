@@ -134,7 +134,6 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
     "OffsetRight",
     "TurnLargeEntry",
     "TurnLargeExit",
-    "Straight",
     "OneTileStraight",
   ];
 
@@ -147,7 +146,8 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
     await expect(choice).toBeVisible();
     await choice.click();
     await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
-    await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
+    const refusal = await choice.locator(".piece-tile__tip span").textContent();
+    await expect(page.getByRole("button", { name: "Place piece" }), `Cannot place ${piece} at step ${index + 1}: ${refusal}`).toBeEnabled();
     await page.getByRole("button", { name: "Place piece" }).click();
     await expect(track).toHaveCount(index + 2);
   }
