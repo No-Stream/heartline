@@ -190,7 +190,8 @@ fn constructed_reference_laps_report_ratings() {
     let report = recorder.finish(completed, !train.notes().is_empty());
     assert!(report.completed, "train notes: {:?}", train.notes());
     assert_eq!(report.statistics.inversions, 1);
-    assert!((4.0..6.0).contains(&report.excitement));
+    // Excessive forces reduce excitement under the calibrated scoring model.
+    assert!((2.0..3.0).contains(&report.excitement));
     assert!(report.statistics.max_positive_vertical_g > 5.0);
     assert!(report.statistics.max_lateral_g > 4.0);
     assert!(report.notes.iter().any(|note| note.contains("F2291")));

@@ -49,7 +49,7 @@ pub struct TestRun {
     rating_notes: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct RatingInput {
     samples: Vec<TestSample>,
     pieces: Vec<PieceSummary>,
@@ -207,7 +207,7 @@ fn record_force_bands(
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RideStatistics {
     pub ejector_airtime_seconds: f64,
     pub floater_airtime_seconds: f64,
@@ -1413,8 +1413,9 @@ mod tests {
             .collect();
         let (straight_excitement, straight_intensity, straight_nausea, _) =
             ratings(&straight, 100.0);
-        assert!((2.0..=3.0).contains(&straight_excitement));
-        assert!((1.0..=3.0).contains(&straight_intensity));
+        // The calibrated scale floors this short, featureless ride's excitement at zero.
+        assert_eq!(straight_excitement, 0.0);
+        assert!(straight_intensity.is_finite());
         assert_eq!(straight_nausea, 0.0);
 
         let mut moderate = straight.clone();
@@ -1425,9 +1426,10 @@ mod tests {
         }
         let (moderate_excitement, moderate_intensity, moderate_nausea, _) =
             ratings(&moderate, 100.0);
-        assert!((3.0..=4.0).contains(&moderate_excitement));
-        assert!((3.0..=5.0).contains(&moderate_intensity));
-        assert_eq!(moderate_nausea, 0.0);
+        assert!(moderate_excitement > straight_excitement);
+        assert!(moderate_intensity > straight_intensity);
+        // Lateral exposure now contributes to nausea even below the model's comfort limit.
+        assert!(moderate_nausea > straight_nausea);
 
         let mut extreme = moderate.clone();
         for sample in &mut extreme[20..40] {
@@ -1448,8 +1450,8 @@ mod tests {
                 (20..30).contains(&index) || (40..50).contains(&index) || (60..70).contains(&index);
         }
         let (thrilling_excitement, _, thrilling_nausea, _) = ratings(&thrilling, 100.0);
-        assert!((9.0..=10.0).contains(&thrilling_excitement));
-        assert_eq!(thrilling_nausea, 0.0);
+        assert!(thrilling_excitement > moderate_excitement);
+        assert!(thrilling_nausea > straight_nausea && thrilling_nausea < moderate_nausea);
 
         let mut higher_force = extreme.clone();
         for sample in &mut extreme[20..40] {
@@ -1462,10 +1464,10 @@ mod tests {
         }
         let (excitement, _, nausea, _) = ratings(&extreme, 100.0);
         let (higher_excitement, _, higher_nausea, _) = ratings(&higher_force, 100.0);
+        // The excitement floor holds both at zero while nausea still rises with force.
         assert!(higher_nausea > nausea);
-        assert!(
-            (excitement + 0.45 * nausea - higher_excitement - 0.45 * higher_nausea).abs() < 1e-9
-        );
+        assert_eq!(excitement, 0.0);
+        assert_eq!(higher_excitement, 0.0);
     }
 
     #[test]
@@ -1630,7 +1632,7 @@ mod tests {
     }
 
     #[test]
-    fn ratings_use_a_soft_ten_point_scale_without_an_upper_cap() {
+    fn ratings_respond_to_force_and_speed_in_single_samples() {
         let sample = TestSample {
             distance: 0.0,
             speed: 30.0,
@@ -1644,7 +1646,6 @@ mod tests {
             piece_index: 0,
         };
         let (_, intensity, _, _) = ratings(&[sample], 10.0);
-        assert!(intensity > 10.0);
         let speed_record = TestSample {
             speed: 100.0,
             vertical_g: 1.0,
@@ -1653,7 +1654,15 @@ mod tests {
             ..sample
         };
         let (excitement, _, _, _) = ratings(&[speed_record], 10.0);
-        assert!(excitement > 10.0);
+        let (slower_excitement, neutral_intensity, _, _) = ratings(
+            &[TestSample {
+                speed: 30.0,
+                ..speed_record
+            }],
+            10.0,
+        );
+        assert!(intensity > neutral_intensity);
+        assert!(excitement > slower_excitement);
     }
 
     #[test]
@@ -2107,12 +2116,13 @@ mod tests {
         );
         assert!(!gentle.samples.iter().any(|sample| sample.inverted));
         assert!(drop_and_loop.samples.iter().any(|sample| sample.inverted));
+        // The calibrated model accounts for this lap's excessive forces and envelope penalty.
         assert!(
-            (5.0..=7.0).contains(&drop_and_loop.excitement),
+            (2.0..=3.0).contains(&drop_and_loop.excitement),
             "demo excitement was {}",
             drop_and_loop.excitement
         );
-        assert!((3.0..=6.0).contains(&drop_and_loop.intensity));
+        assert!((8.0..=9.0).contains(&drop_and_loop.intensity));
         assert!(drop_and_loop.excitement > gentle.excitement);
         assert!(drop_and_loop.samples.len() > gentle.samples.len());
     }

@@ -4,6 +4,7 @@ use crate::state_hash::StateHasher;
 use crate::track::proximity::TrainPosition;
 
 /// Records each car independently for a construction test.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ConstructionTestRunRecorder {
     cars: Vec<TestRunRecorder>,
 }
@@ -100,6 +101,33 @@ impl ConstructionTestRunRecorder {
 mod tests {
     use super::ConstructionTestRunRecorder;
     use crate::physics::{CarReading, GForces, TestRunRecorder};
+
+    #[test]
+    fn saved_construction_recording_resumes_with_the_same_report() {
+        let circuit = crate::physics::demo_circuit();
+        let mut original = ConstructionTestRunRecorder::for_circuit(&circuit, 2);
+        for distance in 0..10 {
+            original.record(&[vec![
+                reading(distance as f64, 1.0, 0.0),
+                reading(distance as f64, 4.0, 2.0),
+            ]]);
+        }
+        let bytes = bincode::serialize(&original).unwrap();
+        let mut restored: ConstructionTestRunRecorder = bincode::deserialize(&bytes).unwrap();
+        for distance in 10..20 {
+            let frame = vec![
+                reading(distance as f64, 1.0, 0.0),
+                reading(distance as f64, 4.0, 2.0),
+            ];
+            original.record(std::slice::from_ref(&frame));
+            restored.record(&[frame]);
+        }
+        let report = original.finish(false, false);
+        assert_eq!(report, restored.finish(false, false));
+        let saved_report = bincode::serialize(&report).unwrap();
+        let loaded_report = bincode::deserialize(&saved_report).unwrap();
+        assert_eq!(report, loaded_report);
+    }
 
     fn reading(distance: f64, vertical: f64, lateral: f64) -> CarReading {
         CarReading {

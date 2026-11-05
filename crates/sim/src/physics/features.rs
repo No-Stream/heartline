@@ -7,10 +7,11 @@ use super::TestSample;
 use super::comfort::{EnvelopeExceedance, evaluate_envelope};
 use super::testing::RideStatistics;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PieceSummary {
     pub(super) id: PieceId,
-    pub(super) name: &'static str,
+    #[serde(with = "crate::save::catalog_text")]
+    pub(super) name: crate::save::CatalogText,
     pub(super) kind: PieceKind,
     pub(super) shape: Shape,
     pub(super) inversion: Option<Inversion>,
@@ -79,10 +80,11 @@ pub(super) fn is_active_sample(sample: &TestSample, pieces: &[PieceSummary]) -> 
         )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Location {
     pub piece_index: usize,
-    pub piece_name: &'static str,
+    #[serde(with = "crate::save::catalog_text")]
+    pub piece_name: crate::save::CatalogText,
     pub distance_m: f64,
     pub seconds_from_start: f64,
 }

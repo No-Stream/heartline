@@ -340,7 +340,7 @@ use crate::track::Heartlining;
 
 /// Seconds in the model-specific bands used by the force overlay. Excessive
 /// durations are summed across axes, so simultaneous excessive axes both count.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct ForceBandDurations {
     pub(super) airtime_good: f64,
     pub(super) airtime_great: f64,
@@ -352,7 +352,7 @@ pub(super) struct ForceBandDurations {
     pub(super) dangerous: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Term {
     Airtime,
     PositiveForces,
@@ -441,7 +441,7 @@ impl Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Contribution {
     pub term: Term,
     pub value: f64,
@@ -469,7 +469,7 @@ impl Contribution {
         )
     }
 }
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ScoreBreakdown {
     pub excitement: Vec<Contribution>,
     pub intensity: Vec<Contribution>,

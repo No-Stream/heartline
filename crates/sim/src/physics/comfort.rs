@@ -659,7 +659,7 @@ mod envelope_tests {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) enum EnvelopeAxis {
     Vertical,
     Lateral,
@@ -670,7 +670,7 @@ pub(super) enum EnvelopeAxis {
     Onset,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct EnvelopeWorst {
     pub(super) location: Location,
     pub(super) axis: EnvelopeAxis,
@@ -679,13 +679,13 @@ pub(super) struct EnvelopeWorst {
     pub(super) ratio: f64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct EnvelopeStretch {
     pub(super) location: Location,
     pub(super) seconds: f64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct EnvelopeExceedance {
     pub(super) g_seconds: f64,
     pub(super) seconds: f64,
@@ -693,7 +693,7 @@ pub(super) struct EnvelopeExceedance {
     pub(super) stretches: Vec<EnvelopeStretch>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct EnvelopeTracker {
     result: EnvelopeExceedance,
     clocks: [f64; 6],
