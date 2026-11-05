@@ -17,6 +17,7 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
   });
 
   const pieces = readCircuit("Briar Blitz");
+  expect(pieces).toContain("TopHat");
   const trackPieces = pieces.filter((piece) => piece !== "+chain" && piece !== "-chain");
   const chainOn = pieces.indexOf("+chain");
   const chainOff = pieces.indexOf("-chain");
@@ -64,6 +65,7 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
   expect(chainEnabled).toBe(false);
   expect(trackCount).toBe(trackPieces.length + 1);
   expect(placedPieces).toContain("BankedTurnStandalone");
+  expect(placedPieces).toContain("TopHat");
   expect(placedPieces.filter((piece) => piece.startsWith("TightTwister") || piece.startsWith("Twister")).length).toBeGreaterThanOrEqual(2);
 
   await page.setViewportSize({ width: 1280, height: 720 });

@@ -6,6 +6,9 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 800, height: 480 });
   const circuit = readCircuit("Velocity Viper");
+  const topHatIndex = circuit.indexOf("LaunchedTopHat");
+  expect(topHatIndex).toBeGreaterThan(0);
+  expect(circuit[topHatIndex - 1]).toMatch(/^Launch/);
   await startPark(page, { park: "new", seed: 2026, speed: 1 });
   await placeStation(page, { model: "velocity_viper", height: 4, tile: { x: 241, y: 249, z: 2 }, direction: { x: 241, y: 251, z: 2 } });
   await page.locator("canvas").focus();
@@ -60,7 +63,7 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
   const launchPositions = page.getByRole("region", { name: "Launch positions" }).locator("li");
-  await expect(launchPositions).toHaveCount(2);
+  await expect(launchPositions).toHaveCount(3);
   const launchCentres = (await launchPositions.allTextContents()).map((text) => {
     const match = /(\d+(?:\.\d+)?) m from station/.exec(text);
     if (!match) throw new Error(`Launch position has no distance: ${text}`);
@@ -71,7 +74,7 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
     return centres.map((centre) => samples.reduce((closest, sample) =>
       Math.abs(sample.distance - centre) < Math.abs(closest.distance - centre) ? sample : closest).speed);
   }, launchCentres);
-  expect(launchSpeeds).toHaveLength(2);
+  expect(launchSpeeds).toHaveLength(3);
   for (const speed of launchSpeeds) expect(speed).toBeGreaterThan(2);
   expect(await page.evaluate(() => window.gameTest.crestBursts().length)).toBeGreaterThan(crestCount);
 });

@@ -1,5 +1,5 @@
 use super::*;
-use crate::physics::{PhysicsConfig, Train};
+use crate::physics::{PhysicsConfig, PreviewStatus, Train, preview_open_track};
 use crate::track::{Heading, Slope, Vec3, hybrid_model};
 use crate::world::Surface;
 use std::collections::{HashSet, VecDeque};
@@ -188,6 +188,40 @@ fn launch_speed_limits_follow_track_length_and_are_shared_across_models() {
     let original_hash = hybrid.state_hash();
     assert!(hybrid.set_launch_intensity(0, short_bounds.maximum).is_ok());
     assert_ne!(hybrid.state_hash(), original_hash);
+}
+
+#[test]
+fn viper_can_build_a_launch_to_fifty_metres_per_second() {
+    let world = world();
+    let model = crate::track::multi_launch_model();
+    let mut construction = Construction::new(start(), model.clone());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    for (index, target) in [(1, 30.0), (2, 42.0), (3, 50.0)] {
+        construction
+            .append(PieceId::LaunchLong, &world, &[])
+            .unwrap();
+        construction.set_launch_intensity(index, target).unwrap();
+    }
+    let preview = preview_open_track(
+        construction.pieces(),
+        &model.train,
+        PhysicsConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(preview.status, PreviewStatus::ReachedEnd);
+    let last_sample = preview.report.samples.last().unwrap();
+    let peak_force = preview
+        .report
+        .samples
+        .iter()
+        .map(|sample| sample.longitudinal_g.abs())
+        .fold(0.0_f64, f64::max);
+    eprintln!(
+        "launch exit speed {} m/s, peak longitudinal force {} g",
+        last_sample.speed, peak_force
+    );
+    assert!((45.0..=55.0).contains(&last_sample.speed));
+    assert!(peak_force <= 1.5);
 }
 
 #[test]

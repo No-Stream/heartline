@@ -267,11 +267,6 @@ pub(super) fn sample(parameter: f64) -> ([f64; 2], [f64; 2], [f64; 2]) {
     interpolate(points[index - 1], points[index], distance, total_length)
 }
 
-pub(super) fn endpoint() -> [f64; 2] {
-    let end = profile().last().unwrap();
-    [end.x, end.z]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,14 +311,14 @@ mod tests {
             .iter()
             .find(|piece| piece.id == crate::track::PieceId::TopHat)
             .unwrap();
-        let horizontal_scale = (piece.exit.position().x - piece.entry.position().x) / endpoint()[0];
+        let profile = crate::track::profile::embedded_profile("BriarTopHat");
         for index in 0..=4000 {
             let distance = piece.length() * index as f64 / 4000.0;
             let actual = piece.sample(distance);
-            let (position, first, _) = sample(piece.parameter_at_distance(distance));
-            let expected_tangent =
-                crate::track::curves::Vec3::new(first[0] * horizontal_scale, 0.0, first[1]).unit();
-            assert!((actual.position.x - position[0] * horizontal_scale).abs() < 1e-8);
+            let (position, first, _) =
+                profile.sample(piece.parameter_at_distance(distance) * profile.length());
+            let expected_tangent = crate::track::curves::Vec3::new(first[0], 0.0, first[1]).unit();
+            assert!((actual.position.x - position[0]).abs() < 1e-8);
             assert!((actual.position.z - position[1]).abs() < 1e-8);
             assert!((actual.tangent - expected_tangent).length() < 1e-8);
         }

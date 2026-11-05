@@ -297,6 +297,7 @@ pub enum PieceId {
     HalfCorkscrewLeftDown,
     HalfCorkscrewRightDown,
     TopHat,
+    LaunchedTopHat,
     LevelToSixtyUp,
     SixtyUpToLevel,
     LevelToSixtyDown,
@@ -388,7 +389,6 @@ pub(crate) enum Shape {
     Plain,
     AirtimeHill,
     Overbank,
-    TopHat,
     Profile(Arc<SolvedProfile>),
     Roll(Arc<RollGeometry>),
     RolledProfile(Arc<SolvedProfile>, Twist),
@@ -399,7 +399,6 @@ impl Shape {
             Self::Plain => 0,
             Self::AirtimeHill => 1,
             Self::Overbank => 2,
-            Self::TopHat => 9,
             Self::Profile(_) => 11,
             Self::Roll(_) => 12,
             Self::RolledProfile(_, _) => 13,
@@ -708,21 +707,6 @@ impl Piece {
                         + vertical_correction * smooth_second),
             );
         }
-        if matches!(&self.shape, Shape::TopHat) {
-            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-            let (position, first, second) = super::vertical_top_hat::sample(t);
-            let endpoint = super::vertical_top_hat::endpoint();
-            let span = (self.exit.position() - self.entry.position()).dot(forward);
-            let horizontal_scale = span / endpoint[0];
-            let vertical = Vec3::new(0.0, 0.0, 1.0);
-            return (
-                self.entry.position()
-                    + forward * (position[0] * horizontal_scale)
-                    + vertical * position[1],
-                forward * (first[0] * horizontal_scale) + vertical * first[1],
-                forward * (second[0] * horizontal_scale) + vertical * second[1],
-            );
-        }
         let (s, ds, dds) = smooth(t);
         let t2 = t * t;
         let t3 = t2 * t;
@@ -922,7 +906,7 @@ impl Piece {
         let (position, velocity, acceleration) = self.raw(t);
         let tangent = velocity.unit();
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
-        let base_up = if matches!(&self.shape, Shape::Profile(_) | Shape::TopHat) {
+        let base_up = if matches!(&self.shape, Shape::Profile(_)) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit()
         } else {
@@ -1415,14 +1399,9 @@ mod shape_tests {
 
     #[test]
     fn shape_hash_keeps_the_existing_variant_tags() {
-        let shapes = [
-            Shape::Plain,
-            Shape::AirtimeHill,
-            Shape::Overbank,
-            Shape::TopHat,
-        ];
+        let shapes = [Shape::Plain, Shape::AirtimeHill, Shape::Overbank];
 
-        for (expected_tag, shape) in [0_u8, 1, 2, 9].into_iter().zip(shapes) {
+        for (expected_tag, shape) in [0_u8, 1, 2].into_iter().zip(shapes) {
             let mut actual = StateHasher::new();
             shape.hash_into(&mut actual);
 
