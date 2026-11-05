@@ -44,6 +44,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   piece_shapes_json: wasmMock.pieceShapes,
   WasmSimulation: class {
     chain = false;
+    carsPerTrain = 6;
     colors = JSON.stringify({ track: "coral", supports: "timber", trains: "sage" });
     constructor(seed: bigint, guestCount: number, park: string) { wasmMock.construct(seed, guestCount, park); }
     scenery_json() { return "[]"; }
@@ -82,6 +83,13 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_coaster_income() { return 0; }
     construction_block_report_json() { return wasmMock.blockReport(); }
     construction_train_count() { return 1; }
+    construction_min_cars_per_train() { return wasmMock.constructionActive() ? 3 : 0; }
+    construction_max_cars_per_train() { return wasmMock.constructionActive() ? 6 : 0; }
+    construction_set_cars_per_train(cars: number) {
+      if (!wasmMock.constructionActive() || cars < 3 || cars > 6) return false;
+      this.carsPerTrain = cars;
+      return true;
+    }
     construction_start() { wasmMock.constructionActive.mockReturnValue(true); wasmMock.constructionTrackLength = 1; }
     construction_select(piece: string) { wasmMock.constructionSelect(piece); }
     construction_append() { wasmMock.constructionAppend(); wasmMock.constructionTrackLength += 1; }
@@ -101,7 +109,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_set_chain(enabled: boolean) { wasmMock.setChain(enabled); this.chain = enabled; }
     construction_set_launch_intensity(id: number, targetSpeed: number) { wasmMock.setLaunchIntensity(id, targetSpeed); return true; }
     construction_colors() { return wasmMock.constructionActive() ? this.colors : "null"; }
-    construction_train_layout() { return wasmMock.constructionActive() ? JSON.stringify({ model: "velocity_viper", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }) : "null"; }
+    construction_train_layout() { return wasmMock.constructionActive() ? JSON.stringify({ model: "velocity_viper", carsPerTrain: this.carsPerTrain, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: this.carsPerTrain * 3 }) : "null"; }
     construction_set_colors(track: string, supports: string, trains: string) { this.colors = JSON.stringify({ track, supports, trains }); }
     construction_train_poses() { return wasmMock.constructionTrainPoses(); }
     construction_train_states() { return wasmMock.constructionTrainStates(); }
