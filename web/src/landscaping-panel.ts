@@ -1,6 +1,6 @@
 import "./print-modern.css";
 import "./landscaping-panel.css";
-import type { InputAction } from "./input/actions";
+import type { InputAction, UndergroundStyle } from "./input/actions";
 import { LANDSCAPING_TOOLS, type LandscapingSelection, type LandscapingTool } from "./landscaping-tool";
 import { displayToMetres, formatLength, metresToInput, unitLabel, type Units } from "./units";
 
@@ -23,13 +23,18 @@ function readInteger(input: HTMLInputElement | HTMLSelectElement, label: string)
   return value;
 }
 
+const UNDERGROUND_HINTS: Record<UndergroundStyle, string> = {
+  cut: "Cut away ground above this height.",
+  cutaway: "Cut a window around the pointer, or just above the end of the track you are building. Buried track shows through the ground.",
+};
+
 export function createLandscapingPanel(
   container: HTMLElement,
   dispatch: (action: InputAction) => void,
 ): {
   message(text: string): void;
   activate(): void;
-  setUndergroundView(enabled: boolean, level?: number): void;
+  setUndergroundView(enabled: boolean, level?: number, style?: UndergroundStyle): void;
   setUnits(units: Units): void;
 } {
   container.classList.add("tool-panel", "landscaping");
@@ -54,8 +59,9 @@ export function createLandscapingPanel(
     </div>
     <div class="tool-panel__section landscaping__underground">
       <div class="landscaping__underground-heading"><h3>Underground view</h3><button type="button" data-underground-toggle aria-pressed="false">Show underground</button></div>
+      <label><span class="tool-panel__label">Show</span><select data-underground-style aria-label="Underground view style"><option value="cut">Whole view cut</option><option value="cutaway">Cutaway window</option></select></label>
       <label><span class="tool-panel__label">Cut level</span><input data-underground-level aria-label="Underground cut level" type="range" min="-32" max="128" step="1" value="8"><output data-underground-output>8</output></label>
-      <p class="tool-panel__hint">Cut away ground above this height.</p>
+      <p class="tool-panel__hint" data-underground-hint>Cut away ground above this height.</p>
     </div>
     <p class="tool-panel__hint landscaping__hint">Choose a tool, then drag over the park. Corner tools use the picked corner.</p>
     <p class="tool-panel__status landscaping__status" role="status" aria-live="polite"></p>`;
@@ -68,6 +74,12 @@ export function createLandscapingPanel(
   const level = container.querySelector<HTMLInputElement>("[data-underground-level]")!;
   const levelOutput = container.querySelector<HTMLOutputElement>("[data-underground-output]")!;
   const undergroundButton = container.querySelector<HTMLButtonElement>("[data-underground-toggle]")!;
+  const undergroundStyle = container.querySelector<HTMLSelectElement>("[data-underground-style]")!;
+  const undergroundHint = container.querySelector<HTMLElement>("[data-underground-hint]")!;
+  const showStyle = (style: UndergroundStyle): void => {
+    undergroundStyle.value = style;
+    undergroundHint.textContent = UNDERGROUND_HINTS[style];
+  };
   let selectedTool: LandscapingTool = "raise_tiles";
   let undergroundEnabled = false;
   let units: Units = "metric";
@@ -126,6 +138,13 @@ export function createLandscapingPanel(
     dispatch({ type: "underground-view-level", level: nextLevel });
   });
 
+  undergroundStyle.addEventListener("change", () => {
+    const style = undergroundStyle.value;
+    if (style !== "cut" && style !== "cutaway") throw new Error(`Unknown underground view style ${style}`);
+    showStyle(style);
+    dispatch({ type: "underground-view-style", style });
+  });
+
   undergroundButton.addEventListener("click", () => {
     undergroundEnabled = !undergroundEnabled;
     undergroundButton.textContent = undergroundEnabled ? "Show surface" : "Show underground";
@@ -148,7 +167,8 @@ export function createLandscapingPanel(
     },
     message(text: string): void { status.textContent = text; },
     activate,
-    setUndergroundView(enabled: boolean, nextLevel?: number): void {
+    setUndergroundView(enabled: boolean, nextLevel?: number, style?: UndergroundStyle): void {
+      if (style !== undefined) showStyle(style);
       undergroundEnabled = enabled;
       undergroundButton.textContent = undergroundEnabled ? "Show surface" : "Show underground";
       undergroundButton.setAttribute("aria-pressed", String(undergroundEnabled));

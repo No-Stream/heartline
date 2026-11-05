@@ -5,7 +5,7 @@ import type { ConstructionForcePreview } from "./construction-protocol";
 import type { GuestDetail } from "./guest-panel/protocol";
 import type { Facility } from "./facilities";
 import type { Camera, WorldPoint } from "./camera";
-import type { Pick, WorldSprite } from "./render/index";
+import type { Cutaway, Pick, WorldSprite } from "./render/index";
 import type { CrestBurst } from "./render/effects";
 import type { ReplaySession } from "./session-replay";
 import type { TrainState } from "./train-states";
@@ -66,6 +66,8 @@ export interface GameTest {
   advanceTicks(count: number): Promise<void>;
   advanceBlockAnalysis(budget: number): Promise<void>;
   setCamera(camera: Camera): void;
+  /** The cutaway window drawn in the last frame, in canvas pixels, while the underground view uses it. */
+  cutaway(): Cutaway | null;
   setSurface(x: number, y: number, corners: [number, number, number, number]): void;
   project(point: WorldPoint): { x: number; y: number };
   pick(x: number, y: number): Pick | null;

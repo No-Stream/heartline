@@ -1,6 +1,6 @@
 import { GRADE_GLSL, POOL_FALLOFF_DECAY, POOL_FALLOFF_RIM_START, POOL_GLSL } from "./daylight";
 
-export const FLOATS_PER_QUAD = 28;
+export const FLOATS_PER_QUAD = 29;
 
 export function createRenderResources(gl: WebGL2RenderingContext, images: Record<string, HTMLImageElement[]>) {
   function shader(type: number, source: string): WebGLShader {
@@ -23,9 +23,9 @@ export function createRenderResources(gl: WebGL2RenderingContext, images: Record
     precision highp float;
     layout(location=0) in vec4 a; layout(location=1) in vec4 b;
     layout(location=2) in vec4 c; layout(location=3) in vec4 d;
-    layout(location=4) in vec4 vs; layout(location=5) in vec3 objectId; layout(location=6) in vec4 tint; layout(location=7) in float light;
+    layout(location=4) in vec4 vs; layout(location=5) in vec3 objectId; layout(location=6) in vec4 tint; layout(location=7) in float light; layout(location=8) in float cut;
     uniform vec2 resolution; uniform vec2 depthRange; uniform bool overlay; uniform float overlayDepth;
-    out vec2 uv; flat out vec3 id; flat out vec4 fill; flat out float lit;
+    out vec2 uv; flat out vec3 id; flat out vec4 fill; flat out float lit; flat out float cutSide;
     void main() {
       int indices[6] = int[6](0,1,2,0,2,3); int i = indices[gl_VertexID];
       vec4 p = i == 0 ? a : i == 1 ? b : i == 2 ? c : d;
@@ -33,14 +33,17 @@ export function createRenderResources(gl: WebGL2RenderingContext, images: Record
       vec2 screen = p.xy / resolution;
       float z = overlay ? overlayDepth : 1.0 - (p.z - depthRange.x) / depthRange.y * 2.0;
       gl_Position = vec4(screen.x*2.0-1.0, 1.0-screen.y*2.0, z, 1.0);
-      uv = vec2(p.w,v); id = objectId; fill = tint; lit = light;
+      uv = vec2(p.w,v); id = objectId; fill = tint; lit = light; cutSide = cut;
     }`, `#version 300 es
     precision highp float; uniform sampler2D atlas; uniform bool picking; uniform bool textured; uniform int shape; uniform bool graded;
     uniform sampler2D poolLight; uniform bool pooled; uniform vec2 resolution;
+    uniform vec3 cutaway; uniform vec3 cutawayRim; uniform vec4 silhouette;
     ${GRADE_GLSL}
     ${POOL_GLSL}
-    in vec2 uv; flat in vec3 id; flat in vec4 fill; flat in float lit; out vec4 color;
+    in vec2 uv; flat in vec3 id; flat in vec4 fill; flat in float lit; flat in float cutSide; out vec4 color;
     void main() {
+      float cutawayDistance = length(gl_FragCoord.xy - cutaway.xy);
+      if (cutaway.z > 0.0 && ((cutSide == 1.0 && cutawayDistance < cutaway.z) || (cutSide == 2.0 && cutawayDistance >= cutaway.z))) discard;
       vec4 texel = textured ? texture(atlas,uv) * fill : fill;
       if (shape != 0) {
         float r = length(uv * 2.0 - 1.0);
@@ -50,7 +53,8 @@ export function createRenderResources(gl: WebGL2RenderingContext, images: Record
       if (texel.a < (shape != 0 ? 0.003 : 0.05) || (picking && all(equal(id, vec3(0.0))))) discard;
       vec3 printed = graded ? grade(texel.rgb, lit) : texel.rgb;
       if (pooled) printed = lightInPool(printed, texel.rgb, texture(poolLight, gl_FragCoord.xy / resolution).rgb);
-      color = picking ? vec4(id,1.0) : vec4(printed, texel.a);
+      if (cutSide == 2.0) printed = mix(printed, cutawayRim, smoothstep(cutaway.z - 3.5, cutaway.z - 1.5, cutawayDistance));
+      color = picking ? vec4(id,1.0) : silhouette.a > 0.0 ? silhouette : vec4(printed, texel.a);
     }`);
   const fullScreenVertex = (depth: number) => `#version 300 es
     void main() { vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(corner * 2.0 - 1.0, ${depth.toFixed(1)}, 1.0); }`;
@@ -91,6 +95,7 @@ export function createRenderResources(gl: WebGL2RenderingContext, images: Record
   gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 3, gl.FLOAT, false, stride, 80); gl.vertexAttribDivisor(5, 1);
   gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 4, gl.FLOAT, false, stride, 92); gl.vertexAttribDivisor(6, 1);
   gl.enableVertexAttribArray(7); gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 108); gl.vertexAttribDivisor(7, 1);
+  gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 1, gl.FLOAT, false, stride, 112); gl.vertexAttribDivisor(8, 1);
   const textures = Object.fromEntries(Object.entries(images).map(([scale, pageImages]) => [scale, pageImages.map((image) => {
     const texture = gl.createTexture(); if (!texture) throw new Error("Could not create atlas texture");
     gl.bindTexture(gl.TEXTURE_2D, texture);

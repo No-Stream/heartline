@@ -472,6 +472,19 @@ describe("world scene", () => {
     expect(scene.triangles.length).toBeLessThan(1000);
     expect(scene.triangles.some((triangle) => triangle.tileX === 256 && triangle.tileY === 256 && triangle.kind === "terrain")).toBe(true);
   });
+  test("builds only the tiles near given screen bounds, such as a cutaway window", () => {
+    const surfaces = new Int32Array(64 * 64 * 6);
+    const view = { dimensions: new Uint16Array([64, 64]), surfaces, paths: new Int32Array() };
+    const centered = { ...camera, centerX: 32, centerY: 32 };
+    const full = buildScene(view, centered, viewport, atlas);
+    const center = projectWorld(centered, viewport, { x: 32.5, y: 32.5, z: 0 });
+    const windowed = buildScene(view, centered, viewport, atlas, "1", 0, { left: center.x - 20, top: center.y - 20, right: center.x + 20, bottom: center.y + 20 });
+    expect(windowed.triangles.length).toBeLessThan(full.triangles.length / 4);
+    expect(windowed.triangles.some((triangle) => triangle.tileX === 32 && triangle.tileY === 32 && triangle.kind === "terrain")).toBe(true);
+    for (const triangle of windowed.triangles) {
+      expect(triangle.vertices.some((vertex) => Math.abs(vertex.x - center.x) < 200 && Math.abs(vertex.y - center.y) < 200)).toBe(true);
+    }
+  });
   test("reflects surface mutations in every rotation", () => {
     const surfaces = new Int32Array(6);
     const mutableWorld: WorldView = { dimensions: new Uint16Array([1, 1]), surfaces, paths: new Int32Array() };

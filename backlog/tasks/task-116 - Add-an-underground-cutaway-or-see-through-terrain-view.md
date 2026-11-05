@@ -1,9 +1,10 @@
 ---
 id: TASK-116
 title: Add an underground cutaway or see-through terrain view
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-04 23:33'
+updated_date: '2026-11-05 11:58'
 labels: []
 dependencies: []
 priority: medium
@@ -18,7 +19,13 @@ Owner request 2026-11-04: make it easy to see what you are doing underground. To
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A cutaway or see-through view shows underground track in context
-- [ ] #2 Works while building coaster track and paths underground
-- [ ] #3 Browser test and screenshots
+- [x] #1 A cutaway or see-through view shows underground track in context
+- [x] #2 Works while building coaster track and paths underground
+- [x] #3 Browser test and screenshots
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Underground view has a style select in the Landscaping panel: Whole view cut (the old behaviour, default) or Cutaway window. The window is a 150 CSS px circle drawn cut at a level: around the end of the coaster being built (cut 3 m above the track end) or around the pointer at the chosen cut level in other tools. Coaster track buried outside the window is traced through the ground as a flat silhouette. Prototypes compared: ghosted terrain over buried track, x-ray silhouettes, and a cutaway window; the shipped view combines the window with the silhouettes. Spec: web/e2e/underground-cutaway.spec.ts.
+<!-- SECTION:NOTES:END -->
