@@ -34,6 +34,8 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     coaster_train_layout() { return JSON.stringify({ model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }); }
     coaster_train_poses() { return new Float32Array(); }
     construction_train_poses() { return new Float32Array(); }
+    coaster_train_states() { return new Float32Array([0, 4, 0, 1.1, 0.2, 1]); }
+    construction_train_states() { return new Float32Array(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
     construction_coaster_price() { return 0; }
@@ -126,7 +128,9 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   expect(snapshot.guestIds).toEqual(new Uint32Array([7]));
   expect(snapshot.guests).toEqual(new Float32Array([1, 2, 3, 1, 0, 4, 1]));
   expect(snapshot.appearances).toEqual(new Uint8Array([1, 2, 3, 4, 0]));
-  expect(transfer).toEqual([snapshot.guestIds.buffer, snapshot.guests.buffer, snapshot.appearances.buffer, snapshot.trainPoses.buffer, snapshot.constructionTrainPoses.buffer, snapshot.constructionRiders.buffer]);
+  expect(snapshot.trainStates).toEqual(new Float32Array([0, 4, 0, 1.1, 0.2, 1]));
+  expect(snapshot.constructionTrainStates).toEqual(new Float32Array());
+  expect(transfer).toEqual([snapshot.guestIds.buffer, snapshot.guests.buffer, snapshot.appearances.buffer, snapshot.trainPoses.buffer, snapshot.constructionTrainPoses.buffer, snapshot.trainStates.buffer, snapshot.constructionTrainStates.buffer, snapshot.constructionRiders.buffer]);
   vi.advanceTimersByTime(34);
   expect(workerMock.tick).toHaveBeenCalledTimes(1);
 });

@@ -6,6 +6,7 @@ import type { Camera, WorldPoint } from "./camera";
 import type { Pick, WorldSprite } from "./render/index";
 import type { CrestBurst } from "./render/effects";
 import type { ReplaySession } from "./session-replay";
+import type { TrainState } from "./train-states";
 
 export function validateBlockAnalysisBudget(budget: number): void {
   if (!Number.isInteger(budget) || budget < 1 || budget > 1000) throw new RangeError("Invalid test block analysis budget");
@@ -57,6 +58,7 @@ export interface GameTest {
   guestDetail(): GuestDetail | null;
   testingReport(): TestingReport | null;
   constructionTrainPoses(): readonly number[];
+  trainStates(): { coaster: readonly TrainState[]; construction: readonly TrainState[] };
   replaySession(session: ReplaySession): Promise<void>;
   advanceTicks(count: number): Promise<void>;
   advanceBlockAnalysis(budget: number): Promise<void>;

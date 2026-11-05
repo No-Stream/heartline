@@ -1061,6 +1061,35 @@ impl WasmSimulation {
         self.construction_placed_supports_cache.clone()
     }
 
+    pub fn construction_train_states(&self) -> Vec<f32> {
+        let mut result = Vec::new();
+        if let Some(operation) = &self.coaster_operation {
+            let circuit = self
+                .block_layout
+                .as_ref()
+                .expect("operation has a block layout")
+                .circuit();
+            let mut trains: Vec<_> = operation.trains().collect();
+            trains.sort_by_key(|(train_id, _)| *train_id);
+            for (train_id, train) in trains {
+                let occupied = self
+                    .coaster_riders
+                    .get(&train_id)
+                    .is_some_and(|riders| !riders.is_empty());
+                append_train_state(&mut result, circuit, train, train_id, occupied);
+            }
+        } else if let Some((circuit, train)) = &self.construction_train {
+            append_train_state(&mut result, circuit, train, 0, false);
+            if let Some(station) = &self.recovered_station {
+                let sample = station.sample(station.length());
+                result[2] = 4.0;
+                result[3] = sample.up.z as f32;
+                result[4] = sample.up.cross(sample.tangent).z as f32;
+            }
+        }
+        result
+    }
+
     pub fn construction_train_poses(&self) -> Vec<f32> {
         let config = &self
             .construction

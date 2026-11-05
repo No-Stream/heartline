@@ -52,6 +52,7 @@ import { createUnitsSetting } from "./units-setting";
 import { createLiveAudio, renderOffline } from "./audio/engine";
 import { soundFrame } from "./audio/mapping";
 import { createSoundSetting } from "./sound-setting";
+import { parseTrainStates, validateTrainStates } from "./train-states";
 
 declare const __GIT_HASH__: string;
 
@@ -309,6 +310,12 @@ const gameTest: GameTest = {
   guestDetail() { return latestGuestDetail; },
   testingReport() { return construction?.testingReport ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
+  trainStates() {
+    return {
+      coaster: parseTrainStates(current?.trainStates ?? new Float32Array()),
+      construction: parseTrainStates(current?.constructionTrainStates ?? new Float32Array()),
+    };
+  },
   replaySession: replayLiveSession,
   advanceTicks(count) {
     if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
@@ -681,6 +688,8 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
   } else if (message.type === "snapshot") {
+    validateTrainStates(message.trainStates);
+    validateTrainStates(message.constructionTrainStates);
     if (frameLogEnabled) snapshotArrivalEntries.push({ now: performance.now(), sentAt: message.sentAt, tickCount: message.tickCount });
     if (!frozen && !renderClock.push(message)) return;
     previous = current;

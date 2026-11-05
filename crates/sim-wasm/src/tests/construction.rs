@@ -1615,6 +1615,8 @@ fn construction_closes_and_runs_physics_deterministically() {
     assert_eq!(recovered_train.speed(), 0.0);
     let recovered_poses = simulation.construction_train_poses();
     let station = &simulation.construction.as_ref().unwrap().pieces()[0];
+    let recovered_state = simulation.construction_train_states();
+    assert_eq!(recovered_state, vec![0.0, 0.0, 4.0, 1.0, 0.0, 0.0]);
     assert_eq!(recovered_train.distance(), station.length());
     let config = &simulation.construction.as_ref().unwrap().model().train;
     assert_eq!(recovered_poses.len(), usize::from(config.cars) * 11);

@@ -63,6 +63,16 @@ impl WasmSimulation {
         })
     }
 
+    /// Per-train speed, track kind, rider forces, and occupancy.
+    pub fn coaster_train_states(&self) -> Vec<f32> {
+        let Some(coaster) = self.demo_coaster() else {
+            return Vec::new();
+        };
+        let mut result = Vec::new();
+        append_train_state(&mut result, &coaster.circuit, &coaster.train, 0, true);
+        result
+    }
+
     /// Cars: car index, position, tangent, up, occupied-seat bitmask.
     pub fn coaster_train_poses(&self) -> Vec<f32> {
         let Some(coaster) = self.demo_coaster() else {

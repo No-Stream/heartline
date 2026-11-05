@@ -11,3 +11,7 @@ test("Rust and TypeScript describe the same ordered bridge records", () => {
   }
   expect([...rust.matchAll(/pub const ([A-Z_]+): &\[&str\]/g)].map((match) => match[1]).sort()).toEqual(Object.keys(BRIDGE_LAYOUTS).sort());
 });
+
+test("train state records use the documented snapshot field order", () => {
+  expect(BRIDGE_LAYOUTS.TRAIN_STATE).toEqual(["train_index", "speed", "piece_kind", "vertical_g", "lateral_g", "occupied"]);
+});

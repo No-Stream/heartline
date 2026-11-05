@@ -344,6 +344,7 @@ pub enum Note {
 pub struct Train {
     distance: f64,
     speed: f64,
+    last_acceleration: f64,
     cars: usize,
     spacing: f64,
     config: PhysicsConfig,
@@ -442,6 +443,7 @@ impl Train {
         Self {
             distance,
             speed,
+            last_acceleration: 0.0,
             cars,
             spacing: train.length_metres / cars as f64,
             config,
@@ -473,6 +475,15 @@ impl Train {
     }
     pub fn speed(&self) -> f64 {
         self.speed
+    }
+    pub fn lead_car_forces(&self, circuit: &Circuit) -> GForces {
+        let (index, local) = circuit.locate(self.distance);
+        rider_g(
+            &circuit.pieces[index],
+            local,
+            self.speed,
+            self.last_acceleration,
+        )
     }
     pub fn readings(&self) -> &[Vec<CarReading>] {
         &self.readings
@@ -670,11 +681,11 @@ impl Train {
         }
         self.distance = next_distance;
         self.speed = next_speed;
+        self.last_acceleration = (self.speed - previous_speed) / TIME_STEP;
         if previous_speed >= 0.0 && self.speed < 0.0 {
             self.rolled_back = true;
         }
         if record_readings {
-            let longitudinal_acceleration = (self.speed - previous_speed) / TIME_STEP;
             self.readings.push(
                 (0..self.cars)
                     .map(|car| {
@@ -685,7 +696,7 @@ impl Train {
                             &circuit.pieces[index],
                             local,
                             self.speed,
-                            longitudinal_acceleration,
+                            self.last_acceleration,
                         );
                         CarReading {
                             distance: distance.rem_euclid(circuit.length),
@@ -713,6 +724,7 @@ impl Train {
                 .expect("rollback recovery requires a station");
             self.distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
             self.speed = 0.0;
+            self.last_acceleration = 0.0;
             self.recovered = true;
             self.notes.push(Note::RecoveredAfterRollback);
         }
