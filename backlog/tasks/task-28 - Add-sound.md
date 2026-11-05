@@ -4,7 +4,7 @@ title: Add sound
 status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-05 07:39'
+updated_date: '2026-11-05 08:11'
 labels:
   - audio
 milestone: m-3
@@ -42,4 +42,6 @@ When sound families land: the player pause (Space) must silence train and event 
 2026-11-04: plan item 8 (build and interface sounds: placement thunk by material, build, undo, error, finish flourish) and item 1 (per-train state in snapshots) merged to master. Next: items 4-5 (mapping, train sounds).
 
 2026-11-04: plan items 4 (game-state mapping) and 5 (train sounds: steel roar with whine, wooden rhythmic rumble, hybrid mix, chain clack and motor, launch whoosh, brake hiss, station release and dispatch chime) merged. Owner listening pass still needed. Next: items 6-7 (screams, crowd and ambience).
+
+2026-11-05: plan items 6-7 merged (rider screams with per-train grouping and cooldown; crowd murmur by nearby guest count; day birds over wind; night crickets). All synthesis items are on master. Remaining: item 9, the owner's listening pass and SOUND_TUNING adjustments.
 <!-- SECTION:NOTES:END -->
