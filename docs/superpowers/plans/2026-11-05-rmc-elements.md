@@ -44,7 +44,7 @@ Feels and their force schedules (one geometry per feel and size; the model lists
 
 | Feel | `G_pull` | `G_crest` | Models | Binding limit |
 |---|---|---|---|---|
-| Ejector | 4.2 g | −1.2 g | Timber Tumbler, Velocity Viper | steel vertical minimum −1.5 g |
+| Ejector | 4.2 g | −0.95 to −1.2 g, depending on size | Timber Tumbler, Velocity Viper | steel vertical minimum −1.5 g |
 | Floater | 3.7 g | −0.3 g | all three | none close; wood pull 4.0 g sets the 3.7 g |
 | Speed hill | 3.7 g | +0.3 g | all three | none close |
 | Wooden ejector (shown as "Ejector" on Briar Blitz) | 3.7 g | −0.7 g | Briar Blitz | wood vertical minimum −1.0 g |
@@ -53,9 +53,9 @@ Sizes are `(height × span)` cells. The rated maximum is the solved design speed
 
 | Feel | Size (h × L, m) | Flank θ | Rated window (m/s) |
 |---|---|---|---|
-| Ejector | 4 × 32 | 23.98° | 9.75–17.57 |
-| Ejector | 8 × 48 | 31.30° | 13.17–19.60 |
-| Ejector | 12 × 64 | 34.86° | 15.92–22.15 |
+| Ejector | 4 × 32 | 23.73° | 9.80–17.11 |
+| Ejector | 8 × 48 | 30.98° | 13.20–19.24 |
+| Ejector | 12 × 64 | 34.56° | 15.94–21.88 |
 | Ejector | 8 × 64 | 23.94° | 13.49–25.22 |
 | Ejector | 12 × 80 | 28.46° | 16.14–26.59 |
 | Ejector | 16 × 96 | 31.45° | 18.42–28.34 |
@@ -71,6 +71,8 @@ Sizes are `(height × span)` cells. The rated maximum is the solved design speed
 | Wooden ejector | 6 × 48 | 23.71° | 11.83–19.67 |
 | Wooden ejector | 8 × 64 | 23.71° | 13.50–22.89 |
 | Wooden ejector | 16 × 80 | 36.59° | 18.25–22.64 |
+
+The three shorter steel ejector hills use crest schedules of −0.95 g (4 × 32), −1.00 g (8 × 48), and −1.05 g (12 × 64). At their solved design speeds, the worst vertical forces for 6- and 12-car trains respectively changed from −1.653/−1.685 g to −1.322/−1.352 g, from −1.613/−1.668 g to −1.355/−1.406 g, and from −1.570/−1.621 g to −1.382/−1.430 g. Both steel models produced the same measured values. The other ejector cells retain their −1.2 g crest schedules.
 
 The planned set has 18 straight profiles. One cell is deferred: the 2 × 48 m speed hill needed a shorter span, and the nearest grid candidate, 2 × 38 m, still fails the solver at the 10° minimum flank boundary. Do not loosen the angle or force limits to recover it. The generated set therefore has 17 straight profiles plus the three crest-time profiles. Longitudinal force (the `g (t_car − t̄)` term on a flank) is the one limit these geometry solves cannot predict; the 40°–48° cells are the ones to watch, and the cure is a smaller flank angle for that cell.
 

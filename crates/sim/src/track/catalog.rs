@@ -1363,7 +1363,7 @@ fn build_catalog() -> Vec<Piece> {
             HillFeel::Ejector,
             4,
             32,
-            17.569831373543856,
+            17.107634715519225,
             5.0,
         ),
         (
@@ -1373,7 +1373,7 @@ fn build_catalog() -> Vec<Piece> {
             HillFeel::Ejector,
             8,
             48,
-            19.603721266357503,
+            19.241231068056585,
             5.0,
         ),
         (
@@ -1383,7 +1383,7 @@ fn build_catalog() -> Vec<Piece> {
             HillFeel::Ejector,
             12,
             64,
-            22.1527055313112,
+            21.87909569552651,
             5.0,
         ),
         (

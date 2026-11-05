@@ -1497,7 +1497,7 @@ mod tests {
             design_speed: 21.0,
             flank_angle: 30.0_f64.to_radians(),
             pull_force: 4.2,
-            crest_force: -1.2,
+            crest_force: -0.95,
             model_radius: 8.0,
         },
         HillCase {
@@ -1507,7 +1507,7 @@ mod tests {
             design_speed: 23.0,
             flank_angle: 40.0_f64.to_radians(),
             pull_force: 4.2,
-            crest_force: -1.2,
+            crest_force: -1.0,
             model_radius: 8.0,
         },
         HillCase {
@@ -1517,7 +1517,7 @@ mod tests {
             design_speed: 26.0,
             flank_angle: 45.0_f64.to_radians(),
             pull_force: 4.2,
-            crest_force: -1.2,
+            crest_force: -1.05,
             model_radius: 8.0,
         },
         HillCase {
