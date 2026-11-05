@@ -1128,6 +1128,7 @@ fn build_catalog() -> Vec<Piece> {
             "Descending left banked helix",
         ),
         (Straight, AirtimeHill, "Small airtime hill"),
+        (TurnLargeStandalone, WaveTurnLeft, "Left wave turn"),
         (
             TurnLargeStandalone,
             HybridOverbankLeft,
@@ -1150,7 +1151,23 @@ fn build_catalog() -> Vec<Piece> {
                 piece.tangent_scale *= 0.75;
             }
             TwisterHelixLeft => piece.exit.z = -4,
-            HybridOverbankLeft => piece.shape = Shape::Overbank,
+            HybridOverbankLeft => {
+                piece.shape = Shape::Overbank;
+                piece.rated_speeds = Some(RatedSpeeds {
+                    minimum_entry: 5.0,
+                    maximum_entry: 13.0,
+                });
+            }
+            WaveTurnLeft => {
+                piece.shape = Shape::WaveTurn {
+                    bump: 2.0,
+                    peak: std::f64::consts::FRAC_PI_2,
+                };
+                piece.rated_speeds = Some(RatedSpeeds {
+                    minimum_entry: 8.0,
+                    maximum_entry: 23.0,
+                });
+            }
             AirtimeHill => {
                 piece.exit.x = 16;
                 piece.tangent_scale = 32.0;
@@ -1167,6 +1184,7 @@ fn build_catalog() -> Vec<Piece> {
             HybridOverbankRight,
             "Right overbanked turn",
         ),
+        (WaveTurnLeft, WaveTurnRight, "Right wave turn"),
         (TwisterFanLeft, TwisterFanRight, "Right fan turn"),
         (TightTwisterLeft, TightTwisterRight, "Tight right turn"),
         (

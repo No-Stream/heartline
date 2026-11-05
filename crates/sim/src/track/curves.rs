@@ -362,6 +362,8 @@ pub enum PieceId {
     ZeroGRollCompactRight,
     StallLeft,
     StallRight,
+    WaveTurnLeft,
+    WaveTurnRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {
@@ -389,6 +391,7 @@ pub(crate) enum Shape {
     Plain,
     AirtimeHill,
     Overbank,
+    WaveTurn { bump: f64, peak: f64 },
     Profile(Arc<SolvedProfile>),
     Roll(Arc<RollGeometry>),
     RolledProfile(Arc<SolvedProfile>, Twist),
@@ -399,12 +402,17 @@ impl Shape {
             Self::Plain => 0,
             Self::AirtimeHill => 1,
             Self::Overbank => 2,
+            Self::WaveTurn { .. } => 14,
             Self::Profile(_) => 11,
             Self::Roll(_) => 12,
             Self::RolledProfile(_, _) => 13,
         };
         hash.write_u8(tag);
         match self {
+            Self::WaveTurn { bump, peak } => {
+                hash.write_f64(*bump);
+                hash.write_f64(*peak);
+            }
             Self::Profile(profile) => profile.hash_into(hash),
             Self::Roll(roll) => roll.hash_into(hash),
             Self::RolledProfile(profile, twist) => {
@@ -862,8 +870,11 @@ impl Piece {
             + a1 * ddq1
             + correction0 * ddf
             + correction1 * ddg;
-        if matches!(&self.shape, Shape::AirtimeHill) {
-            let height = 3.0;
+        if let Some(height) = match &self.shape {
+            Shape::AirtimeHill => Some(3.0),
+            Shape::WaveTurn { bump, .. } => Some(*bump),
+            _ => None,
+        } {
             let bump = 64.0 * (t3 - 3.0 * t4 + 3.0 * t5 - t5 * t);
             let derivative = 64.0 * (3.0 * t2 - 12.0 * t3 + 15.0 * t4 - 6.0 * t5);
             let second = 64.0 * (6.0 * t - 36.0 * t2 + 60.0 * t3 - 30.0 * t4);
@@ -1007,6 +1018,8 @@ impl Piece {
             2.0 * std::f64::consts::PI / 3.0
                 * (std::f64::consts::PI * t).sin().powi(2)
                 * if self.mirrored { -1.0 } else { 1.0 }
+        } else if let Shape::WaveTurn { peak, .. } = &self.shape {
+            peak * 64.0 * t.powi(3) * (1.0 - t).powi(3) * if self.mirrored { -1.0 } else { 1.0 }
         } else {
             0.0
         };

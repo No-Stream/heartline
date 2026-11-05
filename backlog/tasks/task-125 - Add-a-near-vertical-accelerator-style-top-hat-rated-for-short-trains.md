@@ -4,7 +4,7 @@ title: Add a near-vertical accelerator-style top hat rated for short trains
 status: To Do
 assignee: []
 created_date: '2026-11-05 15:13'
-updated_date: '2026-11-05 15:46'
+updated_date: '2026-11-05 16:59'
 labels:
   - coaster
 dependencies: []
@@ -22,4 +22,6 @@ Follow-up to TASK-98. Near-vertical (80-85 degree) launched top hats at 45-66 m/
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-05 owner: 'consider how Intamin Blitz / multi launch support them'. Decision: build a Blitz-style top hat (moderate height, about 47-55 m, near-vertical flanks, entered from a launch at about 30-33 m/s, slow crest with strong airtime) rated for short trains (about 5-6 cars), with a builder warning for longer trains.
+
+2026-11-05: paused after three design rounds. Height-first 42 m at 80 degrees does not solve (the pull-up and crest arcs alone reach 52 m at the planned forces); 48 m stretched crests got 4 cars to -1.43 g but 5 cars to -1.91 g. Options for the owner: accept a taller top hat (about 52-55 m, like Pantheon) entered faster from a stronger launch; or lower the pull-up force target; or defer. Measurements in docs/superpowers/plans/2026-11-05-top-hats.md on branch blitz-top-hat.
 <!-- SECTION:NOTES:END -->

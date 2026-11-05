@@ -1684,6 +1684,8 @@ define_piece_id_wire_names!(
     TightTwisterRight,
     HybridOverbankLeft,
     HybridOverbankRight,
+    WaveTurnLeft,
+    WaveTurnRight,
     HalfTileStraight,
     FullOffsetLeft,
     FullOffsetRight,

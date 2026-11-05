@@ -35,7 +35,7 @@ import { createConstructionEffects } from "./construction-effects";
 import { nearestBlockBoundaryMetres } from "./render/track/blocks";
 import { createGuestPanel } from "./guest-panel/guest-panel";
 import type { GuestDetail } from "./guest-panel/protocol";
-import { createPathTool, type PathToolMessage } from "./path-tool";
+import { createPathTool, type PathTile, type PathToolMessage } from "./path-tool";
 import { createPathPanel } from "./path-panel";
 import { pathTileFromPick } from "./path-picking";
 import { decodePathPreview, pathPreviewRefusalAt } from "./render/path-ghost";
@@ -59,6 +59,16 @@ import { soundFrame, type MappingMemory, type UiEvent } from "./audio/mapping";
 import { constructionUiEvents, createUiEventQueue, pathUiEvent, placementUiEvent, terrainUiEvent } from "./audio/ui-events";
 import { createSoundSetting } from "./sound-setting";
 import { parseTrainStates, validateTrainStates } from "./train-states";
+import {
+  constructionCutawayTarget,
+  landscapingCutawayTarget,
+  pathCutawayTarget,
+  pathTileCutawayTarget,
+  shouldShowAutomaticCutaway,
+  storeUndergroundCutawayMode,
+  storedUndergroundCutawayMode,
+  type UndergroundCutawayTarget,
+} from "./underground-cutaway";
 
 declare const __GIT_HASH__: string;
 
@@ -167,7 +177,7 @@ const facilityPanel = createFacilityPanel(facilityContainer, { atlas, images }, 
 const pathContainer = document.querySelector<HTMLElement>("[data-paths]");
 if (!pathContainer) throw new Error("Path panel is missing");
 const pathsElement = pathContainer;
-let pathHover: { x: number; y: number } | null = null;
+let pathHover: PathTile | null = null;
 const pathTool = createPathTool((command) => sendWorkerAction(worker, command), () => {
   const state = pathTool.state();
   const refusal = state.preview && pathHover ? pathPreviewRefusalAt(decodePathPreview(state.preview.paths), pathHover.x, pathHover.y) : null;
@@ -178,15 +188,19 @@ const pathAdapter = pathToolAdapter(pathTool);
 const pathPanel = createPathPanel(pathContainer, dispatch);
 pathContainer.querySelector<HTMLElement>("[data-build]")!.title = `Build paths (${keyHint(builderShortcuts.pathBuild)})`;
 pathContainer.querySelector<HTMLElement>("[data-remove]")!.title = `Remove paths (${keyHint(builderShortcuts.pathRemove)})`;
-let undergroundLevel: number | undefined;
+let manualUndergroundEnabled = false;
 let selectedUndergroundLevel = 8;
-let undergroundStyle: UndergroundStyle = "cut";
+let undergroundStyle: UndergroundStyle = "cutaway";
+let undergroundCutawayMode = storedUndergroundCutawayMode();
+let lastLandscapingUndergroundEnabled = false;
 /** The cutaway window drawn in the last frame; picking inside it uses its cut level. */
 let renderedCutaway: Cutaway | undefined;
 let pointerPosition: ScreenPoint | null = null;
 const landscapingContainer = document.querySelector<HTMLElement>("[data-landscaping]");
 if (!landscapingContainer) throw new Error("Landscaping panel is missing");
 const landscapingPanel = createLandscapingPanel(landscapingContainer, dispatch);
+landscapingPanel.setUndergroundView(false, selectedUndergroundLevel, undergroundStyle);
+panel.setUndergroundCutawayMode(undergroundCutawayMode);
 const landscapingTool = createLandscapingTool((command) => {
   if (!world || command.x < 0 || command.y < 0 || command.x + command.size > world.dimensions[0] || command.y + command.size > world.dimensions[1]) {
     landscapingPanel.message("Brush extends outside the park.");
@@ -563,18 +577,34 @@ function dispatch(action: InputAction): void {
     landscapingAdapter.activate(action.selection);
   } else if (action.type === "landscaping-cancel") {
     landscapingAdapter.deactivate();
+  } else if (action.type === "underground-cutaway-mode-set") {
+    undergroundCutawayMode = action.mode;
+    storeUndergroundCutawayMode(undergroundCutawayMode);
+    panel.setUndergroundCutawayMode(undergroundCutawayMode);
+    if (undergroundCutawayMode === "off") manualUndergroundEnabled = false;
+    syncLandscapingUndergroundView(automaticCutawayTarget(), true);
+    renderRevision.invalidate();
   } else if (action.type === "underground-view-toggle" || action.type === "underground-view-level" || action.type === "underground-view-style") {
     if (action.type === "underground-view-level") selectedUndergroundLevel = action.level;
     else if (action.type === "underground-view-style") undergroundStyle = action.style;
-    else undergroundLevel = undergroundLevel === undefined ? selectedUndergroundLevel : undefined;
-    if (undergroundLevel !== undefined) undergroundLevel = selectedUndergroundLevel;
-    landscapingPanel.setUndergroundView(undergroundLevel !== undefined, selectedUndergroundLevel, undergroundStyle);
+    else if (automaticCutawayVisible(automaticCutawayTarget())) {
+      undergroundCutawayMode = "off";
+      storeUndergroundCutawayMode(undergroundCutawayMode);
+      panel.setUndergroundCutawayMode(undergroundCutawayMode);
+      manualUndergroundEnabled = false;
+    } else manualUndergroundEnabled = !manualUndergroundEnabled;
+    syncLandscapingUndergroundView(automaticCutawayTarget(), true);
     renderRevision.invalidate();
   } else if (landscapingTool.state().active && (action.type === "hover" || action.type === "select" || action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end" || action.type === "drag-cancel")) {
     if (action.type === "drag-cancel") landscapingAdapter.drag("cancel", null);
     else {
-      const pick = action.position ? renderer.pickSurface(action.position.x, action.position.y) : null;
-      const tile = landscapingTileFromPick(pick, world, action.position, screenCamera(), viewport, pickLevelAt(action.position));
+      const state = landscapingTool.state();
+      const carvingWithAutomaticCutaway = !manualUndergroundEnabled && state.selection?.tool === "carve" && automaticCutawayVisible(automaticCutawayTarget());
+      const pick = action.position
+        ? carvingWithAutomaticCutaway ? renderer.pickSurfaceUncut(action.position.x, action.position.y) : renderer.pickSurface(action.position.x, action.position.y)
+        : null;
+      const undergroundLevel = carvingWithAutomaticCutaway ? undefined : pickLevelAt(action.position);
+      const tile = landscapingTileFromPick(pick, world, action.position, screenCamera(), viewport, undergroundLevel);
       if (action.type === "hover") landscapingAdapter.pointerMove(tile);
       else if (action.type === "select") landscapingAdapter.click(tile);
       else landscapingAdapter.drag(action.type === "drag-start" ? "start" : action.type === "drag-move" ? "move" : "end", tile);
@@ -881,10 +911,38 @@ function cutawayFor(level: number, trackEnd: WorldPoint | undefined): Cutaway {
   return { x: center.x, y: center.y, radius: CUTAWAY_RADIUS * viewport.width / cssViewport().width, level: trackEnd ? cutawayLevelForTrack(trackEnd.z) : level };
 }
 
+function automaticCutawayTarget(heights?: ReturnType<typeof constructionHeights>): UndergroundCutawayTarget | null {
+  if (!world) return null;
+  if (activeTool === "coaster" && construction?.active) {
+    const constructionHeightsForTrack = heights ?? constructionHeights(world, construction.placedRails);
+    return constructionCutawayTarget(constructionHeightsForTrack?.end ?? null);
+  }
+  if (activeTool === "paths" && pathTool.state().mode === "build") {
+    const preview = pathTool.state().preview;
+    return pathCutawayTarget(world, preview?.paths ?? null) ?? pathTileCutawayTarget(world, pathHover);
+  }
+  if (activeTool === "landscape" && landscapingTool.state().active) {
+    const state = landscapingTool.state();
+    return landscapingCutawayTarget(world, state.preview, state.selection);
+  }
+  return null;
+}
+
+function automaticCutawayVisible(target: UndergroundCutawayTarget | null): boolean {
+  return shouldShowAutomaticCutaway(undergroundCutawayMode, target);
+}
+
+function syncLandscapingUndergroundView(target = automaticCutawayTarget(), force = false): void {
+  const enabled = manualUndergroundEnabled || automaticCutawayVisible(target);
+  if (!force && enabled === lastLandscapingUndergroundEnabled) return;
+  lastLandscapingUndergroundEnabled = enabled;
+  landscapingPanel.setUndergroundView(enabled, selectedUndergroundLevel, undergroundStyle);
+}
+
 /** The height the pointer picks at: the cut level inside the cutaway window or under the whole-view cut, the surface otherwise. */
 function pickLevelAt(position: ScreenPoint | null): number | undefined {
-  if (!renderedCutaway) return undergroundLevel;
-  return position && insideCutaway(renderedCutaway, position.x, position.y) ? renderedCutaway.level : undefined;
+  if (renderedCutaway) return position && insideCutaway(renderedCutaway, position.x, position.y) ? renderedCutaway.level : undefined;
+  return manualUndergroundEnabled && undergroundStyle === "cut" ? selectedUndergroundLevel : undefined;
 }
 
 /** Force labels and the hover readout belong to the estimate of an unfinished coaster, not to test-run reports. */
@@ -906,6 +964,9 @@ function frame(now: number): void {
   }
   lastFrameAt = now;
   const heights = activeTool === "coaster" && construction?.active ? constructionHeights(world, construction.placedRails) : null;
+  const autoTarget = automaticCutawayTarget(heights);
+  const autoCutawayVisible = automaticCutawayVisible(autoTarget);
+  syncLandscapingUndergroundView(autoTarget);
   heightMarkers.hidden = heights === null;
   if (heights) {
     const trackText = `Track end: ${formatLength(heights.end.metres, unitsSetting.units())} above ground`;
@@ -924,7 +985,11 @@ function frame(now: number): void {
   forceOverlay.render(forceOverlayVisible(), (sample) => projectWorld(camera, cssViewport(), sample), cssViewport(), heightMarkerBox);
   constructionEffects.active(now);
   dayClock.update(dayPhase);
-  renderedCutaway = undergroundLevel !== undefined && undergroundStyle === "cutaway" ? cutawayFor(undergroundLevel, heights?.end.position) : undefined;
+  renderedCutaway = manualUndergroundEnabled && undergroundStyle === "cutaway"
+    ? cutawayFor(selectedUndergroundLevel, heights?.end.position)
+    : !manualUndergroundEnabled && autoCutawayVisible && autoTarget
+      ? cutawayFor(autoTarget.level, autoTarget)
+      : undefined;
   const scene = composeScene({
     world,
     previous: renderPrevious,
@@ -936,7 +1001,7 @@ function frame(now: number): void {
     atlas,
     facilities,
     scenery,
-    undergroundLevel: undergroundStyle === "cut" ? undergroundLevel : undefined,
+    undergroundLevel: manualUndergroundEnabled && undergroundStyle === "cut" ? selectedUndergroundLevel : undefined,
     construction,
     activeTool,
     selectedGuestId,

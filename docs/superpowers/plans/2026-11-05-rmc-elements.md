@@ -98,6 +98,14 @@ The wave turn is a hill crest held near 90° bank while the track turns, so ride
 
 The existing `HybridOverbankLeft/Right` (120° overbanked turn) is already the ticket's "outer-banked turn"; it gains a scanned rated window and joins Velocity Viper's allowed list. Briar Blitz gets neither turn.
 
+The flat-approach full-train scans used both hands, both steel models and six and twelve cars at integer entry speeds from 2 to 30 m/s. Passing windows for wave bumps of 2, 3, 4 and 6 m were respectively 6–23, 8–24, 9–25 and 11–24 m/s. The 2 m bump has the widest window and is used in the catalog. At 5 m/s it stalls; at 24 m/s lateral force reaches 1.571 g. The existing overbank passes 2–13 m/s; at 14 m/s lateral force reaches 1.555 g. The persistent test checks every 1 m/s within the revised windows below.
+
+The generic steep-crest approach test stalled at the original minimum of both windows for both hands, both steel models and both train lengths. The flat-approach scans above did not establish a safe minimum after a crest.
+
+Measure the minimum for each turn at 1 m/s increments with the generic steep-crest approach, recording all combinations of both hands, steel models and train lengths at every tested speed. Keep the existing maximum; accept the first speed at which all combinations pass only if the resulting window is at least 2 m/s wide. Otherwise defer that turn.
+
+The steep-crest scan covered all 16 combinations at each integer speed from 2 through 10 m/s. Both overbank hands first passed all four model and train-length combinations at 5 m/s; at 4 m/s two of four failed for each hand. Both wave hands first passed all four at 8 m/s; at 7 m/s all four failed for each hand. The revised windows are 5–13 m/s for the overbank and 8–23 m/s for the wave turn, retaining the flat-scan maxima. Both satisfy the minimum width.
+
 ### 3d. Step-up under-flip
 
 Coasterpedia defines it as a climb, a 270° roll and a dive down to the side (Zadra, Untamed, Joker; the ticket's examples Iron Gwazi, Jersey Devil and ArieForce One do not have one). A 270° roll ending in a sideways dive needs a 90°-banked, descending, heading-changed connector, which the grid does not have, and it is a classic (not heartlined) inversion. It is not planned here. The nearest buildable approximation from existing pieces is `HalfCorkscrew*Up` (level to inverted, 12 m up) into `HalfCorkscrew*Down` the other way, a climbing full roll with a 12 m step; it can be offered as a "step-up roll" element in a follow-up if the owner wants it. Section 8 asks.
