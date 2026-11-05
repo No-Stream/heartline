@@ -202,8 +202,12 @@ fn viper_can_build_a_launch_to_fifty_metres_per_second() {
             .unwrap();
         construction.set_launch_intensity(index, target).unwrap();
     }
-    let preview = preview_open_track(construction.pieces(), &model.train, PhysicsConfig::default())
-        .unwrap();
+    let preview = preview_open_track(
+        construction.pieces(),
+        &model.train,
+        PhysicsConfig::default(),
+    )
+    .unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let last_sample = preview.report.samples.last().unwrap();
     let peak_force = preview
