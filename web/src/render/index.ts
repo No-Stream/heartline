@@ -327,8 +327,8 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       skyBatches = encode((atmosphere?.sky ?? []).map(fromGeometry));
       decalBatches = encode(clip(atmosphere?.decals ?? []).map(fromGeometry));
       poolBatches = encode((nightLights?.pools ?? atmosphere?.pools ?? []).map(fromGeometry));
-      overlayBatches = encode((atmosphere?.overlay ?? []).map(fromGeometry));
-      sparkBatches = encode((atmosphere?.sparks ?? []).map(fromGeometry));
+      overlayBatches = encode(clip(atmosphere?.overlay ?? []).map(fromGeometry));
+      sparkBatches = encode(clip(atmosphere?.sparks ?? []).map(fromGeometry));
       glowBatches = encode((nightLights?.glows ?? atmosphere?.glows ?? []).map((glow) => ({
         vertices: ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(([across, down]) => ({ x: glow.x + across * glow.radius, y: glow.y + down * glow.radius, depth: 0, height: 0, u: (across + 1) / 2, v: (down + 1) / 2 })),
         page: SHAPE_PAGES.glow, color: [...glow.color, glow.intensity] as const, light: 1, pickId: 0,

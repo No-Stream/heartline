@@ -9,7 +9,7 @@ import { hexColor, type Backdrop, type Lighting, type Rgb, type Sun } from "./da
 import { clipGeometryAboveLevel, SHAPE_PAGES, type Atlas, type GeometryQuad, type Vertex, type WorldSprite } from "./scene";
 
 /** A soft additive light, in canvas pixels, drawn into the low-resolution glow layer. */
-export interface Glow { x: number; y: number; radius: number; color: Rgb; intensity: number; height?: number }
+export interface Glow { x: number; y: number; radius: number; color: Rgb; intensity: number; height: number }
 export interface CrestBurst { x: number; y: number; z: number; tick: number }
 export interface CrestTracker { climbing: boolean; climbStartTick: number; climbStartZ: number }
 /** The area fireworks are launched over, in tiles; `ground` is the height of the park in tiles. */
@@ -123,8 +123,8 @@ export interface NightLights {
 export function clipNightLightsAboveLevel(lights: NightLights, level: number, depthBias = 0): NightLights {
   return {
     bulbs: clipGeometryAboveLevel(lights.bulbs, level, depthBias),
-    pools: lights.pools.filter((pool) => pool.lightSourceHeight === undefined || pool.lightSourceHeight <= level),
-    glows: lights.glows.filter((glow) => glow.height === undefined || glow.height <= level),
+    pools: lights.pools.filter((pool) => pool.lightSourceHeight !== undefined && pool.lightSourceHeight <= level),
+    glows: lights.glows.filter((glow) => glow.height <= level),
   };
 }
 
@@ -150,7 +150,7 @@ export function buildLights(sources: LightSources, lighting: Lighting, tick: num
     const point = project(camera, viewport, x, y, z);
     if (!onScreen(viewport, point, glowRadius)) return;
     bulbs.push(screenQuad(point, bulbRadius, bulbRadius, 0, point.depth + 0.02, point.height, SHAPE_PAGES.disc, color, on, "light", id, 1));
-    glows.push({ x: point.x, y: point.y, radius: glowRadius, color, intensity: glowIntensity * on });
+    glows.push({ x: point.x, y: point.y, radius: glowRadius, color, intensity: glowIntensity * on, height: point.height });
   };
 
   const chase = Math.floor(tick / CHASE_TICKS);
@@ -215,9 +215,9 @@ const SPARK_GRAVITY = 0.0007;
 const shellColors = [LIGHT_INK.mustard, LIGHT_INK.coral, LIGHT_INK.teal, LIGHT_INK.slate, LIGHT_INK.paper];
 
 /** A line between two canvas points, drawn as a thin soft-ended streak. */
-function streak(from: { x: number; y: number }, to: { x: number; y: number }, width: number, color: Rgb, alpha: number, id: string): GeometryQuad {
+function streak(from: { x: number; y: number }, to: { x: number; y: number }, width: number, color: Rgb, alpha: number, id: string, height: number): GeometryQuad {
   const length = Math.hypot(to.x - from.x, to.y - from.y);
-  return screenQuad({ x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }, Math.max(width, length / 2 + width), width, Math.atan2(to.y - from.y, to.x - from.x), 0, 0, SHAPE_PAGES.softDisc, color, alpha, "firework", id, 1);
+  return screenQuad({ x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }, Math.max(width, length / 2 + width), width, Math.atan2(to.y - from.y, to.x - from.x), 0, height, SHAPE_PAGES.softDisc, color, alpha, "firework", id, 1);
 }
 
 /** Fireworks over the park on dark nights: at most one shell starts in each four-second slot. Sparks are drawn additively. */
@@ -241,14 +241,14 @@ export function buildFireworks(bounds: ParkBounds | null, lighting: Lighting, ti
     const shellHeight = (time: number): number => bounds.ground + (burstHeight - bounds.ground) * (1 - (1 - Math.max(0, time) / FIREWORK_RISE_TICKS) ** 2);
     if (age < FIREWORK_RISE_TICKS) {
       const head = project(camera, viewport, x, y, shellHeight(age));
-      sparks.push(streak(project(camera, viewport, x, y, shellHeight(age - 6)), head, width, LIGHT_INK.paper, darkness * 0.8, id));
-      glows.push({ x: head.x, y: head.y, radius: 12 * zoom, color: LIGHT_INK.warm, intensity: 0.4 * darkness });
+      sparks.push(streak(project(camera, viewport, x, y, shellHeight(age - 6)), head, width, LIGHT_INK.paper, darkness * 0.8, id, head.height));
+      glows.push({ x: head.x, y: head.y, radius: 12 * zoom, color: LIGHT_INK.warm, intensity: 0.4 * darkness, height: head.height });
       continue;
     }
     const burstAge = age - FIREWORK_RISE_TICKS;
     const fade = (1 - burstAge / FIREWORK_BURST_TICKS) ** 1.4;
     const centre = project(camera, viewport, x, y, burstHeight);
-    glows.push({ x: centre.x, y: centre.y, radius: 170 * zoom, color: colors[0], intensity: darkness * 0.8 * Math.exp(-burstAge / 10) });
+    glows.push({ x: centre.x, y: centre.y, radius: 170 * zoom, color: colors[0], intensity: darkness * 0.8 * Math.exp(-burstAge / 10), height: centre.height });
     const positionAt = (spark: number, time: number) => {
       const rise = 2 * hash(slot * 131 + spark, 8) - 1;
       const turn = 2 * Math.PI * hash(slot * 131 + spark, 9);
@@ -261,9 +261,10 @@ export function buildFireworks(bounds: ParkBounds | null, lighting: Lighting, ti
       if (burstAge > 45 && hash(spark * 7919 + slot, Math.floor(burstAge / 3)) < 0.35) continue;
       const color = colors[spark % 2];
       const head = positionAt(spark, burstAge);
-      sparks.push(streak(positionAt(spark, burstAge - 5), head, width, color, darkness * fade, id));
-      sparks.push(streak(positionAt(spark, burstAge - 12), positionAt(spark, burstAge - 5), width * 0.7, color, darkness * fade * 0.35, id));
-      if (spark % 6 === 0) glows.push({ x: head.x, y: head.y, radius: 16 * zoom, color, intensity: 0.3 * darkness * fade });
+      sparks.push(streak(positionAt(spark, burstAge - 5), head, width, color, darkness * fade, id, head.height));
+      const tail = positionAt(spark, burstAge - 5);
+      sparks.push(streak(positionAt(spark, burstAge - 12), tail, width * 0.7, color, darkness * fade * 0.35, id, tail.height));
+      if (spark % 6 === 0) glows.push({ x: head.x, y: head.y, radius: 16 * zoom, color, intensity: 0.3 * darkness * fade, height: head.height });
     }
   }
   return { sparks, glows };
@@ -306,14 +307,15 @@ export function buildConfetti(bursts: readonly CrestBurst[], tick: number, camer
     for (let piece = 0; piece < CONFETTI_PIECES; piece++) {
       const random = (salt: number): number => hash(burst.tick * 977 + piece, salt);
       const flutter = 0.08 * Math.sin(age * 0.25 + 6.28 * random(1));
+      const height = burst.z + 0.3 + (0.05 + 0.07 * random(4)) * spread - 0.016 * age;
       const point = projectWorld(camera, viewport, {
         x: burst.x + (random(2) - 0.5) * 0.22 * spread + flutter,
         y: burst.y + (random(3) - 0.5) * 0.22 * spread - flutter,
-        z: burst.z + 0.3 + (0.05 + 0.07 * random(4)) * spread - 0.016 * age,
+        z: height,
       });
       const tumble = Math.abs(Math.cos(age * 0.3 + random(5) * 6));
       const angle = random(6) * 6.28 + age * 0.2 * (random(7) > 0.5 ? 1 : -1);
-      pieces.push(screenQuad(point, Math.max(1.2, 4.2 * zoom * (0.3 + 0.7 * tumble)), Math.max(1, 2.4 * zoom), angle, 0, 0, SHAPE_PAGES.flat, confettiColors[piece % confettiColors.length], fade, "confetti", "confetti", 0.6));
+      pieces.push(screenQuad(point, Math.max(1.2, 4.2 * zoom * (0.3 + 0.7 * tumble)), Math.max(1, 2.4 * zoom), angle, 0, height * 4, SHAPE_PAGES.flat, confettiColors[piece % confettiColors.length], fade, "confetti", "confetti", 0.6));
     }
   }
   return pieces;
