@@ -65,7 +65,7 @@ describe("interface sound queue", () => {
     const events = queue.drain();
     expect(events).toEqual([{ sound: "place", material: "steel" }, { sound: "error" }, { sound: "place", material: "steel" }]);
     expect(queue.drain()).toEqual([]);
-    const frame = soundFrame({ snapshot: undefined, interpolation: 1, camera: { centerX: 0, centerY: 0, zoom: 1, rotation: 0 }, viewport: { width: 800, height: 600 }, dayPhase: 0.5, gameSpeed: 16, demoTrain: null, constructionTrain: null, crestBursts: [], ui: events });
+    const frame = soundFrame({ snapshot: undefined, interpolation: 1, camera: { centerX: 0, centerY: 0, zoom: 1, rotation: 0 }, viewport: { width: 800, height: 600 }, dayPhase: 0.5, gameSpeed: 16, demoTrain: null, constructionTrain: null, crestBursts: [], ui: events, paused: false, timeSeconds: 0 }).frame;
     expect(frame.ui).toEqual(events);
     expect(frame.eventsMuted).toBe(true);
   });

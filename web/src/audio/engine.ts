@@ -1,5 +1,6 @@
 import { allocateTrainVoices, MAX_SCREAM_GROUPS, MAX_TRAIN_VOICES, MAX_UI_VOICES } from "./voices";
 import type { SoundFrame, UiSound } from "./mapping";
+import { createTrainVoice } from "./synth/train";
 import { playUiSound, type UiSoundHandle } from "./synth/ui";
 
 export const AUDIO_LOOKAHEAD = 0.15;
@@ -13,9 +14,9 @@ export function schedulePeriodic(nextTime: number, rate: number, clock: Schedule
   return { events, nextTime };
 }
 
-export interface OfflineScript { duration: number; frames: { time: number; frame: SoundFrame }[]; volume?: number; muted?: boolean }
+export interface OfflineScript { duration: number; frames: { time: number; frame: SoundFrame }[]; volume?: number; muted?: boolean; includeSamples?: boolean }
 /** `peakTime` is when the loudest sample plays, in seconds; `above1000` overlaps the other bands and uses the same one-pole split. */
-export interface ChannelMetrics { peak: number; peakTime: number; rms: number; bands: { below200: number; from200To2000: number; above2000: number; above1000: number } }
+export interface ChannelMetrics { peak: number; peakTime: number; rms: number; bands: { below200: number; from200To2000: number; above2000: number; above1000: number }; samples?: number[] }
 export interface OfflineResult { channels: ChannelMetrics[] }
 export interface ActiveVoices { trains: number; screams: number; ui: number; ambience: "day" | "night" | "silent" }
 
@@ -27,6 +28,7 @@ export function createAudioEngine(context: BaseAudioContext, volume = 0.7, muted
   master.gain.value = muted ? 0 : volume * volume;
   master.connect(compressor).connect(context.destination);
   const trainPool = Array.from({ length: MAX_TRAIN_VOICES }, () => context.createGain());
+  const trainVoices = trainPool.map((voice) => createTrainVoice(context, voice));
   const screamPool = Array.from({ length: MAX_SCREAM_GROUPS }, () => context.createGain());
   const uiPool = Array.from({ length: MAX_UI_VOICES }, () => context.createGain());
   const crowd = context.createGain();
@@ -52,14 +54,20 @@ export function createAudioEngine(context: BaseAudioContext, volume = 0.7, muted
       const previous = allocation;
       allocation = allocateTrainVoices(allocation, frame.trains);
       for (let index = 0; index < trainPool.length; index++) {
-        if (previous[index] !== undefined && previous[index] !== null && previous[index] !== allocation[index]) emptyFamily.release(clock);
+        if (previous[index] !== undefined && previous[index] !== null && previous[index] !== allocation[index]) trainVoices[index]!.release(clock);
         const train = frame.trains.find((candidate) => candidate.train === allocation[index]);
-        if (train) emptyFamily.apply(train, clock);
+        if (train) trainVoices[index]!.apply(train, clock, frame.eventsMuted);
         trainPool[index]!.gain.setTargetAtTime(allocation[index] === null ? 0 : 1, atTime, 0.05);
       }
       emptyFamily.apply(frame.crowd, clock);
       emptyFamily.apply(frame.ambience, clock);
       if (!frame.eventsMuted) for (const event of frame.screams) emptyFamily.trigger(event, clock);
+      if (frame.paused) {
+        for (let index = 0; index < uiSounds.length; index++) {
+          uiSounds[index]?.stop(clock.now);
+          uiSounds[index] = null;
+        }
+      }
       // A fifth overlapping interface sound fades out the oldest, so a burst of events cannot stack up.
       for (const event of frame.ui) {
         uiSounds[nextUiSlot]?.stop(clock.now);
@@ -168,7 +176,7 @@ export async function renderOffline(script: OfflineScript): Promise<OfflineResul
       lowEnergy += low * low; midEnergy += (midLow - low) ** 2; highEnergy += (sample - midLow) ** 2; aboveKiloEnergy += (sample - kiloLow) ** 2;
     }
     const bandRms = (bandEnergy: number): number => Math.sqrt(bandEnergy / samples.length);
-    channels.push({ peak, peakTime: peakIndex / sampleRate, rms: bandRms(energy), bands: { below200: bandRms(lowEnergy), from200To2000: bandRms(midEnergy), above2000: bandRms(highEnergy), above1000: bandRms(aboveKiloEnergy) } });
+    channels.push({ ...(script.includeSamples ? { samples: Array.from(samples) } : {}), peak, peakTime: peakIndex / sampleRate, rms: bandRms(energy), bands: { below200: bandRms(lowEnergy), from200To2000: bandRms(midEnergy), above2000: bandRms(highEnergy), above1000: bandRms(aboveKiloEnergy) } });
   }
   return { channels };
 }

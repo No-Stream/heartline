@@ -50,7 +50,7 @@ import { constructionHeights } from "./height-markers";
 import { formatLength, type Units } from "./units";
 import { createUnitsSetting } from "./units-setting";
 import { createLiveAudio, renderOffline } from "./audio/engine";
-import { soundFrame, type UiEvent } from "./audio/mapping";
+import { soundFrame, type MappingMemory, type UiEvent } from "./audio/mapping";
 import { constructionUiEvents, createUiEventQueue, pathUiEvent, placementUiEvent, terrainUiEvent } from "./audio/ui-events";
 import { createSoundSetting } from "./sound-setting";
 import { parseTrainStates, validateTrainStates } from "./train-states";
@@ -211,6 +211,7 @@ let dayTick: number | undefined;
 let demoCrests = createCrestTracker();
 let constructionCrests = createCrestTracker();
 let crestBursts: CrestBurst[] = [];
+let soundMemory: MappingMemory | undefined;
 /** Every crest burst since the page loaded, for tests. */
 const crestHistory: CrestBurst[] = [];
 function setTimeOfDay(phase: number): void {
@@ -810,7 +811,9 @@ function frame(now: number): void {
     renderTick: renderFrame?.tick,
     setGuestAnchor: (point) => guestPanel.setAnchor(point),
   });
-  audio.apply(soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts, ui: uiEvents.drain() }));
+  const sound = soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts, ui: uiEvents.drain(), paused: gamePause.isPaused(), timeSeconds: now / 1000 }, soundMemory);
+  soundMemory = sound.memory;
+  audio.apply(sound.frame);
   renderedGuests = scene.guests;
   renderedRiders = scene.riders;
   renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none" });
