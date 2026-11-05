@@ -4,7 +4,7 @@ title: Make GitHub CI pass
 status: To Do
 assignee: []
 created_date: '2026-11-05 00:27'
-updated_date: '2026-11-05 23:16'
+updated_date: '2026-11-05 23:58'
 labels: []
 dependencies: []
 priority: high
@@ -29,4 +29,6 @@ The repo went public as No-Stream/heartline on 2026-11-04. The first CI run (Act
 2026-11-05: postcard replaced bincode (RUSTSEC-2025-0141; save version 2, version 1 refused), CI split into smaller jobs, two browser tests use deterministic waits; merged and pushed as 6595b23. GitHub run 42119910401: audit, lint, threaded and flexibility tests, e2e build and smoothness passed; test and the feature and journey e2e jobs were still running at handoff.
 
 2026-11-05: run 42121748977 passed every job except e2e (feature), which hit the 20-minute job limit and was cancelled; the feature project is now sharded into three CI jobs.
+
+2026-11-05: sharded run 42128358630: all jobs green except the feature shards (16 failures: small screenshot differences and runner timeouts). Branch ci-feature investigating (Docker parity likely).
 <!-- SECTION:NOTES:END -->
