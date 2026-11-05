@@ -292,6 +292,7 @@ fn piece_group(piece: &Piece) -> &'static str {
         piece.kind,
         PieceKind::Station | PieceKind::Brakes | PieceKind::Launch
     ) || piece.entry.z != piece.exit.z
+        || piece.family.is_some()
     {
         "special"
     } else {

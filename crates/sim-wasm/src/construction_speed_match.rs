@@ -2,7 +2,7 @@ use crate::WasmSimulation;
 use crate::construction::{pieceid_from_wire, wire_pieceid};
 use serde::Serialize;
 use theme_park_sim::track::construction::select_speed_matched_variant;
-use theme_park_sim::track::{PieceId, catalog};
+use theme_park_sim::track::{Piece, PieceId, catalog};
 use ts_rs::TS;
 use wasm_bindgen::prelude::*;
 
@@ -22,11 +22,17 @@ pub struct ConstructionSpeedMatchWire {
     variants: Vec<ConstructionSpeedMatchVariantWire>,
 }
 
-fn same_family(first: PieceId, second: PieceId) -> bool {
+fn same_family(first: &Piece, second: &Piece) -> bool {
     use PieceId::{LargeLoop, LargeLoopRight, Loop, LoopRight};
-    first == second
+    first.id == second.id
+        || first
+            .family
+            .zip(second.family)
+            .is_some_and(|(first_family, second_family)| {
+                first_family.same_recommendation_family(second_family)
+            })
         || matches!(
-            (first, second),
+            (first.id, second.id),
             (Loop, LargeLoop)
                 | (LargeLoop, Loop)
                 | (LoopRight, LargeLoopRight)
@@ -43,17 +49,19 @@ impl WasmSimulation {
         let Some(id) = pieceid_from_wire(id) else {
             return "null".into();
         };
-        if !catalog()
+        let Some(selected_piece) = catalog()
             .iter()
-            .any(|piece| piece.id == id && piece.rated_speeds.is_some())
-        {
+            .find(|piece| piece.id == id && piece.rated_speeds.is_some())
+        else {
             return "null".into();
-        }
+        };
         let candidates: Vec<_> = construction
             .available_choices(&self.world, &self.facility_obstacles())
             .into_iter()
             .filter(|(piece, choice)| {
-                choice.result.is_ok() && same_family(id, piece.id) && piece.rated_speeds.is_some()
+                choice.result.is_ok()
+                    && same_family(selected_piece, piece)
+                    && piece.rated_speeds.is_some()
             })
             .map(|(piece, _)| piece)
             .collect();
@@ -163,5 +171,32 @@ mod tests {
         assert!(unavailable["entrySpeed"].is_null());
         assert!(unavailable["recommendedId"].is_null());
         assert!(unavailable["fits"].is_null());
+    }
+
+    #[test]
+    fn speed_match_groups_straight_hills_by_feel() {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+        simulation.construction_start(200, 200, 20, 0);
+        let result: serde_json::Value = serde_json::from_str(
+            &simulation.construction_speed_match_json("EjectorHill12x64", Some(26.0)),
+        )
+        .unwrap();
+        let mut ids: Vec<_> = result["variants"]
+            .as_array()
+            .expect("hill variants are available")
+            .iter()
+            .map(|variant| variant["id"].as_str().unwrap())
+            .collect();
+        ids.sort_unstable();
+        let mut expected_ids = vec![
+            "EjectorHill8x48",
+            "EjectorHill12x64",
+            "EjectorHill8x64",
+            "EjectorHill12x80",
+            "EjectorHill16x96",
+        ];
+        expected_ids.sort_unstable();
+        assert_eq!(ids, expected_ids);
+        assert!(result["recommendedId"].is_string());
     }
 }

@@ -3,8 +3,8 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use super::profile::{SolvedProfile, embedded_profile};
 use super::roll::RollGeometry;
 use super::{
-    Bank, Heading, Heartlining, HorizontalCurvature, Inversion, Material, Piece, PieceId,
-    PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
+    Bank, Heading, Heartlining, HillFamily, HillFeel, HorizontalCurvature, Inversion, Material,
+    Piece, PieceId, PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
 };
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
@@ -777,6 +777,7 @@ fn build_catalog() -> Vec<Piece> {
                         }),
                         _ => None,
                     },
+                    family: None,
                     entry,
                     exit,
                     shape,
@@ -1329,6 +1330,175 @@ fn build_catalog() -> Vec<Piece> {
         .find(|piece| piece.id == Straight)
         .unwrap()
         .clone();
+    for (id, profile_name, name, feel, height_metres, span_metres, design_speed, model_radius) in [
+        (
+            EjectorHill8x48,
+            "EjectorHill8x48",
+            "Ejector hill 8 × 48 m",
+            HillFeel::Ejector,
+            8,
+            48,
+            19.241231068056585,
+            5.0,
+        ),
+        (
+            EjectorHill12x64,
+            "EjectorHill12x64",
+            "Ejector hill 12 × 64 m",
+            HillFeel::Ejector,
+            12,
+            64,
+            21.87909569552651,
+            5.0,
+        ),
+        (
+            EjectorHill8x64,
+            "EjectorHill8x64",
+            "Ejector hill 8 × 64 m",
+            HillFeel::Ejector,
+            8,
+            64,
+            25.215898112149066,
+            5.0,
+        ),
+        (
+            EjectorHill12x80,
+            "EjectorHill12x80",
+            "Ejector hill 12 × 80 m",
+            HillFeel::Ejector,
+            12,
+            80,
+            26.585748621077,
+            5.0,
+        ),
+        (
+            EjectorHill16x96,
+            "EjectorHill16x96",
+            "Ejector hill 16 × 96 m",
+            HillFeel::Ejector,
+            16,
+            96,
+            28.343393349671633,
+            5.0,
+        ),
+        (
+            FloaterHill4x48,
+            "FloaterHill4x48",
+            "Floater hill 4 × 48 m",
+            HillFeel::Floater,
+            4,
+            48,
+            21.7867646837123,
+            8.0,
+        ),
+        (
+            FloaterHill8x64,
+            "FloaterHill8x64",
+            "Floater hill 8 × 64 m",
+            HillFeel::Floater,
+            8,
+            64,
+            21.601128616279556,
+            8.0,
+        ),
+        (
+            FloaterHill12x80,
+            "FloaterHill12x80",
+            "Floater hill 12 × 80 m",
+            HillFeel::Floater,
+            12,
+            80,
+            23.010352430305794,
+            8.0,
+        ),
+        (
+            FloaterHill6x64,
+            "FloaterHill6x64",
+            "Floater hill 6 × 64 m",
+            HillFeel::Floater,
+            6,
+            64,
+            24.072334659394315,
+            8.0,
+        ),
+        (
+            FloaterHill12x96,
+            "FloaterHill12x96",
+            "Floater hill 12 × 96 m",
+            HillFeel::Floater,
+            12,
+            96,
+            26.747140189026076,
+            8.0,
+        ),
+        (
+            FloaterHill16x112,
+            "FloaterHill16x112",
+            "Floater hill 16 × 112 m",
+            HillFeel::Floater,
+            16,
+            112,
+            27.856176132329804,
+            8.0,
+        ),
+        (
+            SpeedHill4x64,
+            "SpeedHill4x64",
+            "Speed hill 4 × 64 m",
+            HillFeel::Speed,
+            4,
+            64,
+            23.92362571301575,
+            8.0,
+        ),
+        (
+            SpeedHill6x80,
+            "SpeedHill6x80",
+            "Speed hill 6 × 80 m",
+            HillFeel::Speed,
+            6,
+            80,
+            24.860505930642848,
+            8.0,
+        ),
+        (
+            WoodenEjectorHill6x48,
+            "WoodenEjectorHill6x48",
+            "Ejector hill 6 × 48 m",
+            HillFeel::Ejector,
+            6,
+            48,
+            19.66550391454844,
+            8.0,
+        ),
+    ] {
+        let profile = Arc::new(embedded_profile(profile_name));
+        let maximum_entry = design_speed
+            - match id {
+                EjectorHill8x48 | FloaterHill4x48 | SpeedHill6x80 => 1.0,
+                SpeedHill4x64 => 3.0,
+                _ => 0.0,
+            };
+        let rated_speeds = profile.rated_speeds(name, maximum_entry, 2.0, model_radius);
+        let endpoint = profile.endpoint();
+        let mut piece = straight.clone();
+        piece.id = id;
+        piece.name = name;
+        piece.exit.x = (endpoint[0] / 2.0).round() as i32;
+        piece.exit.z = (endpoint[1] / 2.0).round() as i32;
+        piece.shape = Shape::Profile(profile);
+        piece.rated_speeds = Some(rated_speeds);
+        piece.family = Some(HillFamily {
+            feel,
+            height_metres,
+            span_metres,
+            twist: None,
+            design_speed_metres_per_second: design_speed,
+        });
+        piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+        piece.clear_arc_table();
+        pieces.push(piece);
+    }
     for (id, name, bank) in [
         (BankedStraightLeft, "Left-banked straight", Left),
         (BankedStraightRight, "Right-banked straight", Right),
