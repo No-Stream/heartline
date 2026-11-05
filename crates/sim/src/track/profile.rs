@@ -2,7 +2,7 @@
 use std::f64::consts::PI;
 
 use crate::state_hash::StateHasher;
-use crate::track::curves::{RatedSpeeds, HEART_HEIGHT_METRES};
+use crate::track::curves::{HEART_HEIGHT_METRES, RatedSpeeds};
 #[cfg(test)]
 const HEART_HEIGHT: f64 = HEART_HEIGHT_METRES;
 
@@ -946,9 +946,12 @@ fn hill_spec_at(spec: &ProfileSpec, design_speed: f64, flank_angle: f64) -> Prof
         "{}: hill requires two arcs",
         spec.name
     );
-    let [Segment::Arc { schedule: pull, .. }, Segment::Arc {
-        schedule: crest, ..
-    }] = spec.segments.as_slice()
+    let [
+        Segment::Arc { schedule: pull, .. },
+        Segment::Arc {
+            schedule: crest, ..
+        },
+    ] = spec.segments.as_slice()
     else {
         panic!("{}: hill requires pull and crest arcs", spec.name);
     };
@@ -1443,6 +1446,10 @@ mod tests {
     const MAXIMUM_PROFILE_POSITION_ERROR_METRES: f64 = 0.001;
     const MAXIMUM_PROFILE_CURVATURE_ERROR: f64 = 2e-4;
 
+    fn hill_profile_point_count(_name: &str) -> usize {
+        GENERATED_HILL_PROFILE_POINTS
+    }
+
     #[derive(Clone, Copy)]
     struct HillCase {
         name: &'static str,
@@ -1455,7 +1462,7 @@ mod tests {
         model_radius: f64,
     }
 
-    const HILL_CASES: [HillCase; 18] = [
+    const HILL_CASES: [HillCase; 17] = [
         HillCase {
             name: "EjectorHill4x32",
             height: 4.0,
@@ -1574,16 +1581,6 @@ mod tests {
             flank_angle: 33.0_f64.to_radians(),
             pull_force: 3.7,
             crest_force: -0.3,
-            model_radius: 8.0,
-        },
-        HillCase {
-            name: "SpeedHill2x38",
-            height: 2.0,
-            span: 38.0,
-            design_speed: 19.117376,
-            flank_angle: 10.192336_f64.to_radians(),
-            pull_force: 3.7,
-            crest_force: 0.3,
             model_radius: 8.0,
         },
         HillCase {
@@ -1759,11 +1756,7 @@ mod tests {
                     table.flank_angle,
                     table.insert,
                 );
-                assert_eq!(
-                    table.point_count, GENERATED_HILL_PROFILE_POINTS,
-                    "{} point count",
-                    table.name
-                );
+                assert_eq!(table.point_count, hill_profile_point_count(table.name));
                 assert_eq!(
                     table.values.len(),
                     table.point_count,
@@ -1814,6 +1807,7 @@ mod tests {
         );
         for entry in entries {
             let profile = &entry.profile;
+            let point_count = hill_profile_point_count(entry.name);
             writeln!(
                 output,
                 "    GeneratedHillProfile {{ name: {:?}, minimum_entry: {:.17}, minimum_radius: {:.17}, length: {:.17}, design_speed: {:.17}, flank_angle: {:.17}, insert: {:.17}, crest_start: {:.17}, crest_end: {:.17}, point_count: {}, values: &[",
@@ -1826,12 +1820,11 @@ mod tests {
                 entry.insert,
                 entry.crest_start,
                 entry.crest_end,
-                GENERATED_HILL_PROFILE_POINTS,
+                point_count,
             )
             .unwrap();
-            for index in 0..GENERATED_HILL_PROFILE_POINTS {
-                let distance =
-                    profile.length() * index as f64 / (GENERATED_HILL_PROFILE_POINTS - 1) as f64;
+            for index in 0..point_count {
+                let distance = profile.length() * index as f64 / (point_count - 1) as f64;
                 let (position, tangent, _) = profile.sample(distance);
                 let curvature = reference_curvature(profile, distance);
                 writeln!(
@@ -1970,7 +1963,7 @@ mod tests {
 
     #[test]
     fn hills_solve_to_their_dimensions_and_rate_limits() {
-        let mut entries = Vec::with_capacity(21);
+        let mut entries = Vec::with_capacity(HILL_CASES.len() + CREST_TIME_CASES.len());
         for case in HILL_CASES {
             let spec = hill_spec(case);
             let solved = snap_hill(&spec, case.height, case.span);
@@ -2069,7 +2062,12 @@ mod tests {
             eprintln!(
                 "{}: height {:.6} m, span {:.6} m, flank {:.3} deg, crest time {:.6} s, roll rate {:.3} deg/s, rated {:.3}..{:.3} m/s, minimum radius {:.3} m",
                 case.name,
-                solved.profile.points.iter().map(|point| point.z).fold(f64::NEG_INFINITY, f64::max),
+                solved
+                    .profile
+                    .points
+                    .iter()
+                    .map(|point| point.z)
+                    .fold(f64::NEG_INFINITY, f64::max),
                 solved.profile.endpoint()[0],
                 solved.flank_angle.to_degrees(),
                 crest_time,
@@ -2096,7 +2094,10 @@ mod tests {
 
     #[test]
     fn hill_profiles_are_current() {
-        assert_eq!(GENERATED_HILL_PROFILES.len(), 21);
+        assert_eq!(
+            GENERATED_HILL_PROFILES.len(),
+            HILL_CASES.len() + CREST_TIME_CASES.len()
+        );
         let entries = hill_entries_from_generated_designs();
         let mut acceptance_failures = Vec::new();
         for entry in entries {
@@ -2107,7 +2108,8 @@ mod tests {
                 .unwrap();
             let design = embedded_profile_design(entry.name);
             assert_eq!(
-                generated.point_count, GENERATED_HILL_PROFILE_POINTS,
+                generated.point_count,
+                hill_profile_point_count(entry.name),
                 "{} point count",
                 entry.name
             );
@@ -2362,11 +2364,13 @@ mod solver_acceptance_tests {
         assert!(profile.maximum_force(31.3) <= 4.2 + 1e-6);
         assert!((x / 2.0 - (x / 2.0).round()).abs() < 1e-9);
         assert!((z / 2.0 - (z / 2.0).round()).abs() < 1e-9);
-        assert!(profile
-            .points
-            .windows(2)
-            .any(|points| (points[0].angle - PI / 2.0).abs() < 1e-9
-                && (points[1].angle - PI / 2.0).abs() < 1e-9));
+        assert!(
+            profile
+                .points
+                .windows(2)
+                .any(|points| (points[0].angle - PI / 2.0).abs() < 1e-9
+                    && (points[1].angle - PI / 2.0).abs() < 1e-9)
+        );
     }
 
     #[test]

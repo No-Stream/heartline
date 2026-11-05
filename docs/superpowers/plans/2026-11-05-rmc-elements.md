@@ -49,30 +49,30 @@ Feels and their force schedules (one geometry per feel and size; the model lists
 | Speed hill | 3.7 g | +0.3 g | all three | none close |
 | Wooden ejector (shown as "Ejector" on Briar Blitz) | 3.7 g | −0.7 g | Briar Blitz | wood vertical minimum −1.0 g |
 
-Sizes are `(height × span)` cells. The rated maximum is the solved design speed; the estimates below come from scaling the TASK-95 numbers (pull-up radius `v²/((G_pull − 1) g)`, crest radius `v_top²/((1 − G_crest) g)`) and are good to about ±15 %. The cells were chosen so each feel covers the speeds players actually have: 24–34 m/s at the bottom of a Timber Tumbler drop, 21–27 m/s on Briar Blitz, 31–34 m/s off the Viper launch, 15–22 m/s mid-ride.
+Sizes are `(height × span)` cells. The rated maximum is the solved design speed. The dimensions, flank angles and rated windows below are measured from the hill solver. The cells were chosen so each feel covers the speeds players actually have: 24–34 m/s at the bottom of a Timber Tumbler drop, 21–27 m/s on Briar Blitz, 31–34 m/s off the Viper launch, 15–22 m/s mid-ride.
 
-| Feel | Size (h × L, m) | Flank θ (est.) | Rated max (est., m/s) | Rated min (`sqrt(2 g h + 36)`) |
-|---|---|---|---|---|
-| Ejector | 4 × 32 | 30° | 21 | 10.7 |
-| Ejector | 8 × 48 | 40° | 23 | 14.0 |
-| Ejector | 12 × 64 | 45° | 26 | 16.5 |
-| Ejector | 8 × 64 | 30° | 30 | 14.0 |
-| Ejector | 12 × 80 | 36° | 31 | 16.5 |
-| Ejector | 16 × 96 | 40° | 33 | 18.7 |
-| Floater | 4 × 48 | 29° | 22 | 10.7 |
-| Floater | 8 × 64 | 29° | 26 | 14.0 |
-| Floater | 12 × 80 | 35° | 27 | 16.5 |
-| Floater | 6 × 64 | 22° | 29 | 12.4 |
-| Floater | 12 × 96 | 29° | 31 | 16.5 |
-| Floater | 16 × 112 | 33° | 32 | 18.7 |
-| Speed hill | 2 × 48 | 10° | 28 | 8.6 |
-| Speed hill | 4 × 64 | 15° | 28 | 10.7 |
-| Speed hill | 6 × 80 | 17° | 29 | 12.4 |
-| Wooden ejector | 6 × 48 | 29° | 24 | 12.4 |
-| Wooden ejector | 8 × 64 | 30° | 27 | 14.0 |
-| Wooden ejector | 16 × 80 | 48° | 26 | 18.7 |
+| Feel | Size (h × L, m) | Flank θ | Rated window (m/s) |
+|---|---|---|---|
+| Ejector | 4 × 32 | 23.98° | 9.75–17.57 |
+| Ejector | 8 × 48 | 31.30° | 13.17–19.60 |
+| Ejector | 12 × 64 | 34.86° | 15.92–22.15 |
+| Ejector | 8 × 64 | 23.94° | 13.49–25.22 |
+| Ejector | 12 × 80 | 28.46° | 16.14–26.59 |
+| Ejector | 16 × 96 | 31.45° | 18.42–28.34 |
+| Floater | 4 × 48 | 15.74° | 10.32–21.79 |
+| Floater | 8 × 64 | 23.07° | 13.54–21.60 |
+| Floater | 12 × 80 | 27.27° | 16.17–23.01 |
+| Floater | 6 × 64 | 17.61° | 12.12–24.07 |
+| Floater | 12 × 96 | 23.11° | 16.27–26.75 |
+| Floater | 16 × 112 | 26.18° | 18.52–27.86 |
+| Speed hill | 2 × 38 (deferred) | 10° boundary | — |
+| Speed hill | 4 × 64 | 11.39° | 10.53–23.92 |
+| Speed hill | 6 × 80 | 13.54° | 12.26–24.86 |
+| Wooden ejector | 6 × 48 | 23.71° | 11.83–19.67 |
+| Wooden ejector | 8 × 64 | 23.71° | 13.50–22.89 |
+| Wooden ejector | 16 × 80 | 36.59° | 18.25–22.64 |
 
-That is 18 profiles. If a cell is infeasible (the Newton leaves `θ` outside 10°–55° or the window falls under 2 m/s) the implementer moves it to the nearest feasible span and reports the change; no cell is silently dropped. Longitudinal force (the `g (t_car − t̄)` term on a flank) is the one limit the estimates cannot predict; the 40°–48° cells are the ones to watch, and the cure is a smaller flank angle for that cell.
+The planned set has 18 straight profiles. One cell is deferred: the 2 × 48 m speed hill needed a shorter span, and the nearest grid candidate, 2 × 38 m, still fails the solver at the 10° minimum flank boundary. Do not loosen the angle or force limits to recover it. The generated set therefore has 17 straight profiles plus the three crest-time profiles. Longitudinal force (the `g (t_car − t̄)` term on a flank) is the one limit these geometry solves cannot predict; the 40°–48° cells are the ones to watch, and the cure is a smaller flank angle for that cell.
 
 The existing `AirtimeHill` ("Small airtime hill", a 3 m plain bump) stays exactly as it is: it is in the Timber Tumbler journey circuit and in the recorded replay sessions. Retiring it is a follow-up once the owner has used the new hills.
 
@@ -159,9 +159,9 @@ Browser: the Timber Tumbler journey circuit (`web/e2e/player/circuits.txt`) gain
 
 Each task is sized for one implementation agent. "Gate" is what must be green before the task is done; run those suites only. The full `make lint`, `make test` and `make journeys` run once, in task 9. Model routing follows the global rules: Luna at xhigh for well-specified work, Terra at medium where geometry or caching is intricate, Opus for the inspector's look and wording.
 
-**Task 1: hill solver and generated-table format (Terra, medium).** `ProfileSpec::hill`, `snap_hill` (two-dimensional Newton on `(v, θ)` with 512-step iteration and a 2048-step finish, equal inserts, assertions), the zero-g variant that solves θ from a crest-time target instead of a span, and the generated entry format: name, minimum entry, minimum radius, length, design `(v, θ, insert)`, crest start and end distances, point count, values. The currentness test re-solves from the stored design. Generate the 21 profiles at 256 points; measure the acceptance errors and the wasm growth after `make build`; fall back to `f32` storage if growth exceeds 200 KB. Acceptance: all 21 profiles solve, land on their targets to 1e-9, pass the force-schedule assertion and the 1 mm / 2e-4 acceptance; the estimate table in section 3a is rewritten with solver numbers (height, span, θ, rated window) in this document. Gate: `cargo test -p theme-park-sim --release --lib track::profile`, `make build`.
+**Task 1: hill solver and generated-table format (Terra, medium).** `ProfileSpec::hill`, `snap_hill` (two-dimensional Newton on `(v, θ)` with 512-step iteration and a 2048-step finish, equal inserts, assertions), the zero-g variant that solves θ from a crest-time target instead of a span, and the generated entry format: name, minimum entry, minimum radius, length, design `(v, θ, insert)`, crest start and end distances, point count, values. The currentness test re-solves from the stored design. Generate the 20 feasible profiles at 512 points; measure the acceptance errors and wasm growth. If growth exceeds 200 KB, measure 256 points against the same limits once before choosing. Acceptance: all 20 generated profiles solve, land on their targets to 1e-9, pass the force-schedule assertion and the 1 mm / 2e-4 acceptance. Defer the 2 × 38 m speed hill because it fails at the 10° flank boundary; do not loosen limits. The estimate table in section 3a is rewritten with solver numbers (height, span, θ, rated window) in this document. Gate: `cargo test -p theme-park-sim --release --lib track::profile`, `make build`.
 
-**Task 2: catalog, ids, wire names, allowed lists for the straight hills (Luna, xhigh).** The 18 straight hills as `Shape::Profile` pieces with `family` metadata, `rated_speeds` from the profile (`rated_speeds(name, v, 2.0, model_radius)`), the model allowed lists per section 3f, `piece_group` ("special"), wire names, `PieceId` arms. Acceptance: every hill passes the generic rated test at both window ends with six and twelve cars on every model that allows it; `every_model_piece_variant_has_a_reachable_entry_connector` and the sim-wasm wire round-trip pass. Any cell that fails is moved to the nearest feasible span and reported. Gate: `cargo test -p theme-park-sim --release --test rated_element_physics`, `cargo test -p theme-park-sim --release --lib track::tests track::catalog` (two invocations), `cargo test -p theme-park-sim-wasm`.
+**Task 2: catalog, ids, wire names, allowed lists for the straight hills (Luna, xhigh).** The 17 straight hills as `Shape::Profile` pieces with `family` metadata, `rated_speeds` from the profile (`rated_speeds(name, v, 2.0, model_radius)`), the model allowed lists per section 3f, `piece_group` ("special"), wire names, `PieceId` arms. Acceptance: every hill passes the generic rated test at both window ends with six and twelve cars on every model that allows it; `every_model_piece_variant_has_a_reachable_entry_connector` and the sim-wasm wire round-trip pass. Any cell that fails is moved to the nearest feasible span and reported. Gate: `cargo test -p theme-park-sim --release --test rated_element_physics`, `cargo test -p theme-park-sim --release --lib track::tests track::catalog` (two invocations), `cargo test -p theme-park-sim-wasm`.
 
 **Task 3: `Shape::RolledProfile`, outer banks, zero-g rolls and stall (Terra, medium).** The shape variant and `Twist` enum, `raw()` and `sample()` for the rolled rail about the planar heart with closed-form derivatives, `hash_into`, `PartialEq`, mirror handling in the catalog's mirror loop, the 24 outer-bank hills, 4 zero-g rolls and 2 stalls with heartlining and inversion tags and rated windows (zero-g and stall: maximum = design speed, minimum from the profile; outer banks: the straight hill's window, confirmed by the rated test and narrowed by 1 m/s steps if lateral fails at an end). Roll-rate test at the rated maximum. Acceptance: join test at 1e-8 against every following piece, mirror symmetry, heart equals the planar heart to 1e-9, every variant passes both window ends on both steel models, outer-bank lateral ≤ 1.5 g, zero-g roll and stall peak roll rate printed and ≤ 200°/s (the compact zero-g roll may use the widened window; if it still exceeds 200°/s, ship at the measured rate and flag it). Gate: `cargo test -p theme-park-sim --release --lib track::roll track::tests track::profile` (three invocations), `--test rated_element_physics --test inversion_physics`, `cargo test -p theme-park-sim-wasm`.
 
