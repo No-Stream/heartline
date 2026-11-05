@@ -1113,13 +1113,7 @@ mod tests {
         let train = hybrid_model().train;
         let index = ClearanceIndex::new(std::slice::from_ref(&piece));
         assert_eq!(
-            check_clearance(
-                &world(20),
-                &piece,
-                &train,
-                &[],
-                &[]
-            ),
+            check_clearance(&world(20), &piece, &train, &[], &[]),
             Err(ClearanceCollision::Terrain)
         );
         assert_eq!(

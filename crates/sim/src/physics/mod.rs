@@ -463,8 +463,8 @@ impl Train {
                             .launch
                             .expect("launch parameters validated at construction");
                         if let Some(target_speed) = circuit.pieces[index].launch_target_speed {
-                            let target_speed = target_speed
-                                .min(crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+                            let target_speed =
+                                target_speed.min(crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND);
                             let remaining_distance = (circuit.starts[index]
                                 + circuit.pieces[index].length()
                                 - self.distance)
@@ -473,9 +473,8 @@ impl Train {
                                 .max(0.0)
                                 / (2.0 * remaining_distance))
                                 .min(LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED);
-                            next_speed = next_speed.max(
-                                (previous_speed + acceleration * TIME_STEP).min(target_speed),
-                            );
+                            next_speed = next_speed
+                                .max((previous_speed + acceleration * TIME_STEP).min(target_speed));
                         } else {
                             next_speed = next_speed.max(
                                 (previous_speed + launch.acceleration * TIME_STEP)

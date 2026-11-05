@@ -486,7 +486,7 @@ impl Construction {
         }
         let candidate_world = carved_world.as_ref().unwrap_or(world);
         check_clearance_indexed(
-            &candidate_world,
+            candidate_world,
             piece,
             &self.model.train,
             &cache.clearance_index,
@@ -521,7 +521,7 @@ impl Construction {
             let index_for_recheck = ClearanceIndex::new(&all_pieces);
             for (index, retained_piece) in all_pieces.iter().enumerate() {
                 check_clearance_indexed(
-                    &candidate_world,
+                    candidate_world,
                     retained_piece,
                     &self.model.train,
                     &index_for_recheck,
@@ -564,7 +564,7 @@ impl Construction {
                     );
                 }
                 validated_supports.push(
-                    route_supports(supported_piece, &candidate_world, &support_obstacles)
+                    route_supports(supported_piece, candidate_world, &support_obstacles)
                         .map_err(construction_support_error)?,
                 );
                 continue;
