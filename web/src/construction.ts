@@ -1,7 +1,9 @@
+import { speedMatchMessage } from "./construction-speed-match";
+import { candidateForceReadout } from "./candidate-force-readout";
 import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, repaint, type CoasterPart } from "./coaster-colors";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState, steppedTrainCount } from "./block-panel-state";
-import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions, type StepAttribute } from "./construction-choices";
+import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPieceSelection, stepperOptions, type PieceStep, type StepAttribute } from "./construction-choices";
 import type { BlockReport, ConstructionElement, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
@@ -108,6 +110,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <section class="tool-panel__section builder__next" aria-label="Chosen piece" data-next>
           <figure class="tool-panel__preview" data-preview><div class="tool-panel__preview-icons" data-preview-icons></div>
             <figcaption><span class="tool-panel__label tool-panel__preview-group" data-preview-group></span><span class="tool-panel__preview-name" data-preview-name></span></figcaption></figure>
+          <div data-speed-match hidden><div role="group" aria-label="Element size" data-speed-match-variants></div><p data-speed-match-message></p></div>
+          <div class="builder__candidate-force" data-candidate-force-preview aria-live="polite" hidden></div>
           <div class="builder__steppers" data-steppers>${steppers.map(({ attribute, label, previous, next, keys }) => `
             <div class="stepper" role="group" aria-label="Next piece ${attribute}">
               <span class="tool-panel__label">${label}</span>
@@ -310,6 +314,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     return shape;
   };
   const select = (piece: string | undefined): void => { if (piece && piece !== state?.selected) dispatch({ type: "construction-select", piece }); };
+  const stepSelection = (attribute: PieceStep, step: -1 | 1): void => {
+    if (!state) return;
+    const action = steppedPieceSelection(state.pieces, shapes, state.selected, attribute, step);
+    if (action) dispatch(action);
+  };
   const showTab = (shown: BuilderTab, focus: boolean): void => {
     for (const { id, tab, panel } of tabs) {
       tab.setAttribute("aria-selected", String(id === shown));
@@ -396,8 +405,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   }
   deleteMode.addEventListener("change", () => dispatch({ type: "construction-delete-mode", enabled: deleteMode.checked }));
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
-    element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => { if (state) select(steppedPiece(state.pieces, shapes, state.selected, attribute, step)); });
+    element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => { stepSelection(attribute, step); });
   }
+  element("[data-speed-match-variants]").addEventListener("click", (event) => {
+    const button = (event.target as Element).closest<HTMLButtonElement>("[data-speed-match-variant]");
+    if (button && button.dataset.speedMatchVariant !== state?.selected) {
+      dispatch({ type: "construction-select", piece: button.dataset.speedMatchVariant!, exact: true });
+    }
+  });
   palette.addEventListener("click", (event) => {
     const tile = (event.target as Element).closest<HTMLElement>("[data-piece]");
     if (tile) select(tile.dataset.piece);
@@ -416,7 +431,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const step = ({ ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 } as Record<string, -1 | 1 | undefined>)[event.key];
     if (!step || !state) return;
     event.preventDefault();
-    select(steppedPiece(state.pieces, shapes, state.selected, "piece", step));
+    stepSelection("piece", step);
   });
 
   function renderPalette(pieces: readonly ConstructionPiece[]): void {
@@ -469,6 +484,24 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       tile.tabIndex = checked ? 0 : -1;
       if (checked && focusInPalette) tile.focus();
     }
+    const speedMatch = element("[data-speed-match]");
+    speedMatch.hidden = !current.speedMatch;
+    element("[data-speed-match-message]").textContent = current.speedMatch ? speedMatchMessage(current.speedMatch, current.selected) : "";
+    element("[data-speed-match-variants]").replaceChildren(...(current.speedMatch?.variants ?? []).map(({ id, label }) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.speedMatchVariant = id;
+      button.textContent = label;
+      button.setAttribute("aria-pressed", String(id === current.selected));
+      return button;
+    }));
+    const candidateForce = element("[data-candidate-force-preview]");
+    candidateForce.hidden = !current.candidateForcePreview || !current.speedMatch;
+    candidateForce.replaceChildren(...(current.candidateForcePreview && current.speedMatch ? candidateForceReadout(current.candidateForcePreview, units) : []).map((line) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = line;
+      return paragraph;
+    }));
     const selected = current.pieces.find(({ id }) => id === current.selected);
     const selectedElement = current.elements.find(({ id }) => id === current.selected);
     const preview = element("[data-preview]");
@@ -702,7 +735,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element(".builder__station-height .stepper__unit").textContent = unitLabel(units);
       element("[data-block-add-label]").textContent = `New boundary (${unitLabel(units)})`;
       setHeight(dispatchedHeight);
-      if (state) { renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
+      if (state) { renderSelection(state, false); renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
     },
     setHeightMarkers(trackHeight, stationHeightText) {
       element("[data-panel-track-height]").textContent = trackHeight;
@@ -720,7 +753,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     },
     choose(action) {
       if (!state?.active || !state.complete) return;
-      select(action.type === "piece-group" ? pieceInGroup(state.pieces, action.group) : steppedPiece(state.pieces, shapes, state.selected, action.attribute, action.step));
+      if (action.type === "piece-group") select(pieceInGroup(state.pieces, action.group));
+      else stepSelection(action.attribute, action.step);
     },
     setDeleteMode(enabled) { deleteMode.checked = enabled; },
     setSelectedBlock(index) {

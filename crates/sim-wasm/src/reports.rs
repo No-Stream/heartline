@@ -180,6 +180,9 @@ mod wire_tests {
         crate::construction::ConstructionTrackWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionColorsWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionForcePreviewWire::export_all_to(&output).unwrap();
+        crate::construction::ConstructionCandidateForcePreviewWire::export_all_to(&output).unwrap();
+        crate::construction_speed_match::ConstructionSpeedMatchWire::export_all_to(&output)
+            .unwrap();
         crate::facilities::FacilityReport::export_all_to(&output).unwrap();
         crate::scenery::SceneryReport::export_all_to(&output).unwrap();
         crate::guest_report::GuestDetailReport::export_all_to(&output).unwrap();

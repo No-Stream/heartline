@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConstructionPiece, PieceShape } from "./construction-protocol";
-import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions } from "./construction-choices";
+import { speedMatchedSelection } from "./construction-speed-match";
+import { steppedPieceSelection, groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions } from "./construction-choices";
 
 function shape(id: string, turn: number, kind = "Track"): PieceShape {
   return { id, name: id, kind, turn, entrySlope: "Level", exitSlope: "Level", entryBank: "Level", exitBank: "Level", points: [] };
@@ -204,4 +205,15 @@ describe("construction steppers", () => {
       "Roll out from right bank",
     ]);
   });
+});
+
+it("cycles past speed-matched variants without redirecting to a previous size", () => {
+  const palette = [piece("Loop", "inversion"), piece("HeartlineRoll", "inversion"), piece("LargeLoop", "inversion"), piece("LaunchShort", "special")];
+  let selected = "Loop";
+  for (let index = 0; index < 3; index++) {
+    const action = steppedPieceSelection(palette, shapes, selected, "piece", 1)!;
+    expect(action.exact).toBe(true);
+    selected = speedMatchedSelection(action.piece, { entrySpeed: 10, recommendedId: "Loop", fits: true, variants: [] }, action.exact);
+  }
+  expect(selected).toBe("LaunchShort");
 });

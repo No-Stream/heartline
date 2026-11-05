@@ -1,3 +1,5 @@
+import { constructionEndSpeed, speedMatchedSelection, type ConstructionSpeedMatch } from "./construction-speed-match";
+import type { CandidateForcePreview } from "./candidate-force-readout";
 import type { ConstructionColorsWire as ConstructionColors } from "./generated/ConstructionColorsWire";
 import type { Facility, FacilityAction } from "./facilities";
 import init, { WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_wasm.js";
@@ -111,6 +113,8 @@ function sendGuestDetail(guestId = selectedGuestId): void {
   lastGuestDetailSentAt = performance.now();
 }
 
+let constructionEndSpeedCache: number | undefined;
+
 function sendConstruction(complete = true): void {
   const pieces = JSON.parse(simulation.construction_choices()) as ConstructionPiece[];
   const elements = complete ? JSON.parse(simulation.construction_elements()) as ConstructionElement[] : [];
@@ -136,6 +140,7 @@ function sendConstruction(complete = true): void {
   const constructionForcePreview = complete
     ? JSON.parse(simulation.construction_force_preview_json()) as ConstructionForcePreview | null
     : null;
+  if (complete) constructionEndSpeedCache = constructionEndSpeed(constructionForcePreview);
   sendWorkerMessage(workerScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     selected: selected || null, track,
     canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
@@ -143,6 +148,8 @@ function sendConstruction(complete = true): void {
     canFinish: simulation.construction_can_finish(), finishReason: simulation.construction_finish_reason(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as TestingReport | null,
     constructionForcePreview,
+    candidateForcePreview: complete ? JSON.parse(simulation.construction_candidate_force_preview_json()) as CandidateForcePreview | null : null,
+    speedMatch: complete ? JSON.parse(simulation.construction_speed_match_json(selected, constructionEndSpeedCache)) as ConstructionSpeedMatch | null : null,
     canTest: simulation.construction_can_test(), isOpen: simulation.construction_is_open(), coasterPrice, coasterIncome, stationPositions: [...simulation.construction_station_positions()], message: lastConstructionMessage || selectedChoice?.refusal || "",
     blockReport: JSON.parse(lastBlockReport) as BlockReport, trainCount: simulation.construction_train_count(),
     previewRails, previewTies, previewSupports, placedRails, placedTies, placedSupports, railDistances, blockCandidates,
@@ -424,9 +431,14 @@ workerScope.addEventListener("message", (event) => {
       return;
     }
     if (action.type !== "set-surface") {
+      if (action.type !== "construction-select") constructionEndSpeedCache = undefined;
       switch (action.type) {
         case "construction-start": simulation.construction_start(action.x * 2, action.y * 2, action.z / 2, action.heading * 2); break;
-        case "construction-select": simulation.construction_select(action.piece); break;
+        case "construction-select": {
+          const match = action.exact ? null : JSON.parse(simulation.construction_speed_match_json(action.piece, constructionEndSpeedCache)) as ConstructionSpeedMatch | null;
+          simulation.construction_select(speedMatchedSelection(action.piece, match, action.exact ?? false));
+          break;
+        }
         case "construction-set-chain": simulation.construction_set_chain(action.enabled); break;
         case "construction-set-launch-intensity": simulation.construction_set_launch_intensity(action.id, action.targetSpeed); break;
         case "construction-append": simulation.construction_append(); break;

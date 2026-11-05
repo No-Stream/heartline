@@ -330,3 +330,10 @@
 .testing-band-legend > span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .testing-band-legend__swatch { display: inline-block; width: 18px; height: 8px; border-radius: 2px; }
 .testing-band-legend [data-band="past"] .testing-band-legend__swatch { outline: 2px solid var(--ink); outline-offset: 0; }
+
+.builder__candidate-force { margin: 0.5rem 0; color: var(--ink-soft); font-size: 0.8rem; }
+.builder__candidate-force p { margin: 0.2rem 0; }
+
+[data-speed-match-variants] { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+[data-speed-match-variants] button[aria-pressed="true"] { background: var(--teal); color: var(--paper); }
+[data-speed-match-message] { margin: 0.3rem 0; font-size: 0.8rem; }
