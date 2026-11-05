@@ -604,6 +604,23 @@ fn assert_curvature_continuous_at_join(first: &Piece, second: &Piece) {
     near_vec_with_tolerance(incoming_curvature_vector, outgoing_curvature_vector, 1e-2);
 }
 
+fn assert_track_frame_continuous_at_join(first: &Piece, second: &Piece) {
+    let join_distance = 0.05;
+    let incoming = first.sample(first.length());
+    let outgoing = second.sample(0.0);
+    near_vec(incoming.position, outgoing.position);
+    near_vec(incoming.tangent, outgoing.tangent);
+    near_vec(incoming.up, outgoing.up);
+    near_angle(incoming.roll, outgoing.roll);
+    near(incoming.curvature, outgoing.curvature);
+
+    let incoming_curvature_vector =
+        (incoming.tangent - first.sample(first.length() - join_distance).tangent) / join_distance;
+    let outgoing_curvature_vector =
+        (second.sample(join_distance).tangent - outgoing.tangent) / join_distance;
+    near_vec_with_tolerance(incoming_curvature_vector, outgoing_curvature_vector, 1e-2);
+}
+
 fn place_curvature_sequence(ids: &[PieceId], initial_state: TrackState) -> Vec<Piece> {
     let templates = catalog();
     let mut end = initial_state;
@@ -698,6 +715,56 @@ fn joined_pieces_have_matching_position_tangent_roll_and_curvature() {
             );
         }
     }
+}
+
+#[test]
+fn banked_turns_join_banked_straights_and_rollouts_continuously() {
+    use PieceId::*;
+
+    let templates = catalog();
+    let banked_turn_exits = [
+        BankedTurnExit,
+        BankedTurnStandalone,
+        SmallRightBankedTurnExit,
+        SmallRightBankedTurnStandalone,
+        LargeLeftBankedTurnExit,
+        LargeLeftBankedTurnStandalone,
+        LargeRightBankedTurnExit,
+        LargeRightBankedTurnStandalone,
+        TwisterFanLeft,
+        TwisterFanRight,
+        TwisterHelixLeft,
+        TwisterHelixRight,
+    ];
+
+    let mut tested_turns = 0;
+    for turn in templates.iter().filter(|piece| {
+        banked_turn_exits.contains(&piece.id)
+            && piece.entry.heading != piece.exit.heading
+            && piece.exit.bank != Bank::Level
+            && piece.exit.horizontal_curvature == HorizontalCurvature::Straight
+    }) {
+        tested_turns += 1;
+        let (straight_id, rollout_id) = match turn.exit.bank {
+            Bank::Left => (BankedStraightLeft, RolloutLeft),
+            Bank::Right => (BankedStraightRight, RolloutRight),
+            Bank::Level | Bank::Inverted => unreachable!("banked turn exits banked"),
+        };
+        let banked_straight = templates
+            .iter()
+            .filter(|piece| piece.id == straight_id)
+            .find_map(|template| template.at(turn.exit))
+            .unwrap_or_else(|| panic!("{straight_id:?} does not follow {:?}", turn.id));
+        let rollout = templates
+            .iter()
+            .filter(|piece| piece.id == rollout_id)
+            .find_map(|template| template.at(banked_straight.exit))
+            .unwrap_or_else(|| panic!("{rollout_id:?} does not follow {:?}", turn.id));
+
+        assert_track_frame_continuous_at_join(turn, &banked_straight);
+        assert_track_frame_continuous_at_join(&banked_straight, &rollout);
+    }
+    assert!(tested_turns > 0, "no banked turn exits tested");
 }
 
 #[test]

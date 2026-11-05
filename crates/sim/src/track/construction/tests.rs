@@ -249,6 +249,78 @@ fn choices_report_model_and_connector_rejections() {
 }
 
 #[test]
+fn construction_offers_bank_straights_and_rollouts_after_banked_turns() {
+    use PieceId::*;
+
+    let world = world();
+    let banked_turn_exits = [
+        BankedTurnExit,
+        BankedTurnStandalone,
+        SmallRightBankedTurnExit,
+        SmallRightBankedTurnStandalone,
+        LargeLeftBankedTurnExit,
+        LargeLeftBankedTurnStandalone,
+        LargeRightBankedTurnExit,
+        LargeRightBankedTurnStandalone,
+        TwisterFanLeft,
+        TwisterFanRight,
+        TwisterHelixLeft,
+        TwisterHelixRight,
+    ];
+    let models = [
+        hybrid_model(),
+        crate::track::multi_launch_model(),
+        crate::track::wooden_twister_model(),
+    ];
+
+    for model in models {
+        let mut tested_turns = 0;
+        for turn in templates().iter().filter(|piece| {
+            banked_turn_exits.contains(&piece.id)
+                && piece.entry.heading != piece.exit.heading
+                && piece.exit.bank != crate::track::Bank::Level
+                && piece.exit.horizontal_curvature == crate::track::HorizontalCurvature::Straight
+                && model.allows_piece(piece)
+        }) {
+            tested_turns += 1;
+            let mut end = turn.exit;
+            end.x += 50;
+            end.y += 50;
+            end.z += 20;
+            let construction = Construction::new(end, model.clone());
+            let choices = construction.choices(&world, &[]);
+            let (banked_straight, rollout) = match turn.exit.bank {
+                crate::track::Bank::Left => (BankedStraightLeft, RolloutLeft),
+                crate::track::Bank::Right => (BankedStraightRight, RolloutRight),
+                crate::track::Bank::Level | crate::track::Bank::Inverted => {
+                    unreachable!("banked turn exits banked")
+                }
+            };
+
+            for id in [banked_straight, rollout] {
+                let choice = choices
+                    .iter()
+                    .find(|choice| choice.id == id)
+                    .unwrap_or_else(|| panic!("missing {id:?} choice after {:?}", turn.id));
+                assert_eq!(
+                    choice.result,
+                    Ok(()),
+                    "{id:?} refused after {:?} for {} at {:?}",
+                    turn.id,
+                    model.name,
+                    turn.exit
+                );
+            }
+        }
+        assert!(
+            tested_turns > 0,
+            "no banked turn exits tested for {}",
+            model.name
+        );
+    }
+}
+
+#[test]
 fn launch_model_builds_midcourse_launch_and_chain_lifts() {
     let mut construction = Construction::new(start(), crate::track::multi_launch_model());
     construction
