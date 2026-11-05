@@ -1,6 +1,6 @@
 //! Compact guest memories of completed rides.
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MemoryEntry {
     pub ride_id: u32,
     pub enjoyment: i8,
@@ -8,7 +8,7 @@ pub struct MemoryEntry {
     pub tick: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GuestMemory {
     entries: [MemoryEntry; Self::CAPACITY],
     start: u8,

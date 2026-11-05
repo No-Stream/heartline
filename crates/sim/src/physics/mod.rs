@@ -30,7 +30,7 @@ pub use preview::{PreviewStatus, TrackPreview, preview_open_track};
 mod block_operation;
 pub use block_operation::BlockOperation;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Circuit {
     pieces: Vec<Piece>,
     starts: Vec<f64>,
@@ -287,7 +287,7 @@ pub fn demo_circuit() -> Circuit {
     Circuit::new(pieces).expect("demo circuit closes")
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PhysicsConfig {
     /// The track model specifies dimensions, not mass; callers choose a mass per loaded car.
     pub car_mass_kg: f64,
@@ -330,20 +330,20 @@ impl Default for PhysicsConfig {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SectionControl {
     Launch {
         target_speed: f64,
         acceleration: f64,
     },
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GForces {
     pub vertical: f64,
     pub lateral: f64,
     pub longitudinal: f64,
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CarReading {
     pub distance: f64,
     pub speed: f64,
@@ -354,12 +354,12 @@ pub struct CarReading {
     pub roll: f64,
     pub piece_index: usize,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Note {
     RecoveredAfterRollback,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Train {
     distance: f64,
     speed: f64,

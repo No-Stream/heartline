@@ -12,6 +12,7 @@ use crate::state_hash::StateHasher;
 /// Groups arrive and leave together. Groups larger than the arrival rate may
 /// arrive in one tick, but never if they would exceed the population target.
 /// A target may be unreachable when no inactive group fits the remaining space.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct VisitManager {
     roster_size: usize,
     active_count: usize,

@@ -12,7 +12,7 @@ pub struct PathOpening {
     pub mask: u8,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum FacilityKind {
     Entrance,
     Food,
@@ -68,7 +68,7 @@ pub fn facility_access_direction(
     })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Building {
     pub id: u32,
     pub kind: FacilityKind,
@@ -99,7 +99,7 @@ pub enum FacilityAccessError {
     QueueAlreadyOwned,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct ParkFacilities {
     buildings: Vec<Building>,
     next_id: u32,

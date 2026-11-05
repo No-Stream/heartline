@@ -17,7 +17,7 @@ const STRONG_POSITIVE_G_THRESHOLD: f64 = 3.5;
 // https://www.vdv-freizeittechnologie.de/files/bilder-vdv/pdf/Rohde-Accelerationlimits-2nd-edition-2024.pdf
 const STRONG_LATERAL_G_THRESHOLD: f64 = 1.0;
 /// One fixed-distance force and speed sample from a coaster test run.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TestSample {
     pub distance: f64,
     pub speed: f64,
@@ -32,7 +32,7 @@ pub struct TestSample {
 }
 
 /// A completed or interrupted test run, including advisory ride ratings.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TestRun {
     pub samples: Vec<TestSample>,
     pub proximity_events: Vec<ProximityEvent>,
@@ -488,6 +488,7 @@ fn scoring_notes(
 }
 
 /// Turns per-tick train readings into one interpolated sample per track metre.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct TestRunRecorder {
     circuit_length: f64,
     force_limits: ComfortableForceLimits,
@@ -519,9 +520,10 @@ pub struct TestRunRecorder {
     visited_ranges: Vec<(f64, f64)>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 struct RatedPieceSpeedWindow {
-    name: &'static str,
+    #[serde(with = "crate::save::catalog_text")]
+    name: crate::save::CatalogText,
     minimum_entry: f64,
     maximum_entry: f64,
 }

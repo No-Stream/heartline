@@ -879,3 +879,55 @@ fn banked_straights_and_rollouts_pass_full_train_at_rated_window_ends() {
         }
     }
 }
+
+#[test]
+fn wave_and_overbank_turns_have_rated_windows_for_both_steel_models() {
+    for id in [
+        PieceId::WaveTurnLeft,
+        PieceId::WaveTurnRight,
+        PieceId::HybridOverbankLeft,
+        PieceId::HybridOverbankRight,
+    ] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let rated = piece.rated_speeds.expect("turn must have a rated window");
+        assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
+        for model in [hybrid_model(), multi_launch_model()] {
+            assert!(
+                model.allows_piece(piece),
+                "{} does not allow {id:?}",
+                model.name
+            );
+        }
+    }
+}
+
+#[test]
+fn wave_and_overbank_turns_have_contiguous_rated_windows() {
+    for id in [
+        PieceId::WaveTurnLeft,
+        PieceId::WaveTurnRight,
+        PieceId::HybridOverbankLeft,
+        PieceId::HybridOverbankRight,
+    ] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let rated = piece.rated_speeds.unwrap();
+        let (circuit, start, end) = circuit_for_level_piece(id);
+        let mut speed = rated.minimum_entry;
+        while speed <= rated.maximum_entry {
+            for model in [hybrid_model(), multi_launch_model()] {
+                for cars in [6, 12] {
+                    assert_train_crosses_element(
+                        &model,
+                        &circuit,
+                        id,
+                        start..end,
+                        cars,
+                        speed,
+                        false,
+                    );
+                }
+            }
+            speed += 1.0;
+        }
+    }
+}

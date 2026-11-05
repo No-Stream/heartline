@@ -1,7 +1,7 @@
 //! Places guests know about and the services those places provide.
 use crate::world::Position;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PlaceKind {
     Ride,
     Food,
@@ -11,7 +11,7 @@ pub enum PlaceKind {
     Souvenir,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KnownPlace {
     pub id: u32,
     pub position: Position,

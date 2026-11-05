@@ -34,6 +34,8 @@ export interface WorldRenderer {
   /** Picks a row-major rectangle in backing-store pixels. Pixels outside the canvas are null. */
   pickRegion(x: number, y: number, width: number, height: number): (Pick | null)[];
   pickSurface(x: number, y: number): Pick | null;
+  /** Picks the original surface beneath the pointer without applying the cutaway window. */
+  pickSurfaceUncut(x: number, y: number): Pick | null;
   pickFacilityPlacement(x: number, y: number): Pick | null;
   waitForGpu(): void;
 }
@@ -145,6 +147,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
   const uniform = (target: WebGLProgram, name: string): WebGLUniformLocation | null => gl!.getUniformLocation(target, name);
   let scene: Scene = { triangles: [] };
   let surfaceScene: Scene = { triangles: [] };
+  let uncutSurfaceScene: Scene = { triangles: [] };
   let facilityScene: Scene = { triangles: [] };
   let groundBatches: Batch[] = []; let standingBatches: Batch[] = []; let buriedTraceBatches: Batch[] = [];
   let cutaway: Cutaway | undefined;
@@ -345,6 +348,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       pixelRatio = canvas.width / Math.max(1, canvas.clientWidth || canvas.width);
       const viewport = { width: canvas.width, height: canvas.height };
       scene = buildScene(world, camera, viewport, atlas, activeScale, waterFrame);
+      uncutSurfaceScene = { triangles: scene.triangles.filter(({ kind }) => kind === "terrain" || kind === "carved-floor" || kind === "path") };
       if (cutaway) {
         for (const triangle of scene.triangles) triangle.cut = CutSide.outside;
         const cut = buildScene({ ...world, undergroundLevel: cutaway.level }, camera, viewport, atlas, activeScale, waterFrame, cutawayBounds(cutaway));
@@ -429,6 +433,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
       return result;
     },
     pickSurface(x, y) { return pickVisible(surfaceScene, x, y); },
+    pickSurfaceUncut(x, y) { return pickScene(uncutSurfaceScene, Math.floor(x) + 0.5, Math.floor(y) + 0.5, 0.125); },
     pickFacilityPlacement(x, y) { return pickVisible(facilityScene, x, y); },
     waitForGpu() { gl!.readPixels(0, 0, 1, 1, gl!.RGBA, gl!.UNSIGNED_BYTE, new Uint8Array(4)); },
   };
@@ -458,6 +463,7 @@ export function createWorldRenderer(canvas: HTMLCanvasElement, atlas: Atlas, ima
       return Array(width * height).fill(null);
     },
     pickSurface(x, y) { return renderer.pickSurface(x, y); },
+    pickSurfaceUncut(x, y) { return contextLost ? null : renderer.pickSurfaceUncut(x, y); },
     pickFacilityPlacement(x, y) { return contextLost ? null : renderer.pickFacilityPlacement(x, y); },
     waitForGpu() { if (!contextLost) renderer.waitForGpu(); },
   };

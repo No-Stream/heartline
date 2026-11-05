@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-05 13:43'
+updated_date: '2026-11-05 17:24'
 labels: []
 dependencies:
   - TASK-95
@@ -43,4 +43,6 @@ Owner approved the airtime hill interface on 2026-11-04: one parameterised 'Airt
 2026-11-05: plan tasks 1-2 merged to master. 14 straight hills (ejector, floater, speed, wooden ejector) with measured rated windows; deferred: 4 x 32 m steel ejector (2.1 g longitudinal), 8 x 64 and 16 x 80 m wooden ejectors, 2 x 38 m speed hill (solver does not converge). Hill tables are f32 deltas, wasm +180 KB.
 
 2026-11-05: plan task 3 merged. 22 outer-banked hills (own family: floater-level vertical plus outward lateral, rated within all force limits), four zero-g rolls and two stalls (peak roll rates 178-192 deg/s; the stall's inverted hold is 10% of its roll window to stay under 200 deg/s; the fast zero-g roll passes longitudinal by 0.002 g). Next: task 4 (wave turn and rated overbank turn).
+
+2026-11-05: plan task 4 merged: wave turns (left and right, 2 m bump, rated 8-23 m/s) and the rated overbanked turn (5-13 m/s, now also on Velocity Viper), minimums measured from a steep-crest entry. Next: task 5 (lazy family validation, estimated end speed, readout).
 <!-- SECTION:NOTES:END -->

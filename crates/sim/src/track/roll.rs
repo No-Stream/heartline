@@ -5,7 +5,7 @@ use crate::track::curves::{HEART_HEIGHT_METRES, TrackState, Vec3};
 
 const DIFFERENCE_STEP: f64 = 1.0e-5;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Twist {
     OuterBank {
         peak: f64,
@@ -100,7 +100,7 @@ impl Twist {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 enum RollPath {
     Spline {
         extra_turns: Option<f64>,
@@ -160,7 +160,7 @@ impl PartialEq for RollPath {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RollGeometry {
     path: RollPath,
 }

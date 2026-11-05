@@ -16,6 +16,7 @@ pub struct VisitChanges {
     pub departed: Vec<GuestId>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ParkGuests {
     pub(super) walking: WalkingSimulation,
     pub(super) behaviors: BehaviorSimulation,
@@ -28,6 +29,9 @@ pub struct ParkGuests {
 }
 
 impl ParkGuests {
+    pub(crate) fn rebind_world(&mut self, world: &World) {
+        self.walking.rebind_world(world);
+    }
     pub fn new(
         seed: u64,
         roster_size: usize,
@@ -431,6 +435,154 @@ mod tests {
     use super::*;
     use crate::guests::behavior::{KnownPlace, PlaceKind};
     use crate::world::{Path, Surface};
+
+    #[test]
+    fn save_guest_memories_survive_round_trip_and_continuation() {
+        use crate::guests::memories::MemoryEntry;
+
+        let entrance = Position {
+            x: 0,
+            y: 0,
+            height: 0,
+        };
+        let mut world = World::new(
+            2,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        world.place_path(Path {
+            position: entrance,
+            slope: None,
+        });
+        let mut original = ParkGuests::new(42, 2, &world, entrance, 1);
+        original.walking.traits_mut().record_memory(
+            GuestId(0),
+            MemoryEntry {
+                ride_id: 9,
+                enjoyment: 7,
+                nausea: 3,
+                tick: 12,
+            },
+        );
+        original.tick(&world, &[], 0, Some(1));
+        let bytes = bincode::serialize(&original).unwrap();
+        let mut restored: ParkGuests = bincode::deserialize(&bytes).unwrap();
+        restored.rebind_world(&world);
+        assert_eq!(
+            original.walking.traits().memory(GuestId(0)),
+            restored.walking.traits().memory(GuestId(0))
+        );
+        assert_eq!(original.state_hash(), restored.state_hash());
+        for _ in 0..20 {
+            original.tick(&world, &[], 0, None);
+            restored.tick(&world, &[], 0, None);
+            assert_eq!(original.state_hash(), restored.state_hash());
+        }
+    }
+
+    #[test]
+    fn save_riders_and_waiting_queue_continue_with_a_moving_train() {
+        use crate::guests::details::ActivityKind;
+        use crate::physics::{PhysicsConfig, Train, demo_circuit};
+        use crate::state_hash::StateHasher;
+        use crate::world::PathKind;
+
+        let position = |x| Position { x, y: 0, height: 0 };
+        let mut world = World::new(
+            4,
+            1,
+            Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        world
+            .build_path_route(position(0), position(1), PathKind::Normal, 0)
+            .unwrap();
+        world
+            .build_path_route(position(1), position(3), PathKind::Queue, 0)
+            .unwrap();
+        let facility = Facility {
+            place: KnownPlace {
+                id: 700,
+                position: position(3),
+                kind: PlaceKind::Ride,
+                minimum_height_cm: 0,
+                intensity: 50,
+                ride_type: 2,
+                theme: 0,
+                price: 0,
+            },
+            capacity: 1,
+            duration_ticks: 1,
+            exit_position: Some(position(0)),
+        };
+        let mut original_guests = ParkGuests::new(31, 12, &world, position(0), 12);
+        original_guests.open_with_guests(&[facility]);
+        original_guests.set_external_rides(&[facility.place.id]);
+        let mut riders = Vec::new();
+        for _ in 0..20_000 {
+            original_guests.tick(&world, &[facility], 100, None);
+            if riders.is_empty() {
+                riders = original_guests.board_coaster(&facility);
+            }
+            if !riders.is_empty()
+                && (0..12).any(|id| {
+                    original_guests.behaviors.activity_detail(GuestId(id)).kind
+                        == ActivityKind::Queuing
+                })
+            {
+                break;
+            }
+        }
+        assert!(!riders.is_empty());
+        assert!(
+            riders
+                .iter()
+                .all(|guest| original_guests.behaviors.is_coaster_riding(*guest))
+        );
+        assert!((0..12).any(
+            |id| original_guests.behaviors.activity_detail(GuestId(id)).kind
+                == ActivityKind::Queuing
+        ));
+        let original_circuit = demo_circuit();
+        let mut original_train = Train::new(
+            &original_circuit,
+            &crate::track::hybrid_model().train,
+            PhysicsConfig::default(),
+            0.0,
+            2.0,
+        );
+        for _ in 0..100 {
+            original_train.step(&original_circuit);
+        }
+        let bytes = crate::track::curves::with_snapshot_arc_tables(|| {
+            bincode::serialize(&(&original_guests, &original_circuit, &original_train))
+        })
+        .unwrap();
+        let (mut restored_guests, restored_circuit, mut restored_train): (
+            ParkGuests,
+            crate::physics::Circuit,
+            Train,
+        ) = crate::track::curves::with_snapshot_arc_tables(|| bincode::deserialize(&bytes))
+            .unwrap();
+        restored_guests.rebind_world(&world);
+        for _ in 0..20 {
+            assert_eq!(original_guests.state_hash(), restored_guests.state_hash());
+            let mut first = StateHasher::new();
+            let mut second = StateHasher::new();
+            original_train.hash_into(&mut first);
+            restored_train.hash_into(&mut second);
+            assert_eq!(first.finish(), second.finish());
+            original_guests.tick(&world, &[facility], 100, None);
+            restored_guests.tick(&world, &[facility], 100, None);
+            original_train.step(&original_circuit);
+            restored_train.step(&restored_circuit);
+        }
+    }
 
     #[test]
     fn placed_scenery_changes_guest_happiness_and_details() {

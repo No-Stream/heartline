@@ -13,7 +13,7 @@ pub use super::traits::{
 };
 use crate::state_hash::StateHasher;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GuestStore {
     pub(super) seed: u64,
     pub(super) ids: Vec<GuestId>,

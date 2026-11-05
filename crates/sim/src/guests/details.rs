@@ -93,7 +93,7 @@ pub struct GuestTraitsDetail {
     pub walking_speed: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GuestMemoryDetail {
     Ride {
         ride_id: u32,

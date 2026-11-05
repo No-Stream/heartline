@@ -16,6 +16,8 @@ export type WorkerAction =
   | { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
   | { type: "construction-input-barrier" }
   | { type: "export-session"; requestId: number }
+  | { type: "save-park"; requestId: number }
+  | { type: "load-park"; requestId: number; bytes: Uint8Array }
   | { type: "construction-finish-await" } | { type: "test-resume" } | { type: "guest-detail-close" }
   | { type: "set-speed"; speed: number }
   | { type: "set-paused"; paused: boolean }
@@ -32,7 +34,10 @@ export type CoasterWorldMessage = WorldSnapshot & { coasterGeometry?: Float32Arr
 export type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: Float32Array; constructionTrainPoses: Float32Array; trainStates: Float32Array; constructionTrainStates: Float32Array; constructionRiders: Uint32Array };
 export type WorkerMessage =
   | { type: "construction-input-barrier" }
-  | { type: "session-export"; requestId: number; recording: WorkerRecording }
+  | { type: "session-export"; requestId: number; recording?: WorkerRecording; error?: string }
+  | { type: "park-saved"; requestId: number; bytes?: Uint8Array; error?: string }
+  | { type: "park-loaded"; requestId: number; error?: string }
+  | { type: "park-restoring" }
   | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
   | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "test-resumed" } | { type: "construction-finish-ready" }
   | { type: "surface-edited"; changed: boolean }

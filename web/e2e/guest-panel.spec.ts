@@ -7,7 +7,7 @@ interface GuestPick {
   readonly y: number;
 }
 
-async function openGuestPanel(page: Page): Promise<{ guestId: string; panel: Locator }> {
+async function openGuestPanel(page: Page): Promise<{ guestId: string; panel: Locator; target: GuestPick }> {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await page.evaluate(() => {
@@ -36,8 +36,26 @@ async function openGuestPanel(page: Page): Promise<{ guestId: string; panel: Loc
   const panel = page.getByTestId("guest-panel");
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute("data-guest-id", target.id);
-  return { guestId: target.id, panel };
+  return { guestId: target.id, panel, target };
 }
+
+test("reopening the same guest preserves a valid panel position", async ({ page }) => {
+  const { guestId, panel, target } = await openGuestPanel(page);
+  const position = await panel.evaluate((element) => {
+    const canvas = document.querySelector("canvas")!.getBoundingClientRect();
+    const bounds = element.getBoundingClientRect();
+    const top = bounds.top + (bounds.bottom + 30 <= canvas.bottom ? 20 : -20);
+    element.style.top = `${top}px`;
+    return { left: bounds.left, top };
+  });
+  await panel.getByTestId("guest-panel-close").click();
+  await expect(panel).toBeHidden();
+  await clickCanvas(page, target);
+  await expect(panel).toHaveAttribute("data-guest-id", guestId);
+  const reopened = await panel.boundingBox();
+  expect(reopened?.x).toBeCloseTo(position.left);
+  expect(reopened?.y).toBeCloseTo(position.top);
+});
 
 test("opens a guest story, switches to a group member, and closes with Escape", async ({ page }) => {
   const { guestId, panel } = await openGuestPanel(page);
