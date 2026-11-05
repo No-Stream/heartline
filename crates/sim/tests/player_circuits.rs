@@ -170,6 +170,62 @@ fn assert_ride_force_bound(
 }
 
 #[test]
+fn construction_test_rides_keep_raw_longitudinal_forces_physically_plausible() {
+    // Timber Tumbler's Airtime Hill has a separate heart-path force issue tracked in TASK-101.
+    let circuits = [
+        ("Velocity Viper", multi_launch_model()),
+        ("Briar Blitz", wooden_twister_model()),
+    ];
+    for (name, model) in circuits {
+        let circuit = build_player_circuit(name, model.clone());
+        assert_construction_test_force_bound(name, &circuit, &model);
+    }
+    let model = hybrid_model();
+    let circuit = demo_circuit();
+    assert_construction_test_force_bound("demo", &circuit, &model);
+}
+
+fn assert_construction_test_force_bound(
+    name: &str,
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &theme_park_sim::track::CoasterModel,
+) {
+    let mut train = theme_park_sim::physics::Train::new(
+        circuit,
+        &model.train,
+        PhysicsConfig {
+            lift_speed: 5.0,
+            ..PhysicsConfig::default()
+        },
+        0.0,
+        2.0,
+    );
+    let mut completed = false;
+    for _ in 0..60_000 {
+        let previous_speed = train.speed();
+        train.step(circuit);
+        for frame in train.take_readings() {
+            for reading in frame {
+                let piece_index = circuit.piece_index(reading.distance);
+                assert!(
+                    reading.g.longitudinal.abs() <= 2.5,
+                    "{name}: {:.3} g on piece {piece_index} {:?}, speed {previous_speed:.6} -> {:.6} m/s",
+                    reading.g.longitudinal,
+                    circuit.pieces()[piece_index].kind,
+                    train.speed()
+                );
+            }
+        }
+        assert!(train.notes().is_empty(), "{name} train recovered");
+        if train.distance() >= circuit.length() {
+            completed = true;
+            break;
+        }
+    }
+    assert!(completed, "{name} construction test ride did not finish");
+}
+
+#[test]
 fn chain_lift_brakes_a_fast_train_at_a_physical_rate() {
     let circuit = build_player_circuit("Velocity Viper", multi_launch_model());
     let model = multi_launch_model();
