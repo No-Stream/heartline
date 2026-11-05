@@ -514,11 +514,25 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
         (super::PieceId::TerrainFall, "special"),
         (super::PieceId::ShortOffsetLeft, "straight"),
         (super::PieceId::ShortOffsetRight, "straight"),
+        (super::PieceId::BankedStraightLeft, "straight"),
+        (super::PieceId::BankedStraightRight, "straight"),
+        (super::PieceId::RolloutLeft, "bank"),
+        (super::PieceId::RolloutRight, "bank"),
     ];
 
     for (id, expected_group) in expected_groups {
         let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
         assert_eq!(super::piece_group(piece), expected_group, "{id:?}");
+    }
+
+    for (id, expected_name) in [
+        (super::PieceId::BankedStraightLeft, "Left-banked straight"),
+        (super::PieceId::BankedStraightRight, "Right-banked straight"),
+        (super::PieceId::RolloutLeft, "Roll out from left bank"),
+        (super::PieceId::RolloutRight, "Roll out from right bank"),
+    ] {
+        let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
+        assert_eq!(piece.name, expected_name, "{id:?}");
     }
 
     let mut turn_named_straight = catalog
@@ -612,18 +626,17 @@ fn construction_selects_the_sixty_degree_continuation_after_steep_to_sixty_trans
 fn construction_falls_back_to_the_first_valid_piece_without_a_straight_continuation() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
-    simulation.construction_select("BankLeft");
+    simulation.construction_select("TurnSmallEntry");
+    assert!(
+        simulation.construction_can_append(),
+        "{}",
+        simulation.construction_message()
+    );
     simulation.construction_append();
 
     let choices: serde_json::Value =
         serde_json::from_str(&simulation.construction_choices()).unwrap();
     let choices = choices.as_array().unwrap();
-    assert!(!choices.iter().any(|choice| {
-        choice["heading"] == "East"
-            && choice["slope"] == "Level"
-            && choice["bank"] == "Left"
-            && choice["refusal"].as_str().unwrap().is_empty()
-    }));
     let first_valid = choices
         .iter()
         .find(|choice| choice["refusal"].as_str().unwrap().is_empty())
@@ -633,8 +646,17 @@ fn construction_falls_back_to_the_first_valid_piece_without_a_straight_continuat
 
     assert_eq!(simulation.construction_selected(), first_valid);
     let construction = simulation.park.construction.as_ref().unwrap();
+    let end = construction.end();
+    assert_eq!((end.x, end.y, end.z), (216, 208, 20));
     let candidates =
         construction.available_choices(&simulation.park.world, &simulation.facility_obstacles());
+    assert!(!candidates.iter().any(|(piece, choice)| {
+        choice.result.is_ok()
+            && piece.inversion.is_none()
+            && matches!(piece.kind, super::PieceKind::Track | super::PieceKind::Lift)
+            && super::same_track_orientation(piece.entry, construction.end())
+            && super::same_track_orientation(piece.exit, construction.end())
+    }));
     assert_eq!(
         simulation.selected,
         super::default_construction_piece_from_choices(&candidates, construction.end())

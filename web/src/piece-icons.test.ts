@@ -34,4 +34,22 @@ describe("piece icons", () => {
     expect(bankedShape).toBeDefined();
     expect(() => pieceIconSvg({ ...bankedShape!, exitBank: "Diagonal" }, "twist", 46, 34)).toThrow("Unknown track bank: Diagonal");
   });
+
+  it("draws the bank state for straight banked continuations and roll-outs", () => {
+    for (const [id, entryBank, exitBank] of [
+      ["BankedStraightLeft", "Left", "Left"],
+      ["BankedStraightRight", "Right", "Right"],
+      ["RolloutLeft", "Left", "Level"],
+      ["RolloutRight", "Right", "Level"],
+    ]) {
+      const shape = shapes.find((candidate) => candidate.id === id);
+      expect(shape, id).toBeDefined();
+      expect(shape?.entryBank, id).toBe(entryBank);
+      expect(shape?.exitBank, id).toBe(exitBank);
+      const svg = pieceIconSvg(shape!, iconViews(shape!)[0], 46, 34);
+      expect(svg, id).toContain('class="piece-icon__bank"');
+      expect(svg, id).toContain('class="piece-icon__bank-exit"');
+      if (entryBank !== exitBank) expect(svg, id).toContain('class="piece-icon__bank-entry"');
+    }
+  });
 });

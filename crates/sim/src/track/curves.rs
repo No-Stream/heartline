@@ -313,6 +313,10 @@ pub enum PieceId {
     RavenRollRightDown,
     LargeLoop,
     LargeLoopRight,
+    BankedStraightLeft,
+    BankedStraightRight,
+    RolloutLeft,
+    RolloutRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
