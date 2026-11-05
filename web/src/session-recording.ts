@@ -9,7 +9,8 @@
  * after their tick, and finalTick is the simulation tick at export. An optional
  * expect block holds replay assertions; strict makes hash mismatches fail.
  * Replay initializes with manualBlockAnalysis enabled and applies recorded
- * test-advance-block-analysis commands in order; set-surface corners must be
+ * test-advance-block-analysis and test-advance-block-placement commands in
+ * order; set-surface corners must be
  * reconstructed as an Int16Array before posting the command to the worker.
  */
 export interface WorkerRecording {

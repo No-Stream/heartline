@@ -9,11 +9,13 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterColors, CoasterModel, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    CoasterColors, CoasterModel, Heartlining, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
     LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape,
     SupportStyle, TrackState, TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
+#[cfg(test)]
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 
@@ -139,6 +141,10 @@ pub struct Construction {
     validation_cache: RefCell<Option<ValidationCache>>,
     choices_cache: RefCell<Option<ChoicesCache>>,
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
+    #[cfg(test)]
+    support_cache_misses: Cell<usize>,
+    #[cfg(test)]
+    validation_cache_rebuilds: Cell<usize>,
 }
 
 impl Construction {
@@ -157,6 +163,10 @@ impl Construction {
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
+            #[cfg(test)]
+            support_cache_misses: Cell::new(0),
+            #[cfg(test)]
+            validation_cache_rebuilds: Cell::new(0),
         }
     }
 
@@ -578,6 +588,9 @@ impl Construction {
                 && same_obstacles(&cache.obstacles, obstacles)
         });
         if !matches_inputs {
+            #[cfg(test)]
+            self.validation_cache_rebuilds
+                .set(self.validation_cache_rebuilds.get() + 1);
             let existing: Vec<_> = self
                 .pieces
                 .iter()
@@ -721,6 +734,9 @@ impl Construction {
                 continue;
             }
             if index < cache.existing.len() && cache.supports[index].is_none() {
+                #[cfg(test)]
+                self.support_cache_misses
+                    .set(self.support_cache_misses.get() + 1);
                 let mut bounds = obstacles.to_vec();
                 let region = support_search_region(supported_piece);
                 for (other_index, other_bounds) in cache.track_obstacles.iter().enumerate() {

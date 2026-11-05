@@ -8,6 +8,7 @@ pub struct ElementChoice {
     pub name: &'static str,
     pub pieces: Vec<PieceId>,
     pub geometry: Vec<Piece>,
+    pub heartlining: Option<Heartlining>,
     pub would_tunnel: bool,
     construction_hash: u64,
 }
@@ -49,12 +50,12 @@ impl Construction {
         for (id, name, pieces) in [
             (
                 "immelmann-left",
-                "Left Immelmann (not heartlined)",
+                "Left Immelmann",
                 [PieceId::HalfLoopUp, PieceId::HalfCorkscrewLeftDown],
             ),
             (
                 "immelmann-right",
-                "Right Immelmann (not heartlined)",
+                "Right Immelmann",
                 [PieceId::HalfLoopUp, PieceId::HalfCorkscrewRightDown],
             ),
         ] {
@@ -68,12 +69,12 @@ impl Construction {
         for (id, name, pieces) in [
             (
                 "dive-loop-left",
-                "Left dive loop (not heartlined)",
+                "Left dive loop",
                 [PieceId::HalfCorkscrewLeftUp, PieceId::HalfLoopDown],
             ),
             (
                 "dive-loop-right",
-                "Right dive loop (not heartlined)",
+                "Right dive loop",
                 [PieceId::HalfCorkscrewRightUp, PieceId::HalfLoopDown],
             ),
         ] {
@@ -100,17 +101,17 @@ impl Construction {
         for (raven_id, raven_name, serpent_id, serpent_name, down, up) in [
             (
                 "raven-turn-left",
-                "Left raven turn (not heartlined)",
+                "Left raven turn",
                 "sea-serpent-left",
-                "Left sea serpent (not heartlined)",
+                "Left sea serpent",
                 PieceId::RavenRollLeftDown,
                 PieceId::RavenRollRightUp,
             ),
             (
                 "raven-turn-right",
-                "Right raven turn (not heartlined)",
+                "Right raven turn",
                 "sea-serpent-right",
-                "Right sea serpent (not heartlined)",
+                "Right sea serpent",
                 PieceId::RavenRollRightDown,
                 PieceId::RavenRollLeftUp,
             ),
@@ -436,11 +437,13 @@ impl Construction {
             .expect("validated element geometry has tunnel plans")
             .iter()
             .any(|plan| plan.would_tunnel());
+        let heartlining = heartlining_for_geometry(&geometry);
         ElementChoice {
             id,
             name,
             pieces,
             geometry,
+            heartlining,
             would_tunnel,
             construction_hash: self.state_hash(),
         }
@@ -470,5 +473,46 @@ impl Construction {
         }
         *self = self.append_sequence(&element.pieces, world, obstacles)?;
         Ok(())
+    }
+}
+
+fn heartlining_for_geometry(geometry: &[Piece]) -> Option<Heartlining> {
+    let mut heartlining = None;
+    for piece in geometry.iter().filter(|piece| piece.inversion.is_some()) {
+        let piece_heartlining = piece
+            .heartlining
+            .expect("inversion pieces must declare their heartlining");
+        if let Some(existing_heartlining) = heartlining {
+            assert_eq!(
+                existing_heartlining, piece_heartlining,
+                "an element cannot mix heartlined and classic inversions"
+            );
+        }
+        heartlining = Some(piece_heartlining);
+    }
+    heartlining
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn element_heartlining_ignores_non_inversion_pieces() {
+        let catalog = crate::track::catalog();
+        let straight = catalog
+            .iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .unwrap()
+            .clone();
+        let loop_piece = catalog
+            .iter()
+            .find(|piece| piece.id == PieceId::Loop)
+            .unwrap()
+            .clone();
+        assert_eq!(
+            heartlining_for_geometry(&[straight, loop_piece]),
+            Some(Heartlining::NotHeartlined)
+        );
     }
 }

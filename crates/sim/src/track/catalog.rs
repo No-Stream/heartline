@@ -470,7 +470,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             Loop,
-            "Vertical loop (not heartlined)",
+            "Vertical loop",
             standard_loop_exit_x,
             2,
             0,
@@ -483,7 +483,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             Corkscrew,
-            "Left classic corkscrew (not heartlined)",
+            "Left classic corkscrew",
             14,
             8,
             0,
@@ -496,7 +496,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HeartlineRoll,
-            "Left heartline roll (heartlined)",
+            "Left heartline roll",
             24,
             0,
             0,
@@ -509,7 +509,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfLoopUp,
-            "Half loop up (not heartlined)",
+            "Half loop up",
             (HALF_LOOP.endpoint()[0] / 2.0).round() as i32,
             0,
             (HALF_LOOP.endpoint()[1] / 2.0).round() as i32,
@@ -522,7 +522,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfLoopDown,
-            "Half loop down (not heartlined)",
+            "Half loop down",
             -(HALF_LOOP.endpoint()[0] / 2.0).round() as i32,
             0,
             -(HALF_LOOP.endpoint()[1] / 2.0).round() as i32,
@@ -535,7 +535,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfCorkscrewLeftUp,
-            "Left half roll up (not heartlined)",
+            "Left half roll up",
             20,
             0,
             6,
@@ -548,7 +548,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfCorkscrewLeftDown,
-            "Left half roll down (not heartlined)",
+            "Left half roll down",
             20,
             0,
             -6,
@@ -561,7 +561,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             RavenRollLeftUp,
-            "Left offset half roll up (not heartlined)",
+            "Left offset half roll up",
             24,
             4,
             0,
@@ -574,7 +574,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             RavenRollLeftDown,
-            "Left offset half roll down (not heartlined)",
+            "Left offset half roll down",
             24,
             4,
             0,
@@ -776,7 +776,7 @@ fn build_catalog() -> Vec<Piece> {
     for (id, name, profile, maximum_entry, model_radius, material) in [
         (
             LargeLoop,
-            "Large vertical loop (not heartlined)",
+            "Large vertical loop",
             Arc::clone(&LARGE_LOOP_PROFILE),
             31.3,
             5.0,
@@ -784,7 +784,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             SteelLoop,
-            "Steel-structure loop (not heartlined)",
+            "Steel-structure loop",
             Arc::clone(&STEEL_LOOP_PROFILE),
             27.0,
             8.0,
@@ -1162,46 +1162,30 @@ fn build_catalog() -> Vec<Piece> {
             ShortOffsetRight,
             "Right short half-tile offset",
         ),
-        (Loop, LoopRight, "Right vertical loop (not heartlined)"),
-        (
-            LargeLoop,
-            LargeLoopRight,
-            "Right large vertical loop (not heartlined)",
-        ),
-        (
-            SteelLoop,
-            SteelLoopRight,
-            "Right steel-structure loop (not heartlined)",
-        ),
-        (
-            Corkscrew,
-            CorkscrewRight,
-            "Right classic corkscrew (not heartlined)",
-        ),
-        (
-            HeartlineRoll,
-            HeartlineRollRight,
-            "Right heartline roll (heartlined)",
-        ),
+        (Loop, LoopRight, "Right vertical loop"),
+        (LargeLoop, LargeLoopRight, "Right large vertical loop"),
+        (SteelLoop, SteelLoopRight, "Right steel-structure loop"),
+        (Corkscrew, CorkscrewRight, "Right classic corkscrew"),
+        (HeartlineRoll, HeartlineRollRight, "Right heartline roll"),
         (
             HalfCorkscrewLeftUp,
             HalfCorkscrewRightUp,
-            "Right half roll up (not heartlined)",
+            "Right half roll up",
         ),
         (
             HalfCorkscrewLeftDown,
             HalfCorkscrewRightDown,
-            "Right half roll down (not heartlined)",
+            "Right half roll down",
         ),
         (
             RavenRollLeftUp,
             RavenRollRightUp,
-            "Right offset half roll up (not heartlined)",
+            "Right offset half roll up",
         ),
         (
             RavenRollLeftDown,
             RavenRollRightDown,
-            "Right offset half roll down (not heartlined)",
+            "Right offset half roll down",
         ),
     ] {
         let mut piece = pieces
@@ -1245,14 +1229,14 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             BarrelDropLeft,
-            "Left barrel-roll drop (not heartlined)",
+            "Left barrel-roll drop",
             Left,
             FlatBank,
             true,
         ),
         (
             BarrelDropRight,
-            "Right barrel-roll drop (not heartlined)",
+            "Right barrel-roll drop",
             Right,
             FlatBank,
             true,
