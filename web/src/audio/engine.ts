@@ -1,5 +1,6 @@
 import { allocateTrainVoices, MAX_SCREAM_GROUPS, MAX_TRAIN_VOICES, MAX_UI_VOICES } from "./voices";
-import type { SoundFrame } from "./mapping";
+import type { SoundFrame, UiSound } from "./mapping";
+import { playUiSound, type UiSoundHandle } from "./synth/ui";
 
 export const AUDIO_LOOKAHEAD = 0.15;
 export interface ScheduleClock { now: number; until: number }
@@ -13,7 +14,8 @@ export function schedulePeriodic(nextTime: number, rate: number, clock: Schedule
 }
 
 export interface OfflineScript { duration: number; frames: { time: number; frame: SoundFrame }[]; volume?: number; muted?: boolean }
-export interface ChannelMetrics { peak: number; rms: number; bands: { below200: number; from200To2000: number; above2000: number } }
+/** `peakTime` is when the loudest sample plays, in seconds; `above1000` overlaps the other bands and uses the same one-pole split. */
+export interface ChannelMetrics { peak: number; peakTime: number; rms: number; bands: { below200: number; from200To2000: number; above2000: number; above1000: number } }
 export interface OfflineResult { channels: ChannelMetrics[] }
 export interface ActiveVoices { trains: number; screams: number; ui: number; ambience: "day" | "night" | "silent" }
 
@@ -31,6 +33,10 @@ export function createAudioEngine(context: BaseAudioContext, volume = 0.7, muted
   const ambience = context.createGain();
   for (const voice of [...trainPool, ...screamPool, ...uiPool, crowd, ambience]) voice.connect(master);
   let allocation: (number | null)[] = [];
+  const uiSounds: (UiSoundHandle | null)[] = uiPool.map(() => null);
+  let nextUiSlot = 0;
+  let variationSeed = 1;
+  const variation = (): number => { variationSeed = (variationSeed * 16807) % 2147483647; return (variationSeed - 1) / 2147483646; };
   const emptyFamily = { apply(_parameters: unknown, _clock: ScheduleClock): void {}, trigger(_event: unknown, _clock: ScheduleClock): void {}, release(_clock: ScheduleClock): void {} };
   return {
     setVolume(nextVolume: number, nextMuted: boolean, atTime = context.currentTime): void {
@@ -54,10 +60,16 @@ export function createAudioEngine(context: BaseAudioContext, volume = 0.7, muted
       emptyFamily.apply(frame.crowd, clock);
       emptyFamily.apply(frame.ambience, clock);
       if (!frame.eventsMuted) for (const event of frame.screams) emptyFamily.trigger(event, clock);
-      for (const event of frame.ui) emptyFamily.trigger(event, clock);
+      // A fifth overlapping interface sound fades out the oldest, so a burst of events cannot stack up.
+      for (const event of frame.ui) {
+        uiSounds[nextUiSlot]?.stop(clock.now);
+        uiSounds[nextUiSlot] = playUiSound(context, uiPool[nextUiSlot]!, event, clock.now, variation);
+        nextUiSlot = (nextUiSlot + 1) % uiPool.length;
+      }
     },
     activeVoices(): ActiveVoices {
-      return { trains: allocation.filter((train) => train !== null).length, screams: 0, ui: 0, ambience: "silent" };
+      const ui = uiSounds.filter((sound) => sound !== null && sound.end > context.currentTime).length;
+      return { trains: allocation.filter((train) => train !== null).length, screams: 0, ui, ambience: "silent" };
     },
   };
 }
@@ -67,6 +79,7 @@ export function createLiveAudio(options: { testMode: boolean; onLockChange(locke
   let engine: ReturnType<typeof createAudioEngine> | undefined;
   let volume = 0.7;
   let muted = false;
+  let lastUiEvent: UiSound | null = null;
   let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
   let transition = Promise.resolve();
   function syncState(): Promise<void> {
@@ -118,7 +131,12 @@ export function createLiveAudio(options: { testMode: boolean; onLockChange(locke
       volume = nextVolume; muted = nextMuted;
       if (context) void syncState();
     },
-    apply(frame: SoundFrame): void { engine?.apply(frame); },
+    apply(frame: SoundFrame): void {
+      lastUiEvent = frame.ui.at(-1)?.sound ?? lastUiEvent;
+      engine?.apply(frame);
+    },
+    /** The most recent interface sound requested, recorded even while the context is locked, so tests can check triggers silently. */
+    lastUiEvent(): UiSound | null { return lastUiEvent; },
     activeVoices(): ActiveVoices { return engine?.activeVoices() ?? { trains: 0, screams: 0, ui: 0, ambience: "silent" }; },
   };
 }
@@ -136,17 +154,21 @@ export async function renderOffline(script: OfflineScript): Promise<OfflineResul
   const channels: ChannelMetrics[] = [];
   for (let channel = 0; channel < rendered.numberOfChannels; channel++) {
     const samples = rendered.getChannelData(channel);
-    let peak = 0; let energy = 0; let low = 0; let midLow = 0;
-    let lowEnergy = 0; let midEnergy = 0; let highEnergy = 0;
+    let peak = 0; let peakIndex = 0; let energy = 0; let low = 0; let midLow = 0; let kiloLow = 0;
+    let lowEnergy = 0; let midEnergy = 0; let highEnergy = 0; let aboveKiloEnergy = 0;
     const lowAlpha = 1 - Math.exp(-2 * Math.PI * 200 / sampleRate);
     const midAlpha = 1 - Math.exp(-2 * Math.PI * 2000 / sampleRate);
-    for (const sample of samples) {
+    const kiloAlpha = 1 - Math.exp(-2 * Math.PI * 1000 / sampleRate);
+    for (let index = 0; index < samples.length; index++) {
+      const sample = samples[index]!;
       if (!Number.isFinite(sample)) throw new Error("Offline render contains a non-finite sample");
-      peak = Math.max(peak, Math.abs(sample)); energy += sample * sample;
-      low += lowAlpha * (sample - low); midLow += midAlpha * (sample - midLow);
-      lowEnergy += low * low; midEnergy += (midLow - low) ** 2; highEnergy += (sample - midLow) ** 2;
+      if (Math.abs(sample) > peak) { peak = Math.abs(sample); peakIndex = index; }
+      energy += sample * sample;
+      low += lowAlpha * (sample - low); midLow += midAlpha * (sample - midLow); kiloLow += kiloAlpha * (sample - kiloLow);
+      lowEnergy += low * low; midEnergy += (midLow - low) ** 2; highEnergy += (sample - midLow) ** 2; aboveKiloEnergy += (sample - kiloLow) ** 2;
     }
-    channels.push({ peak, rms: Math.sqrt(energy / samples.length), bands: { below200: Math.sqrt(lowEnergy / samples.length), from200To2000: Math.sqrt(midEnergy / samples.length), above2000: Math.sqrt(highEnergy / samples.length) } });
+    const bandRms = (bandEnergy: number): number => Math.sqrt(bandEnergy / samples.length);
+    channels.push({ peak, peakTime: peakIndex / sampleRate, rms: bandRms(energy), bands: { below200: bandRms(lowEnergy), from200To2000: bandRms(midEnergy), above2000: bandRms(highEnergy), above1000: bandRms(aboveKiloEnergy) } });
   }
   return { channels };
 }
