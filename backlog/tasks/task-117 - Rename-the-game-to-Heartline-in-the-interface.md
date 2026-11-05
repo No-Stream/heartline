@@ -1,9 +1,10 @@
 ---
 id: TASK-117
 title: Rename the game to Heartline in the interface
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-04 23:47'
+updated_date: '2026-11-05 09:39'
 labels: []
 dependencies: []
 priority: low
@@ -21,3 +22,9 @@ Owner chose the name Heartline on 2026-11-04 (GitHub repo No-Stream/heartline). 
 - [ ] #1 Game bar and page title read Heartline
 - [ ] #2 Affected screenshot baselines updated and reviewed
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Page title and game bar read Heartline; a browser test checks both. The dark workshop baseline was re-recorded (only the game bar changed). Folder, crate, package, replay-format and storage-key names are unchanged so saved preferences survive. README screenshots on the readme-images release still show the old name.
+<!-- SECTION:FINAL_SUMMARY:END -->
