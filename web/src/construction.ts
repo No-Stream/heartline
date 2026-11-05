@@ -1,7 +1,9 @@
-import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, repaint, type CoasterPart } from "./coaster-colors";
+import { speedMatchMessage } from "./construction-speed-match";
+import { candidateForceReadout } from "./candidate-force-readout";
+import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
 import { constructionEvent } from "./construction-effects";
-import { availableBlockBoundaries, blockPanelState, steppedTrainCount } from "./block-panel-state";
-import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions, type StepAttribute } from "./construction-choices";
+import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
+import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPieceSelection, stepperOptions, type PieceStep, type StepAttribute } from "./construction-choices";
 import type { BlockReport, ConstructionElement, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
@@ -20,6 +22,7 @@ export interface ConstructionPanel {
   setSelectedBlock(index: number | null): void;
   setUnits(units: Units): void;
   setHeightMarkers(track: string, station: string): void;
+  setQueueNotice(notice: string): void;
 }
 
 const groupNames: Record<string, string> = { straight: "Straight", turn: "Turns", slope: "Slopes", bank: "Banks", inversion: "Inversions", special: "Special" };
@@ -99,6 +102,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       <p class="tool-panel__hint">Choose a tile, then point and click to choose the station direction.</p>
     </div>
     <p role="status" class="tool-panel__status" data-message></p>
+    <p aria-live="polite" class="tool-panel__status" data-construction-queue></p>
     <div data-editor hidden>
       <div class="builder__tabs" role="tablist" aria-label="Coaster builder sections" data-builder-tabs>${builderTabs.map(({ id, label }, index) => `
         <button type="button" role="tab" id="builder-tab-${id}" aria-controls="builder-tabpanel-${id}" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}" data-builder-tab="${id}">${label}</button>`).join("")}
@@ -108,6 +112,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         <section class="tool-panel__section builder__next" aria-label="Chosen piece" data-next>
           <figure class="tool-panel__preview" data-preview><div class="tool-panel__preview-icons" data-preview-icons></div>
             <figcaption><span class="tool-panel__label tool-panel__preview-group" data-preview-group></span><span class="tool-panel__preview-name" data-preview-name></span></figcaption></figure>
+          <div data-speed-match hidden><div role="group" aria-label="Element size" data-speed-match-variants></div><p data-speed-match-message></p></div>
+          <div class="builder__candidate-force" data-candidate-force-preview aria-live="polite" hidden></div>
           <div class="builder__steppers" data-steppers>${steppers.map(({ attribute, label, previous, next, keys }) => `
             <div class="stepper" role="group" aria-label="Next piece ${attribute}">
               <span class="tool-panel__label">${label}</span>
@@ -309,7 +315,12 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (!shape) throw new Error(`Missing shape for piece ${id}`);
     return shape;
   };
-  const select = (piece: string | undefined): void => { if (piece && piece !== state?.selected) dispatch({ type: "construction-select", piece }); };
+  const select = (piece: string | undefined): void => { if (piece) dispatch({ type: "construction-select", piece }); };
+  const stepSelection = (attribute: PieceStep, step: -1 | 1): void => {
+    if (!state) return;
+    const action = steppedPieceSelection(state.pieces, shapes, state.selected, attribute, step);
+    if (action) dispatch(action);
+  };
   const showTab = (shown: BuilderTab, focus: boolean): void => {
     for (const { id, tab, panel } of tabs) {
       tab.setAttribute("aria-selected", String(id === shown));
@@ -340,9 +351,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   });
   for (const [button, step] of [[fewerTrains, -1], [moreTrains, 1]] as const) {
     button.addEventListener("click", () => {
-      if (!state) return;
-      const count = steppedTrainCount(state.trainCount, state.blockReport.trainCapacity, step);
-      if (count !== undefined) dispatch({ type: "construction-set-train-count", count });
+      dispatch({ type: "construction-train-count-step", step });
     });
   }
   addBlock.addEventListener("click", () => {
@@ -373,7 +382,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   confirmFinish.addEventListener("click", () => dispatch({ type: "construction-finish-confirm" }));
   cancelFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cancel" }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
-  open.addEventListener("click", () => dispatch({ type: "construction-set-open", open: !state?.isOpen }));
+  open.addEventListener("click", () => dispatch({ type: "construction-open-toggle" }));
   const setCoasterPrice = (price: number): void => {
     if (!Number.isInteger(price) || price < 0 || price > 65535) throw new RangeError("Invalid coaster ticket price");
     coasterPrice.value = String(price);
@@ -384,27 +393,33 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   });
   const coasterPriceButtons = [...container.querySelectorAll<HTMLButtonElement>("[data-coaster-price-step]")];
   coasterPriceButtons.forEach((button) => button.addEventListener("click", () => {
-    setCoasterPrice(Number(coasterPrice.value) + Number(button.dataset.coasterPriceStep));
+    dispatch({ type: "construction-price-step", step: Number(button.dataset.coasterPriceStep) });
   }));
-  chainToggle.addEventListener("click", () => { if (state) dispatch({ type: "construction-set-chain", enabled: !state.chain }); });
+  chainToggle.addEventListener("click", () => dispatch({ type: "chain-toggle" }));
   const colorRows = COASTER_PARTS.map((part) => ({ part, row: element(`[data-coaster-color-part="${part}"]`) }));
   for (const { part, row } of colorRows) {
     row.addEventListener("click", (event) => {
       const swatch = (event.target as Element).closest<HTMLElement>("[data-coaster-color]");
-      if (swatch && state?.colors) dispatch({ type: "construction-set-colors", colors: repaint(state.colors, part, swatch.dataset.coasterColor!) });
+      if (swatch && state?.colors) dispatch({ type: "construction-color-select", part, color: swatch.dataset.coasterColor! });
     });
   }
   deleteMode.addEventListener("change", () => dispatch({ type: "construction-delete-mode", enabled: deleteMode.checked }));
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
-    element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => { if (state) select(steppedPiece(state.pieces, shapes, state.selected, attribute, step)); });
+    element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => dispatch({ type: "piece-step", attribute, step }));
   }
+  element("[data-speed-match-variants]").addEventListener("click", (event) => {
+    const button = (event.target as Element).closest<HTMLButtonElement>("[data-speed-match-variant]");
+    if (button) {
+      dispatch({ type: "construction-select", piece: button.dataset.speedMatchVariant!, exact: true });
+    }
+  });
   palette.addEventListener("click", (event) => {
     const tile = (event.target as Element).closest<HTMLElement>("[data-piece]");
     if (tile) select(tile.dataset.piece);
   });
   elements.addEventListener("click", (event) => {
-    const tile = (event.target as Element).closest<HTMLElement>("[data-element]");
-    if (tile) select(tile.dataset.element);
+    const tile = (event.target as Element).closest<HTMLElement>("[data-track-choice]");
+    if (tile) select(tile.dataset.trackChoice);
   });
   palette.addEventListener("keydown", (event) => {
     const tile = (event.target as Element).closest<HTMLElement>("[data-piece]");
@@ -416,7 +431,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const step = ({ ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 } as Record<string, -1 | 1 | undefined>)[event.key];
     if (!step || !state) return;
     event.preventDefault();
-    select(steppedPiece(state.pieces, shapes, state.selected, "piece", step));
+    dispatch({ type: "piece-step", attribute: "piece", step });
   });
 
   function renderPalette(pieces: readonly ConstructionPiece[]): void {
@@ -447,28 +462,100 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }));
   }
 
-  function renderElements(choices: readonly ConstructionElement[]): void {
-    elements.replaceChildren(...choices.map((choice) => {
+  function renderElements(choices: readonly ConstructionElement[], pieces: readonly ConstructionPiece[]): void {
+    const renderElement = (choice: {
+      id: string;
+      pieceId: string;
+      slope: string;
+      name: string;
+      heartlined: boolean | null;
+      elementId?: string;
+      refusal?: string;
+    }): HTMLButtonElement => {
       const shape = shapeOf(choice.pieceId, choice.slope);
       const button = document.createElement("button");
       button.type = "button";
       button.className = "builder__element";
-      button.dataset.element = choice.id;
+      button.dataset.trackChoice = choice.id;
+      if (choice.elementId) button.dataset.element = choice.elementId;
+      if (choice.refusal) button.title = choice.refusal;
       button.setAttribute("aria-pressed", String(choice.id === state?.selected));
       button.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}<span></span>`;
       button.querySelector("span")!.textContent = choice.name;
       return button;
+    };
+    const ordinaryElements = choices.filter((choice) => choice.heartlined === null).map((choice) => renderElement({
+      id: choice.id,
+      elementId: choice.id,
+      pieceId: choice.pieceId,
+      slope: choice.slope,
+      name: choice.name,
+      heartlined: null,
     }));
+    const inversionChoices = [
+      ...choices.filter((choice) => choice.heartlined !== null).map((choice) => ({
+        id: choice.id,
+        elementId: choice.id,
+        pieceId: choice.pieceId,
+        slope: choice.slope,
+        name: choice.name,
+        heartlined: choice.heartlined,
+      })),
+      ...pieces.filter((piece) => piece.heartlined !== null).map((piece) => ({
+        id: piece.id,
+        pieceId: piece.id,
+        slope: piece.slope,
+        name: pieceDisplayName(piece),
+        heartlined: piece.heartlined,
+        refusal: piece.refusal,
+      })),
+    ];
+    const inversionGroups = [
+      { heartlined: true, label: "Modern inversions (heartlined)" },
+      { heartlined: false, label: "Classic inversions (not heartlined)" },
+    ].flatMap(({ heartlined, label }) => {
+      const members = inversionChoices.filter((choice) => choice.heartlined === heartlined);
+      if (members.length === 0) return [];
+      const group = document.createElement("section");
+      group.className = "builder__element-group";
+      group.dataset.heartlinedGroup = String(heartlined);
+      const heading = document.createElement("h4");
+      heading.textContent = label;
+      const groupElements = document.createElement("div");
+      groupElements.className = "builder__element-group-items";
+      groupElements.append(...members.map(renderElement));
+      group.append(heading, groupElements);
+      return [group];
+    });
+    elements.replaceChildren(...ordinaryElements, ...inversionGroups);
   }
 
   function renderSelection(current: ConstructionState, focusInPalette: boolean): void {
-    for (const tile of elements.querySelectorAll<HTMLElement>("[data-element]")) tile.setAttribute("aria-pressed", String(tile.dataset.element === current.selected));
+    for (const tile of elements.querySelectorAll<HTMLElement>("[data-track-choice]")) tile.setAttribute("aria-pressed", String(tile.dataset.trackChoice === current.selected));
     for (const tile of palette.querySelectorAll<HTMLElement>("[data-piece]")) {
       const checked = tile.dataset.piece === current.selected;
       tile.setAttribute("aria-checked", String(checked));
       tile.tabIndex = checked ? 0 : -1;
       if (checked && focusInPalette) tile.focus();
     }
+    const speedMatch = element("[data-speed-match]");
+    speedMatch.hidden = !current.speedMatch;
+    element("[data-speed-match-message]").textContent = current.speedMatch ? speedMatchMessage(current.speedMatch, current.selected) : "";
+    element("[data-speed-match-variants]").replaceChildren(...(current.speedMatch?.variants ?? []).map(({ id, label }) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.speedMatchVariant = id;
+      button.textContent = label;
+      button.setAttribute("aria-pressed", String(id === current.selected));
+      return button;
+    }));
+    const candidateForce = element("[data-candidate-force-preview]");
+    candidateForce.hidden = !current.candidateForcePreview || !current.speedMatch;
+    candidateForce.replaceChildren(...(current.candidateForcePreview && current.speedMatch ? candidateForceReadout(current.candidateForcePreview, units) : []).map((line) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = line;
+      return paragraph;
+    }));
     const selected = current.pieces.find(({ id }) => id === current.selected);
     const selectedElement = current.elements.find(({ id }) => id === current.selected);
     const preview = element("[data-preview]");
@@ -497,8 +584,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         void value.offsetWidth;
         value.classList.add("stepper__value--changed");
       }
-      element<HTMLButtonElement>(`[data-stepper="${attribute}--1"]`).disabled = !options || options.index <= 0;
-      element<HTMLButtonElement>(`[data-stepper="${attribute}-1"]`).disabled = !options || options.index >= options.values.length - 1;
+      element<HTMLButtonElement>(`[data-stepper="${attribute}--1"]`).disabled = current.complete && (!options || options.index <= 0);
+      element<HTMLButtonElement>(`[data-stepper="${attribute}-1"]`).disabled = current.complete && (!options || options.index >= options.values.length - 1);
     }
   }
 
@@ -702,7 +789,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element(".builder__station-height .stepper__unit").textContent = unitLabel(units);
       element("[data-block-add-label]").textContent = `New boundary (${unitLabel(units)})`;
       setHeight(dispatchedHeight);
-      if (state) { renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
+      if (state) { renderSelection(state, false); renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
     },
     setHeightMarkers(trackHeight, stationHeightText) {
       element("[data-panel-track-height]").textContent = trackHeight;
@@ -720,8 +807,12 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     },
     choose(action) {
       if (!state?.active || !state.complete) return;
-      select(action.type === "piece-group" ? pieceInGroup(state.pieces, action.group) : steppedPiece(state.pieces, shapes, state.selected, action.attribute, action.step));
+      if (action.type === "piece-group") {
+        const piece = pieceInGroup(state.pieces, action.group);
+        if (piece !== state.selected) select(piece);
+      } else stepSelection(action.attribute, action.step);
     },
+    setQueueNotice(notice) { element("[data-construction-queue]").textContent = notice; },
     setDeleteMode(enabled) { deleteMode.checked = enabled; },
     setSelectedBlock(index) {
       if (index !== null && !state?.blockReport.sections.some((section) => section.editableIndex === index)) {
@@ -735,7 +826,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     update(next) {
       const previous = state;
       state = next;
-      editor.inert = !next.complete;
       editor.setAttribute("aria-busy", String(!next.complete));
       editor.hidden = !next.active;
       if (next.active && !previous?.active) showTab("build", false);
@@ -766,7 +856,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       finish.classList.toggle("tool-panel__action--primary", next.canFinish && !next.canClose);
       append.classList.toggle("tool-panel__action--primary", !next.canClose && !next.canFinish);
       finish.hidden = closed || next.finishPreview;
-      finish.disabled = !next.canFinish;
+      finish.disabled = next.complete && !next.canFinish;
       finishReason.textContent = next.finishReason;
       finishReason.hidden = closed || next.canFinish || next.finishPreview;
       finishConfirmation.hidden = closed || !next.finishPreview;
@@ -774,16 +864,16 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       const focusInPalette = palette.contains(document.activeElement);
       const nextPaletteKey = next.pieces.map(({ id, refusal }) => `${id}:${refusal}`).join("|");
       if (nextPaletteKey !== paletteKey) { paletteKey = nextPaletteKey; renderPalette(next.pieces); }
-      const nextElementsKey = JSON.stringify(next.elements);
-      if (nextElementsKey !== elementsKey) { elementsKey = nextElementsKey; renderElements(next.elements); }
+      const nextElementsKey = JSON.stringify([next.elements, next.pieces]);
+      if (nextElementsKey !== elementsKey) { elementsKey = nextElementsKey; renderElements(next.elements, next.pieces); }
       renderSelection(next, focusInPalette);
       const nextTrackKey = next.track.map(({ id, label, kind, launchTargetSpeed }) => `${id}:${label}:${kind}:${launchTargetSpeed}`).join("|");
       if (nextTrackKey !== trackKey) { trackKey = nextTrackKey; renderTrack(next, event === "placed"); }
-      append.disabled = !next.canAppend;
-      undo.disabled = next.track.length === 0;
-      close.disabled = !next.canClose;
-      test.disabled = !next.canTest;
-      open.disabled = !next.canTest && !next.isOpen;
+      append.disabled = next.complete && !next.canAppend;
+      undo.disabled = next.complete && next.track.length === 0;
+      close.disabled = next.complete && !next.canClose;
+      test.disabled = next.complete && !next.canTest;
+      open.disabled = next.complete && !next.canTest && !next.isOpen;
       open.textContent = next.isOpen ? "Close coaster" : "Open coaster";
       if (document.activeElement !== coasterPrice) coasterPrice.value = String(next.coasterPrice);
       for (const button of coasterPriceButtons) {

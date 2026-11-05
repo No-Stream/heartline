@@ -145,6 +145,9 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
     const choice = choices.locator(`[data-piece="${piece}"]`);
     await expect(choice).toBeVisible();
     await choice.click();
+    if (piece === "Loop") {
+      await page.locator('[data-speed-match-variant="Loop"]').click();
+    }
     await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
     const refusal = await choice.locator(".piece-tile__tip span").textContent();
     await expect(page.getByRole("button", { name: "Place piece" }), `Cannot place ${piece} at step ${index + 1}: ${refusal}`).toBeEnabled();
@@ -170,7 +173,10 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
   await page.getByRole("button", { name: "Test coaster" }).click();
   await page.evaluate(() => window.gameTest.advanceTicks(10000));
   await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status")).toHaveText("Train completed a lap.");
-  await expect(page.locator("[data-testing]")).toHaveScreenshot("coaster-testing-panel-lift-circuit.png", { animations: "disabled" });
+  const testingPanel = page.locator("[data-testing]");
+  const panelHeight = await testingPanel.evaluate((element) => Math.ceil(element.getBoundingClientRect().height));
+  await page.setViewportSize({ width: 1280, height: Math.max(720, panelHeight + 100) });
+  await expect(testingPanel).toHaveScreenshot("coaster-testing-panel-lift-circuit.png", { animations: "disabled" });
 });
 
 test("places a 60-degree climb and complete banked turn with lift markers @fast", async ({ page }) => {

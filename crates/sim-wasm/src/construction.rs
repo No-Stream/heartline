@@ -1,7 +1,8 @@
 use super::*;
 use serde::Serialize;
-use theme_park_sim::physics::{Circuit, TestRun};
-use theme_park_sim::track::Bank;
+use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
+use theme_park_sim::track::ComfortableForceLimits;
+use theme_park_sim::track::{Bank, Heartlining, HillTwist};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -10,6 +11,7 @@ pub struct ConstructionPieceWire {
     id: &'static str,
     label: &'static str,
     group: &'static str,
+    heartlined: Option<bool>,
     heading: &'static str,
     slope: &'static str,
     bank: &'static str,
@@ -22,6 +24,7 @@ pub struct ConstructionElementWire {
     id: String,
     name: &'static str,
     piece_id: &'static str,
+    heartlined: Option<bool>,
     slope: &'static str,
     kind: &'static str,
     would_tunnel: bool,
@@ -80,6 +83,132 @@ pub struct ConstructionColorsWire {
     trains: &'static str,
 }
 
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionForceLimitsWire {
+    minimum_vertical_g: f64,
+    maximum_vertical_g: f64,
+    maximum_lateral_g: f64,
+    maximum_longitudinal_g: f64,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionLastPlacedForceWire {
+    maximum_speed: f64,
+    minimum_vertical_g: f64,
+    maximum_vertical_g: f64,
+    maximum_absolute_lateral_g: f64,
+    maximum_absolute_longitudinal_g: f64,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionLaunchEstimateWire {
+    piece_index: usize,
+    maximum_speed: f64,
+    peak_longitudinal_g: Option<f64>,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionForcePreviewWire {
+    samples: Vec<crate::reports::TestingSample>,
+    completed: bool,
+    status: &'static str,
+    last_placed: Option<ConstructionLastPlacedForceWire>,
+    launches: Vec<ConstructionLaunchEstimateWire>,
+    limits: ConstructionForceLimitsWire,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionRatedSpeedWire {
+    minimum_entry: f64,
+    maximum_entry: f64,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionCandidateForcePreviewWire {
+    status: &'static str,
+    outer_bank: bool,
+    entry_speed: Option<f64>,
+    peaks: Option<ConstructionLastPlacedForceWire>,
+    limits: ConstructionForceLimitsWire,
+    rated_speed: Option<ConstructionRatedSpeedWire>,
+}
+
+fn force_limits_wire(limits: ComfortableForceLimits) -> ConstructionForceLimitsWire {
+    ConstructionForceLimitsWire {
+        minimum_vertical_g: limits.minimum_vertical_g,
+        maximum_vertical_g: limits.maximum_vertical_g,
+        maximum_lateral_g: limits.maximum_lateral_g,
+        maximum_longitudinal_g: limits.maximum_longitudinal_g,
+    }
+}
+
+fn open_track_position(pieces: &[Piece], distance: f64) -> Vec3 {
+    let mut piece_start = 0.0;
+    for piece in pieces {
+        let piece_end = piece_start + piece.length();
+        if distance <= piece_end {
+            return piece
+                .sample((distance - piece_start).clamp(0.0, piece.length()))
+                .position;
+        }
+        piece_start = piece_end;
+    }
+    panic!("force preview sample lies beyond the open track");
+}
+
+fn last_placed_force_wire(
+    samples: &[crate::reports::TestingSample],
+    start_distance: f64,
+    end_distance: f64,
+) -> Option<ConstructionLastPlacedForceWire> {
+    let samples: Vec<_> = samples
+        .iter()
+        .filter(|sample| sample.distance >= start_distance && sample.distance <= end_distance)
+        .collect();
+    if samples.is_empty() {
+        return None;
+    }
+    Some(ConstructionLastPlacedForceWire {
+        maximum_speed: samples
+            .iter()
+            .map(|sample| sample.speed)
+            .fold(f64::NEG_INFINITY, f64::max),
+        minimum_vertical_g: samples
+            .iter()
+            .map(|sample| sample.vertical_g)
+            .fold(f64::INFINITY, f64::min),
+        maximum_vertical_g: samples
+            .iter()
+            .map(|sample| sample.vertical_g)
+            .fold(f64::NEG_INFINITY, f64::max),
+        maximum_absolute_lateral_g: samples
+            .iter()
+            .map(|sample| sample.lateral_g.abs())
+            .fold(0.0, f64::max),
+        maximum_absolute_longitudinal_g: samples
+            .iter()
+            .map(|sample| sample.longitudinal_g.abs())
+            .fold(0.0, f64::max),
+    })
+}
+
+fn entry_speed(samples: &[crate::reports::TestingSample], distance: f64) -> Option<f64> {
+    let next_index = samples.partition_point(|sample| sample.distance < distance);
+    let next = samples.get(next_index)?;
+    if next.distance == distance {
+        return Some(next.speed);
+    }
+    let previous = samples.get(next_index.checked_sub(1)?)?;
+    let fraction = (distance - previous.distance) / (next.distance - previous.distance);
+    Some(previous.speed + fraction * (next.speed - previous.speed))
+}
+
 pub(crate) fn colors_json(colors: Option<CoasterColors>) -> String {
     let colors = colors.map(|colors| ConstructionColorsWire {
         track: colors.track.name(),
@@ -102,6 +231,10 @@ fn element_representative(element: &ElementChoice) -> &Piece {
         })
         .or_else(|| element.geometry.first())
         .expect("an element choice contains at least one piece")
+}
+
+fn heartlined(heartlining: Option<Heartlining>) -> Option<bool> {
+    heartlining.map(|heartlining| heartlining == Heartlining::Heartlined)
 }
 
 fn slope_rank(slope: Slope) -> u8 {
@@ -242,6 +375,160 @@ impl WasmSimulation {
         serde_json::to_string(&layout).expect("serialize train layout")
     }
 
+    /// Estimates speed and rider forces over the pieces already placed in construction.
+    pub fn construction_force_preview_json(&self) -> String {
+        let Some(construction) = self.construction.as_ref() else {
+            return "null".into();
+        };
+        let pieces = construction.pieces();
+        let Some(preview) = preview_open_track(
+            pieces,
+            &construction.model().train,
+            PhysicsConfig {
+                lift_speed: 5.0,
+                ..PhysicsConfig::default()
+            },
+        ) else {
+            return "null".into();
+        };
+        let samples: Vec<_> = preview
+            .report
+            .samples
+            .iter()
+            .map(|sample| {
+                let position = open_track_position(pieces, sample.distance) / 4.0;
+                crate::reports::TestingSample {
+                    distance: sample.distance,
+                    x: position.x,
+                    y: position.y,
+                    z: position.z,
+                    speed: sample.speed,
+                    vertical_g: sample.vertical_g,
+                    lateral_g: sample.lateral_g,
+                    longitudinal_g: sample.longitudinal_g,
+                    airtime: sample.airtime,
+                }
+            })
+            .collect();
+        let last_placed = pieces.last().and_then(|piece| {
+            (piece.kind != PieceKind::Station).then(|| {
+                let end_distance: f64 = pieces.iter().map(Piece::length).sum();
+                last_placed_force_wire(&samples, end_distance - piece.length(), end_distance)
+            })?
+        });
+        let mut start_distance = 0.0;
+        let launches = pieces
+            .iter()
+            .zip(construction.piece_ids())
+            .enumerate()
+            .filter_map(|(piece_index, (piece, id))| {
+                let end_distance = start_distance + piece.length();
+                let result = (piece.kind == PieceKind::Launch).then(|| {
+                    let maximum_speed = construction
+                        .launch_speed_bounds(*id)
+                        .expect("launch has speed bounds")
+                        .maximum;
+                    let peak_longitudinal_g = samples
+                        .iter()
+                        .filter(|sample| {
+                            sample.distance >= start_distance && sample.distance <= end_distance
+                        })
+                        .map(|sample| sample.longitudinal_g.abs())
+                        .reduce(f64::max);
+                    ConstructionLaunchEstimateWire {
+                        piece_index,
+                        maximum_speed,
+                        peak_longitudinal_g,
+                    }
+                });
+                start_distance = end_distance;
+                result
+            })
+            .collect();
+        let status = match preview.status {
+            PreviewStatus::ReachedEnd => "reachedEnd",
+            PreviewStatus::Stalled => "stalled",
+            PreviewStatus::TimedOut => "timedOut",
+        };
+        serde_json::to_string(&ConstructionForcePreviewWire {
+            samples,
+            completed: preview.report.completed,
+            status,
+            last_placed,
+            launches,
+            limits: force_limits_wire(construction.model().comfortable_force_limits),
+        })
+        .expect("construction force preview serializes")
+    }
+
+    /// Estimates the selected candidate using the placed track and the same train physics.
+    pub fn construction_candidate_force_preview_json(&self) -> String {
+        let Some(construction) = self.construction.as_ref() else {
+            return "null".into();
+        };
+        let candidate = self.construction_preview();
+        let Some(first) = candidate.first() else {
+            return "null".into();
+        };
+        let outer_bank = first.family.is_some_and(|family| {
+            matches!(
+                family.twist,
+                Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+            )
+        });
+        let rated_speed = first.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
+            minimum_entry: speeds.minimum_entry,
+            maximum_entry: speeds.maximum_entry,
+        });
+        let start_distance: f64 = construction.pieces().iter().map(Piece::length).sum();
+        let mut pieces = construction.pieces().to_vec();
+        pieces.extend(candidate);
+        let end_distance: f64 = pieces.iter().map(Piece::length).sum();
+        let preview = preview_open_track(
+            &pieces,
+            &construction.model().train,
+            PhysicsConfig {
+                lift_speed: 5.0,
+                ..PhysicsConfig::default()
+            },
+        )
+        .expect("construction contains a station");
+        let samples: Vec<_> = preview
+            .report
+            .samples
+            .iter()
+            .map(|sample| {
+                let position = open_track_position(&pieces, sample.distance) / 4.0;
+                crate::reports::TestingSample {
+                    distance: sample.distance,
+                    x: position.x,
+                    y: position.y,
+                    z: position.z,
+                    speed: sample.speed,
+                    vertical_g: sample.vertical_g,
+                    lateral_g: sample.lateral_g,
+                    longitudinal_g: sample.longitudinal_g,
+                    airtime: sample.airtime,
+                }
+            })
+            .collect();
+        let entry_speed = entry_speed(&samples, start_distance);
+        let status = match preview.status {
+            PreviewStatus::ReachedEnd => "reachedEnd",
+            PreviewStatus::Stalled => "stalled",
+            PreviewStatus::TimedOut => "timedOut",
+        };
+        serde_json::to_string(&ConstructionCandidateForcePreviewWire {
+            status,
+            outer_bank,
+            entry_speed,
+            peaks: last_placed_force_wire(&samples, start_distance, end_distance),
+            limits: force_limits_wire(construction.model().comfortable_force_limits),
+            rated_speed,
+        })
+        .expect("candidate force preview serializes")
+    }
+
     /// Repaints the coaster. Names outside the palette leave it unchanged and explain why in the construction message.
     pub fn construction_set_colors(&mut self, track: &str, supports: &str, trains: &str) {
         let Some(colors) = CoasterColors::from_names(track, supports, trains) else {
@@ -330,6 +617,7 @@ impl WasmSimulation {
                         id: wire_pieceid(piece.id),
                         label: piece.name,
                         group: piece_group(&piece),
+                        heartlined: heartlined(piece.heartlining),
                         heading: wire_heading(piece.exit.heading),
                         slope: wire_slope(piece.exit.slope),
                         bank: wire_bank(piece.exit.bank),
@@ -361,6 +649,7 @@ impl WasmSimulation {
                             id: format!("element:{}", element.id),
                             name: element.name,
                             piece_id: wire_pieceid(representative.id),
+                            heartlined: heartlined(element.heartlining),
                             slope: wire_slope(representative.exit.slope),
                             kind: wire_piecekind(representative.kind),
                             would_tunnel: element.would_tunnel,
@@ -1094,6 +1383,35 @@ impl WasmSimulation {
         self.construction_placed_supports_cache.clone()
     }
 
+    pub fn construction_train_states(&self) -> Vec<f32> {
+        let mut result = Vec::new();
+        if let Some(operation) = &self.coaster_operation {
+            let circuit = self
+                .block_layout
+                .as_ref()
+                .expect("operation has a block layout")
+                .circuit();
+            let mut trains: Vec<_> = operation.trains().collect();
+            trains.sort_by_key(|(train_id, _)| *train_id);
+            for (train_id, train) in trains {
+                let occupied = self
+                    .coaster_riders
+                    .get(&train_id)
+                    .is_some_and(|riders| !riders.is_empty());
+                append_train_state(&mut result, circuit, train, train_id, occupied);
+            }
+        } else if let Some((circuit, train)) = &self.construction_train {
+            append_train_state(&mut result, circuit, train, 0, false);
+            if let Some(station) = &self.recovered_station {
+                let sample = station.sample(station.length());
+                result[2] = 4.0;
+                result[3] = sample.up.z as f32;
+                result[4] = sample.up.cross(sample.tangent).z as f32;
+            }
+        }
+        result
+    }
+
     pub fn construction_train_poses(&self) -> Vec<f32> {
         let config = &self
             .construction
@@ -1376,6 +1694,7 @@ define_piece_id_wire_names!(
     HalfCorkscrewLeftDown,
     HalfCorkscrewRightDown,
     TopHat,
+    LaunchedTopHat,
     LevelToSixtyUp,
     SixtyUpToLevel,
     LevelToSixtyDown,
@@ -1392,6 +1711,50 @@ define_piece_id_wire_names!(
     RavenRollRightDown,
     LargeLoop,
     LargeLoopRight,
+    EjectorHill8x48,
+    EjectorHill12x64,
+    EjectorHill8x64,
+    EjectorHill12x80,
+    EjectorHill16x96,
+    FloaterHill4x48,
+    FloaterHill8x64,
+    FloaterHill12x80,
+    FloaterHill6x64,
+    FloaterHill12x96,
+    FloaterHill16x112,
+    SpeedHill4x64,
+    SpeedHill6x80,
+    WoodenEjectorHill6x48,
+    WoodenEjectorHill8x64,
+    WoodenEjectorHill16x80,
+    EjectorHill8x48OuterLeft,
+    EjectorHill8x48OuterRight,
+    EjectorHill12x64OuterLeft,
+    EjectorHill12x64OuterRight,
+    EjectorHill8x64OuterLeft,
+    EjectorHill8x64OuterRight,
+    EjectorHill12x80OuterLeft,
+    EjectorHill12x80OuterRight,
+    EjectorHill16x96OuterLeft,
+    EjectorHill16x96OuterRight,
+    FloaterHill4x48OuterLeft,
+    FloaterHill4x48OuterRight,
+    FloaterHill8x64OuterLeft,
+    FloaterHill8x64OuterRight,
+    FloaterHill12x80OuterLeft,
+    FloaterHill12x80OuterRight,
+    FloaterHill6x64OuterLeft,
+    FloaterHill6x64OuterRight,
+    FloaterHill12x96OuterLeft,
+    FloaterHill12x96OuterRight,
+    FloaterHill16x112OuterLeft,
+    FloaterHill16x112OuterRight,
+    ZeroGRollFastLeft,
+    ZeroGRollFastRight,
+    ZeroGRollCompactLeft,
+    ZeroGRollCompactRight,
+    StallLeft,
+    StallRight,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

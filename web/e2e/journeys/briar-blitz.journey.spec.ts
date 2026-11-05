@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readCircuit } from "../player/circuits";
 import { closeCircuit, legacyRideRating, openTool, placePiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
+import { expectRideReportExplained } from "../player/ride-report";
 
 test("Briar Blitz player journey @journey", async ({ page }) => {
   test.setTimeout(180_000);
@@ -17,6 +18,7 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
   });
 
   const pieces = readCircuit("Briar Blitz");
+  expect(pieces).toContain("TopHat");
   const trackPieces = pieces.filter((piece) => piece !== "+chain" && piece !== "-chain");
   const chainOn = pieces.indexOf("+chain");
   const chainOff = pieces.indexOf("-chain");
@@ -64,6 +66,7 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
   expect(chainEnabled).toBe(false);
   expect(trackCount).toBe(trackPieces.length + 1);
   expect(placedPieces).toContain("BankedTurnStandalone");
+  expect(placedPieces).toContain("TopHat");
   expect(placedPieces.filter((piece) => piece.startsWith("TightTwister") || piece.startsWith("Twister")).length).toBeGreaterThanOrEqual(2);
 
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -74,12 +77,7 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
   const crestCount = await page.evaluate(() => window.gameTest.crestBursts().length);
   await testRide(page);
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
-  await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
-  const rating = await page.evaluate(() => window.gameTest.testingReport()!.rating);
-  expect(rating.excitement).toBeGreaterThanOrEqual(2);
-  expect(rating.excitement).toBeLessThanOrEqual(6);
-  expect(rating.intensity).toBeGreaterThan(0);
-  expect(rating.intensity).toBeLessThan(12);
+  const { rating } = await expectRideReportExplained(page);
   console.log(`Briar Blitz ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);

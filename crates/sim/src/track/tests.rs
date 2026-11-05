@@ -10,6 +10,265 @@ fn catalog_returns_the_same_static_template_slice() {
 }
 
 #[test]
+fn airtime_rating_matches_the_force_overlay_bands() {
+    use super::models::AirtimeRating;
+
+    let steel_limits = hybrid_model().comfortable_force_limits;
+    assert_eq!(steel_limits.classify_airtime(-0.2), AirtimeRating::Weak);
+    assert_eq!(
+        steel_limits.classify_airtime(-0.200_001),
+        AirtimeRating::Good
+    );
+    assert_eq!(steel_limits.classify_airtime(-0.9), AirtimeRating::Good);
+    assert_eq!(
+        steel_limits.classify_airtime(-0.900_001),
+        AirtimeRating::Great
+    );
+    assert_eq!(steel_limits.classify_airtime(-1.5), AirtimeRating::Great);
+    assert_eq!(
+        steel_limits.classify_airtime(-1.500_001),
+        AirtimeRating::TooMuch
+    );
+    assert_eq!(
+        steel_limits.classify_airtime(-1.3 * -steel_limits.minimum_vertical_g),
+        AirtimeRating::TooMuch
+    );
+    assert_eq!(
+        steel_limits.classify_airtime(-1.300_001 * -steel_limits.minimum_vertical_g),
+        AirtimeRating::Dangerous
+    );
+}
+
+#[test]
+fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
+    let steel_models = [hybrid_model(), multi_launch_model()];
+    let wood = wooden_twister_model();
+    let upright_hills: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| {
+            piece.family.is_some_and(|family| {
+                matches!(family.feel, HillFeel::Ejector | HillFeel::Floater)
+                    && family.twist.is_none()
+            }) && steel_models.iter().all(|model| model.allows_piece(piece))
+        })
+        .collect();
+    assert_eq!(upright_hills.len(), 11);
+
+    let outer_banks: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| {
+            piece.family.is_some_and(|family| {
+                matches!(
+                    family.twist,
+                    Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                )
+            })
+        })
+        .collect();
+    assert_eq!(outer_banks.len(), upright_hills.len() * 2);
+
+    for upright in upright_hills {
+        let family = upright.family.unwrap();
+        for twist in [HillTwist::OuterBankLeft, HillTwist::OuterBankRight] {
+            let matching: Vec<_> = outer_banks
+                .iter()
+                .filter(|piece| {
+                    let candidate = piece.family.unwrap();
+                    candidate.feel == family.feel
+                        && candidate.height_metres == family.height_metres
+                        && candidate.span_metres == family.span_metres
+                        && candidate.twist == Some(twist)
+                })
+                .collect();
+            assert_eq!(matching.len(), 1, "{} {twist:?}", upright.name);
+            let piece = matching[0];
+            assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
+            assert_eq!(piece.inversion, None);
+            assert!(piece.rated_speeds.is_some(), "{}", piece.name);
+            assert!(!wood.allows_piece(piece), "{}", piece.name);
+            for model in &steel_models {
+                assert!(model.allows_piece(piece), "{} {}", model.name, piece.name);
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
+    let steel_models = [hybrid_model(), multi_launch_model()];
+    let wood = wooden_twister_model();
+    for (feel, size_count) in [(HillFeel::ZeroGRoll, 2), (HillFeel::Stall, 1)] {
+        let pieces: Vec<_> = catalog()
+            .iter()
+            .filter(|piece| piece.family.is_some_and(|family| family.feel == feel))
+            .collect();
+        assert_eq!(pieces.len(), 2 * size_count, "{feel:?}");
+        let mut dimensions: Vec<_> = pieces
+            .iter()
+            .map(|piece| {
+                let family = piece.family.unwrap();
+                (family.height_metres, family.span_metres)
+            })
+            .collect();
+        dimensions.sort_unstable();
+        dimensions.dedup();
+        assert_eq!(dimensions.len(), size_count, "{feel:?}");
+        for (height, span) in dimensions {
+            for twist in [HillTwist::LeftRoll, HillTwist::RightRoll] {
+                let matching: Vec<_> = pieces
+                    .iter()
+                    .filter(|piece| {
+                        let family = piece.family.unwrap();
+                        family.height_metres == height
+                            && family.span_metres == span
+                            && family.twist == Some(twist)
+                    })
+                    .collect();
+                assert_eq!(matching.len(), 1, "{feel:?} {height} x {span} {twist:?}");
+                let piece = matching[0];
+                assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
+                assert_eq!(piece.inversion, Some(Inversion::HeartlineRoll));
+                assert!(piece.rated_speeds.is_some(), "{}", piece.name);
+                assert!(!wood.allows_piece(piece), "{}", piece.name);
+                for model in &steel_models {
+                    assert!(model.allows_piece(piece), "{} {}", model.name, piece.name);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
+    let expected_hills: [(&str, &[&str]); 14] = [
+        (
+            "Ejector hill 8 × 48 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Ejector hill 12 × 64 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Ejector hill 8 × 64 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Ejector hill 12 × 80 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Ejector hill 16 × 96 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Floater hill 4 × 48 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 8 × 64 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 12 × 80 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 6 × 64 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 12 × 96 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 16 × 112 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Speed hill 4 × 64 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Speed hill 6 × 80 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
+    ];
+    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    let hill_pieces: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| expected_hills.iter().any(|(name, _)| piece.name == *name))
+        .collect();
+    assert_eq!(hill_pieces.len(), expected_hills.len());
+
+    for (name, expected_models) in expected_hills {
+        let piece = hill_pieces
+            .iter()
+            .find(|piece| {
+                piece.name == name
+                    && expected_models.iter().all(|model_name| {
+                        models
+                            .iter()
+                            .find(|model| model.name == *model_name)
+                            .unwrap()
+                            .allowed_pieces
+                            .contains(&piece.id)
+                    })
+            })
+            .unwrap_or_else(|| panic!("catalog is missing {name}"));
+        assert!(matches!(piece.shape, Shape::Profile(_)), "{name}");
+        let rated = piece.rated_speeds.expect("hill has a rated speed window");
+        assert!(rated.maximum_entry - rated.minimum_entry >= 2.0, "{name}");
+        let family = piece.family.expect("hill has family metadata");
+        let dimensions: Vec<u16> = name
+            .split_whitespace()
+            .filter_map(|word| word.parse().ok())
+            .collect();
+        let expected_feel = if name.starts_with("Floater") {
+            HillFeel::Floater
+        } else if name.starts_with("Speed") {
+            HillFeel::Speed
+        } else {
+            HillFeel::Ejector
+        };
+        assert_eq!(family.feel, expected_feel, "{name}");
+        assert_eq!(family.height_metres, dimensions[0] as u8, "{name}");
+        assert_eq!(family.span_metres, dimensions[1], "{name}");
+        assert_eq!(family.twist, None, "{name}");
+        let reduction = match piece.id {
+            PieceId::EjectorHill8x48 | PieceId::FloaterHill4x48 | PieceId::SpeedHill6x80 => 1.0,
+            PieceId::SpeedHill4x64 => 3.0,
+            _ => 0.0,
+        };
+        assert_eq!(
+            family.design_speed_metres_per_second - reduction,
+            rated.maximum_entry,
+            "{name} rated maximum"
+        );
+
+        for model in &models {
+            let should_be_allowed = expected_models.contains(&model.name);
+            assert_eq!(
+                model.allowed_pieces.contains(&piece.id),
+                should_be_allowed,
+                "{} availability for {name}",
+                model.name
+            );
+            assert_eq!(
+                model
+                    .available_pieces(TrackState::origin())
+                    .iter()
+                    .any(|candidate| candidate.id == piece.id),
+                should_be_allowed,
+                "{} reachable entry connector for {name}",
+                model.name
+            );
+        }
+    }
+}
+
+#[test]
 fn half_loop_has_grid_aligned_forward_displacement() {
     let pieces = catalog();
     for (id, expected_x) in [(PieceId::HalfLoopUp, 14), (PieceId::HalfLoopDown, -14)] {
@@ -109,41 +368,44 @@ fn end_state_after_allowed_pieces(model: &CoasterModel, ids: &[PieceId]) -> Trac
 #[test]
 fn inversion_pieces_identify_their_heartlining() {
     for piece in catalog() {
-        assert_eq!(
-            piece.inversion.is_some(),
-            piece.heartlining.is_some(),
-            "{:?}",
-            piece.id
-        );
-        if let Some(heartlining) = piece.heartlining {
-            let label = match heartlining {
-                Heartlining::Heartlined => "(heartlined)",
-                Heartlining::NotHeartlined => "(not heartlined)",
-            };
-            assert!(piece.name.contains(label), "{:?}: {}", piece.id, piece.name);
+        if piece.inversion.is_some() {
+            assert!(
+                piece.heartlining.is_some(),
+                "{:?}: inversions identify heartlining",
+                piece.id
+            );
+        } else if piece.heartlining.is_some() {
+            assert!(
+                piece.family.is_some_and(|family| matches!(
+                    family.twist,
+                    Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                )) && piece.heartlining == Some(Heartlining::Heartlined),
+                "{:?}: unexpected heartlining on a non-inversion",
+                piece.id
+            );
         }
+        assert!(
+            !piece.name.contains("(heartlined)"),
+            "{:?}: {}",
+            piece.id,
+            piece.name
+        );
+        assert!(
+            !piece.name.contains("(not heartlined)"),
+            "{:?}: {}",
+            piece.id,
+            piece.name
+        );
     }
 }
 
 #[test]
 fn half_corkscrew_ids_display_as_up_and_down_half_rolls() {
     let expected_names = [
-        (
-            PieceId::HalfCorkscrewLeftUp,
-            "Left half roll up (not heartlined)",
-        ),
-        (
-            PieceId::HalfCorkscrewLeftDown,
-            "Left half roll down (not heartlined)",
-        ),
-        (
-            PieceId::HalfCorkscrewRightUp,
-            "Right half roll up (not heartlined)",
-        ),
-        (
-            PieceId::HalfCorkscrewRightDown,
-            "Right half roll down (not heartlined)",
-        ),
+        (PieceId::HalfCorkscrewLeftUp, "Left half roll up"),
+        (PieceId::HalfCorkscrewLeftDown, "Left half roll down"),
+        (PieceId::HalfCorkscrewRightUp, "Right half roll up"),
+        (PieceId::HalfCorkscrewRightDown, "Right half roll down"),
     ];
     let pieces = catalog();
 
@@ -1681,24 +1943,24 @@ fn classic_corkscrew_has_a_larger_track_path_than_heartline_roll() {
 
 #[test]
 fn top_hat_has_a_tall_summit_and_level_connectors() {
-    let piece = catalog()
-        .iter()
-        .find(|piece| piece.id == PieceId::TopHat)
-        .unwrap();
-    let midpoint = piece.sample(piece.length() / 2.0);
-    assert!(midpoint.position.z >= 29.0);
-    let slopes: Vec<_> = (0..=1000)
-        .map(|index| {
-            piece
-                .sample(piece.length() * (f64::from(index) / 1000.0))
-                .tangent
-                .z
-        })
-        .collect();
-    assert!(slopes.iter().copied().fold(0.0, f64::max) > 0.95);
-    assert!(slopes.iter().copied().fold(0.0, f64::min) < -0.95);
-    near_vec(piece.sample(0.0).tangent, piece.entry.tangent());
-    near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
+    for (id, height) in [(PieceId::TopHat, 30.0), (PieceId::LaunchedTopHat, 38.0)] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let midpoint = piece.sample(piece.length() / 2.0);
+        assert!((midpoint.position.z - height).abs() < 0.01);
+        let slopes: Vec<_> = (0..=1000)
+            .map(|index| {
+                piece
+                    .sample(piece.length() * (f64::from(index) / 1000.0))
+                    .tangent
+                    .z
+            })
+            .collect();
+        assert!(slopes.iter().copied().fold(0.0, f64::max) > 0.65);
+        assert!(slopes.iter().copied().fold(0.0, f64::min) < -0.65);
+        assert!(piece.rated_speeds.is_some());
+        near_vec(piece.sample(0.0).tangent, piece.entry.tangent());
+        near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
+    }
 }
 
 #[test]

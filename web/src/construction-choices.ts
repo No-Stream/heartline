@@ -108,3 +108,9 @@ export function pieceInGroup(pieces: readonly ConstructionPiece[], group: string
   const members = pieces.filter((piece) => piece.group === group);
   return (members.find((piece) => !piece.refusal) ?? members[0])?.id;
 }
+
+/** A step names an exact palette entry, so speed matching must not redirect navigation. */
+export function steppedPieceSelection(pieces: readonly ConstructionPiece[], shapes: ReadonlyMap<string, PieceShape>, selectedId: string | null, name: PieceStep, step: -1 | 1): { type: "construction-select"; piece: string; exact: true } | undefined {
+  const piece = steppedPiece(pieces, shapes, selectedId, name, step);
+  return piece && piece !== selectedId ? { type: "construction-select", piece, exact: true } : undefined;
+}

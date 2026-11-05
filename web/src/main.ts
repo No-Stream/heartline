@@ -11,20 +11,23 @@ import type { Facility } from "./facilities";
 import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
-import type { CameraAction, InputAction } from "./input/actions";
+import type { CameraAction, InputAction, ScreenPoint, UndergroundStyle } from "./input/actions";
 import { constructionRiderPositions, validateBlockAnalysisBudget, type FrameLogEntry, type GameTest, type SnapshotArrivalEntry } from "./game-test";
 import { blockLayoutChanged } from "./block-analysis-progress";
-import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from "./render/index";
+import { createWorldRenderer, loadAtlas, type Cutaway, type WorldView, type WorldSprite } from "./render/index";
+import { CUTAWAY_RADIUS, cutawayLevelForTrack, insideCutaway } from "./render/cutaway";
 import { advanceDayPhase, NOON, START_PHASE } from "./render/daylight";
 import { CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
 import { fitGameBar } from "./game-bar-fit";
 import { trackStyle } from "./render/track/geometry";
 import type { TrainLayout } from "./train-layout";
-import type { CoasterColorScheme } from "./coaster-colors";
+import { repaint, type CoasterColorScheme } from "./coaster-colors";
+import { steppedTrainCount } from "./block-panel-state";
 import { createStaticTrackCache } from "./render/track/cache";
 import { RenderClock } from "./render-clock";
 import { createConstructionPanel } from "./construction";
+import { createConstructionInputQueue } from "./construction-input-queue";
 import type { BlockAnalysisProgress, ConstructionState, PieceShapesMessage } from "./construction-protocol";
 import { followTrackEnd, railPoints } from "./construction-camera";
 import { createConstructionEffects } from "./construction-effects";
@@ -47,12 +50,14 @@ import { parseReplaySession, type ReplaySession } from "./session-replay";
 import { createGamePauseState } from "./game-pause";
 import { replaySessionIntoWorker } from "./session-replay-worker";
 import { constructionHeights } from "./height-markers";
+import { createForceOverlay, nearestSampleIndex, type ScreenBox } from "./force-overlay";
 import { formatLength, type Units } from "./units";
 import { createUnitsSetting } from "./units-setting";
 import { createLiveAudio, renderOffline } from "./audio/engine";
-import { soundFrame, type UiEvent } from "./audio/mapping";
+import { soundFrame, type MappingMemory, type UiEvent } from "./audio/mapping";
 import { constructionUiEvents, createUiEventQueue, pathUiEvent, placementUiEvent, terrainUiEvent } from "./audio/ui-events";
 import { createSoundSetting } from "./sound-setting";
+import { parseTrainStates, validateTrainStates } from "./train-states";
 
 declare const __GIT_HASH__: string;
 
@@ -90,7 +95,8 @@ let world: CoasterWorld | undefined;
 let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
 const renderClock = new RenderClock<CoasterSnapshot>(30);
-let frozen = new URLSearchParams(location.search).has("test");
+const testMode = new URLSearchParams(location.search).has("test");
+let frozen = testMode;
 const frameLogEnabled = new URLSearchParams(location.search).get("frameLog") === "1";
 const frameLogEntries: FrameLogEntry[] = [];
 const snapshotArrivalEntries: SnapshotArrivalEntry[] = [];
@@ -136,7 +142,11 @@ let followedPreview = "";
 let lastFrameAt = performance.now();
 let testingMetric: TestingMetric | null = null;
 let testingReportJson = "";
+let constructionForcePreviewJson = "";
 const testingPanel = createTestingPanel(panelContainer.querySelector<HTMLElement>("[data-testing]")!, trackStyle(atlas), dispatch, () => renderRevision.invalidate());
+const forceOverlay = createForceOverlay(document.querySelector<HTMLElement>("[data-force-overlay]")!);
+/** Hover reaches this many CSS pixels from the coloured track. */
+const FORCE_HOVER_PIXELS = 14;
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
 const guestPanel = createGuestPanel(gameCanvas, { dispatch });
@@ -169,6 +179,10 @@ pathContainer.querySelector<HTMLElement>("[data-build]")!.title = `Build paths (
 pathContainer.querySelector<HTMLElement>("[data-remove]")!.title = `Remove paths (${keyHint(builderShortcuts.pathRemove)})`;
 let undergroundLevel: number | undefined;
 let selectedUndergroundLevel = 8;
+let undergroundStyle: UndergroundStyle = "cut";
+/** The cutaway window drawn in the last frame; picking inside it uses its cut level. */
+let renderedCutaway: Cutaway | undefined;
+let pointerPosition: ScreenPoint | null = null;
 const landscapingContainer = document.querySelector<HTMLElement>("[data-landscaping]");
 if (!landscapingContainer) throw new Error("Landscaping panel is missing");
 const landscapingPanel = createLandscapingPanel(landscapingContainer, dispatch);
@@ -210,6 +224,7 @@ let dayTick: number | undefined;
 let demoCrests = createCrestTracker();
 let constructionCrests = createCrestTracker();
 let crestBursts: CrestBurst[] = [];
+let soundMemory: MappingMemory | undefined;
 /** Every crest burst since the page loaded, for tests. */
 const crestHistory: CrestBurst[] = [];
 function setTimeOfDay(phase: number): void {
@@ -258,8 +273,10 @@ function endInputModes(): void {
 /** Every input mode belongs to one tool, so opening another tool ends it and only the open tool's mode can be active. */
 function openTool(tool: Tool, activatePanel = true): void {
   if (tool === activeTool) return;
+  if (activeTool === "coaster") constructionInputQueue.cancel();
   endInputModes();
   activeTool = tool;
+  renderRevision.invalidate();
   if (tool === "coaster") coasterAdapter.activate(undefined); else coasterAdapter.deactivate();
   toolbar.setActive(tool);
   dayClock.setControlsVisible(tool === "none");
@@ -315,10 +332,17 @@ const gameTest: GameTest = {
   requestGuestDetail(id) { sendWorkerAction(worker, { type: "guest-detail-request", guestId: id }); },
   guestDetail() { return latestGuestDetail; },
   testingReport() { return construction?.testingReport ?? null; },
+  constructionForcePreview() { return construction?.constructionForcePreview ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
+  trainStates() {
+    return {
+      coaster: parseTrainStates(current?.trainStates ?? new Float32Array()),
+      construction: parseTrainStates(current?.constructionTrainStates ?? new Float32Array()),
+    };
+  },
   replaySession: replayLiveSession,
   advanceTicks(count) {
-    if (!frozen || advanceTicksComplete || !Number.isInteger(count) || count < 1 || count > 100000) throw new Error("Invalid test tick advance");
+    if ((!frozen && !(testMode && gamePause.isPaused())) || advanceTicksComplete || !Number.isInteger(count) || count < 0 || count > 100000) throw new Error("Invalid test tick advance");
     return new Promise<void>((resolve) => { advanceTicksComplete = resolve; sendWorkerAction(worker, { type: "test-advance", count }); });
   },
   advanceBlockAnalysis(budget) {
@@ -326,7 +350,13 @@ const gameTest: GameTest = {
     validateBlockAnalysisBudget(budget);
     return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; sendWorkerAction(worker, { type: "test-advance-block-analysis", budget }); });
   },
+  advanceBlockPlacement(budget) {
+    if (!manualBlockAnalysis || advanceBlockAnalysisComplete) throw new Error("Invalid test block placement advance");
+    validateBlockAnalysisBudget(budget);
+    return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; sendWorkerAction(worker, { type: "test-advance-block-placement", budget }); });
+  },
   setCamera(value) { camera = value; followPoints = undefined; renderRevision.invalidate(); },
+  cutaway() { return renderedCutaway ?? null; },
   setSurface(x, y, corners) { sendWorkerAction(worker, { type: "set-surface", x, y, corners: new Int16Array(corners) }); },
   project(point) { return projectWorld(screenCamera(), viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
@@ -346,6 +376,7 @@ function applyUnits(units: Units): void {
   landscapingPanel.setUnits(units);
   guestPanel.setUnits(units);
   testingPanel.setUnits(units);
+  forceOverlay.setEstimate(construction?.constructionForcePreview ?? null, units);
   renderRevision.invalidate();
 }
 const unitsSetting = createUnitsSetting(unitsContainer, dispatch);
@@ -388,10 +419,23 @@ function handleCoasterPointer(action: InputAction): boolean {
   return true;
 }
 const coasterAdapter = coasterToolAdapter((action) => {
-  if (construction && !construction.complete) return true;
   if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") return handleCoasterPointer(action);
   if (action.type === "chain-toggle") {
-    if (construction?.active) sendWorkerAction(worker, { type: "construction-set-chain", enabled: !construction.chain });
+    if (construction?.active) sendConstructionInput({ type: "construction-set-chain", enabled: !construction.chain });
+  } else if (action.type === "construction-color-select") {
+    if (construction?.colors) sendConstructionInput({ type: "construction-set-colors", colors: repaint(construction.colors, action.part, action.color) });
+  } else if (action.type === "construction-open-toggle") {
+    if (construction?.active) sendConstructionInput({ type: "construction-set-open", open: !construction.isOpen });
+  } else if (action.type === "construction-price-step") {
+    if (construction?.active) {
+      const price = construction.coasterPrice + action.step;
+      if (price >= 0 && price <= 65535) sendConstructionInput({ type: "construction-set-coaster-price", price });
+    }
+  } else if (action.type === "construction-train-count-step") {
+    if (construction?.active) {
+      const count = steppedTrainCount(construction.trainCount, construction.blockReport.trainCapacity, action.step);
+      if (count !== undefined) sendConstructionInput({ type: "construction-set-train-count", count });
+    }
   } else if (action.type === "construction-delete-mode" || action.type === "delete-mode-toggle") {
     deleteMode = action.type === "delete-mode-toggle" ? !deleteMode : action.enabled;
     panel.setDeleteMode(deleteMode);
@@ -399,18 +443,37 @@ const coasterAdapter = coasterToolAdapter((action) => {
   } else if (action.type === "piece-step" || action.type === "piece-group") {
     panel.choose(action);
   } else if (action.type === "construction-set-model") {
-    sendWorkerAction(worker, { type: "construction-select", piece: `model:${action.model}` });
+    sendConstructionInput({ type: "construction-select", piece: `model:${action.model}` });
   } else if (isConstructionAction(action)) {
-    sendWorkerAction(worker, action);
+    sendConstructionInput(action);
   } else return false;
   return true;
 }, handleCoasterPointer);
 
+let executingConstructionInput = false;
+let constructionInputSent = false;
+function sendConstructionInput(action: Extract<InputAction, WorkerAction>): void {
+  constructionInputSent = true;
+  sendWorkerAction(worker, action);
+}
+const constructionInputQueue = createConstructionInputQueue((action) => {
+  constructionInputSent = false;
+  executingConstructionInput = true;
+  try { coasterAdapter.key(action); } finally { executingConstructionInput = false; }
+  if (constructionInputSent) sendWorkerAction(worker, { type: "construction-input-barrier" });
+  return constructionInputSent;
+}, (notice) => panel.setQueueNotice(notice));
+
 function dispatch(action: InputAction): void {
   inputLog.push({ action: structuredClone(action), time: performance.now(), tick: current?.tickCount ?? 0, viewport: { ...viewport }, camera: { ...camera } });
+  if (action.type === "hover" || action.type === "drag-move") {
+    pointerPosition = action.position;
+    if (renderedCutaway) renderRevision.invalidate();
+  }
   // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
   if (coasterActions.has(action.type) || action.type.startsWith("construction-")) {
-    coasterAdapter.key(action);
+    if (executingConstructionInput) coasterAdapter.key(action);
+    else if (activeTool === "coaster") constructionInputQueue.submit(action, construction?.track.length ?? 0);
     return;
   }
   if (action.type === "session-export") {
@@ -493,17 +556,18 @@ function dispatch(action: InputAction): void {
     landscapingAdapter.activate(action.selection);
   } else if (action.type === "landscaping-cancel") {
     landscapingAdapter.deactivate();
-  } else if (action.type === "underground-view-toggle" || action.type === "underground-view-level") {
+  } else if (action.type === "underground-view-toggle" || action.type === "underground-view-level" || action.type === "underground-view-style") {
     if (action.type === "underground-view-level") selectedUndergroundLevel = action.level;
+    else if (action.type === "underground-view-style") undergroundStyle = action.style;
     else undergroundLevel = undergroundLevel === undefined ? selectedUndergroundLevel : undefined;
     if (undergroundLevel !== undefined) undergroundLevel = selectedUndergroundLevel;
-    landscapingPanel.setUndergroundView(undergroundLevel !== undefined, selectedUndergroundLevel);
+    landscapingPanel.setUndergroundView(undergroundLevel !== undefined, selectedUndergroundLevel, undergroundStyle);
     renderRevision.invalidate();
   } else if (landscapingTool.state().active && (action.type === "hover" || action.type === "select" || action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end" || action.type === "drag-cancel")) {
     if (action.type === "drag-cancel") landscapingAdapter.drag("cancel", null);
     else {
       const pick = action.position ? renderer.pickSurface(action.position.x, action.position.y) : null;
-      const tile = landscapingTileFromPick(pick, world, action.position, screenCamera(), viewport, undergroundLevel);
+      const tile = landscapingTileFromPick(pick, world, action.position, screenCamera(), viewport, pickLevelAt(action.position));
       if (action.type === "hover") landscapingAdapter.pointerMove(tile);
       else if (action.type === "select") landscapingAdapter.click(tile);
       else landscapingAdapter.drag(action.type === "drag-start" ? "start" : action.type === "drag-move" ? "move" : "end", tile);
@@ -562,6 +626,10 @@ function dispatch(action: InputAction): void {
     coasterAdapter.drag(phase, action);
   } else if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") {
     coasterAdapter.key(action);
+  } else if (action.type === "hover" && activeTool === "coaster") {
+    const estimateSamples = forceOverlayVisible() ? construction?.constructionForcePreview?.samples ?? [] : [];
+    const points = estimateSamples.map((sample) => projectWorld(screenCamera(), viewport, sample));
+    if (forceOverlay.setHover(action.position ? nearestSampleIndex(points, action.position, FORCE_HOVER_PIXELS * pixelRatio) : null)) renderRevision.invalidate();
   } else if (action.type === "select") {
     const selection = renderer.pick(action.position.x, action.position.y);
     gameCanvas.dataset.selection = JSON.stringify(selection);
@@ -589,6 +657,7 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
     moveCamera(action);
     if (action.type !== "rotate") followPoints = undefined;
+    renderRevision.invalidate();
   }
 }
 function isConstructionAction(action: InputAction): action is Extract<InputAction, WorkerAction> {
@@ -680,6 +749,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     followedPreview = previewKey;
     construction = next;
     panel.update(next);
+    if (message.type === "construction-state") constructionInputQueue.setBusy(!next.complete, next.track.length);
     const selectedWouldTunnel = next.pieces.some((piece) => piece.id === next.selected && piece.wouldTunnel)
       || next.elements.some((element) => element.id === next.selected && element.wouldTunnel);
     tunnelPreview.textContent = selectedWouldTunnel ? "This selection will tunnel through terrain." : "";
@@ -688,19 +758,28 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     gameCanvas.dataset.blockBoundaries = String(next.blockReport.sections.length);
     const reportJson = JSON.stringify(next.testingReport ?? null);
     if (reportJson !== testingReportJson) { testingReportJson = reportJson; testingPanel.update(next.testingReport ?? null); }
+    const estimateJson = JSON.stringify(next.constructionForcePreview ?? null);
+    if (estimateJson !== constructionForcePreviewJson) { constructionForcePreviewJson = estimateJson; testingPanel.updateEstimate(next.constructionForcePreview ?? null); forceOverlay.setEstimate(next.constructionForcePreview ?? null, unitsSetting.units()); }
     if (redraw) renderRevision.invalidate();
   } else if (message.type === "guest-detail") {
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
   } else if (message.type === "snapshot") {
+    validateTrainStates(message.trainStates);
+    validateTrainStates(message.constructionTrainStates);
     if (frameLogEnabled) snapshotArrivalEntries.push({ now: performance.now(), sentAt: message.sentAt, tickCount: message.tickCount });
-    if (!frozen && !renderClock.push(message)) return;
+    if (!frozen && advanceTicksComplete) {
+      renderClock.snap(message);
+      renderRevision.invalidate();
+    } else if (!frozen && !renderClock.push(message)) return;
     previous = current;
     if (!frozen || !current || current.guestIds.length === 0 || advanceTicksComplete) current = message;
     if (!frozen) observeTick(message);
     else if (advanceTicksComplete) observeCrests(message);
     output.value = String(message.tickCount);
     gameCanvas.dataset.agentCount = String(current?.guestIds.length ?? 0);
+  } else if (message.type === "construction-input-barrier") {
+    constructionInputQueue.complete(construction?.track.length ?? 0, construction?.active ?? false);
   } else if (message.type === "surface-edited" || message.type === "test-resumed" || message.type === "construction-finish-ready") {
     // These replies are consumed by test and replay listeners.
   } else {
@@ -743,9 +822,26 @@ function observeCrests(snapshot: CoasterSnapshot): void {
   crestBursts = [...crestBursts, ...newBursts].filter((burst) => snapshot.tickCount - burst.tick < CONFETTI_LIFE_TICKS);
 }
 
+/** The cutaway window follows the end of the track being built, cut just above it; otherwise it follows the pointer at the chosen cut level. */
+function cutawayFor(level: number, trackEnd: WorldPoint | undefined): Cutaway {
+  const center = trackEnd ? projectWorld(screenCamera(), viewport, trackEnd) : pointerPosition ?? { x: viewport.width / 2, y: viewport.height / 2 };
+  return { x: center.x, y: center.y, radius: CUTAWAY_RADIUS * viewport.width / cssViewport().width, level: trackEnd ? cutawayLevelForTrack(trackEnd.z) : level };
+}
+
+/** The height the pointer picks at: the cut level inside the cutaway window or under the whole-view cut, the surface otherwise. */
+function pickLevelAt(position: ScreenPoint | null): number | undefined {
+  if (!renderedCutaway) return undergroundLevel;
+  return position && insideCutaway(renderedCutaway, position.x, position.y) ? renderedCutaway.level : undefined;
+}
+
+/** Force labels and the hover readout belong to the estimate of an unfinished coaster, not to test-run reports. */
+function forceOverlayVisible(): boolean {
+  return activeTool === "coaster" && !!construction?.active && !construction.testingReport && !!construction.constructionForcePreview && testingMetric !== null;
+}
+
 function frame(now: number): void {
   if (!world || replayInProgress) return;
-  if (frozen && gameTest.ready) return;
+  if (gameTest.ready && (frozen || (testMode && gamePause.isPaused() && !followPoints))) return;
   const renderFrame = frozen ? undefined : renderClock.frame(now);
   const renderPrevious = frozen ? previous : renderFrame?.previous;
   const renderCurrent = frozen ? current : renderFrame?.current;
@@ -768,8 +864,14 @@ function frame(now: number): void {
     heightMarkers.style.left = `${anchor.x}px`;
     heightMarkers.style.top = `${anchor.y}px`;
   }
+  const heightMarkerBox: ScreenBox[] = heights ? [{
+    left: parseFloat(heightMarkers.style.left) + 12 - 14, top: parseFloat(heightMarkers.style.top) - 12 - heightMarkers.offsetHeight,
+    width: heightMarkers.offsetWidth + 14, height: heightMarkers.offsetHeight + 14,
+  }] : [];
+  forceOverlay.render(forceOverlayVisible(), (sample) => projectWorld(camera, cssViewport(), sample), cssViewport(), heightMarkerBox);
   constructionEffects.active(now);
   dayClock.update(dayPhase);
+  renderedCutaway = undergroundLevel !== undefined && undergroundStyle === "cutaway" ? cutawayFor(undergroundLevel, heights?.end.position) : undefined;
   const scene = composeScene({
     world,
     previous: renderPrevious,
@@ -781,7 +883,7 @@ function frame(now: number): void {
     atlas,
     facilities,
     scenery,
-    undergroundLevel,
+    undergroundLevel: undergroundStyle === "cut" ? undergroundLevel : undefined,
     construction,
     activeTool,
     selectedGuestId,
@@ -802,10 +904,12 @@ function frame(now: number): void {
     renderTick: renderFrame?.tick,
     setGuestAnchor: (point) => guestPanel.setAnchor(point),
   });
-  audio.apply(soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts, ui: uiEvents.drain() }));
+  const sound = soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts, ui: uiEvents.drain(), paused: gamePause.isPaused(), timeSeconds: now / 1000 }, soundMemory);
+  soundMemory = sound.memory;
+  audio.apply(sound.frame);
   renderedGuests = scene.guests;
   renderedRiders = scene.riders;
-  renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none" });
+  renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none", cutaway: renderedCutaway });
   const trainPoses = scene.view.trainPoses;
   if (frameLogEnabled && renderCurrent && trainPoses.length >= 11) {
     frameLogEntries.push({

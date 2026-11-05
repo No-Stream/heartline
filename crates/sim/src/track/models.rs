@@ -74,6 +74,35 @@ pub struct ComfortableForceLimits {
     pub maximum_lateral_g: f64,
     pub maximum_longitudinal_g: f64,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AirtimeRating {
+    Weak,
+    Good,
+    Great,
+    TooMuch,
+    Dangerous,
+}
+
+impl ComfortableForceLimits {
+    /// Rates negative vertical force using the airtime bands shown by the force overlay.
+    pub fn classify_airtime(self, vertical_g: f64) -> AirtimeRating {
+        let airtime_g = -vertical_g;
+        let comfortable_airtime_limit_g = -self.minimum_vertical_g;
+        if airtime_g <= 0.2 {
+            AirtimeRating::Weak
+        } else if airtime_g <= 0.9 {
+            AirtimeRating::Good
+        } else if airtime_g <= comfortable_airtime_limit_g {
+            AirtimeRating::Great
+        } else if airtime_g <= 1.3 * comfortable_airtime_limit_g {
+            AirtimeRating::TooMuch
+        } else {
+            AirtimeRating::Dangerous
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LaunchSpeedBounds {
     pub minimum: f64,
@@ -267,6 +296,15 @@ pub fn wooden_twister_model() -> CoasterModel {
                 TwisterHelixLeft,
                 TwisterHelixRight,
                 AirtimeHill,
+                FloaterHill4x48,
+                FloaterHill8x64,
+                FloaterHill12x80,
+                FloaterHill6x64,
+                FloaterHill12x96,
+                FloaterHill16x112,
+                SpeedHill4x64,
+                SpeedHill6x80,
+                WoodenEjectorHill6x48,
                 TightTwisterLeft,
                 TightTwisterRight,
             ]
@@ -423,6 +461,47 @@ pub fn hybrid_model() -> CoasterModel {
                 TerrainRise,
                 TerrainFall,
                 AirtimeHill,
+                EjectorHill8x48OuterLeft,
+                EjectorHill8x48OuterRight,
+                EjectorHill12x64OuterLeft,
+                EjectorHill12x64OuterRight,
+                EjectorHill8x64OuterLeft,
+                EjectorHill8x64OuterRight,
+                EjectorHill12x80OuterLeft,
+                EjectorHill12x80OuterRight,
+                EjectorHill16x96OuterLeft,
+                EjectorHill16x96OuterRight,
+                FloaterHill4x48OuterLeft,
+                FloaterHill4x48OuterRight,
+                FloaterHill8x64OuterLeft,
+                FloaterHill8x64OuterRight,
+                FloaterHill12x80OuterLeft,
+                FloaterHill12x80OuterRight,
+                FloaterHill6x64OuterLeft,
+                FloaterHill6x64OuterRight,
+                FloaterHill12x96OuterLeft,
+                FloaterHill12x96OuterRight,
+                FloaterHill16x112OuterLeft,
+                FloaterHill16x112OuterRight,
+                ZeroGRollFastLeft,
+                ZeroGRollFastRight,
+                ZeroGRollCompactLeft,
+                ZeroGRollCompactRight,
+                StallLeft,
+                StallRight,
+                EjectorHill8x48,
+                EjectorHill12x64,
+                EjectorHill8x64,
+                EjectorHill12x80,
+                EjectorHill16x96,
+                FloaterHill4x48,
+                FloaterHill8x64,
+                FloaterHill12x80,
+                FloaterHill6x64,
+                FloaterHill12x96,
+                FloaterHill16x112,
+                SpeedHill4x64,
+                SpeedHill6x80,
                 HybridOverbankLeft,
                 HybridOverbankRight,
                 TwistedDropLeft,
@@ -482,6 +561,7 @@ pub fn multi_launch_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                LaunchedTopHat,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,
@@ -591,6 +671,47 @@ pub fn multi_launch_model() -> CoasterModel {
                 TerrainRise,
                 TerrainFall,
                 AirtimeHill,
+                EjectorHill8x48OuterLeft,
+                EjectorHill8x48OuterRight,
+                EjectorHill12x64OuterLeft,
+                EjectorHill12x64OuterRight,
+                EjectorHill8x64OuterLeft,
+                EjectorHill8x64OuterRight,
+                EjectorHill12x80OuterLeft,
+                EjectorHill12x80OuterRight,
+                EjectorHill16x96OuterLeft,
+                EjectorHill16x96OuterRight,
+                FloaterHill4x48OuterLeft,
+                FloaterHill4x48OuterRight,
+                FloaterHill8x64OuterLeft,
+                FloaterHill8x64OuterRight,
+                FloaterHill12x80OuterLeft,
+                FloaterHill12x80OuterRight,
+                FloaterHill6x64OuterLeft,
+                FloaterHill6x64OuterRight,
+                FloaterHill12x96OuterLeft,
+                FloaterHill12x96OuterRight,
+                FloaterHill16x112OuterLeft,
+                FloaterHill16x112OuterRight,
+                ZeroGRollFastLeft,
+                ZeroGRollFastRight,
+                ZeroGRollCompactLeft,
+                ZeroGRollCompactRight,
+                StallLeft,
+                StallRight,
+                EjectorHill8x48,
+                EjectorHill12x64,
+                EjectorHill8x64,
+                EjectorHill12x80,
+                EjectorHill16x96,
+                FloaterHill4x48,
+                FloaterHill8x64,
+                FloaterHill12x80,
+                FloaterHill6x64,
+                FloaterHill12x96,
+                FloaterHill16x112,
+                SpeedHill4x64,
+                SpeedHill6x80,
             ]
         },
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],

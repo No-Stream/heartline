@@ -118,22 +118,38 @@ mod tests {
         }
     }
 
+    fn scoring_reading(distance: f64, vertical: f64, lateral: f64) -> CarReading {
+        CarReading {
+            speed: 30.0,
+            ..reading(distance, vertical, lateral)
+        }
+    }
+
     #[test]
     fn construction_score_includes_sustained_force_from_rear_car() {
         let mut quiet = ConstructionTestRunRecorder::new(10.0, 2);
         let mut force = ConstructionTestRunRecorder::new(10.0, 2);
         for recorder in [&mut quiet, &mut force] {
-            recorder.record(&[vec![reading(0.0, 1.0, 0.0), reading(0.0, 1.0, 0.0)]]);
+            recorder.record(&[vec![
+                scoring_reading(0.0, 1.0, 0.0),
+                scoring_reading(0.0, 1.0, 0.0),
+            ]]);
         }
         for _ in 0..400 {
-            quiet.record(&[vec![reading(0.0, 1.0, 0.0), reading(0.0, 1.0, 0.0)]]);
-            force.record(&[vec![reading(0.0, 1.0, 0.0), reading(0.0, 8.0, 3.0)]]);
+            quiet.record(&[vec![
+                scoring_reading(0.0, 1.0, 0.0),
+                scoring_reading(0.0, 1.0, 0.0),
+            ]]);
+            force.record(&[vec![
+                scoring_reading(0.0, 1.0, 0.0),
+                scoring_reading(0.0, 8.0, 3.0),
+            ]]);
         }
         for distance in 1..10 {
             for recorder in [&mut quiet, &mut force] {
                 recorder.record(&[vec![
-                    reading(distance as f64, 1.0, 0.0),
-                    reading(distance as f64, 1.0, 0.0),
+                    scoring_reading(distance as f64, 1.0, 0.0),
+                    scoring_reading(distance as f64, 1.0, 0.0),
                 ]]);
             }
         }
@@ -165,8 +181,8 @@ mod tests {
         let mut recorder = ConstructionTestRunRecorder::new(10.0, 2);
         for distance in 0..10 {
             recorder.record(&[vec![
-                reading(distance as f64, 4.0, 0.0),
-                reading(distance as f64, 1.0, 3.0),
+                scoring_reading(distance as f64, 4.0, 0.0),
+                scoring_reading(distance as f64, 1.0, 3.0),
             ]]);
         }
         let mut report = recorder.finish(true, false);

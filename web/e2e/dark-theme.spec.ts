@@ -50,6 +50,12 @@ const pagePoints = [{ x: 0.05, y: 0.95 }, { x: 0.95, y: 0.95 }, { x: 0.5, y: 0.9
 const parkPoints = [{ x: 0.5, y: 0.7 }, { x: 0.5, y: 0.2 }];
 
 test.describe("dark interface", () => {
+  test("shows the game name in the page and game bar", async ({ page }) => {
+    await startGame(page);
+    await expect(page).toHaveTitle("Heartline");
+    await expect(page.locator(".game-bar h1")).toHaveText("Heartline");
+  });
+
   test("the theme toggle works while the atlas is still loading", async ({ page }) => {
     let releaseAtlas: () => void = () => {};
     const atlasReleased = new Promise<void>((resolve) => { releaseAtlas = resolve; });

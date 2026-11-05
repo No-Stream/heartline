@@ -247,9 +247,9 @@ fn active_airtime_moments(
     completed: bool,
 ) -> usize {
     let mut previous_airtime = completed
-        && frames.last().is_some_and(|frame| {
-            frame.active && samples[frame.index].vertical_g < 0.0
-        });
+        && frames
+            .last()
+            .is_some_and(|frame| frame.active && samples[frame.index].vertical_g < 0.0);
     let mut moments = 0;
     for frame in frames {
         if !frame.active {
@@ -413,7 +413,7 @@ fn element_classes(
             }
             _ => {}
         }
-        if piece.id == PieceId::TopHat || piece.shape == Shape::TopHat {
+        if matches!(piece.id, PieceId::TopHat | PieceId::LaunchedTopHat) {
             classes.insert(ElementClass::TopHat);
         }
         if piece.shape == Shape::Overbank
@@ -933,12 +933,12 @@ mod tests {
             piece(PieceId::BankedTurnStandalone, PieceKind::Track),
             piece(PieceId::BarrelDropLeft, PieceKind::Track),
             piece(PieceId::TopHat, PieceKind::Track),
+            piece(PieceId::LaunchedTopHat, PieceKind::Track),
             piece(PieceId::HybridOverbankRight, PieceKind::Track),
             piece(PieceId::Launch, PieceKind::Launch),
         ];
-        pieces[7].shape = Shape::TopHat;
-        pieces[8].shape = Shape::Overbank;
-        let mut samples: Vec<_> = (0..11)
+        pieces[9].shape = Shape::Overbank;
+        let mut samples: Vec<_> = (0..12)
             .map(|index| TestSample {
                 piece_index: index.min(pieces.len() - 1),
                 ..sample(index, 10.0)
@@ -981,6 +981,26 @@ mod tests {
         assert_eq!(features.proximity_counts.dueling, 1);
         assert_eq!(features.proximity_counts.tunnel, 1);
         assert_eq!(features.proximity_counts.terrain_hugging, 1);
+    }
+
+    #[test]
+    fn top_hat_class_covers_both_profile_shaped_top_hat_pieces() {
+        for id in [PieceId::TopHat, PieceId::LaunchedTopHat] {
+            let catalog_piece = crate::track::catalog()
+                .iter()
+                .find(|catalog_piece| catalog_piece.id == id)
+                .unwrap();
+            assert!(matches!(catalog_piece.shape, Shape::Profile(_)));
+            let mut top_hat = piece(id, PieceKind::Track);
+            top_hat.shape = catalog_piece.shape.clone();
+
+            let features = ride_features(&[sample(0, 10.0)], &[top_hat], &[], 1.0, true);
+
+            assert!(
+                features.element_classes.contains(&ElementClass::TopHat),
+                "missing top-hat class for {id:?}"
+            );
+        }
     }
 
     #[test]

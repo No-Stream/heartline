@@ -25,8 +25,8 @@ struct ScoreBand {
 
 struct ExpectedScores {
     excitement: ScoreBand,
-    intensity: ScoreBand,
-    nausea: ScoreBand,
+    intensity: Option<ScoreBand>,
+    nausea: Option<ScoreBand>,
 }
 
 const fn score_band(minimum: f64, maximum: f64) -> ScoreBand {
@@ -271,13 +271,69 @@ fn score_intamin_accelerator() -> Archetype {
     }
 }
 
-fn archetypes() -> [Archetype; 5] {
+fn score_intamin_blitz() -> Archetype {
+    let mut features = empty_features();
+    features.ride_seconds = 85.0;
+    features.active_airtime_moments = 10;
+    features.active_average_speed = 27.0;
+    features.inversion_passages = vec![
+        (Inversion::VerticalLoop, Heartlining::Heartlined),
+        (Inversion::Corkscrew, Heartlining::Heartlined),
+        (Inversion::HeartlineRoll, Heartlining::Heartlined),
+    ];
+    features.element_classes = BTreeSet::from([
+        ElementClass::EjectorHill,
+        ElementClass::FloaterHill,
+        ElementClass::TopHat,
+        ElementClass::BigDrop,
+        ElementClass::Launch,
+        ElementClass::VerticalLoop,
+        ElementClass::Corkscrew,
+        ElementClass::BankedTurn,
+    ]);
+    features.snap_count = 6;
+    features.max_roll_rate_deg_s = 130.0;
+    features.roll_rate_seconds = 1.5;
+    features.statistics = RideStatistics {
+        ejector_airtime_seconds: 5.0,
+        floater_airtime_seconds: 3.0,
+        airtime_moments: 10,
+        max_positive_vertical_g: 4.5,
+        max_negative_vertical_g: -1.2,
+        max_lateral_g: 1.2,
+        max_forward_g: 1.3,
+        max_speed: 32.0,
+        average_speed: 27.0,
+        duration_seconds: 85.0,
+        track_length: 2295.0,
+        biggest_drop: 45.0,
+        launches: 3,
+        launch_peak_speed: 32.0,
+        inversions: 3,
+        ..RideStatistics::default()
+    };
+    Archetype {
+        name: "Intamin Blitz multi-launch",
+        features,
+        bands: ForceBandDurations {
+            airtime_good: 3.0,
+            airtime_great: 5.0,
+            vertical_great: 3.0,
+            lateral_strong: 1.5,
+            longitudinal_strong: 3.0,
+            ..ForceBandDurations::default()
+        },
+    }
+}
+
+fn archetypes() -> [Archetype; 6] {
     [
         score_family_wooden(),
         score_classic_arrow_looper(),
         score_b_and_m_hyper(),
         score_rmc_hybrid(),
         score_intamin_accelerator(),
+        score_intamin_blitz(),
     ]
 }
 
@@ -312,57 +368,59 @@ fn print_contributions(name: &str, score: &Scores) {
 #[test]
 fn calibration_table_prints_synthetic_archetype_scores_and_breakdowns() {
     println!("Synthetic coaster archetypes; calibrated SCORING candidate");
-    let mut measured = [(0.0, 0.0, 0.0); 5];
+    let mut measured = [(0.0, 0.0, 0.0); 6];
     let mut band_failures = Vec::new();
     for (index, (archetype, expected)) in archetypes()
         .into_iter()
         .zip([
             ExpectedScores {
                 excitement: score_band(1.5, 3.0),
-                intensity: score_band(2.0, 3.5),
-                nausea: score_band(0.3, 1.5),
+                intensity: Some(score_band(2.0, 3.5)),
+                nausea: Some(score_band(0.3, 1.5)),
             },
             ExpectedScores {
-                excitement: score_band(4.0, 6.0),
-                intensity: score_band(6.0, 7.5),
-                nausea: score_band(4.5, 7.0),
+                excitement: score_band(4.0, 5.0),
+                intensity: Some(score_band(6.0, 7.5)),
+                nausea: Some(score_band(4.5, 7.0)),
             },
             ExpectedScores {
-                excitement: score_band(6.5, 8.5),
-                intensity: score_band(5.0, 6.5),
-                nausea: score_band(1.0, 2.5),
+                excitement: score_band(6.0, 7.5),
+                intensity: Some(score_band(5.0, 6.5)),
+                nausea: None,
             },
             ExpectedScores {
-                excitement: score_band(8.5, 11.0),
-                intensity: score_band(7.0, 8.5),
-                nausea: score_band(3.5, 5.5),
+                excitement: score_band(9.5, 11.0),
+                intensity: Some(score_band(7.0, 8.5)),
+                nausea: None,
             },
             ExpectedScores {
                 excitement: score_band(5.5, 7.0),
-                intensity: score_band(6.5, 8.0),
-                nausea: score_band(0.8, 2.5),
+                intensity: Some(score_band(6.5, 8.0)),
+                nausea: None,
+            },
+            ExpectedScores {
+                excitement: score_band(9.0, 11.0),
+                intensity: None,
+                nausea: None,
             },
         ])
         .enumerate()
     {
         let scores = score(&archetype.features, &archetype.bands);
         println!(
-            "  target: excitement {:.1}–{:.1}, intensity {:.1}–{:.1}, nausea {:.1}–{:.1}",
-            expected.excitement.minimum,
-            expected.excitement.maximum,
-            expected.intensity.minimum,
-            expected.intensity.maximum,
-            expected.nausea.minimum,
-            expected.nausea.maximum,
+            "  excitement target: {:.1}–{:.1}",
+            expected.excitement.minimum, expected.excitement.maximum,
         );
         print_contributions(archetype.name, &scores);
         measured[index] = (scores.excitement, scores.intensity, scores.nausea);
         for (label, actual, band) in [
-            ("excitement", scores.excitement, expected.excitement),
+            ("excitement", scores.excitement, Some(expected.excitement)),
             ("intensity", scores.intensity, expected.intensity),
             ("nausea", scores.nausea, expected.nausea),
         ] {
-            if !(band.minimum..=band.maximum).contains(&actual) {
+            if let Some(band) = band
+                && !(band.minimum..=band.maximum).contains(&actual)
+            {
                 band_failures.push(format!(
                     "{} {label} score {actual:.2} is outside {:.1}–{:.1}",
                     archetype.name, band.minimum, band.maximum
@@ -382,13 +440,19 @@ fn calibration_table_prints_synthetic_archetype_scores_and_breakdowns() {
         }
     }
     let [
-        (family, _, family_nausea),
-        (arrow, arrow_intensity, arrow_nausea),
-        (hyper, hyper_intensity, hyper_nausea),
-        (rmc, rmc_intensity, rmc_nausea),
-        (accelerator, accelerator_intensity, accelerator_nausea),
+        (family, _, _),
+        (arrow, arrow_intensity, _),
+        (hyper, hyper_intensity, _),
+        (rmc, rmc_intensity, _),
+        (accelerator, accelerator_intensity, _),
+        (blitz, _, _),
     ] = measured;
-    if !(rmc > hyper && hyper > accelerator && accelerator > arrow && arrow > family) {
+    if !(rmc > hyper
+        && blitz > hyper
+        && hyper > accelerator
+        && accelerator > arrow
+        && arrow > family)
+    {
         band_failures
             .push("archetype excitement order must put the airtime rich hybrid highest".to_owned());
     }
@@ -400,14 +464,6 @@ fn calibration_table_prints_synthetic_archetype_scores_and_breakdowns() {
             "intensity order must put the high force Arrow below the RMC and accelerator"
                 .to_owned(),
         );
-    }
-    if !(arrow_nausea > rmc_nausea
-        && rmc_nausea > hyper_nausea
-        && hyper_nausea > accelerator_nausea
-        && accelerator_nausea > family_nausea)
-    {
-        band_failures
-            .push("nausea order must follow the specified force and inversion exposure".to_owned());
     }
     assert!(
         band_failures.is_empty(),

@@ -122,6 +122,14 @@ pub const TRAIN_POSE: &[&str] = &[
     "up_z",
     "occupied_seat_mask",
 ];
+pub const TRAIN_STATE: &[&str] = &[
+    "train_index",
+    "speed",
+    "piece_kind",
+    "vertical_g",
+    "lateral_g",
+    "occupied",
+];
 pub const RIDER: &[&str] = &["car_index", "seat_index", "guest_id"];
 pub const RAIL_DISTANCE: &[&str] = &["start_metres", "end_metres"];
 pub const BLOCK_CANDIDATE: &[&str] = &["distance_metres"];

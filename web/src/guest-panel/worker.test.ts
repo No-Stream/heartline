@@ -24,7 +24,10 @@ const wasmMock = vi.hoisted(() => ({
   finishSearchStart: vi.fn(),
   finishSearchAdvance: vi.fn(() => true),
   constructionTrainPoses: vi.fn(() => new Float32Array()),
+  coasterTrainStates: vi.fn(() => new Float32Array()),
+  constructionTrainStates: vi.fn(() => new Float32Array()),
   advanceBlockAnalysis: vi.fn((_budget: number) => false),
+  advanceBlockPlacement: vi.fn((_budget: number) => {}),
   blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}'),
 }));
 
@@ -72,6 +75,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     coaster_colors() { return JSON.stringify({ track: "coral", supports: "timber", trains: "sage" }); }
     coaster_train_layout() { return JSON.stringify({ model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }); }
     coaster_train_poses() { return new Float32Array(); }
+    coaster_train_states() { return wasmMock.coasterTrainStates(); }
     construction_riders() { return new Uint32Array(); }
     construction_message() { return ""; }
     construction_coaster_price() { return 0; }
@@ -84,6 +88,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_undo() { wasmMock.constructionUndo(); wasmMock.constructionTrackLength -= 1; }
     construction_delete(id: number) { wasmMock.constructionDelete(id); wasmMock.constructionTrackLength -= 1; }
     construction_advance_block_analysis(budget: number) { return wasmMock.advanceBlockAnalysis(budget); }
+    construction_advance_block_placement_for_test(budget: number) { wasmMock.advanceBlockPlacement(budget); }
     construction_choices() { return "[]"; }
     construction_elements() { return "[]"; }
     construction_selected() { return ""; }
@@ -99,6 +104,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_train_layout() { return wasmMock.constructionActive() ? JSON.stringify({ model: "velocity_viper", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }) : "null"; }
     construction_set_colors(track: string, supports: string, trains: string) { this.colors = JSON.stringify({ track, supports, trains }); }
     construction_train_poses() { return wasmMock.constructionTrainPoses(); }
+    construction_train_states() { return wasmMock.constructionTrainStates(); }
     construction_placed_rails() { return new Float32Array(); }
     construction_rail_distances() { return new Float32Array(); }
     construction_block_candidates() { return new Float64Array(); }
@@ -106,6 +112,9 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_placed_supports() { return new Float32Array(); }
     construction_can_close() { return false; }
     construction_test_report_json() { return "null"; }
+    construction_force_preview_json() { return "null"; }
+    construction_candidate_force_preview_json() { return "null"; }
+    construction_speed_match_json() { return "null"; }
     construction_can_test() { return false; }
     construction_finish_preview_active() { return false; }
     construction_can_finish() { return wasmMock.finishAvailable; }
@@ -132,7 +141,11 @@ afterEach(() => {
   wasmMock.pathPreview.mockReset();
   wasmMock.pathBuild.mockReset();
   wasmMock.pathRemove.mockReset();
+  wasmMock.constructionTrainPoses.mockReset().mockReturnValue(new Float32Array());
+  wasmMock.coasterTrainStates.mockReset().mockReturnValue(new Float32Array());
+  wasmMock.constructionTrainStates.mockReset().mockReturnValue(new Float32Array());
   wasmMock.advanceBlockAnalysis.mockReset().mockReturnValue(false);
+  wasmMock.advanceBlockPlacement.mockReset();
   wasmMock.blockReport.mockReset().mockReturnValue('{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}');
   wasmMock.constructionActive.mockReset().mockReturnValue(false);
   wasmMock.setChain.mockReset();
@@ -200,6 +213,24 @@ it("advances block analysis only when requested in test mode", async () => {
   await Promise.resolve();
   expect(wasmMock.advanceBlockAnalysis).toHaveBeenCalledExactlyOnceWith(42);
   expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({ type: "test-block-analysis-advanced" });
+});
+
+it("advances only placement on the dedicated frozen test command and records it", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "test-advance-block-placement", budget: 42 } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.advanceBlockPlacement).toHaveBeenCalledExactlyOnceWith(42);
+  expect(wasmMock.advanceBlockAnalysis).not.toHaveBeenCalled();
+  expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({ type: "test-block-analysis-advanced" });
+  onMessage({ data: { type: "export-session", requestId: 1 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.at(-1)?.[0].recording.commands).toEqual([{ tick: 0, command: { type: "test-advance-block-placement", budget: 42 } }]);
 });
 
 it("continues block analysis on a timer in live mode", async () => {
@@ -321,7 +352,7 @@ it("refreshes the world after facilities are placed or removed", async () => {
   expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
 });
 
-it("does not request construction train poses before a coaster is under construction", async () => {
+it("does not request construction train poses or states before a coaster is under construction", async () => {
   vi.useFakeTimers();
   wasmMock.initialize.mockResolvedValue(undefined);
   wasmMock.constructionTrainPoses.mockImplementation(() => { throw new Error("Construction train does not exist"); });
@@ -335,7 +366,33 @@ it("does not request construction train poses before a coaster is under construc
   await Promise.resolve();
 
   expect(wasmMock.constructionTrainPoses).not.toHaveBeenCalled();
+  expect(wasmMock.constructionTrainStates).not.toHaveBeenCalled();
   expect(postMessage.mock.calls.some(([message]) => message.type === "snapshot" && message.constructionTrainPoses.length === 0)).toBe(true);
+  expect(postMessage.mock.calls.some(([message]) => message.type === "snapshot" && message.constructionTrainStates.length === 0)).toBe(true);
+});
+
+it("includes per-train states in snapshots and transfers their buffers", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const trainStates = new Float32Array([0, 8, 1, 1.2, 0.4, 1]);
+  wasmMock.coasterTrainStates.mockReturnValue(trainStates);
+  const constructionTrainStates = new Float32Array([0, 3, 0, 1, 0, 1]);
+  wasmMock.constructionTrainStates.mockReturnValue(constructionTrainStates);
+  wasmMock.constructionActive.mockReturnValue(true);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: false, manualBlockAnalysis: false } } as MessageEvent);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const [snapshot, transfers] = postMessage.mock.calls.find(([message]) => message.type === "snapshot")!;
+  expect(snapshot.trainStates).toBe(trainStates);
+  expect(snapshot.constructionTrainStates).toBe(constructionTrainStates);
+  expect(transfers).toContain(trainStates.buffer);
+  expect(transfers).toContain(constructionTrainStates.buffer);
 });
 
 it("refreshes the world after coaster construction changes", async () => {

@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
 use theme_park_sim::track::{
-    CoasterModel, Piece, PieceId, TrackState, catalog, hybrid_model, multi_launch_model,
-    wooden_twister_model,
+    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -79,6 +79,9 @@ fn next_connector(piece: &Piece, state: TrackState) -> TrackState {
 }
 
 fn level_return_path(start: TrackState, templates: &[Piece]) -> Vec<PieceId> {
+    let margin = 64;
+    let x_bounds = start.x.min(0) - margin..=start.x.max(0) + margin;
+    let y_bounds = start.y.min(0) - margin..=start.y.max(0) + margin;
     let mut queue = VecDeque::from([(start, Vec::new())]);
     let mut visited = HashSet::from([connector_key(start)]);
     while let Some((state, path)) = queue.pop_front() {
@@ -98,7 +101,7 @@ fn level_return_path(start: TrackState, templates: &[Piece]) -> Vec<PieceId> {
                 continue;
             }
             let next = next_connector(template, state);
-            if next.x.abs() > 300 || next.y.abs() > 300 || next.z.abs() > 300 {
+            if !x_bounds.contains(&next.x) || !y_bounds.contains(&next.y) || next.z != 0 {
                 continue;
             }
             if !visited.insert(connector_key(next)) {
@@ -151,6 +154,36 @@ fn circuit_for_level_piece(piece_id: PieceId) -> (Circuit, f64, f64) {
     }
     assert_eq!(state, TrackState::origin());
     (Circuit::new(pieces).unwrap(), element_start, element_end)
+}
+
+#[test]
+fn rolled_inversion_minimum_speeds_clear_with_energy_margin() {
+    use PieceId::*;
+    for id in [
+        ZeroGRollFastLeft,
+        ZeroGRollFastRight,
+        ZeroGRollCompactLeft,
+        ZeroGRollCompactRight,
+        StallLeft,
+        StallRight,
+    ] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let rated = piece.rated_speeds.expect("rolled inversion must be rated");
+        let (circuit, start, end) = circuit_for_level_piece(id);
+        for model in [hybrid_model(), multi_launch_model()] {
+            for cars in [6, 12] {
+                assert_train_crosses_element(
+                    &model,
+                    &circuit,
+                    id,
+                    start..end,
+                    cars,
+                    rated.minimum_entry,
+                    true,
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -463,11 +496,10 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
     ];
     let allowed_models = models();
     for piece in catalog().iter().filter(|piece| {
-        // TASK-98 has not assigned TopHat a rated speed window yet.
-        piece.id != TopHat
-            && (piece.inversion.is_some()
-                || sixty_transitions.contains(&piece.id)
-                || drops.contains(&piece.id))
+        matches!(piece.id, TopHat | LaunchedTopHat)
+            || piece.inversion.is_some()
+            || sixty_transitions.contains(&piece.id)
+            || drops.contains(&piece.id)
     }) {
         if allowed_models.iter().any(|model| model.allows_piece(piece)) {
             let rated = piece
@@ -491,6 +523,7 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
 
 #[test]
 fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
+    let mut failures = Vec::new();
     for template in catalog().iter().filter(|piece| {
         piece.rated_speeds.is_some()
             && piece.entry == TrackState::origin()
@@ -514,7 +547,9 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
                     let is_ascending = template.exit.position().z > template.entry.position().z
                         || matches!(
                             template.id,
-                            PieceId::HalfLoopUp
+                            PieceId::TopHat
+                                | PieceId::LaunchedTopHat
+                                | PieceId::HalfLoopUp
                                 | PieceId::Loop
                                 | PieceId::LoopRight
                                 | PieceId::LargeLoop
@@ -522,19 +557,135 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
                                 | PieceId::SteelLoop
                                 | PieceId::SteelLoopRight
                         );
-                    assert_train_crosses_element(
-                        &model,
-                        &circuit,
-                        template.id,
-                        element_start..element_end,
-                        cars,
-                        entry_speed,
-                        entry_speed == rated.minimum_entry && is_ascending,
-                    );
+                    if std::panic::catch_unwind(|| {
+                        assert_train_crosses_element(
+                            &model,
+                            &circuit,
+                            template.id,
+                            element_start..element_end,
+                            cars,
+                            entry_speed,
+                            entry_speed == rated.minimum_entry && is_ascending,
+                        );
+                    })
+                    .is_err()
+                    {
+                        failures.push(format!(
+                            "{:?} {} {cars} cars at {entry_speed}",
+                            template.id, model.name
+                        ));
+                    }
                 }
             }
         }
     }
+    assert!(
+        failures.is_empty(),
+        "rated physics failures: {}",
+        failures.join("; ")
+    );
+}
+
+#[test]
+fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train_layout() {
+    let allowed_models = models();
+    let ejector_hills: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| {
+            piece
+                .family
+                .is_some_and(|family| family.feel == HillFeel::Ejector && family.twist.is_none())
+                && allowed_models
+                    .iter()
+                    .any(|model| model.allowed_pieces.contains(&piece.id))
+        })
+        .collect();
+    assert_eq!(ejector_hills.len(), 6, "ejector hill family size");
+
+    let mut failures = Vec::new();
+    for piece in ejector_hills {
+        let rated = piece
+            .rated_speeds
+            .expect("ejector hill has a rated speed window");
+        let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
+
+        for model in allowed_models
+            .iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            for cars in [6, 12] {
+                let mut train_config = model.train.clone();
+                train_config.cars = cars;
+                let mut train = Train::new(
+                    &circuit,
+                    &train_config,
+                    unpowered(),
+                    element_start,
+                    rated.maximum_entry,
+                );
+                let mut cars_seen = vec![false; usize::from(cars)];
+                let mut minimum_vertical_g = f64::INFINITY;
+
+                for _ in 0..100_000 {
+                    train.step(&circuit);
+                    for frame in train.take_readings() {
+                        for (index, reading) in frame.into_iter().enumerate() {
+                            if (element_start..element_end).contains(&reading.distance) {
+                                cars_seen[index] = true;
+                                minimum_vertical_g = minimum_vertical_g.min(reading.g.vertical);
+                            }
+                        }
+                    }
+                    if train.distance() >= element_end + train_config.length_metres {
+                        break;
+                    }
+                    assert!(train.speed() > 0.0, "{} {cars} cars stalled", piece.name);
+                    assert!(
+                        train.notes().is_empty(),
+                        "{} {cars} cars rolled back",
+                        piece.name
+                    );
+                }
+
+                let limits = model.comfortable_force_limits;
+                eprintln!(
+                    "{} {} {cars} cars / {:.1} m at rated maximum {:.3} m/s: minimum vertical force {minimum_vertical_g:.3} g",
+                    piece.name, model.name, train_config.length_metres, rated.maximum_entry
+                );
+                assert!(
+                    cars_seen.into_iter().all(|seen| seen),
+                    "{} {} {cars} cars: not every car entered the hill",
+                    piece.name,
+                    model.name
+                );
+                assert!(
+                    train.distance() >= element_end + train_config.length_metres,
+                    "{} {} {cars} cars: train did not clear the hill",
+                    piece.name,
+                    model.name
+                );
+                assert!(
+                    train.notes().is_empty(),
+                    "{} {} {cars} cars: train rolled back",
+                    piece.name,
+                    model.name
+                );
+                if minimum_vertical_g < limits.minimum_vertical_g {
+                    failures.push(format!(
+                        "{} {} {cars} cars: {minimum_vertical_g:.3} g below floor {:.3} g",
+                        piece.name, model.name, limits.minimum_vertical_g
+                    ));
+                }
+                if limits.classify_airtime(minimum_vertical_g) != AirtimeRating::Great {
+                    failures.push(format!(
+                        "{} {} {cars} cars: {minimum_vertical_g:.3} g is not Great",
+                        piece.name, model.name
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]

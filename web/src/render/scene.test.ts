@@ -87,6 +87,17 @@ describe("world scene", () => {
     appendGeometry(scene, [outside], viewport);
     expect(scene.triangles).toHaveLength(before);
   });
+  test("keeps raster-tolerant subpixel picks ahead of overlapping lower geometry", () => {
+    const vertices = [[10.516, 0], [10.696, 0], [10.696, 20], [10.516, 20]].map(([x, y]) => ({ x, y, depth: 1, height: 2, u: 0, v: 0 })) as GeometryQuad["vertices"];
+    const scene = { triangles: [] };
+    const backgroundVertices = [[0, 0], [20, 0], [20, 20], [0, 20]].map(([x, y]) => ({ x, y, depth: 0, height: 1, u: 0, v: 0 })) as GeometryQuad["vertices"];
+    appendGeometry(scene, [
+      { vertices: backgroundVertices, kind: "fixture", id: "background", tileX: 1, tileY: 1, color: [1, 1, 1, 1] },
+      { vertices, kind: "fixture", id: "thin", tileX: 0, tileY: 0, color: [1, 1, 1, 1] },
+    ]);
+    expect(pickScene(scene, 10.5, 10)).toMatchObject({ kind: "fixture", id: "background" });
+    expect(pickScene(scene, 10.5, 10, 0.125)).toEqual({ kind: "fixture", id: "thin", x: 0, y: 0, height: 2 });
+  });
   test("resolves a rasterized subpixel edge to the selected geometry", () => {
     const vertices = [[10.516, 0], [10.696, 0], [10.696, 20], [10.516, 20]].map(([x, y]) => ({ x, y, depth: 1, height: 2, u: 0, v: 0 })) as GeometryQuad["vertices"];
     const scene = { triangles: [] };
@@ -460,6 +471,19 @@ describe("world scene", () => {
     const scene = buildScene({ dimensions: new Uint16Array([512, 512]), surfaces, paths: new Int32Array() }, { ...camera, centerX: 256, centerY: 256 }, viewport, atlas);
     expect(scene.triangles.length).toBeLessThan(1000);
     expect(scene.triangles.some((triangle) => triangle.tileX === 256 && triangle.tileY === 256 && triangle.kind === "terrain")).toBe(true);
+  });
+  test("builds only the tiles near given screen bounds, such as a cutaway window", () => {
+    const surfaces = new Int32Array(64 * 64 * 6);
+    const view = { dimensions: new Uint16Array([64, 64]), surfaces, paths: new Int32Array() };
+    const centered = { ...camera, centerX: 32, centerY: 32 };
+    const full = buildScene(view, centered, viewport, atlas);
+    const center = projectWorld(centered, viewport, { x: 32.5, y: 32.5, z: 0 });
+    const windowed = buildScene(view, centered, viewport, atlas, "1", 0, { left: center.x - 20, top: center.y - 20, right: center.x + 20, bottom: center.y + 20 });
+    expect(windowed.triangles.length).toBeLessThan(full.triangles.length / 4);
+    expect(windowed.triangles.some((triangle) => triangle.tileX === 32 && triangle.tileY === 32 && triangle.kind === "terrain")).toBe(true);
+    for (const triangle of windowed.triangles) {
+      expect(triangle.vertices.some((vertex) => Math.abs(vertex.x - center.x) < 200 && Math.abs(vertex.y - center.y) < 200)).toBe(true);
+    }
   });
   test("reflects surface mutations in every rotation", () => {
     const surfaces = new Int32Array(6);

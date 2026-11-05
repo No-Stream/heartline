@@ -1,3 +1,5 @@
+import type { ConstructionSpeedMatch } from "./construction-speed-match";
+import type { CandidateForcePreview } from "./candidate-force-readout";
 import type { CoasterColorScheme } from "./coaster-colors";
 import type { TestingReport } from "./coaster-testing";
 import type { CoasterModelKey, TrainLayout } from "./train-layout";
@@ -5,7 +7,7 @@ import type { CoasterModelKey, TrainLayout } from "./train-layout";
 /** Commands are processed in order by the simulation worker. */
 export type ConstructionAction =
   | { readonly type: "construction-start"; readonly x: number; readonly y: number; readonly z: number; readonly heading: number }
-  | { readonly type: "construction-select"; readonly piece: string }
+  | { readonly type: "construction-select"; readonly piece: string; readonly exact?: boolean }
   | { readonly type: "construction-set-chain"; readonly enabled: boolean }
   | { readonly type: "construction-set-launch-intensity"; readonly id: number; readonly targetSpeed: number }
   | { readonly type: "construction-append" }
@@ -41,6 +43,11 @@ export type { ConstructionTrackWire as ConstructionTrack } from "./generated/Con
 import type { ConstructionPieceWire as ConstructionPiece } from "./generated/ConstructionPieceWire";
 import type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
 import type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
+import type { ConstructionForcePreviewWire } from "./generated/ConstructionForcePreviewWire";
+
+export type ConstructionForcePreview = Omit<ConstructionForcePreviewWire, "status"> & {
+  readonly status: "reachedEnd" | "stalled" | "timedOut";
+};
 
 export interface PieceShapesMessage {
   readonly type: "piece-shapes";
@@ -75,6 +82,9 @@ export interface ConstructionState {
   readonly blockReport: BlockReport;
   readonly trainCount: number;
   readonly testingReport?: TestingReport | null;
+  readonly constructionForcePreview: ConstructionForcePreview | null;
+  readonly candidateForcePreview: CandidateForcePreview | null;
+  readonly speedMatch: ConstructionSpeedMatch | null;
   readonly placedRails: Float32Array;
   readonly railDistances: Float32Array;
   readonly blockCandidates: Float64Array;

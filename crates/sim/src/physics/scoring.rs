@@ -1,4 +1,4 @@
-use crate::track::ComfortableForceLimits;
+use crate::track::{AirtimeRating, ComfortableForceLimits};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ForceAxis {
@@ -30,20 +30,27 @@ pub(super) fn force_band(
             && limits.maximum_lateral_g > 0.0
             && limits.maximum_longitudinal_g > 0.0
     );
+    if axis == ForceAxis::Airtime {
+        return match limits.classify_airtime(value_g) {
+            AirtimeRating::Weak => ForceBand::Weak,
+            AirtimeRating::Good => ForceBand::Good,
+            AirtimeRating::Great => ForceBand::Great,
+            AirtimeRating::TooMuch => ForceBand::TooMuch,
+            AirtimeRating::Dangerous => ForceBand::Dangerous,
+        };
+    }
     let (magnitude, limit) = match axis {
-        ForceAxis::Airtime => (-value_g, -limits.minimum_vertical_g),
+        ForceAxis::Airtime => unreachable!(),
         ForceAxis::Vertical => (value_g, limits.maximum_vertical_g),
         ForceAxis::Lateral => (value_g.abs(), limits.maximum_lateral_g),
         ForceAxis::Longitudinal => (value_g.abs(), limits.maximum_longitudinal_g),
     };
     match axis {
-        ForceAxis::Airtime if magnitude <= SCORING.airtime_weak_limit => ForceBand::Weak,
-        ForceAxis::Airtime if magnitude <= SCORING.airtime_good_limit => ForceBand::Good,
         ForceAxis::Vertical if magnitude <= SCORING.vertical_weak_limit => ForceBand::Weak,
         ForceAxis::Vertical if magnitude <= SCORING.vertical_good_limit_fraction * limit => {
             ForceBand::Good
         }
-        ForceAxis::Airtime | ForceAxis::Vertical if magnitude <= limit => ForceBand::Great,
+        ForceAxis::Vertical if magnitude <= limit => ForceBand::Great,
         ForceAxis::Lateral | ForceAxis::Longitudinal
             if magnitude <= SCORING.horizontal_fine_limit_fraction * limit =>
         {
@@ -68,6 +75,26 @@ mod tests {
             maximum_lateral_g: 1.5,
             maximum_longitudinal_g: 2.0,
         };
+        for (axis, value, expected) in [
+            (ForceAxis::Airtime, -0.2, ForceBand::Weak),
+            (ForceAxis::Airtime, -0.2001, ForceBand::Good),
+            (ForceAxis::Airtime, -0.9001, ForceBand::Great),
+            (ForceAxis::Airtime, -1.95, ForceBand::TooMuch),
+            (ForceAxis::Airtime, -1.951, ForceBand::Dangerous),
+            (ForceAxis::Vertical, 2.0, ForceBand::Weak),
+            (ForceAxis::Vertical, 2.001, ForceBand::Good),
+            (ForceAxis::Vertical, 4.0, ForceBand::Good),
+            (ForceAxis::Vertical, 4.001, ForceBand::Great),
+            (ForceAxis::Vertical, 5.0, ForceBand::Great),
+            (ForceAxis::Vertical, 6.5, ForceBand::TooMuch),
+            (ForceAxis::Vertical, 6.501, ForceBand::Dangerous),
+            (ForceAxis::Longitudinal, -1.0, ForceBand::Fine),
+            (ForceAxis::Longitudinal, -2.0, ForceBand::Strong),
+            (ForceAxis::Longitudinal, -2.6, ForceBand::TooMuch),
+            (ForceAxis::Longitudinal, -2.601, ForceBand::Dangerous),
+        ] {
+            assert_eq!(force_band(axis, value, limits), expected);
+        }
         assert_eq!(force_band(ForceAxis::Airtime, 0.0, limits), ForceBand::Weak);
         assert_eq!(
             force_band(ForceAxis::Airtime, -0.9, limits),
@@ -111,8 +138,8 @@ mod tests {
 #[cfg(test)]
 mod score_tests {
     use super::*;
-    use crate::physics::features::{PieceSummary, ride_features};
     use crate::physics::TestSample;
+    use crate::physics::features::{PieceSummary, ride_features};
     use crate::track::{PieceId, PieceKind, Shape};
 
     #[test]
@@ -141,6 +168,31 @@ mod score_tests {
     }
 
     #[test]
+    fn excitement_floor_is_explained_in_the_breakdown() {
+        let mut features = ride_features(&[], &[], &[], 0.0, false);
+        features.envelope.g_seconds = 10.0;
+        let result = score(&features, &ForceBandDurations::default());
+        assert_eq!(result.excitement, 0.0);
+        assert!(
+            result
+                .breakdown
+                .excitement
+                .iter()
+                .any(|item| item.term == Term::ExcitementFloor && item.value > 0.0)
+        );
+        assert!(
+            result
+                .breakdown
+                .excitement
+                .iter()
+                .map(|item| item.value)
+                .sum::<f64>()
+                .abs()
+                < 1e-12
+        );
+    }
+
+    #[test]
     fn airtime_moments_keep_paying_and_envelope_penalty_keeps_location() {
         use crate::physics::comfort::{EnvelopeAxis, EnvelopeWorst};
         let mut features = ride_features(&[], &[], &[], 0.0, false);
@@ -148,7 +200,16 @@ mod score_tests {
         let ten = score(&features, &ForceBandDurations::default());
         features.active_airtime_moments = 20;
         let twenty = score(&features, &ForceBandDurations::default());
-        assert!(twenty.excitement - ten.excitement > 0.2);
+        let airtime_moments = |result: &Scores| {
+            result
+                .breakdown
+                .excitement
+                .iter()
+                .find(|item| item.term == Term::AirtimeMoments)
+                .unwrap()
+                .value
+        };
+        assert!(airtime_moments(&twenty) - airtime_moments(&ten) > 0.2);
         let location = Location {
             piece_index: 2,
             piece_name: "Loop",
@@ -315,6 +376,7 @@ pub enum Term {
     DeadTime,
     Envelope,
     Sickening,
+    ExcitementFloor,
     PeakForce,
     SustainedForce,
     Reversals,
@@ -347,6 +409,7 @@ impl Term {
             Self::DeadTime => "dead time",
             Self::Envelope => "forces above the ASTM comfort envelope",
             Self::Sickening => "nausea",
+            Self::ExcitementFloor => "minimum excitement",
             Self::PeakForce => "peak force",
             Self::SustainedForce => "sustained force",
             Self::Reversals => "reversals",
@@ -423,8 +486,6 @@ pub(super) struct Scores {
 // Each pair is a contribution weight and its characteristic scale. Calibration
 // anchors are maintained in calibration_tests.rs.
 struct ScoringConstants {
-    airtime_weak_limit: f64,
-    airtime_good_limit: f64,
     vertical_weak_limit: f64,
     vertical_good_limit_fraction: f64,
     horizontal_fine_limit_fraction: f64,
@@ -487,8 +548,6 @@ struct ScoringConstants {
     envelope: (f64, f64),
 }
 const SCORING: ScoringConstants = ScoringConstants {
-    airtime_weak_limit: 0.2,
-    airtime_good_limit: 0.9,
     vertical_weak_limit: 2.0,
     vertical_good_limit_fraction: 0.8,
     horizontal_fine_limit_fraction: 0.5,
@@ -537,9 +596,9 @@ const SCORING: ScoringConstants = ScoringConstants {
     positive: (1.0, 2.0),
     lateral: (0.7, 2.0),
     longitudinal: (0.4, 2.0),
-    excessive: (-1.5, 2.0),
+    excessive: (-0.7, 2.0),
     moments: (1.2, 10.0),
-    inversions: (2.0, 2.0),
+    inversions: (2.2, 2.0),
     speed: (1.2, 20.0),
     drop: (0.8, 40.0),
     pace: (0.6, 12.0),
@@ -550,7 +609,7 @@ const SCORING: ScoringConstants = ScoringConstants {
     roll: (0.5, 90.0),
     time: (0.8, 45.0),
     proximity: (1.0, 2.0),
-    dead: (-1.5, 6.0),
+    dead: (-0.5, 6.0),
     envelope: (-3.0, 1.0),
 };
 fn soft(measure: f64, (weight, scale): (f64, f64)) -> f64 {
@@ -852,7 +911,15 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
         -SCORING.nausea_penalty_weight * (nausea - SCORING.nausea_penalty_threshold).max(0.0),
         None,
     );
-    let excitement = e.iter().map(|item| item.value).sum();
+    let raw_excitement = e.iter().map(|item| item.value).sum::<f64>();
+    add(
+        e,
+        Term::ExcitementFloor,
+        0.0,
+        (-raw_excitement).max(0.0),
+        None,
+    );
+    let excitement = raw_excitement.max(0.0);
     Scores {
         excitement,
         intensity,

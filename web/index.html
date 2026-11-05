@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Theme Park Sim</title>
+    <title>Heartline</title>
   </head>
   <body>
     <main>
       <header class="game-bar">
-        <h1>Theme Park Sim</h1>
+        <h1>Heartline</h1>
         <div data-toolbar></div>
         <div data-day-clock></div>
         <p><span class="game-bar__tick-label">Simulation ticks: </span><output data-testid="tick-count" aria-label="Simulation ticks">0</output></p>
@@ -18,6 +18,7 @@
       </header>
       <div class="game-world">
         <canvas aria-label="Theme park world" tabindex="0" style="touch-action: none" width="800" height="500"></canvas>
+        <div data-force-overlay hidden></div>
         <div class="height-markers" data-height-markers hidden>
           <strong data-track-height></strong>
           <span data-station-height></span>

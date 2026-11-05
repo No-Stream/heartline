@@ -1,9 +1,8 @@
 use super::*;
-use crate::physics::{PhysicsConfig, Train};
+use crate::physics::{PhysicsConfig, PreviewStatus, Train, preview_open_track};
 use crate::track::{Heading, Slope, Vec3, hybrid_model};
 use crate::world::Surface;
 use std::collections::{HashSet, VecDeque};
-use std::time::{Duration, Instant};
 
 fn world() -> World {
     World::new(
@@ -189,6 +188,40 @@ fn launch_speed_limits_follow_track_length_and_are_shared_across_models() {
     let original_hash = hybrid.state_hash();
     assert!(hybrid.set_launch_intensity(0, short_bounds.maximum).is_ok());
     assert_ne!(hybrid.state_hash(), original_hash);
+}
+
+#[test]
+fn viper_can_build_a_launch_to_fifty_metres_per_second() {
+    let world = world();
+    let model = crate::track::multi_launch_model();
+    let mut construction = Construction::new(start(), model.clone());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    for (index, target) in [(1, 30.0), (2, 42.0), (3, 50.0)] {
+        construction
+            .append(PieceId::LaunchLong, &world, &[])
+            .unwrap();
+        construction.set_launch_intensity(index, target).unwrap();
+    }
+    let preview = preview_open_track(
+        construction.pieces(),
+        &model.train,
+        PhysicsConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(preview.status, PreviewStatus::ReachedEnd);
+    let last_sample = preview.report.samples.last().unwrap();
+    let peak_force = preview
+        .report
+        .samples
+        .iter()
+        .map(|sample| sample.longitudinal_g.abs())
+        .fold(0.0_f64, f64::max);
+    eprintln!(
+        "launch exit speed {} m/s, peak longitudinal force {} g",
+        last_sample.speed, peak_force
+    );
+    assert!((45.0..=55.0).contains(&last_sample.speed));
+    assert!(peak_force <= 1.5);
 }
 
 #[test]
@@ -1281,40 +1314,33 @@ fn choices_after_deleting_from_150_piece_circuit() {
             water: None,
         },
     );
-    let mut best_elapsed = Duration::MAX;
-    for _ in 0..3 {
-        let mut construction = Construction::new(TrackState { z: 160, ..start() }, hybrid_model());
-        construction.append(PieceId::Station, &world, &[]).unwrap();
-        for _ in 0..72 {
-            construction.append(PieceId::Straight, &world, &[]).unwrap();
-        }
-        for _ in 0..2 {
-            construction
-                .append(PieceId::TurnSmallStandalone, &world, &[])
-                .unwrap();
-        }
-        for _ in 0..73 {
-            construction.append(PieceId::Straight, &world, &[]).unwrap();
-        }
-        for _ in 0..2 {
-            construction
-                .append(PieceId::TurnSmallStandalone, &world, &[])
-                .unwrap();
-        }
-        assert_eq!(construction.pieces().len(), 150);
-        construction.close().unwrap();
-        construction.delete_from(75).unwrap();
-        let started = Instant::now();
-        let choices = construction.choices(&world, &[]);
-        best_elapsed = best_elapsed.min(started.elapsed());
-        assert!(choices.iter().any(|choice| choice.result.is_ok()));
+    let mut construction = Construction::new(TrackState { z: 160, ..start() }, hybrid_model());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    for _ in 0..72 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
     }
-    if !cfg!(debug_assertions) {
-        assert!(
-            best_elapsed < Duration::from_millis(50),
-            "best of three choices runs took {best_elapsed:?}"
-        );
+    for _ in 0..2 {
+        construction
+            .append(PieceId::TurnSmallStandalone, &world, &[])
+            .unwrap();
     }
+    for _ in 0..73 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    for _ in 0..2 {
+        construction
+            .append(PieceId::TurnSmallStandalone, &world, &[])
+            .unwrap();
+    }
+    assert_eq!(construction.pieces().len(), 150);
+    construction.close().unwrap();
+    construction.delete_from(75).unwrap();
+    construction.validation_cache_rebuilds.set(0);
+    construction.support_cache_misses.set(0);
+    let choices = construction.choices(&world, &[]);
+    assert!(choices.iter().any(|choice| choice.result.is_ok()));
+    assert_eq!(construction.validation_cache_rebuilds.get(), 0);
+    assert_eq!(construction.support_cache_misses.get(), 0);
 }
 
 #[test]

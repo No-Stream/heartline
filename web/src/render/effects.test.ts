@@ -27,16 +27,19 @@ function rails(count: number): Float32Array {
 const leadCar = (z: number, climbing: number): Float32Array => new Float32Array([0, 10, 10, z, 1, 0, climbing, 0, 0, 1, 15]);
 
 describe("crest confetti", () => {
-  function run(heights: readonly number[]): CrestBurst[] {
+  function runSamples(samples: readonly { tick: number; z: number; climb: number }[]): CrestBurst[] {
     let tracker: CrestTracker = createCrestTracker();
     const bursts: CrestBurst[] = [];
-    heights.forEach((z, tick) => {
-      const next = heights[tick + 1] ?? z;
-      const result = detectCrest(tracker, leadCar(z, Math.sign(next - z) * 0.3), tick);
+    samples.forEach(({ tick, z, climb }) => {
+      const result = detectCrest(tracker, leadCar(z, climb), tick);
       tracker = result.tracker;
       if (result.burst) bursts.push(result.burst);
     });
     return bursts;
+  }
+
+  function run(heights: readonly number[]): CrestBurst[] {
+    return runSamples(heights.map((z, tick) => ({ z, tick, climb: Math.sign((heights[tick + 1] ?? z) - z) * 0.3 })));
   }
 
   it("bursts once when a train tops a long lift hill", () => {
@@ -47,11 +50,32 @@ describe("crest confetti", () => {
     expect(bursts[0].tick).toBeGreaterThan(295);
   });
 
-  it("ignores small hills and tall hills climbed quickly on momentum", () => {
+  it("bursts when a fast launch reaches a genuine height crest", () => {
+    const launch = [...Array.from({ length: 36 }, (_, tick) => 3 + tick * 0.25), ...Array.from({ length: 20 }, (_, tick) => 12 - tick * 0.45)];
+    const bursts = run(launch);
+    expect(bursts).toHaveLength(1);
+    expect(bursts[0].z).toBeGreaterThan(11.9);
+    expect(bursts[0].tick).toBe(36);
+  });
+
+  it("uses sampled snapshot ticks and reports a crest only once", () => {
+    const bursts = runSamples([
+      { tick: 100, z: 3, climb: 0.3 },
+      { tick: 106, z: 6, climb: 0.3 },
+      { tick: 115, z: 10, climb: 0.3 },
+      { tick: 119, z: 9, climb: -0.3 },
+      { tick: 124, z: 10, climb: -0.3 },
+      { tick: 129, z: 8, climb: -0.3 },
+    ]);
+    expect(bursts).toHaveLength(1);
+    expect(bursts[0]).toEqual({ x: 10, y: 10, z: 10, tick: 115 });
+  });
+
+  it("ignores small hills but reports tall hills climbed quickly on momentum", () => {
     const bump = [...Array.from({ length: 10 }, (_, tick) => 3 + tick * 0.05), ...Array.from({ length: 10 }, (_, tick) => 3.5 - tick * 0.05)];
     expect(run(bump)).toEqual([]);
     const camelback = [...Array.from({ length: 80 }, (_, tick) => 3 + tick * 0.12), ...Array.from({ length: 30 }, (_, tick) => 12.6 - tick * 0.3)];
-    expect(run(camelback)).toEqual([]);
+    expect(run(camelback)).toHaveLength(1);
   });
 
   it("draws the same confetti for the same tick and none once it has settled", () => {

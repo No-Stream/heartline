@@ -1,6 +1,7 @@
 import { projectVertex } from "./projection";
 import { unprojectGround, type Camera, type Viewport } from "../camera";
 import { pathCornerHeights } from "./path-ghost";
+import type { CutSide, ScreenBounds } from "./cutaway";
 
 export interface AtlasFrame {
   width: number; height: number; anchor: { x: number; y: number };
@@ -17,7 +18,7 @@ export interface WorldView { dimensions: Uint16Array; surfaces: Int32Array; path
 export type Pick = { kind: "terrain" | "water" | "path" | "cliff" | "carved-floor" | "cavern-wall"; x: number; y: number; height: number } | { kind: string; id: string; x: number; y: number; height: number };
 export interface Vertex { x: number; y: number; depth: number; height: number; u: number; v: number }
 /** `page` is an atlas page, or one of `SHAPE_PAGES` for an untextured fill. `light` is how much the surface keeps its own colour at night (see `gradeColor`). */
-export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: string; tileX: number; tileY: number; height: number; id?: string; light?: number }
+export interface Triangle { vertices: [Vertex, Vertex, Vertex]; page: number; color: readonly [number, number, number, number]; kind: string; tileX: number; tileY: number; height: number; id?: string; light?: number; cut?: CutSide }
 export interface Scene { triangles: Triangle[] }
 export interface GeometryQuad { vertices: [Vertex, Vertex, Vertex, Vertex]; page?: number; color: Triangle["color"]; kind: string; id: string; tileX: number; tileY: number; light?: number; lightSourceHeight?: number }
 /** Untextured fills. Round shapes are drawn inside the unit square given by the vertices' u and v. */
@@ -159,7 +160,8 @@ function frameFor(atlas: Atlas, sprite: string, view = "any", animation = "stati
   return result;
 }
 
-export function buildScene(world: WorldView, camera: Camera, viewport: Viewport, atlas: Atlas, scale = "1", waterFrame = 0): Scene {
+/** `bounds`, in canvas pixels, limits which tiles are built; it defaults to the viewport. */
+export function buildScene(world: WorldView, camera: Camera, viewport: Viewport, atlas: Atlas, scale = "1", waterFrame = 0, bounds: ScreenBounds = { left: 0, top: 0, right: viewport.width, bottom: viewport.height }): Scene {
   const [width, height] = world.dimensions;
   if (!width || !height || world.dimensions.length !== 2 || world.surfaces.length !== width * height * 6 || world.paths.length % 4 !== 0) throw new Error("Invalid world snapshot");
   const undergroundLevel = world.undergroundLevel;
@@ -285,13 +287,13 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
   }
   for (let i = 2; i < world.paths.length; i += 4) { minHeight = Math.min(minHeight, world.paths[i]); maxHeight = Math.max(maxHeight, world.paths[i] + 1); }
   for (let i = 2; i < (world.carved?.length ?? 0); i += 4) minHeight = Math.min(minHeight, world.carved![i]);
-  const bounds = [minHeight, maxHeight].flatMap((heightSteps) => [
-    { x: 0, y: 0 }, { x: viewport.width, y: 0 }, { x: viewport.width, y: viewport.height }, { x: 0, y: viewport.height },
+  const groundCorners = [minHeight, maxHeight].flatMap((heightSteps) => [
+    { x: bounds.left, y: bounds.top }, { x: bounds.right, y: bounds.top }, { x: bounds.right, y: bounds.bottom }, { x: bounds.left, y: bounds.bottom },
   ].map((screen) => unprojectGround(camera, viewport, screen, heightSteps / 4)));
-  const startX = Math.max(0, Math.floor(Math.min(...bounds.map((point) => point.x))) - 2);
-  const endX = Math.min(width, Math.ceil(Math.max(...bounds.map((point) => point.x))) + 2);
-  const startY = Math.max(0, Math.floor(Math.min(...bounds.map((point) => point.y))) - 2);
-  const endY = Math.min(height, Math.ceil(Math.max(...bounds.map((point) => point.y))) + 2);
+  const startX = Math.max(0, Math.floor(Math.min(...groundCorners.map((point) => point.x))) - 2);
+  const endX = Math.min(width, Math.ceil(Math.max(...groundCorners.map((point) => point.x))) + 2);
+  const startY = Math.max(0, Math.floor(Math.min(...groundCorners.map((point) => point.y))) - 2);
+  const endY = Math.min(height, Math.ceil(Math.max(...groundCorners.map((point) => point.y))) + 2);
   for (let y = startY; y < endY; y++) for (let x = startX; x < endX; x++) {
     const index = (y * width + x) * 6;
     const corners = [...world.surfaces.subarray(index, index + 4)];
@@ -313,7 +315,7 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
     const projectedBounds = [...quad(positions.map(() => Math.min(...tileHeights))), ...quad(positions.map(() => Math.max(...tileHeights)))];
     const minX = Math.min(...projectedBounds.map((v) => v.x)); const maxX = Math.max(...projectedBounds.map((v) => v.x));
     const minY = Math.min(...projectedBounds.map((v) => v.y)); const maxY = Math.max(...projectedBounds.map((v) => v.y));
-    if (maxX < -100 || minX > viewport.width + 100 || maxY < -100 || minY > viewport.height + 100) continue;
+    if (maxX < bounds.left - 100 || minX > bounds.right + 100 || maxY < bounds.top - 100 || minY > bounds.bottom + 100) continue;
     const tileCarvings = carved.get(y * width + x) ?? [];
     const opening = tileCarvings.find(([, top]) => corners.every((corner) => top >= corner));
     if (!opening) addQuad(terrain, "terrain", x, y, WHITE, grass, undefined, undefined, undergroundLevel);
@@ -500,9 +502,12 @@ export function buildScene(world: WorldView, camera: Camera, viewport: Viewport,
 
 export function pickScene(scene: Scene, x: number, y: number, rasterTolerance = 0): Pick | null {
   let selected: Triangle | undefined; let selectedDepth = -Infinity; let selectedHeight = 0;
+  const padding = Math.max(0, rasterTolerance);
   for (const triangle of scene.triangles) {
     if (UNPICKABLE_KINDS.has(triangle.kind)) continue;
     const [a,b,c] = triangle.vertices;
+    if (x < Math.min(a.x, b.x, c.x) - padding || x > Math.max(a.x, b.x, c.x) + padding
+      || y < Math.min(a.y, b.y, c.y) - padding || y > Math.max(a.y, b.y, c.y) + padding) continue;
     const denominator = (b.y-c.y)*(a.x-c.x)+(c.x-b.x)*(a.y-c.y);
     if (denominator === 0) continue;
     let first = ((b.y-c.y)*(x-c.x)+(c.x-b.x)*(y-c.y))/denominator;

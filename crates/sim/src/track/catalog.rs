@@ -1,16 +1,50 @@
 use std::sync::{Arc, LazyLock, OnceLock};
 
-use super::profile::{SolvedProfile, embedded_profile};
-use super::roll::RollGeometry;
+use crate::physics::GRAVITY;
+
+use super::profile::{GENERATED_HILL_DESIGNS, SolvedProfile, embedded_profile};
+use super::roll::{RollGeometry, Twist};
 use super::{
-    Bank, Heading, Heartlining, HorizontalCurvature, Inversion, Material, Piece, PieceId,
-    PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
+    Bank, Heading, Heartlining, HillFamily, HillFeel, HillTwist, HorizontalCurvature, Inversion,
+    Material, Piece, PieceId, PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
 };
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
 pub fn catalog() -> &'static [Piece] {
     static CATALOG: LazyLock<Vec<Piece>> = LazyLock::new(build_catalog);
     &CATALOG
+}
+
+fn rolled_inversion_minimum_entry(piece: &Piece) -> f64 {
+    const SAMPLE_SPACING: f64 = 0.05;
+    const TRAIN_LENGTH: f64 = 18.0;
+    const MINIMUM_SPEED: f64 = 6.0;
+
+    let length = piece.length();
+    let steps = ((length + TRAIN_LENGTH) / SAMPLE_SPACING).ceil() as usize;
+    let heights: Vec<_> = (0..=steps)
+        .map(|index| {
+            piece
+                .sample((index as f64 * SAMPLE_SPACING).min(length))
+                .position
+                .z
+        })
+        .collect();
+    let initial_height = heights[0];
+    let maximum_mean_height = [6, 12]
+        .into_iter()
+        .flat_map(|cars| {
+            let car_spacing_steps = (TRAIN_LENGTH / cars as f64 / SAMPLE_SPACING).round() as usize;
+            let heights = &heights;
+            (0..=steps).map(move |front| {
+                (0..cars)
+                    .map(|car| heights[front.saturating_sub(car * car_spacing_steps)])
+                    .sum::<f64>()
+                    / cars as f64
+            })
+        })
+        .fold(f64::NEG_INFINITY, f64::max);
+    (2.0 * GRAVITY * (maximum_mean_height - initial_height) + MINIMUM_SPEED.powi(2)).sqrt()
 }
 
 fn build_catalog() -> Vec<Piece> {
@@ -470,7 +504,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             Loop,
-            "Vertical loop (not heartlined)",
+            "Vertical loop",
             standard_loop_exit_x,
             2,
             0,
@@ -483,7 +517,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             Corkscrew,
-            "Left classic corkscrew (not heartlined)",
+            "Left classic corkscrew",
             14,
             8,
             0,
@@ -496,7 +530,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HeartlineRoll,
-            "Left heartline roll (heartlined)",
+            "Left heartline roll",
             24,
             0,
             0,
@@ -509,7 +543,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfLoopUp,
-            "Half loop up (not heartlined)",
+            "Half loop up",
             (HALF_LOOP.endpoint()[0] / 2.0).round() as i32,
             0,
             (HALF_LOOP.endpoint()[1] / 2.0).round() as i32,
@@ -522,7 +556,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfLoopDown,
-            "Half loop down (not heartlined)",
+            "Half loop down",
             -(HALF_LOOP.endpoint()[0] / 2.0).round() as i32,
             0,
             -(HALF_LOOP.endpoint()[1] / 2.0).round() as i32,
@@ -535,7 +569,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfCorkscrewLeftUp,
-            "Left half roll up (not heartlined)",
+            "Left half roll up",
             20,
             0,
             6,
@@ -548,7 +582,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             HalfCorkscrewLeftDown,
-            "Left half roll down (not heartlined)",
+            "Left half roll down",
             20,
             0,
             -6,
@@ -561,7 +595,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             RavenRollLeftUp,
-            "Left offset half roll up (not heartlined)",
+            "Left offset half roll up",
             24,
             4,
             0,
@@ -574,7 +608,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             RavenRollLeftDown,
-            "Left offset half roll down (not heartlined)",
+            "Left offset half roll down",
             24,
             4,
             0,
@@ -584,21 +618,6 @@ fn build_catalog() -> Vec<Piece> {
             Inverted,
             FlatBank,
             Shape::Roll(Arc::clone(&RAVEN_ROLL)),
-        ),
-        // Pending owner decision: a camelback on Briar Blitz or a fast-launch
-        // top hat on Velocity Viper. Keep this piece outside force assertions.
-        (
-            TopHat,
-            "Top hat",
-            88,
-            0,
-            0,
-            East,
-            Level,
-            Level,
-            FlatBank,
-            FlatBank,
-            Shape::TopHat,
         ),
         (
             Brakes,
@@ -777,6 +796,7 @@ fn build_catalog() -> Vec<Piece> {
                         }),
                         _ => None,
                     },
+                    family: None,
                     entry,
                     exit,
                     shape,
@@ -790,7 +810,7 @@ fn build_catalog() -> Vec<Piece> {
     for (id, name, profile, maximum_entry, model_radius, material) in [
         (
             LargeLoop,
-            "Large vertical loop (not heartlined)",
+            "Large vertical loop",
             Arc::clone(&LARGE_LOOP_PROFILE),
             31.3,
             5.0,
@@ -798,7 +818,7 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             SteelLoop,
-            "Steel-structure loop (not heartlined)",
+            "Steel-structure loop",
             Arc::clone(&STEEL_LOOP_PROFILE),
             27.0,
             8.0,
@@ -1176,46 +1196,30 @@ fn build_catalog() -> Vec<Piece> {
             ShortOffsetRight,
             "Right short half-tile offset",
         ),
-        (Loop, LoopRight, "Right vertical loop (not heartlined)"),
-        (
-            LargeLoop,
-            LargeLoopRight,
-            "Right large vertical loop (not heartlined)",
-        ),
-        (
-            SteelLoop,
-            SteelLoopRight,
-            "Right steel-structure loop (not heartlined)",
-        ),
-        (
-            Corkscrew,
-            CorkscrewRight,
-            "Right classic corkscrew (not heartlined)",
-        ),
-        (
-            HeartlineRoll,
-            HeartlineRollRight,
-            "Right heartline roll (heartlined)",
-        ),
+        (Loop, LoopRight, "Right vertical loop"),
+        (LargeLoop, LargeLoopRight, "Right large vertical loop"),
+        (SteelLoop, SteelLoopRight, "Right steel-structure loop"),
+        (Corkscrew, CorkscrewRight, "Right classic corkscrew"),
+        (HeartlineRoll, HeartlineRollRight, "Right heartline roll"),
         (
             HalfCorkscrewLeftUp,
             HalfCorkscrewRightUp,
-            "Right half roll up (not heartlined)",
+            "Right half roll up",
         ),
         (
             HalfCorkscrewLeftDown,
             HalfCorkscrewRightDown,
-            "Right half roll down (not heartlined)",
+            "Right half roll down",
         ),
         (
             RavenRollLeftUp,
             RavenRollRightUp,
-            "Right offset half roll up (not heartlined)",
+            "Right offset half roll up",
         ),
         (
             RavenRollLeftDown,
             RavenRollRightDown,
-            "Right offset half roll down (not heartlined)",
+            "Right offset half roll down",
         ),
     ] {
         let mut piece = pieces
@@ -1259,14 +1263,14 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (
             BarrelDropLeft,
-            "Left barrel-roll drop (not heartlined)",
+            "Left barrel-roll drop",
             Left,
             FlatBank,
             true,
         ),
         (
             BarrelDropRight,
-            "Right barrel-roll drop (not heartlined)",
+            "Right barrel-roll drop",
             Right,
             FlatBank,
             true,
@@ -1345,6 +1349,392 @@ fn build_catalog() -> Vec<Piece> {
         .find(|piece| piece.id == Straight)
         .unwrap()
         .clone();
+    for (id, profile_name, name, maximum_entry) in [
+        (TopHat, "BriarTopHat", "Top hat", 27.15540286069387),
+        (
+            LaunchedTopHat,
+            "LaunchedTopHat",
+            "Launched top hat",
+            34.59739161543454,
+        ),
+    ] {
+        let profile = Arc::new(embedded_profile(profile_name));
+        let mut piece = straight.clone();
+        piece.id = id;
+        piece.name = name;
+        piece.exit.x = (profile.endpoint()[0] / 2.0).round() as i32;
+        piece.rated_speeds = Some(profile.rated_speeds(name, maximum_entry, 2.0, 8.0));
+        piece.shape = Shape::Profile(profile);
+        piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+        piece.clear_arc_table();
+        pieces.push(piece);
+    }
+    for (id, profile_name, name, feel, height_metres, span_metres, design_speed, model_radius) in [
+        (
+            EjectorHill8x48,
+            "EjectorHill8x48",
+            "Ejector hill 8 × 48 m",
+            HillFeel::Ejector,
+            8,
+            48,
+            19.241231068056585,
+            5.0,
+        ),
+        (
+            EjectorHill12x64,
+            "EjectorHill12x64",
+            "Ejector hill 12 × 64 m",
+            HillFeel::Ejector,
+            12,
+            64,
+            21.87909569552651,
+            5.0,
+        ),
+        (
+            EjectorHill8x64,
+            "EjectorHill8x64",
+            "Ejector hill 8 × 64 m",
+            HillFeel::Ejector,
+            8,
+            64,
+            25.215898112149066,
+            5.0,
+        ),
+        (
+            EjectorHill12x80,
+            "EjectorHill12x80",
+            "Ejector hill 12 × 80 m",
+            HillFeel::Ejector,
+            12,
+            80,
+            26.585748621077,
+            5.0,
+        ),
+        (
+            EjectorHill16x96,
+            "EjectorHill16x96",
+            "Ejector hill 16 × 96 m",
+            HillFeel::Ejector,
+            16,
+            96,
+            28.343393349671633,
+            5.0,
+        ),
+        (
+            FloaterHill4x48,
+            "FloaterHill4x48",
+            "Floater hill 4 × 48 m",
+            HillFeel::Floater,
+            4,
+            48,
+            21.7867646837123,
+            8.0,
+        ),
+        (
+            FloaterHill8x64,
+            "FloaterHill8x64",
+            "Floater hill 8 × 64 m",
+            HillFeel::Floater,
+            8,
+            64,
+            21.601128616279556,
+            8.0,
+        ),
+        (
+            FloaterHill12x80,
+            "FloaterHill12x80",
+            "Floater hill 12 × 80 m",
+            HillFeel::Floater,
+            12,
+            80,
+            23.010352430305794,
+            8.0,
+        ),
+        (
+            FloaterHill6x64,
+            "FloaterHill6x64",
+            "Floater hill 6 × 64 m",
+            HillFeel::Floater,
+            6,
+            64,
+            24.072334659394315,
+            8.0,
+        ),
+        (
+            FloaterHill12x96,
+            "FloaterHill12x96",
+            "Floater hill 12 × 96 m",
+            HillFeel::Floater,
+            12,
+            96,
+            26.747140189026076,
+            8.0,
+        ),
+        (
+            FloaterHill16x112,
+            "FloaterHill16x112",
+            "Floater hill 16 × 112 m",
+            HillFeel::Floater,
+            16,
+            112,
+            27.856176132329804,
+            8.0,
+        ),
+        (
+            SpeedHill4x64,
+            "SpeedHill4x64",
+            "Speed hill 4 × 64 m",
+            HillFeel::Speed,
+            4,
+            64,
+            23.92362571301575,
+            8.0,
+        ),
+        (
+            SpeedHill6x80,
+            "SpeedHill6x80",
+            "Speed hill 6 × 80 m",
+            HillFeel::Speed,
+            6,
+            80,
+            24.860505930642848,
+            8.0,
+        ),
+        (
+            WoodenEjectorHill6x48,
+            "WoodenEjectorHill6x48",
+            "Ejector hill 6 × 48 m",
+            HillFeel::Ejector,
+            6,
+            48,
+            19.66550391454844,
+            8.0,
+        ),
+    ] {
+        let profile = Arc::new(embedded_profile(profile_name));
+        let maximum_entry = design_speed
+            - match id {
+                EjectorHill8x48 | FloaterHill4x48 | SpeedHill6x80 => 1.0,
+                SpeedHill4x64 => 3.0,
+                _ => 0.0,
+            };
+        let rated_speeds = profile.rated_speeds(name, maximum_entry, 2.0, model_radius);
+        let endpoint = profile.endpoint();
+        let mut piece = straight.clone();
+        piece.id = id;
+        piece.name = name;
+        piece.exit.x = (endpoint[0] / 2.0).round() as i32;
+        piece.exit.z = (endpoint[1] / 2.0).round() as i32;
+        piece.shape = Shape::Profile(profile);
+        piece.rated_speeds = Some(rated_speeds);
+        piece.family = Some(HillFamily {
+            feel,
+            height_metres,
+            span_metres,
+            twist: None,
+            design_speed_metres_per_second: design_speed,
+        });
+        piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+        piece.clear_arc_table();
+        pieces.push(piece);
+    }
+    for (source_id, left_id, right_id, profile_name) in [
+        (
+            EjectorHill8x48,
+            EjectorHill8x48OuterLeft,
+            EjectorHill8x48OuterRight,
+            "EjectorHill8x48",
+        ),
+        (
+            EjectorHill12x64,
+            EjectorHill12x64OuterLeft,
+            EjectorHill12x64OuterRight,
+            "EjectorHill12x64",
+        ),
+        (
+            EjectorHill8x64,
+            EjectorHill8x64OuterLeft,
+            EjectorHill8x64OuterRight,
+            "EjectorHill8x64",
+        ),
+        (
+            EjectorHill12x80,
+            EjectorHill12x80OuterLeft,
+            EjectorHill12x80OuterRight,
+            "EjectorHill12x80",
+        ),
+        (
+            EjectorHill16x96,
+            EjectorHill16x96OuterLeft,
+            EjectorHill16x96OuterRight,
+            "EjectorHill16x96",
+        ),
+        (
+            FloaterHill4x48,
+            FloaterHill4x48OuterLeft,
+            FloaterHill4x48OuterRight,
+            "FloaterHill4x48",
+        ),
+        (
+            FloaterHill8x64,
+            FloaterHill8x64OuterLeft,
+            FloaterHill8x64OuterRight,
+            "FloaterHill8x64",
+        ),
+        (
+            FloaterHill12x80,
+            FloaterHill12x80OuterLeft,
+            FloaterHill12x80OuterRight,
+            "FloaterHill12x80",
+        ),
+        (
+            FloaterHill6x64,
+            FloaterHill6x64OuterLeft,
+            FloaterHill6x64OuterRight,
+            "FloaterHill6x64",
+        ),
+        (
+            FloaterHill12x96,
+            FloaterHill12x96OuterLeft,
+            FloaterHill12x96OuterRight,
+            "FloaterHill12x96",
+        ),
+        (
+            FloaterHill16x112,
+            FloaterHill16x112OuterLeft,
+            FloaterHill16x112OuterRight,
+            "FloaterHill16x112",
+        ),
+    ] {
+        let source = pieces
+            .iter()
+            .find(|piece| piece.id == source_id)
+            .unwrap()
+            .clone();
+        let design = GENERATED_HILL_DESIGNS
+            .iter()
+            .find(|design| design.name == profile_name)
+            .unwrap();
+        let Shape::Profile(profile) = &source.shape else {
+            unreachable!()
+        };
+        for (id, mirrored, twist) in [
+            (left_id, false, HillTwist::OuterBankLeft),
+            (right_id, true, HillTwist::OuterBankRight),
+        ] {
+            let mut piece = source.clone();
+            piece.id = id;
+            piece.name = if mirrored {
+                "Outer-banked hill right"
+            } else {
+                "Outer-banked hill left"
+            };
+            piece.mirrored = mirrored;
+            piece.shape = Shape::RolledProfile(
+                profile.clone(),
+                Twist::OuterBank {
+                    peak: 110.0_f64.to_radians(),
+                    start: design.crest_start,
+                    end: design.crest_end,
+                },
+            );
+            piece.family.as_mut().unwrap().twist = Some(twist);
+            piece.heartlining = Some(Heartlining::Heartlined);
+            let rated = piece.rated_speeds.as_mut().unwrap();
+            // The train needs more entry energy when its rear cars are below a steep crest.
+            rated.minimum_entry += 1.0;
+            assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
+            piece.clear_arc_table();
+            pieces.push(piece);
+        }
+    }
+    for (left_id, right_id, profile_name, feel, height, span, is_stall) in [
+        (
+            ZeroGRollFastLeft,
+            ZeroGRollFastRight,
+            "ZeroGRollFast",
+            HillFeel::ZeroGRoll,
+            8,
+            86,
+            false,
+        ),
+        (
+            ZeroGRollCompactLeft,
+            ZeroGRollCompactRight,
+            "ZeroGRollCompact",
+            HillFeel::ZeroGRoll,
+            10,
+            80,
+            false,
+        ),
+        (
+            StallLeft,
+            StallRight,
+            "Stall",
+            HillFeel::Stall,
+            13,
+            104,
+            true,
+        ),
+    ] {
+        let profile = Arc::new(embedded_profile(profile_name));
+        let design = GENERATED_HILL_DESIGNS
+            .iter()
+            .find(|design| design.name == profile_name)
+            .unwrap();
+        let endpoint = profile.endpoint();
+        for (id, mirrored, twist) in [
+            (left_id, false, HillTwist::LeftRoll),
+            (right_id, true, HillTwist::RightRoll),
+        ] {
+            let mut piece = straight.clone();
+            piece.id = id;
+            piece.name = match (is_stall, mirrored) {
+                (true, false) => "Stall left",
+                (true, true) => "Stall right",
+                (false, false) => "Zero-g roll left",
+                (false, true) => "Zero-g roll right",
+            };
+            piece.exit.x = (endpoint[0] / 2.0).round() as i32;
+            piece.exit.z = (endpoint[1] / 2.0).round() as i32;
+            piece.mirrored = mirrored;
+            piece.shape = Shape::RolledProfile(
+                profile.clone(),
+                if is_stall {
+                    Twist::Stall {
+                        ramp: 0.25,
+                        hold: 0.1,
+                        start: design.crest_start,
+                        end: design.crest_end,
+                    }
+                } else {
+                    let fast = matches!(id, ZeroGRollFastLeft | ZeroGRollFastRight);
+                    let extension = if fast { 0.10 } else { 0.05 } * profile.length();
+                    Twist::ZeroGRoll {
+                        ramp: if fast { 0.40 } else { 0.25 },
+                        start: (design.crest_start - extension).max(0.0),
+                        end: (design.crest_end + extension).min(profile.length()),
+                    }
+                },
+            );
+            piece.inversion = Some(Inversion::HeartlineRoll);
+            piece.heartlining = Some(Heartlining::Heartlined);
+            piece.family = Some(HillFamily {
+                feel,
+                height_metres: height,
+                span_metres: span,
+                twist: Some(twist),
+                design_speed_metres_per_second: design.design_speed,
+            });
+            piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+            piece.clear_arc_table();
+            let mut rated = profile.rated_speeds(profile_name, design.design_speed, 2.0, 8.0);
+            rated.minimum_entry = rolled_inversion_minimum_entry(&piece);
+            assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
+            piece.rated_speeds = Some(rated);
+            pieces.push(piece);
+        }
+    }
     for (id, name, bank) in [
         (BankedStraightLeft, "Left-banked straight", Left),
         (BankedStraightRight, "Right-banked straight", Right),

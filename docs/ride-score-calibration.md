@@ -201,3 +201,51 @@ the straight-profile 2–3 excitement band, and Demo excitement 5–7. The calib
 archetypes and the current Demo measurement contradict those expectations. I
 left their assertions and tolerances unchanged. The new calibration test also
 fails the excitement ordering assertion; the printed scores also miss the three plan bands listed above and the nausea ordering. No tests are skipped or thresholds relaxed. Review of these model and design conflicts remains open.
+
+## 2026-11-05 owner-target candidate
+
+This candidate reduces the maximum excitement penalties for excessive-force
+band exposure from 1.5 to 0.7 and dead time from 1.5 to 0.5, and raises the
+inversion contribution's maximum from 2.0 to 2.2. The ASTM envelope penalty
+is unchanged. These choices restore credit for classic inversions while still
+penalizing both excessive exposure and sustained envelope violations. Excitement
+is floored at zero per car; a minimum-excitement contribution reconciles each
+reported breakdown with that floor. Airtime force bands use the model's existing
+classifier; all force bands follow the overlay's displayed thresholds.
+
+The synthetic Blitz reference describes 85 seconds, three launches, ten airtime
+moments, a top hat, three distinct heartlined inversions, and 45 m maximum drop.
+Like the other archetypes it is a feature profile, not a verified constructible
+circuit. Modern nausea targets were removed, rather than inferring nausea from a
+coaster name. These are the first and only measurements of this candidate:
+
+| Synthetic archetype | Excitement | Owner excitement target | Intensity | Nausea |
+| --- | ---: | ---: | ---: | ---: |
+| Family wooden coaster | 2.96 | 1.5–3.0 | 2.78 | 0.38 |
+| Classic Arrow looper | 4.05 | 4.0–5.0 | 7.24 | 5.53 |
+| B&M hyper | 6.62 | 6.0–7.5 | 6.31 | 0.53 |
+| RMC hybrid | 10.80 | 9.5–11.0 | 7.26 | 3.55 |
+| Intamin accelerator | 5.78 | 5.5–7.0 | 7.39 | 0.18 |
+| Intamin Blitz multi-launch | 11.09 | 9.0–11.0 **miss** | 7.92 | 2.98 |
+
+The Blitz misses its upper bound by 0.09 points, so the calibration test fails.
+The candidate has not been retuned and these measurements are not a completed
+calibration. All actual circuits below completed their test laps; the layouts
+may differ from the earlier historical measurements above.
+
+| Circuit | Excitement | Intensity | Nausea | Peak +vertical g | Peak −vertical g | Peak lateral g | Peak speed m/s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Demo | 0.54 | 8.88 | 6.98 | 4.70 | 0.00 | 6.12 | 27.79 |
+| Timber Tumbler | 1.48 | 10.43 | 7.90 | 11.42 | −13.43 | 15.79 | 44.08 |
+| Velocity Viper | 1.98 | 9.71 | 5.95 | 5.43 | −1.76 | 7.45 | 31.30 |
+| Briar Blitz | 0.17 | 9.36 | 6.85 | 4.42 | −0.40 | 7.20 | 26.74 |
+
+These scores do not establish comfortable rides. In particular, the high measured
+forces and envelope penalties warrant layout review independently of the score.
+
+The focused scoring tests passed (6 tests). After five recorder fixtures were
+made long or fast enough to exercise their existing assertions, the recorder
+suite passed 30 of 33 tests. The remaining failures concern the old synthetic
+profile bands, the Demo excitement band, and the assumption that one extreme
+sample produces intensity above 10. Their assertions remain unchanged and need
+review against the approved scoring model.

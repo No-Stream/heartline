@@ -225,6 +225,7 @@ fn score_term_key(term: Term) -> &'static str {
         Term::DeadTime => "deadTime",
         Term::Envelope => "envelope",
         Term::Sickening => "sickening",
+        Term::ExcitementFloor => "excitementFloor",
         Term::PeakForce => "peakForce",
         Term::SustainedForce => "sustainedForce",
         Term::Reversals => "reversals",
@@ -313,6 +314,10 @@ mod wire_tests {
         crate::construction::ConstructionElementWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionTrackWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionColorsWire::export_all_to(&output).unwrap();
+        crate::construction::ConstructionForcePreviewWire::export_all_to(&output).unwrap();
+        crate::construction::ConstructionCandidateForcePreviewWire::export_all_to(&output).unwrap();
+        crate::construction_speed_match::ConstructionSpeedMatchWire::export_all_to(&output)
+            .unwrap();
         crate::facilities::FacilityReport::export_all_to(&output).unwrap();
         crate::scenery::SceneryReport::export_all_to(&output).unwrap();
         crate::guest_report::GuestDetailReport::export_all_to(&output).unwrap();

@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { readCircuit } from "../player/circuits";
 import { fileURLToPath } from "node:url";
 import { clickCanvas, closeCircuit, legacyRideRating, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, selectUnits, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
+import { expectRideReportExplained } from "../player/ride-report";
 import { parseReplaySession } from "../../src/session-replay";
 
 test("Timber Tumbler player journey @journey", async ({ page }) => {
@@ -143,13 +144,8 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await testRide(page);
   await waitForState(page, async () => (await page.getByRole("region", { name: "Coaster construction" }).getByRole("status").textContent()) === "Train completed a lap.", { ticks: 30_000 });
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
-  await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
   await expect(page.locator('[data-score-breakdown="excitement"]')).toContainText("Ejector airtime");
-  const rating = await page.evaluate(() => window.gameTest.testingReport()!.rating);
-  expect(rating.excitement).toBeGreaterThanOrEqual(4);
-  expect(rating.excitement).toBeLessThan(10);
-  expect(rating.intensity).toBeGreaterThan(0);
-  expect(rating.intensity).toBeLessThan(12);
+  const { rating } = await expectRideReportExplained(page);
   console.log(`Timber Tumbler ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
@@ -191,7 +187,14 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
     await openTool(page, "Coaster");
   }
 
+  const estimateBeforeDeletion = await page.evaluate(() => window.gameTest.constructionForcePreview());
   await page.getByRole("button", { name: "Delete Gentle climb, piece 3" }).click();
+  await expect(page.locator("[data-track] li")).toHaveCount(48);
+  await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeDisabled();
-  await expect(page.getByLabel("Track overlay")).toBeDisabled();
+  expect(await page.evaluate(() => window.gameTest.testingReport())).toBeNull();
+  const estimateAfterDeletion = await page.evaluate(() => window.gameTest.constructionForcePreview());
+  expect(estimateAfterDeletion?.samples.length).toBeGreaterThan(0);
+  expect(estimateAfterDeletion).not.toEqual(estimateBeforeDeletion);
+  await expect(page.getByLabel("Track overlay")).toBeEnabled();
 });

@@ -1,5 +1,10 @@
 import { allocateTrainVoices, MAX_SCREAM_GROUPS, MAX_TRAIN_VOICES, MAX_UI_VOICES } from "./voices";
 import type { SoundFrame, UiSound } from "./mapping";
+import { createTrainVoice } from "./synth/train";
+import { createCrowdVoice } from "./synth/crowd";
+import { createAmbienceVoice } from "./synth/ambience";
+import { playScream, type ScreamHandle } from "./synth/screams";
+import { screamSlot } from "./scream-pool";
 import { playUiSound, type UiSoundHandle } from "./synth/ui";
 
 export const AUDIO_LOOKAHEAD = 0.15;
@@ -13,10 +18,10 @@ export function schedulePeriodic(nextTime: number, rate: number, clock: Schedule
   return { events, nextTime };
 }
 
-export interface OfflineScript { duration: number; frames: { time: number; frame: SoundFrame }[]; volume?: number; muted?: boolean }
+export interface OfflineScript { duration: number; frames: { time: number; frame: SoundFrame }[]; volume?: number; muted?: boolean; includeSamples?: boolean; includeVoiceTimeline?: boolean }
 /** `peakTime` is when the loudest sample plays, in seconds; `above1000` overlaps the other bands and uses the same one-pole split. */
-export interface ChannelMetrics { peak: number; peakTime: number; rms: number; bands: { below200: number; from200To2000: number; above2000: number; above1000: number } }
-export interface OfflineResult { channels: ChannelMetrics[] }
+export interface ChannelMetrics { peak: number; peakTime: number; rms: number; bands: { below200: number; from200To2000: number; above2000: number; above1000: number }; samples?: number[] }
+export interface OfflineResult { channels: ChannelMetrics[]; voiceTimeline?: ActiveVoices[] }
 export interface ActiveVoices { trains: number; screams: number; ui: number; ambience: "day" | "night" | "silent" }
 
 export function createAudioEngine(context: BaseAudioContext, volume = 0.7, muted = false) {
@@ -27,17 +32,21 @@ export function createAudioEngine(context: BaseAudioContext, volume = 0.7, muted
   master.gain.value = muted ? 0 : volume * volume;
   master.connect(compressor).connect(context.destination);
   const trainPool = Array.from({ length: MAX_TRAIN_VOICES }, () => context.createGain());
+  const trainVoices = trainPool.map((voice) => createTrainVoice(context, voice));
   const screamPool = Array.from({ length: MAX_SCREAM_GROUPS }, () => context.createGain());
   const uiPool = Array.from({ length: MAX_UI_VOICES }, () => context.createGain());
   const crowd = context.createGain();
   const ambience = context.createGain();
+  const crowdVoice = createCrowdVoice(context, crowd);
+  const ambienceVoice = createAmbienceVoice(context, ambience);
   for (const voice of [...trainPool, ...screamPool, ...uiPool, crowd, ambience]) voice.connect(master);
   let allocation: (number | null)[] = [];
   const uiSounds: (UiSoundHandle | null)[] = uiPool.map(() => null);
+  const screams: (ScreamHandle | null)[] = screamPool.map(() => null);
   let nextUiSlot = 0;
   let variationSeed = 1;
   const variation = (): number => { variationSeed = (variationSeed * 16807) % 2147483647; return (variationSeed - 1) / 2147483646; };
-  const emptyFamily = { apply(_parameters: unknown, _clock: ScheduleClock): void {}, trigger(_event: unknown, _clock: ScheduleClock): void {}, release(_clock: ScheduleClock): void {} };
+  let activeAmbience: ActiveVoices["ambience"] = "silent";
   return {
     setVolume(nextVolume: number, nextMuted: boolean, atTime = context.currentTime): void {
       master.gain.setTargetAtTime(nextMuted ? 0 : nextVolume * nextVolume, atTime, 0.05);
@@ -52,14 +61,30 @@ export function createAudioEngine(context: BaseAudioContext, volume = 0.7, muted
       const previous = allocation;
       allocation = allocateTrainVoices(allocation, frame.trains);
       for (let index = 0; index < trainPool.length; index++) {
-        if (previous[index] !== undefined && previous[index] !== null && previous[index] !== allocation[index]) emptyFamily.release(clock);
+        if (previous[index] !== undefined && previous[index] !== null && previous[index] !== allocation[index]) trainVoices[index]!.release(clock);
         const train = frame.trains.find((candidate) => candidate.train === allocation[index]);
-        if (train) emptyFamily.apply(train, clock);
+        if (train) trainVoices[index]!.apply(train, clock, frame.eventsMuted);
         trainPool[index]!.gain.setTargetAtTime(allocation[index] === null ? 0 : 1, atTime, 0.05);
       }
-      emptyFamily.apply(frame.crowd, clock);
-      emptyFamily.apply(frame.ambience, clock);
-      if (!frame.eventsMuted) for (const event of frame.screams) emptyFamily.trigger(event, clock);
+      crowdVoice.apply(frame.crowd, clock);
+      ambienceVoice.apply(frame.ambience, clock);
+      activeAmbience = frame.ambience.day === 0 && frame.ambience.night === 0 ? "silent" : frame.ambience.day > frame.ambience.night ? "day" : "night";
+      if (frame.eventsMuted) {
+        for (let index = 0; index < screams.length; index++) {
+          screams[index]?.stop(atTime);
+          screams[index] = null;
+        }
+      } else for (const event of frame.screams) {
+        const slot = screamSlot(screams, atTime);
+        screams[slot]?.stop(atTime);
+        screams[slot] = playScream(context, screamPool[slot]!, event, atTime, variation);
+      }
+      if (frame.paused) {
+        for (let index = 0; index < uiSounds.length; index++) {
+          uiSounds[index]?.stop(clock.now);
+          uiSounds[index] = null;
+        }
+      }
       // A fifth overlapping interface sound fades out the oldest, so a burst of events cannot stack up.
       for (const event of frame.ui) {
         uiSounds[nextUiSlot]?.stop(clock.now);
@@ -67,9 +92,9 @@ export function createAudioEngine(context: BaseAudioContext, volume = 0.7, muted
         nextUiSlot = (nextUiSlot + 1) % uiPool.length;
       }
     },
-    activeVoices(): ActiveVoices {
-      const ui = uiSounds.filter((sound) => sound !== null && sound.end > context.currentTime).length;
-      return { trains: allocation.filter((train) => train !== null).length, screams: 0, ui, ambience: "silent" };
+    activeVoices(atTime = context.currentTime): ActiveVoices {
+      const ui = uiSounds.filter((sound) => sound !== null && sound.end > atTime).length;
+      return { trains: allocation.filter((train) => train !== null).length, screams: screams.filter((scream) => scream !== null && scream.end > atTime).length, ui, ambience: activeAmbience };
     },
   };
 }
@@ -146,9 +171,11 @@ export async function renderOffline(script: OfflineScript): Promise<OfflineResul
   const sampleRate = 48000;
   const context = new OfflineAudioContext(2, Math.ceil(script.duration * sampleRate), sampleRate);
   const engine = createAudioEngine(context, script.volume ?? 0.7, script.muted ?? false);
+  const voiceTimeline: ActiveVoices[] = [];
   for (const entry of script.frames) {
     if (!Number.isFinite(entry.time) || entry.time < 0 || entry.time > script.duration) throw new RangeError("Invalid offline frame time");
     engine.apply(entry.frame, entry.time);
+    if (script.includeVoiceTimeline) voiceTimeline.push(engine.activeVoices(entry.time));
   }
   const rendered = await context.startRendering();
   const channels: ChannelMetrics[] = [];
@@ -168,7 +195,7 @@ export async function renderOffline(script: OfflineScript): Promise<OfflineResul
       lowEnergy += low * low; midEnergy += (midLow - low) ** 2; highEnergy += (sample - midLow) ** 2; aboveKiloEnergy += (sample - kiloLow) ** 2;
     }
     const bandRms = (bandEnergy: number): number => Math.sqrt(bandEnergy / samples.length);
-    channels.push({ peak, peakTime: peakIndex / sampleRate, rms: bandRms(energy), bands: { below200: bandRms(lowEnergy), from200To2000: bandRms(midEnergy), above2000: bandRms(highEnergy), above1000: bandRms(aboveKiloEnergy) } });
+    channels.push({ ...(script.includeSamples ? { samples: Array.from(samples) } : {}), peak, peakTime: peakIndex / sampleRate, rms: bandRms(energy), bands: { below200: bandRms(lowEnergy), from200To2000: bandRms(midEnergy), above2000: bandRms(highEnergy), above1000: bandRms(aboveKiloEnergy) } });
   }
-  return { channels };
+  return { channels, ...(script.includeVoiceTimeline ? { voiceTimeline } : {}) };
 }

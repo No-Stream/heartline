@@ -9,11 +9,13 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterColors, CoasterModel, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    CoasterColors, CoasterModel, Heartlining, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
     LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape,
     SupportStyle, TrackState, TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
+#[cfg(test)]
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 
@@ -49,6 +51,42 @@ pub struct PieceChoice {
     pub id: PieceId,
     pub result: Result<(), ConstructionError>,
     pub would_tunnel: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpeedMatchedVariant {
+    pub id: PieceId,
+    pub fits: bool,
+}
+
+/// Select the rated candidate with the largest margin to either window edge.
+/// If no window contains the speed, select the nearest window instead. Ties
+/// preserve the order supplied by the caller.
+pub fn select_speed_matched_variant(
+    candidates: &[Piece],
+    entry_speed: f64,
+) -> Option<SpeedMatchedVariant> {
+    assert!(entry_speed.is_finite() && entry_speed >= 0.0);
+    let mut best: Option<(SpeedMatchedVariant, f64)> = None;
+    for piece in candidates {
+        let Some(window) = piece.rated_speeds else {
+            continue;
+        };
+        assert!(window.minimum_entry.is_finite() && window.maximum_entry.is_finite());
+        assert!(window.minimum_entry >= 0.0 && window.minimum_entry <= window.maximum_entry);
+        let margin = (entry_speed - window.minimum_entry).min(window.maximum_entry - entry_speed);
+        let choice = SpeedMatchedVariant {
+            id: piece.id,
+            fits: margin >= 0.0,
+        };
+        if best
+            .as_ref()
+            .is_none_or(|(_, best_margin)| margin > *best_margin)
+        {
+            best = Some((choice, margin));
+        }
+    }
+    best.map(|(choice, _)| choice)
 }
 
 #[derive(Clone)]
@@ -103,6 +141,10 @@ pub struct Construction {
     validation_cache: RefCell<Option<ValidationCache>>,
     choices_cache: RefCell<Option<ChoicesCache>>,
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
+    #[cfg(test)]
+    support_cache_misses: Cell<usize>,
+    #[cfg(test)]
+    validation_cache_rebuilds: Cell<usize>,
 }
 
 impl Construction {
@@ -121,6 +163,10 @@ impl Construction {
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
+            #[cfg(test)]
+            support_cache_misses: Cell::new(0),
+            #[cfg(test)]
+            validation_cache_rebuilds: Cell::new(0),
         }
     }
 
@@ -542,6 +588,9 @@ impl Construction {
                 && same_obstacles(&cache.obstacles, obstacles)
         });
         if !matches_inputs {
+            #[cfg(test)]
+            self.validation_cache_rebuilds
+                .set(self.validation_cache_rebuilds.get() + 1);
             let existing: Vec<_> = self
                 .pieces
                 .iter()
@@ -685,6 +734,9 @@ impl Construction {
                 continue;
             }
             if index < cache.existing.len() && cache.supports[index].is_none() {
+                #[cfg(test)]
+                self.support_cache_misses
+                    .set(self.support_cache_misses.get() + 1);
                 let mut bounds = obstacles.to_vec();
                 let region = support_search_region(supported_piece);
                 for (other_index, other_bounds) in cache.track_obstacles.iter().enumerate() {

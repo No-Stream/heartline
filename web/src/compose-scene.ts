@@ -14,7 +14,7 @@ import { buildSelectionRing } from "./guest-panel/selection-ring";
 import { buildPathGhostQuads, decodePathPreview } from "./render/path-ghost";
 import { buildLandscapingGhostQuads, type LandscapingPreview } from "./landscaping-tool";
 import { buildSceneryGhostQuads, scenerySprites, type Scenery, type SceneryPreview } from "./scenery-tool";
-import { buildProximityMarkers, buildTestingRibbon, type TestingMetric } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, overlaySamples, type TestingMetric } from "./coaster-testing";
 import type { Atlas, GeometryQuad, WorldSprite, WorldView } from "./render/scene";
 import type { AtmospherePass, GeometryPass } from "./render/index";
 import type { CoasterSnapshot } from "./protocol";
@@ -108,6 +108,10 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
   const constructionTrainPoses = input.current
     ? interpolateTrainPoses(input.previous?.constructionTrainPoses ?? input.current.constructionTrainPoses, input.current.constructionTrainPoses, input.interpolation)
     : noGeometry;
+  const testingSamples = overlaySamples(
+    input.construction?.testingReport?.samples ?? null,
+    input.construction?.constructionForcePreview?.samples ?? null,
+  );
   const sprites = [
     ...facilitySprites(input.facilities, input.camera.rotation),
     ...scenerySprites(input.scenery, input.camera.rotation),
@@ -175,8 +179,16 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
         }
         return quad;
       }),
-      ...(input.construction?.testingReport && (input.testingMetric || input.testingHighlightDistance !== undefined)
-        ? buildTestingRibbon(input.construction.testingReport.samples, input.testingMetric ?? "speed", camera, viewport, trackStyle(atlas), input.testingHighlightDistance)
+      ...(testingSamples.length && (input.testingMetric || input.testingHighlightDistance !== undefined)
+        ? buildTestingRibbon(
+          testingSamples,
+          input.testingMetric ?? "speed",
+          camera,
+          viewport,
+          trackStyle(atlas),
+          input.testingHighlightDistance,
+          input.construction?.constructionForcePreview?.limits,
+        )
         : []),
       ...(input.construction?.testingReport ? buildProximityMarkers(input.construction.testingReport.proximityEvents, camera, viewport, trackStyle(atlas)) : []),
       ...input.constructionEffects.quads(input.now, camera, viewport),

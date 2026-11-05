@@ -3,13 +3,13 @@ import { canvasToPage, clickCanvas, clickTile, moveOverCanvas, openTool, selectU
 
 const blockCircuitPieces = [
   "Straight", "Straight", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
-  "Straight", "Straight", "Straight", "Straight", "Straight", "Straight", "TurnLargeEntry", "TurnLargeExit",
+  "Straight", "Straight", "Straight", "Straight", "Straight", "Straight", "TurnLargeEntry",
 ];
 
 const boardingCircuitPieces = [
   "LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight",
-  "Straight", "Straight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown",
-  "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit",
+  "OneTileStraight", "OneTileStraight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown",
+  "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit", "OneTileStraight",
 ];
 
 test("automatic block sections can be inspected, moved, refused, and rendered @slow", async ({ page }) => {
@@ -20,6 +20,11 @@ test("automatic block sections can be inspected, moved, refused, and rendered @s
   const blockPanel = page.getByRole("region", { name: "Block sections" });
   await expect(blockPanel).toBeVisible();
   await page.getByRole("button", { name: "Add block sections" }).click();
+  await page.evaluate(async () => {
+    for (let slice = 0; slice < 1_000; slice += 1) await window.gameTest.advanceBlockPlacement(1_000);
+  });
+  await expect(blockPanel.locator("[data-block-report]")).toHaveAttribute("data-placement-status", "searching");
+  await expect(blockPanel.locator("[data-block-capacity]")).toHaveText(/supports up to (?:[2-9]|[1-9]\d+) trains?/);
   await installVerifiedPlacement(page);
 
   const report = blockPanel.locator("[data-block-report]");
@@ -197,11 +202,15 @@ async function buildBlockCircuit(
   for (const [index, piece] of pieces.entries()) {
     const needsChain = pieces === blockCircuitPieces ? index === 2 || index === 9 : index < 8;
     if (needsChain !== chainEnabled) {
-      await page.keyboard.press("h");
+      await page.getByRole("button", { name: "Chain lift" }).click();
       chainEnabled = needsChain;
+      await expect(page.getByRole("button", { name: "Chain lift" })).toHaveAttribute("aria-pressed", String(chainEnabled));
     }
     const choice = choices.locator(`[data-piece="${piece}"]`);
     await choice.click();
+    if (piece === "Loop") {
+      await page.getByRole("group", { name: "Element size" }).locator('[data-speed-match-variant="Loop"]').click();
+    }
     await expect(choice).toHaveAttribute("aria-checked", "true");
     const placePiece = page.getByRole("button", { name: "Place piece" });
     if (!(await placePiece.isEnabled())) {
@@ -211,7 +220,12 @@ async function buildBlockCircuit(
     await placePiece.click();
     await expect(track.locator("li")).toHaveCount(index + 2);
   }
-  await page.getByRole("button", { name: "Close circuit" }).click();
+  const finishCoaster = page.getByRole("button", { name: "Finish coaster" });
+  await expect(finishCoaster).toBeEnabled();
+  await finishCoaster.click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "true");
+  await page.getByRole("button", { name: "Confirm coaster finish" }).click();
+  await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
 }
 

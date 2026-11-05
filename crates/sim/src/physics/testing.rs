@@ -685,8 +685,7 @@ impl TestRunRecorder {
 
     /// Records readings for one car at each physics step.
     ///
-    /// Readings are sampled at 200 Hz, so interpolation at crossed metre marks
-    /// stays close to the simulated motion while keeping the overlay compact.
+    /// Interpolation at crossed metre marks keeps the overlay compact.
     pub fn record(&mut self, frames: &[Vec<CarReading>]) {
         for frame in frames {
             if frame.is_empty() {
@@ -1660,8 +1659,8 @@ mod tests {
         use crate::track::Vec3;
         use crate::track::proximity::{ProximityEvent, ProximityKind};
         let mut recorder = TestRunRecorder::new(100.0);
-        record(&mut recorder, reading(0.0, 10.0, 1.0, 0.0, 0.0));
-        record(&mut recorder, reading(10.0, 10.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(0.0, 30.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(10.0, 30.0, 1.0, 0.0, 0.0));
         let mut report = recorder.finish(false, false);
         let baseline = report.excitement;
         let event = |distance| ProximityEvent {
@@ -1680,8 +1679,8 @@ mod tests {
     fn proximity_ratings_have_diminishing_returns_and_ignore_event_order() {
         use crate::track::proximity::{ProximityEvent, ProximityKind};
         let mut recorder = TestRunRecorder::new(100.0);
-        record(&mut recorder, reading(0.0, 10.0, 1.0, 0.0, 0.0));
-        record(&mut recorder, reading(20.0, 10.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(0.0, 30.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(20.0, 30.0, 1.0, 0.0, 0.0));
         let baseline = recorder.finish(false, false);
         let events: Vec<_> = (1..=10)
             .map(|index| ProximityEvent {
@@ -1914,11 +1913,11 @@ mod tests {
             let mut recorder = TestRunRecorder::new(10.0);
             record(
                 &mut recorder,
-                reading(0.0, 20.0, vertical, lateral, longitudinal),
+                reading(0.0, 30.0, vertical, lateral, longitudinal),
             );
             record(
                 &mut recorder,
-                reading(1.0, 20.0, vertical, lateral, longitudinal),
+                reading(1.0, 30.0, vertical, lateral, longitudinal),
             );
             recorder.finish(true, false)
         }
@@ -1982,15 +1981,15 @@ mod tests {
 
     #[test]
     fn strong_lateral_and_sustained_high_g_produce_advisory_notes() {
-        let mut recorder = TestRunRecorder::new(72.0);
-        for tick in 0..800 {
+        let mut recorder = TestRunRecorder::new(360.0);
+        for tick in 0..1600 {
             record(
                 &mut recorder,
                 reading_with_track(
                     f64::from(tick) * 18.0 * super::super::TIME_STEP,
                     18.0,
                     5.0,
-                    2.5,
+                    1.4,
                     1.0,
                     0.0,
                     false,
@@ -2451,8 +2450,8 @@ mod tests {
     fn theming_recomputes_every_car_before_averaging_the_ride_score() {
         fn report(vertical_g: f64) -> TestRun {
             let mut recorder = TestRunRecorder::new(10.0);
-            record(&mut recorder, reading(0.0, 20.0, vertical_g, 0.0, 0.0));
-            record(&mut recorder, reading(1.0, 20.0, vertical_g, 0.0, 0.0));
+            record(&mut recorder, reading(0.0, 30.0, vertical_g, 0.0, 0.0));
+            record(&mut recorder, reading(1.0, 30.0, vertical_g, 0.0, 0.0));
             recorder.finish(true, false)
         }
 
