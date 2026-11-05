@@ -13,16 +13,15 @@ test("the cutaway window shows coaster track and tunnels being built underground
   test.setTimeout(240_000);
   await startPark(page, { park: "new", seed: 2027, speed: 1 });
   await raisePlateau(page);
-  await page.getByLabel("Underground view style").selectOption("cutaway");
+  await expect(page.getByLabel("Underground view style")).toHaveValue("cutaway");
   await expect(page.getByRole("region", { name: "Landscaping" }).locator("[data-underground-hint]")).toContainText("Buried track shows through the ground");
+  expect(await page.evaluate(() => window.gameTest.cutaway())).toBeNull();
   await buildRouteIntoTheGround(page);
+  const builder = page.getByRole("region", { name: "Coaster construction" });
+  const undergroundCutaway = builder.getByLabel("Underground cutaway");
+  await expect(undergroundCutaway).toHaveValue("auto");
   await page.evaluate(() => { window.gameTest.setTimeOfDay(0.45); window.gameTest.setCamera({ centerX: 57, centerY: 63, zoom: 1.5, rotation: 0 }); });
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
-  expect(await page.evaluate(() => window.gameTest.cutaway())).toBeNull();
-  const buriedTrackPicks = await constructionPicksAt(page, await page.evaluate(() => window.gameTest.project({ x: 61.5, y: 66.5, z: 1 })));
-  expect(buriedTrackPicks, "buried track is hidden by the ground in the surface view").toBe(0);
-
-  await page.keyboard.press("u");
   await expect.poll(() => page.evaluate(() => window.gameTest.cutaway())).not.toBeNull();
   const cutaway = (await page.evaluate(() => window.gameTest.cutaway()))!;
   expect(await constructionPicksAt(page, cutaway), "the window around the track end shows the track").toBeGreaterThan(0);
@@ -38,10 +37,20 @@ test("the cutaway window shows coaster track and tunnels being built underground
   await expect(page.locator("canvas"), "the window's edge and the buried track stay readable at night in the dark theme")
     .toHaveScreenshot("underground-cutaway-coaster-dark-night.png", { animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001 });
 
+  await undergroundCutaway.selectOption("off");
+  await expect.poll(() => page.evaluate(() => window.gameTest.cutaway())).toBeNull();
+  await openTool(page, "Landscape");
+  await openTool(page, "Coaster");
+  await expect(builder.getByLabel("Underground cutaway")).toHaveValue("off");
+  await expect.poll(() => page.evaluate(() => window.gameTest.cutaway())).toBeNull();
+
   const tunnel = await page.evaluate(() => window.gameTest.carvedSpans().filter(([x, y]) => y === 66 && x >= 60 && x <= 64)[0]);
   expect(tunnel, "the coaster carved a tunnel").toBeDefined();
   await openTool(page, "Landscape");
-  await page.getByLabel("Underground cut level").fill(String(tunnel[2] + 2));
+  const landscaping = page.getByRole("region", { name: "Landscaping" });
+  await landscaping.getByLabel("Underground cut level").fill(String(tunnel[2] + 2));
+  await landscaping.locator("[data-underground-toggle]").click();
+  await expect(landscaping.locator("[data-underground-toggle]")).toHaveText("Show surface");
   await openTool(page, "Paths");
   await page.getByRole("button", { name: "Build paths" }).click();
   const tunnelFloor = await page.evaluate((span) => window.gameTest.project({ x: span[0] + 0.5, y: span[1] + 0.5, z: span[2] / 4 }), tunnel);
@@ -53,7 +62,9 @@ test("the cutaway window shows coaster track and tunnels being built underground
   expect(await page.evaluate(({ x, y }) => window.gameTest.pickSurface(x, y), tunnelFloor))
     .toMatchObject({ kind: "carved-floor", x: tunnel[0], y: tunnel[1], height: tunnel[2] });
 
-  await page.keyboard.press("u");
+  await openTool(page, "Landscape");
+  await landscaping.locator("[data-underground-toggle]").click();
+  await expect(landscaping.locator("[data-underground-toggle]")).toHaveText("Show underground");
   await expect.poll(() => page.evaluate(() => window.gameTest.cutaway())).toBeNull();
 });
 

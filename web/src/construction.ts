@@ -9,6 +9,7 @@ import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
 import { displaySpeedToMetresPerSecond, displayToMetres, formatLength, metresPerSecondToDisplay, metresToInput, speedUnitLabel, unitLabel, type Units } from "./units";
+import type { UndergroundCutawayMode } from "./underground-cutaway";
 import "./print-modern.css";
 import "./construction.css";
 
@@ -21,6 +22,7 @@ export interface ConstructionPanel {
   setDeleteMode(enabled: boolean): void;
   setSelectedBlock(index: number | null): void;
   setUnits(units: Units): void;
+  setUndergroundCutawayMode(mode: UndergroundCutawayMode): void;
   setHeightMarkers(track: string, station: string): void;
   setQueueNotice(notice: string): void;
 }
@@ -87,6 +89,15 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         </select>
       </label>
       <p class="tool-panel__hint" data-model-description>${coasterModels["model:hybrid"].description}</p>
+    </section>
+    <section class="tool-panel__section builder__underground">
+      <label><span class="tool-panel__label">Underground cutaway</span>
+        <select data-underground-cutaway aria-label="Underground cutaway">
+          <option value="auto">Auto</option>
+          <option value="off">Off</option>
+          <option value="on">On</option>
+        </select>
+      </label>
     </section>
     <div class="tool-panel__section builder__station">
       <div class="builder__station-height">
@@ -276,6 +287,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const stamp = element("[data-stamp]");
   const modelSelect = element<HTMLSelectElement>("[data-model]");
   const modelDescription = element("[data-model-description]");
+  const undergroundCutaway = element<HTMLSelectElement>("[data-underground-cutaway]");
   const launches = element("[data-launches]");
   const launchList = element<HTMLOListElement>("[data-launch-list]");
   const blockPanel = element("[data-block-panel]");
@@ -359,6 +371,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (Number.isFinite(boundary)) dispatch({ type: "construction-add-block", boundaryMetres: displayToMetres(boundary, units) });
   });
   container.dataset.model = modelSelect.value;
+  undergroundCutaway.addEventListener("change", () => {
+    const mode = undergroundCutaway.value;
+    if (mode !== "auto" && mode !== "off" && mode !== "on") throw new Error(`Unknown underground cutaway mode ${mode}`);
+    dispatch({ type: "underground-cutaway-mode-set", mode });
+  });
   modelSelect.addEventListener("change", () => {
     const model = coasterModels[modelSelect.value as keyof typeof coasterModels];
     if (!model) throw new Error(`Unknown coaster model ${modelSelect.value}`);
@@ -793,6 +810,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       setHeight(dispatchedHeight);
       if (state) { renderSelection(state, false); renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
     },
+    setUndergroundCutawayMode(mode) { undergroundCutaway.value = mode; },
     setHeightMarkers(trackHeight, stationHeightText) {
       element("[data-panel-track-height]").textContent = trackHeight;
       element("[data-panel-station-height]").textContent = stationHeightText;

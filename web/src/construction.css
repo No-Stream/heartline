@@ -1,5 +1,6 @@
 /* The coaster builder's own layout. Tokens, buttons, steppers and the shared panel pieces are in print-modern.css. */
 .builder__model { display: grid; gap: 0.25rem; }
+.builder__underground label { display: grid; gap: 0.25rem; }
 .builder .tool-panel__status:empty { display: none; }
 
 /* Station */
