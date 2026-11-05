@@ -642,6 +642,9 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
         let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
         assert_eq!(super::piece_group(piece), expected_group, "{id:?}");
     }
+    for piece in catalog.iter().filter(|piece| piece.family.is_some()) {
+        assert_eq!(super::piece_group(piece), "special", "{:?}", piece.id);
+    }
 
     for (id, expected_name) in [
         (super::PieceId::BankedStraightLeft, "Left-banked straight"),

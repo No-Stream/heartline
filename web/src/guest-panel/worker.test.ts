@@ -27,6 +27,7 @@ const wasmMock = vi.hoisted(() => ({
   coasterTrainStates: vi.fn(() => new Float32Array()),
   constructionTrainStates: vi.fn(() => new Float32Array()),
   advanceBlockAnalysis: vi.fn((_budget: number) => false),
+  advanceBlockPlacement: vi.fn((_budget: number) => {}),
   blockReport: vi.fn(() => '{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}'),
 }));
 
@@ -87,6 +88,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_undo() { wasmMock.constructionUndo(); wasmMock.constructionTrackLength -= 1; }
     construction_delete(id: number) { wasmMock.constructionDelete(id); wasmMock.constructionTrackLength -= 1; }
     construction_advance_block_analysis(budget: number) { return wasmMock.advanceBlockAnalysis(budget); }
+    construction_advance_block_placement_for_test(budget: number) { wasmMock.advanceBlockPlacement(budget); }
     construction_choices() { return "[]"; }
     construction_elements() { return "[]"; }
     construction_selected() { return ""; }
@@ -143,6 +145,7 @@ afterEach(() => {
   wasmMock.coasterTrainStates.mockReset().mockReturnValue(new Float32Array());
   wasmMock.constructionTrainStates.mockReset().mockReturnValue(new Float32Array());
   wasmMock.advanceBlockAnalysis.mockReset().mockReturnValue(false);
+  wasmMock.advanceBlockPlacement.mockReset();
   wasmMock.blockReport.mockReset().mockReturnValue('{"sections":[],"trainCapacity":0,"capacitySearchComplete":null,"theoreticalHourlyRiders":null,"throughputStatus":"unavailable","placementStatus":"idle","placementSearchComplete":null,"reasons":[],"notes":[],"suggestions":[]}');
   wasmMock.constructionActive.mockReset().mockReturnValue(false);
   wasmMock.setChain.mockReset();
@@ -210,6 +213,24 @@ it("advances block analysis only when requested in test mode", async () => {
   await Promise.resolve();
   expect(wasmMock.advanceBlockAnalysis).toHaveBeenCalledExactlyOnceWith(42);
   expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({ type: "test-block-analysis-advanced" });
+});
+
+it("advances only placement on the dedicated frozen test command and records it", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "test-advance-block-placement", budget: 42 } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.advanceBlockPlacement).toHaveBeenCalledExactlyOnceWith(42);
+  expect(wasmMock.advanceBlockAnalysis).not.toHaveBeenCalled();
+  expect(postMessage.mock.calls.at(-1)?.[0]).toEqual({ type: "test-block-analysis-advanced" });
+  onMessage({ data: { type: "export-session", requestId: 1 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.at(-1)?.[0].recording.commands).toEqual([{ tick: 0, command: { type: "test-advance-block-placement", budget: 42 } }]);
 });
 
 it("continues block analysis on a timer in live mode", async () => {

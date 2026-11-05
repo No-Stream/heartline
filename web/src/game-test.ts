@@ -65,6 +65,7 @@ export interface GameTest {
   replaySession(session: ReplaySession): Promise<void>;
   advanceTicks(count: number): Promise<void>;
   advanceBlockAnalysis(budget: number): Promise<void>;
+  advanceBlockPlacement(budget: number): Promise<void>;
   setCamera(camera: Camera): void;
   setSurface(x: number, y: number, corners: [number, number, number, number]): void;
   project(point: WorldPoint): { x: number; y: number };

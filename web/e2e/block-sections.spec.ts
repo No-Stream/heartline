@@ -20,7 +20,12 @@ test("automatic block sections can be inspected, moved, refused, and rendered @s
   const blockPanel = page.getByRole("region", { name: "Block sections" });
   await expect(blockPanel).toBeVisible();
   await page.getByRole("button", { name: "Add block sections" }).click();
-  await installVerifiedPlacement(page, true);
+  await page.evaluate(async () => {
+    for (let slice = 0; slice < 1_000; slice += 1) await window.gameTest.advanceBlockPlacement(1_000);
+  });
+  await expect(blockPanel.locator("[data-block-report]")).toHaveAttribute("data-placement-status", "searching");
+  await expect(blockPanel.locator("[data-block-capacity]")).toHaveText(/supports up to (?:[2-9]|[1-9]\d+) trains?/);
+  await installVerifiedPlacement(page);
 
   const report = blockPanel.locator("[data-block-report]");
   const capacity = blockPanel.locator("[data-block-capacity]");
@@ -224,7 +229,7 @@ async function buildBlockCircuit(
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
 }
 
-async function installVerifiedPlacement(page: Page, waitForCompletion = false): Promise<void> {
+async function installVerifiedPlacement(page: Page): Promise<void> {
   const report = page.locator("[data-block-report]");
   const capacity = page.locator("[data-block-capacity]");
   await expect(report).toHaveAttribute("data-placement-status", /^(searching|incomplete|complete)$/);
@@ -232,11 +237,10 @@ async function installVerifiedPlacement(page: Page, waitForCompletion = false): 
     const placementStatus = await report.getAttribute("data-placement-status");
     const installedCapacity = Number(/supports up to (\d+) trains?/.exec(await capacity.textContent() ?? "")?.[1] ?? 0);
     if (placementStatus !== "searching") {
-      if (waitForCompletion) expect(placementStatus).toBe("complete");
       expect(installedCapacity, "automatic placement must verify at least two trains").toBeGreaterThanOrEqual(2);
       return;
     }
-    if (!waitForCompletion && installedCapacity >= 2) {
+    if (installedCapacity >= 2) {
       await page.getByRole("button", { name: "Use current layout" }).click();
       await expect(report).toHaveAttribute("data-placement-status", /^(incomplete|complete)$/);
       await expect(page.getByRole("button", { name: "Use current layout" })).toBeHidden();

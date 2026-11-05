@@ -3,7 +3,6 @@ use crate::physics::{PhysicsConfig, Train};
 use crate::track::{Heading, Slope, Vec3, hybrid_model};
 use crate::world::Surface;
 use std::collections::{HashSet, VecDeque};
-use std::time::{Duration, Instant};
 
 fn world() -> World {
     World::new(
@@ -1281,40 +1280,33 @@ fn choices_after_deleting_from_150_piece_circuit() {
             water: None,
         },
     );
-    let mut best_elapsed = Duration::MAX;
-    for _ in 0..3 {
-        let mut construction = Construction::new(TrackState { z: 160, ..start() }, hybrid_model());
-        construction.append(PieceId::Station, &world, &[]).unwrap();
-        for _ in 0..72 {
-            construction.append(PieceId::Straight, &world, &[]).unwrap();
-        }
-        for _ in 0..2 {
-            construction
-                .append(PieceId::TurnSmallStandalone, &world, &[])
-                .unwrap();
-        }
-        for _ in 0..73 {
-            construction.append(PieceId::Straight, &world, &[]).unwrap();
-        }
-        for _ in 0..2 {
-            construction
-                .append(PieceId::TurnSmallStandalone, &world, &[])
-                .unwrap();
-        }
-        assert_eq!(construction.pieces().len(), 150);
-        construction.close().unwrap();
-        construction.delete_from(75).unwrap();
-        let started = Instant::now();
-        let choices = construction.choices(&world, &[]);
-        best_elapsed = best_elapsed.min(started.elapsed());
-        assert!(choices.iter().any(|choice| choice.result.is_ok()));
+    let mut construction = Construction::new(TrackState { z: 160, ..start() }, hybrid_model());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    for _ in 0..72 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
     }
-    if !cfg!(debug_assertions) {
-        assert!(
-            best_elapsed < Duration::from_millis(50),
-            "best of three choices runs took {best_elapsed:?}"
-        );
+    for _ in 0..2 {
+        construction
+            .append(PieceId::TurnSmallStandalone, &world, &[])
+            .unwrap();
     }
+    for _ in 0..73 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    for _ in 0..2 {
+        construction
+            .append(PieceId::TurnSmallStandalone, &world, &[])
+            .unwrap();
+    }
+    assert_eq!(construction.pieces().len(), 150);
+    construction.close().unwrap();
+    construction.delete_from(75).unwrap();
+    construction.validation_cache_rebuilds.set(0);
+    construction.support_cache_misses.set(0);
+    let choices = construction.choices(&world, &[]);
+    assert!(choices.iter().any(|choice| choice.result.is_ok()));
+    assert_eq!(construction.validation_cache_rebuilds.get(), 0);
+    assert_eq!(construction.support_cache_misses.get(), 0);
 }
 
 #[test]

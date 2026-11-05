@@ -48,6 +48,10 @@ impl Construction {
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
+            #[cfg(test)]
+            support_cache_misses: Cell::new(0),
+            #[cfg(test)]
+            validation_cache_rebuilds: Cell::new(0),
         }
     }
 
