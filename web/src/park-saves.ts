@@ -3,7 +3,7 @@ import "./park-saves.css";
 
 export function createParkSaves(container: HTMLElement, save: () => Promise<Uint8Array>, load: (bytes: Uint8Array) => Promise<void>): { message(text: string): void } {
   container.className = "park-saves";
-  container.innerHTML = `<button type="button" class="park-saves__toggle" aria-expanded="false">Park saves</button>
+  container.innerHTML = `<button type="button" class="park-saves__toggle" aria-expanded="false">Park</button>
     <div class="park-saves__menu" hidden>
       <button type="button" data-save>Save park</button>
       <button type="button" data-load>Load park</button>

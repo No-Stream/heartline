@@ -178,3 +178,9 @@ main {
 .game-bar[data-fit-level="7"] .toolbar__tool span,
 .game-bar[data-fit-level="8"] .toolbar__tool span { display: none; }
 .game-bar[data-fit-level="7"] .toolbar__tool kbd { display: inline; }
+.game-bar[data-fit-level="7"] .day-clock__icon,
+.game-bar[data-fit-level="8"] .day-clock__icon,
+.game-bar[data-fit-level="7"] .day-clock__paused,
+.game-bar[data-fit-level="8"] .day-clock__paused,
+.game-bar[data-fit-level="8"] .day-clock__time { display: none; }
+.game-bar[data-fit-level="8"] .day-clock__speed { min-width: 30px; padding: 0; }
