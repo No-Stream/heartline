@@ -1120,7 +1120,7 @@ fn build_catalog() -> Vec<Piece> {
             HybridOverbankLeft => {
                 piece.shape = Shape::Overbank;
                 piece.rated_speeds = Some(RatedSpeeds {
-                    minimum_entry: 2.0,
+                    minimum_entry: 5.0,
                     maximum_entry: 13.0,
                 });
             }
@@ -1130,7 +1130,7 @@ fn build_catalog() -> Vec<Piece> {
                     peak: std::f64::consts::FRAC_PI_2,
                 };
                 piece.rated_speeds = Some(RatedSpeeds {
-                    minimum_entry: 6.0,
+                    minimum_entry: 8.0,
                     maximum_entry: 23.0,
                 });
             }
