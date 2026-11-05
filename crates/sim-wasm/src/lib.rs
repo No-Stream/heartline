@@ -1,6 +1,7 @@
 mod blocks;
 mod command_errors;
 mod construction;
+mod construction_speed_match;
 mod facilities;
 mod guest_benchmark;
 mod guest_report;

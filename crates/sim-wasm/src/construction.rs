@@ -119,6 +119,23 @@ pub struct ConstructionForcePreviewWire {
     limits: ConstructionForceLimitsWire,
 }
 
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionRatedSpeedWire {
+    minimum_entry: f64,
+    maximum_entry: f64,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionCandidateForcePreviewWire {
+    status: &'static str,
+    entry_speed: Option<f64>,
+    peaks: Option<ConstructionLastPlacedForceWire>,
+    limits: ConstructionForceLimitsWire,
+    rated_speed: Option<ConstructionRatedSpeedWire>,
+}
+
 fn force_limits_wire(limits: ComfortableForceLimits) -> ConstructionForceLimitsWire {
     ConstructionForceLimitsWire {
         minimum_vertical_g: limits.minimum_vertical_g,
@@ -176,6 +193,17 @@ fn last_placed_force_wire(
             .map(|sample| sample.longitudinal_g.abs())
             .fold(0.0, f64::max),
     })
+}
+
+fn entry_speed(samples: &[crate::reports::TestingSample], distance: f64) -> Option<f64> {
+    let next_index = samples.partition_point(|sample| sample.distance < distance);
+    let next = samples.get(next_index)?;
+    if next.distance == distance {
+        return Some(next.speed);
+    }
+    let previous = samples.get(next_index.checked_sub(1)?)?;
+    let fraction = (distance - previous.distance) / (next.distance - previous.distance);
+    Some(previous.speed + fraction * (next.speed - previous.speed))
 }
 
 pub(crate) fn colors_json(colors: Option<CoasterColors>) -> String {
@@ -424,6 +452,67 @@ impl WasmSimulation {
             limits: force_limits_wire(construction.model().comfortable_force_limits),
         })
         .expect("construction force preview serializes")
+    }
+
+    /// Estimates the selected candidate using the placed track and the same train physics.
+    pub fn construction_candidate_force_preview_json(&self) -> String {
+        let Some(construction) = self.construction.as_ref() else {
+            return "null".into();
+        };
+        let candidate = self.construction_preview();
+        let Some(first) = candidate.first() else {
+            return "null".into();
+        };
+        let rated_speed = first.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
+            minimum_entry: speeds.minimum_entry,
+            maximum_entry: speeds.maximum_entry,
+        });
+        let start_distance: f64 = construction.pieces().iter().map(Piece::length).sum();
+        let mut pieces = construction.pieces().to_vec();
+        pieces.extend(candidate);
+        let end_distance: f64 = pieces.iter().map(Piece::length).sum();
+        let preview = preview_open_track(
+            &pieces,
+            &construction.model().train,
+            PhysicsConfig {
+                lift_speed: 5.0,
+                ..PhysicsConfig::default()
+            },
+        )
+        .expect("construction contains a station");
+        let samples: Vec<_> = preview
+            .report
+            .samples
+            .iter()
+            .map(|sample| {
+                let position = open_track_position(&pieces, sample.distance) / 4.0;
+                crate::reports::TestingSample {
+                    distance: sample.distance,
+                    x: position.x,
+                    y: position.y,
+                    z: position.z,
+                    speed: sample.speed,
+                    vertical_g: sample.vertical_g,
+                    lateral_g: sample.lateral_g,
+                    longitudinal_g: sample.longitudinal_g,
+                    airtime: sample.airtime,
+                }
+            })
+            .collect();
+        let entry_speed = entry_speed(&samples, start_distance);
+        let status = match preview.status {
+            PreviewStatus::ReachedEnd => "reachedEnd",
+            PreviewStatus::Stalled => "stalled",
+            PreviewStatus::TimedOut => "timedOut",
+        };
+        serde_json::to_string(&ConstructionCandidateForcePreviewWire {
+            status,
+            entry_speed,
+            peaks: last_placed_force_wire(&samples, start_distance, end_distance),
+            limits: force_limits_wire(construction.model().comfortable_force_limits),
+            rated_speed,
+        })
+        .expect("candidate force preview serializes")
     }
 
     /// Repaints the coaster. Names outside the palette leave it unchanged and explain why in the construction message.

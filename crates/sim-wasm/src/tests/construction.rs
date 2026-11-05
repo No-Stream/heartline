@@ -3,6 +3,45 @@ use std::collections::{HashSet, VecDeque};
 use super::WasmSimulation;
 
 #[test]
+fn candidate_force_preview_reports_selected_track_without_placing_it() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    assert_eq!(
+        simulation.construction_candidate_force_preview_json(),
+        "null"
+    );
+    simulation.construction_start(100, 100, 20, 0);
+    simulation.construction_select("Straight");
+    let before = simulation.construction_track();
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_candidate_force_preview_json()).unwrap();
+    assert_eq!(preview["status"], "reachedEnd");
+    assert!(preview["entrySpeed"].as_f64().unwrap() > 0.0);
+    assert!(preview["peaks"]["maximumVerticalG"].as_f64().is_some());
+    assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
+    assert_eq!(simulation.construction_track(), before);
+}
+
+#[test]
+fn candidate_force_preview_does_not_invent_peaks_beyond_a_stall() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(100, 100, 20, 0);
+    simulation.construction_select("LevelToGentleUp");
+    assert!(simulation.construction_can_append());
+    simulation.construction_append();
+    for _ in 0..4 {
+        simulation.construction_select("GentleUp");
+        assert!(simulation.construction_can_append());
+        simulation.construction_append();
+    }
+    simulation.construction_select("GentleUp");
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_candidate_force_preview_json()).unwrap();
+    assert_eq!(preview["status"], "stalled");
+    assert!(preview["entrySpeed"].is_null());
+    assert!(preview["peaks"].is_null());
+}
+
+#[test]
 fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let simulation = super::WasmSimulation::new(42, 0, String::from("demo"));
     let piece = simulation
