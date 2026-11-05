@@ -9,7 +9,7 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterColors, CoasterModel, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    CoasterColors, CoasterModel, Heartlining, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
     LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape,
     SupportStyle, TrackState, TrainConfiguration, Vec3, catalog,
 };
