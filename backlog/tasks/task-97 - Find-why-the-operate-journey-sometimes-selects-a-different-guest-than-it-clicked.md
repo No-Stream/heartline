@@ -3,10 +3,10 @@ id: TASK-97
 title: >-
   Find why the operate journey sometimes selects a different guest than it
   clicked
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-11-04 13:55'
-updated_date: '2026-11-04 23:30'
+updated_date: '2026-11-05 00:06'
 labels:
   - test
   - bug
@@ -27,4 +27,6 @@ Seen 2026-11-04 in one make journeys run on the renderer-stages branch: the Timb
 2026-11-04: an instrumented investigation could not reproduce the wrong-guest selection; a second failure mode appeared (no stationary queued guest within 45 s). Fix: add a real pause (Space and a clock button) and have the journey select guests while paused, as a player would.
 
 Cause: the journey treated guests standing on queue tiles while waiting for their group as queuing guests. Fixed by adding a player pause (Space and a clock button), selecting guests while paused, and waiting for a guest whose activity is queuing. The game bar now fits itself by measuring instead of fixed width breakpoints.
+
+Reopened 2026-11-04: the wrong-guest panel reproduced once while paused, so it is not only movement; investigating click-to-selection.
 <!-- SECTION:NOTES:END -->
