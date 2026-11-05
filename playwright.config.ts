@@ -28,7 +28,8 @@ export default defineConfig({
       name: "journey",
       testMatch: "**/*.journey.spec.ts",
       grep: /@journey/,
-      workers: 2,
+      // Journeys are long and heavy; two at once on six compute cores pushed the operating journey to its limit.
+      workers: 1,
       use: { viewport: { width: 1280, height: 720 } },
     },
     {
