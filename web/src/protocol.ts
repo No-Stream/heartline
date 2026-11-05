@@ -34,13 +34,16 @@ export type WorkerMessage =
   | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "test-resumed" } | { type: "construction-finish-ready" }
   | { type: "surface-edited"; changed: boolean }
   | { type: "facility-access-preview"; requestId: number; rotation: number | undefined }
-  | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean }
+  | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean; outcome: PlacementOutcome | null }
   | { type: "guest-detail"; guestId: string; detail: GuestDetail | null }
-  | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string };
+  | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string; outcome: PlacementOutcome | null };
 
 export function sendWorkerAction(worker: Worker, action: WorkerAction): void {
   worker.postMessage(action);
 }
+
+/** What a player's scenery or facility command did; `null` on updates that answer no such command. */
+export type PlacementOutcome = "placed" | "removed" | "refused";
 
 export function sendWorkerMessage(scope: { postMessage(message: WorkerMessage, transfer?: Transferable[]): void }, message: WorkerMessage, transfer?: Transferable[]): void {
   scope.postMessage(message, transfer);
