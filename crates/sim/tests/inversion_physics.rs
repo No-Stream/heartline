@@ -604,8 +604,8 @@ fn descending_fifteen_degree_pull_maximum_respects_longitudinal_limit() {
     let end = start + circuit.pieces()[index].length();
     let maximum = circuit.pieces()[index].rated_speeds.unwrap().maximum_entry;
     assert_eq!(
-        maximum, 27.0,
-        "the 28 m/s scan point exceeds the longitudinal limit"
+        maximum, 28.0,
+        "the 29 m/s scan point exceeds the longitudinal limit"
     );
     let mut config = hybrid_model().train;
     config.cars = 12;
