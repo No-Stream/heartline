@@ -1,9 +1,10 @@
 ---
 id: TASK-105
 title: Show an approximate g-force and speed overlay while building
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-04 17:00'
+updated_date: '2026-11-05 04:27'
 labels: []
 dependencies:
   - TASK-95
@@ -23,3 +24,9 @@ Owner request 2026-11-04. While building a coaster, show approximate speed and g
 - [ ] #2 Updates after each placement fast enough to feel live
 - [ ] #3 Browser test checks the overlay appears and changes
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-04 owner: wants force overlays while building, like the existing test-run track overlay, e.g. to see 'this camelback is pulling -2.5 g, that won't work'. Approximate is fine. Reuse the existing overlay metrics (speed, vertical, lateral, longitudinal, airtime) on the unfinished track, and flag forces past the model's comfortable limits.
+<!-- SECTION:NOTES:END -->
