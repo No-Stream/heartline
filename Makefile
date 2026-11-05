@@ -68,7 +68,13 @@ bench:
 	$(CARGO) run --release -p theme-park-sim --features threads --example tick_bench
 
 bench-construction:
-	$(CARGO) run --release -p theme-park-sim --example construction_bench
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- catalog
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- choices hybrid
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- choices multi_launch
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- choices wooden
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements hybrid
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements multi_launch
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements wooden
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- per-piece
 
 bench-guests: wasm-bindgen
