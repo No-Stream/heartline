@@ -54,6 +54,7 @@ export type InputAction =
   | { readonly type: "landscaping-cancel" }
   | { readonly type: "underground-view-toggle" }
   | { readonly type: "underground-view-level"; readonly level: number }
+  | { readonly type: "underground-view-style"; readonly style: UndergroundStyle }
   | { readonly type: "facility-place-mode"; readonly kind: FacilityKind; readonly rotation: number }
   | { readonly type: "facility-remove-mode" | "facility-cancel" }
   | { readonly type: "facility-price"; readonly id: number; readonly price: number }
@@ -69,3 +70,6 @@ export type InputAction =
   | ConstructionPanelAction;
 
 export type CameraAction = Extract<InputAction, { readonly type: "pan" | "zoom" | "rotate" }>;
+
+/** How the underground view shows the world: cut everywhere at a level, or only inside a window around the work. */
+export type UndergroundStyle = "cut" | "cutaway";
