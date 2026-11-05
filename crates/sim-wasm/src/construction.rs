@@ -2,7 +2,7 @@ use super::*;
 use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
 use theme_park_sim::track::ComfortableForceLimits;
-use theme_park_sim::track::{Bank, Heartlining, HillTwist};
+use theme_park_sim::track::{Bank, Heartlining, HillFeel, HillTwist};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -17,6 +17,30 @@ pub struct ConstructionPieceWire {
     bank: &'static str,
     refusal: String,
     would_tunnel: bool,
+    hill_estimate: Option<ConstructionHillEstimateWire>,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionHillEstimateWire {
+    entry_speed: Option<f64>,
+    source: &'static str,
+    rated_speed: Option<ConstructionRatedSpeedWire>,
+    minimum_vertical_g: Option<f64>,
+    maximum_vertical_g: Option<f64>,
+    airtime_seconds: Option<f64>,
+    limits: ConstructionForceLimitsWire,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionHillOptionWire {
+    id: &'static str,
+    feel: &'static str,
+    height: u8,
+    span: u16,
+    twist: &'static str,
+    rated_speed: Option<ConstructionRatedSpeedWire>,
 }
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -137,6 +161,33 @@ pub struct ConstructionCandidateForcePreviewWire {
     peaks: Option<ConstructionLastPlacedForceWire>,
     limits: ConstructionForceLimitsWire,
     rated_speed: Option<ConstructionRatedSpeedWire>,
+}
+
+fn hill_feel_wire(feel: HillFeel) -> &'static str {
+    match feel {
+        HillFeel::Ejector => "ejector",
+        HillFeel::Floater => "floater",
+        HillFeel::Speed => "speed",
+        HillFeel::ZeroGRoll => "zeroGRoll",
+        HillFeel::Stall => "stall",
+    }
+}
+
+fn hill_twist_wire(twist: Option<HillTwist>) -> &'static str {
+    match twist {
+        None => "none",
+        Some(HillTwist::OuterBankLeft) => "outerLeft",
+        Some(HillTwist::OuterBankRight) => "outerRight",
+        Some(HillTwist::LeftRoll) => "left",
+        Some(HillTwist::RightRoll) => "right",
+    }
+}
+
+fn rated_speed_wire(piece: &Piece) -> Option<ConstructionRatedSpeedWire> {
+    piece.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
+        minimum_entry: speeds.minimum_entry,
+        maximum_entry: speeds.maximum_entry,
+    })
 }
 
 fn force_limits_wire(limits: ComfortableForceLimits) -> ConstructionForceLimitsWire {
@@ -544,6 +595,36 @@ impl WasmSimulation {
         }
     }
 
+    pub fn construction_hill_options(&self) -> String {
+        let model = self
+            .construction
+            .as_ref()
+            .map(|construction| construction.model().clone())
+            .unwrap_or_else(|| match self.construction_model {
+                ConstructionModel::Hybrid => hybrid_model(),
+                ConstructionModel::MultiLaunch => multi_launch_model(),
+                ConstructionModel::WoodenTwister => wooden_twister_model(),
+            });
+        let options: Vec<_> = theme_park_sim::track::catalog()
+            .iter()
+            .filter_map(|piece| {
+                let family = piece.family?;
+                model
+                    .allowed_pieces
+                    .contains(&piece.id)
+                    .then(|| ConstructionHillOptionWire {
+                        id: wire_pieceid(piece.id),
+                        feel: hill_feel_wire(family.feel),
+                        height: family.height_metres,
+                        span: family.span_metres,
+                        twist: hill_twist_wire(family.twist),
+                        rated_speed: rated_speed_wire(piece),
+                    })
+            })
+            .collect();
+        serde_json::to_string(&options).expect("hill options serialize")
+    }
+
     pub fn construction_select(&mut self, id: &str) {
         self.selected_element = None;
         match id {
@@ -585,7 +666,35 @@ impl WasmSimulation {
             self.refresh_construction_support_rendering();
             return;
         }
+        let id = if let Some(parameters) = id.strip_prefix("hill:") {
+            let matching = theme_park_sim::track::catalog().iter().find(|piece| {
+                piece.family.is_some_and(|family| {
+                    format!(
+                        "{}:{}x{}:{}",
+                        hill_feel_wire(family.feel),
+                        family.height_metres,
+                        family.span_metres,
+                        hill_twist_wire(family.twist)
+                    ) == parameters
+                })
+            });
+            matching.map(|piece| wire_pieceid(piece.id)).unwrap_or("")
+        } else {
+            id
+        };
         self.selected = pieceid_from_wire(id);
+        if let Some(selected) = self.selected {
+            let obstacles = self.facility_obstacles();
+            let world = self.world.clone();
+            if let Some(construction) = self.construction.as_mut() {
+                if theme_park_sim::track::catalog()
+                    .iter()
+                    .any(|piece| piece.id == selected && piece.family.is_some())
+                {
+                    let _ = construction.select_hill_variant(selected, &world, &obstacles);
+                }
+            }
+        }
         self.construction_message = if self.selected.is_some() {
             String::new()
         } else {
@@ -608,6 +717,14 @@ impl WasmSimulation {
     }
 
     pub fn construction_choices(&self) -> String {
+        self.construction_choices_with_preview(None, "")
+    }
+
+    pub fn construction_choices_with_preview(
+        &self,
+        entry_speed: Option<f64>,
+        status: &str,
+    ) -> String {
         let obstacles = self.facility_obstacles();
         let choices: Vec<_> = self
             .construction
@@ -630,6 +747,36 @@ impl WasmSimulation {
                             .map(construction_error)
                             .unwrap_or_default(),
                         would_tunnel: choice.would_tunnel,
+                        hill_estimate: if self.selected == Some(piece.id) && piece.family.is_some()
+                        {
+                            let (speed, source) = match status {
+                                "reachedEnd" => (entry_speed, "simulated"),
+                                "stalled" => (Some(0.0), "stalled"),
+                                "timedOut" => (None, "timedOut"),
+                                "" => (construction.estimated_end_speed(None).speed, "energy"),
+                                _ => panic!("unknown construction preview status"),
+                            };
+                            let forces = speed.and_then(|speed| {
+                                theme_park_sim::track::predicted_hill_forces(&piece, speed)
+                            });
+                            Some(ConstructionHillEstimateWire {
+                                entry_speed: speed,
+                                source,
+                                rated_speed: rated_speed_wire(&piece),
+                                minimum_vertical_g: forces
+                                    .as_ref()
+                                    .map(|force| force.minimum_vertical_g),
+                                maximum_vertical_g: forces
+                                    .as_ref()
+                                    .map(|force| force.maximum_vertical_g),
+                                airtime_seconds: forces.as_ref().map(|force| force.airtime_seconds),
+                                limits: force_limits_wire(
+                                    construction.model().comfortable_force_limits,
+                                ),
+                            })
+                        } else {
+                            None
+                        },
                     })
                     .collect()
             })

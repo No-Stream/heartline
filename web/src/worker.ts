@@ -5,7 +5,7 @@ import type { Facility, FacilityAction } from "./facilities";
 import init, { WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_wasm.js";
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
-import type { ConstructionAction, ConstructionElement, ConstructionForcePreview, ConstructionPiece, ConstructionTrack, PieceShape } from "./construction-protocol";
+import type { ConstructionAction, ConstructionElement, ConstructionForcePreview, ConstructionHillOption, ConstructionPiece, ConstructionTrack, PieceShape } from "./construction-protocol";
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
@@ -122,7 +122,12 @@ function sendGuestDetail(guestId = selectedGuestId): void {
 let constructionEndSpeedCache: number | undefined;
 
 function sendConstruction(complete = true): void {
-  const pieces = JSON.parse(simulation.construction_choices()) as ConstructionPiece[];
+  const constructionForcePreview = complete
+    ? JSON.parse(simulation.construction_force_preview_json()) as ConstructionForcePreview | null
+    : null;
+  const pieces = JSON.parse(simulation.construction_choices_with_preview(
+    constructionEndSpeed(constructionForcePreview), constructionForcePreview?.status ?? "",
+  )) as ConstructionPiece[];
   const elements = complete ? JSON.parse(simulation.construction_elements()) as ConstructionElement[] : [];
   const selected = simulation.construction_selected();
   const selectedChoice = pieces.find((piece) => piece.id === selected);
@@ -143,11 +148,9 @@ function sendConstruction(complete = true): void {
   const colorNames = JSON.parse(simulation.construction_colors()) as ConstructionColors | null;
   const layoutReport = JSON.parse(simulation.construction_train_layout()) as TrainLayout | null;
   const trainLayout = layoutReport ? parseTrainLayout(layoutReport) : null;
-  const constructionForcePreview = complete
-    ? JSON.parse(simulation.construction_force_preview_json()) as ConstructionForcePreview | null
-    : null;
   if (complete) constructionEndSpeedCache = constructionEndSpeed(constructionForcePreview);
   sendWorkerMessage(outputScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
+    hillOptions: JSON.parse(simulation.construction_hill_options()) as ConstructionHillOption[],
     selected: selected || null, track,
     canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),

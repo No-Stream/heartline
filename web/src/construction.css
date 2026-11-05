@@ -341,3 +341,74 @@
 [data-speed-match-variants] { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
 [data-speed-match-variants] button[aria-pressed="true"] { background: var(--teal); color: var(--paper); }
 [data-speed-match-message] { margin: 0.3rem 0; font-size: 0.8rem; }
+
+/* Airtime hill: folded to one line under the chosen piece; open, it steps the hill's feel, size and twist and prints the predicted ride. */
+.builder__hill { padding: 0.45rem 0; }
+.builder__hill summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  cursor: pointer;
+  list-style: none;
+}
+.builder__hill summary::-webkit-details-marker { display: none; }
+.builder__hill summary::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 0;
+  height: 0;
+  border-block: 0.3rem solid var(--transparent);
+  border-left: 0.42rem solid var(--coral);
+  transition: transform 160ms ease-out;
+}
+.builder__hill[open] summary::before { transform: rotate(90deg); }
+.builder__hill-title { font: 600 0.92rem/1.2 var(--body-font); white-space: nowrap; }
+.builder__hill-current {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font: italic 0.82rem/1.2 var(--body-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.builder__hill-body { display: grid; gap: 0.45rem; padding-top: 0.55rem; }
+.builder__hill-steppers { display: grid; gap: 0.3rem; }
+.builder__hill .stepper { grid-template-columns: 4.3rem 1.6rem minmax(0, 1fr) 1.6rem; }
+.builder__hill-suggestion { color: var(--ink-soft); font-size: 0.8rem; font-style: italic; }
+.builder__hill-suggestion:has(span:empty):has(button[hidden]) { display: none; }
+.builder__hill-readout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.2rem 0.7rem;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--teal);
+  background: color-mix(in srgb, var(--teal) 8%, var(--paper));
+}
+.builder__hill-row { display: contents; }
+.builder__hill-readout dd { margin: 0; font: 0.9rem/1.3 var(--body-font); font-variant-numeric: tabular-nums; }
+.builder__hill-rating {
+  display: inline-block;
+  margin-left: 0.2rem;
+  padding: 0 0.3rem;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font: 600 0.78rem/1.25 var(--heading-font);
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.08em;
+}
+.builder__hill-rating[data-tone="weak"] { color: var(--ink-soft); }
+.builder__hill-rating[data-tone="fine"] { color: var(--teal); }
+.builder__hill-rating[data-tone="great"] { color: var(--paper); background: var(--teal); border-color: var(--teal); }
+.builder__hill-rating[data-tone="past"] { color: color-mix(in srgb, var(--coral) 75%, var(--ink)); }
+.builder__hill-rating[data-tone="dangerous"] { color: var(--paper); background: var(--coral); border-color: var(--coral); }
+.builder__hill-message {
+  padding-left: 0.5rem;
+  border-left: 3px solid var(--coral);
+  color: color-mix(in srgb, var(--coral) 65%, var(--ink));
+  font-size: 0.8rem;
+  font-style: italic;
+}
