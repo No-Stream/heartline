@@ -118,7 +118,7 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   expect(worldTransfer).toContain(world.coasterRails.buffer);
   expect(worldTransfer).toContain(world.coasterTies.buffer);
   expect(workerMock.tick).not.toHaveBeenCalled();
-  expect(postMessage.mock.calls[2][0]).toEqual({ type: "scenery", scenery: [], message: "" });
+  expect(postMessage.mock.calls[2][0]).toEqual({ type: "scenery", scenery: [], message: "", outcome: null });
   expect(postMessage.mock.calls[3][0]).toEqual({ type: "piece-shapes", shapes: [] });
   expect(postMessage.mock.calls[4][0]).toEqual({ type: "ready" });
   expect(postMessage.mock.calls[5][0]).toMatchObject({ type: "snapshot", tickCount: 0 });
