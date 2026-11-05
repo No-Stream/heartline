@@ -1,9 +1,10 @@
 ---
 id: TASK-114
 title: Check that Resume works while a guest panel is open
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-04 23:18'
+updated_date: '2026-11-05 01:06'
 labels: []
 dependencies: []
 priority: medium
@@ -18,6 +19,12 @@ Found 2026-11-04 while fixing the operate journey (TASK-97): the diagnosing agen
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Clicking Resume with a guest panel open resumes the game
-- [ ] #2 A browser test covers it
+- [x] #1 Clicking Resume with a guest panel open resumes the game
+- [x] #2 A browser test covers it
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Cause: the guest panel kept its old position after a resize and covered Resume at 1280 px; it now stays inside the canvas.
+<!-- SECTION:NOTES:END -->
