@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-05 17:24'
+updated_date: '2026-11-05 19:57'
 labels: []
 dependencies:
   - TASK-95
@@ -45,4 +45,6 @@ Owner approved the airtime hill interface on 2026-11-04: one parameterised 'Airt
 2026-11-05: plan task 3 merged. 22 outer-banked hills (own family: floater-level vertical plus outward lateral, rated within all force limits), four zero-g rolls and two stalls (peak roll rates 178-192 deg/s; the stall's inverted hold is 10% of its roll window to stay under 200 deg/s; the fast zero-g roll passes longitudinal by 0.002 g). Next: task 4 (wave turn and rated overbank turn).
 
 2026-11-05: plan task 4 merged: wave turns (left and right, 2 m bump, rated 8-23 m/s) and the rated overbanked turn (5-13 m/s, now also on Velocity Viper), minimums measured from a steep-crest entry. Next: task 5 (lazy family validation, estimated end speed, readout).
+
+2026-11-05: task 6 (Airtime hill inspector: feel/height/length/twist steppers, live readout with rating chips, speed-matched default, Enter repeats a hill) done on rmc-hills (0876f98). Follow-ups for task 7: (a) the default size should be the one whose predicted crest airtime is closest to the family's target (ejector 'great'), not just nearest the window top (gives -0.9 g 'good'); (b) the point-mass forecast rates floaters at about -0.2 g 'weak': check against full-train simulation and the TASK-128 heart-speed correction; (c) add a lateral row to the readout for outer banks.
 <!-- SECTION:NOTES:END -->
