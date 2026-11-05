@@ -4,6 +4,7 @@ title: Broaden coaster vocabularies with unique signatures and manufacturer styl
 status: To Do
 assignee: []
 created_date: '2026-11-03 16:34'
+updated_date: '2026-11-05 05:06'
 labels:
   - coaster
   - art
@@ -28,3 +29,9 @@ Owner direction (2026-11-03): fill in realistic track for each model. Examples: 
 - [ ] #4 Pieces unusual for a model are marked as such in model data and in the builder, ready for a cost multiplier
 - [ ] #5 Supports and track are drawn in a manufacturer-specific style for each model
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-04 owner: realism means plausible and fun, not slavish copies of real models. Wooden coasters can combine ideas from The Gravity Group and older vintage woodies (not urgent).
+<!-- SECTION:NOTES:END -->

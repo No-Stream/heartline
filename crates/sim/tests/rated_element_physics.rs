@@ -670,3 +670,61 @@ fn barrel_roll_drop_rail_descends_monotonically_for_both_mirrors() {
         );
     }
 }
+
+#[test]
+fn banked_straights_and_rollouts_pass_full_train_at_rated_window_ends() {
+    use PieceId::*;
+    for (bank, straight, rollout) in [
+        (BankLeft, BankedStraightLeft, RolloutLeft),
+        (BankRight, BankedStraightRight, RolloutRight),
+    ] {
+        for (entry, exit) in [
+            (None, None),
+            (Some(LevelToGentleUp), Some(GentleUpToLevel)),
+            (Some(LevelToGentleDown), Some(GentleDownToLevel)),
+        ] {
+            let mut sequence = Vec::new();
+            sequence.extend(entry);
+            sequence.extend([bank, straight, rollout]);
+            sequence.extend(exit);
+            let (circuit, ranges) = circuit_for_sequence(&sequence);
+            for &(id, start, end) in &ranges {
+                if id != straight && id != rollout {
+                    continue;
+                }
+                let slope = if entry == Some(LevelToGentleUp) {
+                    theme_park_sim::track::Slope::UpGentle
+                } else if entry == Some(LevelToGentleDown) {
+                    theme_park_sim::track::Slope::DownGentle
+                } else {
+                    theme_park_sim::track::Slope::Level
+                };
+                let piece = catalog()
+                    .iter()
+                    .find(|piece| piece.id == id && piece.entry.slope == slope)
+                    .unwrap();
+                let rated = piece
+                    .rated_speeds
+                    .expect("banked continuation needs a rated window");
+                for model in models()
+                    .into_iter()
+                    .filter(|model| model.allows_piece(piece))
+                {
+                    for cars in [6, 12] {
+                        for speed in [rated.minimum_entry, rated.maximum_entry] {
+                            assert_train_crosses_element(
+                                &model,
+                                &circuit,
+                                id,
+                                start..end,
+                                cars,
+                                speed,
+                                false,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

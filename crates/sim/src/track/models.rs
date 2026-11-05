@@ -183,6 +183,10 @@ pub fn wooden_twister_model() -> CoasterModel {
             use PieceId::*;
             vec![
                 Straight,
+                BankedStraightLeft,
+                BankedStraightRight,
+                RolloutLeft,
+                RolloutRight,
                 HalfTileStraight,
                 OneTileStraight,
                 OneTileGentleUp,
@@ -311,6 +315,10 @@ pub fn hybrid_model() -> CoasterModel {
             use PieceId::*;
             vec![
                 Straight,
+                BankedStraightLeft,
+                BankedStraightRight,
+                RolloutLeft,
+                RolloutRight,
                 HalfTileStraight,
                 OneTileStraight,
                 OneTileGentleUp,
@@ -475,6 +483,10 @@ pub fn multi_launch_model() -> CoasterModel {
             use PieceId::*;
             vec![
                 Straight,
+                BankedStraightLeft,
+                BankedStraightRight,
+                RolloutLeft,
+                RolloutRight,
                 HalfTileStraight,
                 OneTileStraight,
                 OneTileGentleUp,

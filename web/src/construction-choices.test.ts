@@ -182,4 +182,26 @@ describe("construction steppers", () => {
     expect(pieceInGroup(pieces, "inversion")).toBe("Loop");
     expect(pieceInGroup(pieces, "unknown")).toBeUndefined();
   });
+
+  it("shows banked straights with straight pieces and roll-outs with bank transitions", () => {
+    const bankedContinuations = [
+      { ...piece("BankedStraightLeft", "straight", "Level", "Left"), label: "Left-banked straight" },
+      { ...piece("BankedStraightRight", "straight", "Level", "Right"), label: "Right-banked straight" },
+      { ...piece("RolloutLeft", "bank", "Level", "Level"), label: "Roll out from left bank" },
+      { ...piece("RolloutRight", "bank", "Level", "Level"), label: "Roll out from right bank" },
+    ];
+
+    const groups = groupedPieces(bankedContinuations);
+
+    expect(groups.map(({ group, pieces: members }) => [group, members.map(({ id }) => id)])).toEqual([
+      ["straight", ["BankedStraightLeft", "BankedStraightRight"]],
+      ["bank", ["RolloutLeft", "RolloutRight"]],
+    ]);
+    expect(bankedContinuations.map(pieceDisplayName)).toEqual([
+      "Left-banked straight",
+      "Right-banked straight",
+      "Roll out from left bank",
+      "Roll out from right bank",
+    ]);
+  });
 });

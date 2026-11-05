@@ -51,7 +51,8 @@ import { createForceOverlay, nearestSampleIndex, type ScreenBox } from "./force-
 import { formatLength, type Units } from "./units";
 import { createUnitsSetting } from "./units-setting";
 import { createLiveAudio, renderOffline } from "./audio/engine";
-import { soundFrame } from "./audio/mapping";
+import { soundFrame, type UiEvent } from "./audio/mapping";
+import { constructionUiEvents, createUiEventQueue, pathUiEvent, placementUiEvent, terrainUiEvent } from "./audio/ui-events";
 import { createSoundSetting } from "./sound-setting";
 
 declare const __GIT_HASH__: string;
@@ -126,6 +127,11 @@ const panel = createConstructionPanel(panelContainer, dispatch);
 // The whole page, so builder keys keep working after a click in the panel or when a re-rendered control drops focus.
 bindKeyboard(document.body, dispatch, () => ({ x: gameCanvas.width / 2, y: gameCanvas.height / 2 }), () => activeTool === "coaster" && selectedBlock !== null);
 const constructionEffects = createConstructionEffects(trackStyle(atlas));
+const uiEvents = createUiEventQueue();
+/** Builder and tool sounds follow the player's own actions, so frozen test mode and session replays queue none. */
+function queueUiEvent(event: UiEvent | null): void {
+  if (event && !frozen && !replayInProgress) uiEvents.push(event, performance.now());
+}
 let followPoints: WorldPoint[] | undefined;
 let followedPreview = "";
 let lastFrameAt = performance.now();
@@ -174,6 +180,7 @@ const landscapingPanel = createLandscapingPanel(landscapingContainer, dispatch);
 const landscapingTool = createLandscapingTool((command) => {
   if (!world || command.x < 0 || command.y < 0 || command.x + command.size > world.dimensions[0] || command.y + command.size > world.dimensions[1]) {
     landscapingPanel.message("Brush extends outside the park.");
+    queueUiEvent({ sound: "error" });
     return;
   }
   sendWorkerAction(worker, command);
@@ -276,7 +283,7 @@ let latestGuestDetail: GuestDetail | null = null;
 let renderedGuests: readonly WorldSprite[] = [];
 let renderedRiders: { id: string; left: number; right: number; top: number; bottom: number }[] = [];
 const gameTest: GameTest = {
-  audio: { state: () => audio.state(), unlock: () => audio.unlock(), activeVoices: () => audio.activeVoices(), renderOffline },
+  audio: { state: () => audio.state(), unlock: () => audio.unlock(), activeVoices: () => audio.activeVoices(), lastUiEvent: () => audio.lastUiEvent(), renderOffline },
   get ready() { return renderRevision.ready(); },
   tickCount() { return current?.tickCount ?? 0; },
   frameLog() { return frameLogEnabled ? frameLogEntries.map((entry) => ({ ...entry })) : []; },
@@ -632,12 +639,15 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   } else if (message.type === "scenery") {
     scenery = message.scenery;
     if (message.message) sceneryTool.receive(message.message);
+    queueUiEvent(placementUiEvent(message.outcome));
     renderRevision.invalidate();
   } else if (message.type === "terrain-result") {
     landscapingTool.receive(message);
+    queueUiEvent(terrainUiEvent(message));
     landscapingPanel.message(message.message);
   } else if (message.type === "path-preview" || message.type === "path-command-result") {
     pathTool.receive(message);
+    if (message.type === "path-command-result") queueUiEvent(pathUiEvent(message));
   } else if (message.type === "world") {
     const coasterGeometry = message.coasterGeometry ?? world?.coasterGeometry;
     const coasterRails = message.coasterRails ?? world?.coasterRails;
@@ -658,6 +668,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   } else if (message.type === "facilities") {
     if (frozen && facilities.length && !message.message && !message.forced) return;
     facilities = message.facilities;
+    queueUiEvent(placementUiEvent(message.outcome));
     const panelSnapshot = JSON.stringify([facilities.map(({ id, kind, price }) => ({ id, kind, price })), message.revenue]);
     if (panelSnapshot !== facilityPanelSnapshot) {
       facilityPanel.update(facilities, message.revenue);
@@ -673,6 +684,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     const next: ConstructionState = message.type === "construction-state" ? message : { ...construction!, ...message, type: "construction-state" };
     const redraw = message.type === "construction-state" || blockLayoutChanged(construction!.blockReport.sections, next.blockReport.sections);
     if (!frozen) constructionEffects.observe(construction, next, performance.now());
+    for (const event of constructionUiEvents(construction, next)) queueUiEvent(event);
     const preview = railPoints(next.previewRails);
     const previewKey = JSON.stringify([preview[0], preview.at(-1)]);
     if (pathTool.state().mode === "inactive" && preview.length && previewKey !== followedPreview) followPoints = preview;
@@ -812,7 +824,7 @@ function frame(now: number): void {
     renderTick: renderFrame?.tick,
     setGuestAnchor: (point) => guestPanel.setAnchor(point),
   });
-  audio.apply(soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts }));
+  audio.apply(soundFrame({ snapshot: renderCurrent, interpolation, camera, viewport: cssViewport(), dayPhase, gameSpeed, demoTrain: world.coasterTrain, constructionTrain: construction?.trainLayout ?? null, crestBursts, ui: uiEvents.drain() }));
   renderedGuests = scene.guests;
   renderedRiders = scene.riders;
   renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none" });

@@ -1,4 +1,5 @@
 import type { ActiveVoices, OfflineResult, OfflineScript } from "./audio/engine";
+import type { UiSound } from "./audio/mapping";
 import type { TestingReport } from "./coaster-testing";
 import type { ConstructionForcePreview } from "./construction-protocol";
 import type { GuestDetail } from "./guest-panel/protocol";
@@ -42,7 +43,7 @@ export interface SnapshotArrivalEntry {
 }
 
 export interface GameTest {
-  audio: { state(): "locked" | AudioContextState; unlock(): Promise<void>; activeVoices(): ActiveVoices; renderOffline(script: OfflineScript): Promise<OfflineResult> };
+  audio: { state(): "locked" | AudioContextState; unlock(): Promise<void>; activeVoices(): ActiveVoices; lastUiEvent(): UiSound | null; renderOffline(script: OfflineScript): Promise<OfflineResult> };
   ready: boolean;
   tickCount(): number;
   frameLog(): readonly FrameLogEntry[];

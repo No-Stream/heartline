@@ -13,7 +13,7 @@ import { parseCoasterColors } from "./coaster-colors";
 import { parseTrainLayout, type TrainLayout } from "./train-layout";
 import { shouldInvalidateConstructionFinishSearch } from "./construction-finish-search";
 
-import { sendWorkerMessage, assertNever, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition } from "./protocol";
+import { sendWorkerMessage, assertNever, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition, type PlacementOutcome } from "./protocol";
 import type { BlockReport } from "./construction-protocol";
 import type { TestingReport } from "./coaster-testing";
 import type { GuestDetail } from "./guest-panel/protocol";
@@ -176,16 +176,16 @@ function scheduleFinishSearch(): void {
   }, 0);
 }
 
-function sendFacilities(message = "", placed = false, forced = false): void {
+function sendFacilities(message = "", placed = false, forced = false, outcome: PlacementOutcome | null = null): void {
   lastFacilitiesJson = simulation.facilities_json();
   const facilities = JSON.parse(lastFacilitiesJson) as Facility[];
   lastFacilityRevenue = String(simulation.facility_revenue());
-  sendWorkerMessage(workerScope, { type: "facilities", facilities, message, placed, forced, revenue: lastFacilityRevenue });
+  sendWorkerMessage(workerScope, { type: "facilities", facilities, message, placed, forced, revenue: lastFacilityRevenue, outcome });
 }
 
-function sendScenery(message = ""): void {
+function sendScenery(message = "", outcome: PlacementOutcome | null = null): void {
   const scenery = JSON.parse(simulation.scenery_json()) as Scenery[];
-  sendWorkerMessage(workerScope, { type: "scenery", scenery, message });
+  sendWorkerMessage(workerScope, { type: "scenery", scenery, message, outcome });
 }
 
 function sendWorld(): void {
@@ -313,7 +313,8 @@ workerScope.addEventListener("message", (event) => {
         ? simulation.place_scenery(action.kind, action.x, action.y, action.rotation, action.quarter)
         : simulation.remove_scenery(action.id);
       if (success) sendWorld();
-      sendScenery(simulation.scenery_message() || (success ? (action.type === "scenery-place" ? "Scenery placed." : "Scenery removed.") : "Scenery could not be changed."));
+      const outcome = success ? (action.type === "scenery-place" ? "placed" : "removed") : "refused";
+      sendScenery(simulation.scenery_message() || (success ? (action.type === "scenery-place" ? "Scenery placed." : "Scenery removed.") : "Scenery could not be changed."), outcome);
       return;
     }
     if (action.type === "facility-price") {
@@ -324,7 +325,7 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "facility-remove") {
       const removed = simulation.remove_facility(action.id);
       if (removed) sendWorld();
-      sendFacilities(removed ? "Facility removed." : simulation.facility_message());
+      sendFacilities(removed ? "Facility removed." : simulation.facility_message(), false, false, removed ? "removed" : "refused");
       return;
     }
     if (action.type === "facility-access-preview") {
@@ -341,7 +342,7 @@ workerScope.addEventListener("message", (event) => {
         placed = simulation.place_facility_at(action.kind, action.x, action.y, rotation, action.height);
       }
       if (placed) sendWorld();
-      sendFacilities(placed ? "Facility placed." : simulation.facility_message(), placed);
+      sendFacilities(placed ? "Facility placed." : simulation.facility_message(), placed, false, placed ? "placed" : "refused");
       return;
     }
     if (action.type === "terrain-edit") {
