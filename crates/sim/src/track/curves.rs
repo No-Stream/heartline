@@ -3,7 +3,7 @@ use std::ops::{Add, Div, Mul, Sub};
 use std::sync::{Arc, OnceLock};
 
 use super::Material;
-use super::roll::RollGeometry;
+use super::roll::{RollGeometry, RollSample, Twist};
 use crate::state_hash::StateHasher;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -333,6 +333,34 @@ pub enum PieceId {
     WoodenEjectorHill6x48,
     WoodenEjectorHill8x64,
     WoodenEjectorHill16x80,
+    EjectorHill8x48OuterLeft,
+    EjectorHill8x48OuterRight,
+    EjectorHill12x64OuterLeft,
+    EjectorHill12x64OuterRight,
+    EjectorHill8x64OuterLeft,
+    EjectorHill8x64OuterRight,
+    EjectorHill12x80OuterLeft,
+    EjectorHill12x80OuterRight,
+    EjectorHill16x96OuterLeft,
+    EjectorHill16x96OuterRight,
+    FloaterHill4x48OuterLeft,
+    FloaterHill4x48OuterRight,
+    FloaterHill8x64OuterLeft,
+    FloaterHill8x64OuterRight,
+    FloaterHill12x80OuterLeft,
+    FloaterHill12x80OuterRight,
+    FloaterHill6x64OuterLeft,
+    FloaterHill6x64OuterRight,
+    FloaterHill12x96OuterLeft,
+    FloaterHill12x96OuterRight,
+    FloaterHill16x112OuterLeft,
+    FloaterHill16x112OuterRight,
+    ZeroGRollFastLeft,
+    ZeroGRollFastRight,
+    ZeroGRollCompactLeft,
+    ZeroGRollCompactRight,
+    StallLeft,
+    StallRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -363,6 +391,7 @@ pub(crate) enum Shape {
     TopHat,
     Profile(Arc<SolvedProfile>),
     Roll(Arc<RollGeometry>),
+    RolledProfile(Arc<SolvedProfile>, Twist),
 }
 impl Shape {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
@@ -373,11 +402,16 @@ impl Shape {
             Self::TopHat => 9,
             Self::Profile(_) => 11,
             Self::Roll(_) => 12,
+            Self::RolledProfile(_, _) => 13,
         };
         hash.write_u8(tag);
         match self {
             Self::Profile(profile) => profile.hash_into(hash),
             Self::Roll(roll) => roll.hash_into(hash),
+            Self::RolledProfile(profile, twist) => {
+                profile.hash_into(hash);
+                twist.hash_into(hash);
+            }
             _ => {}
         }
     }
@@ -393,6 +427,8 @@ pub enum HillFeel {
     Ejector,
     Floater,
     Speed,
+    ZeroGRoll,
+    Stall,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -493,6 +529,60 @@ fn curvature(velocity: Vec3, acceleration: Vec3) -> f64 {
     velocity.cross(acceleration).length() / velocity.length().powi(3)
 }
 impl Piece {
+    fn rolled_profile_sample(&self, profile: &SolvedProfile, twist: Twist, t: f64) -> RollSample {
+        let length = profile.length();
+        let (position, first, second, third) = profile.sample_with_third(t * length);
+        let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+        let left = Vec3::new(-forward.y, forward.x, 0.0);
+        let vertical = Vec3::new(0.0, 0.0, 1.0);
+        let diagonal = if self.entry.heading.index() % 2 == 0 {
+            1.0
+        } else {
+            std::f64::consts::SQRT_2
+        };
+        let correction =
+            self.exit.position().z - self.entry.position().z - profile.endpoint()[1] * diagonal;
+        let (smooth, smooth_first, smooth_second) = smooth(t);
+        let smooth_third = 60.0 * (1.0 - 6.0 * t + 6.0 * t * t);
+        let velocity = (forward * first[0] + vertical * first[1]) * (length * diagonal)
+            + vertical * (correction * smooth_first);
+        let acceleration = (forward * second[0] + vertical * second[1])
+            * (length.powi(2) * diagonal)
+            + vertical * (correction * smooth_second);
+        let jerk = (forward * third[0] + vertical * third[1]) * (length.powi(3) * diagonal)
+            + vertical * (correction * smooth_third);
+        let tangent = velocity.unit();
+        let base_up = (forward * -tangent.z + vertical * tangent.dot(forward)).unit();
+        let speed_squared = velocity.dot(velocity);
+        let omega = -velocity.cross(acceleration).dot(left) / speed_squared;
+        let omega_first = -velocity.cross(jerk).dot(left) / speed_squared
+            - 2.0 * omega * velocity.dot(acceleration) / speed_squared;
+        let base_first = tangent * -omega;
+        let base_second = tangent * -omega_first - base_up * omega.powi(2);
+        let (angle, angle_first, angle_second) = twist.sample(t * length, self.mirrored);
+        let angle = angle + self.entry.bank.radians();
+        let angle_first = angle_first * length;
+        let angle_second = angle_second * length.powi(2);
+        let (sin, cos) = angle.sin_cos();
+        let up = base_up * cos + left * sin;
+        let up_first = base_first * cos + (left * cos - base_up * sin) * angle_first;
+        let up_second = base_second * cos - base_first * (2.0 * sin * angle_first)
+            + (left * cos - base_up * sin) * angle_second
+            - up * angle_first.powi(2);
+        let heart = self.entry.position()
+            + forward * (position[0] * diagonal)
+            + vertical * (position[1] * diagonal + correction * smooth)
+            + base_up * HEART_HEIGHT_METRES;
+        RollSample {
+            position: heart - up * HEART_HEIGHT_METRES,
+            first: velocity + (base_first - up_first) * HEART_HEIGHT_METRES,
+            second: acceleration + (base_second - up_second) * HEART_HEIGHT_METRES,
+            heart,
+            up,
+            roll: angle,
+        }
+    }
+
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_u8(self.id as u8);
         hash.write_bytes(self.name.as_bytes());
@@ -540,6 +630,10 @@ impl Piece {
     }
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
+        if let Shape::RolledProfile(profile, twist) = &self.shape {
+            let sample = self.rolled_profile_sample(profile, *twist, t);
+            return (sample.position, sample.first, sample.second);
+        }
         if let Shape::Roll(geometry) = &self.shape {
             let sample =
                 geometry.sample(self.entry, self.exit, self.mirrored, self.tangent_scale, t);
@@ -800,6 +894,18 @@ impl Piece {
     }
     pub fn sample(&self, distance: f64) -> TrackSample {
         let t = self.parameter_at_distance(distance);
+        if let Shape::RolledProfile(profile, twist) = &self.shape {
+            let sample = self.rolled_profile_sample(profile, *twist, t);
+            return TrackSample {
+                position: sample.position,
+                heart: sample.heart,
+                tangent: sample.first.unit(),
+                up: sample.up,
+                curvature: sample.first.cross(sample.second).length()
+                    / sample.first.length().powi(3),
+                roll: sample.roll,
+            };
+        }
         if let Shape::Roll(geometry) = &self.shape {
             let sample =
                 geometry.sample(self.entry, self.exit, self.mirrored, self.tangent_scale, t);
@@ -900,6 +1006,9 @@ impl Piece {
     pub fn at(&self, state: TrackState) -> Option<Self> {
         let exit = self.exit_at(state)?;
         let rotation = (state.heading.index() - self.entry.heading.index()).rem_euclid(8);
+        if rotation % 2 == 0 {
+            self.arc_table();
+        }
         let mut piece = self.clone();
         piece.exit = exit;
         piece.entry = state;
@@ -919,7 +1028,8 @@ mod shape_tests {
     use std::sync::{Arc, OnceLock};
 
     use super::{
-        Bank, Heading, Heartlining, HorizontalCurvature, Piece, PieceId, PieceKind, Shape,
+        Bank, HEART_HEIGHT_METRES, Heading, Heartlining, HorizontalCurvature, Piece, PieceId,
+        PieceKind, Shape, Vec3,
     };
     use crate::state_hash::StateHasher;
     use crate::track::roll::RollGeometry;
@@ -991,10 +1101,12 @@ mod shape_tests {
 
     #[test]
     fn rigid_placement_reuses_arc_length_and_curvature_cache() {
-        let piece = crate::track::catalog::catalog()
+        let mut piece = crate::track::catalog::catalog()
             .iter()
             .find(|piece| piece.id == PieceId::HeartlineRoll)
-            .unwrap();
+            .unwrap()
+            .clone();
+        piece.clear_arc_table();
         let placed = piece
             .at(TrackState {
                 x: 32,
@@ -1123,6 +1235,182 @@ mod shape_tests {
             let placed = piece.at(start).unwrap();
             assert_eq!(piece.exit_at(start), Some(placed.exit), "{heading:?}");
         }
+    }
+
+    #[test]
+    fn rolled_profile_rail_derivatives_match_position() {
+        let mut piece = crate::track::catalog::catalog()
+            .iter()
+            .find(|piece| matches!(&piece.shape, Shape::Profile(_)))
+            .unwrap()
+            .clone();
+        let Shape::Profile(profile) = &piece.shape else {
+            unreachable!()
+        };
+        let length = profile.length();
+        piece.shape = Shape::RolledProfile(
+            Arc::clone(profile),
+            super::Twist::OuterBank {
+                peak: 110_f64.to_radians(),
+                start: length * 0.2,
+                end: length * 0.8,
+            },
+        );
+        let step = 1e-6;
+        for t in [0.1373, 0.3137, 0.4873, 0.6137, 0.8373] {
+            let before = piece.raw(t - step);
+            let center = piece.raw(t);
+            let after = piece.raw(t + step);
+            assert!(((after.0 - before.0) / (2.0 * step) - center.1).length() < 1e-4);
+            assert!(((after.1 - before.1) / (2.0 * step) - center.2).length() < 1e-2);
+        }
+    }
+
+    #[test]
+    fn rolled_profiles_follow_the_planar_heart_and_join_connectors() {
+        let pieces = crate::track::catalog::catalog();
+        let mut count = 0;
+        for piece in pieces
+            .iter()
+            .filter(|piece| matches!(piece.shape, Shape::RolledProfile(..)))
+        {
+            count += 1;
+            let Shape::RolledProfile(profile, _) = &piece.shape else {
+                unreachable!()
+            };
+            for heading in [Heading::East, Heading::NorthEast] {
+                let mut entry = piece.entry;
+                entry.heading = heading;
+                let placed = piece.at(entry).unwrap();
+                let mut planar = placed.clone();
+                planar.shape = Shape::Profile(Arc::clone(profile));
+                for index in 0..=100 {
+                    let t = f64::from(index) / 100.0;
+                    let sample = if let Shape::RolledProfile(profile, twist) = &placed.shape {
+                        placed.rolled_profile_sample(profile, *twist, t)
+                    } else {
+                        unreachable!()
+                    };
+                    let (planar_rail, planar_velocity, _) = planar.raw(t);
+                    let forward =
+                        Vec3::new(placed.entry.tangent().x, placed.entry.tangent().y, 0.0).unit();
+                    let planar_tangent = planar_velocity.unit();
+                    let planar_up = Vec3::new(0.0, 0.0, 1.0) * planar_tangent.dot(forward)
+                        - forward * planar_tangent.z;
+                    let expected_heart = planar_rail + planar_up.unit() * HEART_HEIGHT_METRES;
+                    assert!(
+                        (sample.heart - expected_heart).length() < 1e-9,
+                        "{:?} {heading:?} {t}",
+                        piece.id
+                    );
+                    if index == 0 || index == 100 {
+                        let connector = if index == 0 {
+                            placed.entry
+                        } else {
+                            placed.exit
+                        };
+                        assert!(
+                            (sample.position - connector.position()).length() < 1e-7,
+                            "{:?} {heading:?} {t}",
+                            piece.id
+                        );
+                        assert!(sample.first.unit().dot(connector.tangent().unit()) > 1.0 - 1e-10);
+                        assert!(
+                            sample.first.cross(sample.second).length()
+                                / sample.first.length().powi(3)
+                                < 1e-8
+                        );
+                    }
+                    let mut mirrored = placed.clone();
+                    mirrored.mirrored = !placed.mirrored;
+                    let mirrored_sample =
+                        if let Shape::RolledProfile(profile, twist) = &mirrored.shape {
+                            mirrored.rolled_profile_sample(profile, *twist, t)
+                        } else {
+                            unreachable!()
+                        };
+                    assert!((sample.heart - mirrored_sample.heart).length() < 1e-9);
+                    assert!((sample.roll + mirrored_sample.roll).abs() < 1e-9);
+                    let forward =
+                        Vec3::new(placed.entry.tangent().x, placed.entry.tangent().y, 0.0).unit();
+                    let left = Vec3::new(-forward.y, forward.x, 0.0);
+                    let delta = sample.position - mirrored_sample.position;
+                    assert!((delta - left * delta.dot(left)).length() < 1e-9);
+                    assert!(
+                        ((sample.position + mirrored_sample.position) / 2.0 - sample.heart)
+                            .dot(left)
+                            .abs()
+                            < 1e-9
+                    );
+                    assert!((sample.up.dot(left) + mirrored_sample.up.dot(left)).abs() < 1e-9);
+                    assert!(
+                        ((sample.up - mirrored_sample.up)
+                            - left * (sample.up - mirrored_sample.up).dot(left))
+                        .length()
+                            < 1e-9
+                    );
+                }
+            }
+        }
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn rolled_hill_inversions_limit_roll_rate_for_full_trains() {
+        let mut failures = Vec::new();
+        let mut count = 0;
+        for piece in crate::track::catalog::catalog().iter().filter(|piece| {
+            piece.family.is_some_and(|family| {
+                matches!(
+                    family.feel,
+                    super::HillFeel::ZeroGRoll | super::HillFeel::Stall
+                )
+            })
+        }) {
+            count += 1;
+            let Shape::RolledProfile(profile, twist) = &piece.shape else {
+                unreachable!()
+            };
+            let entry_speed = piece.rated_speeds.unwrap().maximum_entry;
+            let mut peak = 0.0_f64;
+            for index in 0..=2000 {
+                let distance = piece.length() * f64::from(index) / 2000.0;
+                let t = piece.parameter_at_distance(distance);
+                let (_, angle_first, _) = twist.sample(t * profile.length(), piece.mirrored);
+                let roll_per_metre = angle_first * profile.length() / piece.raw(t).1.length();
+                for cars in [6, 12] {
+                    let spacing = 18.0 / cars as f64;
+                    for car in 0..cars {
+                        let mean_height = (0..cars)
+                            .map(|other| {
+                                let other_distance =
+                                    distance + (car as f64 - other as f64) * spacing;
+                                piece
+                                    .sample(other_distance.clamp(0.0, piece.length()))
+                                    .position
+                                    .z
+                                    - piece.entry.position().z
+                            })
+                            .sum::<f64>()
+                            / cars as f64;
+                        let speed = (entry_speed.powi(2) - 2.0 * 9.81 * mean_height).sqrt();
+                        peak = peak.max((roll_per_metre * speed).abs().to_degrees());
+                    }
+                }
+            }
+            eprintln!(
+                "{:?} at {entry_speed:.2} m/s: {peak:.3} degrees/s",
+                piece.id
+            );
+            if peak > 200.0 + 1e-6 {
+                failures.push((piece.id, peak));
+            }
+        }
+        assert_eq!(count, 6);
+        assert!(
+            failures.is_empty(),
+            "roll rates above 200 degrees/s: {failures:?}"
+        );
     }
 
     #[test]

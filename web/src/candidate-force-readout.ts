@@ -30,7 +30,7 @@ export function candidateForceReadout(preview: CandidateForcePreview, units: Uni
     `Estimated entry speed: ${formatSpeed(preview.entrySpeed, units)}${range}`,
     `Estimated minimum vertical force: ${formatForce(preview.peaks.minimumVerticalG)} g (${verticalRating(preview.peaks.minimumVerticalG, preview.limits)})`,
     `Estimated maximum vertical force: ${formatForce(preview.peaks.maximumVerticalG)} g (${verticalRating(preview.peaks.maximumVerticalG, preview.limits)})`,
-    `Estimated lateral force: ${formatForce(preview.peaks.maximumAbsoluteLateralG)} g (${rateForce("lateral", preview.peaks.maximumAbsoluteLateralG, preview.limits)}); longitudinal force: ${formatForce(preview.peaks.maximumAbsoluteLongitudinalG)} g (${rateForce("longitudinal", preview.peaks.maximumAbsoluteLongitudinalG, preview.limits)})`,
+    `Estimated ${preview.outerBank ? "outer-bank lateral" : "lateral"} force: ${formatForce(preview.peaks.maximumAbsoluteLateralG)} g (${rateForce("lateral", preview.peaks.maximumAbsoluteLateralG, preview.limits)}); longitudinal force: ${formatForce(preview.peaks.maximumAbsoluteLongitudinalG)} g (${rateForce("longitudinal", preview.peaks.maximumAbsoluteLongitudinalG, preview.limits)})`,
   ];
   if (preview.status === "stalled") lines.unshift("The train stalls in this piece; force estimates are partial.");
   if (preview.status === "timedOut") lines.unshift("The estimate timed out in this piece; force estimates are partial.");

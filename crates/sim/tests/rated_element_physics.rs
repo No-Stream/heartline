@@ -154,6 +154,36 @@ fn circuit_for_level_piece(piece_id: PieceId) -> (Circuit, f64, f64) {
 }
 
 #[test]
+fn rolled_inversion_minimum_speeds_clear_with_energy_margin() {
+    use PieceId::*;
+    for id in [
+        ZeroGRollFastLeft,
+        ZeroGRollFastRight,
+        ZeroGRollCompactLeft,
+        ZeroGRollCompactRight,
+        StallLeft,
+        StallRight,
+    ] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let rated = piece.rated_speeds.expect("rolled inversion must be rated");
+        let (circuit, start, end) = circuit_for_level_piece(id);
+        for model in [hybrid_model(), multi_launch_model()] {
+            for cars in [6, 12] {
+                assert_train_crosses_element(
+                    &model,
+                    &circuit,
+                    id,
+                    start..end,
+                    cars,
+                    rated.minimum_entry,
+                    true,
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn level_elements_clear_from_their_minimum_after_a_steep_crest() {
     use PieceId::*;
     for piece in catalog().iter().filter(|piece| {
@@ -560,7 +590,7 @@ fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train
         .filter(|piece| {
             piece
                 .family
-                .is_some_and(|family| family.feel == HillFeel::Ejector)
+                .is_some_and(|family| family.feel == HillFeel::Ejector && family.twist.is_none())
                 && allowed_models
                     .iter()
                     .any(|model| model.allowed_pieces.contains(&piece.id))

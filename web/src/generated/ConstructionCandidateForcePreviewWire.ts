@@ -3,4 +3,4 @@ import type { ConstructionForceLimitsWire } from "./ConstructionForceLimitsWire"
 import type { ConstructionLastPlacedForceWire } from "./ConstructionLastPlacedForceWire";
 import type { ConstructionRatedSpeedWire } from "./ConstructionRatedSpeedWire";
 
-export type ConstructionCandidateForcePreviewWire = { status: string, entrySpeed: number | null, peaks: ConstructionLastPlacedForceWire | null, limits: ConstructionForceLimitsWire, ratedSpeed: ConstructionRatedSpeedWire | null, };
+export type ConstructionCandidateForcePreviewWire = { status: string, outerBank: boolean, entrySpeed: number | null, peaks: ConstructionLastPlacedForceWire | null, limits: ConstructionForceLimitsWire, ratedSpeed: ConstructionRatedSpeedWire | null, };
