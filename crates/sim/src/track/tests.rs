@@ -15,11 +15,20 @@ fn airtime_rating_matches_the_force_overlay_bands() {
 
     let steel_limits = hybrid_model().comfortable_force_limits;
     assert_eq!(steel_limits.classify_airtime(-0.2), AirtimeRating::Weak);
-    assert_eq!(steel_limits.classify_airtime(-0.200_001), AirtimeRating::Good);
+    assert_eq!(
+        steel_limits.classify_airtime(-0.200_001),
+        AirtimeRating::Good
+    );
     assert_eq!(steel_limits.classify_airtime(-0.9), AirtimeRating::Good);
-    assert_eq!(steel_limits.classify_airtime(-0.900_001), AirtimeRating::Great);
+    assert_eq!(
+        steel_limits.classify_airtime(-0.900_001),
+        AirtimeRating::Great
+    );
     assert_eq!(steel_limits.classify_airtime(-1.5), AirtimeRating::Great);
-    assert_eq!(steel_limits.classify_airtime(-1.500_001), AirtimeRating::TooMuch);
+    assert_eq!(
+        steel_limits.classify_airtime(-1.500_001),
+        AirtimeRating::TooMuch
+    );
     assert_eq!(
         steel_limits.classify_airtime(-1.3 * -steel_limits.minimum_vertical_g),
         AirtimeRating::TooMuch
@@ -32,21 +41,59 @@ fn airtime_rating_matches_the_force_overlay_bands() {
 
 #[test]
 fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
-    let expected_hills: [(&str, &[&str]); 17] = [
-        ("Ejector hill 4 × 32 m", &["Timber Tumbler", "Velocity Viper"]),
-        ("Ejector hill 8 × 48 m", &["Timber Tumbler", "Velocity Viper"]),
-        ("Ejector hill 12 × 64 m", &["Timber Tumbler", "Velocity Viper"]),
-        ("Ejector hill 8 × 64 m", &["Timber Tumbler", "Velocity Viper"]),
-        ("Ejector hill 12 × 80 m", &["Timber Tumbler", "Velocity Viper"]),
-        ("Ejector hill 16 × 96 m", &["Timber Tumbler", "Velocity Viper"]),
-        ("Floater hill 4 × 48 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
-        ("Floater hill 8 × 64 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
-        ("Floater hill 12 × 80 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
-        ("Floater hill 6 × 64 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
-        ("Floater hill 12 × 96 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
-        ("Floater hill 16 × 112 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
-        ("Speed hill 4 × 64 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
-        ("Speed hill 6 × 80 m", &["Timber Tumbler", "Velocity Viper", "Briar Blitz"]),
+    let expected_hills: [(&str, &[&str]); 16] = [
+        (
+            "Ejector hill 8 × 48 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Ejector hill 12 × 64 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Ejector hill 8 × 64 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Ejector hill 12 × 80 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Ejector hill 16 × 96 m",
+            &["Timber Tumbler", "Velocity Viper"],
+        ),
+        (
+            "Floater hill 4 × 48 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 8 × 64 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 12 × 80 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 6 × 64 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 12 × 96 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Floater hill 16 × 112 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Speed hill 4 × 64 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
+        (
+            "Speed hill 6 × 80 m",
+            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+        ),
         ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
         ("Ejector hill 8 × 64 m", &["Briar Blitz"]),
         ("Ejector hill 16 × 80 m", &["Briar Blitz"]),
@@ -93,8 +140,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         assert_eq!(family.span_metres, dimensions[1], "{name}");
         assert_eq!(family.twist, None, "{name}");
         assert_eq!(
-            family.design_speed_metres_per_second,
-            rated.maximum_entry,
+            family.design_speed_metres_per_second, rated.maximum_entry,
             "{name} design speed"
         );
 

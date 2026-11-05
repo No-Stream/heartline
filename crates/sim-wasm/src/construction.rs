@@ -1661,7 +1661,6 @@ define_piece_id_wire_names!(
     RavenRollRightDown,
     LargeLoop,
     LargeLoopRight,
-    EjectorHill4x32,
     EjectorHill8x48,
     EjectorHill12x64,
     EjectorHill8x64,

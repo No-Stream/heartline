@@ -491,6 +491,7 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
 
 #[test]
 fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
+    let mut failures = Vec::new();
     for template in catalog().iter().filter(|piece| {
         piece.rated_speeds.is_some()
             && piece.entry == TrackState::origin()
@@ -522,19 +523,33 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
                                 | PieceId::SteelLoop
                                 | PieceId::SteelLoopRight
                         );
-                    assert_train_crosses_element(
-                        &model,
-                        &circuit,
-                        template.id,
-                        element_start..element_end,
-                        cars,
-                        entry_speed,
-                        entry_speed == rated.minimum_entry && is_ascending,
-                    );
+                    if std::panic::catch_unwind(|| {
+                        assert_train_crosses_element(
+                            &model,
+                            &circuit,
+                            template.id,
+                            element_start..element_end,
+                            cars,
+                            entry_speed,
+                            entry_speed == rated.minimum_entry && is_ascending,
+                        );
+                    })
+                    .is_err()
+                    {
+                        failures.push(format!(
+                            "{:?} {} {cars} cars at {entry_speed}",
+                            template.id, model.name
+                        ));
+                    }
                 }
             }
         }
     }
+    assert!(
+        failures.is_empty(),
+        "rated physics failures: {}",
+        failures.join("; ")
+    );
 }
 
 #[test]
@@ -554,16 +569,21 @@ fn every_steel_ejector_hill_is_great_at_design_speed_for_each_allowed_model_and_
                     .any(|model| model.allowed_pieces.contains(&piece.id))
         })
         .collect();
-    assert_eq!(ejector_hills.len(), 6, "steel ejector hill family size");
+    assert_eq!(ejector_hills.len(), 5, "steel ejector hill family size");
 
     let mut failures = Vec::new();
     for piece in ejector_hills {
         let family = piece.family.expect("ejector hill has family metadata");
-        let rated = piece.rated_speeds.expect("ejector hill has a rated speed window");
+        let rated = piece
+            .rated_speeds
+            .expect("ejector hill has a rated speed window");
         assert_eq!(family.design_speed_metres_per_second, rated.maximum_entry);
         let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
 
-        for model in steel_models.iter().filter(|model| model.allows_piece(piece)) {
+        for model in steel_models
+            .iter()
+            .filter(|model| model.allows_piece(piece))
+        {
             for cars in [6, 12] {
                 let mut train_config = model.train.clone();
                 train_config.cars = cars;
@@ -591,7 +611,11 @@ fn every_steel_ejector_hill_is_great_at_design_speed_for_each_allowed_model_and_
                         break;
                     }
                     assert!(train.speed() > 0.0, "{} {cars} cars stalled", piece.name);
-                    assert!(train.notes().is_empty(), "{} {cars} cars rolled back", piece.name);
+                    assert!(
+                        train.notes().is_empty(),
+                        "{} {cars} cars rolled back",
+                        piece.name
+                    );
                 }
 
                 let limits = model.comfortable_force_limits;

@@ -53,7 +53,7 @@ Sizes are `(height × span)` cells. The rated maximum is the solved design speed
 
 | Feel | Size (h × L, m) | Flank θ | Rated window (m/s) |
 |---|---|---|---|
-| Ejector | 4 × 32 | 23.73° | 9.80–17.11 |
+| Ejector | 4 × 32 (deferred) | 23.73° | — |
 | Ejector | 8 × 48 | 30.98° | 13.20–19.24 |
 | Ejector | 12 × 64 | 34.56° | 15.94–21.88 |
 | Ejector | 8 × 64 | 23.94° | 13.49–25.22 |
@@ -72,9 +72,9 @@ Sizes are `(height × span)` cells. The rated maximum is the solved design speed
 | Wooden ejector | 8 × 64 | 23.71° | 13.50–22.89 |
 | Wooden ejector | 16 × 80 | 36.59° | 18.25–22.64 |
 
-The three shorter steel ejector hills use crest schedules of −0.95 g (4 × 32), −1.00 g (8 × 48), and −1.05 g (12 × 64). At their solved design speeds, the worst vertical forces for 6- and 12-car trains respectively changed from −1.653/−1.685 g to −1.322/−1.352 g, from −1.613/−1.668 g to −1.355/−1.406 g, and from −1.570/−1.621 g to −1.382/−1.430 g. Both steel models produced the same measured values. The other ejector cells retain their −1.2 g crest schedules.
+The 4 × 32 m ejector is deferred: its longitudinal force reached 2.149 g; the 4 × 48 m candidate reached 1.703 g longitudinal and −1.115 g vertical. The 8 × 48 and 12 × 64 m steel ejector hills use crest schedules of −1.00 g and −1.05 g respectively. At their solved design speeds, the worst vertical forces for 6- and 12-car trains respectively changed from −1.613/−1.668 g to −1.355/−1.406 g for 8 × 48 m and from −1.570/−1.621 g to −1.382/−1.430 g for 12 × 64 m. Both steel models produced the same measured values. The other ejector cells retain their −1.2 g crest schedules.
 
-The planned set has 18 straight profiles. One cell is deferred: the 2 × 48 m speed hill needed a shorter span, and the nearest grid candidate, 2 × 38 m, still fails the solver at the 10° minimum flank boundary. Do not loosen the angle or force limits to recover it. The generated set therefore has 17 straight profiles plus the three crest-time profiles. Longitudinal force (the `g (t_car − t̄)` term on a flank) is the one limit these geometry solves cannot predict; the 40°–48° cells are the ones to watch, and the cure is a smaller flank angle for that cell.
+The planned set has 18 straight profiles. Two cells are deferred: the 4 × 32 m ejector described above and the 2 × 48 m speed hill needed a shorter span, and the nearest grid candidate, 2 × 38 m, still fails the solver at the 10° minimum flank boundary. Do not loosen the angle or force limits to recover it. The generated set therefore has 16 straight profiles plus the three crest-time profiles. Longitudinal force (the `g (t_car − t̄)` term on a flank) is the one limit these geometry solves cannot predict; the 40°–48° cells are the ones to watch, and the cure is a smaller flank angle for that cell.
 
 The existing `AirtimeHill` ("Small airtime hill", a 3 m plain bump) stays exactly as it is: it is in the Timber Tumbler journey circuit and in the recorded replay sessions. Retiring it is a follow-up once the owner has used the new hills.
 

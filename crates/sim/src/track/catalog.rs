@@ -1346,26 +1346,7 @@ fn build_catalog() -> Vec<Piece> {
         .find(|piece| piece.id == Straight)
         .unwrap()
         .clone();
-    for (
-        id,
-        profile_name,
-        name,
-        feel,
-        height_metres,
-        span_metres,
-        design_speed,
-        model_radius,
-    ) in [
-        (
-            EjectorHill4x32,
-            "EjectorHill4x32",
-            "Ejector hill 4 × 32 m",
-            HillFeel::Ejector,
-            4,
-            32,
-            17.107634715519225,
-            5.0,
-        ),
+    for (id, profile_name, name, feel, height_metres, span_metres, design_speed, model_radius) in [
         (
             EjectorHill8x48,
             "EjectorHill8x48",

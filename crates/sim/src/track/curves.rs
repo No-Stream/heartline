@@ -317,7 +317,6 @@ pub enum PieceId {
     BankedStraightRight,
     RolloutLeft,
     RolloutRight,
-    EjectorHill4x32,
     EjectorHill8x48,
     EjectorHill12x64,
     EjectorHill8x64,

@@ -189,7 +189,6 @@ mod tests {
             .collect();
         ids.sort_unstable();
         let mut expected_ids = vec![
-            "EjectorHill4x32",
             "EjectorHill8x48",
             "EjectorHill12x64",
             "EjectorHill8x64",
