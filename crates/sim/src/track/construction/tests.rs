@@ -321,6 +321,48 @@ fn construction_offers_bank_straights_and_rollouts_after_banked_turns() {
 }
 
 #[test]
+fn construction_offers_bank_straights_and_rollouts_after_bank_transitions() {
+    use PieceId::*;
+
+    let world = world();
+    for model in [
+        hybrid_model(),
+        crate::track::multi_launch_model(),
+        crate::track::wooden_twister_model(),
+    ] {
+        for (transition, banked_straight, rollout) in [
+            (BankLeft, BankedStraightLeft, RolloutLeft),
+            (BankRight, BankedStraightRight, RolloutRight),
+        ] {
+            let mut construction = Construction::new(start(), model.clone());
+            construction
+                .append(Station, &world, &[])
+                .unwrap_or_else(|error| panic!("{}: Station: {error:?}", model.name));
+            construction
+                .append(transition, &world, &[])
+                .unwrap_or_else(|error| panic!("{}: {transition:?}: {error:?}", model.name));
+
+            let choices = construction.choices(&world, &[]);
+            for id in [banked_straight, rollout] {
+                let choice = choices
+                    .iter()
+                    .find(|choice| choice.id == id)
+                    .unwrap_or_else(|| {
+                        panic!("missing {id:?} after {transition:?} for {}", model.name)
+                    });
+                assert_eq!(
+                    choice.result,
+                    Ok(()),
+                    "{id:?} refused after {transition:?} for {} at {:?}",
+                    model.name,
+                    construction.end()
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn launch_model_builds_midcourse_launch_and_chain_lifts() {
     let mut construction = Construction::new(start(), crate::track::multi_launch_model());
     construction

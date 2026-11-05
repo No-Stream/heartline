@@ -760,9 +760,15 @@ fn banked_turns_join_banked_straights_and_rollouts_continuously() {
             .filter(|piece| piece.id == rollout_id)
             .find_map(|template| template.at(banked_straight.exit))
             .unwrap_or_else(|| panic!("{rollout_id:?} does not follow {:?}", turn.id));
+        let direct_rollout = templates
+            .iter()
+            .filter(|piece| piece.id == rollout_id)
+            .find_map(|template| template.at(turn.exit))
+            .unwrap_or_else(|| panic!("{rollout_id:?} does not follow {:?} directly", turn.id));
 
         assert_track_frame_continuous_at_join(turn, &banked_straight);
         assert_track_frame_continuous_at_join(&banked_straight, &rollout);
+        assert_track_frame_continuous_at_join(turn, &direct_rollout);
     }
     assert!(tested_turns > 0, "no banked turn exits tested");
 }
