@@ -11,8 +11,9 @@ export default defineConfig({
   testDir: "./web/e2e",
   snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{-platform}{ext}",
   // Each test boots the WebAssembly simulation and a software-rendered WebGL2 context;
-  // one worker per core starved startup and caused timeouts.
-  workers: 4,
+  // one worker per core starved startup and caused timeouts. Two workers fit the six compute cores in
+  // tools/compute-cpus; each software-rendered browser uses several cores.
+  workers: 2,
   use: {
     baseURL,
     launchOptions: { channel: "chrome" },
@@ -21,7 +22,7 @@ export default defineConfig({
     {
       name: "feature",
       testIgnore: ["**/*.journey.spec.ts", "**/smoothness.spec.ts"],
-      workers: 4,
+      workers: 2,
     },
     {
       name: "journey",

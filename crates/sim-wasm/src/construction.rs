@@ -1,9 +1,8 @@
 use super::*;
 use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
-use theme_park_sim::track::Bank;
 use theme_park_sim::track::ComfortableForceLimits;
-use theme_park_sim::track::Heartlining;
+use theme_park_sim::track::{Bank, Heartlining, HillTwist};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -133,6 +132,7 @@ pub struct ConstructionRatedSpeedWire {
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionCandidateForcePreviewWire {
     status: &'static str,
+    outer_bank: bool,
     entry_speed: Option<f64>,
     peaks: Option<ConstructionLastPlacedForceWire>,
     limits: ConstructionForceLimitsWire,
@@ -470,6 +470,12 @@ impl WasmSimulation {
         let Some(first) = candidate.first() else {
             return "null".into();
         };
+        let outer_bank = first.family.is_some_and(|family| {
+            matches!(
+                family.twist,
+                Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+            )
+        });
         let rated_speed = first.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
             minimum_entry: speeds.minimum_entry,
             maximum_entry: speeds.maximum_entry,
@@ -514,6 +520,7 @@ impl WasmSimulation {
         };
         serde_json::to_string(&ConstructionCandidateForcePreviewWire {
             status,
+            outer_bank,
             entry_speed,
             peaks: last_placed_force_wire(&samples, start_distance, end_distance),
             limits: force_limits_wire(construction.model().comfortable_force_limits),
@@ -1687,6 +1694,34 @@ define_piece_id_wire_names!(
     WoodenEjectorHill6x48,
     WoodenEjectorHill8x64,
     WoodenEjectorHill16x80,
+    EjectorHill8x48OuterLeft,
+    EjectorHill8x48OuterRight,
+    EjectorHill12x64OuterLeft,
+    EjectorHill12x64OuterRight,
+    EjectorHill8x64OuterLeft,
+    EjectorHill8x64OuterRight,
+    EjectorHill12x80OuterLeft,
+    EjectorHill12x80OuterRight,
+    EjectorHill16x96OuterLeft,
+    EjectorHill16x96OuterRight,
+    FloaterHill4x48OuterLeft,
+    FloaterHill4x48OuterRight,
+    FloaterHill8x64OuterLeft,
+    FloaterHill8x64OuterRight,
+    FloaterHill12x80OuterLeft,
+    FloaterHill12x80OuterRight,
+    FloaterHill6x64OuterLeft,
+    FloaterHill6x64OuterRight,
+    FloaterHill12x96OuterLeft,
+    FloaterHill12x96OuterRight,
+    FloaterHill16x112OuterLeft,
+    FloaterHill16x112OuterRight,
+    ZeroGRollFastLeft,
+    ZeroGRollFastRight,
+    ZeroGRollCompactLeft,
+    ZeroGRollCompactRight,
+    StallLeft,
+    StallRight,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

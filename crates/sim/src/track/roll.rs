@@ -5,6 +5,101 @@ use crate::track::curves::{HEART_HEIGHT_METRES, TrackState, Vec3};
 
 const DIFFERENCE_STEP: f64 = 1.0e-5;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Twist {
+    OuterBank {
+        peak: f64,
+        start: f64,
+        end: f64,
+    },
+    ZeroGRoll {
+        ramp: f64,
+        start: f64,
+        end: f64,
+    },
+    Stall {
+        ramp: f64,
+        hold: f64,
+        start: f64,
+        end: f64,
+    },
+}
+
+impl Twist {
+    pub(crate) fn hash_into(self, hash: &mut StateHasher) {
+        match self {
+            Self::OuterBank { peak, start, end } => {
+                hash.write_u8(0);
+                hash.write_f64(peak);
+                hash.write_f64(start);
+                hash.write_f64(end);
+            }
+            Self::ZeroGRoll { ramp, start, end } => {
+                hash.write_u8(1);
+                hash.write_f64(ramp);
+                hash.write_f64(start);
+                hash.write_f64(end);
+            }
+            Self::Stall {
+                ramp,
+                hold,
+                start,
+                end,
+            } => {
+                hash.write_u8(2);
+                hash.write_f64(ramp);
+                hash.write_f64(hold);
+                hash.write_f64(start);
+                hash.write_f64(end);
+            }
+        }
+    }
+
+    pub(crate) fn sample(self, distance: f64, mirrored: bool) -> (f64, f64, f64) {
+        let (start, end) = match self {
+            Self::OuterBank { start, end, .. }
+            | Self::ZeroGRoll { start, end, .. }
+            | Self::Stall { start, end, .. } => (start, end),
+        };
+        assert!(start < end);
+        let u = ((distance - start) / (end - start)).clamp(0.0, 1.0);
+        let (value, first, second) = match self {
+            Self::OuterBank { peak, .. } => {
+                let w = u * (1.0 - u);
+                (
+                    peak * 64.0 * w.powi(3),
+                    peak * 192.0 * w.powi(2) * (1.0 - 2.0 * u),
+                    peak * 384.0 * w * (1.0 - 5.0 * u + 5.0 * u * u),
+                )
+            }
+            Self::ZeroGRoll { ramp, .. } => {
+                assert!(ramp > 0.0 && ramp <= 0.5);
+                let (v, d, dd) = roll_schedule(u, ramp);
+                (TAU * v, TAU * d, TAU * dd)
+            }
+            Self::Stall { ramp, hold, .. } => {
+                assert!(ramp > 0.0 && ramp <= 0.5 && (0.0..1.0).contains(&hold));
+                let width = (1.0 - hold) / 2.0;
+                if u < width {
+                    let (v, d, dd) = roll_schedule(u / width, ramp);
+                    (PI * v, PI * d / width, PI * dd / width.powi(2))
+                } else if u > 1.0 - width {
+                    let (v, d, dd) = roll_schedule((1.0 - u) / width, ramp);
+                    (PI * v, -PI * d / width, PI * dd / width.powi(2))
+                } else {
+                    (PI, 0.0, 0.0)
+                }
+            }
+        };
+        let sign = if mirrored { -1.0 } else { 1.0 };
+        (
+            sign * value,
+            sign * first / (end - start),
+            sign * second / (end - start).powi(2),
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 enum RollPath {
     Spline {
@@ -581,6 +676,41 @@ fn state_up(state: TrackState) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hill_twist_derivatives_match_finite_differences() {
+        use super::Twist;
+        for twist in [
+            Twist::OuterBank {
+                peak: 110_f64.to_radians(),
+                start: 2.0,
+                end: 18.0,
+            },
+            Twist::ZeroGRoll {
+                ramp: 0.25,
+                start: 2.0,
+                end: 18.0,
+            },
+            Twist::Stall {
+                ramp: 0.25,
+                hold: 0.25,
+                start: 2.0,
+                end: 18.0,
+            },
+        ] {
+            let step = 1e-4;
+            for index in 1..100 {
+                let distance = 2.0 + f64::from(index) * 0.16;
+                let before = twist.sample(distance - step, false);
+                let center = twist.sample(distance, false);
+                let after = twist.sample(distance + step, false);
+                assert!(((after.0 - before.0) / (2.0 * step) - center.1).abs() < 1e-7);
+                assert!(((after.1 - before.1) / (2.0 * step) - center.2).abs() < 1e-5);
+                let mirror = twist.sample(distance, true);
+                assert_eq!(mirror, (-center.0, -center.1, -center.2));
+            }
+        }
+    }
 
     #[test]
     fn barrel_descent_bias_keeps_the_rail_descending() {

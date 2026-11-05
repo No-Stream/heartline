@@ -15,10 +15,29 @@ fn candidate_force_preview_reports_selected_track_without_placing_it() {
     let preview: serde_json::Value =
         serde_json::from_str(&simulation.construction_candidate_force_preview_json()).unwrap();
     assert_eq!(preview["status"], "reachedEnd");
+    assert_eq!(preview["outerBank"], false);
     assert!(preview["entrySpeed"].as_f64().unwrap() > 0.0);
     assert!(preview["peaks"]["maximumVerticalG"].as_f64().is_some());
     assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
     assert_eq!(simulation.construction_track(), before);
+}
+
+#[test]
+fn candidate_force_preview_identifies_outer_banks_for_lateral_readout() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(100, 100, 20, 0);
+    simulation.construction_select("EjectorHill12x64OuterLeft");
+
+    let preview: serde_json::Value =
+        serde_json::from_str(&simulation.construction_candidate_force_preview_json()).unwrap();
+
+    assert_eq!(preview["outerBank"], true);
+    assert!(preview["peaks"]["minimumVerticalG"].as_f64().is_some());
+    assert!(
+        preview["peaks"]["maximumAbsoluteLateralG"]
+            .as_f64()
+            .is_some()
+    );
 }
 
 #[test]
@@ -643,7 +662,12 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
         assert_eq!(super::piece_group(piece), expected_group, "{id:?}");
     }
     for piece in catalog.iter().filter(|piece| piece.family.is_some()) {
-        assert_eq!(super::piece_group(piece), "special", "{:?}", piece.id);
+        let expected = if piece.inversion.is_some() {
+            "inversion"
+        } else {
+            "special"
+        };
+        assert_eq!(super::piece_group(piece), expected, "{:?}", piece.id);
     }
 
     for (id, expected_name) in [

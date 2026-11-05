@@ -199,4 +199,27 @@ mod tests {
         assert_eq!(ids, expected_ids);
         assert!(result["recommendedId"].is_string());
     }
+
+    #[test]
+    fn speed_match_keeps_outer_banks_in_their_own_handed_family() {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+        simulation.construction_start(200, 200, 20, 0);
+        let result: serde_json::Value = serde_json::from_str(
+            &simulation.construction_speed_match_json("EjectorHill12x64OuterLeft", Some(26.0)),
+        )
+        .unwrap();
+        let ids: Vec<_> = result["variants"]
+            .as_array()
+            .expect("outer-bank variants are available")
+            .iter()
+            .map(|variant| variant["id"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(ids.len(), 5);
+        assert!(
+            ids.iter()
+                .all(|id| id.starts_with("EjectorHill") && id.ends_with("OuterLeft"))
+        );
+        assert!(ids.contains(&"EjectorHill12x64OuterLeft"));
+    }
 }

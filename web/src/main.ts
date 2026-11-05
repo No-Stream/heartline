@@ -11,10 +11,11 @@ import type { Facility } from "./facilities";
 import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
-import type { CameraAction, InputAction } from "./input/actions";
+import type { CameraAction, InputAction, ScreenPoint, UndergroundStyle } from "./input/actions";
 import { constructionRiderPositions, validateBlockAnalysisBudget, type FrameLogEntry, type GameTest, type SnapshotArrivalEntry } from "./game-test";
 import { blockLayoutChanged } from "./block-analysis-progress";
-import { createWorldRenderer, loadAtlas, type WorldView, type WorldSprite } from "./render/index";
+import { createWorldRenderer, loadAtlas, type Cutaway, type WorldView, type WorldSprite } from "./render/index";
+import { CUTAWAY_RADIUS, cutawayLevelForTrack, insideCutaway } from "./render/cutaway";
 import { advanceDayPhase, NOON, START_PHASE } from "./render/daylight";
 import { CONFETTI_LIFE_TICKS, createCrestTracker, detectCrest, type CrestBurst } from "./render/effects";
 import { createDayClock, type DaySpeed } from "./day-clock";
@@ -178,6 +179,10 @@ pathContainer.querySelector<HTMLElement>("[data-build]")!.title = `Build paths (
 pathContainer.querySelector<HTMLElement>("[data-remove]")!.title = `Remove paths (${keyHint(builderShortcuts.pathRemove)})`;
 let undergroundLevel: number | undefined;
 let selectedUndergroundLevel = 8;
+let undergroundStyle: UndergroundStyle = "cut";
+/** The cutaway window drawn in the last frame; picking inside it uses its cut level. */
+let renderedCutaway: Cutaway | undefined;
+let pointerPosition: ScreenPoint | null = null;
 const landscapingContainer = document.querySelector<HTMLElement>("[data-landscaping]");
 if (!landscapingContainer) throw new Error("Landscaping panel is missing");
 const landscapingPanel = createLandscapingPanel(landscapingContainer, dispatch);
@@ -351,6 +356,7 @@ const gameTest: GameTest = {
     return new Promise<void>((resolve) => { advanceBlockAnalysisComplete = resolve; sendWorkerAction(worker, { type: "test-advance-block-placement", budget }); });
   },
   setCamera(value) { camera = value; followPoints = undefined; renderRevision.invalidate(); },
+  cutaway() { return renderedCutaway ?? null; },
   setSurface(x, y, corners) { sendWorkerAction(worker, { type: "set-surface", x, y, corners: new Int16Array(corners) }); },
   project(point) { return projectWorld(screenCamera(), viewport, point); },
   pick(x, y) { return renderer.pick(x, y); },
@@ -460,6 +466,10 @@ const constructionInputQueue = createConstructionInputQueue((action) => {
 
 function dispatch(action: InputAction): void {
   inputLog.push({ action: structuredClone(action), time: performance.now(), tick: current?.tickCount ?? 0, viewport: { ...viewport }, camera: { ...camera } });
+  if (action.type === "hover" || action.type === "drag-move") {
+    pointerPosition = action.position;
+    if (renderedCutaway) renderRevision.invalidate();
+  }
   // Coaster keys only act while the coaster tool is open; its buttons are hidden otherwise.
   if (coasterActions.has(action.type) || action.type.startsWith("construction-")) {
     if (executingConstructionInput) coasterAdapter.key(action);
@@ -546,17 +556,18 @@ function dispatch(action: InputAction): void {
     landscapingAdapter.activate(action.selection);
   } else if (action.type === "landscaping-cancel") {
     landscapingAdapter.deactivate();
-  } else if (action.type === "underground-view-toggle" || action.type === "underground-view-level") {
+  } else if (action.type === "underground-view-toggle" || action.type === "underground-view-level" || action.type === "underground-view-style") {
     if (action.type === "underground-view-level") selectedUndergroundLevel = action.level;
+    else if (action.type === "underground-view-style") undergroundStyle = action.style;
     else undergroundLevel = undergroundLevel === undefined ? selectedUndergroundLevel : undefined;
     if (undergroundLevel !== undefined) undergroundLevel = selectedUndergroundLevel;
-    landscapingPanel.setUndergroundView(undergroundLevel !== undefined, selectedUndergroundLevel);
+    landscapingPanel.setUndergroundView(undergroundLevel !== undefined, selectedUndergroundLevel, undergroundStyle);
     renderRevision.invalidate();
   } else if (landscapingTool.state().active && (action.type === "hover" || action.type === "select" || action.type === "drag-start" || action.type === "drag-move" || action.type === "drag-end" || action.type === "drag-cancel")) {
     if (action.type === "drag-cancel") landscapingAdapter.drag("cancel", null);
     else {
       const pick = action.position ? renderer.pickSurface(action.position.x, action.position.y) : null;
-      const tile = landscapingTileFromPick(pick, world, action.position, screenCamera(), viewport, undergroundLevel);
+      const tile = landscapingTileFromPick(pick, world, action.position, screenCamera(), viewport, pickLevelAt(action.position));
       if (action.type === "hover") landscapingAdapter.pointerMove(tile);
       else if (action.type === "select") landscapingAdapter.click(tile);
       else landscapingAdapter.drag(action.type === "drag-start" ? "start" : action.type === "drag-move" ? "move" : "end", tile);
@@ -811,6 +822,18 @@ function observeCrests(snapshot: CoasterSnapshot): void {
   crestBursts = [...crestBursts, ...newBursts].filter((burst) => snapshot.tickCount - burst.tick < CONFETTI_LIFE_TICKS);
 }
 
+/** The cutaway window follows the end of the track being built, cut just above it; otherwise it follows the pointer at the chosen cut level. */
+function cutawayFor(level: number, trackEnd: WorldPoint | undefined): Cutaway {
+  const center = trackEnd ? projectWorld(screenCamera(), viewport, trackEnd) : pointerPosition ?? { x: viewport.width / 2, y: viewport.height / 2 };
+  return { x: center.x, y: center.y, radius: CUTAWAY_RADIUS * viewport.width / cssViewport().width, level: trackEnd ? cutawayLevelForTrack(trackEnd.z) : level };
+}
+
+/** The height the pointer picks at: the cut level inside the cutaway window or under the whole-view cut, the surface otherwise. */
+function pickLevelAt(position: ScreenPoint | null): number | undefined {
+  if (!renderedCutaway) return undergroundLevel;
+  return position && insideCutaway(renderedCutaway, position.x, position.y) ? renderedCutaway.level : undefined;
+}
+
 /** Force labels and the hover readout belong to the estimate of an unfinished coaster, not to test-run reports. */
 function forceOverlayVisible(): boolean {
   return activeTool === "coaster" && !!construction?.active && !construction.testingReport && !!construction.constructionForcePreview && testingMetric !== null;
@@ -848,6 +871,7 @@ function frame(now: number): void {
   forceOverlay.render(forceOverlayVisible(), (sample) => projectWorld(camera, cssViewport(), sample), cssViewport(), heightMarkerBox);
   constructionEffects.active(now);
   dayClock.update(dayPhase);
+  renderedCutaway = undergroundLevel !== undefined && undergroundStyle === "cutaway" ? cutawayFor(undergroundLevel, heights?.end.position) : undefined;
   const scene = composeScene({
     world,
     previous: renderPrevious,
@@ -859,7 +883,7 @@ function frame(now: number): void {
     atlas,
     facilities,
     scenery,
-    undergroundLevel,
+    undergroundLevel: undergroundStyle === "cut" ? undergroundLevel : undefined,
     construction,
     activeTool,
     selectedGuestId,
@@ -884,7 +908,7 @@ function frame(now: number): void {
   audio.apply(sound.frame);
   renderedGuests = scene.guests;
   renderedRiders = scene.riders;
-  renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none" });
+  renderer.render({ world: scene.view, camera: scene.camera, waterFrame: scene.waterFrame, geometryPasses: scene.geometryPasses, atmospherePass: scene.atmospherePass, showBuildGrid: activeTool !== "none", cutaway: renderedCutaway });
   const trainPoses = scene.view.trainPoses;
   if (frameLogEnabled && renderCurrent && trainPoses.length >= 11) {
     frameLogEntries.push({
