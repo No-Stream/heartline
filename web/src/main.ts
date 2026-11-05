@@ -5,7 +5,8 @@ import { createFacilityTool } from "./facility-tool";
 import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
 import { createRenderRevision } from "./render-revision";
 import { composeScene } from "./compose-scene";
-import { sendWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterSnapshot } from "./protocol";
+import { sendWorkerAction as postWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterSnapshot } from "./protocol";
+import { createAutosaveScheduler, getAutosaveSettings, type AutosaveScheduler } from "./autosave";
 import "./print-modern.css";
 import "./app.css";
 import type { Facility } from "./facilities";
@@ -71,6 +72,43 @@ import {
 } from "./underground-cutaway";
 
 declare const __GIT_HASH__: string;
+
+let autosaveScheduler: AutosaveScheduler | undefined;
+
+function sendWorkerAction(worker: Worker, action: WorkerAction): void {
+  postWorkerAction(worker, action);
+  if (isParkMutationIntent(action)) autosaveScheduler?.markChanged();
+}
+
+function isParkMutationIntent(action: WorkerAction): boolean {
+  switch (action.type) {
+    case "construction-start":
+    case "construction-select":
+    case "construction-set-chain":
+    case "construction-set-launch-intensity":
+    case "construction-append":
+    case "construction-undo":
+    case "construction-delete":
+    case "construction-close":
+    case "construction-finish-preview":
+    case "construction-finish-confirm":
+    case "construction-finish-cancel":
+    case "construction-set-open":
+    case "construction-set-coaster-price":
+    case "construction-set-colors":
+    case "construction-test":
+    case "construction-auto-blocks":
+    case "construction-apply-best-blocks":
+    case "construction-set-train-count":
+    case "construction-set-cars-per-train":
+    case "construction-move-block":
+    case "construction-remove-block":
+    case "construction-add-block":
+      return true;
+    default:
+      return false;
+  }
+}
 
 interface RecordedInput { action: InputAction; time: number; tick: number; viewport: Viewport; camera: Camera }
 const renderRevision = createRenderRevision();
@@ -708,23 +746,48 @@ const worker = new Worker(new URL("./worker.ts", import.meta.url), {
 let parkRequestId = 0;
 let loadedPark = false;
 let snapLoadedPark = false;
-const pendingParkRequests = new Map<number, { resolve: (bytes?: Uint8Array) => void; reject: (error: Error) => void }>();
+interface ParkSnapshotReply { bytes?: Uint8Array; tickCount?: number }
+const pendingParkRequests = new Map<number, { resolve: (reply: ParkSnapshotReply) => void; reject: (error: Error) => void }>();
 const parkSavesContainer = document.querySelector<HTMLElement>("[data-park-saves]");
 if (!parkSavesContainer) throw new Error("Park saves controls are missing");
-const parkSaves = createParkSaves(parkSavesContainer, async () => {
+function requestParkSnapshot(): Promise<{ bytes: Uint8Array; parkAgeTicks: number }> {
   const requestId = ++parkRequestId;
-  const bytes = await new Promise<Uint8Array | undefined>((resolve, reject) => {
-    pendingParkRequests.set(requestId, { resolve, reject });
+  return new Promise<{ bytes: Uint8Array; parkAgeTicks: number }>((resolve, reject) => {
+    pendingParkRequests.set(requestId, {
+      resolve(reply) {
+        if (!reply.bytes || reply.tickCount === undefined) {
+          reject(new Error("Worker returned no park snapshot age or data."));
+          return;
+        }
+        resolve({ bytes: reply.bytes, parkAgeTicks: reply.tickCount });
+      },
+      reject,
+    });
     sendWorkerAction(worker, { type: "save-park", requestId });
   });
-  if (!bytes) throw new Error("Worker returned no park data.");
-  return bytes;
-}, async (bytes) => {
+}
+async function loadParkBytes(bytes: Uint8Array): Promise<void> {
   const requestId = ++parkRequestId;
-  await new Promise<Uint8Array | undefined>((resolve, reject) => {
-    pendingParkRequests.set(requestId, { resolve, reject });
+  await new Promise<void>((resolve, reject) => {
+    pendingParkRequests.set(requestId, { resolve: () => resolve(), reject });
     sendWorkerAction(worker, { type: "load-park", requestId, bytes });
   });
+}
+const parkSaves = createParkSaves(parkSavesContainer, async () => {
+  return (await requestParkSnapshot()).bytes;
+}, loadParkBytes, (settings) => autosaveScheduler?.setSettings(settings));
+autosaveScheduler = createAutosaveScheduler({
+  settings: getAutosaveSettings(),
+  capture: requestParkSnapshot,
+  message(text, openMenu) {
+    parkSaves.message(text, openMenu ?? true);
+    void parkSaves.refreshAutosaves().catch((error: unknown) => {
+      parkSaves.message(`Could not refresh autosaves: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  },
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && autosaveScheduler) void autosaveScheduler.update(performance.now(), false, current?.tickCount ?? 0);
 });
 let workerReady = false;
 let replayInProgress = false;
@@ -746,9 +809,10 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     if (message.error) pending.reject(new Error(message.error));
     else {
       if (message.type === "park-loaded") loadedPark = true;
-      pending.resolve(message.type === "park-saved" ? message.bytes : undefined);
+    pending.resolve(message.type === "park-saved" ? { bytes: message.bytes, tickCount: message.tickCount } : {});
     }
   } else if (message.type === "park-restoring") {
+    autosaveScheduler?.reset();
     snapLoadedPark = true;
     dayTick = undefined;
     demoCrests = createCrestTracker();
@@ -774,15 +838,18 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   } else if (message.type === "facility-access-preview") {
     if (facilityTool.receivePreview(message.requestId, message.rotation)) facilityPanel.previewDirection(message.rotation);
   } else if (message.type === "scenery") {
+    if (message.outcome === "placed" || message.outcome === "removed") autosaveScheduler?.markChanged();
     scenery = message.scenery;
     if (message.message) sceneryTool.receive(message.message);
     queueUiEvent(placementUiEvent(message.outcome));
     renderRevision.invalidate();
   } else if (message.type === "terrain-result") {
+    if (message.success) autosaveScheduler?.markChanged();
     landscapingTool.receive(message);
     queueUiEvent(terrainUiEvent(message));
     landscapingPanel.message(message.message);
   } else if (message.type === "path-preview" || message.type === "path-command-result") {
+    if (message.type === "path-command-result" && message.success) autosaveScheduler?.markChanged();
     pathTool.receive(message);
     if (message.type === "path-command-result") queueUiEvent(pathUiEvent(message));
   } else if (message.type === "world") {
@@ -803,6 +870,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     advanceBlockAnalysisComplete?.();
     advanceBlockAnalysisComplete = undefined;
   } else if (message.type === "facilities") {
+    if (message.outcome === "placed" || message.outcome === "removed" || message.message === "Price updated.") autosaveScheduler?.markChanged();
     if (frozen && facilities.length && !message.message && !message.forced) return;
     facilities = message.facilities;
     queueUiEvent(placementUiEvent(message.outcome));
@@ -864,6 +932,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   } else if (message.type === "construction-input-barrier") {
     constructionInputQueue.complete(construction?.track.length ?? 0, construction?.active ?? false);
   } else if (message.type === "surface-edited" || message.type === "test-resumed" || message.type === "construction-finish-ready") {
+    if (message.type === "surface-edited" && message.changed) autosaveScheduler?.markChanged();
     // These replies are consumed by test and replay listeners.
   } else {
     assertNever(message);
@@ -951,6 +1020,10 @@ function forceOverlayVisible(): boolean {
 }
 
 function frame(now: number): void {
+  if (autosaveScheduler) {
+    const running = workerReady && !frozen && !gamePause.isPaused() && gameSpeed > 0 && !document.hidden && !replayInProgress;
+    void autosaveScheduler.update(now, running, current?.tickCount ?? 0);
+  }
   if (!world || replayInProgress) return;
   if (gameTest.ready && (frozen || (testMode && gamePause.isPaused() && !followPoints))) return;
   const renderFrame = frozen ? undefined : renderClock.frame(now);

@@ -287,7 +287,8 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "save-park") {
       try {
         const bytes = (simulation as WasmSimulation & { save_state(): Uint8Array }).save_state();
-        sendWorkerMessage(outputScope, { type: "park-saved", requestId: action.requestId, bytes }, [bytes.buffer]);
+        const tickCount = Number(simulation.tick_count());
+        sendWorkerMessage(outputScope, { type: "park-saved", requestId: action.requestId, bytes, tickCount }, [bytes.buffer]);
       } catch (error) {
         sendWorkerMessage(outputScope, { type: "park-saved", requestId: action.requestId, error: String(error) });
       }

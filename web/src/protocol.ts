@@ -35,7 +35,7 @@ export type CoasterSnapshot = GuestSnapshot & { tickCount: number; trainPoses: F
 export type WorkerMessage =
   | { type: "construction-input-barrier" }
   | { type: "session-export"; requestId: number; recording?: WorkerRecording; error?: string }
-  | { type: "park-saved"; requestId: number; bytes?: Uint8Array; error?: string }
+  | { type: "park-saved"; requestId: number; bytes?: Uint8Array; tickCount?: number; error?: string }
   | { type: "park-loaded"; requestId: number; error?: string }
   | { type: "park-restoring" }
   | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
