@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidateForceReadout } from "./candidate-force-readout";
+import { candidateForceReadout, hillReadout } from "./candidate-force-readout";
 
 const preview = {
   status: "reachedEnd" as const,
@@ -46,35 +46,50 @@ describe("candidate force readout", () => {
   });
 });
 
-describe("hill force readout", () => {
-  it("formats predicted hill forces and airtime in the selected units", () => {
-    const hill = {
-      entrySpeed: 20,
-      source: "energy" as const,
-      ratedSpeed: { minimumEntry: 16, maximumEntry: 26 },
-      minimumVerticalG: -1, maximumVerticalG: 3.7, airtimeSeconds: 1.25,
-    };
-    expect(candidateForceReadout(null, "metric", hill)).toEqual([
-      "Hill profile estimate (entry speed: energy estimate)",
-      "Estimated entry speed: 72 km/h (within rated range 57.6–93.6 km/h)",
-      "Estimated minimum vertical force: −1 g; maximum vertical force: 3.7 g",
-      "Estimated airtime: 1.3 s",
-    ]);
-    expect(candidateForceReadout(null, "imperial", hill)[1]).toBe("Estimated entry speed: 44.7 mph (within rated range 35.8–58.2 mph)");
+describe("airtime hill readout", () => {
+  const hill = {
+    entrySpeed: 20,
+    source: "energy",
+    ratedSpeed: { minimumEntry: 16, maximumEntry: 26 },
+    minimumVerticalG: -1.1, maximumVerticalG: 3.4, airtimeSeconds: 1.25,
+    limits: { minimumVerticalG: -1.5, maximumVerticalG: 4.5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 },
+  };
+
+  it("rates the predicted forces and shows speeds in the chosen units", () => {
+    expect(hillReadout(hill, "metric")).toEqual({
+      rows: [
+        { label: "Entry speed", value: "72 km/h", note: "", tone: null },
+        { label: "Rated for", value: "58–94 km/h", note: "in range", tone: "fine" },
+        { label: "Lowest", value: "−1.1 g", note: "great airtime", tone: "great" },
+        { label: "Highest", value: "3.4 g", note: "good", tone: "fine" },
+        { label: "Airtime", value: "1.3 s", note: "", tone: null },
+      ],
+      message: "",
+    });
+    const imperial = hillReadout(hill, "imperial").rows;
+    expect(imperial[0].value).toBe("45 mph");
+    expect(imperial[1].value).toBe("36–58 mph");
   });
 
-  it("reports rollback and speeds outside the rated range", () => {
-    const hill = {
-      entrySpeed: 30,
-      source: "energy" as const,
-      ratedSpeed: { minimumEntry: 16, maximumEntry: 26 },
-      minimumVerticalG: 0.2, maximumVerticalG: 4, airtimeSeconds: 0,
-    };
-    expect(candidateForceReadout(null, "metric", hill)[1]).toContain("outside rated range");
-    const combined = candidateForceReadout(preview, "metric", { ...hill, source: "simulated" });
-    expect(combined).toContain("Estimated minimum vertical force: −0.5 g (good airtime)");
-    expect(combined).toContain("Hill profile estimate (entry speed: simulated)");
-    expect(candidateForceReadout(null, "metric", { ...hill, minimumVerticalG: null, maximumVerticalG: null, airtimeSeconds: null })).toEqual(["Rollback expected; no hill force estimate is available."]);
-    expect(candidateForceReadout(null, "metric", { ...hill, source: "timedOut", entrySpeed: null, minimumVerticalG: null, maximumVerticalG: null, airtimeSeconds: null })).toEqual(["The estimate timed out before this hill; no force estimate is available."]);
+  it("flags speeds outside the rated window and forces past the limit", () => {
+    const fast = hillReadout({ ...hill, entrySpeed: 27, minimumVerticalG: -1.8, maximumVerticalG: 6 }, "metric").rows;
+    expect(fast[1]).toMatchObject({ note: "too fast", tone: "past" });
+    expect(fast[2]).toMatchObject({ note: "too much airtime", tone: "past" });
+    expect(fast[3]).toMatchObject({ note: "dangerous", tone: "dangerous" });
+    expect(hillReadout({ ...hill, entrySpeed: 15, minimumVerticalG: -0.1 }, "metric").rows.slice(1, 3).map(({ note }) => note)).toEqual(["too slow", "weak airtime"]);
+  });
+
+  it("explains when there is no force estimate", () => {
+    const noForces = { minimumVerticalG: null, maximumVerticalG: null, airtimeSeconds: null };
+    expect(hillReadout({ ...hill, ...noForces, entrySpeed: 9 }, "metric")).toEqual({
+      rows: [{ label: "Entry speed", value: "32 km/h", note: "", tone: null }, { label: "Rated for", value: "58–94 km/h", note: "too slow", tone: "past" }],
+      message: "At this speed the train would not make it over the crest.",
+    });
+    expect(hillReadout({ ...hill, ...noForces, entrySpeed: null }, "metric").message).toBe("The train would roll back before reaching this hill.");
+    expect(hillReadout({ ...hill, ...noForces, entrySpeed: 0, source: "stalled" }, "metric").message).toBe("The train stalls before reaching this hill.");
+    expect(hillReadout({ ...hill, ...noForces, entrySpeed: null, source: "timedOut" }, "metric")).toEqual({
+      rows: [{ label: "Rated for", value: "58–94 km/h", note: "", tone: null }],
+      message: "The speed estimate timed out before this hill.",
+    });
   });
 });

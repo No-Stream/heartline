@@ -1929,6 +1929,7 @@ fn hill_options_follow_model_and_select_variants_by_parameters() {
         .unwrap();
     assert!(selected["hillEstimate"]["entrySpeed"].is_number());
     assert!(selected["hillEstimate"]["ratedSpeed"].is_object());
+    assert!(selected["hillEstimate"]["limits"]["minimumVerticalG"].is_number());
     simulation.construction_select("model:wooden_twister");
     simulation.construction_start(200, 200, 20, 0);
     let wooden: Vec<serde_json::Value> =

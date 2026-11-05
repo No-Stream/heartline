@@ -40,6 +40,8 @@ export type { BlockSectionReport as BlockSection } from "./generated/BlockSectio
 export type { ConstructionPieceWire as ConstructionPiece } from "./generated/ConstructionPieceWire";
 export type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
 export type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
+export type { ConstructionHillOptionWire as ConstructionHillOption } from "./generated/ConstructionHillOptionWire";
+import type { ConstructionHillOptionWire as ConstructionHillOption } from "./generated/ConstructionHillOptionWire";
 import type { ConstructionPieceWire as ConstructionPiece } from "./generated/ConstructionPieceWire";
 import type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
 import type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
@@ -66,6 +68,8 @@ export interface ConstructionState {
   readonly trainLayout: TrainLayout | null;
   readonly pieces: readonly ConstructionPiece[];
   readonly elements: readonly ConstructionElement[];
+  /** Every airtime hill the model offers, whether or not it fits at the track end. */
+  readonly hillOptions: readonly ConstructionHillOption[];
   readonly selected: string | null;
   readonly track: readonly ConstructionTrack[];
   readonly canAppend: boolean;

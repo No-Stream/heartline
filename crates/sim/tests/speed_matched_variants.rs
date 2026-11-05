@@ -84,3 +84,36 @@ fn actual_loop_sizes_are_selected_at_their_rated_midpoints() {
         assert!(selected.fits);
     }
 }
+
+#[test]
+fn airtime_hills_select_the_containing_window_ridden_closest_to_its_top() {
+    let family = |ids: &[PieceId]| -> Vec<Piece> {
+        ids.iter()
+            .map(|id| {
+                catalog()
+                    .iter()
+                    .find(|piece| piece.id == *id)
+                    .unwrap()
+                    .clone()
+            })
+            .collect()
+    };
+    let ejectors = family(&[
+        PieceId::EjectorHill8x48,
+        PieceId::EjectorHill12x64,
+        PieceId::EjectorHill8x64,
+        PieceId::EjectorHill12x80,
+        PieceId::EjectorHill16x96,
+    ]);
+    let selected = select_speed_matched_variant(&ejectors, 25.0).unwrap();
+    assert_eq!(selected.id, PieceId::EjectorHill8x64);
+    assert!(selected.fits);
+    let selected = select_speed_matched_variant(&ejectors, 30.0).unwrap();
+    assert_eq!(selected.id, PieceId::EjectorHill16x96);
+    assert!(!selected.fits);
+    let rolls = family(&[PieceId::ZeroGRollFastLeft, PieceId::ZeroGRollCompactLeft]);
+    assert_eq!(
+        select_speed_matched_variant(&rolls, 19.0).unwrap().id,
+        PieceId::ZeroGRollFastLeft
+    );
+}

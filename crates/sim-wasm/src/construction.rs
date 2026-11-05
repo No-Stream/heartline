@@ -29,6 +29,7 @@ pub struct ConstructionHillEstimateWire {
     minimum_vertical_g: Option<f64>,
     maximum_vertical_g: Option<f64>,
     airtime_seconds: Option<f64>,
+    limits: ConstructionForceLimitsWire,
 }
 
 #[derive(Serialize, TS)]
@@ -766,6 +767,9 @@ impl WasmSimulation {
                                     .as_ref()
                                     .map(|force| force.maximum_vertical_g),
                                 airtime_seconds: forces.as_ref().map(|force| force.airtime_seconds),
+                                limits: force_limits_wire(
+                                    construction.model().comfortable_force_limits,
+                                ),
                             })
                         } else {
                             None

@@ -1,7 +1,8 @@
-import { rateForce, rateVertical } from "./force-overlay";
+import { rateForce, rateVertical, type ForceLimits, type ForceRating } from "./force-overlay";
 import { formatSpeed, type Units } from "./units";
 
 import type { ConstructionCandidateForcePreviewWire } from "./generated/ConstructionCandidateForcePreviewWire";
+import type { ConstructionHillEstimateWire } from "./generated/ConstructionHillEstimateWire";
 
 export type CandidateForcePreview = Omit<ConstructionCandidateForcePreviewWire, "status"> & {
   readonly status: "reachedEnd" | "stalled" | "timedOut";
@@ -16,15 +17,6 @@ function verticalRating(force: number, limits: CandidateForcePreview["limits"]):
   return axis === "airtime" ? `${rating} airtime` : rating;
 }
 
-export interface HillForcePreview {
-  readonly entrySpeed: number | null;
-  readonly source: string;
-  readonly ratedSpeed: CandidateForcePreview["ratedSpeed"];
-  readonly minimumVerticalG: number | null;
-  readonly maximumVerticalG: number | null;
-  readonly airtimeSeconds: number | null;
-}
-
 function speedReadout(entrySpeed: number, ratedSpeed: CandidateForcePreview["ratedSpeed"], units: Units): string {
   const range = ratedSpeed
     ? ` (${entrySpeed >= ratedSpeed.minimumEntry && entrySpeed <= ratedSpeed.maximumEntry ? "within" : "outside"} rated range ${formatSpeed(ratedSpeed.minimumEntry, units).replace(/ (mph|km\/h)$/, "")}–${formatSpeed(ratedSpeed.maximumEntry, units)})`
@@ -32,24 +24,59 @@ function speedReadout(entrySpeed: number, ratedSpeed: CandidateForcePreview["rat
   return `Estimated entry speed: ${formatSpeed(entrySpeed, units)}${range}`;
 }
 
-function hillForceReadout(preview: HillForcePreview, units: Units): string[] {
-  if (preview.source === "timedOut") return ["The estimate timed out before this hill; no force estimate is available."];
-  if (preview.entrySpeed === null || preview.minimumVerticalG === null || preview.maximumVerticalG === null || preview.airtimeSeconds === null) return ["Rollback expected; no hill force estimate is available."];
+export type HillForcePreview = ConstructionHillEstimateWire;
+/** How a readout value reads against the rating bands: weak, fine, great, past the limit, or dangerous. */
+export type HillReadoutTone = "weak" | "fine" | "great" | "past" | "dangerous";
+export interface HillReadoutRow {
+  readonly label: string;
+  readonly value: string;
+  readonly note: string;
+  readonly tone: HillReadoutTone | null;
+}
+export interface HillReadout {
+  readonly rows: readonly HillReadoutRow[];
+  /** Why there is no force estimate, or empty when there is one. */
+  readonly message: string;
+}
+
+const ratingTones: Readonly<Record<ForceRating, HillReadoutTone>> = {
+  weak: "weak", good: "fine", fine: "fine", great: "great", strong: "great", "too much": "past", dangerous: "dangerous",
+};
+
+function verticalRow(label: string, force: number, limits: ForceLimits): HillReadoutRow {
+  const { axis, rating } = rateVertical(force, limits);
+  return { label, value: `${formatForce(force)} g`, note: axis === "airtime" ? `${rating} airtime` : rating, tone: ratingTones[rating] };
+}
+
+/** The airtime hill inspector's prediction: entry speed against the hill's rated window, then the forces and airtime it gives at that speed. */
+export function hillReadout(preview: HillForcePreview, units: Units): HillReadout {
+  const speed = (metresPerSecond: number): string => formatSpeed(metresPerSecond, units, 0);
+  const { ratedSpeed, entrySpeed } = preview;
+  const ratedRow = (entry: number | null): HillReadoutRow[] => {
+    if (!ratedSpeed) return [];
+    const note = entry === null ? "" : entry < ratedSpeed.minimumEntry ? "too slow" : entry > ratedSpeed.maximumEntry ? "too fast" : "in range";
+    return [{ label: "Rated for", value: `${speed(ratedSpeed.minimumEntry).replace(/ (mph|km\/h)$/, "")}–${speed(ratedSpeed.maximumEntry)}`, note, tone: note === "" ? null : note === "in range" ? "fine" : "past" }];
+  };
+  if (preview.source === "timedOut") return { rows: ratedRow(null), message: "The speed estimate timed out before this hill." };
+  if (entrySpeed === null) return { rows: ratedRow(null), message: "The train would roll back before reaching this hill." };
+  if (preview.source === "stalled" || entrySpeed === 0) return { rows: ratedRow(null), message: "The train stalls before reaching this hill." };
+  const entryRows = [{ label: "Entry speed", value: speed(entrySpeed), note: "", tone: null }, ...ratedRow(entrySpeed)];
   const { minimumVerticalG, maximumVerticalG, airtimeSeconds } = preview;
-  return [
-    `Hill profile estimate (entry speed: ${preview.source === "simulated" ? "simulated" : "energy estimate"})`,
-    speedReadout(preview.entrySpeed, preview.ratedSpeed, units),
-    `Estimated minimum vertical force: ${formatForce(minimumVerticalG)} g; maximum vertical force: ${formatForce(maximumVerticalG)} g`,
-    `Estimated airtime: ${formatForce(airtimeSeconds)} s`,
-  ];
+  if (minimumVerticalG === null || maximumVerticalG === null || airtimeSeconds === null) {
+    return { rows: entryRows, message: "At this speed the train would not make it over the crest." };
+  }
+  return {
+    rows: [
+      ...entryRows,
+      verticalRow("Lowest", minimumVerticalG, preview.limits),
+      verticalRow("Highest", maximumVerticalG, preview.limits),
+      { label: "Airtime", value: `${formatForce(airtimeSeconds)} s`, note: "", tone: null },
+    ],
+    message: "",
+  };
 }
 
-export function candidateForceReadout(preview: CandidateForcePreview | null, units: Units, hill: HillForcePreview | null = null): string[] {
-  const lines = preview ? simulatedForceReadout(preview, units) : [];
-  return hill ? [...lines, ...hillForceReadout(hill, units)] : lines;
-}
-
-function simulatedForceReadout(preview: CandidateForcePreview, units: Units): string[] {
+export function candidateForceReadout(preview: CandidateForcePreview, units: Units): string[] {
   if (preview.entrySpeed === null) {
     return ["The train does not reach this piece; no force estimate is available."];
   }

@@ -1,10 +1,10 @@
 import { speedMatchMessage } from "./construction-speed-match";
-import { candidateForceReadout } from "./candidate-force-readout";
+import { candidateForceReadout, hillReadout } from "./candidate-force-readout";
 import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
-import { groupedPieces, pieceDisplayName, pieceInGroup, steppedPieceSelection, stepperOptions, type PieceStep, type StepAttribute } from "./construction-choices";
-import type { BlockReport, ConstructionElement, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
+import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
+import type { BlockReport, ConstructionElement, ConstructionHillOption, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
@@ -57,6 +57,15 @@ const steppers: readonly { attribute: StepAttribute; label: string; previous: st
   { attribute: "slope", label: "Slope", previous: "Slope down", next: "Slope up", keys: ["slopeDown", "slopeUp"] },
   { attribute: "bank", label: "Bank", previous: "Bank left", next: "Bank right", keys: ["bankLeft", "bankRight"] },
 ];
+const hillSteppers: readonly { attribute: HillAttribute; label: string; previous: string; next: string }[] = [
+  { attribute: "feel", label: "Feel", previous: "Previous hill feel", next: "Next hill feel" },
+  { attribute: "height", label: "Height", previous: "Lower hill", next: "Taller hill" },
+  { attribute: "span", label: "Length", previous: "Shorter hill", next: "Longer hill" },
+  { attribute: "twist", label: "Twist", previous: "Twist left", next: "Twist right" },
+];
+/** The feel of the first hill the player opens: the strongest airtime, as a camelback should give by default. */
+const defaultHillFeel = "ejector";
+const hillSummaryHint = "Sized for the train's speed";
 /** Building comes first; colours and running the ride are settings the player visits when they want them. */
 const builderTabs = [
   { id: "build", label: "Build" },
@@ -135,6 +144,23 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
             </div>`).join("")}
           </div>
         </section>
+        <details class="tool-panel__section builder__hill" data-hill>
+          <summary><span class="builder__hill-title">Airtime hill</span><span class="builder__hill-current" data-hill-current>${hillSummaryHint}</span></summary>
+          <div class="builder__hill-body">
+            <div class="builder__hill-steppers">${hillSteppers.map(({ attribute, label, previous, next }) => `
+              <div class="stepper" role="group" aria-label="Hill ${label.toLowerCase()}">
+                <span class="tool-panel__label">${label}</span>
+                <button type="button" data-hill-stepper="${attribute}--1" aria-label="${previous}">−</button>
+                <span class="stepper__value" data-hill-value="${attribute}"></span>
+                <button type="button" data-hill-stepper="${attribute}-1" aria-label="${next}">+</button>
+              </div>`).join("")}
+            </div>
+            <p class="builder__hill-suggestion"><span data-hill-suggestion></span> <button type="button" class="tool-panel__action tool-panel__action--quiet" data-hill-suggested hidden>Use suggested size</button></p>
+            <dl class="builder__hill-readout" data-hill-readout aria-live="polite" aria-label="Predicted ride on this hill"></dl>
+            <p class="builder__hill-message" data-hill-message hidden></p>
+            <p class="tool-panel__hint">Place it with ${hint("place")}. The hill stays chosen, so pressing ${hint("place")} again adds another for a camelback run.</p>
+          </div>
+        </details>
         <div class="tool-panel__section builder__chain" data-chain-section>
           <button type="button" class="builder__chain-toggle" data-chain-toggle aria-pressed="false" aria-label="Chain lift" aria-keyshortcuts="${keyHint(builderShortcuts.chain)}" aria-describedby="chain-lift-hint">
             <svg class="builder__chain-links" viewBox="0 0 30 14" width="30" height="14" aria-hidden="true"><rect class="builder__chain-plate" x="2.6" y="3.4" width="14" height="8" rx="4"/><rect class="builder__chain-plate" x="13.6" y="3.4" width="14" height="8" rx="4"/><rect class="builder__chain-line" x="1.5" y="2.5" width="14" height="8" rx="4"/><rect class="builder__chain-line" x="12.5" y="2.5" width="14" height="8" rx="4"/></svg>
@@ -309,6 +335,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const blockSuggestions = element<HTMLUListElement>("[data-block-suggestions]");
   const blockPanelHint = element("[data-block-panel-hint]");
   const choices = element("[data-choices]");
+  const hillSection = element<HTMLDetailsElement>("[data-hill]");
+  const hillReadoutList = element("[data-hill-readout]");
+  const hillMessage = element("[data-hill-message]");
+  const hillSuggested = element<HTMLButtonElement>("[data-hill-suggested]");
   const tabList = element("[data-builder-tabs]");
   const tabs = builderTabs.map(({ id }) => ({ id, tab: element<HTMLButtonElement>(`[data-builder-tab="${id}"]`), panel: element(`[data-builder-tabpanel="${id}"]`) }));
   let shapes = new Map<string, PieceShape>();
@@ -321,6 +351,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   let selectedBlock: number | null = null;
   let closed = false;
   let units: Units = "imperial";
+  let hillChosenBefore = false;
+  let hillWasSelected = false;
 
   const shapeOf = (id: string, slope?: string): PieceShape => {
     const shape = (slope && shapes.get(`${id}\0${slope}`)) ?? shapes.get(id);
@@ -429,6 +461,20 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (button) {
       dispatch({ type: "construction-select", piece: button.dataset.speedMatchVariant!, exact: true });
     }
+  });
+  for (const { attribute } of hillSteppers) for (const step of [-1, 1] as const) {
+    element(`[data-hill-stepper="${attribute}-${step}"]`).addEventListener("click", () => {
+      const action = state && steppedHillSelection(state.hillOptions, state.selected, attribute, step);
+      if (action) dispatch(action);
+    });
+  }
+  hillSection.addEventListener("toggle", () => {
+    if (!hillSection.open || !state || state.hillOptions.some(({ id }) => id === state!.selected)) return;
+    const piece = hillToOpen(state.hillOptions, state.pieces, hillChosenBefore ? null : defaultHillFeel);
+    if (piece) dispatch({ type: "construction-select", piece });
+  });
+  hillSuggested.addEventListener("click", () => {
+    if (hillSuggested.dataset.piece) dispatch({ type: "construction-select", piece: hillSuggested.dataset.piece, exact: true });
   });
   palette.addEventListener("click", (event) => {
     const tile = (event.target as Element).closest<HTMLElement>("[data-piece]");
@@ -555,8 +601,9 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       tile.tabIndex = checked ? 0 : -1;
       if (checked && focusInPalette) tile.focus();
     }
+    const selectedHill = current.hillOptions.find(({ id }) => id === current.selected);
     const speedMatch = element("[data-speed-match]");
-    speedMatch.hidden = !current.speedMatch;
+    speedMatch.hidden = !current.speedMatch || !!selectedHill;
     element("[data-speed-match-message]").textContent = current.speedMatch ? speedMatchMessage(current.speedMatch, current.selected) : "";
     element("[data-speed-match-variants]").replaceChildren(...(current.speedMatch?.variants ?? []).map(({ id, label }) => {
       const button = document.createElement("button");
@@ -567,11 +614,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       return button;
     }));
     const selected = current.pieces.find(({ id }) => id === current.selected);
-    const hillEstimate = selected?.hillEstimate ?? null;
-    const forcePreview = current.speedMatch || hillEstimate ? current.candidateForcePreview : null;
+    // A hill shows its own prediction in the hill section.
+    const forcePreview = current.speedMatch && !selectedHill ? current.candidateForcePreview : null;
     const candidateForce = element("[data-candidate-force-preview]");
-    candidateForce.hidden = !forcePreview && !hillEstimate;
-    candidateForce.replaceChildren(...candidateForceReadout(forcePreview, units, hillEstimate).map((line) => {
+    candidateForce.hidden = !forcePreview;
+    candidateForce.replaceChildren(...(forcePreview ? candidateForceReadout(forcePreview, units) : []).map((line) => {
       const paragraph = document.createElement("p");
       paragraph.textContent = line;
       return paragraph;
@@ -593,6 +640,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element("[data-preview-name]").textContent = selectedElement.name;
       element("[data-preview-group]").textContent = "Track element";
     }
+    element("[data-steppers]").hidden = !!selectedHill;
+    renderHill(current, selectedHill, selected?.hillEstimate ?? null);
     for (const { attribute } of steppers) {
       const options = stepperOptions(current.pieces, shapes, current.selected, attribute);
       const value = element(`[data-stepper-value="${attribute}"]`);
@@ -606,6 +655,59 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element<HTMLButtonElement>(`[data-stepper="${attribute}--1"]`).disabled = current.complete && (!options || options.index <= 0);
       element<HTMLButtonElement>(`[data-stepper="${attribute}-1"]`).disabled = current.complete && (!options || options.index >= options.values.length - 1);
     }
+  }
+
+  function renderHill(current: ConstructionState, selectedHill: ConstructionHillOption | undefined, estimate: ConstructionPiece["hillEstimate"]): void {
+    // Choosing a hill anywhere opens its section, and choosing any other piece folds it away.
+    if (!!selectedHill !== hillWasSelected) hillSection.open = !!selectedHill;
+    hillWasSelected = !!selectedHill;
+    if (selectedHill) hillChosenBefore = true;
+    hillSection.hidden = closed || current.canClose || current.hillOptions.length === 0;
+    element("[data-hill-current]").textContent = selectedHill ? hillLabel(selectedHill, units) : hillSummaryHint;
+    for (const { attribute } of hillSteppers) {
+      const options = hillStepperOptions(current.hillOptions, current.selected, attribute, units);
+      const value = element(`[data-hill-value="${attribute}"]`);
+      const text = options ? options.values[options.index] : "";
+      if (value.textContent !== text) {
+        value.textContent = text;
+        value.classList.remove("stepper__value--changed");
+        void value.offsetWidth;
+        value.classList.add("stepper__value--changed");
+      }
+      element<HTMLButtonElement>(`[data-hill-stepper="${attribute}--1"]`).disabled = !options || options.index <= 0;
+      element<HTMLButtonElement>(`[data-hill-stepper="${attribute}-1"]`).disabled = !options || options.index >= options.values.length - 1;
+    }
+    const match = selectedHill ? current.speedMatch : null;
+    const suggested = current.hillOptions.find(({ id }) => id === match?.recommendedId);
+    const suggestedSize = suggested ? formatHillSize(suggested.height, suggested.span, units) : "";
+    element("[data-hill-suggestion]").textContent = !match || match.entrySpeed === null ? ""
+      : !suggested ? "No size of this hill fits here."
+        : match.fits === false ? `No size fits the predicted entry speed; ${suggestedSize} is the closest.`
+          : suggested.id === current.selected ? "Sized for the predicted entry speed." : `Suggested for this speed: ${suggestedSize}.`;
+    hillSuggested.hidden = !suggested || suggested.id === current.selected;
+    hillSuggested.dataset.piece = suggested?.id ?? "";
+    const readout = estimate ? hillReadout(estimate, units) : { rows: [], message: "" };
+    hillReadoutList.replaceChildren(...readout.rows.map(({ label, value, note, tone }) => {
+      const row = document.createElement("div");
+      row.className = "builder__hill-row";
+      const term = document.createElement("dt");
+      term.className = "tool-panel__label";
+      term.textContent = label;
+      const amount = document.createElement("dd");
+      amount.textContent = value;
+      if (note) {
+        const rating = document.createElement("span");
+        rating.className = "builder__hill-rating";
+        rating.dataset.tone = tone ?? "";
+        rating.textContent = note;
+        amount.append(" ", rating);
+      }
+      row.append(term, amount);
+      return row;
+    }));
+    hillReadoutList.hidden = readout.rows.length === 0;
+    hillMessage.textContent = readout.message;
+    hillMessage.hidden = readout.message === "";
   }
 
   function renderLaunchPositions(current: ConstructionState): void {

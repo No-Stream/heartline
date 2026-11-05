@@ -340,3 +340,63 @@ test("offers and places a twisted drop directly from a banked track @fast", asyn
   await expect(track).toHaveCount(3);
   await expect(track.last().locator(".track-chip__name")).toHaveText("Left twisted drop");
 });
+
+test("sizes an airtime hill for the entry speed, steps it, and repeats it into a camelback run @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.locator(".builder select[data-model]").selectOption("model:hybrid");
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const track = page.locator("[data-track] li");
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const placePiece = page.getByRole("button", { name: "Place piece" });
+  const selected = page.locator("[data-construction]");
+  for (const [index, pieceId] of ["LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel"].entries()) {
+    await choices.locator(`[data-piece="${pieceId}"]`).click();
+    await expect(selected).toHaveAttribute("data-selected", pieceId);
+    await placePiece.click();
+    await expect(track).toHaveCount(index + 2);
+  }
+
+  const hill = page.locator("[data-hill]");
+  const readout = hill.locator("[data-hill-readout]");
+  await expect(hill).not.toHaveAttribute("open");
+  await hill.getByText("Airtime hill").click();
+  await expect(selected).toHaveAttribute("data-selected", "EjectorHill8x64");
+  await expect(hill.getByRole("group", { name: "Hill feel" })).toContainText("Ejector");
+  await expect(hill.locator("[data-hill-suggestion]")).toHaveText("Sized for the predicted entry speed.");
+  await expect(readout).toContainText("Entry speed");
+  await expect(readout).toContainText("in range");
+  await expect(readout).toContainText(/(good|great) airtime/);
+  await expect(page.locator("[data-steppers]")).toBeHidden();
+  await page.mouse.move(0, 0);
+  await expect(hill).toHaveScreenshot("airtime-hill-inspector.png", { animations: "disabled" });
+
+  const speedMatchedReadout = await readout.textContent();
+  await hill.getByRole("button", { name: "Taller hill" }).click();
+  await expect(selected).toHaveAttribute("data-selected", "EjectorHill12x64");
+  await expect(readout).not.toHaveText(speedMatchedReadout!);
+  await expect(readout).toContainText("too fast");
+  await expect(hill.locator("[data-hill-suggestion]")).toHaveText("Suggested for this speed: 8 × 64 m.");
+  await hill.getByRole("button", { name: "Use suggested size" }).click();
+  await expect(selected).toHaveAttribute("data-selected", "EjectorHill8x64");
+
+  await placePiece.click();
+  await expect(track).toHaveCount(7);
+  await expect(selected).toHaveAttribute("data-selected", "EjectorHill8x64");
+  await expect(hill).toHaveAttribute("open");
+  await placePiece.press("Enter");
+  await expect(track).toHaveCount(8);
+  await expect(track.nth(6).locator(".track-chip__name")).toHaveText("Ejector hill 8 × 64 m");
+  await expect(track.nth(7).locator(".track-chip__name")).toHaveText("Ejector hill 8 × 64 m");
+});

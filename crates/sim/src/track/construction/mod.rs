@@ -9,9 +9,10 @@ use crate::track::supports::{
     generate_dense_supports, generate_supports, support_intersects_obstacle,
 };
 use crate::track::{
-    CoasterColors, CoasterModel, Heartlining, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
-    LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape,
-    SupportStyle, TrackState, TrainConfiguration, Vec3, catalog,
+    CoasterColors, CoasterModel, Heartlining, HillFeel,
+    LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
+    LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState,
+    TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
 #[cfg(test)]
@@ -62,8 +63,11 @@ pub struct SpeedMatchedVariant {
 }
 
 /// Select the rated candidate with the largest margin to either window edge.
-/// If no window contains the speed, select the nearest window instead. Ties
-/// preserve the order supplied by the caller.
+/// Ejector, floater and speed hills are the exception: a hill gives its named
+/// feel only near the top of its window, so among the windows that contain the
+/// speed they select the one with the least headroom to its top. If no window
+/// contains the speed, select the nearest window instead. Ties preserve the
+/// order supplied by the caller.
 pub fn select_speed_matched_variant(
     candidates: &[Piece],
     entry_speed: f64,
@@ -76,16 +80,27 @@ pub fn select_speed_matched_variant(
         };
         assert!(window.minimum_entry.is_finite() && window.maximum_entry.is_finite());
         assert!(window.minimum_entry >= 0.0 && window.minimum_entry <= window.maximum_entry);
-        let margin = (entry_speed - window.minimum_entry).min(window.maximum_entry - entry_speed);
-        let choice = SpeedMatchedVariant {
-            id: piece.id,
-            fits: margin >= 0.0,
+        let headroom = window.maximum_entry - entry_speed;
+        let margin = (entry_speed - window.minimum_entry).min(headroom);
+        let fits = margin >= 0.0;
+        let rides_best_near_top = piece.family.is_some_and(|family| {
+            matches!(
+                family.feel,
+                HillFeel::Ejector | HillFeel::Floater | HillFeel::Speed
+            )
+        });
+        // Fitting windows score at least zero and outrank every window that does not fit.
+        let score = if fits && rides_best_near_top {
+            1.0 / (1.0 + headroom)
+        } else {
+            margin
         };
+        let choice = SpeedMatchedVariant { id: piece.id, fits };
         if best
             .as_ref()
-            .is_none_or(|(_, best_margin)| margin > *best_margin)
+            .is_none_or(|(_, best_score)| score > *best_score)
         {
-            best = Some((choice, margin));
+            best = Some((choice, score));
         }
     }
     best.map(|(choice, _)| choice)

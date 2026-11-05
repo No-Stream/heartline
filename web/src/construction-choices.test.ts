@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ConstructionPiece, PieceShape } from "./construction-protocol";
+import type { ConstructionHillOption, ConstructionPiece, PieceShape } from "./construction-protocol";
 import { speedMatchedSelection } from "./construction-speed-match";
-import { steppedPieceSelection, groupedPieces, pieceDisplayName, pieceInGroup, steppedPiece, stepperOptions } from "./construction-choices";
+import { steppedPieceSelection, groupedPieces, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, steppedHillSelection, steppedPiece, stepperOptions, type HillAttribute } from "./construction-choices";
 
 function shape(id: string, turn: number, kind = "Track"): PieceShape {
   return { id, name: id, kind, turn, entrySlope: "Level", exitSlope: "Level", entryBank: "Level", exitBank: "Level", points: [] };
@@ -216,4 +216,51 @@ it("cycles past speed-matched variants without redirecting to a previous size", 
     selected = speedMatchedSelection(action.piece, { entrySpeed: 10, recommendedId: "Loop", fits: true, variants: [] }, action.exact);
   }
   expect(selected).toBe("LaunchShort");
+});
+
+describe("airtime hill steppers", () => {
+  const hill = (feel: string, height: number, span: number, twist = "none"): ConstructionHillOption => ({
+    id: `${feel}${height}x${span}${twist}`, feel, height, span, twist, ratedSpeed: { minimumEntry: 10, maximumEntry: 20 },
+  });
+  const hybrid = [
+    hill("ejector", 8, 48), hill("ejector", 12, 64), hill("ejector", 8, 64), hill("ejector", 12, 80), hill("ejector", 16, 96),
+    hill("floater", 4, 48), hill("floater", 8, 64), hill("floater", 12, 80), hill("speed", 4, 64), hill("speed", 6, 80),
+    hill("ejector", 8, 64, "outerLeft"), hill("ejector", 8, 64, "outerRight"), hill("ejector", 12, 64, "outerLeft"), hill("ejector", 12, 64, "outerRight"),
+    hill("zeroGRoll", 8, 86, "left"), hill("zeroGRoll", 8, 86, "right"), hill("stall", 13, 104, "left"), hill("stall", 13, 104, "right"),
+  ];
+  const step = (selected: string, attribute: HillAttribute, direction: -1 | 1) => steppedHillSelection(hybrid, selected, attribute, direction);
+
+  it("lists the model's feels, the feel's twists and the family's sizes in stepper order", () => {
+    expect(hillStepperOptions(hybrid, "ejector12x64none", "feel", "metric")).toEqual({ values: ["Ejector", "Floater", "Speed hill", "Zero-g roll", "Stall"], index: 0 });
+    expect(hillStepperOptions(hybrid, "ejector12x64none", "twist", "metric")).toEqual({ values: ["Outer bank left", "Upright", "Outer bank right"], index: 1 });
+    expect(hillStepperOptions(hybrid, "ejector12x64none", "height", "metric")).toEqual({ values: ["8 m", "12 m", "16 m"], index: 1 });
+    expect(hillStepperOptions(hybrid, "ejector12x64none", "span", "imperial")).toEqual({ values: ["157 ft", "210 ft", "262 ft", "315 ft"], index: 1 });
+    expect(hillStepperOptions(hybrid, "speed4x64none", "twist", "metric")).toEqual({ values: ["Upright"], index: 0 });
+    expect(hillStepperOptions(hybrid, "stall13x104right", "twist", "metric")).toEqual({ values: ["Roll left", "Roll right"], index: 1 });
+    expect(hillStepperOptions(hybrid, "Straight", "feel", "metric")).toBeUndefined();
+  });
+
+  it("steps height and length exactly, keeping the other dimension as close as the grid allows", () => {
+    expect(step("ejector12x64none", "height", 1)).toEqual({ type: "construction-select", piece: "ejector16x96none", exact: true });
+    expect(step("ejector12x80none", "height", -1)).toEqual({ type: "construction-select", piece: "ejector8x64none", exact: true });
+    expect(step("ejector8x48none", "span", 1)).toEqual({ type: "construction-select", piece: "ejector8x64none", exact: true });
+    expect(step("ejector8x64none", "span", 1)).toEqual({ type: "construction-select", piece: "ejector12x80none", exact: true });
+    expect(step("ejector16x96none", "height", 1)).toBeUndefined();
+    expect(step("ejector8x48none", "span", -1)).toBeUndefined();
+  });
+
+  it("lets the worker size a new feel or twist for the entry speed, starting from the most similar hill", () => {
+    expect(step("ejector12x64outerLeft", "feel", 1)).toEqual({ type: "construction-select", piece: "floater12x80none", exact: false });
+    expect(step("speed6x80none", "feel", 1)).toEqual({ type: "construction-select", piece: "zeroGRoll8x86left", exact: false });
+    expect(step("zeroGRoll8x86right", "feel", 1)).toEqual({ type: "construction-select", piece: "stall13x104right", exact: false });
+    expect(step("ejector12x64none", "twist", -1)).toEqual({ type: "construction-select", piece: "ejector12x64outerLeft", exact: false });
+    expect(step("ejector12x64outerRight", "twist", 1)).toBeUndefined();
+  });
+
+  it("opens on the current hill or the most similar hill of the preferred feel", () => {
+    const pieces = [piece("Straight", "straight"), piece("floater8x64none", "special")];
+    expect(hillToOpen(hybrid, pieces, "ejector")).toBe("ejector8x64none");
+    expect(hillToOpen(hybrid, pieces, null)).toBe("floater8x64none");
+    expect(hillToOpen(hybrid.filter(({ feel }) => feel !== "ejector"), pieces, "ejector")).toBe("floater8x64none");
+  });
 });
