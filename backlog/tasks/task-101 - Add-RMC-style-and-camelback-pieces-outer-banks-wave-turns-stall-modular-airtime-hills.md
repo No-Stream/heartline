@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-05 19:57'
+updated_date: '2026-11-05 22:27'
 labels: []
 dependencies:
   - TASK-95
@@ -47,4 +47,6 @@ Owner approved the airtime hill interface on 2026-11-04: one parameterised 'Airt
 2026-11-05: plan task 4 merged: wave turns (left and right, 2 m bump, rated 8-23 m/s) and the rated overbanked turn (5-13 m/s, now also on Velocity Viper), minimums measured from a steep-crest entry. Next: task 5 (lazy family validation, estimated end speed, readout).
 
 2026-11-05: task 6 (Airtime hill inspector: feel/height/length/twist steppers, live readout with rating chips, speed-matched default, Enter repeats a hill) done on rmc-hills (0876f98). Follow-ups for task 7: (a) the default size should be the one whose predicted crest airtime is closest to the family's target (ejector 'great'), not just nearest the window top (gives -0.9 g 'good'); (b) the point-mass forecast rates floaters at about -0.2 g 'weak': check against full-train simulation and the TASK-128 heart-speed correction; (c) add a lateral row to the readout for outer banks.
+
+2026-11-05: tasks 1-6 merged and pushed (415e0e6). Next: task 7 (compositions and journeys) combined with rebuilding the demo and three player circuits as good rides with the new hills, banked turns and banked straights, plus the task 6 follow-ups above; then task 8 close-out. Start after ride-stats merges (both touch circuits and journeys).
 <!-- SECTION:NOTES:END -->

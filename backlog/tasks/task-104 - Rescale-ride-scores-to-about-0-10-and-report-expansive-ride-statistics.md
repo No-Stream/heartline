@@ -4,7 +4,7 @@ title: Rescale ride scores to about 0-10 and report expansive ride statistics
 status: In Progress
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-04 22:06'
+updated_date: '2026-11-05 22:27'
 labels: []
 dependencies:
   - TASK-95
@@ -29,4 +29,6 @@ Owner request 2026-11-04. Scores (excitement, intensity, nausea or whatever the 
 
 <!-- SECTION:NOTES:BEGIN -->
 Owner request 2026-11-04: inform scores by ASTM F2291 and reasoned judgement of why people like coasters (airtime most important; laterals and positives less; element variety with diminishing returns for repeated inversions, little for airtime; pacing; whip and aggression; theming; ride time; max and average speed). The running job delivers the statistics and the 0-10 rescale; a Fable plan (docs/superpowers/plans/2026-11-04-coaster-scoring.md) designs the scoring model to implement afterwards.
+
+2026-11-05: branch ride-stats (6b5ca09) is complete apart from re-recording the Velocity Viper scoring-panel screenshot (it grew with the self-explanatory contributions; the re-record was queued behind other browser runs). Lint, full feature project and 8/9 journeys passed; merge after the re-record, then close TASK-104 and TASK-113. The panel is too wordy: TASK-130 makes it concise.
 <!-- SECTION:NOTES:END -->
