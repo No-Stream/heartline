@@ -194,22 +194,20 @@ pub(super) struct GeneratedHillProfile {
     pub(super) minimum_entry: f64,
     pub(super) minimum_radius: f64,
     pub(super) length: f64,
+    pub(super) point_count: usize,
+    // The first two values are per-sample position deltas, accumulated in f64 at load time.
+    pub(super) values: &'static [[f32; 4]],
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(super) struct GeneratedHillDesign {
+    pub(super) name: &'static str,
     pub(super) design_speed: f64,
     pub(super) flank_angle: f64,
     pub(super) insert: f64,
     pub(super) crest_start: f64,
     pub(super) crest_end: f64,
-    pub(super) point_count: usize,
-    pub(super) values: &'static [[f64; 4]],
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct EmbeddedProfileDesign {
-    pub(crate) design_speed: f64,
-    pub(crate) flank_angle: f64,
-    pub(crate) insert: f64,
-    pub(crate) crest_start: f64,
-    pub(crate) crest_end: f64,
 }
 
 pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
@@ -217,7 +215,7 @@ pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
         .iter()
         .find(|profile| profile.name == name)
     {
-        return embedded_profile_from_values(
+        return embedded_hill_profile_from_values(
             profile.minimum_entry,
             profile.minimum_radius,
             profile.length,
@@ -238,24 +236,31 @@ pub(crate) fn embedded_profile(name: &str) -> SolvedProfile {
     )
 }
 
-fn embedded_profile_from_values(
+fn embedded_hill_profile_from_values<T>(
     minimum_entry: f64,
     minimum_radius: f64,
     length: f64,
     point_count: usize,
-    values: &[[f64; 4]],
-) -> SolvedProfile {
+    values: &[[T; 4]],
+) -> SolvedProfile
+where
+    T: Copy + Into<f64>,
+{
     assert_eq!(point_count, values.len());
+    let mut x = 0.0;
+    let mut z = 0.0;
     let points = values
         .iter()
         .enumerate()
         .map(|(index, value)| {
-            let curvature = value[3];
+            x += value[0].into();
+            z += value[1].into();
+            let curvature: f64 = value[3].into();
             Point {
                 distance: length * index as f64 / (point_count - 1) as f64,
-                x: value[0],
-                z: value[1],
-                angle: value[2],
+                x,
+                z,
+                angle: value[2].into(),
                 heart_curvature: curvature / (1.0 - HEART_HEIGHT_METRES * curvature),
                 curvature,
             }
@@ -268,17 +273,36 @@ fn embedded_profile_from_values(
     }
 }
 
-pub(crate) fn embedded_profile_design(name: &str) -> EmbeddedProfileDesign {
-    let profile = GENERATED_HILL_PROFILES
+fn embedded_profile_from_values<T>(
+    minimum_entry: f64,
+    minimum_radius: f64,
+    length: f64,
+    point_count: usize,
+    values: &[[T; 4]],
+) -> SolvedProfile
+where
+    T: Copy + Into<f64>,
+{
+    assert_eq!(point_count, values.len());
+    let points = values
         .iter()
-        .find(|profile| profile.name == name)
-        .unwrap_or_else(|| panic!("missing generated profile {name}"));
-    EmbeddedProfileDesign {
-        design_speed: profile.design_speed,
-        flank_angle: profile.flank_angle,
-        insert: profile.insert,
-        crest_start: profile.crest_start,
-        crest_end: profile.crest_end,
+        .enumerate()
+        .map(|(index, value)| {
+            let curvature = value[3].into();
+            Point {
+                distance: length * index as f64 / (point_count - 1) as f64,
+                x: value[0].into(),
+                z: value[1].into(),
+                angle: value[2].into(),
+                heart_curvature: curvature / (1.0 - HEART_HEIGHT_METRES * curvature),
+                curvature,
+            }
+        })
+        .collect();
+    SolvedProfile {
+        points,
+        cached_minimum_entry: Some(minimum_entry),
+        cached_minimum_radius: Some(minimum_radius),
     }
 }
 
@@ -1442,12 +1466,15 @@ mod tests {
     use std::fmt::Write as _;
 
     const GENERATED_PROFILE_POINTS: usize = 512;
-    const GENERATED_HILL_PROFILE_POINTS: usize = 512;
     const MAXIMUM_PROFILE_POSITION_ERROR_METRES: f64 = 0.001;
     const MAXIMUM_PROFILE_CURVATURE_ERROR: f64 = 2e-4;
 
-    fn hill_profile_point_count(_name: &str) -> usize {
-        GENERATED_HILL_PROFILE_POINTS
+    fn hill_profile_point_count(name: &str) -> usize {
+        if name == "ZeroGRollCompact" {
+            1024
+        } else {
+            512
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -1746,56 +1773,52 @@ mod tests {
     }
 
     fn hill_entries_from_generated_designs() -> Vec<HillTableEntry> {
-        GENERATED_HILL_PROFILES
+        GENERATED_HILL_DESIGNS
             .iter()
-            .map(|table| {
-                let spec = hill_template(table.name);
+            .map(|design| {
+                let table = GENERATED_HILL_PROFILES
+                    .iter()
+                    .find(|table| table.name == design.name)
+                    .unwrap();
+                let spec = hill_template(design.name);
                 let solved = solve_hill_at_design(
                     &spec,
-                    table.design_speed,
-                    table.flank_angle,
-                    table.insert,
+                    design.design_speed,
+                    design.flank_angle,
+                    design.insert,
                 );
-                assert_eq!(table.point_count, hill_profile_point_count(table.name));
+                assert_eq!(table.point_count, hill_profile_point_count(design.name));
                 assert_eq!(
                     table.values.len(),
                     table.point_count,
                     "{} table length",
-                    table.name
+                    design.name
                 );
                 assert!(
                     (table.minimum_entry - solved.profile.minimum_entry()).abs() < 1e-12,
                     "{} minimum entry",
-                    table.name
+                    design.name
                 );
                 assert!(
                     (table.minimum_radius - solved.profile.minimum_radius()).abs() < 1e-12,
                     "{} minimum radius",
-                    table.name
+                    design.name
                 );
                 assert!(
                     (table.length - solved.profile.length()).abs() < 1e-12,
                     "{} length",
-                    table.name
+                    design.name
                 );
-                assert!(
-                    (table.crest_start - solved.crest_start).abs() < 1e-12,
-                    "{} crest start",
-                    table.name
-                );
-                assert!(
-                    (table.crest_end - solved.crest_end).abs() < 1e-12,
-                    "{} crest end",
-                    table.name
-                );
+                assert!((design.crest_start - solved.crest_start).abs() < 1e-12);
+                assert!((design.crest_end - solved.crest_end).abs() < 1e-12);
                 HillTableEntry {
-                    name: table.name,
+                    name: design.name,
                     profile: solved.profile,
-                    design_speed: table.design_speed,
-                    flank_angle: table.flank_angle,
-                    insert: table.insert,
-                    crest_start: table.crest_start,
-                    crest_end: table.crest_end,
+                    design_speed: design.design_speed,
+                    flank_angle: design.flank_angle,
+                    insert: design.insert,
+                    crest_start: design.crest_start,
+                    crest_end: design.crest_end,
                 }
             })
             .collect()
@@ -1803,41 +1826,61 @@ mod tests {
 
     fn generated_hill_source(entries: &[HillTableEntry]) -> String {
         let mut output = String::from(
-            "// Generated by the hill_profiles_are_current test.\n#[allow(clippy::excessive_precision, clippy::approx_constant)]\npub(super) const GENERATED_HILL_PROFILES: &[GeneratedHillProfile] = &[\n",
+            "// Generated by the hill_profiles_are_current test.\n#[allow(clippy::approx_constant)]\npub(super) const GENERATED_HILL_PROFILES: &[GeneratedHillProfile] = &[\n",
         );
         for entry in entries {
             let profile = &entry.profile;
             let point_count = hill_profile_point_count(entry.name);
+            let mut previous_position = [0.0; 2];
             writeln!(
                 output,
-                "    GeneratedHillProfile {{ name: {:?}, minimum_entry: {:.17}, minimum_radius: {:.17}, length: {:.17}, design_speed: {:.17}, flank_angle: {:.17}, insert: {:.17}, crest_start: {:.17}, crest_end: {:.17}, point_count: {}, values: &[",
+            "    GeneratedHillProfile {{ name: {:?}, minimum_entry: {:?}, minimum_radius: {:?}, length: {:?}, point_count: {}, values: &[",
                 entry.name,
                 profile.minimum_entry(),
                 profile.minimum_radius(),
                 profile.length(),
-                entry.design_speed,
-                entry.flank_angle,
-                entry.insert,
-                entry.crest_start,
-                entry.crest_end,
                 point_count,
             )
             .unwrap();
             for index in 0..point_count {
                 let distance = profile.length() * index as f64 / (point_count - 1) as f64;
                 let (position, tangent, _) = profile.sample(distance);
+                let position_delta = [
+                    position[0] - previous_position[0],
+                    position[1] - previous_position[1],
+                ];
+                previous_position = position;
                 let curvature = reference_curvature(profile, distance);
+                let values = [
+                    format!("{:.9e}", position_delta[0]).parse::<f32>().unwrap(),
+                    format!("{:.9e}", position_delta[1]).parse::<f32>().unwrap(),
+                    format!("{:.9e}", tangent[1].atan2(tangent[0]))
+                        .parse::<f32>()
+                        .unwrap(),
+                    format!("{:.9e}", curvature).parse::<f32>().unwrap(),
+                ];
                 writeln!(
                     output,
-                    "        [{:.17}, {:.17}, {:.17}, {:.17}],",
-                    position[0],
-                    position[1],
-                    tangent[1].atan2(tangent[0]),
-                    curvature
+                    "        [{:?}f32, {:?}f32, {:?}f32, {:?}f32],",
+                    values[0], values[1], values[2], values[3]
                 )
                 .unwrap();
             }
             output.push_str("    ] },\n");
+        }
+        output.push_str("];\n\n#[cfg(test)]\n#[allow(clippy::approx_constant)]\npub(super) const GENERATED_HILL_DESIGNS: &[GeneratedHillDesign] = &[\n");
+        for entry in entries {
+            writeln!(
+                output,
+                "    GeneratedHillDesign {{ name: {:?}, design_speed: {:?}, flank_angle: {:?}, insert: {:?}, crest_start: {:?}, crest_end: {:?} }},",
+                entry.name,
+                entry.design_speed,
+                entry.flank_angle,
+                entry.insert,
+                entry.crest_start,
+                entry.crest_end,
+            )
+            .unwrap();
         }
         output.push_str("];\n");
         output
@@ -2095,7 +2138,7 @@ mod tests {
     #[test]
     fn hill_profiles_are_current() {
         assert_eq!(
-            GENERATED_HILL_PROFILES.len(),
+            GENERATED_HILL_DESIGNS.len(),
             HILL_CASES.len() + CREST_TIME_CASES.len()
         );
         let entries = hill_entries_from_generated_designs();
@@ -2106,26 +2149,14 @@ mod tests {
                 .iter()
                 .find(|profile| profile.name == entry.name)
                 .unwrap();
-            let design = embedded_profile_design(entry.name);
+            let design = GENERATED_HILL_DESIGNS
+                .iter()
+                .find(|design| design.name == entry.name)
+                .unwrap();
             assert_eq!(
                 generated.point_count,
                 hill_profile_point_count(entry.name),
                 "{} point count",
-                entry.name
-            );
-            assert!(
-                (generated.design_speed - entry.design_speed).abs() < 1e-12,
-                "{} design speed",
-                entry.name
-            );
-            assert!(
-                (generated.flank_angle - entry.flank_angle).abs() < 1e-12,
-                "{} flank angle",
-                entry.name
-            );
-            assert!(
-                (generated.insert - entry.insert).abs() < 1e-12,
-                "{} insert",
                 entry.name
             );
             assert!((design.design_speed - entry.design_speed).abs() < 1e-12);
@@ -2133,18 +2164,50 @@ mod tests {
             assert!((design.insert - entry.insert).abs() < 1e-12);
             assert!((design.crest_start - entry.crest_start).abs() < 1e-12);
             assert!((design.crest_end - entry.crest_end).abs() < 1e-12);
+            let mut previous_position = [0.0; 2];
+            let precise_values: Vec<[f64; 4]> = (0..generated.point_count)
+                .map(|index| {
+                    let distance =
+                        generated.length * index as f64 / (generated.point_count - 1) as f64;
+                    let (position, tangent, _) = entry.profile.sample(distance);
+                    let position_delta = [
+                        position[0] - previous_position[0],
+                        position[1] - previous_position[1],
+                    ];
+                    previous_position = position;
+                    [
+                        position_delta[0],
+                        position_delta[1],
+                        tangent[1].atan2(tangent[0]),
+                        reference_curvature(&entry.profile, distance),
+                    ]
+                })
+                .collect();
+            let precise = embedded_hill_profile_from_values(
+                generated.minimum_entry,
+                generated.minimum_radius,
+                generated.length,
+                generated.point_count,
+                &precise_values,
+            );
             let mut maximum_position_error = 0.0_f64;
             let mut maximum_curvature_error = 0.0_f64;
+            let mut maximum_f32_curvature_delta = 0.0_f64;
             let mut check = |distance: f64| {
                 let (expected_position, _, _) = entry.profile.sample(distance);
                 let (actual_position, tangent, second) = actual.sample(distance);
+                let (_, precise_tangent, precise_second) = precise.sample(distance);
                 let position_error = (expected_position[0] - actual_position[0])
                     .hypot(expected_position[1] - actual_position[1]);
                 let curvature_error = (reference_curvature(&entry.profile, distance)
                     - profile_curvature_from_derivatives(tangent, second))
                 .abs();
+                let f32_curvature_delta = (profile_curvature_from_derivatives(tangent, second)
+                    - profile_curvature_from_derivatives(precise_tangent, precise_second))
+                .abs();
                 maximum_position_error = maximum_position_error.max(position_error);
                 maximum_curvature_error = maximum_curvature_error.max(curvature_error);
+                maximum_f32_curvature_delta = maximum_f32_curvature_delta.max(f32_curvature_delta);
             };
             let length = entry.profile.length();
             for index in 0..=16_381 {
@@ -2156,8 +2219,11 @@ mod tests {
                 }
             }
             eprintln!(
-                "{}: maximum position error {:.9} m, maximum curvature error {:.9} 1/m",
-                entry.name, maximum_position_error, maximum_curvature_error
+                "{}: maximum position error {:.9} m, maximum curvature error {:.9} 1/m, f32 curvature delta {:.9} 1/m",
+                entry.name,
+                maximum_position_error,
+                maximum_curvature_error,
+                maximum_f32_curvature_delta
             );
             if maximum_position_error > MAXIMUM_PROFILE_POSITION_ERROR_METRES {
                 acceptance_failures.push(format!(
@@ -2171,6 +2237,12 @@ mod tests {
                     entry.name, maximum_curvature_error
                 ));
             }
+            assert!(
+                maximum_f32_curvature_delta <= 1e-5,
+                "{} f32 storage adds {:.9} 1/m geometric curvature error",
+                entry.name,
+                maximum_f32_curvature_delta
+            );
         }
         assert!(
             acceptance_failures.is_empty(),
