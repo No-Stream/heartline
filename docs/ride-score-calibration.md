@@ -51,6 +51,26 @@ recorder independently selected the largest force on each axis from all cars in
 a frame, then assigned those values to the front car's distance. The resulting
 combined forces and duration of exposure need not describe any actual rider.
 
+One additional hybrid reference was built with `Construction`, including a
+chain lift and a vertical loop, and closed with `find_completion` and
+`apply_completion`. With the model's full train, initial speed 2 m/s and lift
+speed 5 m/s, it completed its 683.30 m lap in 88.60 s. Excitement, intensity,
+and nausea were 4.81, 4.65, and 1.66. The worst-car peaks were 5.42 g positive
+vertical and 4.76 g lateral; maximum speed was 30.37 m/s. The report flagged
+an estimated force-limit penalty and a loop entry speed of 30.1 m/s, above its
+24.7–27.5 m/s rated band. This is an over-limit reference, not a comfortable
+intense ride. Its repeatable construction and lap test are in
+`crates/sim/src/track/construction/completion_tests.rs`.
+
+A flat hybrid oval made from Station, two TurnSmallStandalone pieces, Straight,
+and another TurnSmallStandalone was closed by a further TurnSmallStandalone.
+With the same initial speed it stalled after 56.5 m, so its partial score is
+not a reference rating. Replacing the Straight with LaunchShort produced a
+prefix for which the bounded completion search found no connection. These
+observations do not establish that a gentle, banked, lift-powered circuit is
+impossible. Constructible gentle, moderate, comfortable intense and low-speed
+banked references remain to be measured.
+
 Timber Tumbler also has extreme forces in the individual-car measurements:
 the recorded train peaks were +11.42 g vertical, −13.43 g vertical and 15.79 g
 lateral. Its high discomfort is therefore not explained entirely by combining

@@ -1,4 +1,5 @@
 use super::*;
+use crate::physics::{ConstructionTestRunRecorder, PhysicsConfig, Train};
 use crate::track::{PieceId, PieceKind, TrackState, hybrid_model, wooden_twister_model};
 use crate::world::Surface;
 
@@ -101,4 +102,102 @@ fn completion_finds_a_four_piece_southeast_offset_connection() {
         .apply_completion(&completion, &world, &[])
         .unwrap();
     assert!(construction.is_closed());
+}
+
+#[test]
+fn constructed_reference_laps_report_ratings() {
+    use PieceId::*;
+    let world = World::new(
+        128,
+        128,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let start = TrackState {
+        x: 50,
+        y: 50,
+        z: 36,
+        ..TrackState::origin()
+    };
+    let model = hybrid_model();
+    let mut construction = Construction::new(start, model.clone());
+    construction.append(Station, &world, &[]).unwrap();
+    construction.set_chain(true);
+    for id in [
+        LevelToGentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUpToLevel,
+        Straight,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    construction.set_chain(false);
+    for id in [
+        OneTileStraight,
+        OneTileStraight,
+        OffsetLeft,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LevelToGentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Loop,
+        OffsetRight,
+        TurnLargeEntry,
+        TurnLargeExit,
+        HalfTileStraight,
+        OneTileStraight,
+        OneTileStraight,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let completion = construction
+        .find_completion(&world, &[])
+        .expect("completion");
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+    let circuit = construction.circuit().unwrap();
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let mut train = Train::new(&circuit, &model.train, config, 0.0, 2.0);
+    let mut recorder =
+        ConstructionTestRunRecorder::for_circuit(&circuit, usize::from(model.train.cars));
+    let mut completed = false;
+    for _ in 0..60_000 {
+        train.step(&circuit);
+        recorder.record(&train.take_readings());
+        if train.distance() >= circuit.length() {
+            completed = true;
+            break;
+        }
+        if !train.notes().is_empty() {
+            break;
+        }
+    }
+    let report = recorder.finish(completed, !train.notes().is_empty());
+    assert!(report.completed, "train notes: {:?}", train.notes());
+    assert_eq!(report.statistics.inversions, 1);
+    assert!((4.0..6.0).contains(&report.excitement));
+    assert!(report.statistics.max_positive_vertical_g > 5.0);
+    assert!(report.statistics.max_lateral_g > 4.0);
+    assert!(report.notes.iter().any(|note| note.contains("F2291")));
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.contains("above its rated speed band"))
+    );
 }
