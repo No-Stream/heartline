@@ -28,7 +28,9 @@ pub enum ClearanceCollision {
     OutsideWorld,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct TerrainCell {
     pub x: u16,
     pub y: u16,

@@ -8,6 +8,9 @@ mod guest_report;
 mod guests;
 pub mod layouts;
 mod reports;
+mod save;
+#[cfg(test)]
+mod save_tests;
 mod scenery;
 mod world;
 pub use reports::piece_shapes_json;
@@ -65,6 +68,7 @@ struct SupportRenderCache {
 }
 
 #[wasm_bindgen]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct WasmSimulation {
     park: Park,
     facility_message: String,
@@ -74,14 +78,16 @@ pub struct WasmSimulation {
     terrain_invalidated_paths: Vec<Position>,
     construction_model: ConstructionModel,
     selected: Option<PieceId>,
-    selected_element: Option<&'static str>,
+    selected_element: Option<String>,
     construction_undo_groups: Vec<usize>,
     construction_completion: Option<Completion>,
     construction_completion_available: Option<Completion>,
     construction_completion_search: Option<CompletionSearch>,
     construction_completion_checked: bool,
-    construction_completion_unavailable_reason: Option<&'static str>,
+    construction_completion_unavailable_reason: Option<String>,
+    #[serde(skip)]
     construction_preview_supports_cache: Vec<f32>,
+    #[serde(skip)]
     construction_placed_supports_cache: Vec<f32>,
     recovered_station: Option<Piece>,
 }
@@ -100,7 +106,7 @@ impl std::ops::DerefMut for WasmSimulation {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 enum ConstructionModel {
     Hybrid,
     MultiLaunch,
@@ -264,7 +270,7 @@ impl WasmSimulation {
             return Vec::new();
         }
         let obstacles = self.facility_obstacles();
-        if let Some(element_id) = self.selected_element {
+        if let Some(element_id) = self.selected_element.as_deref() {
             return construction
                 .element_choices(&self.park.world, &obstacles)
                 .into_iter()

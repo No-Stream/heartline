@@ -558,7 +558,7 @@ impl WasmSimulation {
                     .element_choices(&self.world, &obstacles)
                     .into_iter()
                     .find(|element| element.id == element_id)
-                    .map(|element| element.id)
+                    .map(|element| element.id.to_owned())
             });
             self.construction_message = if self.selected_element.is_some() {
                 String::new()
@@ -582,7 +582,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_selected(&self) -> String {
-        if let Some(element_id) = self.selected_element {
+        if let Some(element_id) = self.selected_element.as_deref() {
             return format!("element:{element_id}");
         }
         self.selected
@@ -694,7 +694,7 @@ impl WasmSimulation {
             return false;
         };
         let obstacles = self.facility_obstacles();
-        if let Some(element_id) = self.selected_element {
+        if let Some(element_id) = self.selected_element.as_deref() {
             return construction
                 .element_choices(&self.world, &obstacles)
                 .iter()
@@ -713,7 +713,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_preview_reason(&self) -> String {
-        if let Some(element_id) = self.selected_element {
+        if let Some(element_id) = self.selected_element.as_deref() {
             let available = self.construction.as_ref().is_some_and(|construction| {
                 construction
                     .element_choices(&self.world, &self.facility_obstacles())
@@ -845,9 +845,10 @@ impl WasmSimulation {
         self.construction_finish_invalidate();
         let obstacles = self.facility_obstacles();
         let selected = self.selected;
-        let selected_element = self.selected_element;
+        let selected_element = self.selected_element.clone();
         let world = self.park.world.clone();
         let undo_group_size = selected_element
+            .as_deref()
             .and_then(|element_id| {
                 self.park.construction.as_ref().and_then(|construction| {
                     construction
@@ -864,7 +865,7 @@ impl WasmSimulation {
                 .construction
                 .as_ref()
                 .ok_or_else(|| "Construction is inactive".to_string())?;
-            if let Some(element_id) = selected_element {
+            if let Some(element_id) = selected_element.as_deref() {
                 let element = construction
                     .element_choices(&world, &obstacles)
                     .into_iter()
@@ -1049,6 +1050,10 @@ impl WasmSimulation {
         self.construction_completion.is_some()
     }
 
+    pub fn construction_finish_search_pending(&self) -> bool {
+        self.construction_completion_search.is_some()
+    }
+
     pub fn construction_finish_invalidate(&mut self) {
         let had_preview = self.construction_completion.is_some();
         self.construction_completion = None;
@@ -1074,7 +1079,7 @@ impl WasmSimulation {
             },
         );
         self.construction_completion_search = search;
-        self.construction_completion_unavailable_reason = reason;
+        self.construction_completion_unavailable_reason = reason.map(str::to_owned);
         self.construction_completion_checked = self.construction_completion_search.is_none();
     }
 
@@ -1103,6 +1108,7 @@ impl WasmSimulation {
             String::new()
         } else if self.construction_completion_checked {
             self.construction_completion_unavailable_reason
+                .as_deref()
                 .unwrap_or("No nearby connection to the station was found.")
                 .into()
         } else {

@@ -22,6 +22,7 @@ use crate::track::{CoasterColors, TrainConfiguration, hybrid_model};
 use crate::world::World;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct DemoCoaster {
     pub circuit: Circuit,
     pub train: Train,
@@ -29,6 +30,7 @@ pub struct DemoCoaster {
     pub colors: CoasterColors,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Park {
     pub world: World,
     pub facilities: ParkFacilities,
@@ -64,16 +66,22 @@ pub struct Park {
     pub block_throughput_estimator: Option<ThroughputEstimator>,
     pub block_analysis_extra_to_throughput: bool,
     pub block_throughput_cache: BTreeMap<Vec<u64>, (f64, String)>,
+    #[serde(skip)]
     pub support_render_cache: BTreeMap<usize, tick::SupportRenderCache>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub(crate) struct TunnelOwner {
     generation: u64,
     piece_id: usize,
 }
 
 impl Park {
+    pub fn rebind_world_after_loading(&mut self) {
+        self.simulation.rebind_world(&self.world);
+    }
     pub fn new(
         world: World,
         facilities: ParkFacilities,

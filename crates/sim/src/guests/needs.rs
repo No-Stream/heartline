@@ -1,6 +1,6 @@
 //! Guest need levels.
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Needs {
     pub hunger: u16,
     pub thirst: u16,

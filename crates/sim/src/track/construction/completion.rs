@@ -10,7 +10,7 @@ const BEAM_WIDTH: usize = 12;
 const CANDIDATES_PER_NODE: usize = 16;
 const MIN_PIECE_SCORE: f64 = 1.0;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Completion {
     pub pieces: Vec<PieceId>,
     pub geometry: Vec<Piece>,
@@ -18,6 +18,7 @@ pub struct Completion {
     construction_hash: u64,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct SearchNode {
     construction: Construction,
     pieces: Vec<PieceId>,
@@ -154,6 +155,7 @@ pub enum CompletionSearchProgress {
     Finished(Option<Completion>),
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct CompletionSearch {
     target: TrackState,
     construction_hash: u64,

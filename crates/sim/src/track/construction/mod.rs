@@ -93,6 +93,7 @@ struct PieceValidation {
     tunnel_plan: TunnelPlan,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct TrackSegment {
     pub ids: Vec<usize>,
     pub pieces: Vec<Piece>,
@@ -126,6 +127,7 @@ struct ValidationCache {
     supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Construction {
     start: TrackState,
     model: CoasterModel,
@@ -136,8 +138,11 @@ pub struct Construction {
     closed: bool,
     chain: bool,
     colors: CoasterColors,
+    #[serde(skip)]
     validation_cache: RefCell<Option<ValidationCache>>,
+    #[serde(skip)]
     choices_cache: RefCell<Option<ChoicesCache>>,
+    #[serde(skip)]
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
 }
 

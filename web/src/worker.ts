@@ -31,8 +31,10 @@ const workerScope = self as unknown as {
   postMessage(message: WorkerMessage, transfer?: Transferable[]): void;
   addEventListener(type: "message", listener: (event: MessageEvent<WorkerAction>) => void): void;
 };
+let outputScope: { postMessage(message: WorkerMessage, transfer?: Transferable[]): void } = workerScope;
 let simulation: WasmSimulation;
 let recorder: SessionRecorder;
+let sessionRecordingAvailable = true;
 let clock = createSimulationClock(tickRate, 4);
 let lastWakeup: number;
 let coasterGeometrySent = false;
@@ -48,7 +50,7 @@ let blockAnalysisScheduled = false;
 function tickSimulation(): void {
   simulation.tick();
   const tick = Number(simulation.tick_count());
-  if (tick % 300 === 0) recorder.recordCheckpoint(tick, simulation.state_hash());
+  if (sessionRecordingAvailable && tick % 300 === 0) recorder.recordCheckpoint(tick, simulation.state_hash());
 }
 
 function scheduleBlockAnalysis(): void {
@@ -62,18 +64,18 @@ function scheduleBlockAnalysis(): void {
 }
 
 function advanceBlockAnalysis(budget: number): boolean {
-  recorder.recordCommand(Number(simulation.tick_count()), { type: "test-advance-block-analysis", budget });
+  if (sessionRecordingAvailable) recorder.recordCommand(Number(simulation.tick_count()), { type: "test-advance-block-analysis", budget });
   const complete = simulation.construction_advance_block_analysis(budget);
   const report = simulation.construction_block_report_json();
   if (simulation.construction_active() && report !== lastBlockReport) {
     lastBlockReport = report;
     lastConstructionMessage = simulation.construction_message();
-    sendWorkerMessage(workerScope, { type: "block-analysis-progress", blockReport: JSON.parse(report) as BlockReport, trainCount: simulation.construction_train_count(), message: lastConstructionMessage });
+    sendWorkerMessage(outputScope, { type: "block-analysis-progress", blockReport: JSON.parse(report) as BlockReport, trainCount: simulation.construction_train_count(), message: lastConstructionMessage });
   }
   return complete;
 }
 
-function wake(forceSnapshot = false): void {
+function wake(forceSnapshot = false, scheduleNext = true): void {
   const now = performance.now();
   const result = advanceSimulation(clock, now - lastWakeup, gameSpeed);
   lastWakeup = now;
@@ -92,7 +94,7 @@ function wake(forceSnapshot = false): void {
     const constructionTrainPoses = constructionActive ? simulation.construction_train_poses() : new Float32Array();
     const constructionTrainStates = constructionActive ? simulation.construction_train_states() : new Float32Array();
     const constructionRiders = simulation.construction_riders();
-    sendWorkerMessage(workerScope,
+    sendWorkerMessage(outputScope,
       { type: "snapshot", sentAt: performance.now(), tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, trainStates, constructionTrainStates, constructionRiders },
       [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, trainStates.buffer, constructionTrainStates.buffer, constructionRiders.buffer],
     );
@@ -102,14 +104,14 @@ function wake(forceSnapshot = false): void {
   if (simulation.construction_active() && (message !== lastConstructionMessage || simulation.construction_block_report_json() !== lastBlockReport || constructionEconomy !== lastConstructionEconomy)) sendConstruction();
   if (selectedGuestId !== undefined && now - lastGuestDetailSentAt >= 500) sendGuestDetail();
   if (simulation.facilities_json() !== lastFacilitiesJson || String(simulation.facility_revenue()) !== lastFacilityRevenue) sendFacilities();
-  if (simulationPaused || gamePaused) return;
+  if (simulationPaused || gamePaused || !scheduleNext) return;
   setTimeout(wake, Math.max(0, clock.tickDurationMs - clock.accumulatorMs));
 }
 
 function sendGuestDetail(guestId = selectedGuestId): void {
   if (guestId === undefined) return;
   const detail = JSON.parse(simulation.guest_detail_json(guestId)) as GuestDetail | null;
-  sendWorkerMessage(workerScope, { type: "guest-detail", guestId: `guest-${guestId}`, detail });
+  sendWorkerMessage(outputScope, { type: "guest-detail", guestId: `guest-${guestId}`, detail });
   lastGuestDetailSentAt = performance.now();
 }
 
@@ -141,7 +143,7 @@ function sendConstruction(complete = true): void {
     ? JSON.parse(simulation.construction_force_preview_json()) as ConstructionForcePreview | null
     : null;
   if (complete) constructionEndSpeedCache = constructionEndSpeed(constructionForcePreview);
-  sendWorkerMessage(workerScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
+  sendWorkerMessage(outputScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     selected: selected || null, track,
     canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
@@ -159,12 +161,12 @@ function sendConstruction(complete = true): void {
 let finishSearchGeneration = 0;
 let finishSearchPending = false;
 let finishSearchAwaited = false;
-function scheduleFinishSearch(): void {
+function scheduleFinishSearch(resume = false): void {
   const generation = ++finishSearchGeneration;
   finishSearchPending = true;
   setTimeout(() => {
     if (generation !== finishSearchGeneration) return;
-    simulation.construction_finish_search_start();
+    if (!resume) simulation.construction_finish_search_start();
     sendConstruction();
     const advance = (): void => {
       if (generation !== finishSearchGeneration) return;
@@ -178,7 +180,7 @@ function scheduleFinishSearch(): void {
         sendConstruction();
         if (finishSearchAwaited) {
           finishSearchAwaited = false;
-          sendWorkerMessage(workerScope, { type: "construction-finish-ready" });
+          sendWorkerMessage(outputScope, { type: "construction-finish-ready" });
         }
       }
       else setTimeout(advance, 0);
@@ -191,12 +193,12 @@ function sendFacilities(message = "", placed = false, forced = false, outcome: P
   lastFacilitiesJson = simulation.facilities_json();
   const facilities = JSON.parse(lastFacilitiesJson) as Facility[];
   lastFacilityRevenue = String(simulation.facility_revenue());
-  sendWorkerMessage(workerScope, { type: "facilities", facilities, message, placed, forced, revenue: lastFacilityRevenue, outcome });
+  sendWorkerMessage(outputScope, { type: "facilities", facilities, message, placed, forced, revenue: lastFacilityRevenue, outcome });
 }
 
 function sendScenery(message = "", outcome: PlacementOutcome | null = null): void {
   const scenery = JSON.parse(simulation.scenery_json()) as Scenery[];
-  sendWorkerMessage(workerScope, { type: "scenery", scenery, message, outcome });
+  sendWorkerMessage(outputScope, { type: "scenery", scenery, message, outcome });
 }
 
 function sendWorld(): void {
@@ -210,10 +212,10 @@ function sendWorld(): void {
     const coasterColors = demoColors ? parseCoasterColors(demoColors) : null;
     const demoTrain = JSON.parse(simulation.coaster_train_layout()) as TrainLayout | null;
     const coasterTrain = demoTrain ? parseTrainLayout(demoTrain) : null;
-    sendWorkerMessage(workerScope, { ...world.message, coasterGeometry, coasterRails, coasterTies, coasterSupports, coasterColors, coasterTrain }, [...world.transfer, coasterGeometry.buffer, coasterRails.buffer, coasterTies.buffer, coasterSupports.buffer]);
+    sendWorkerMessage(outputScope, { ...world.message, coasterGeometry, coasterRails, coasterTies, coasterSupports, coasterColors, coasterTrain }, [...world.transfer, coasterGeometry.buffer, coasterRails.buffer, coasterTies.buffer, coasterSupports.buffer]);
     coasterGeometrySent = true;
   } else {
-    sendWorkerMessage(workerScope, { ...world.message, coasterSupports }, [...world.transfer, coasterSupports.buffer]);
+    sendWorkerMessage(outputScope, { ...world.message, coasterSupports }, [...world.transfer, coasterSupports.buffer]);
   }
 }
 
@@ -256,8 +258,8 @@ workerScope.addEventListener("message", (event) => {
       sendWorld();
       sendFacilities();
       sendScenery();
-      sendWorkerMessage(workerScope, { type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
-      sendWorkerMessage(workerScope, { type: "ready" });
+      sendWorkerMessage(outputScope, { type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
+      sendWorkerMessage(outputScope, { type: "ready" });
       lastWakeup = performance.now();
       wake(true);
     });
@@ -266,23 +268,100 @@ workerScope.addEventListener("message", (event) => {
   if (!initialized) throw new Error("Worker must be initialized first");
   void initialized.then(() => {
     if (action.type === "construction-input-barrier") {
-      sendWorkerMessage(workerScope, { type: "construction-input-barrier" });
+      sendWorkerMessage(outputScope, { type: "construction-input-barrier" });
       return;
     }
     if (action.type === "export-session") {
-      sendWorkerMessage(workerScope, { type: "session-export", requestId: action.requestId, recording: recorder.snapshot(Number(simulation.tick_count())) });
+      if (sessionRecordingAvailable) sendWorkerMessage(outputScope, { type: "session-export", requestId: action.requestId, recording: recorder.snapshot(Number(simulation.tick_count())) });
+      else sendWorkerMessage(outputScope, { type: "session-export", requestId: action.requestId, error: "Session export is unavailable after loading a park." });
+      return;
+    }
+    if (action.type === "save-park") {
+      try {
+        const bytes = (simulation as WasmSimulation & { save_state(): Uint8Array }).save_state();
+        sendWorkerMessage(outputScope, { type: "park-saved", requestId: action.requestId, bytes }, [bytes.buffer]);
+      } catch (error) {
+        sendWorkerMessage(outputScope, { type: "park-saved", requestId: action.requestId, error: String(error) });
+      }
+      return;
+    }
+    if (action.type === "load-park") {
+      let restored: WasmSimulation;
+      try {
+        restored = (WasmSimulation as typeof WasmSimulation & { load_state(bytes: Uint8Array): WasmSimulation }).load_state(action.bytes);
+      } catch (error) {
+        sendWorkerMessage(outputScope, { type: "park-loaded", requestId: action.requestId, error: String(error) });
+        return;
+      }
+      const previousSimulation = simulation;
+      const previousClock = clock;
+      const previousWakeup = lastWakeup;
+      const previousGeometrySent = coasterGeometrySent;
+      const previousConstructionEndSpeed = constructionEndSpeedCache;
+      const previousConstructionMessage = lastConstructionMessage;
+      const previousBlockReport = lastBlockReport;
+      const previousConstructionEconomy = lastConstructionEconomy;
+      const previousFacilitiesJson = lastFacilitiesJson;
+      const previousFacilityRevenue = lastFacilityRevenue;
+      const previousSelectedGuestId = selectedGuestId;
+      const staged: { message: WorkerMessage; transfer?: Transferable[] }[] = [];
+      simulation = restored;
+      selectedGuestId = undefined;
+      outputScope = { postMessage(message, transfer) { staged.push({ message, transfer }); } };
+      try {
+        coasterGeometrySent = false;
+        constructionEndSpeedCache = undefined;
+        lastConstructionMessage = "";
+        lastBlockReport = "";
+        lastConstructionEconomy = "";
+        clock = createSimulationClock(tickRate, 4);
+        sendWorld();
+        sendFacilities("", false, true);
+        sendScenery();
+        sendConstruction();
+        lastWakeup = performance.now();
+        wake(true, false);
+      } catch (error) {
+        outputScope = workerScope;
+        simulation = previousSimulation;
+        restored.free();
+        clock = previousClock;
+        lastWakeup = previousWakeup;
+        coasterGeometrySent = previousGeometrySent;
+        constructionEndSpeedCache = previousConstructionEndSpeed;
+        lastConstructionMessage = previousConstructionMessage;
+        lastBlockReport = previousBlockReport;
+        lastConstructionEconomy = previousConstructionEconomy;
+        lastFacilitiesJson = previousFacilitiesJson;
+        lastFacilityRevenue = previousFacilityRevenue;
+        selectedGuestId = previousSelectedGuestId;
+        sendWorkerMessage(outputScope, { type: "park-loaded", requestId: action.requestId, error: String(error) });
+        return;
+      }
+      outputScope = workerScope;
+      previousSimulation.free();
+      sessionRecordingAvailable = false;
+      finishSearchGeneration += 1;
+      finishSearchPending = false;
+      finishSearchAwaited = false;
+      selectedGuestId = undefined;
+      sendWorkerMessage(outputScope, { type: "park-restoring" });
+      for (const item of staged) sendWorkerMessage(outputScope, item.message, item.transfer);
+      sendWorkerMessage(outputScope, { type: "park-loaded", requestId: action.requestId });
+      if ((simulation as WasmSimulation & { construction_finish_search_pending(): boolean }).construction_finish_search_pending()) scheduleFinishSearch(true);
+      scheduleBlockAnalysis();
       return;
     }
     if (action.type === "construction-finish-await") {
       if (finishSearchPending) finishSearchAwaited = true;
-      else sendWorkerMessage(workerScope, { type: "construction-finish-ready" });
+      else sendWorkerMessage(outputScope, { type: "construction-finish-ready" });
       return;
     }
     if (shouldInvalidateConstructionFinishSearch(action)) {
       simulation.construction_finish_invalidate();
       scheduleFinishSearch();
     }
-    if (!["test-resume", "test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode"].includes(action.type)) {
+    if (sessionRecordingAvailable && !["test-resume", "test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode"].includes(action.type)) {
       recorder.recordCommand(Number(simulation.tick_count()), action);
     }
     if (action.type === "test-resume") {
@@ -292,7 +371,7 @@ workerScope.addEventListener("message", (event) => {
       manualBlockAnalysis = false;
       clock = createSimulationClock(tickRate, 4);
       lastWakeup = performance.now();
-      sendWorkerMessage(workerScope, { type: "test-resumed" });
+      sendWorkerMessage(outputScope, { type: "test-resumed" });
       wake(true);
       scheduleBlockAnalysis();
       return;
@@ -313,7 +392,7 @@ workerScope.addEventListener("message", (event) => {
       if (!manualBlockAnalysis) throw new Error("Test block analysis advancement is disabled");
       validateBlockAnalysisBudget(action.budget);
       advanceBlockAnalysis(action.budget);
-      sendWorkerMessage(workerScope, { type: "test-block-analysis-advanced" });
+      sendWorkerMessage(outputScope, { type: "test-block-analysis-advanced" });
       return;
     }
     if (action.type === "test-advance") {
@@ -323,7 +402,7 @@ workerScope.addEventListener("message", (event) => {
       wake(true);
       if (selectedGuestId !== undefined) sendGuestDetail();
       sendFacilities("", false, true);
-      sendWorkerMessage(workerScope, { type: "test-advanced" });
+      sendWorkerMessage(outputScope, { type: "test-advanced" });
       return;
     }
     if (action.type === "scenery-place" || action.type === "scenery-remove") {
@@ -348,7 +427,7 @@ workerScope.addEventListener("message", (event) => {
     }
     if (action.type === "facility-access-preview") {
       const rotation = simulation.facility_access_rotation(action.kind, action.x, action.y, action.height, action.rotation);
-      sendWorkerMessage(workerScope, { type: "facility-access-preview", requestId: action.requestId, rotation: rotation < 0 ? undefined : rotation });
+      sendWorkerMessage(outputScope, { type: "facility-access-preview", requestId: action.requestId, rotation: rotation < 0 ? undefined : rotation });
       return;
     }
     if (action.type === "facility-place") {
@@ -374,13 +453,13 @@ workerScope.addEventListener("message", (event) => {
         if (simulation.construction_active()) sendConstruction();
       }
       const invalidatedPaths = simulation.terrain_invalidated_paths();
-      sendWorkerMessage(workerScope, { type: "terrain-result", success, message: simulation.terrain_message(), invalidatedPaths }, [invalidatedPaths.buffer]);
+      sendWorkerMessage(outputScope, { type: "terrain-result", success, message: simulation.terrain_message(), invalidatedPaths }, [invalidatedPaths.buffer]);
       return;
     }
     if (action.type === "guest-detail-request") {
       const match = /^guest-(\d+)$/.exec(action.guestId);
       if (!match) {
-        sendWorkerMessage(workerScope, { type: "guest-detail", guestId: action.guestId, detail: null });
+        sendWorkerMessage(outputScope, { type: "guest-detail", guestId: action.guestId, detail: null });
         return;
       }
       selectedGuestId = Number(match[1]);
@@ -398,7 +477,7 @@ workerScope.addEventListener("message", (event) => {
         action.kind,
         action.style,
       );
-      sendWorkerMessage(workerScope,
+      sendWorkerMessage(outputScope,
         { type: "path-preview", requestId: action.requestId, valid: paths.length > 0 && paths.every((value, index) => index % 9 !== 6 || value === 0), paths, message: pathPreviewMessage(paths) },
         [paths.buffer],
       );
@@ -412,7 +491,7 @@ workerScope.addEventListener("message", (event) => {
         action.style,
       );
       if (success) sendWorld();
-      sendWorkerMessage(workerScope, {
+      sendWorkerMessage(outputScope, {
         type: "path-command-result",
         requestId: action.requestId,
         command: "build",
@@ -425,7 +504,7 @@ workerScope.addEventListener("message", (event) => {
       validatePathPositionInWorld({ x: action.x, y: action.y, z: action.z }, simulation.world_dimensions());
       const success = simulation.path_remove(action.x, action.y, action.z);
       if (success) sendWorld();
-      sendWorkerMessage(workerScope, {
+      sendWorkerMessage(outputScope, {
         type: "path-command-result",
         requestId: action.requestId,
         command: "remove",
@@ -479,6 +558,6 @@ workerScope.addEventListener("message", (event) => {
       sendWorld();
       if (simulation.construction_active()) sendConstruction();
     }
-    sendWorkerMessage(workerScope, { type: "surface-edited", changed });
+    sendWorkerMessage(outputScope, { type: "surface-edited", changed });
   });
 });

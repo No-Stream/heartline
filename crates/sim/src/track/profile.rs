@@ -138,7 +138,7 @@ impl ProfileSpec {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct Point {
     distance: f64,
     x: f64,
@@ -148,7 +148,7 @@ struct Point {
     curvature: f64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct SolvedProfile {
     points: Vec<Point>,
     cached_minimum_entry: Option<f64>,
