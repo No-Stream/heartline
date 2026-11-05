@@ -1496,6 +1496,23 @@ fn deleting_coaster_track_recovers_passengers_from_two_live_trains() {
         .collect();
     assert!(!riders_before_deletion.is_empty());
 
+    let train_ids: Vec<_> = simulation
+        .coaster_operation
+        .as_ref()
+        .unwrap()
+        .trains()
+        .map(|(train_id, _)| train_id as f32)
+        .collect();
+    let train_states = simulation.construction_train_states();
+    assert_eq!(train_states.len(), train_ids.len() * 6);
+    assert_eq!(
+        train_states
+            .chunks_exact(6)
+            .map(|state| state[0])
+            .collect::<Vec<_>>(),
+        train_ids
+    );
+
     simulation.construction_delete(1);
 
     assert!(!simulation.coaster_open);
@@ -1827,6 +1844,59 @@ fn supports_reroute_around_another_sampled_track() {
             .iter()
             .all(|support| support.footing.y != support.anchor.y)
     );
+}
+
+#[test]
+fn demo_train_state_reports_lift_and_valley_forces() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    let lift_speed = 5.0;
+    let mut saw_lift = false;
+    let mut saw_valley = false;
+    for _ in 0..20_000 {
+        simulation.tick();
+        let state = simulation.coaster_train_states();
+        assert_eq!(state.len(), 6);
+        assert_eq!(state[0], 0.0);
+        assert_eq!(state[5], 1.0);
+        saw_lift |= state[2] == 1.0 && (state[1] - lift_speed).abs() < 1e-4;
+        saw_valley |= saw_lift && state[2] == 0.0 && state[3] > 1.1;
+        if saw_valley {
+            break;
+        }
+    }
+    assert!(saw_lift, "train never reached lift speed on the lift");
+    assert!(saw_valley, "train never reached a valley after the lift");
+}
+
+#[test]
+fn construction_train_states_follow_block_operation_trains() {
+    let circuit = unpowered_block_test_circuit();
+    let train = hybrid_model().train;
+    let layout = BlockLayout::new(
+        &circuit,
+        &train,
+        unpowered_block_physics_config(),
+        block_test_boundaries(&circuit),
+    )
+    .unwrap();
+    let mut operation = super::BlockOperation::new(layout.clone());
+    operation.dispatch();
+    for _ in 0..200_000 {
+        operation.step(&[]);
+        if operation.can_dispatch() {
+            operation.dispatch();
+            break;
+        }
+    }
+    assert_eq!(operation.trains().count(), 2);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    simulation.install_block_layout(layout, true);
+    simulation.coaster_operation = Some(operation);
+    let states = simulation.construction_train_states();
+    assert_eq!(states.len(), 12);
+    assert!(states[0] < states[6]);
+    assert_eq!(states[5], 0.0);
+    assert_eq!(states[11], 0.0);
 }
 
 #[test]

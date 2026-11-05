@@ -6,6 +6,34 @@ use crate::track::{PieceId, TrackState, catalog, hybrid_model};
 use crate::world::{Surface, World};
 
 #[test]
+fn lead_car_forces_match_recorded_forces_and_do_not_change_state_hash() {
+    let circuit = demo_circuit();
+    let mut train = Train::new(
+        &circuit,
+        &hybrid_model().train,
+        PhysicsConfig::default(),
+        0.0,
+        0.0,
+    );
+    for _ in 0..100 {
+        train.step(&circuit);
+        let actual = train.lead_car_forces(&circuit);
+        let expected = train.readings().last().unwrap()[0].g;
+        assert_eq!(actual.vertical, expected.vertical);
+        assert_eq!(actual.lateral, expected.lateral);
+        assert_eq!(actual.longitudinal, expected.longitudinal);
+    }
+    let hash = train.state_hash();
+    let mut full_hash = StateHasher::new();
+    train.hash_into(&mut full_hash);
+    train.last_acceleration += 1.0;
+    assert_eq!(train.state_hash(), hash);
+    let mut changed_hash = StateHasher::new();
+    train.hash_into(&mut changed_hash);
+    assert_eq!(full_hash.finish(), changed_hash.finish());
+}
+
+#[test]
 fn straight_level_track_reads_one_vertical_g_and_no_other_forces() {
     let piece = catalog()
         .iter()

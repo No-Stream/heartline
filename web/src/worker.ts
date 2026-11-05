@@ -84,11 +84,14 @@ function wake(forceSnapshot = false): void {
     const guests = simulation.snapshot();
     const appearances = simulation.guest_appearances();
     const trainPoses = simulation.coaster_train_poses();
-    const constructionTrainPoses = simulation.construction_active() ? simulation.construction_train_poses() : new Float32Array();
+    const trainStates = simulation.coaster_train_states();
+    const constructionActive = simulation.construction_active();
+    const constructionTrainPoses = constructionActive ? simulation.construction_train_poses() : new Float32Array();
+    const constructionTrainStates = constructionActive ? simulation.construction_train_states() : new Float32Array();
     const constructionRiders = simulation.construction_riders();
     sendWorkerMessage(workerScope,
-      { type: "snapshot", sentAt: performance.now(), tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, constructionRiders },
-      [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, constructionRiders.buffer],
+      { type: "snapshot", sentAt: performance.now(), tickCount: Number(simulation.tick_count()), guestIds, guests, appearances, trainPoses, constructionTrainPoses, trainStates, constructionTrainStates, constructionRiders },
+      [guestIds.buffer, guests.buffer, appearances.buffer, trainPoses.buffer, constructionTrainPoses.buffer, trainStates.buffer, constructionTrainStates.buffer, constructionRiders.buffer],
     );
   }
   const message = simulation.construction_message();
