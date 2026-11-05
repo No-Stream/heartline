@@ -18,7 +18,7 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
   await expect(track.locator("li")).toHaveCount(1);
-  const pieces = ["LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight", "OneTileStraight", "OneTileStraight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit", "Straight", "OneTileStraight", "OneTileStraight"];
+  const pieces = ["LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight", "OneTileStraight", "OneTileStraight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit", "OneTileStraight"];
   for (const [index, piece] of pieces.entries()) {
     if (index === 0 || index === 8) {
       const chainLift = page.getByRole("button", { name: "Chain lift" });
@@ -26,11 +26,18 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
       await expect(chainLift).toHaveAttribute("aria-pressed", index === 0 ? "true" : "false");
     }
     await choices.locator(`[data-piece="${piece}"]`).click();
+    if (piece === "Loop") {
+      await page.getByRole("group", { name: "Element size" }).locator('[data-speed-match-variant="Loop"]').click();
+    }
+    await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
     await page.getByRole("button", { name: "Place piece" }).click();
     await expect(track.locator("li")).toHaveCount(index + 2);
   }
-  await page.getByRole("button", { name: "Close circuit" }).click();
+  await expect(page.getByRole("button", { name: "Finish coaster" })).toBeEnabled();
+  await page.getByRole("button", { name: "Finish coaster" }).click();
+  await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "true");
+  await page.getByRole("button", { name: "Confirm coaster finish" }).click();
   await expect(page.getByRole("button", { name: "Open coaster" })).toBeEnabled();
 
   await openTool(page, "Landscape");
