@@ -40,6 +40,7 @@ export async function replaySessionIntoWorker(
     waiters.clear();
   };
   const onMessage = (event: MessageEvent<ReplayWorkerMessage>): void => {
+    if (event.data.type === "construction-state" && event.data.complete === false) return;
     const pending = waiters.get(event.data.type);
     if (!pending) return;
     waiters.delete(event.data.type);

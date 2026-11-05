@@ -50,7 +50,9 @@ fn rebuild(
     let mut construction = Construction::new(start, model);
     for &(piece, piece_chain) in prefix {
         construction.set_chain(piece_chain);
-        construction.append(piece, world, &[]).unwrap();
+        construction
+            .append(piece, world, &[])
+            .unwrap_or_else(|error| panic!("cannot append {piece:?}: {error:?}"));
     }
     construction.set_chain(chain);
     construction
@@ -204,10 +206,18 @@ fn run_seeded_walks(model_fn: fn() -> CoasterModel) {
 
 #[test]
 fn refused_append_and_undo_restore_self_obstructed_walk() {
-    let (world_name, world, x, y) = worlds().remove(0);
+    let world_name = "open";
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
     let start = TrackState {
-        x,
-        y,
+        x: 128,
+        y: 256,
         z: 2,
         ..TrackState::origin()
     };

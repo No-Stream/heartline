@@ -1,10 +1,19 @@
+use std::sync::{Arc, LazyLock, OnceLock};
+
+use super::profile::{SolvedProfile, embedded_profile};
+use super::roll::RollGeometry;
 use super::{
     Bank, Heading, Heartlining, HorizontalCurvature, Inversion, Material, Piece, PieceId,
-    PieceKind, Shape, Slope, TrackState, VerticalCurvature,
+    PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
 };
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
-pub fn catalog() -> Vec<Piece> {
+pub fn catalog() -> &'static [Piece] {
+    static CATALOG: LazyLock<Vec<Piece>> = LazyLock::new(build_catalog);
+    &CATALOG
+}
+
+fn build_catalog() -> Vec<Piece> {
     use Bank::{Inverted, Left, Level as FlatBank, Right};
     use Heading::{East, North, West};
     use PieceId::*;
@@ -12,6 +21,36 @@ pub fn catalog() -> Vec<Piece> {
         DownGentle, DownModerate, DownSixty, DownSteep, Level, UpGentle, UpModerate, UpSixty,
         UpSteep,
     };
+    static HALF_LOOP: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("HalfLoop")));
+    static LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("Loop")));
+    static LARGE_LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("LargeLoop")));
+    static STEEL_LOOP_PROFILE: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("SteelLoop")));
+    static SIXTY_PULL: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("SixtyPull")));
+    static SIXTY_CREST: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("SixtyCrest")));
+    static FULL_CORKSCREW: LazyLock<Arc<RollGeometry>> =
+        LazyLock::new(|| Arc::new(RollGeometry::general_helix_for_connector()));
+    static HALF_CORKSCREW: LazyLock<Arc<RollGeometry>> =
+        LazyLock::new(|| Arc::new(RollGeometry::half_roll()));
+    static HEARTLINE: LazyLock<Arc<RollGeometry>> =
+        LazyLock::new(|| Arc::new(RollGeometry::spline_turns(1.0)));
+    static RAVEN_ROLL: LazyLock<Arc<RollGeometry>> =
+        LazyLock::new(|| Arc::new(RollGeometry::spline()));
+    static BARREL_DROP: LazyLock<Arc<RollGeometry>> = LazyLock::new(|| {
+        Arc::new(RollGeometry::spline_turns_with_asymmetric_descent(
+            1.0, 1.65, 0.4,
+        ))
+    });
+    static BANKED_DROP: LazyLock<Arc<RollGeometry>> =
+        LazyLock::new(|| Arc::new(RollGeometry::spline()));
+    static FIFTEEN_PULL: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("FifteenPull")));
+    let standard_loop_exit_x = (LOOP_PROFILE.endpoint()[0] / 2.0).round() as i32;
     let definitions = [
         (
             Straight,
@@ -81,67 +120,67 @@ pub fn catalog() -> Vec<Piece> {
         (
             LevelToSixtyUp,
             "Begin 60-degree climb",
-            30,
+            (SIXTY_PULL.endpoint()[0] / 2.0).round() as i32,
             0,
-            20,
+            (SIXTY_PULL.endpoint()[1] / 2.0).round() as i32,
             East,
             Level,
             UpSixty,
             FlatBank,
             FlatBank,
-            Shape::Plain,
+            Shape::Profile(Arc::clone(&SIXTY_PULL)),
         ),
         (
             SixtyUpToLevel,
             "Level out from 60-degree climb",
-            30,
+            (SIXTY_CREST.endpoint()[0] / 2.0).round() as i32,
             0,
-            20,
+            (SIXTY_CREST.endpoint()[1] / 2.0).round() as i32,
             East,
             UpSixty,
             Level,
             FlatBank,
             FlatBank,
-            Shape::Plain,
+            Shape::Profile(Arc::clone(&SIXTY_CREST)),
         ),
         (
             LevelToSixtyDown,
             "Begin 60-degree descent",
-            30,
+            (SIXTY_CREST.endpoint()[0] / 2.0).round() as i32,
             0,
-            -20,
+            -(SIXTY_CREST.endpoint()[1] / 2.0).round() as i32,
             East,
             Level,
             DownSixty,
             FlatBank,
             FlatBank,
-            Shape::Plain,
+            Shape::Profile(Arc::clone(&SIXTY_CREST)),
         ),
         (
             SixtyDownToLevel,
             "Level out from 60-degree descent",
-            30,
+            (SIXTY_PULL.endpoint()[0] / 2.0).round() as i32,
             0,
-            -20,
+            -(SIXTY_PULL.endpoint()[1] / 2.0).round() as i32,
             East,
             DownSixty,
             Level,
             FlatBank,
             FlatBank,
-            Shape::Plain,
+            Shape::Profile(Arc::clone(&SIXTY_PULL)),
         ),
         (
             SteepToSixtyUp,
             "Begin 60-degree climb",
-            8,
+            (FIFTEEN_PULL.endpoint()[0] / 2.0).round() as i32,
             0,
-            11,
+            (FIFTEEN_PULL.endpoint()[1] / 2.0).round() as i32,
             East,
             UpSteep,
             UpSixty,
             FlatBank,
             FlatBank,
-            Shape::Plain,
+            Shape::Profile(Arc::clone(&FIFTEEN_PULL)),
         ),
         (
             SixtyUp,
@@ -198,15 +237,15 @@ pub fn catalog() -> Vec<Piece> {
         (
             SixtyToSteepDown,
             "End 60-degree descent",
-            8,
+            (FIFTEEN_PULL.endpoint()[0] / 2.0).round() as i32,
             0,
-            -11,
+            -(FIFTEEN_PULL.endpoint()[1] / 2.0).round() as i32,
             East,
             DownSixty,
             DownSteep,
             FlatBank,
             FlatBank,
-            Shape::Plain,
+            Shape::Profile(Arc::clone(&FIFTEEN_PULL)),
         ),
         (
             LevelToGentleUp,
@@ -432,7 +471,7 @@ pub fn catalog() -> Vec<Piece> {
         (
             Loop,
             "Vertical loop (not heartlined)",
-            32,
+            standard_loop_exit_x,
             2,
             0,
             East,
@@ -440,25 +479,25 @@ pub fn catalog() -> Vec<Piece> {
             Level,
             FlatBank,
             FlatBank,
-            Shape::Loop,
+            Shape::Profile(Arc::clone(&LOOP_PROFILE)),
         ),
         (
             Corkscrew,
             "Left classic corkscrew (not heartlined)",
-            16,
-            0,
+            14,
+            8,
             0,
             East,
             Level,
             Level,
             FlatBank,
             FlatBank,
-            Shape::Corkscrew,
+            Shape::Roll(Arc::clone(&FULL_CORKSCREW)),
         ),
         (
             HeartlineRoll,
             "Left heartline roll (heartlined)",
-            16,
+            24,
             0,
             0,
             East,
@@ -466,64 +505,92 @@ pub fn catalog() -> Vec<Piece> {
             Level,
             FlatBank,
             FlatBank,
-            Shape::Heartline,
+            Shape::Roll(Arc::clone(&HEARTLINE)),
         ),
         (
             HalfLoopUp,
             "Half loop up (not heartlined)",
+            (HALF_LOOP.endpoint()[0] / 2.0).round() as i32,
             0,
-            0,
-            16,
+            (HALF_LOOP.endpoint()[1] / 2.0).round() as i32,
             West,
             Level,
             Level,
             FlatBank,
             Inverted,
-            Shape::HalfLoop,
+            Shape::Profile(Arc::clone(&HALF_LOOP)),
         ),
         (
             HalfLoopDown,
             "Half loop down (not heartlined)",
+            -(HALF_LOOP.endpoint()[0] / 2.0).round() as i32,
             0,
-            0,
-            -16,
+            -(HALF_LOOP.endpoint()[1] / 2.0).round() as i32,
             West,
             Level,
             Level,
             Inverted,
             FlatBank,
-            Shape::HalfLoop,
+            Shape::Profile(Arc::clone(&HALF_LOOP)),
         ),
         (
             HalfCorkscrewLeftUp,
-            "Left half corkscrew up (not heartlined)",
-            16,
+            "Left half roll up (not heartlined)",
+            20,
             0,
-            4,
+            6,
             East,
             Level,
             Level,
             FlatBank,
             Inverted,
-            Shape::HalfCorkscrew,
+            Shape::Roll(Arc::clone(&HALF_CORKSCREW)),
         ),
         (
             HalfCorkscrewLeftDown,
-            "Left half corkscrew down (not heartlined)",
-            16,
+            "Left half roll down (not heartlined)",
+            20,
             0,
-            -4,
+            -6,
             East,
             Level,
             Level,
             Inverted,
             FlatBank,
-            Shape::HalfCorkscrew,
+            Shape::Roll(Arc::clone(&HALF_CORKSCREW)),
         ),
+        (
+            RavenRollLeftUp,
+            "Left offset half roll up (not heartlined)",
+            24,
+            4,
+            0,
+            East,
+            Level,
+            Level,
+            FlatBank,
+            Inverted,
+            Shape::Roll(Arc::clone(&RAVEN_ROLL)),
+        ),
+        (
+            RavenRollLeftDown,
+            "Left offset half roll down (not heartlined)",
+            24,
+            4,
+            0,
+            East,
+            Level,
+            Level,
+            Inverted,
+            FlatBank,
+            Shape::Roll(Arc::clone(&RAVEN_ROLL)),
+        ),
+        // Pending owner decision: a camelback on Briar Blitz or a fast-launch
+        // top hat on Velocity Viper. Keep this piece outside force assertions.
         (
             TopHat,
             "Top hat",
-            64,
+            88,
             0,
             0,
             East,
@@ -600,16 +667,18 @@ pub fn catalog() -> Vec<Piece> {
                 let (kind, inversion) = match id {
                     Brakes => (PieceKind::Brakes, None),
                     Station => (PieceKind::Station, None),
-                    Loop | HalfLoopUp | HalfLoopDown => {
+                    Loop | LargeLoop | SteelLoop | HalfLoopUp | HalfLoopDown => {
                         (PieceKind::Track, Some(Inversion::VerticalLoop))
                     }
-                    Corkscrew | HalfCorkscrewLeftUp | HalfCorkscrewLeftDown => {
-                        (PieceKind::Track, Some(Inversion::Corkscrew))
-                    }
+                    Corkscrew
+                    | HalfCorkscrewLeftUp
+                    | HalfCorkscrewLeftDown
+                    | RavenRollLeftUp
+                    | RavenRollLeftDown => (PieceKind::Track, Some(Inversion::Corkscrew)),
                     HeartlineRoll => (PieceKind::Track, Some(Inversion::HeartlineRoll)),
                     _ => (PieceKind::Track, None),
                 };
-                let mut piece = Piece {
+                Piece {
                     id,
                     name,
                     kind,
@@ -617,27 +686,143 @@ pub fn catalog() -> Vec<Piece> {
                     inversion,
                     heartlining: match id {
                         Loop
+                        | LargeLoop
+                        | SteelLoop
                         | Corkscrew
                         | HalfLoopUp
                         | HalfLoopDown
                         | HalfCorkscrewLeftUp
-                        | HalfCorkscrewLeftDown => Some(Heartlining::NotHeartlined),
+                        | HalfCorkscrewLeftDown
+                        | RavenRollLeftUp
+                        | RavenRollLeftDown => Some(Heartlining::NotHeartlined),
                         HeartlineRoll => Some(Heartlining::Heartlined),
                         _ => None,
                     },
                     structure_material: None,
+                    rated_speeds: match id {
+                        LevelToSixtyDown => Some(RatedSpeeds {
+                            minimum_entry: 5.0,
+                            maximum_entry: 19.0,
+                        }),
+                        SixtyToSteepUp => Some(RatedSpeeds {
+                            minimum_entry: 27.0,
+                            maximum_entry: 30.0,
+                        }),
+                        SteepToSixtyDown => Some(RatedSpeeds {
+                            minimum_entry: 3.0,
+                            maximum_entry: 20.0,
+                        }),
+                        SixtyUpToLevel => {
+                            Some(SIXTY_CREST.rated_speeds("SixtyUpToLevel", 30.0, 2.0, 8.0))
+                        }
+                        Corkscrew => Some(RatedSpeeds {
+                            minimum_entry: 14.0,
+                            maximum_entry: 19.0,
+                        }),
+                        HeartlineRoll => Some(RatedSpeeds {
+                            minimum_entry: 8.0,
+                            maximum_entry: 20.0,
+                        }),
+                        HalfCorkscrewLeftUp => Some(RatedSpeeds {
+                            minimum_entry: 17.0,
+                            maximum_entry: 22.0,
+                        }),
+                        HalfCorkscrewLeftDown => Some(RatedSpeeds {
+                            minimum_entry: 5.0,
+                            maximum_entry: (22.0_f64.powi(2) - 2.0 * 9.81 * 12.0).sqrt(),
+                        }),
+                        RavenRollLeftUp => Some(RatedSpeeds {
+                            minimum_entry: 8.0,
+                            maximum_entry: 17.0,
+                        }),
+                        RavenRollLeftDown => Some(RatedSpeeds {
+                            minimum_entry: 8.0,
+                            maximum_entry: 18.0,
+                        }),
+                        BankedDropLeft | TwistedDropLeft => Some(RatedSpeeds {
+                            minimum_entry: 12.0,
+                            maximum_entry: 15.0,
+                        }),
+                        BarrelDropLeft => Some(RatedSpeeds {
+                            minimum_entry: 10.0,
+                            maximum_entry: 15.0,
+                        }),
+                        LevelToSixtyUp => {
+                            Some(SIXTY_PULL.rated_speeds("LevelToSixtyUp", 34.0, 2.0, 5.0))
+                        }
+                        SteepToSixtyUp => {
+                            Some(FIFTEEN_PULL.rated_speeds("SteepToSixtyUp", 34.0, 2.0, 5.0))
+                        }
+                        SixtyDownToLevel => Some(RatedSpeeds {
+                            minimum_entry: 2.0,
+                            maximum_entry: (34.0_f64.powi(2)
+                                - 2.0 * 9.81 * SIXTY_PULL.endpoint()[1])
+                                .sqrt(),
+                        }),
+                        // The next 1 m/s scan step exceeds the longitudinal limit.
+                        SixtyToSteepDown => Some(RatedSpeeds {
+                            minimum_entry: 2.0,
+                            maximum_entry: 28.0,
+                        }),
+                        Loop => Some(LOOP_PROFILE.rated_speeds("Loop", 27.5, 1.5, 5.0)),
+                        HalfLoopUp => Some(RatedSpeeds {
+                            minimum_entry: HALF_LOOP.minimum_entry(),
+                            maximum_entry: 31.3,
+                        }),
+                        HalfLoopDown => Some(RatedSpeeds {
+                            minimum_entry: 4.0,
+                            maximum_entry: (31.3_f64.powi(2)
+                                - 2.0 * 9.81 * HALF_LOOP.endpoint()[1])
+                                .sqrt(),
+                        }),
+                        _ => None,
+                    },
                     entry,
                     exit,
                     shape,
                     tangent_scale: scale,
                     mirrored: false,
-                    arc_lengths: Vec::new(),
-                };
-                piece.rebuild_arc();
-                piece
+                    arc_table: Arc::new(OnceLock::new()),
+                }
             },
         )
         .collect();
+    for (id, name, profile, maximum_entry, model_radius, material) in [
+        (
+            LargeLoop,
+            "Large vertical loop (not heartlined)",
+            Arc::clone(&LARGE_LOOP_PROFILE),
+            31.3,
+            5.0,
+            None,
+        ),
+        (
+            SteelLoop,
+            "Steel-structure loop (not heartlined)",
+            Arc::clone(&STEEL_LOOP_PROFILE),
+            27.0,
+            8.0,
+            Some(Material::Steel),
+        ),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == Loop)
+            .unwrap()
+            .clone();
+        let endpoint = profile.endpoint();
+        piece.id = id;
+        piece.name = name;
+        piece.exit.x = (endpoint[0] / 2.0).round() as i32;
+        piece.exit.y = 2;
+        piece.exit.z = 0;
+        piece.shape = Shape::Profile(profile.clone());
+        piece.rated_speeds = Some(profile.rated_speeds(name, maximum_entry, 1.5, model_radius));
+        piece.structure_material = material;
+        piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+        piece.clear_arc_table();
+        pieces.push(piece);
+    }
     for (
         base,
         entry_id,
@@ -698,12 +883,12 @@ pub fn catalog() -> Vec<Piece> {
         entry.id = entry_id;
         entry.name = entry_name;
         entry.exit.horizontal_curvature = curvature;
-        entry.rebuild_arc();
+        entry.clear_arc_table();
         let mut exit = pieces[index].clone();
         exit.id = exit_id;
         exit.name = exit_name;
         exit.entry.horizontal_curvature = curvature;
-        exit.rebuild_arc();
+        exit.clear_arc_table();
         pieces[index].entry.horizontal_curvature = curvature;
         pieces[index].exit.horizontal_curvature = curvature;
         pieces[index].tangent_scale = match curvature {
@@ -713,7 +898,7 @@ pub fn catalog() -> Vec<Piece> {
             | HorizontalCurvature::RightSmall
             | HorizontalCurvature::RightLarge => unreachable!(),
         };
-        pieces[index].rebuild_arc();
+        pieces[index].clear_arc_table();
         pieces.push(entry);
         pieces.push(exit);
     }
@@ -790,7 +975,7 @@ pub fn catalog() -> Vec<Piece> {
             _ => {}
         }
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (id, name, half_tiles, height, kind) in [
@@ -821,7 +1006,7 @@ pub fn catalog() -> Vec<Piece> {
         piece.exit.x = half_tiles;
         piece.exit.z = height;
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (base, id, name, height) in [
@@ -838,7 +1023,7 @@ pub fn catalog() -> Vec<Piece> {
         piece.exit.x = 2;
         piece.exit.z = height;
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     let mut full_offset = pieces
@@ -851,7 +1036,7 @@ pub fn catalog() -> Vec<Piece> {
     full_offset.exit.y = 2;
     full_offset.tangent_scale =
         (full_offset.exit.position() - full_offset.entry.position()).length();
-    full_offset.rebuild_arc();
+    full_offset.clear_arc_table();
     pieces.push(full_offset);
     let mut short_offset = pieces
         .iter()
@@ -863,10 +1048,9 @@ pub fn catalog() -> Vec<Piece> {
     short_offset.exit.x = 6;
     short_offset.tangent_scale =
         (short_offset.exit.position() - short_offset.entry.position()).length();
-    short_offset.rebuild_arc();
+    short_offset.clear_arc_table();
     pieces.push(short_offset);
     for (base, id, name) in [
-        (Loop, SteelLoop, "Steel-structure loop (not heartlined)"),
         (TurnSmallStandalone, TwisterFanLeft, "Left fan turn"),
         (TurnSmallStandalone, TightTwisterLeft, "Tight left turn"),
         (
@@ -905,7 +1089,7 @@ pub fn catalog() -> Vec<Piece> {
             }
             _ => unreachable!(),
         }
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (source, id, name) in [
@@ -994,6 +1178,11 @@ pub fn catalog() -> Vec<Piece> {
         ),
         (Loop, LoopRight, "Right vertical loop (not heartlined)"),
         (
+            LargeLoop,
+            LargeLoopRight,
+            "Right large vertical loop (not heartlined)",
+        ),
+        (
             SteelLoop,
             SteelLoopRight,
             "Right steel-structure loop (not heartlined)",
@@ -1011,12 +1200,22 @@ pub fn catalog() -> Vec<Piece> {
         (
             HalfCorkscrewLeftUp,
             HalfCorkscrewRightUp,
-            "Right half corkscrew up (not heartlined)",
+            "Right half roll up (not heartlined)",
         ),
         (
             HalfCorkscrewLeftDown,
             HalfCorkscrewRightDown,
-            "Right half corkscrew down (not heartlined)",
+            "Right half roll down (not heartlined)",
+        ),
+        (
+            RavenRollLeftUp,
+            RavenRollRightUp,
+            "Right offset half roll up (not heartlined)",
+        ),
+        (
+            RavenRollLeftDown,
+            RavenRollRightDown,
+            "Right offset half roll down (not heartlined)",
         ),
     ] {
         let mut piece = pieces
@@ -1044,7 +1243,7 @@ pub fn catalog() -> Vec<Piece> {
             };
         }
         piece.mirrored = true;
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (id, name, bank, exit_bank, barrel) in [
@@ -1083,12 +1282,28 @@ pub fn catalog() -> Vec<Piece> {
         piece.entry.bank = bank;
         piece.exit.bank = exit_bank;
         if barrel {
-            piece.shape = Shape::BarrelDrop;
+            piece.exit.x = 16;
+            piece.exit.z = -4;
+            piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+            piece.shape = Shape::Roll(Arc::clone(&BARREL_DROP));
             piece.inversion = Some(Inversion::HeartlineRoll);
             piece.heartlining = Some(Heartlining::NotHeartlined);
             piece.mirrored = bank == Right;
+        } else {
+            piece.shape = Shape::Roll(Arc::clone(&BANKED_DROP));
         }
-        piece.rebuild_arc();
+        piece.rated_speeds = Some(match id {
+            BankedDropLeft | BankedDropRight | TwistedDropLeft | TwistedDropRight => RatedSpeeds {
+                minimum_entry: 12.0,
+                maximum_entry: 15.0,
+            },
+            BarrelDropLeft | BarrelDropRight => RatedSpeeds {
+                minimum_entry: 10.0,
+                maximum_entry: 15.0,
+            },
+            _ => unreachable!(),
+        });
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     let turn_ids = [
@@ -1135,7 +1350,7 @@ pub fn catalog() -> Vec<Piece> {
                 transition.entry.slope = slope;
                 transition.exit.slope = slope;
                 transition.exit.z = if slope == UpGentle { 4 } else { -4 };
-                transition.rebuild_arc();
+                transition.clear_arc_table();
                 transition
             })
         })
@@ -1155,7 +1370,7 @@ pub fn catalog() -> Vec<Piece> {
                     _ => unreachable!("turn template has an unexpected radius"),
                 };
                 turn.exit.z = if slope == UpGentle { rise } else { -rise };
-                turn.rebuild_arc();
+                turn.clear_arc_table();
                 turn
             })
         })

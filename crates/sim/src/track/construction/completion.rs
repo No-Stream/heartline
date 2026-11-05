@@ -50,6 +50,13 @@ impl Construction {
         }
     }
 
+    pub(super) fn copy_for_element_choice(&self) -> Self {
+        let mut copy = self.copy_for_completion();
+        copy.validation_cache = RefCell::new(self.validation_cache.borrow().clone());
+        copy.choices_cache = RefCell::new(self.choices_cache.borrow().clone());
+        copy
+    }
+
     pub(super) fn append_sequence(
         &self,
         pieces: &[PieceId],
@@ -57,6 +64,20 @@ impl Construction {
         obstacles: &[SupportObstacle],
     ) -> Result<Self, ConstructionError> {
         let mut updated = self.copy_for_completion();
+        for &id in pieces {
+            updated.append(id, world, obstacles)?;
+        }
+        Ok(updated)
+    }
+
+    pub(super) fn append_sequence_with_cached_validation(
+        &self,
+        pieces: &[PieceId],
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<Self, ConstructionError> {
+        let mut updated = self.copy_for_completion();
+        updated.validation_cache = RefCell::new(self.validation_cache.borrow().clone());
         for &id in pieces {
             updated.append(id, world, obstacles)?;
         }

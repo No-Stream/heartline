@@ -47,6 +47,7 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
     await expect(page.getByRole("button", { name: "Place piece" }), `cannot place ${piece}`).toBeEnabled();
     await page.keyboard.press("b");
     await expect(page.locator("[data-track] li")).toHaveCount(++count);
+    await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   }
   await page.keyboard.press("c");
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();

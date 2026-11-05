@@ -94,6 +94,9 @@ impl Circuit {
 
 /// A small closed circuit for the playable demonstration world.
 pub fn demo_circuit() -> Circuit {
+    use std::cmp::Reverse;
+    use std::collections::{BinaryHeap, HashMap};
+
     use crate::track::{PieceId, TrackState, catalog};
     use PieceId::*;
     let catalog = catalog();
@@ -103,11 +106,11 @@ pub fn demo_circuit() -> Circuit {
         z: 10,
         ..TrackState::origin()
     };
+    let start = state;
     let mut pieces = Vec::new();
     for id in [
         Station,
         LevelToGentleUp,
-        GentleUp,
         GentleUp,
         GentleUp,
         GentleUp,
@@ -124,15 +127,8 @@ pub fn demo_circuit() -> Circuit {
         GentleDown,
         GentleDown,
         GentleDown,
-        GentleDown,
         GentleDownToLevel,
         Loop,
-        OffsetRight,
-        TurnLargeEntry,
-        TurnLargeExit,
-        Straight,
-        OneTileStraight,
-        OneTileStraight,
     ] {
         let mut piece = catalog
             .iter()
@@ -140,9 +136,134 @@ pub fn demo_circuit() -> Circuit {
             .expect("demo piece in catalog")
             .at(state)
             .expect("demo piece joins");
-        if (1..=8).contains(&pieces.len()) {
+        if (1..=9).contains(&pieces.len()) {
             piece.kind = PieceKind::Lift;
         }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+
+    let connector_key = |connector: TrackState| {
+        (
+            connector.x,
+            connector.y,
+            connector.z,
+            connector.heading as u8,
+            connector.slope as u8,
+            connector.bank as u8,
+            connector.horizontal_curvature as u8,
+            connector.vertical_curvature as u8,
+        )
+    };
+    let return_options = [
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallRightStandalone,
+        TurnLargeStandalone,
+        TurnLargeRightStandalone,
+        OffsetLeft,
+        OffsetRight,
+    ];
+    type ConnectorKey = (i32, i32, i32, u8, u8, u8, u8, u8);
+    let start_key: ConnectorKey = connector_key(start);
+    let return_pieces: Vec<_> = return_options
+        .map(|id| {
+            (
+                id,
+                catalog
+                    .iter()
+                    .find(|piece| piece.id == id)
+                    .expect("demo return piece in catalog"),
+            )
+        })
+        .into_iter()
+        .collect();
+    let maximum_horizontal_displacement = return_pieces
+        .iter()
+        .map(|(_, piece)| {
+            let dx = f64::from(piece.exit.x - piece.entry.x);
+            let dy = f64::from(piece.exit.y - piece.entry.y);
+            (std::f64::consts::SQRT_2 * dx.hypot(dy)).ceil() as u32
+        })
+        .max()
+        .expect("demo return options are nonempty");
+    let maximum_heading_change = return_pieces
+        .iter()
+        .map(|(_, piece)| {
+            let heading_change = (piece.exit.heading as u8).abs_diff(piece.entry.heading as u8);
+            heading_change.min(8 - heading_change)
+        })
+        .max()
+        .unwrap_or(0)
+        .max(1);
+    let estimate_remaining_pieces = |connector: ConnectorKey| {
+        let horizontal_distance =
+            connector.0.abs_diff(start_key.0) + connector.1.abs_diff(start_key.1);
+        let distance_lower_bound = horizontal_distance.div_ceil(maximum_horizontal_displacement);
+        let heading_difference = connector.3.abs_diff(start_key.3);
+        let heading_distance = u32::from(heading_difference.min(8 - heading_difference));
+        let heading_lower_bound = heading_distance.div_ceil(u32::from(maximum_heading_change));
+        distance_lower_bound.max(heading_lower_bound) as usize
+    };
+    let initial_key: ConnectorKey = connector_key(state);
+    let mut queue = BinaryHeap::from([Reverse((
+        estimate_remaining_pieces(initial_key),
+        0_usize,
+        initial_key,
+    ))]);
+    let mut states = HashMap::from([(initial_key, state)]);
+    let mut best_path_lengths = HashMap::from([(initial_key, 0_usize)]);
+    let mut parents: HashMap<ConnectorKey, (ConnectorKey, PieceId)> = HashMap::new();
+    while let Some(Reverse((_, path_length, current_key))) = queue.pop() {
+        if best_path_lengths.get(&current_key) != Some(&path_length) {
+            continue;
+        }
+        if current_key == start_key {
+            break;
+        }
+        if path_length >= 80 {
+            continue;
+        }
+        let current = states[&current_key];
+        for (id, piece) in &return_pieces {
+            let next_state = piece.exit_at(current).expect("demo return piece joins");
+            if next_state.x.abs_diff(start.x) > 300 || next_state.y.abs_diff(start.y) > 300 {
+                continue;
+            }
+            let next_key: ConnectorKey = connector_key(next_state);
+            let next_path_length = path_length + 1;
+            if best_path_lengths
+                .get(&next_key)
+                .is_some_and(|best| *best <= next_path_length)
+            {
+                continue;
+            }
+            states.insert(next_key, next_state);
+            best_path_lengths.insert(next_key, next_path_length);
+            parents.insert(next_key, (current_key, *id));
+            let estimate = next_path_length + estimate_remaining_pieces(next_key);
+            queue.push(Reverse((estimate, next_path_length, next_key)));
+        }
+    }
+    assert!(
+        best_path_lengths.contains_key(&start_key),
+        "demo has a level return path within 80 pieces"
+    );
+    let mut return_path = Vec::new();
+    let mut key = start_key;
+    while key != initial_key {
+        let (previous, piece) = parents[&key];
+        return_path.push(piece);
+        key = previous;
+    }
+    return_path.reverse();
+    for id in return_path {
+        let piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .expect("demo return piece in catalog")
+            .at(state)
+            .expect("demo return piece joins");
         state = piece.exit;
         pieces.push(piece);
     }
@@ -614,13 +735,31 @@ impl Train {
 
 fn rider_g(piece: &Piece, distance: f64, speed: f64, acceleration: f64) -> GForces {
     let sample = piece.sample(distance);
-    let delta = 0.001_f64.min(piece.length() / 2.0);
-    let before = (distance - delta).max(0.0);
-    let after = (distance + delta).min(piece.length());
-    let curvature_vector =
-        (piece.sample(after).tangent - piece.sample(before).tangent) / (after - before);
-    let force = curvature_vector * (speed * speed)
-        + sample.tangent * acceleration
+    let step = 0.02_f64.min(piece.length() / 4.0);
+    let (heart_tangent, heart_curvature) = if distance < step {
+        let next = piece.sample(distance + step).heart;
+        let next_next = piece.sample(distance + 2.0 * step).heart;
+        (
+            (sample.heart * -3.0 + next * 4.0 - next_next) / (2.0 * step),
+            (sample.heart - next * 2.0 + next_next) / step.powi(2),
+        )
+    } else if piece.length() - distance < step {
+        let previous = piece.sample(distance - step).heart;
+        let previous_previous = piece.sample(distance - 2.0 * step).heart;
+        (
+            (sample.heart * 3.0 - previous * 4.0 + previous_previous) / (2.0 * step),
+            (sample.heart - previous * 2.0 + previous_previous) / step.powi(2),
+        )
+    } else {
+        let previous = piece.sample(distance - step).heart;
+        let next = piece.sample(distance + step).heart;
+        (
+            (next - previous) / (2.0 * step),
+            (previous - sample.heart * 2.0 + next) / step.powi(2),
+        )
+    };
+    let force = heart_curvature * speed.powi(2)
+        + heart_tangent * acceleration
         + Vec3::new(0.0, 0.0, GRAVITY);
     GForces {
         vertical: force.dot(sample.up) / GRAVITY,

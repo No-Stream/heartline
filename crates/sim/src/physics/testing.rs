@@ -152,6 +152,11 @@ impl TestRun {
 /// Turns per-tick train readings into one interpolated sample per track metre.
 pub struct TestRunRecorder {
     circuit_length: f64,
+    piece_starts: Vec<f64>,
+    rated_pieces: Vec<Option<RatedPieceSpeedWindow>>,
+    last_piece_index: Option<usize>,
+    noted_rated_pieces: Vec<bool>,
+    speed_band_notes: Vec<String>,
     samples: Vec<Option<TestSample>>,
     started: bool,
     start_unwrapped_distance: f64,
@@ -164,10 +169,38 @@ pub struct TestRunRecorder {
     visited_ranges: Vec<(f64, f64)>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RatedPieceSpeedWindow {
+    name: &'static str,
+    minimum_entry: f64,
+    maximum_entry: f64,
+}
+
 impl TestRunRecorder {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRunRecorder-v1");
+        hash.write_tag(b"TestRunRecorder-v2");
         hash.write_f64(self.circuit_length);
+        hash.write_len(self.piece_starts.len());
+        for &piece_start in &self.piece_starts {
+            hash.write_f64(piece_start);
+        }
+        hash.write_len(self.rated_pieces.len());
+        for rated_piece in &self.rated_pieces {
+            hash.write_option(*rated_piece, |hash, window| {
+                hash.write_bytes(window.name.as_bytes());
+                hash.write_f64(window.minimum_entry);
+                hash.write_f64(window.maximum_entry);
+            });
+        }
+        hash.write_option(self.last_piece_index, |hash, index| hash.write_len(index));
+        hash.write_len(self.noted_rated_pieces.len());
+        for &noted in &self.noted_rated_pieces {
+            hash.write_bool(noted);
+        }
+        hash.write_len(self.speed_band_notes.len());
+        for note in &self.speed_band_notes {
+            hash.write_bytes(note.as_bytes());
+        }
         hash.write_len(self.samples.len());
         for sample in &self.samples {
             hash.write_option(*sample, write_sample);
@@ -190,6 +223,11 @@ impl TestRunRecorder {
         assert!(circuit_length.is_finite() && circuit_length > 0.0);
         Self {
             circuit_length,
+            piece_starts: Vec::new(),
+            rated_pieces: Vec::new(),
+            last_piece_index: None,
+            noted_rated_pieces: Vec::new(),
+            speed_band_notes: Vec::new(),
             samples: vec![None; circuit_length.ceil() as usize],
             started: false,
             start_unwrapped_distance: 0.0,
@@ -203,6 +241,24 @@ impl TestRunRecorder {
         }
     }
 
+    pub fn for_circuit(circuit: &Circuit) -> Self {
+        let mut recorder = Self::new(circuit.length());
+        recorder.piece_starts.clone_from(&circuit.starts);
+        recorder.rated_pieces = circuit
+            .pieces
+            .iter()
+            .map(|piece| {
+                piece.rated_speeds.map(|speeds| RatedPieceSpeedWindow {
+                    name: piece.name,
+                    minimum_entry: speeds.minimum_entry,
+                    maximum_entry: speeds.maximum_entry,
+                })
+            })
+            .collect();
+        recorder.noted_rated_pieces = vec![false; circuit.pieces.len()];
+        recorder
+    }
+
     /// Records the front car from each physics step in a batch.
     ///
     /// Readings are sampled at 200 Hz, so interpolation at crossed metre marks
@@ -213,6 +269,18 @@ impl TestRunRecorder {
                 continue;
             };
             let wrapped_distance = reading.distance.rem_euclid(self.circuit_length);
+            if !self.piece_starts.is_empty() {
+                let piece_index = self
+                    .piece_starts
+                    .partition_point(|start| *start <= wrapped_distance)
+                    - 1;
+                if self.last_piece_index != Some(piece_index) {
+                    let entry_speed =
+                        self.rated_piece_entry_speed(piece_index, wrapped_distance, reading.speed);
+                    self.record_rated_speed_band(piece_index, entry_speed);
+                    self.last_piece_index = Some(piece_index);
+                }
+            }
             if !self.started {
                 self.visited_ranges
                     .push((wrapped_distance, wrapped_distance));
@@ -309,6 +377,7 @@ impl TestRunRecorder {
         let circuit_length = self.circuit_length;
         let samples: Vec<_> = self.samples.into_iter().flatten().collect();
         let (excitement, intensity, nausea, mut notes) = ratings(&samples, circuit_length);
+        notes.extend(self.speed_band_notes);
         if !completed {
             notes.push(format!(
                 "The train could not finish the circuit after travelling {:.1} m. Add a lift or launch, or shorten the circuit.",
@@ -336,6 +405,59 @@ impl TestRunRecorder {
         }
         report.update_proximity_ratings();
         report
+    }
+
+    fn record_rated_speed_band(&mut self, piece_index: usize, entry_speed: f64) {
+        let Some(window) = self.rated_pieces[piece_index] else {
+            return;
+        };
+        if self.noted_rated_pieces[piece_index] {
+            return;
+        }
+        let condition = if entry_speed < window.minimum_entry {
+            "below"
+        } else if entry_speed > window.maximum_entry {
+            "above"
+        } else {
+            return;
+        };
+        self.noted_rated_pieces[piece_index] = true;
+        self.speed_band_notes.push(format!(
+            "The train entered {} at {entry_speed:.1} m/s, {condition} its rated speed band of {:.1}–{:.1} m/s.",
+            window.name, window.minimum_entry, window.maximum_entry
+        ));
+    }
+
+    fn rated_piece_entry_speed(
+        &self,
+        piece_index: usize,
+        current_distance: f64,
+        current_speed: f64,
+    ) -> f64 {
+        let Some(previous) = self.last_reading else {
+            return current_speed;
+        };
+        let previous_distance = previous.distance.rem_euclid(self.circuit_length);
+        let mut distance_delta = current_distance - previous_distance;
+        if distance_delta < -self.circuit_length / 2.0 {
+            distance_delta += self.circuit_length;
+        } else if distance_delta > self.circuit_length / 2.0 {
+            distance_delta -= self.circuit_length;
+        }
+        if distance_delta == 0.0 {
+            return current_speed;
+        }
+        let mut distance_to_entry = self.piece_starts[piece_index] - previous_distance;
+        if distance_delta > 0.0 && distance_to_entry < 0.0 {
+            distance_to_entry += self.circuit_length;
+        } else if distance_delta < 0.0 && distance_to_entry > 0.0 {
+            distance_to_entry -= self.circuit_length;
+        }
+        let fraction = distance_to_entry / distance_delta;
+        if !(0.0..=1.0).contains(&fraction) {
+            return current_speed;
+        }
+        previous.speed + fraction * (current_speed - previous.speed)
     }
 
     fn store_sample(&mut self, distance: f64, reading: CarReading) {
@@ -789,7 +911,7 @@ mod tests {
             start_distance,
             initial_speed,
         );
-        let mut recorder = TestRunRecorder::new(circuit.length());
+        let mut recorder = TestRunRecorder::for_circuit(&circuit);
         let mut completed = false;
         for _ in 0..60_000 {
             train.step(&circuit);
@@ -1171,7 +1293,7 @@ mod tests {
             start_distance,
             0.1,
         );
-        let mut recorder = TestRunRecorder::new(circuit.length());
+        let mut recorder = TestRunRecorder::for_circuit(&circuit);
         for _ in 0..100 {
             train.step(&circuit);
             recorder.record(&train.take_readings());
@@ -1204,5 +1326,78 @@ mod tests {
         record(&mut recorder, reading(1.0, 6.0, 1.0, 0.0, 0.0));
         let result = recorder.finish(true, false);
         assert!(result.notes.is_empty());
+    }
+
+    #[test]
+    fn rated_piece_entry_outside_speed_window_is_reported_once() {
+        let mut recorder = TestRunRecorder::new(20.0);
+        recorder.piece_starts = vec![0.0, 10.0];
+        recorder.rated_pieces = vec![
+            None,
+            Some(RatedPieceSpeedWindow {
+                name: "Loop",
+                minimum_entry: 24.7,
+                maximum_entry: 27.5,
+            }),
+        ];
+        recorder.noted_rated_pieces = vec![false; 2];
+        record(&mut recorder, reading(9.9, 35.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(10.1, 35.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(19.9, 35.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(0.1, 35.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(10.1, 35.0, 1.0, 0.0, 0.0));
+
+        let report = recorder.finish(true, false);
+        assert_eq!(report.notes.len(), 1, "notes: {:?}", report.notes);
+        assert_eq!(
+            report.notes[0],
+            "The train entered Loop at 35.0 m/s, above its rated speed band of 24.7–27.5 m/s."
+        );
+    }
+
+    #[test]
+    fn rated_piece_entry_below_speed_window_is_reported() {
+        let mut recorder = TestRunRecorder::new(20.0);
+        recorder.piece_starts = vec![0.0, 10.0];
+        recorder.rated_pieces = vec![
+            None,
+            Some(RatedPieceSpeedWindow {
+                name: "Loop",
+                minimum_entry: 24.7,
+                maximum_entry: 27.5,
+            }),
+        ];
+        recorder.noted_rated_pieces = vec![false; 2];
+        record(&mut recorder, reading(9.9, 2.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(10.1, 2.0, 1.0, 0.0, 0.0));
+
+        let report = recorder.finish(false, false);
+        assert_eq!(
+            report.notes[0],
+            "The train entered Loop at 2.0 m/s, below its rated speed band of 24.7–27.5 m/s."
+        );
+    }
+
+    #[test]
+    fn rated_piece_note_uses_interpolated_speed_at_the_entry_boundary() {
+        let mut recorder = TestRunRecorder::new(20.0);
+        recorder.piece_starts = vec![0.0, 10.0];
+        recorder.rated_pieces = vec![
+            None,
+            Some(RatedPieceSpeedWindow {
+                name: "Loop",
+                minimum_entry: 24.7,
+                maximum_entry: 27.5,
+            }),
+        ];
+        recorder.noted_rated_pieces = vec![false; 2];
+        record(&mut recorder, reading(9.9, 20.0, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(10.3, 30.0, 1.0, 0.0, 0.0));
+
+        let report = recorder.finish(true, false);
+        assert_eq!(
+            report.notes[0],
+            "The train entered Loop at 22.5 m/s, below its rated speed band of 24.7–27.5 m/s."
+        );
     }
 }

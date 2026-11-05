@@ -4,7 +4,7 @@ use crate::world::{Surface, World};
 
 fn straight(y: i32, z: i32) -> Piece {
     catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .unwrap()
         .at(TrackState {
@@ -182,7 +182,7 @@ fn same_coaster_nonadjacent_track_is_detected_and_neighbors_are_excluded() {
     );
     let first = straight(4, 3);
     let second = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .unwrap()
         .at(first.exit)
@@ -328,7 +328,7 @@ fn joined_loop_still_checks_track_away_from_the_connector() {
     );
     let piece = straight(4, 3);
     let mut loop_piece = catalog()
-        .into_iter()
+        .iter()
         .find(|item| item.id == PieceId::Loop)
         .unwrap()
         .at(piece.entry)
@@ -446,7 +446,7 @@ fn a_piece_does_not_report_its_own_routed_supports() {
         },
     );
     let mut piece = catalog()
-        .into_iter()
+        .iter()
         .find(|item| item.id == PieceId::Loop)
         .unwrap()
         .at(TrackState {

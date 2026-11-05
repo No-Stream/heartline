@@ -5,6 +5,109 @@ use crate::track::wooden_twister_model;
 use crate::track::{PieceId, TrackState, catalog, hybrid_model};
 use crate::world::{Surface, World};
 
+#[test]
+fn straight_level_track_reads_one_vertical_g_and_no_other_forces() {
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::Straight)
+        .unwrap();
+
+    let forces = rider_g(piece, piece.length() / 2.0, 17.0, 0.0);
+
+    assert!((forces.vertical - 1.0).abs() < 1e-9, "{forces:?}");
+    assert!(forces.lateral.abs() < 1e-9, "{forces:?}");
+    assert!(forces.longitudinal.abs() < 1e-9, "{forces:?}");
+}
+
+#[test]
+fn level_small_turn_reads_lateral_g_from_its_sixteen_metre_radius() {
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::TurnSmall)
+        .unwrap();
+    let speed = 20.0;
+
+    let forces = rider_g(piece, piece.length() / 2.0, speed, 0.0);
+    let expected_lateral = speed.powi(2) / (GRAVITY * 16.0);
+
+    assert!(
+        (forces.lateral - expected_lateral).abs() <= expected_lateral * 0.02,
+        "expected {expected_lateral:.4} g, got {forces:?}"
+    );
+}
+
+#[test]
+fn climbing_gentle_track_reads_longitudinal_g_from_its_slope() {
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::GentleUp)
+        .unwrap();
+    let distance = piece.length() / 2.0;
+    let sample = piece.sample(distance);
+    let acceleration = 2.5;
+
+    let forces = rider_g(piece, distance, 17.0, acceleration);
+    let expected_longitudinal = acceleration / GRAVITY + sample.tangent.z;
+
+    assert!(
+        (forces.longitudinal - expected_longitudinal).abs() < 1e-6,
+        "expected {expected_longitudinal:.4} g, got {forces:?}"
+    );
+}
+
+#[test]
+fn track_sample_places_the_rider_heart_above_the_rail() {
+    let catalog = catalog();
+    for id in [
+        PieceId::Straight,
+        PieceId::TurnSmallStandalone,
+        PieceId::GentleUp,
+    ] {
+        let piece = catalog.iter().find(|piece| piece.id == id).unwrap();
+        let sample = piece.sample(piece.length() / 2.0);
+
+        assert_eq!(
+            sample.heart,
+            sample.position + sample.up * crate::track::curves::HEART_HEIGHT_METRES,
+            "{id:?}"
+        );
+    }
+}
+
+#[test]
+fn heartline_roll_stays_within_the_revised_longitudinal_force_limit() {
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::HeartlineRoll)
+        .unwrap();
+    let readings: Vec<_> = (0..=200)
+        .map(|step| {
+            let distance = piece.length() * f64::from(step) / 200.0;
+            rider_g(piece, distance, 25.0, 0.0)
+        })
+        .collect();
+    let entry = readings.first().unwrap();
+    let middle = &readings[readings.len() / 2];
+    let exit = readings.last().unwrap();
+    let maximum_lateral = readings
+        .iter()
+        .map(|forces| forces.lateral.abs())
+        .fold(0.0_f64, f64::max);
+    let maximum_longitudinal = readings
+        .iter()
+        .map(|forces| forces.longitudinal.abs())
+        .fold(0.0_f64, f64::max);
+
+    assert!((entry.vertical - 1.0).abs() < 0.05, "{entry:?}");
+    assert!((middle.vertical + 1.0).abs() < 0.05, "{middle:?}");
+    assert!((exit.vertical - 1.0).abs() < 0.05, "{exit:?}");
+    assert!(maximum_lateral <= 1.05, "lateral {maximum_lateral:.4} g");
+    assert!(
+        maximum_longitudinal <= 0.25,
+        "longitudinal {maximum_longitudinal:.4} g"
+    );
+}
+
 fn circuit(ids: &[PieceId]) -> Circuit {
     let catalog = catalog();
     let mut state = TrackState::origin();
@@ -433,7 +536,7 @@ fn energy_conservation_and_repeatable_full_lap() {
 #[test]
 fn vertical_loop_g_uses_curvature_projected_onto_rider_up() {
     let loop_piece = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Loop)
         .unwrap();
     for distance in [loop_piece.length() * 0.05, loop_piece.length() * 0.5] {
@@ -446,8 +549,10 @@ fn vertical_loop_g_uses_curvature_projected_onto_rider_up() {
         let curvature_along_rider_up =
             (tangent_after - tangent_before).dot(sample.up) / (after_distance - before_distance);
         assert!(curvature_along_rider_up > 0.0);
-        let expected = sample.up.z + 20.0_f64.powi(2) * curvature_along_rider_up / GRAVITY;
-        let g = rider_g(&loop_piece, distance, 20.0, 0.0);
+        let heart_curvature = curvature_along_rider_up
+            * (1.0 - crate::track::HEART_HEIGHT_METRES * curvature_along_rider_up);
+        let expected = sample.up.z + 20.0_f64.powi(2) * heart_curvature / GRAVITY;
+        let g = rider_g(loop_piece, distance, 20.0, 0.0);
         assert!(
             (g.vertical - expected).abs() < 0.01,
             "{g:?} versus {expected}"
@@ -696,9 +801,31 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
             .iter()
             .any(|piece| piece.id == PieceId::Loop)
     );
-    assert_eq!(circuit.pieces()[1].kind, PieceKind::Lift);
-    assert_eq!(circuit.pieces()[7].kind, PieceKind::Lift);
-    assert_eq!(circuit.pieces()[8].kind, PieceKind::Lift);
+    assert_eq!(
+        circuit.pieces()[1..7]
+            .iter()
+            .map(|piece| piece.id)
+            .collect::<Vec<_>>(),
+        [
+            PieceId::LevelToGentleUp,
+            PieceId::GentleUp,
+            PieceId::GentleUp,
+            PieceId::GentleUp,
+            PieceId::GentleUp,
+            PieceId::GentleUpToLevel,
+        ]
+    );
+    assert!(
+        circuit.pieces()[1..7]
+            .iter()
+            .all(|piece| piece.kind == PieceKind::Lift)
+    );
+    assert!(
+        circuit.pieces()[7..10]
+            .iter()
+            .all(|piece| piece.kind == PieceKind::Lift)
+    );
+    assert_ne!(circuit.pieces()[10].kind, PieceKind::Lift);
     assert_eq!(
         circuit.pieces().last().unwrap().exit,
         circuit.pieces()[0].entry
@@ -714,6 +841,37 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
     assert!(!train.readings().is_empty());
     assert!(!train.take_readings().is_empty());
     assert!(train.readings().is_empty());
+}
+
+#[test]
+fn demo_return_path_uses_searchable_level_pieces() {
+    let circuit = demo_circuit();
+    let loop_index = circuit
+        .pieces()
+        .iter()
+        .position(|piece| piece.id == PieceId::Loop)
+        .expect("demo circuit contains its loop");
+    let return_path = &circuit.pieces()[loop_index + 1..];
+    let allowed_return_pieces = [
+        PieceId::Straight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallRightStandalone,
+        PieceId::TurnLargeStandalone,
+        PieceId::TurnLargeRightStandalone,
+        PieceId::OffsetLeft,
+        PieceId::OffsetRight,
+    ];
+
+    assert!(!return_path.is_empty());
+    assert!(
+        return_path
+            .iter()
+            .all(|piece| allowed_return_pieces.contains(&piece.id))
+    );
+    assert_eq!(
+        circuit.pieces().last().unwrap().exit,
+        circuit.pieces()[0].entry
+    );
 }
 
 #[test]
@@ -1340,12 +1498,21 @@ fn banked_drops_complete_physics_laps_with_finite_forces() {
         if unbank.is_some() {
             ids.push(GentleUp);
         }
-        ids.extend([GentleUpToLevel, first_turn, second_turn, bank, drop]);
+        ids.push(GentleUpToLevel);
+        let barrel_drop = matches!(drop, BarrelDropLeft | BarrelDropRight);
+        ids.extend([first_turn, second_turn]);
+        if barrel_drop {
+            ids.push(Straight);
+        }
+        ids.extend([bank, drop]);
         if let Some(unbank) = unbank {
             ids.push(unbank);
         }
         ids.push(GentleDownToLevel);
         ids.extend([first_turn, second_turn]);
+        if barrel_drop {
+            ids.extend([TerrainRise, TerrainRise]);
+        }
         let mut state = TrackState::origin();
         let mut pieces = Vec::new();
         for id in ids {
@@ -1360,8 +1527,6 @@ fn banked_drops_complete_physics_laps_with_finite_forces() {
         let circuit =
             Circuit::new(pieces).unwrap_or_else(|error| panic!("{drop:?} end {state:?}: {error}"));
         let config = PhysicsConfig {
-            rolling_resistance: 0.0,
-            drag_coefficient: 0.0,
             powered_sections: false,
             ..PhysicsConfig::default()
         };

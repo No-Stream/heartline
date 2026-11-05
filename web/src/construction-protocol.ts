@@ -50,6 +50,7 @@ export interface PieceShapesMessage {
 /** The worker is authoritative for offered pieces, preview, and placement validity. */
 export interface ConstructionState {
   readonly type: "construction-state";
+  readonly complete: boolean;
   readonly active: boolean;
   readonly chain: boolean;
   /** The coaster's paint, or null before a station is placed. */

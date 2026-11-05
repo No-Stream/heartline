@@ -41,6 +41,11 @@ impl Construction {
         }
         let mut choices = Vec::new();
         choices.extend(self.slope_elements(world, obstacles));
+        let mut half_loop_up = self.copy_for_element_choice();
+        let half_loop_up = half_loop_up
+            .append_cached_choice(PieceId::HalfLoopUp, world, obstacles)
+            .ok()
+            .map(|()| half_loop_up);
         for (id, name, pieces) in [
             (
                 "immelmann-left",
@@ -52,6 +57,15 @@ impl Construction {
                 "Right Immelmann (not heartlined)",
                 [PieceId::HalfLoopUp, PieceId::HalfCorkscrewRightDown],
             ),
+        ] {
+            let choice = half_loop_up.as_ref().and_then(|prefix| {
+                self.element_choice_from_prefix(id, name, pieces.to_vec(), prefix, world, obstacles)
+            });
+            if let Some(choice) = choice {
+                choices.push(choice);
+            }
+        }
+        for (id, name, pieces) in [
             (
                 "dive-loop-left",
                 "Left dive loop (not heartlined)",
@@ -63,29 +77,74 @@ impl Construction {
                 [PieceId::HalfCorkscrewRightUp, PieceId::HalfLoopDown],
             ),
         ] {
-            if let Some(choice) = self.element_choice(id, name, pieces.to_vec(), world, obstacles) {
+            let mut prefix = self.copy_for_element_choice();
+            let choice = prefix
+                .append_cached_choice(pieces[0], world, obstacles)
+                .ok()
+                .and_then(|()| {
+                    self.element_choice_from_prefix(
+                        id,
+                        name,
+                        pieces.to_vec(),
+                        &prefix,
+                        world,
+                        obstacles,
+                    )
+                });
+            if let Some(choice) = choice {
                 choices.push(choice);
             }
         }
-        for (id, name, down, up) in [
+        let mut raven_choices = Vec::new();
+        let mut serpent_choices = Vec::new();
+        for (raven_id, raven_name, serpent_id, serpent_name, down, up) in [
             (
+                "raven-turn-left",
+                "Left raven turn (not heartlined)",
                 "sea-serpent-left",
                 "Left sea serpent (not heartlined)",
-                PieceId::HalfCorkscrewLeftDown,
-                PieceId::HalfCorkscrewRightUp,
+                PieceId::RavenRollLeftDown,
+                PieceId::RavenRollRightUp,
             ),
             (
+                "raven-turn-right",
+                "Right raven turn (not heartlined)",
                 "sea-serpent-right",
                 "Right sea serpent (not heartlined)",
-                PieceId::HalfCorkscrewRightDown,
-                PieceId::HalfCorkscrewLeftUp,
+                PieceId::RavenRollRightDown,
+                PieceId::RavenRollLeftUp,
             ),
         ] {
-            let pieces = vec![PieceId::HalfLoopUp, down, up, PieceId::HalfLoopDown];
-            if let Some(choice) = self.element_choice(id, name, pieces, world, obstacles) {
-                choices.push(choice);
+            if let Some(down_roll) = half_loop_up.as_ref().and_then(|prefix| {
+                prefix
+                    .append_sequence_with_cached_validation(&[down], world, obstacles)
+                    .ok()
+            }) {
+                raven_choices.push(self.choice_from_updated(
+                    raven_id,
+                    raven_name,
+                    vec![PieceId::HalfLoopUp, down],
+                    &down_roll,
+                    world,
+                ));
+                let pieces = vec![PieceId::HalfLoopUp, down, up, PieceId::HalfLoopDown];
+                if let Ok(serpent) = down_roll.append_sequence_with_cached_validation(
+                    &[up, PieceId::HalfLoopDown],
+                    world,
+                    obstacles,
+                ) {
+                    serpent_choices.push(self.choice_from_updated(
+                        serpent_id,
+                        serpent_name,
+                        pieces,
+                        &serpent,
+                        world,
+                    ));
+                }
             }
         }
+        choices.extend(raven_choices);
+        choices.extend(serpent_choices);
         for (id, names, bank, turn, unbank) in [
             (
                 "small-left-banked-turn",
@@ -270,7 +329,7 @@ impl Construction {
             VerticalDownContinue,
             VerticalDownExit,
         ];
-        let mut queue = VecDeque::from([(self.copy_for_completion(), Vec::new(), Vec::new())]);
+        let mut queue = VecDeque::from([(self.copy_for_element_choice(), Vec::new(), Vec::new())]);
         while let Some((construction, path, mut visited)) = queue.pop_front() {
             let end = construction.end();
             let connector = (
@@ -314,7 +373,7 @@ impl Construction {
                 if construction.placeable(template).is_err() {
                     continue;
                 }
-                let mut next = construction.copy_for_completion();
+                let mut next = construction.copy_for_element_choice();
                 if next.append(id, world, obstacles).is_ok() {
                     let mut next_path = path.clone();
                     next_path.push(id);
@@ -333,7 +392,24 @@ impl Construction {
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Option<ElementChoice> {
-        let updated = self.append_sequence(&pieces, world, obstacles).ok()?;
+        let updated = self
+            .append_sequence_with_cached_validation(&pieces, world, obstacles)
+            .ok()?;
+        Some(self.choice_from_updated(id, name, pieces, &updated, world))
+    }
+
+    fn element_choice_from_prefix(
+        &self,
+        id: &'static str,
+        name: &'static str,
+        pieces: Vec<PieceId>,
+        prefix: &Construction,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Option<ElementChoice> {
+        let updated = prefix
+            .append_sequence_with_cached_validation(&pieces[1..], world, obstacles)
+            .ok()?;
         Some(self.choice_from_updated(id, name, pieces, &updated, world))
     }
 

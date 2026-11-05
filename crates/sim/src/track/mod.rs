@@ -8,16 +8,17 @@ pub mod construction;
 pub mod curves;
 pub mod models;
 pub mod supports;
+mod vertical_top_hat;
 
 pub use catalog::catalog;
 pub use colors::{CoasterColor, CoasterColors};
 pub(crate) use curves::Shape;
 pub use curves::{
-    Bank, Heading, Heartlining, HorizontalCurvature, Inversion, Piece, PieceId, PieceKind, Slope,
-    TrackSample, TrackState, Vec3, VerticalCurvature,
+    Bank, HEART_HEIGHT_METRES, Heading, Heartlining, HorizontalCurvature, Inversion, Piece,
+    PieceId, PieceKind, RatedSpeeds, Slope, TrackSample, TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
-    CoasterModel, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    CoasterModel, ComfortableForceLimits, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
     LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules,
     Material, SupportStyle, TrainConfiguration, hybrid_model, multi_launch_model,
     wooden_twister_model,
@@ -29,3 +30,6 @@ mod tests;
 pub mod blocks;
 pub mod clearance;
 pub mod proximity;
+
+mod profile;
+mod roll;

@@ -123,7 +123,7 @@ fn build_player_circuit(
             continue;
         }
         let id = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| format!("{:?}", piece.id) == name)
             .unwrap()
             .id;

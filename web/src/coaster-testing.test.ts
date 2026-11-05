@@ -97,5 +97,13 @@ describe("coaster testing overlay", () => {
       "This layout has at least 100 m in a row below 8 m/s. A taller first drop or a faster section could make it feel livelier.",
       "imperial",
     )).toBe("This layout has at least 328 ft in a row below 17.9 mph. A taller first drop or a faster section could make it feel livelier.");
+    expect(formatTestingNote(
+      "The train entered Steel-structure loop (not heartlined) at 30.2 m/s, above its rated speed band of 25.2–27.0 m/s.",
+      "imperial",
+    )).toBe("The train entered Steel-structure loop (not heartlined) at 67.6 mph, above its rated speed band of 56.4–60.4 mph.");
+    expect(formatTestingNote(
+      "The train entered Vertical loop at 20.0 m/s, below its rated speed band of 24.7–27.5 m/s.",
+      "metric",
+    )).toBe("The train entered Vertical loop at 72 km/h, below its rated speed band of 88.9–99 km/h.");
   });
 });

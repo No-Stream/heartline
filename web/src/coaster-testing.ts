@@ -2,7 +2,7 @@ import { projectVertex } from "./render/projection";
 import type { Camera, Viewport } from "./camera";
 import { terrainHeightAt, type GeometryQuad, type Triangle, type Vertex, type WorldView } from "./render/scene";
 import type { TrackStyle } from "./render/track/geometry";
-import { formatLength, formatSpeed, type Units } from "./units";
+import { formatLength, formatSpeed, speedUnitLabel, type Units } from "./units";
 import type { InputAction } from "./input/actions";
 
 import type { TestingSample } from "./generated/TestingSample";
@@ -132,6 +132,11 @@ export function formatTestingNote(note: string, units: Units): string {
   }
   if (note === "This layout has at least 100 m in a row below 8 m/s. A taller first drop or a faster section could make it feel livelier.") {
     return `This layout has at least ${formatLength(100, units)} in a row below ${formatSpeed(8, units)}. A taller first drop or a faster section could make it feel livelier.`;
+  }
+  const ratedSpeed = /^(The train entered .+ at )([\d.]+) m\/s, (above|below)( its rated speed band of )([\d.]+)–([\d.]+) m\/s\.$/.exec(note);
+  if (ratedSpeed) {
+    const minimum = formatSpeed(Number(ratedSpeed[5]), units).replace(` ${speedUnitLabel(units)}`, "");
+    return `${ratedSpeed[1]}${formatSpeed(Number(ratedSpeed[2]), units)}, ${ratedSpeed[3]}${ratedSpeed[4]}${minimum}–${formatSpeed(Number(ratedSpeed[6]), units)}.`;
   }
   if (/\b\d+(?:\.\d+)? m(?:\/s)?\b/.test(note)) throw new Error(`Ride testing note has an unformatted measurement: ${note}`);
   return note;

@@ -1,7 +1,9 @@
-use std::f64::consts::{FRAC_PI_4, TAU};
+use std::f64::consts::FRAC_PI_4;
 use std::ops::{Add, Div, Mul, Sub};
+use std::sync::{Arc, OnceLock};
 
 use super::Material;
+use super::roll::RollGeometry;
 use crate::state_hash::StateHasher;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -305,6 +307,12 @@ pub enum PieceId {
     TwistedDropRight,
     BarrelDropLeft,
     BarrelDropRight,
+    RavenRollLeftUp,
+    RavenRollRightUp,
+    RavenRollLeftDown,
+    RavenRollRightDown,
+    LargeLoop,
+    LargeLoopRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PieceKind {
@@ -325,19 +333,48 @@ pub enum Heartlining {
     Heartlined,
     NotHeartlined,
 }
-#[derive(Clone, Copy, Debug)]
+use crate::track::profile::SolvedProfile;
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Shape {
     Plain,
     AirtimeHill,
     Overbank,
-    BarrelDrop,
-    Loop,
-    Corkscrew,
-    Heartline,
-    HalfLoop,
-    HalfCorkscrew,
     TopHat,
+    Profile(Arc<SolvedProfile>),
+    Roll(Arc<RollGeometry>),
 }
+impl Shape {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        let tag = match self {
+            Self::Plain => 0,
+            Self::AirtimeHill => 1,
+            Self::Overbank => 2,
+            Self::TopHat => 9,
+            Self::Profile(_) => 11,
+            Self::Roll(_) => 12,
+        };
+        hash.write_u8(tag);
+        match self {
+            Self::Profile(profile) => profile.hash_into(hash),
+            Self::Roll(roll) => roll.hash_into(hash),
+            _ => {}
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RatedSpeeds {
+    pub minimum_entry: f64,
+    pub maximum_entry: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ArcLengthTable {
+    lengths: Vec<f64>,
+    speeds: Vec<f64>,
+    maximum_curvature: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct Piece {
     pub id: PieceId,
@@ -348,22 +385,25 @@ pub struct Piece {
     pub inversion: Option<Inversion>,
     pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
+    pub rated_speeds: Option<RatedSpeeds>,
     pub entry: TrackState,
     pub exit: TrackState,
     pub(crate) shape: Shape,
     pub(crate) tangent_scale: f64,
     pub(crate) mirrored: bool,
-    pub(crate) arc_lengths: Vec<f64>,
+    pub(super) arc_table: Arc<OnceLock<ArcLengthTable>>,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct TrackSample {
     pub position: Vec3,
+    pub heart: Vec3,
     pub tangent: Vec3,
     pub up: Vec3,
     pub curvature: f64,
     /// Unwrapped radians relative to the curve's unbanked frame; compare modulo 2π at joins.
     pub roll: f64,
 }
+pub const HEART_HEIGHT_METRES: f64 = 1.2;
 const ARC_STEPS: usize = 1024;
 impl TrackState {
     pub(crate) fn curvature_vector(self) -> Vec3 {
@@ -398,17 +438,8 @@ fn smooth(t: f64) -> (f64, f64, f64) {
         60.0 * t * (1.0 - t) * (1.0 - 2.0 * t),
     )
 }
-fn top_hat_integrals(t: f64) -> (f64, f64) {
-    const STEPS: usize = 32;
-    let mut horizontal = 0.0;
-    let mut vertical = 0.0;
-    for index in 0..STEPS {
-        let u = t * (index as f64 + 0.5) / STEPS as f64;
-        let angle = std::f64::consts::FRAC_PI_2 * u * u * (3.0 - 2.0 * u);
-        horizontal += angle.cos();
-        vertical += angle.sin();
-    }
-    (horizontal * t / STEPS as f64, vertical * t / STEPS as f64)
+fn curvature(velocity: Vec3, acceleration: Vec3) -> f64 {
+    velocity.cross(acceleration).length() / velocity.length().powi(3)
 }
 impl Piece {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
@@ -428,81 +459,115 @@ impl Piece {
         hash.write_option(self.structure_material, |hash, material| {
             hash.write_u8(material as u8);
         });
+        hash.write_option(self.rated_speeds, |hash, speeds| {
+            hash.write_f64(speeds.minimum_entry);
+            hash.write_f64(speeds.maximum_entry);
+        });
         self.entry.hash_into(hash);
         self.exit.hash_into(hash);
-        hash.write_u8(self.shape as u8);
+        self.shape.hash_into(hash);
         hash.write_f64(self.tangent_scale);
         hash.write_bool(self.mirrored);
-        hash.write_len(self.arc_lengths.len());
-        for &length in &self.arc_lengths {
+        let arc_table = self.arc_table();
+        hash.write_f64(arc_table.maximum_curvature);
+        hash.write_len(arc_table.lengths.len());
+        for &length in &arc_table.lengths {
             hash.write_f64(length);
+        }
+        hash.write_len(arc_table.speeds.len());
+        for &speed in &arc_table.speeds {
+            hash.write_f64(speed);
         }
     }
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
-        if matches!(self.shape, Shape::TopHat) {
+        if let Shape::Roll(geometry) = &self.shape {
+            let sample =
+                geometry.sample(self.entry, self.exit, self.mirrored, self.tangent_scale, t);
+            return (sample.position, sample.first, sample.second);
+        }
+        if let Shape::Profile(profile) = &self.shape {
+            let ascending = self.exit.z >= self.entry.z;
+            let distance = if ascending {
+                t * profile.length()
+            } else {
+                (1.0 - t) * profile.length()
+            };
+            let (position, first, second) = profile.sample(distance);
+            let endpoint = profile.endpoint();
+            let (x, z, dx, dz, ddx, ddz) = if ascending {
+                (
+                    position[0],
+                    position[1],
+                    first[0],
+                    first[1],
+                    second[0],
+                    second[1],
+                )
+            } else if self.id == PieceId::HalfLoopDown {
+                (
+                    position[0] - endpoint[0],
+                    position[1] - endpoint[1],
+                    -first[0],
+                    -first[1],
+                    second[0],
+                    second[1],
+                )
+            } else {
+                (
+                    endpoint[0] - position[0],
+                    position[1] - endpoint[1],
+                    first[0],
+                    -first[1],
+                    -second[0],
+                    second[1],
+                )
+            };
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-            let vertical = Vec3::new(0.0, 0.0, 1.0);
+            let left = Vec3::new(-forward.y, forward.x, 0.0);
+            let up = Vec3::new(0.0, 0.0, 1.0);
+            let side_displacement = (self.exit.position() - self.entry.position()).dot(left);
+            let (smooth, smooth_first, smooth_second) = smooth(t);
+            let scale = profile.length();
             let diagonal_scale = if self.entry.heading.index() % 2 == 0 {
                 1.0
             } else {
                 std::f64::consts::SQRT_2
             };
-            let radius = 20.0 * diagonal_scale;
-            let span = (self.exit.position() - self.entry.position()).dot(forward);
-            let plateau = span - 4.0 * radius;
-            let segment = ((t * 5.0) as usize).min(4);
-            let u = t * 5.0 - segment as f64;
-            let (integral_horizontal, integral_vertical) = top_hat_integrals(u);
-            let scale = radius / top_hat_integrals(1.0).0;
-            let angle = std::f64::consts::FRAC_PI_2 * u * u * (3.0 - 2.0 * u);
-            let angle_derivative = std::f64::consts::FRAC_PI_2 * 6.0 * u * (1.0 - u);
-            let (x, z, dx, dz, ddx, ddz) = match segment {
-                0 => (
-                    scale * integral_horizontal,
-                    scale * integral_vertical,
-                    scale * angle.cos(),
-                    scale * angle.sin(),
-                    -scale * angle.sin() * angle_derivative,
-                    scale * angle.cos() * angle_derivative,
-                ),
-                1 => (
-                    radius + scale * integral_vertical,
-                    radius + scale * integral_horizontal,
-                    scale * angle.sin(),
-                    scale * angle.cos(),
-                    scale * angle.cos() * angle_derivative,
-                    -scale * angle.sin() * angle_derivative,
-                ),
-                2 => (
-                    2.0 * radius + plateau * u,
-                    2.0 * radius,
-                    plateau,
-                    0.0,
-                    0.0,
-                    0.0,
-                ),
-                3 => (
-                    2.0 * radius + plateau + scale * integral_horizontal,
-                    2.0 * radius - scale * integral_vertical,
-                    scale * angle.cos(),
-                    -scale * angle.sin(),
-                    -scale * angle.sin() * angle_derivative,
-                    -scale * angle.cos() * angle_derivative,
-                ),
-                _ => (
-                    3.0 * radius + plateau + scale * integral_vertical,
-                    radius - scale * integral_horizontal,
-                    scale * angle.sin(),
-                    -scale * angle.cos(),
-                    scale * angle.cos() * angle_derivative,
-                    scale * angle.sin() * angle_derivative,
-                ),
+            let vertical_correction = if diagonal_scale == 1.0 {
+                0.0
+            } else {
+                self.exit.position().z
+                    - self.entry.position().z
+                    - if ascending { endpoint[1] } else { -endpoint[1] } * diagonal_scale
             };
             return (
-                self.entry.position() + forward * x + vertical * z,
-                (forward * dx + vertical * dz) * 5.0,
-                (forward * ddx + vertical * ddz) * 25.0,
+                self.entry.position()
+                    + forward * (x * diagonal_scale)
+                    + left * (side_displacement * smooth)
+                    + up * (z * diagonal_scale + vertical_correction * smooth),
+                forward * (dx * scale * diagonal_scale)
+                    + left * (side_displacement * smooth_first)
+                    + up * (dz * scale * diagonal_scale + vertical_correction * smooth_first),
+                forward * (ddx * scale.powi(2) * diagonal_scale)
+                    + left * (side_displacement * smooth_second)
+                    + up * (ddz * scale.powi(2) * diagonal_scale
+                        + vertical_correction * smooth_second),
+            );
+        }
+        if matches!(&self.shape, Shape::TopHat) {
+            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
+            let (position, first, second) = super::vertical_top_hat::sample(t);
+            let endpoint = super::vertical_top_hat::endpoint();
+            let span = (self.exit.position() - self.entry.position()).dot(forward);
+            let horizontal_scale = span / endpoint[0];
+            let vertical = Vec3::new(0.0, 0.0, 1.0);
+            return (
+                self.entry.position()
+                    + forward * (position[0] * horizontal_scale)
+                    + vertical * position[1],
+                forward * (first[0] * horizontal_scale) + vertical * first[1],
+                forward * (second[0] * horizontal_scale) + vertical * second[1],
             );
         }
         let (s, ds, dds) = smooth(t);
@@ -574,7 +639,7 @@ impl Piece {
             + a1 * ddq1
             + correction0 * ddf
             + correction1 * ddg;
-        if matches!(self.shape, Shape::AirtimeHill) {
+        if matches!(&self.shape, Shape::AirtimeHill) {
             let height = 3.0;
             let bump = 64.0 * (t3 - 3.0 * t4 + 3.0 * t5 - t5 * t);
             let derivative = 64.0 * (3.0 * t2 - 12.0 * t3 + 15.0 * t4 - 6.0 * t5);
@@ -583,89 +648,92 @@ impl Piece {
             d.z += height * derivative;
             dd.z += height * second;
         }
-        if matches!(self.shape, Shape::HalfCorkscrew) {
-            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-            let direction = if self.mirrored { -1.0 } else { 1.0 };
-            let lateral = Vec3::new(-forward.y, forward.x, 0.0) * (4.0 * direction);
-            p = p + lateral * (64.0 * (t3 - 3.0 * t4 + 3.0 * t5 - t6));
-            d = d + lateral * (64.0 * (3.0 * t2 - 12.0 * t3 + 15.0 * t4 - 6.0 * t5));
-            dd = dd + lateral * (64.0 * (6.0 * t - 36.0 * t2 + 60.0 * t3 - 30.0 * t4));
-        }
-        if matches!(
-            self.shape,
-            Shape::Loop | Shape::Corkscrew | Shape::Heartline
-        ) {
-            let angle = TAU * (35.0 * t4 - 84.0 * t5 + 70.0 * t6 - 20.0 * t7);
-            let da = TAU * (140.0 * t3 - 420.0 * t4 + 420.0 * t5 - 140.0 * t6);
-            let dda = TAU * (420.0 * t2 - 1680.0 * t3 + 2100.0 * t4 - 840.0 * t5);
-            let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
-            let left = Vec3::new(-forward.y, forward.x, 0.0);
-            let vertical = Vec3::new(0.0, 0.0, 1.0);
-            let (a, b, radius) = if matches!(self.shape, Shape::Loop) {
-                (forward, vertical, 16.0)
-            } else if matches!(self.shape, Shape::Corkscrew) {
-                (left, vertical, 6.0)
-            } else {
-                (left * -1.0, vertical, 1.0)
-            };
-            let a = if self.mirrored && !matches!(self.shape, Shape::Loop) {
-                a * -1.0
-            } else {
-                a
-            };
-            let radius = if self.entry.heading.index() % 2 == 0 {
-                radius
-            } else {
-                radius * std::f64::consts::SQRT_2
-            };
-            p = p + (a * angle.sin() + b * (1.0 - angle.cos())) * radius;
-            d = d + (a * (angle.cos() * da) + b * (angle.sin() * da)) * radius;
-            dd = dd
-                + (a * (angle.cos() * dda - angle.sin() * da * da)
-                    + b * (angle.sin() * dda + angle.cos() * da * da))
-                    * radius;
-        }
         (p, d, dd)
     }
+    #[cfg(test)]
     pub(crate) fn rebuild_arc(&mut self) {
-        self.arc_lengths = Vec::with_capacity(ARC_STEPS + 1);
-        self.arc_lengths.push(0.0);
-        let mut previous = self.raw(0.0).1.length();
+        self.rebuild_arc_with_steps(ARC_STEPS);
+    }
+    #[cfg(test)]
+    fn rebuild_arc_with_steps(&mut self, steps: usize) {
+        self.arc_table = Arc::new(OnceLock::from(self.calculate_arc_table(steps)));
+    }
+    pub(crate) fn clear_arc_table(&mut self) {
+        self.arc_table = Arc::new(OnceLock::new());
+    }
+    fn arc_table(&self) -> &ArcLengthTable {
+        self.arc_table
+            .get_or_init(|| self.calculate_arc_table(ARC_STEPS))
+    }
+    fn calculate_arc_table(&self, steps: usize) -> ArcLengthTable {
+        let mut lengths = Vec::with_capacity(steps + 1);
+        let mut speeds = Vec::with_capacity(steps + 1);
+        lengths.push(0.0);
+        let (_, initial_velocity, initial_acceleration) = self.raw(0.0);
+        let mut previous = initial_velocity.length();
+        let mut maximum_curvature = curvature(initial_velocity, initial_acceleration);
+        speeds.push(previous);
         let mut total = 0.0;
-        for index in 1..=ARC_STEPS {
-            let speed = self.raw(index as f64 / ARC_STEPS as f64).1.length();
-            total += (previous + speed) / (2.0 * ARC_STEPS as f64);
-            self.arc_lengths.push(total);
+        for index in 1..=steps {
+            let (_, velocity, acceleration) = self.raw(index as f64 / steps as f64);
+            let speed = velocity.length();
+            speeds.push(speed);
+            total += (previous + speed) / (2.0 * steps as f64);
+            lengths.push(total);
             previous = speed;
+            maximum_curvature = maximum_curvature.max(curvature(velocity, acceleration));
+        }
+        let maximum_curvature = if steps == ARC_STEPS {
+            maximum_curvature
+        } else {
+            self.calculate_maximum_curvature()
+        };
+        ArcLengthTable {
+            lengths,
+            speeds,
+            maximum_curvature,
         }
     }
     pub fn length(&self) -> f64 {
-        *self.arc_lengths.last().expect("arc table")
+        *self.arc_table().lengths.last().expect("arc table")
     }
     /// The maximum curvature sampled at the arc table's parameter points.
     pub fn maximum_curvature(&self) -> f64 {
+        self.arc_table().maximum_curvature
+    }
+    fn calculate_maximum_curvature(&self) -> f64 {
         (0..=ARC_STEPS)
             .map(|index| {
                 let (_, velocity, acceleration) = self.raw(index as f64 / ARC_STEPS as f64);
-                velocity.cross(acceleration).length() / velocity.length().powi(3)
+                curvature(velocity, acceleration)
             })
             .fold(0.0, f64::max)
     }
-    fn parameter_at_distance(&self, distance: f64) -> f64 {
+    pub(super) fn parameter_at_distance(&self, distance: f64) -> f64 {
         assert!(
             distance.is_finite() && distance >= 0.0 && distance <= self.length(),
             "distance outside piece"
         );
-        let index = self
-            .arc_lengths
+        if distance == self.length() {
+            return 1.0;
+        }
+        let arc_table = self.arc_table();
+        let steps = arc_table.lengths.len() - 1;
+        let index = arc_table
+            .lengths
             .partition_point(|length| *length < distance)
-            .min(ARC_STEPS);
+            .min(steps);
         if index == 0 {
             0.0
         } else {
-            let low = self.arc_lengths[index - 1];
-            (index as f64 - 1.0 + (distance - low) / (self.arc_lengths[index] - low))
-                / ARC_STEPS as f64
+            let low = arc_table.lengths[index - 1];
+            let start_speed = arc_table.speeds[index - 1];
+            let end_speed = arc_table.speeds[index];
+            let scaled_distance = (distance - low) * steps as f64;
+            let discriminant =
+                start_speed.powi(2) + 2.0 * (end_speed - start_speed) * scaled_distance;
+            let fraction = 2.0 * scaled_distance / (start_speed + discriminant.sqrt());
+            (index as f64 - 1.0 + fraction) / steps as f64
         }
     }
     pub(crate) fn tangent_at(&self, distance: f64) -> Vec3 {
@@ -673,10 +741,23 @@ impl Piece {
     }
     pub fn sample(&self, distance: f64) -> TrackSample {
         let t = self.parameter_at_distance(distance);
+        if let Shape::Roll(geometry) = &self.shape {
+            let sample =
+                geometry.sample(self.entry, self.exit, self.mirrored, self.tangent_scale, t);
+            return TrackSample {
+                position: sample.position,
+                heart: sample.heart,
+                tangent: sample.first.unit(),
+                up: sample.up,
+                curvature: sample.first.cross(sample.second).length()
+                    / sample.first.length().powi(3),
+                roll: sample.roll,
+            };
+        }
         let (position, velocity, acceleration) = self.raw(t);
         let tangent = velocity.unit();
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
-        let base_up = if matches!(self.shape, Shape::Loop | Shape::HalfLoop | Shape::TopHat) {
+        let base_up = if matches!(&self.shape, Shape::Profile(_) | Shape::TopHat) {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit()
         } else {
@@ -687,45 +768,38 @@ impl Piece {
             )
         };
         let (s, _, _) = smooth(t);
-        let turns = if matches!(
-            self.shape,
-            Shape::Corkscrew | Shape::Heartline | Shape::BarrelDrop
-        ) {
-            TAU * s * if self.mirrored { -1.0 } else { 1.0 }
-        } else {
-            0.0
-        };
-        let overbank = if matches!(self.shape, Shape::Overbank) {
+        let overbank = if matches!(&self.shape, Shape::Overbank) {
             2.0 * std::f64::consts::PI / 3.0
                 * (std::f64::consts::PI * t).sin().powi(2)
                 * if self.mirrored { -1.0 } else { 1.0 }
         } else {
             0.0
         };
-        let bank = if matches!(self.shape, Shape::HalfLoop) {
+        let bank = if matches!(&self.shape, Shape::Profile(_)) {
             self.entry.bank.radians()
-        } else if matches!(self.shape, Shape::HalfCorkscrew) && self.mirrored {
-            -self.entry.bank.radians() - (self.exit.bank.radians() - self.entry.bank.radians()) * s
         } else {
             self.entry.bank.radians() + (self.exit.bank.radians() - self.entry.bank.radians()) * s
         };
-        let angle = overbank + bank + turns;
+        let angle = overbank + bank;
         let left = base_up.cross(tangent).unit();
         let up = base_up * angle.cos() + left * angle.sin();
         TrackSample {
             position,
+            heart: position + up * HEART_HEIGHT_METRES,
             tangent,
             up,
             curvature: velocity.cross(acceleration).length() / velocity.length().powi(3),
             roll: angle
-                + if matches!(self.shape, Shape::HalfLoop) {
+                + if matches!(&self.shape, Shape::Profile(_))
+                    && (self.entry.bank == Bank::Inverted || self.exit.bank == Bank::Inverted)
+                {
                     std::f64::consts::PI * s
                 } else {
                     0.0
                 },
         }
     }
-    pub fn at(&self, state: TrackState) -> Option<Self> {
+    pub(crate) fn exit_at(&self, state: TrackState) -> Option<TrackState> {
         if state.slope != self.entry.slope
             || state.bank != self.entry.bank
             || state.horizontal_curvature != self.entry.horizontal_curvature
@@ -747,8 +821,7 @@ impl Piece {
             7 => (dx + dy, dy - dx),
             _ => unreachable!(),
         };
-        let mut piece = self.clone();
-        piece.exit = TrackState {
+        Some(TrackState {
             x: state.x + x,
             y: state.y + y,
             z: state.z
@@ -763,13 +836,283 @@ impl Piece {
             bank: self.exit.bank,
             horizontal_curvature: self.exit.horizontal_curvature,
             vertical_curvature: self.exit.vertical_curvature,
-        };
+        })
+    }
+    pub fn at(&self, state: TrackState) -> Option<Self> {
+        let exit = self.exit_at(state)?;
+        let rotation = (state.heading.index() - self.entry.heading.index()).rem_euclid(8);
+        let mut piece = self.clone();
+        piece.exit = exit;
         piece.entry = state;
         if rotation % 2 != 0 {
             piece.tangent_scale *= (piece.exit.position() - piece.entry.position()).length()
                 / (self.exit.position() - self.entry.position()).length();
         }
-        piece.rebuild_arc();
+        if rotation % 2 != 0 {
+            piece.clear_arc_table();
+        }
         Some(piece)
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use std::sync::{Arc, OnceLock};
+
+    use super::{
+        Bank, Heading, Heartlining, HorizontalCurvature, Piece, PieceId, PieceKind, Shape,
+    };
+    use crate::state_hash::StateHasher;
+    use crate::track::roll::RollGeometry;
+    use crate::track::{Slope, TrackState, VerticalCurvature};
+
+    #[test]
+    fn arc_length_table_is_built_on_first_geometry_query() {
+        let mut piece = crate::track::catalog::catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::HeartlineRoll)
+            .unwrap()
+            .clone();
+        piece.clear_arc_table();
+        assert!(piece.arc_table.get().is_none());
+
+        assert!(piece.length() > 0.0);
+
+        assert!(piece.arc_table.get().is_some());
+    }
+
+    #[test]
+    fn arc_length_inversion_has_continuous_speed_at_table_boundaries() {
+        let piece = crate::track::catalog::catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::BarrelDropLeft)
+            .unwrap();
+        let delta = 1e-5;
+        for index in (1..super::ARC_STEPS).step_by(11) {
+            let distance = piece.arc_table().lengths[index];
+            let parameter = index as f64 / super::ARC_STEPS as f64;
+            let expected = 1.0 / piece.raw(parameter).1.length();
+            let before = (parameter - piece.parameter_at_distance(distance - delta)) / delta;
+            let after = (piece.parameter_at_distance(distance + delta) - parameter) / delta;
+            assert!(
+                (before - expected).abs() < 1e-7,
+                "boundary {index}: {before} != {expected}"
+            );
+            assert!(
+                (after - expected).abs() < 1e-7,
+                "boundary {index}: {after} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn arc_speed_cache_matches_geometry_after_cloning_and_placement() {
+        let piece = crate::track::catalog::catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::BarrelDropLeft)
+            .unwrap();
+        let cloned = piece.clone();
+        let mut state = piece.entry;
+        state.heading = Heading::NorthEast;
+        let placed = piece.at(state).unwrap();
+        for candidate in [piece, &cloned, &placed] {
+            let arc_table = candidate.arc_table();
+            assert_eq!(arc_table.speeds.len(), arc_table.lengths.len());
+            let steps = arc_table.speeds.len() - 1;
+            for (index, speed) in arc_table.speeds.iter().enumerate() {
+                let raw_speed = candidate.raw(index as f64 / steps as f64).1.length();
+                // Debug and release builds round the cached and raw paths differently (about 4e-10 here).
+                assert!(
+                    (*speed - raw_speed).abs() < 1e-8,
+                    "boundary {index}: cached speed {speed} != raw speed {raw_speed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rigid_placement_reuses_arc_length_and_curvature_cache() {
+        let piece = crate::track::catalog::catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::HeartlineRoll)
+            .unwrap();
+        let placed = piece
+            .at(TrackState {
+                x: 32,
+                y: 48,
+                heading: Heading::North,
+                ..piece.entry
+            })
+            .unwrap();
+
+        assert_eq!(placed.arc_table(), piece.arc_table());
+        let expected_maximum_curvature = (0..=super::ARC_STEPS)
+            .map(|index| {
+                let (_, velocity, acceleration) = piece.raw(index as f64 / super::ARC_STEPS as f64);
+                super::curvature(velocity, acceleration)
+            })
+            .fold(0.0, f64::max);
+        assert_eq!(piece.maximum_curvature(), expected_maximum_curvature);
+    }
+
+    #[test]
+    fn diagonal_placement_rebuilds_geometry_and_curvature_cache() {
+        let piece = crate::track::catalog::catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::HeartlineRoll)
+            .unwrap();
+        let placed = piece
+            .at(TrackState {
+                x: 32,
+                y: 48,
+                heading: Heading::NorthEast,
+                ..piece.entry
+            })
+            .unwrap();
+        let mut expected = piece.clone();
+        expected.entry = placed.entry;
+        expected.exit = placed.exit;
+        expected.tangent_scale *= (placed.exit.position() - placed.entry.position()).length()
+            / (piece.exit.position() - piece.entry.position()).length();
+        expected.rebuild_arc();
+        let expected_maximum_curvature = (0..=super::ARC_STEPS)
+            .map(|index| {
+                let (_, velocity, acceleration) =
+                    expected.raw(index as f64 / super::ARC_STEPS as f64);
+                super::curvature(velocity, acceleration)
+            })
+            .fold(0.0, f64::max);
+
+        assert_ne!(placed.arc_table(), piece.arc_table());
+        assert_eq!(placed.arc_table(), expected.arc_table());
+        assert_eq!(placed.maximum_curvature(), expected_maximum_curvature);
+    }
+
+    #[test]
+    fn heart_acceleration_converges_as_arc_table_resolution_increases() {
+        let piece = crate::track::catalog::catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::BarrelDropLeft)
+            .unwrap();
+        let mut pieces = Vec::new();
+        for steps in [512, 1024, 2048, 4096] {
+            let mut candidate = piece.clone();
+            candidate.rebuild_arc_with_steps(steps);
+            pieces.push(candidate);
+        }
+        let curvature = |piece: &Piece, fraction: f64| {
+            let distance = piece.length() * fraction;
+            let delta = 0.02;
+            (piece.sample(distance - delta).heart - piece.sample(distance).heart * 2.0
+                + piece.sample(distance + delta).heart)
+                / delta.powi(2)
+        };
+        for index in 1..20 {
+            let fraction = f64::from(index) / 20.0;
+            let reference = curvature(&pieces[3], fraction);
+            for candidate in &pieces[..3] {
+                let error = (curvature(candidate, fraction) - reference).length();
+                assert!(
+                    error < 0.001,
+                    "fraction {fraction}: heart curvature error {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn connector_only_exit_matches_placed_piece_for_every_heading() {
+        let entry = TrackState::origin();
+        let piece = Piece {
+            id: PieceId::Straight,
+            name: "test connector",
+            kind: PieceKind::Track,
+            inversion: None,
+            heartlining: None::<Heartlining>,
+            structure_material: None,
+            rated_speeds: None,
+            entry,
+            exit: TrackState {
+                x: 8,
+                y: 2,
+                z: 4,
+                heading: Heading::North,
+                slope: Slope::Level,
+                bank: Bank::Level,
+                horizontal_curvature: HorizontalCurvature::Straight,
+                vertical_curvature: VerticalCurvature::Straight,
+            },
+            shape: Shape::Plain,
+            tangent_scale: 16.0,
+            mirrored: false,
+            launch_target_speed: None,
+            arc_table: Arc::new(OnceLock::new()),
+        };
+
+        for heading in [
+            Heading::East,
+            Heading::NorthEast,
+            Heading::North,
+            Heading::NorthWest,
+            Heading::West,
+            Heading::SouthWest,
+            Heading::South,
+            Heading::SouthEast,
+        ] {
+            let start = TrackState { heading, ..entry };
+            let placed = piece.at(start).unwrap();
+            assert_eq!(piece.exit_at(start), Some(placed.exit), "{heading:?}");
+        }
+    }
+
+    #[test]
+    fn shape_hash_keeps_the_existing_variant_tags() {
+        let shapes = [
+            Shape::Plain,
+            Shape::AirtimeHill,
+            Shape::Overbank,
+            Shape::TopHat,
+        ];
+
+        for (expected_tag, shape) in [0_u8, 1, 2, 9].into_iter().zip(shapes) {
+            let mut actual = StateHasher::new();
+            shape.hash_into(&mut actual);
+
+            let mut expected = StateHasher::new();
+            expected.write_u8(expected_tag);
+
+            assert_eq!(actual.finish(), expected.finish());
+        }
+    }
+
+    #[test]
+    fn shape_equality_distinguishes_variants() {
+        assert_eq!(Shape::Plain, Shape::Plain);
+        assert_ne!(Shape::Plain, Shape::AirtimeHill);
+    }
+
+    #[test]
+    fn payload_shapes_use_stable_unique_tags_and_structural_equality() {
+        let profile = Shape::Profile(Arc::new(crate::track::profile::test_profile()));
+        let equivalent_profile = Shape::Profile(Arc::new(crate::track::profile::test_profile()));
+        let roll = Shape::Roll(Arc::new(RollGeometry::spline()));
+
+        assert_eq!(profile, equivalent_profile);
+        assert_ne!(profile, roll);
+
+        for (shape, tag) in [(profile, 11), (roll, 12)] {
+            let mut actual = StateHasher::new();
+            shape.hash_into(&mut actual);
+
+            let mut expected = StateHasher::new();
+            expected.write_u8(tag);
+            match &shape {
+                Shape::Profile(profile) => profile.hash_into(&mut expected),
+                Shape::Roll(roll) => roll.hash_into(&mut expected),
+                _ => unreachable!(),
+            }
+
+            assert_eq!(actual.finish(), expected.finish());
+        }
     }
 }

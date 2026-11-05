@@ -7,7 +7,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests generate-report-types check-report-types
+.PHONY: install build check test lint serve e2e e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction generate-report-types check-report-types generate-profiles
 
 install:
 	npm ci
@@ -23,6 +23,9 @@ generate-report-types:
 
 check-report-types:
 	$(CARGO) test -p theme-park-sim-wasm --lib generated_types_are_current
+
+generate-profiles:
+	UPDATE_SOLVED_PROFILES=1 $(CARGO) test -p theme-park-sim --lib track::profile::tests::solved_profiles_are_current
 
 # The CLI version must match the wasm-bindgen crate version in Cargo.lock.
 wasm-bindgen:
@@ -63,6 +66,16 @@ journeys: build
 
 bench:
 	$(CARGO) run --release -p theme-park-sim --features threads --example tick_bench
+
+bench-construction:
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- catalog
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- choices hybrid
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- choices multi_launch
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- choices wooden
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements hybrid
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements multi_launch
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements wooden
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- per-piece
 
 bench-guests: wasm-bindgen
 	$(CARGO) run --release -p theme-park-sim --features threads --example guest_bench

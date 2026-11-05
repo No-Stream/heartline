@@ -16,7 +16,6 @@ use crate::track::{
 use crate::world::World;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
-use std::sync::OnceLock;
 
 #[cfg(test)]
 mod tests;
@@ -52,6 +51,7 @@ pub struct PieceChoice {
     pub would_tunnel: bool,
 }
 
+#[derive(Clone)]
 struct PieceValidation {
     supports: Vec<Vec<Support>>,
     tunnel_plan: TunnelPlan,
@@ -62,14 +62,23 @@ pub struct TrackSegment {
     pub pieces: Vec<Piece>,
 }
 
+#[derive(Clone)]
+struct AvailableChoice {
+    piece: Piece,
+    choice: PieceChoice,
+    validation: Option<PieceValidation>,
+}
+
+#[derive(Clone)]
 struct ChoicesCache {
     world_id: usize,
     world_revision: u64,
     obstacles: Vec<SupportObstacle>,
     choices: Vec<PieceChoice>,
-    available_choices: Vec<(Piece, PieceChoice)>,
+    available_choices: Vec<AvailableChoice>,
 }
 
+#[derive(Clone)]
 struct ValidationCache {
     world_id: usize,
     world_revision: u64,
@@ -198,35 +207,43 @@ impl Construction {
             }
         }
         let mut choices = Vec::new();
-        let mut available_choices: Vec<(Piece, PieceChoice)> = Vec::new();
+        let mut available_choices: Vec<AvailableChoice> = Vec::new();
         let mut seen_ids = HashSet::new();
         for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
             let template = template_for(base.id, self.end());
             let placed = self.model_placeable_geometry(template);
             let mut would_tunnel = false;
-            let result = if self.closed {
-                Err(ConstructionError::Closed)
+            let (result, validation) = if self.closed {
+                (Err(ConstructionError::Closed), None)
             } else {
-                placed.as_ref().map_err(|error| *error).and_then(|piece| {
+                match placed.as_ref().map_err(|error| *error).and_then(|piece| {
                     if self.chain
                         && piece.kind == PieceKind::Track
                         && !self.model.allows_chain(piece)
                     {
                         return Err(ConstructionError::ChainNotAllowed);
                     }
-                    if let Some((_, previous_choice)) = available_choices
-                        .iter()
-                        .find(|(previous_piece, _)| same_geometry(previous_piece, piece))
-                    {
-                        would_tunnel = previous_choice.would_tunnel;
-                        previous_choice.result
-                    } else {
-                        self.validate_piece(piece, world, obstacles)
-                            .map(|validation| {
-                                would_tunnel = validation.tunnel_plan.would_tunnel();
-                            })
+                    Ok(piece)
+                }) {
+                    Err(error) => (Err(error), None),
+                    Ok(piece) => {
+                        if let Some(previous) = available_choices
+                            .iter()
+                            .find(|previous| same_geometry(&previous.piece, piece))
+                        {
+                            would_tunnel = previous.choice.would_tunnel;
+                            (previous.choice.result, previous.validation.clone())
+                        } else {
+                            match self.validate_piece(piece, world, obstacles) {
+                                Ok(validation) => {
+                                    would_tunnel = validation.tunnel_plan.would_tunnel();
+                                    (Ok(()), Some(validation))
+                                }
+                                Err(error) => (Err(error), None),
+                            }
+                        }
                     }
-                })
+                }
             };
             let choice = PieceChoice {
                 id: template.id,
@@ -237,7 +254,11 @@ impl Construction {
                 if self.chain && self.model.allows_chain(&piece) {
                     piece.kind = PieceKind::Lift;
                 }
-                available_choices.push((piece, choice));
+                available_choices.push(AvailableChoice {
+                    piece,
+                    choice,
+                    validation,
+                });
             }
             choices.push(choice);
         }
@@ -263,7 +284,101 @@ impl Construction {
             .as_ref()
             .expect("choices cache initialized")
             .available_choices
-            .clone()
+            .iter()
+            .map(|candidate| (candidate.piece.clone(), candidate.choice))
+            .collect()
+    }
+
+    /// Returns a candidate piece when its connector and model rules permit it.
+    pub fn candidate_piece(&self, id: PieceId) -> Option<Piece> {
+        let mut piece = self
+            .model_placeable_geometry(template_for(id, self.end()))
+            .ok()?;
+        if self.chain && self.model.allows_chain(&piece) {
+            piece.kind = PieceKind::Lift;
+        }
+        Some(piece)
+    }
+
+    /// Finds the first valid candidate preferred by `prefer`, falling back to
+    /// the first valid candidate in catalog order.
+    pub fn first_valid_piece(
+        &self,
+        world: &World,
+        obstacles: &[SupportObstacle],
+        mut prefer: impl FnMut(&Piece) -> bool,
+    ) -> Option<PieceId> {
+        let mut seen_ids = HashSet::new();
+        let mut attempted_preferred = Vec::new();
+        for template in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
+            let Some(piece) = self.candidate_piece(template.id) else {
+                continue;
+            };
+            if prefer(&piece) {
+                let valid = self.validate(piece.id, world, obstacles).is_ok();
+                attempted_preferred.push((piece.id, valid));
+                if valid {
+                    return Some(piece.id);
+                }
+            }
+        }
+
+        let mut seen_ids = HashSet::new();
+        for template in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
+            let Some(piece) = self.candidate_piece(template.id) else {
+                continue;
+            };
+            let valid = attempted_preferred
+                .iter()
+                .find(|(id, _)| *id == piece.id)
+                .map_or_else(
+                    || self.validate(piece.id, world, obstacles).is_ok(),
+                    |(_, ok)| *ok,
+                );
+            if valid {
+                return Some(piece.id);
+            }
+        }
+        None
+    }
+
+    pub(super) fn append_cached_choice(
+        &mut self,
+        id: PieceId,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<(), ConstructionError> {
+        let cached = {
+            let cache = self.choices_cache.borrow();
+            cache.as_ref().and_then(|cache| {
+                (cache.world_id == world.instance_id()
+                    && cache.world_revision == world.revision()
+                    && same_obstacles(&cache.obstacles, obstacles))
+                .then(|| {
+                    let result = cache
+                        .choices
+                        .iter()
+                        .find(|choice| choice.id == id)
+                        .expect("catalog contains every piece id")
+                        .result;
+                    let candidate = cache
+                        .available_choices
+                        .iter()
+                        .find(|candidate| candidate.piece.id == id)
+                        .map(|candidate| (candidate.piece.clone(), candidate.validation.clone()));
+                    (result, candidate)
+                })
+            })
+        };
+        if let Some((result, candidate)) = cached {
+            result?;
+            if let Some((piece, Some(validation))) = candidate {
+                self.append_validated_piece(piece, validation);
+                return Ok(());
+            }
+            return Err(ConstructionError::Unavailable);
+        }
+        self.append(id, world, obstacles)
     }
 
     pub fn validate(
@@ -642,6 +757,11 @@ impl Construction {
         let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
         let validation = self.validate_piece(&piece, world, obstacles)?;
+        self.append_validated_piece(piece, validation);
+        Ok(())
+    }
+
+    fn append_validated_piece(&mut self, piece: Piece, validation: PieceValidation) {
         if self.disconnected.is_empty() {
             let cache = self
                 .validation_cache
@@ -676,7 +796,6 @@ impl Construction {
             self.ids.extend(segment.ids);
             self.pieces.extend(segment.pieces);
         }
-        Ok(())
     }
 
     pub fn delete_from(&mut self, id: usize) -> Result<Vec<Piece>, ConstructionError> {
@@ -811,16 +930,9 @@ impl Construction {
 fn same_geometry(first: &Piece, second: &Piece) -> bool {
     first.entry == second.entry
         && first.exit == second.exit
-        && matches!(
-            (first.shape, second.shape),
-            (Shape::Plain, Shape::Plain)
-                | (Shape::Loop, Shape::Loop)
-                | (Shape::Corkscrew, Shape::Corkscrew)
-                | (Shape::Heartline, Shape::Heartline)
-        )
+        && first.shape == second.shape
         && first.tangent_scale == second.tangent_scale
         && first.mirrored == second.mirrored
-        && first.arc_lengths == second.arc_lengths
 }
 
 fn construction_support_error(error: SupportError) -> ConstructionError {
@@ -926,8 +1038,7 @@ pub fn track_support_obstacles(
 }
 
 fn templates() -> &'static [Piece] {
-    static CATALOG: OnceLock<Vec<Piece>> = OnceLock::new();
-    CATALOG.get_or_init(catalog)
+    catalog()
 }
 
 fn template_for(id: PieceId, end: TrackState) -> &'static Piece {

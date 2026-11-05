@@ -291,6 +291,7 @@ fn samples(piece: &Piece, spacing: f64) -> impl Iterator<Item = f64> + '_ {
 }
 
 /// Cached rail samples for repeated clearance checks against the same track.
+#[derive(Clone)]
 pub struct ClearanceIndex {
     pieces: Vec<Piece>,
     samples: Vec<Vec<(f64, ClearanceBox)>>,
@@ -750,7 +751,7 @@ mod tests {
             ..TrackState::origin()
         };
         catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(state)
@@ -860,7 +861,7 @@ mod tests {
         state.y = 4;
         state.z = i32::from(i16::MIN) - 2;
         let piece = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(state)
@@ -880,7 +881,7 @@ mod tests {
         state.y = 4;
         state.z = 14;
         let piece = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::LevelToGentleDown)
             .unwrap()
             .at(state)
@@ -1088,7 +1089,7 @@ mod tests {
         let index = ClearanceIndex::new(std::slice::from_ref(&retained));
         for y in [20, 32, 38, 40, 42, 48, 60] {
             let candidate = catalog()
-                .into_iter()
+                .iter()
                 .find(|piece| piece.id == PieceId::BankedTurnStandalone)
                 .unwrap()
                 .at(TrackState {
@@ -1143,7 +1144,7 @@ mod tests {
         let train = hybrid_model().train;
         let first = straight(20, 20, 5);
         let short = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::HalfTileStraight)
             .unwrap()
             .at(first.exit)
@@ -1208,7 +1209,7 @@ mod tests {
     fn connected_loop_still_checks_track_far_from_the_join() {
         let piece = straight(40, 40, 20);
         let mut connected_loop = catalog()
-            .into_iter()
+            .iter()
             .find(|item| item.id == PieceId::Loop)
             .unwrap()
             .at(piece.entry)
@@ -1232,7 +1233,7 @@ mod tight_clearance_tests {
     #[test]
     fn half_metre_near_miss_passes_and_overlap_fails() {
         let piece = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(TrackState {
@@ -1276,7 +1277,7 @@ mod tight_clearance_tests {
     #[test]
     fn diagonal_train_allows_half_metre_near_miss() {
         let piece = catalog()
-            .into_iter()
+            .iter()
             .find(|piece| piece.id == PieceId::Straight)
             .unwrap()
             .at(TrackState {
