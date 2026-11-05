@@ -88,7 +88,7 @@ export async function replaySessionIntoWorker(
       const preparedCommand = prepareReplayCommand(command);
       beforeCommand(command);
       if (command.type === "construction-finish-preview") await postAndWait({ type: "construction-finish-await" }, "construction-finish-ready");
-      if (command.type === "test-advance-block-analysis") await postAndWait(preparedCommand, "test-block-analysis-advanced");
+      if (command.type === "test-advance-block-analysis" || command.type === "test-advance-block-placement") await postAndWait(preparedCommand, "test-block-analysis-advanced");
       else if (constructionCommandsAwaitingState.has(command.type)) await postAndWait(preparedCommand, "construction-state");
       else sendWorkerAction(worker, preparedCommand as WorkerAction);
     }

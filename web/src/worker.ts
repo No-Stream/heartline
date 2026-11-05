@@ -64,13 +64,17 @@ function scheduleBlockAnalysis(): void {
 function advanceBlockAnalysis(budget: number): boolean {
   recorder.recordCommand(Number(simulation.tick_count()), { type: "test-advance-block-analysis", budget });
   const complete = simulation.construction_advance_block_analysis(budget);
+  sendBlockAnalysisProgress();
+  return complete;
+}
+
+function sendBlockAnalysisProgress(): void {
   const report = simulation.construction_block_report_json();
   if (simulation.construction_active() && report !== lastBlockReport) {
     lastBlockReport = report;
     lastConstructionMessage = simulation.construction_message();
     sendWorkerMessage(workerScope, { type: "block-analysis-progress", blockReport: JSON.parse(report) as BlockReport, trainCount: simulation.construction_train_count(), message: lastConstructionMessage });
   }
-  return complete;
 }
 
 function wake(forceSnapshot = false): void {
@@ -282,7 +286,7 @@ workerScope.addEventListener("message", (event) => {
       simulation.construction_finish_invalidate();
       scheduleFinishSearch();
     }
-    if (!["test-resume", "test-advance", "test-advance-block-analysis", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode"].includes(action.type)) {
+    if (!["test-resume", "test-advance", "test-advance-block-analysis", "test-advance-block-placement", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "construction-delete-mode"].includes(action.type)) {
       recorder.recordCommand(Number(simulation.tick_count()), action);
     }
     if (action.type === "test-resume") {
@@ -313,6 +317,15 @@ workerScope.addEventListener("message", (event) => {
       if (!manualBlockAnalysis) throw new Error("Test block analysis advancement is disabled");
       validateBlockAnalysisBudget(action.budget);
       advanceBlockAnalysis(action.budget);
+      sendWorkerMessage(workerScope, { type: "test-block-analysis-advanced" });
+      return;
+    }
+    if (action.type === "test-advance-block-placement") {
+      if (!testMode || !manualBlockAnalysis) throw new Error("Test block placement advancement is disabled");
+      validateBlockAnalysisBudget(action.budget);
+      recorder.recordCommand(Number(simulation.tick_count()), action);
+      simulation.construction_advance_block_placement_for_test(action.budget);
+      sendBlockAnalysisProgress();
       sendWorkerMessage(workerScope, { type: "test-block-analysis-advanced" });
       return;
     }
