@@ -40,6 +40,105 @@ fn airtime_rating_matches_the_force_overlay_bands() {
 }
 
 #[test]
+fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
+    let steel_models = [hybrid_model(), multi_launch_model()];
+    let wood = wooden_twister_model();
+    let upright_hills: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| {
+            piece.family.is_some_and(|family| {
+                matches!(family.feel, HillFeel::Ejector | HillFeel::Floater)
+                    && family.twist.is_none()
+            }) && steel_models.iter().all(|model| model.allows_piece(piece))
+        })
+        .collect();
+    assert_eq!(upright_hills.len(), 11);
+
+    let outer_banks: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| {
+            piece.family.is_some_and(|family| {
+                matches!(
+                    family.twist,
+                    Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                )
+            })
+        })
+        .collect();
+    assert_eq!(outer_banks.len(), upright_hills.len() * 2);
+
+    for upright in upright_hills {
+        let family = upright.family.unwrap();
+        for twist in [HillTwist::OuterBankLeft, HillTwist::OuterBankRight] {
+            let matching: Vec<_> = outer_banks
+                .iter()
+                .filter(|piece| {
+                    let candidate = piece.family.unwrap();
+                    candidate.feel == family.feel
+                        && candidate.height_metres == family.height_metres
+                        && candidate.span_metres == family.span_metres
+                        && candidate.twist == Some(twist)
+                })
+                .collect();
+            assert_eq!(matching.len(), 1, "{} {twist:?}", upright.name);
+            let piece = matching[0];
+            assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
+            assert_eq!(piece.inversion, None);
+            assert!(piece.rated_speeds.is_some(), "{}", piece.name);
+            assert!(!wood.allows_piece(piece), "{}", piece.name);
+            for model in &steel_models {
+                assert!(model.allows_piece(piece), "{} {}", model.name, piece.name);
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
+    let steel_models = [hybrid_model(), multi_launch_model()];
+    let wood = wooden_twister_model();
+    for (feel, size_count) in [(HillFeel::ZeroGRoll, 2), (HillFeel::Stall, 1)] {
+        let pieces: Vec<_> = catalog()
+            .iter()
+            .filter(|piece| piece.family.is_some_and(|family| family.feel == feel))
+            .collect();
+        assert_eq!(pieces.len(), 2 * size_count, "{feel:?}");
+        let mut dimensions: Vec<_> = pieces
+            .iter()
+            .map(|piece| {
+                let family = piece.family.unwrap();
+                (family.height_metres, family.span_metres)
+            })
+            .collect();
+        dimensions.sort_unstable();
+        dimensions.dedup();
+        assert_eq!(dimensions.len(), size_count, "{feel:?}");
+        for (height, span) in dimensions {
+            for twist in [HillTwist::LeftRoll, HillTwist::RightRoll] {
+                let matching: Vec<_> = pieces
+                    .iter()
+                    .filter(|piece| {
+                        let family = piece.family.unwrap();
+                        family.height_metres == height
+                            && family.span_metres == span
+                            && family.twist == Some(twist)
+                    })
+                    .collect();
+                assert_eq!(matching.len(), 1, "{feel:?} {height} x {span} {twist:?}");
+                let piece = matching[0];
+                assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
+                assert_eq!(piece.inversion, Some(Inversion::HeartlineRoll));
+                assert!(piece.rated_speeds.is_some(), "{}", piece.name);
+                assert!(!wood.allows_piece(piece), "{}", piece.name);
+                for model in &steel_models {
+                    assert!(model.allows_piece(piece), "{} {}", model.name, piece.name);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
     let expected_hills: [(&str, &[&str]); 14] = [
         (

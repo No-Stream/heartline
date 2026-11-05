@@ -1,10 +1,10 @@
 use std::sync::{Arc, LazyLock, OnceLock};
 
-use super::profile::{SolvedProfile, embedded_profile};
-use super::roll::RollGeometry;
+use super::profile::{GENERATED_HILL_DESIGNS, SolvedProfile, embedded_profile};
+use super::roll::{RollGeometry, Twist};
 use super::{
-    Bank, Heading, Heartlining, HillFamily, HillFeel, HorizontalCurvature, Inversion, Material,
-    Piece, PieceId, PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
+    Bank, Heading, Heartlining, HillFamily, HillFeel, HillTwist, HorizontalCurvature, Inversion,
+    Material, Piece, PieceId, PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
 };
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
@@ -1514,6 +1514,194 @@ fn build_catalog() -> Vec<Piece> {
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
         piece.clear_arc_table();
         pieces.push(piece);
+    }
+    for (source_id, left_id, right_id, profile_name) in [
+        (
+            EjectorHill8x48,
+            EjectorHill8x48OuterLeft,
+            EjectorHill8x48OuterRight,
+            "EjectorHill8x48",
+        ),
+        (
+            EjectorHill12x64,
+            EjectorHill12x64OuterLeft,
+            EjectorHill12x64OuterRight,
+            "EjectorHill12x64",
+        ),
+        (
+            EjectorHill8x64,
+            EjectorHill8x64OuterLeft,
+            EjectorHill8x64OuterRight,
+            "EjectorHill8x64",
+        ),
+        (
+            EjectorHill12x80,
+            EjectorHill12x80OuterLeft,
+            EjectorHill12x80OuterRight,
+            "EjectorHill12x80",
+        ),
+        (
+            EjectorHill16x96,
+            EjectorHill16x96OuterLeft,
+            EjectorHill16x96OuterRight,
+            "EjectorHill16x96",
+        ),
+        (
+            FloaterHill4x48,
+            FloaterHill4x48OuterLeft,
+            FloaterHill4x48OuterRight,
+            "FloaterHill4x48",
+        ),
+        (
+            FloaterHill8x64,
+            FloaterHill8x64OuterLeft,
+            FloaterHill8x64OuterRight,
+            "FloaterHill8x64",
+        ),
+        (
+            FloaterHill12x80,
+            FloaterHill12x80OuterLeft,
+            FloaterHill12x80OuterRight,
+            "FloaterHill12x80",
+        ),
+        (
+            FloaterHill6x64,
+            FloaterHill6x64OuterLeft,
+            FloaterHill6x64OuterRight,
+            "FloaterHill6x64",
+        ),
+        (
+            FloaterHill12x96,
+            FloaterHill12x96OuterLeft,
+            FloaterHill12x96OuterRight,
+            "FloaterHill12x96",
+        ),
+        (
+            FloaterHill16x112,
+            FloaterHill16x112OuterLeft,
+            FloaterHill16x112OuterRight,
+            "FloaterHill16x112",
+        ),
+    ] {
+        let source = pieces
+            .iter()
+            .find(|piece| piece.id == source_id)
+            .unwrap()
+            .clone();
+        let design = GENERATED_HILL_DESIGNS
+            .iter()
+            .find(|design| design.name == profile_name)
+            .unwrap();
+        let Shape::Profile(profile) = &source.shape else {
+            unreachable!()
+        };
+        for (id, mirrored, twist) in [
+            (left_id, false, HillTwist::OuterBankLeft),
+            (right_id, true, HillTwist::OuterBankRight),
+        ] {
+            let mut piece = source.clone();
+            piece.id = id;
+            piece.name = if mirrored {
+                "Outer-banked hill right"
+            } else {
+                "Outer-banked hill left"
+            };
+            piece.mirrored = mirrored;
+            piece.shape = Shape::RolledProfile(
+                profile.clone(),
+                Twist::OuterBank {
+                    peak: 110.0_f64.to_radians(),
+                    start: design.crest_start,
+                    end: design.crest_end,
+                },
+            );
+            piece.family.as_mut().unwrap().twist = Some(twist);
+            piece.heartlining = Some(Heartlining::Heartlined);
+            piece.rated_speeds = None;
+            piece.clear_arc_table();
+            pieces.push(piece);
+        }
+    }
+    for (left_id, right_id, profile_name, feel, height, span, is_stall) in [
+        (
+            ZeroGRollFastLeft,
+            ZeroGRollFastRight,
+            "ZeroGRollFast",
+            HillFeel::ZeroGRoll,
+            8,
+            86,
+            false,
+        ),
+        (
+            ZeroGRollCompactLeft,
+            ZeroGRollCompactRight,
+            "ZeroGRollCompact",
+            HillFeel::ZeroGRoll,
+            8,
+            60,
+            false,
+        ),
+        (
+            StallLeft,
+            StallRight,
+            "Stall",
+            HillFeel::Stall,
+            13,
+            104,
+            true,
+        ),
+    ] {
+        let profile = Arc::new(embedded_profile(profile_name));
+        let design = GENERATED_HILL_DESIGNS
+            .iter()
+            .find(|design| design.name == profile_name)
+            .unwrap();
+        let endpoint = profile.endpoint();
+        for (id, mirrored, twist) in [
+            (left_id, false, HillTwist::LeftRoll),
+            (right_id, true, HillTwist::RightRoll),
+        ] {
+            let mut piece = straight.clone();
+            piece.id = id;
+            piece.name = match (is_stall, mirrored) {
+                (true, false) => "Stall left",
+                (true, true) => "Stall right",
+                (false, false) => "Zero-g roll left",
+                (false, true) => "Zero-g roll right",
+            };
+            piece.exit.x = (endpoint[0] / 2.0).round() as i32;
+            piece.exit.z = (endpoint[1] / 2.0).round() as i32;
+            piece.mirrored = mirrored;
+            piece.shape = Shape::RolledProfile(
+                profile.clone(),
+                if is_stall {
+                    Twist::Stall {
+                        ramp: 0.25,
+                        hold: 0.5,
+                        start: design.crest_start,
+                        end: design.crest_end,
+                    }
+                } else {
+                    Twist::ZeroGRoll {
+                        ramp: 0.25,
+                        start: design.crest_start,
+                        end: design.crest_end,
+                    }
+                },
+            );
+            piece.inversion = Some(Inversion::HeartlineRoll);
+            piece.heartlining = Some(Heartlining::Heartlined);
+            piece.family = Some(HillFamily {
+                feel,
+                height_metres: height,
+                span_metres: span,
+                twist: Some(twist),
+                design_speed_metres_per_second: design.design_speed,
+            });
+            piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
+            piece.clear_arc_table();
+            pieces.push(piece);
+        }
     }
     for (id, name, bank) in [
         (BankedStraightLeft, "Left-banked straight", Left),

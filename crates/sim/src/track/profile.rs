@@ -200,7 +200,7 @@ pub(super) struct GeneratedHillProfile {
     pub(super) values: &'static [[f32; 4]],
 }
 
-#[cfg(test)]
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(super) struct GeneratedHillDesign {
     pub(super) name: &'static str,
@@ -408,6 +408,11 @@ impl SolvedProfile {
             .fold(f64::INFINITY, f64::min)
     }
     pub(crate) fn sample(&self, distance: f64) -> ([f64; 2], [f64; 2], [f64; 2]) {
+        let (position, first, second, _) = self.sample_with_third(distance);
+        (position, first, second)
+    }
+
+    pub(crate) fn sample_with_third(&self, distance: f64) -> ([f64; 2], [f64; 2], [f64; 2], [f64; 2]) {
         let index = self
             .points
             .partition_point(|point| point.distance < distance)
@@ -419,6 +424,7 @@ impl SolvedProfile {
         let mut position = [0.0; 2];
         let mut first = [0.0; 2];
         let mut second = [0.0; 2];
+        let mut third = [0.0; 2];
         for axis in 0..2 {
             let (p0, p1, v0, v1, k0, k1) = if axis == 0 {
                 (
@@ -450,8 +456,9 @@ impl SolvedProfile {
             position[axis] = ((((a * u + b) * u + c) * u + n0 / 2.0) * u + m0) * u + p0;
             first[axis] = ((((5.0 * a * u + 4.0 * b) * u + 3.0 * c) * u + n0) * u + m0) / length;
             second[axis] = (((20.0 * a * u + 12.0 * b) * u + 6.0 * c) * u + n0) / length.powi(2);
+            third[axis] = ((60.0 * a * u + 24.0 * b) * u + 6.0 * c) / length.powi(3);
         }
-        (position, first, second)
+        (position, first, second, third)
     }
 }
 
@@ -1845,7 +1852,7 @@ mod tests {
             }
             output.push_str("    ] },\n");
         }
-        output.push_str("];\n\n#[cfg(test)]\n#[allow(clippy::approx_constant)]\npub(super) const GENERATED_HILL_DESIGNS: &[GeneratedHillDesign] = &[\n");
+        output.push_str("];\n\n#[allow(clippy::approx_constant)]\npub(super) const GENERATED_HILL_DESIGNS: &[GeneratedHillDesign] = &[\n");
         for entry in entries {
             writeln!(
                 output,

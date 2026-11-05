@@ -9253,7 +9253,6 @@ pub(super) const GENERATED_HILL_PROFILES: &[GeneratedHillProfile] = &[
     ] },
 ];
 
-#[cfg(test)]
 #[allow(clippy::approx_constant)]
 pub(super) const GENERATED_HILL_DESIGNS: &[GeneratedHillDesign] = &[
     GeneratedHillDesign { name: "EjectorHill8x48", design_speed: 19.241231068056585, flank_angle: 0.5406194509796842, insert: 0.0, crest_start: 13.055264231877214, crest_end: 38.55275744265748 },

@@ -560,7 +560,7 @@ fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train
         .filter(|piece| {
             piece
                 .family
-                .is_some_and(|family| family.feel == HillFeel::Ejector)
+                .is_some_and(|family| family.feel == HillFeel::Ejector && family.twist.is_none())
                 && allowed_models
                     .iter()
                     .any(|model| model.allowed_pieces.contains(&piece.id))
