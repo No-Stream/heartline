@@ -51,7 +51,7 @@ test("player driver uses the construction steppers and actions", async ({ page }
   await testRide(page);
   await openRide(page);
   expect(await recorded(page)).toEqual([
-    { type: "construction-select", piece: "TurnSmallStandalone" },
+    { type: "construction-select", piece: "TurnSmallStandalone", exact: true },
     { type: "construction-append" },
     { type: "construction-close" },
     { type: "construction-test" },
@@ -240,13 +240,13 @@ test("the whole build loop runs from the keyboard with the panel focused", async
   for (const key of ["a", "d", "w", "s", "z", "]", "[", "1", "3", "Enter", "Backspace", "Delete", "c", "t", "Escape"]) await page.keyboard.press(key);
   await expect(page.getByRole("checkbox", { name: /Delete track by clicking it/ })).not.toBeChecked();
   expect(await recorded(page)).toEqual([
-    { type: "piece-step", attribute: "turn", step: -1 }, { type: "construction-select", piece: "TurnSmallStandalone" },
-    { type: "piece-step", attribute: "turn", step: 1 }, { type: "construction-select", piece: "Straight" },
-    { type: "piece-step", attribute: "slope", step: 1 }, { type: "construction-select", piece: "LevelToGentleUp" },
-    { type: "piece-step", attribute: "slope", step: -1 }, { type: "construction-select", piece: "Straight" },
+    { type: "piece-step", attribute: "turn", step: -1 }, { type: "construction-select", piece: "TurnSmallStandalone", exact: true },
+    { type: "piece-step", attribute: "turn", step: 1 }, { type: "construction-select", piece: "Straight", exact: true },
+    { type: "piece-step", attribute: "slope", step: 1 }, { type: "construction-select", piece: "LevelToGentleUp", exact: true },
+    { type: "piece-step", attribute: "slope", step: -1 }, { type: "construction-select", piece: "Straight", exact: true },
     { type: "piece-step", attribute: "bank", step: -1 },
-    { type: "piece-step", attribute: "piece", step: 1 }, { type: "construction-select", piece: "TurnSmallStandalone" },
-    { type: "piece-step", attribute: "piece", step: -1 }, { type: "construction-select", piece: "Straight" },
+    { type: "piece-step", attribute: "piece", step: 1 }, { type: "construction-select", piece: "TurnSmallStandalone", exact: true },
+    { type: "piece-step", attribute: "piece", step: -1 }, { type: "construction-select", piece: "Straight", exact: true },
     { type: "piece-group", group: "straight" },
     { type: "piece-group", group: "slope" }, { type: "construction-select", piece: "LevelToGentleUp" },
     { type: "construction-undo" },
@@ -257,7 +257,7 @@ test("the whole build loop runs from the keyboard with the panel focused", async
   await page.keyboard.press("ArrowLeft");
   await expect(page.getByRole("radio", { name: "Small left turn" })).toBeFocused();
   await page.keyboard.press("Enter");
-  expect((await recorded(page)).slice(-2)).toEqual([{ type: "construction-select", piece: "TurnSmallStandalone" }, { type: "construction-append" }]);
+  expect((await recorded(page)).slice(-2)).toEqual([{ type: "construction-select", piece: "TurnSmallStandalone", exact: true }, { type: "construction-append" }]);
 });
 
 test("the builder keeps every piece choice on the Build tab and settings on Colours and Operate @fast", async ({ page }) => {
