@@ -83,6 +83,7 @@ test("a coaster tunnels through a hill and completes a test ride @journey", asyn
 
   const tunnel = tunnelSpans[0]!;
   await openTool(page, "Landscape");
+  await page.getByRole("region", { name: "Landscaping" }).getByLabel("Underground view style").selectOption("cut");
   await page.getByLabel("Underground cut level").fill(String(tunnel[3] - 1));
   await page.getByRole("button", { name: "Show underground" }).click();
   await expect(page.getByRole("button", { name: "Show surface" })).toBeVisible();
