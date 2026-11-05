@@ -123,6 +123,8 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
     "Begin gentle climb", "Climbing small right turn", "End gentle climb",
     "Begin gentle descent", "Gentle descent", "Gentle descent", "End gentle descent", "Small left turn",
     ...Array<string>(7).fill("Straight"), "Large left turn", ...Array<string>(3).fill("Straight"),
+    "Straight", "Straight", "Small left turn", "One-tile straight",
+    "Large left turn", "Large left turn", "Small left turn",
   ];
   for (const [index, name] of returnPieces.entries()) {
     if (index === 0 || name !== returnPieces[index - 1]) await page.getByRole("radio", { name, exact: true }).click();

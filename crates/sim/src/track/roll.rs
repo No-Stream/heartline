@@ -855,7 +855,7 @@ mod tests {
         eprintln!(
             "corkscrew length {:.3} m, minimum radius {:.3} m, midpoint height {:.3} m",
             left.length(),
-            1.0 / left.maximum_curvature,
+            1.0 / left.maximum_curvature(),
             left.sample(left.length() / 2.0).position.z
         );
     }

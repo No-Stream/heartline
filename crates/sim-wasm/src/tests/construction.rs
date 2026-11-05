@@ -1,3 +1,7 @@
+use std::collections::{HashSet, VecDeque};
+
+use super::WasmSimulation;
+
 #[test]
 fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     let simulation = super::WasmSimulation::new(42, 0, String::from("demo"));
@@ -39,7 +43,131 @@ fn diagonal_support_bounds_do_not_fill_its_bounding_rectangle() {
     );
     assert_eq!(baseline.events_for_run(&[]), diagonal.events_for_run(&[]));
 }
-use super::WasmSimulation;
+
+const RETURN_PIECES: [theme_park_sim::track::PieceId; 9] = [
+    theme_park_sim::track::PieceId::Straight,
+    theme_park_sim::track::PieceId::HalfTileStraight,
+    theme_park_sim::track::PieceId::OneTileStraight,
+    theme_park_sim::track::PieceId::TurnSmallStandalone,
+    theme_park_sim::track::PieceId::TurnSmallRightStandalone,
+    theme_park_sim::track::PieceId::TurnLargeStandalone,
+    theme_park_sim::track::PieceId::TurnLargeRightStandalone,
+    theme_park_sim::track::PieceId::OffsetLeft,
+    theme_park_sim::track::PieceId::OffsetRight,
+];
+
+fn state_key(state: theme_park_sim::track::TrackState) -> (i32, i32, i32, u8, u8, u8, u8, u8) {
+    (
+        state.x,
+        state.y,
+        state.z,
+        state.heading as u8,
+        state.slope as u8,
+        state.bank as u8,
+        state.horizontal_curvature as u8,
+        state.vertical_curvature as u8,
+    )
+}
+
+fn return_path(
+    start: theme_park_sim::track::TrackState,
+    target: theme_park_sim::track::TrackState,
+    model: &theme_park_sim::track::CoasterModel,
+) -> Vec<theme_park_sim::track::PieceId> {
+    let templates = theme_park_sim::track::catalog();
+    let mut queue = VecDeque::from([(start, Vec::new())]);
+    let mut visited = HashSet::from([state_key(start)]);
+    while let Some((state, path)) = queue.pop_front() {
+        if state == target {
+            return path;
+        }
+        if path.len() >= 80 {
+            continue;
+        }
+        for id in RETURN_PIECES {
+            let template = templates.iter().find(|piece| piece.id == id).unwrap();
+            if !model.allows_piece(template) {
+                continue;
+            }
+            let Some(next_piece) = template.at(state) else {
+                continue;
+            };
+            let next_state = next_piece.exit;
+            if next_state.x.abs() > 500 || next_state.y.abs() > 500 || next_state.z.abs() > 300 {
+                continue;
+            }
+            if !visited.insert(state_key(next_state)) {
+                continue;
+            }
+            let mut next_path = path.clone();
+            next_path.push(id);
+            queue.push_back((next_state, next_path));
+        }
+    }
+    panic!("no bounded return path from {start:?} to {target:?}");
+}
+
+fn append_return_path(simulation: &mut WasmSimulation) {
+    let construction = simulation.construction.as_ref().unwrap();
+    let route = return_path(
+        construction.end(),
+        construction.start(),
+        construction.model(),
+    );
+    for id in route {
+        simulation.construction_set_chain(false);
+        simulation.construction_select(crate::construction::wire_pieceid(id));
+        simulation.construction_append();
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{id:?}: {}",
+            simulation.construction_message()
+        );
+    }
+    simulation.construction_close();
+    assert!(simulation.construction_message().is_empty());
+    assert!(simulation.construction.as_ref().unwrap().is_closed());
+}
+
+fn append_lift_drop_fixture(simulation: &mut WasmSimulation) {
+    simulation.construction_start(100, 100, 40, 0);
+    for (piece, chain) in [
+        ("LevelToGentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUp", true),
+        ("GentleUpToLevel", true),
+        ("TurnLargeEntry", true),
+        ("TurnLargeExit", false),
+        ("OneTileStraight", false),
+        ("OffsetLeft", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
+        ("LevelToGentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDown", false),
+        ("GentleDownToLevel", false),
+        ("Loop", false),
+        ("OffsetRight", false),
+        ("TurnLargeEntry", false),
+        ("TurnLargeExit", false),
+    ] {
+        simulation.construction_set_chain(chain);
+        simulation.construction_select(piece);
+        simulation.construction_append();
+        assert!(
+            simulation.construction_message().is_empty(),
+            "{piece}: {}",
+            simulation.construction_message()
+        );
+    }
+    append_return_path(simulation);
+}
 
 #[test]
 fn wire_piece_names_round_trip_without_catalog_lookup() {
@@ -914,47 +1042,7 @@ fn coaster_colours_replay_to_the_same_state() {
 #[test]
 fn lift_drop_circuit_completes_lap() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    simulation.construction_start(100, 100, 40, 0);
-    for (piece, chain) in [
-        ("LevelToGentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUpToLevel", true),
-        ("Straight", true),
-        ("OneTileStraight", false),
-        ("OneTileStraight", false),
-        ("OffsetLeft", false),
-        ("TurnLargeEntry", false),
-        ("TurnLargeExit", false),
-        ("LevelToGentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDownToLevel", false),
-        ("Loop", false),
-        ("OffsetRight", false),
-        ("TurnLargeEntry", false),
-        ("TurnLargeExit", false),
-        ("Straight", false),
-        ("OneTileStraight", false),
-        ("OneTileStraight", false),
-    ] {
-        simulation.construction_set_chain(chain);
-        simulation.construction_select(piece);
-        simulation.construction_append();
-        assert!(
-            simulation.construction_message().is_empty(),
-            "{piece}: {}",
-            simulation.construction_message()
-        );
-    }
-    assert!(simulation.construction_can_close());
-    simulation.construction_close();
+    append_lift_drop_fixture(&mut simulation);
     assert!(!simulation.park.support_render_cache.is_empty());
     simulation.construction_test();
     for _ in 0..9000 {
@@ -990,47 +1078,7 @@ fn lift_drop_circuit_completes_lap() {
 #[test]
 fn opening_after_a_completed_test_clears_the_report() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    simulation.construction_start(100, 100, 40, 0);
-    for (piece, chain) in [
-        ("LevelToGentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUp", true),
-        ("GentleUpToLevel", true),
-        ("Straight", true),
-        ("OneTileStraight", false),
-        ("OneTileStraight", false),
-        ("OffsetLeft", false),
-        ("TurnLargeEntry", false),
-        ("TurnLargeExit", false),
-        ("LevelToGentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDown", false),
-        ("GentleDownToLevel", false),
-        ("Loop", false),
-        ("OffsetRight", false),
-        ("TurnLargeEntry", false),
-        ("TurnLargeExit", false),
-        ("Straight", false),
-        ("OneTileStraight", false),
-        ("OneTileStraight", false),
-    ] {
-        simulation.construction_set_chain(chain);
-        simulation.construction_select(piece);
-        simulation.construction_append();
-        assert!(
-            simulation.construction_message().is_empty(),
-            "{piece}: {}",
-            simulation.construction_message()
-        );
-    }
-    assert!(simulation.construction_can_close());
-    simulation.construction_close();
+    append_lift_drop_fixture(&mut simulation);
     simulation.construction_test();
     for _ in 0..9000 {
         simulation.tick();

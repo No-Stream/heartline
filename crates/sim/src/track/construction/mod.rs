@@ -759,7 +759,6 @@ fn same_geometry(first: &Piece, second: &Piece) -> bool {
         && first.shape == second.shape
         && first.tangent_scale == second.tangent_scale
         && first.mirrored == second.mirrored
-        && first.arc_lengths == second.arc_lengths
 }
 
 fn construction_support_error(error: SupportError) -> ConstructionError {

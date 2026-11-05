@@ -43,6 +43,13 @@ TurnLargeStandalone
 Straight
 Straight
 Straight
+Straight
+Straight
+TurnSmallStandalone
+OneTileStraight
+TurnLargeStandalone
+TurnLargeStandalone
+TurnSmallStandalone
 
 [Velocity Viper]
 LaunchLong

@@ -1,4 +1,4 @@
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use super::profile::{SolvedProfile, embedded_profile};
 use super::roll::RollGeometry;
@@ -678,7 +678,7 @@ fn build_catalog() -> Vec<Piece> {
                     HeartlineRoll => (PieceKind::Track, Some(Inversion::HeartlineRoll)),
                     _ => (PieceKind::Track, None),
                 };
-                let mut piece = Piece {
+                Piece {
                     id,
                     name,
                     kind,
@@ -758,10 +758,9 @@ fn build_catalog() -> Vec<Piece> {
                                 - 2.0 * 9.81 * SIXTY_PULL.endpoint()[1])
                                 .sqrt(),
                         }),
-                        // The next 1 m/s scan step exceeds the longitudinal limit.
                         SixtyToSteepDown => Some(RatedSpeeds {
                             minimum_entry: 2.0,
-                            maximum_entry: 28.0,
+                            maximum_entry: 27.0,
                         }),
                         Loop => Some(LOOP_PROFILE.rated_speeds("Loop", 27.5, 1.5, 5.0)),
                         HalfLoopUp => Some(RatedSpeeds {
@@ -781,12 +780,8 @@ fn build_catalog() -> Vec<Piece> {
                     shape,
                     tangent_scale: scale,
                     mirrored: false,
-                    arc_lengths: Vec::new(),
-                    arc_speeds: Vec::new(),
-                    maximum_curvature: 0.0,
-                };
-                piece.rebuild_arc();
-                piece
+                    arc_table: Arc::new(OnceLock::new()),
+                }
             },
         )
         .collect();
@@ -823,7 +818,7 @@ fn build_catalog() -> Vec<Piece> {
         piece.rated_speeds = Some(profile.rated_speeds(name, maximum_entry, 1.5, model_radius));
         piece.structure_material = material;
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (
@@ -886,12 +881,12 @@ fn build_catalog() -> Vec<Piece> {
         entry.id = entry_id;
         entry.name = entry_name;
         entry.exit.horizontal_curvature = curvature;
-        entry.rebuild_arc();
+        entry.clear_arc_table();
         let mut exit = pieces[index].clone();
         exit.id = exit_id;
         exit.name = exit_name;
         exit.entry.horizontal_curvature = curvature;
-        exit.rebuild_arc();
+        exit.clear_arc_table();
         pieces[index].entry.horizontal_curvature = curvature;
         pieces[index].exit.horizontal_curvature = curvature;
         pieces[index].tangent_scale = match curvature {
@@ -901,7 +896,7 @@ fn build_catalog() -> Vec<Piece> {
             | HorizontalCurvature::RightSmall
             | HorizontalCurvature::RightLarge => unreachable!(),
         };
-        pieces[index].rebuild_arc();
+        pieces[index].clear_arc_table();
         pieces.push(entry);
         pieces.push(exit);
     }
@@ -978,7 +973,7 @@ fn build_catalog() -> Vec<Piece> {
             _ => {}
         }
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (id, name, half_tiles, height, kind) in [
@@ -1009,7 +1004,7 @@ fn build_catalog() -> Vec<Piece> {
         piece.exit.x = half_tiles;
         piece.exit.z = height;
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (base, id, name, height) in [
@@ -1026,7 +1021,7 @@ fn build_catalog() -> Vec<Piece> {
         piece.exit.x = 2;
         piece.exit.z = height;
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     let mut full_offset = pieces
@@ -1039,7 +1034,7 @@ fn build_catalog() -> Vec<Piece> {
     full_offset.exit.y = 2;
     full_offset.tangent_scale =
         (full_offset.exit.position() - full_offset.entry.position()).length();
-    full_offset.rebuild_arc();
+    full_offset.clear_arc_table();
     pieces.push(full_offset);
     for (base, id, name) in [
         (TurnSmallStandalone, TwisterFanLeft, "Left fan turn"),
@@ -1080,7 +1075,7 @@ fn build_catalog() -> Vec<Piece> {
             }
             _ => unreachable!(),
         }
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (source, id, name) in [
@@ -1229,7 +1224,7 @@ fn build_catalog() -> Vec<Piece> {
             };
         }
         piece.mirrored = true;
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     for (id, name, bank, exit_bank, barrel) in [
@@ -1289,7 +1284,7 @@ fn build_catalog() -> Vec<Piece> {
             },
             _ => unreachable!(),
         });
-        piece.rebuild_arc();
+        piece.clear_arc_table();
         pieces.push(piece);
     }
     let turn_ids = [
@@ -1336,7 +1331,7 @@ fn build_catalog() -> Vec<Piece> {
                 transition.entry.slope = slope;
                 transition.exit.slope = slope;
                 transition.exit.z = if slope == UpGentle { 4 } else { -4 };
-                transition.rebuild_arc();
+                transition.clear_arc_table();
                 transition
             })
         })
@@ -1356,7 +1351,7 @@ fn build_catalog() -> Vec<Piece> {
                     _ => unreachable!("turn template has an unexpected radius"),
                 };
                 turn.exit.z = if slope == UpGentle { rise } else { -rise };
-                turn.rebuild_arc();
+                turn.clear_arc_table();
                 turn
             })
         })

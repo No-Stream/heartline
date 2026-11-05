@@ -18,13 +18,13 @@ fn main() {
     let t = Instant::now();
     let templates = catalog();
     println!(
-        "catalog() first call (includes profile solves): {:.1} ms, {} pieces",
+        "catalog() first call (templates only; arc tables are lazy): {:.1} ms, {} pieces",
         ms(t),
         templates.len()
     );
     let t = Instant::now();
     let _again = catalog();
-    println!("catalog() second call (arc tables only): {:.1} ms", ms(t));
+    println!("catalog() cached call: {:.1} ms", ms(t));
 
     let origin = TrackState::origin();
     let mut seen = HashSet::new();
