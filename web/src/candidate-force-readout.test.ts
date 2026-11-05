@@ -45,3 +45,36 @@ describe("candidate force readout", () => {
     expect(candidateForceReadout({ ...preview, status: "timedOut" }, "metric")[0]).toBe("The estimate timed out in this piece; force estimates are partial.");
   });
 });
+
+describe("hill force readout", () => {
+  it("formats predicted hill forces and airtime in the selected units", () => {
+    const hill = {
+      entrySpeed: 20,
+      source: "energy" as const,
+      ratedSpeed: { minimumEntry: 16, maximumEntry: 26 },
+      minimumVerticalG: -1, maximumVerticalG: 3.7, airtimeSeconds: 1.25,
+    };
+    expect(candidateForceReadout(null, "metric", hill)).toEqual([
+      "Hill profile estimate (entry speed: energy estimate)",
+      "Estimated entry speed: 72 km/h (within rated range 57.6–93.6 km/h)",
+      "Estimated minimum vertical force: −1 g; maximum vertical force: 3.7 g",
+      "Estimated airtime: 1.3 s",
+    ]);
+    expect(candidateForceReadout(null, "imperial", hill)[1]).toBe("Estimated entry speed: 44.7 mph (within rated range 35.8–58.2 mph)");
+  });
+
+  it("reports rollback and speeds outside the rated range", () => {
+    const hill = {
+      entrySpeed: 30,
+      source: "energy" as const,
+      ratedSpeed: { minimumEntry: 16, maximumEntry: 26 },
+      minimumVerticalG: 0.2, maximumVerticalG: 4, airtimeSeconds: 0,
+    };
+    expect(candidateForceReadout(null, "metric", hill)[1]).toContain("outside rated range");
+    const combined = candidateForceReadout(preview, "metric", { ...hill, source: "simulated" });
+    expect(combined).toContain("Estimated minimum vertical force: −0.5 g (good airtime)");
+    expect(combined).toContain("Hill profile estimate (entry speed: simulated)");
+    expect(candidateForceReadout(null, "metric", { ...hill, minimumVerticalG: null, maximumVerticalG: null, airtimeSeconds: null })).toEqual(["Rollback expected; no hill force estimate is available."]);
+    expect(candidateForceReadout(null, "metric", { ...hill, source: "timedOut", entrySpeed: null, minimumVerticalG: null, maximumVerticalG: null, airtimeSeconds: null })).toEqual(["The estimate timed out before this hill; no force estimate is available."]);
+  });
+});

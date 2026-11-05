@@ -89,7 +89,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_delete(id: number) { wasmMock.constructionDelete(id); wasmMock.constructionTrackLength -= 1; }
     construction_advance_block_analysis(budget: number) { return wasmMock.advanceBlockAnalysis(budget); }
     construction_advance_block_placement_for_test(budget: number) { wasmMock.advanceBlockPlacement(budget); }
-    construction_choices() { return "[]"; }
+    construction_choices_with_preview(_entrySpeed: number | undefined, _status: string) { return "[]"; }
     construction_elements() { return "[]"; }
     construction_selected() { return ""; }
     construction_track() { return JSON.stringify(Array.from({ length: wasmMock.constructionTrackLength }, (_, id) => ({ id, label: "Straight", name: "Straight", group: "straight", slope: "level", kind: "track" }))); }

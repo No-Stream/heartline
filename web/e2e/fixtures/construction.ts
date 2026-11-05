@@ -33,9 +33,9 @@ const state: ConstructionState = {
   type: "construction-state", complete: true, active: true, chain: false, colors: { track: "coral", supports: "timber", trains: "sage" },
   trainLayout: { model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 },
   pieces: [
-    { id: "Straight", label: "Straight", group: "straight", heading: "East", slope: "Level", bank: "Level", refusal: "", wouldTunnel: false, heartlined: null },
-    { id: "TurnSmallStandalone", label: "Standalone small left turn", group: "turn", heading: "North", slope: "Level", bank: "Level", refusal: "", wouldTunnel: false, heartlined: null },
-    { id: "LevelToGentleUp", label: "Begin gentle climb", group: "slope", heading: "East", slope: "UpGentle", bank: "Level", refusal: "The train would collide with terrain.", wouldTunnel: false, heartlined: null },
+    { id: "Straight", label: "Straight", group: "straight", heading: "East", slope: "Level", bank: "Level", refusal: "", wouldTunnel: false, heartlined: null, hillEstimate: null },
+    { id: "TurnSmallStandalone", label: "Standalone small left turn", group: "turn", heading: "North", slope: "Level", bank: "Level", refusal: "", wouldTunnel: false, heartlined: null, hillEstimate: null },
+    { id: "LevelToGentleUp", label: "Begin gentle climb", group: "slope", heading: "East", slope: "UpGentle", bank: "Level", refusal: "The train would collide with terrain.", wouldTunnel: false, heartlined: null, hillEstimate: null },
   ], elements: [], selected: "Straight",
   track: [
     { id: 4, label: "Station", name: "Station", group: "special", slope: "Level", kind: "Station", launchTargetSpeed: null, launchMinimumSpeed: null, launchMaximumSpeed: null },

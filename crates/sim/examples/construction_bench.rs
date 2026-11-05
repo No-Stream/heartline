@@ -25,6 +25,7 @@ fn main() {
             model(&arguments),
             ConstructionQuery::Elements,
         ),
+        "hill" => benchmark_hill(),
         "per-piece" => per_piece(),
         command => panic!("unknown construction benchmark command {command}"),
     }
@@ -209,4 +210,45 @@ fn per_piece() {
     for (elapsed, id, length, err) in rows.iter().take(25) {
         println!("  {elapsed:8.1} ms  {id:?}  length {length:.0} m  {err}");
     }
+}
+
+fn benchmark_hill() {
+    let world = World::new(
+        128,
+        128,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let start = TrackState {
+        x: 50,
+        y: 50,
+        z: 2,
+        ..TrackState::origin()
+    };
+    let mut construction = Construction::new(start, hybrid_model());
+    for id in [
+        PieceId::Station,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::LevelToGentleUp,
+        PieceId::GentleUpToLevel,
+        PieceId::Straight,
+        PieceId::Straight,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    construction.choices(&world, &[]);
+    let t = Instant::now();
+    construction
+        .select_hill_variant(PieceId::EjectorHill8x64, &world, &[])
+        .unwrap();
+    println!("[hybrid] select hill first: {:.2} ms", ms(t));
+    let t = Instant::now();
+    construction
+        .select_hill_variant(PieceId::EjectorHill8x64, &world, &[])
+        .unwrap();
+    println!("[hybrid] select hill cached: {:.2} ms", ms(t));
 }

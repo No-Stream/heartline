@@ -122,7 +122,12 @@ function sendGuestDetail(guestId = selectedGuestId): void {
 let constructionEndSpeedCache: number | undefined;
 
 function sendConstruction(complete = true): void {
-  const pieces = JSON.parse(simulation.construction_choices()) as ConstructionPiece[];
+  const constructionForcePreview = complete
+    ? JSON.parse(simulation.construction_force_preview_json()) as ConstructionForcePreview | null
+    : null;
+  const pieces = JSON.parse(simulation.construction_choices_with_preview(
+    constructionEndSpeed(constructionForcePreview), constructionForcePreview?.status ?? "",
+  )) as ConstructionPiece[];
   const elements = complete ? JSON.parse(simulation.construction_elements()) as ConstructionElement[] : [];
   const selected = simulation.construction_selected();
   const selectedChoice = pieces.find((piece) => piece.id === selected);
@@ -143,9 +148,6 @@ function sendConstruction(complete = true): void {
   const colorNames = JSON.parse(simulation.construction_colors()) as ConstructionColors | null;
   const layoutReport = JSON.parse(simulation.construction_train_layout()) as TrainLayout | null;
   const trainLayout = layoutReport ? parseTrainLayout(layoutReport) : null;
-  const constructionForcePreview = complete
-    ? JSON.parse(simulation.construction_force_preview_json()) as ConstructionForcePreview | null
-    : null;
   if (complete) constructionEndSpeedCache = constructionEndSpeed(constructionForcePreview);
   sendWorkerMessage(outputScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     selected: selected || null, track,

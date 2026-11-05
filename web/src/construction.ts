@@ -549,14 +549,16 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       button.setAttribute("aria-pressed", String(id === current.selected));
       return button;
     }));
+    const selected = current.pieces.find(({ id }) => id === current.selected);
+    const hillEstimate = selected?.hillEstimate ?? null;
+    const forcePreview = current.speedMatch || hillEstimate ? current.candidateForcePreview : null;
     const candidateForce = element("[data-candidate-force-preview]");
-    candidateForce.hidden = !current.candidateForcePreview || !current.speedMatch;
-    candidateForce.replaceChildren(...(current.candidateForcePreview && current.speedMatch ? candidateForceReadout(current.candidateForcePreview, units) : []).map((line) => {
+    candidateForce.hidden = !forcePreview && !hillEstimate;
+    candidateForce.replaceChildren(...candidateForceReadout(forcePreview, units, hillEstimate).map((line) => {
       const paragraph = document.createElement("p");
       paragraph.textContent = line;
       return paragraph;
     }));
-    const selected = current.pieces.find(({ id }) => id === current.selected);
     const selectedElement = current.elements.find(({ id }) => id === current.selected);
     const preview = element("[data-preview]");
     preview.hidden = !selected && !selectedElement;

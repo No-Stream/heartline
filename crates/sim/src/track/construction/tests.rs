@@ -1280,6 +1280,7 @@ fn available_choices_match_model_candidates_before_and_after_closing() {
         .model()
         .available_pieces(construction.end())
         .into_iter()
+        .filter(|piece| piece.family.is_none() || piece.id == construction.selected_hill_variant())
         .map(|piece| (piece.id, piece.exit))
         .collect();
     for closed in [false, true] {
@@ -2629,6 +2630,50 @@ fn completion_finds_known_connections_across_models_and_rotations() {
                     .unwrap();
                 assert!(construction.is_closed());
             }
+        }
+    }
+}
+
+#[test]
+fn hill_choices_validate_only_the_selected_variant() {
+    let world = world();
+    let variants: Vec<_> = templates()
+        .iter()
+        .filter(|piece| piece.family.is_some())
+        .map(|piece| piece.id)
+        .collect();
+    for prefix in [
+        vec![PieceId::Station],
+        vec![PieceId::Station, PieceId::Straight],
+        vec![
+            PieceId::Station,
+            PieceId::LevelToGentleUp,
+            PieceId::GentleUpToLevel,
+        ],
+    ] {
+        let mut construction = Construction::new(start(), hybrid_model());
+        for id in prefix {
+            construction.append(id, &world, &[]).unwrap();
+        }
+        for &id in &variants {
+            construction.select_hill_variant(id, &world, &[]).unwrap();
+            let choices = construction.choices(&world, &[]);
+            let family_choices: Vec<_> = choices
+                .iter()
+                .filter(|choice| variants.contains(&choice.id))
+                .collect();
+            assert_eq!(family_choices.len(), 1);
+            assert_eq!(family_choices[0].id, id);
+            assert_eq!(
+                family_choices[0].result,
+                construction.validate(id, &world, &[])
+            );
+            assert!(
+                construction
+                    .available_choices(&world, &[])
+                    .iter()
+                    .all(|(piece, _)| piece.family.is_none() || piece.id == id)
+            );
         }
     }
 }

@@ -75,6 +75,7 @@ bench-construction:
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements hybrid
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements multi_launch
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements wooden
+	$(CARGO) run --release -p theme-park-sim --example construction_bench -- hill
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- per-piece
 
 bench-player-circuits:

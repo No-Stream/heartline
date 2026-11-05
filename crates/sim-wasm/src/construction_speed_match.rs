@@ -55,16 +55,32 @@ impl WasmSimulation {
         else {
             return "null".into();
         };
-        let candidates: Vec<_> = construction
-            .available_choices(&self.world, &self.facility_obstacles())
-            .into_iter()
-            .filter(|(piece, choice)| {
-                choice.result.is_ok()
-                    && same_family(selected_piece, piece)
-                    && piece.rated_speeds.is_some()
-            })
-            .map(|(piece, _)| piece)
-            .collect();
+        let obstacles = self.facility_obstacles();
+        let candidates: Vec<_> = if selected_piece.family.is_some() {
+            catalog()
+                .iter()
+                .filter(|piece| {
+                    same_family(selected_piece, piece)
+                        && piece.rated_speeds.is_some()
+                        && construction.model().allowed_pieces.contains(&piece.id)
+                        && construction
+                            .validate(piece.id, &self.world, &obstacles)
+                            .is_ok()
+                })
+                .cloned()
+                .collect()
+        } else {
+            construction
+                .available_choices(&self.world, &obstacles)
+                .into_iter()
+                .filter(|(piece, choice)| {
+                    choice.result.is_ok()
+                        && same_family(selected_piece, piece)
+                        && piece.rated_speeds.is_some()
+                })
+                .map(|(piece, _)| piece)
+                .collect()
+        };
         let recommendation =
             entry_speed.and_then(|speed| select_speed_matched_variant(&candidates, speed));
         let result = ConstructionSpeedMatchWire {
