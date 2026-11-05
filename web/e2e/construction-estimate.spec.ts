@@ -70,6 +70,18 @@ test("shows a changing speed and force estimate on an unfinished coaster @fast",
   await expect(page.locator("[data-legend]")).toBeVisible();
   await expect(page.locator("[data-band-legend]")).toBeHidden();
   await expect(topSpeed).toBeVisible();
+  await page.getByRole("tab", { name: "Operate" }).click();
+  const cars = page.locator("[data-cars-per-train]");
+  const capacity = page.locator("[data-train-rider-capacity]");
+  const initialCars = Number(await cars.textContent());
+  const initialCapacity = await capacity.textContent();
+  const initialSamples = await page.evaluate(() => window.gameTest.constructionForcePreview()!.samples);
+  await page.getByRole("button", { name: "Remove one car per train" }).click();
+  await expect(cars).toHaveText(String(initialCars - 1));
+  await expect(capacity).not.toHaveText(initialCapacity!);
+  await expect.poll(() => page.evaluate(() => window.gameTest.constructionForcePreview()!.samples)).not.toEqual(initialSamples);
+  await page.getByRole("tab", { name: "Build" }).click();
+  await expect(estimate).toContainText("Approximate construction estimate");
 });
 
 test("marks forces past the model's comfortable limits on a harsh drop @fast", async ({ page }) => {

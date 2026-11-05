@@ -52,6 +52,7 @@ test.beforeAll(async () => {
         input: {
           index: resolve("web/index.html"),
           "session-replay": resolve("web/e2e/fixtures/session-replay.html"),
+          "cars-replay": resolve("web/e2e/fixtures/cars-replay.html"),
         },
       },
     },
@@ -89,6 +90,29 @@ test("replay waits for a finish-coaster search before confirming the connection 
   const session = parseReplaySession({ format: "theme-park-session", version: 1, build: { gitHash: "test", mode: "development" }, seed: "42", park: "demo", guestCount: 0, commands, checkpoints: [], finalTick: 0 });
   const outcome = await replayWithWorker(page, session);
   expect(outcome.observation.constructionPieces).toBeGreaterThan(5);
+});
+
+test("records and replays a non-default car count through the real worker @fast", async ({ page }) => {
+  await page.goto(new URL("/e2e/fixtures/cars-replay.html", fixtureUrl).href);
+  const session = parseReplaySession({
+    format: "theme-park-session", version: 1, seed: "42", park: "new", guestCount: 0,
+    commands: [
+      { tick: 0, command: { type: "construction-select", piece: "model:hybrid" } },
+      { tick: 0, command: { type: "construction-start", x: 100, y: 100, z: 20, heading: 0 } },
+      { tick: 0, command: { type: "construction-set-cars-per-train", cars: 4 } },
+    ],
+    checkpoints: [], finalTick: 300,
+  });
+  const original = await page.evaluate((value) => window.replayCarsSession(value), session);
+  expect(original.trainLayout).toMatchObject({ model: "hybrid", carsPerTrain: 4 });
+  expect(original.recording.commands).toContainEqual({ tick: 0, command: { type: "construction-set-cars-per-train", cars: 4 } });
+  expect(original.recording.checkpoints).toHaveLength(1);
+
+  const recordedSession = parseReplaySession({ format: "theme-park-session", version: 1, ...original.recording });
+  const replayed = await page.evaluate((value) => window.replayCarsSession(value), recordedSession);
+  expect(replayed.trainLayout).toEqual(original.trainLayout);
+  expect(replayed.recording.checkpoints).toEqual(original.recording.checkpoints);
+  expect(replayed.recording.commands).toEqual(original.recording.commands);
 });
 
 async function replaySessionsDirectory(): Promise<{ readonly path: string; readonly session: ReplaySession }[]> {

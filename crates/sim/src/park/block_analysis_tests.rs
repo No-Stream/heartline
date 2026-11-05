@@ -1,12 +1,12 @@
 use super::super::Park;
 use super::{BlockCommandError, block_physics_config};
-use crate::facilities::ParkFacilities;
+use crate::facilities::{ParkFacilities, coaster_access_openings, coaster_facility};
 use crate::guests::park::ParkGuests;
 use crate::physics::{Circuit, PhysicsConfig, Train};
 use crate::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch, brake_runs};
 use crate::track::construction::Construction;
 use crate::track::{PieceId, TrackState, TrainConfiguration, hybrid_model};
-use crate::world::{Path, Position, Surface, World};
+use crate::world::{Path, PathKind, Position, Surface, World};
 
 fn advance_successfully(park: &mut Park, work_steps: u32) -> bool {
     let (complete, error) = park.construction_advance_block_analysis(work_steps);
@@ -352,4 +352,112 @@ fn throughput_is_cached_and_clear_resets_analysis_state() {
     assert!(park.block_throughput_reason.is_empty());
     assert!(park.block_throughput_estimator.is_none());
     assert!(park.block_throughput_cache.is_empty());
+}
+
+#[test]
+fn cars_per_train_changes_configuration_and_invalidates_analysis() {
+    let mut park = block_test_park();
+    park.install_block_layout(unverified_layout(&park), false);
+    let old_train = construction_inputs(&park).1;
+    assert_eq!(old_train.cars, 6);
+    assert_eq!(
+        park.construction_set_cars_per_train(3),
+        Err(BlockCommandError::InvalidCarsPerTrain)
+    );
+    assert!(park.block_layout.is_some());
+    park.construction_set_cars_per_train(4).unwrap();
+    let train = construction_inputs(&park).1;
+    assert_eq!(train.cars, 4);
+    assert_eq!(train.length_metres, 12.0);
+    assert!(park.block_placement_search.is_some());
+    assert_eq!(park.block_layout.as_ref().unwrap().train().cars, 4);
+    park.construction_set_cars_per_train(6).unwrap();
+    assert_eq!(
+        construction_inputs(&park).1.length_metres,
+        old_train.length_metres
+    );
+}
+
+#[test]
+fn cars_per_train_ranges_preserve_existing_defaults() {
+    use crate::track::{multi_launch_model, wooden_twister_model};
+    for (model, minimum, maximum, default) in [
+        (hybrid_model(), 4, 8, 6),
+        (wooden_twister_model(), 4, 12, 12),
+        (multi_launch_model(), 3, 6, 6),
+    ] {
+        assert_eq!(model.cars_per_train_range(), minimum..=maximum);
+        assert_eq!(model.train.cars, default);
+    }
+}
+
+#[test]
+fn cars_per_train_rejects_changes_while_open_and_preserves_noop_analysis() {
+    let mut park = block_test_park();
+    park.install_block_layout(unverified_layout(&park), false);
+    park.construction_set_cars_per_train(6).unwrap();
+    assert!(park.block_layout.is_some());
+    park.coaster_open = true;
+    assert_eq!(
+        park.construction_set_cars_per_train(4),
+        Err(BlockCommandError::CoasterOpen)
+    );
+    assert_eq!(construction_inputs(&park).1.cars, 6);
+    assert!(park.block_layout.is_some());
+}
+
+#[test]
+fn cars_per_train_controls_physics_and_station_capacity() {
+    let mut park = block_test_park();
+    let [queue, exit] = coaster_access_openings(park.construction.as_ref().unwrap()).unwrap();
+    let queue_entry = Position {
+        x: queue.position.x - 1,
+        ..queue.position
+    };
+    for position in [queue.position, exit.position, queue_entry] {
+        assert!(
+            park.world
+                .set_surface(
+                    position.x,
+                    position.y,
+                    Surface {
+                        corners: [position.height; 4],
+                        water: None,
+                    }
+                )
+                .is_empty()
+        );
+    }
+    park.world
+        .build_path_route(queue_entry, queue_entry, PathKind::Normal, 0)
+        .unwrap();
+    park.world
+        .build_path_route(exit.position, exit.position, PathKind::Normal, 0)
+        .unwrap();
+    park.world
+        .build_path_route(queue_entry, queue.position, PathKind::Queue, 0)
+        .unwrap();
+
+    for (cars, capacity) in [(4, 16), (8, 32)] {
+        park.construction_set_cars_per_train(cars).unwrap();
+        let construction = park.construction.as_ref().unwrap();
+        let facility = coaster_facility(&park.world, construction, 1, 0).unwrap();
+        assert_eq!(facility.capacity, capacity);
+
+        let circuit = construction.circuit().unwrap();
+        let mut train = Train::new(
+            &circuit,
+            &construction.model().train,
+            PhysicsConfig::default(),
+            100.0,
+            10.0,
+        );
+        train.step(&circuit);
+        let frame = train.readings().last().unwrap();
+        assert_eq!(frame.len(), usize::from(cars));
+        assert!(
+            (frame[0].distance - frame.last().unwrap().distance - 3.0 * f64::from(cars - 1)).abs()
+                < 1e-9
+        );
+    }
 }
