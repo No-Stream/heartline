@@ -177,9 +177,3 @@
   padding-left: 0.65rem;
   border-left: 1px solid color-mix(in srgb, var(--guest-ink) 24%, var(--transparent));
 }
-
-@media (prefers-reduced-motion: no-preference) {
-  [data-testid="guest-panel"] {
-    transition: left 110ms ease-out, top 110ms ease-out;
-  }
-}
