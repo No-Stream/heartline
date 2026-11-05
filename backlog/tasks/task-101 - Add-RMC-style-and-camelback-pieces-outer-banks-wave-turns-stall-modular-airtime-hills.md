@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-05 01:41'
+updated_date: '2026-11-05 05:43'
 labels: []
 dependencies:
   - TASK-95
@@ -33,4 +33,10 @@ Owner request 2026-11-04. Add Rocky Mountain Construction style elements to Timb
 Owner 2026-11-04: variety in airtime moments is key, especially for RMC-style coasters. Proposed interface: one 'Airtime hill' element with an inspector (feel: ejector / floater / speed hill / stall; height stepper; length; twist: none / banked / outer bank / wave turn; live predicted airtime g and seconds), solved to the target force by the TASK-95 profile solver, chainable into camelback runs (repeat-last-hill key or a run preset). Awaiting owner confirmation of the interface direction.
 
 Owner approved the airtime hill interface on 2026-11-04: one parameterised 'Airtime hill' element (feel: ejector / floater / speed hill / stall; height; length; twist: none / banked / outer bank / wave turn; live predicted airtime g and seconds), solved to the target force by the TASK-95 profile solver, chainable into camelback runs (repeat-last-hill key or run preset).
+
+2026-11-04 owner: make elements modular with a strong default; players can tweak an element, and every element shows its predicted forces and speeds before placing. Fable's six plan questions take their defaults (200 deg/s roll cap, drop the constant-lean banked hill, 110 deg outer bank, one stall, skip the step-up under-flip, upright hills only on Briar Blitz).
+
+2026-11-04 owner: rate every force moment as weak / good / great / too much, not just the g value. Airtime example (vertical g at the heart): about 0 g weak ('an airtime hill offering 0 g is a little sad'); -0.3 to -0.8 g good (floater); -1.0 to -1.3 g great ('-1 g or a hair more is great'); past the model limit (about -1.5 g) too much; about -2 g dangerous. Same idea for positive vertical and lateral. Use the bands in scoring (great airtime raises excitement, too much raises intensity and nausea), in the building overlay labels (TASK-105, bands table in TypeScript), and as the airtime hill's default targets (TASK-101).
+
+2026-11-04 owner: wants force-vector-design style building. Elements are sized for the incoming speed by default: when the player picks a loop or camelback, the builder preselects the grid size whose design speed matches the predicted entry speed (from the TASK-105 construction estimate), so a loop gives strong but reasonable positives and an ejector camelback gives 'great' airtime (about -1.1 g) by default. The preview shows the expected forces with their rating band, and says so when no size fits. Feel is the primary hill setting; height and length remain tweakable. Do not name real rides in the UI.
 <!-- SECTION:NOTES:END -->

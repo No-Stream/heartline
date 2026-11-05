@@ -11,7 +11,7 @@ while true; do
   for slot in $(seq 1 "$slot_count"); do
     exec 9>"$slot_directory/$slot"
     if flock --nonblock 9; then
-      exec nice -n 10 "$@"
+      exec "$(dirname "$0")/run-pinned.sh" "$@"
     fi
     exec 9>&-
   done
