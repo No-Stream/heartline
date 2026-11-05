@@ -8,6 +8,7 @@ pub mod construction;
 pub mod curves;
 pub mod models;
 pub mod supports;
+#[cfg(test)]
 mod vertical_top_hat;
 
 pub use catalog::catalog;

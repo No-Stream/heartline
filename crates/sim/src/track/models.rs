@@ -533,6 +533,7 @@ pub fn multi_launch_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                LaunchedTopHat,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,

@@ -18,7 +18,7 @@ test.beforeAll(async () => {
   pieces = JSON.parse(execFileSync(cargo, ["run", "--quiet", "--release", "-p", "theme-park-sim", "--example", "piece_visual_fixture"], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })) as CatalogPiece[];
   if (!pieces.length) throw new Error("The coaster model has no pieces");
   for (const name of [
-    "TopHat", "HalfLoopUp", "HalfLoopDown", "HalfCorkscrewLeftUp", "HalfCorkscrewRightUp", "HalfCorkscrewLeftDown", "HalfCorkscrewRightDown",
+    "TopHat", "LaunchedTopHat", "HalfLoopUp", "HalfLoopDown", "HalfCorkscrewLeftUp", "HalfCorkscrewRightUp", "HalfCorkscrewLeftDown", "HalfCorkscrewRightDown",
     "LevelToSixtyUp", "SixtyUpToLevel", "LevelToSixtyDown", "SixtyDownToLevel",
     "BankedDropLeft", "BankedDropRight", "TwistedDropLeft", "TwistedDropRight", "BarrelDropLeft", "BarrelDropRight",
   ]) {

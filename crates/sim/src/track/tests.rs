@@ -1841,24 +1841,24 @@ fn classic_corkscrew_has_a_larger_track_path_than_heartline_roll() {
 
 #[test]
 fn top_hat_has_a_tall_summit_and_level_connectors() {
-    let piece = catalog()
-        .iter()
-        .find(|piece| piece.id == PieceId::TopHat)
-        .unwrap();
-    let midpoint = piece.sample(piece.length() / 2.0);
-    assert!(midpoint.position.z >= 29.0);
-    let slopes: Vec<_> = (0..=1000)
-        .map(|index| {
-            piece
-                .sample(piece.length() * (f64::from(index) / 1000.0))
-                .tangent
-                .z
-        })
-        .collect();
-    assert!(slopes.iter().copied().fold(0.0, f64::max) > 0.95);
-    assert!(slopes.iter().copied().fold(0.0, f64::min) < -0.95);
-    near_vec(piece.sample(0.0).tangent, piece.entry.tangent());
-    near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
+    for (id, height) in [(PieceId::TopHat, 30.0), (PieceId::LaunchedTopHat, 38.0)] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let midpoint = piece.sample(piece.length() / 2.0);
+        assert!((midpoint.position.z - height).abs() < 0.01);
+        let slopes: Vec<_> = (0..=1000)
+            .map(|index| {
+                piece
+                    .sample(piece.length() * (f64::from(index) / 1000.0))
+                    .tangent
+                    .z
+            })
+            .collect();
+        assert!(slopes.iter().copied().fold(0.0, f64::max) > 0.65);
+        assert!(slopes.iter().copied().fold(0.0, f64::min) < -0.65);
+        assert!(piece.rated_speeds.is_some());
+        near_vec(piece.sample(0.0).tangent, piece.entry.tangent());
+        near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
+    }
 }
 
 #[test]

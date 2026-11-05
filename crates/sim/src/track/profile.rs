@@ -1495,7 +1495,27 @@ mod tests {
         model_radius: f64,
     }
 
-    const HILL_CASES: [HillCase; 14] = [
+    const HILL_CASES: [HillCase; 16] = [
+        HillCase {
+            name: "BriarTopHat",
+            height: 30.0,
+            span: 120.0,
+            design_speed: 27.0,
+            flank_angle: 45.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -0.5,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "LaunchedTopHat",
+            height: 38.0,
+            span: 160.0,
+            design_speed: 31.3,
+            flank_angle: 45.0_f64.to_radians(),
+            pull_force: 4.2,
+            crest_force: -1.2,
+            model_radius: 8.0,
+        },
         HillCase {
             name: "EjectorHill8x48",
             height: 8.0,

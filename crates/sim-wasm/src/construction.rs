@@ -1645,6 +1645,7 @@ define_piece_id_wire_names!(
     HalfCorkscrewLeftDown,
     HalfCorkscrewRightDown,
     TopHat,
+    LaunchedTopHat,
     LevelToSixtyUp,
     SixtyUpToLevel,
     LevelToSixtyDown,

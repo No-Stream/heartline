@@ -79,6 +79,9 @@ fn next_connector(piece: &Piece, state: TrackState) -> TrackState {
 }
 
 fn level_return_path(start: TrackState, templates: &[Piece]) -> Vec<PieceId> {
+    let margin = 64;
+    let x_bounds = start.x.min(0) - margin..=start.x.max(0) + margin;
+    let y_bounds = start.y.min(0) - margin..=start.y.max(0) + margin;
     let mut queue = VecDeque::from([(start, Vec::new())]);
     let mut visited = HashSet::from([connector_key(start)]);
     while let Some((state, path)) = queue.pop_front() {
@@ -98,7 +101,7 @@ fn level_return_path(start: TrackState, templates: &[Piece]) -> Vec<PieceId> {
                 continue;
             }
             let next = next_connector(template, state);
-            if next.x.abs() > 300 || next.y.abs() > 300 || next.z.abs() > 300 {
+            if !x_bounds.contains(&next.x) || !y_bounds.contains(&next.y) || next.z != 0 {
                 continue;
             }
             if !visited.insert(connector_key(next)) {
@@ -463,11 +466,10 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
     ];
     let allowed_models = models();
     for piece in catalog().iter().filter(|piece| {
-        // TASK-98 has not assigned TopHat a rated speed window yet.
-        piece.id != TopHat
-            && (piece.inversion.is_some()
-                || sixty_transitions.contains(&piece.id)
-                || drops.contains(&piece.id))
+        matches!(piece.id, TopHat | LaunchedTopHat)
+            || piece.inversion.is_some()
+            || sixty_transitions.contains(&piece.id)
+            || drops.contains(&piece.id)
     }) {
         if allowed_models.iter().any(|model| model.allows_piece(piece)) {
             let rated = piece
@@ -515,7 +517,9 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
                     let is_ascending = template.exit.position().z > template.entry.position().z
                         || matches!(
                             template.id,
-                            PieceId::HalfLoopUp
+                            PieceId::TopHat
+                                | PieceId::LaunchedTopHat
+                                | PieceId::HalfLoopUp
                                 | PieceId::Loop
                                 | PieceId::LoopRight
                                 | PieceId::LargeLoop

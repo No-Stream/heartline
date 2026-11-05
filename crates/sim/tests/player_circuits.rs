@@ -136,6 +136,63 @@ fn build_player_circuit(
 }
 
 #[test]
+fn player_journeys_build_and_ride_both_top_hats() {
+    for (name, model, top_hat_id) in [
+        (
+            "Velocity Viper",
+            multi_launch_model(),
+            PieceId::LaunchedTopHat,
+        ),
+        ("Briar Blitz", wooden_twister_model(), PieceId::TopHat),
+    ] {
+        let circuit = build_player_circuit(name, model.clone());
+        let top_hat_index = circuit
+            .pieces()
+            .iter()
+            .position(|piece| piece.id == top_hat_id)
+            .unwrap_or_else(|| panic!("{name} journey has no {top_hat_id:?}"));
+        if name == "Velocity Viper" {
+            assert_eq!(circuit.pieces()[top_hat_index - 1].kind, PieceKind::Launch);
+        }
+        let top_hat_start: f64 = circuit.pieces()[..top_hat_index]
+            .iter()
+            .map(|piece| piece.length())
+            .sum();
+        let top_hat = &circuit.pieces()[top_hat_index];
+        let top_hat_end = top_hat_start + top_hat.length();
+        let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+        let outcome = (0..200_000)
+            .find_map(|_| run.step(&circuit))
+            .unwrap_or_else(|| panic!("{name} test ride did not finish"));
+        let report = &outcome.reports[0];
+        assert!(
+            report.completed && !outcome.recovered,
+            "{name}: {:?}",
+            report.notes
+        );
+        assert!(
+            report.furthest_distance >= top_hat_end,
+            "{name} did not clear its top hat"
+        );
+        let entry_sample = report
+            .samples
+            .iter()
+            .min_by(|left, right| {
+                (left.distance - top_hat_start)
+                    .abs()
+                    .total_cmp(&(right.distance - top_hat_start).abs())
+            })
+            .unwrap();
+        let rated = top_hat.rated_speeds.unwrap();
+        assert!(
+            (rated.minimum_entry..=rated.maximum_entry).contains(&entry_sample.speed),
+            "{name} top-hat entry speed {} outside {rated:?}",
+            entry_sample.speed
+        );
+    }
+}
+
+#[test]
 fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
     let circuits = [
         ("Timber Tumbler", hybrid_model()),
