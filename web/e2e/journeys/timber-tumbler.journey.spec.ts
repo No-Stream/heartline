@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { readFile, writeFile } from "node:fs/promises";
 import { readCircuit } from "../player/circuits";
 import { fileURLToPath } from "node:url";
 import { clickCanvas, closeCircuit, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, selectUnits, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
+import { parseReplaySession } from "../../src/session-replay";
 
 test("Timber Tumbler player journey @journey", async ({ page }) => {
   test.setTimeout(180_000);
@@ -167,10 +169,6 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await clickCanvas(page, overlayPick);
   await expect(page.locator("[data-inspection]")).toContainText("Vertical:");
 
-  await page.getByRole("button", { name: "Delete Gentle climb, piece 3" }).click();
-  await expect(page.getByRole("button", { name: "Test coaster" })).toBeDisabled();
-  await expect(page.getByLabel("Track overlay")).toBeDisabled();
-
   phase("ride test");
   if (process.env.RECORD_JOURNEY_SESSIONS === "1") {
     await openTool(page, "Watch");
@@ -178,6 +176,15 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
     await page.getByRole("button", { name: "Export session", exact: true }).click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/^session-.*\.json$/);
-    await download.saveAs(fileURLToPath(new URL("../sessions/timber-tumbler-built.json", import.meta.url)));
+    const recordingPath = await download.path();
+    if (!recordingPath) throw new Error("The exported journey session is unavailable");
+    const session = parseReplaySession(JSON.parse(await readFile(recordingPath, "utf8")) as unknown);
+    const sessionPath = fileURLToPath(new URL("../sessions/timber-tumbler-built.json", import.meta.url));
+    await writeFile(sessionPath, `${JSON.stringify({ ...session, expect: { constructionClosed: true } }, null, 2)}\n`);
+    await openTool(page, "Coaster");
   }
+
+  await page.getByRole("button", { name: "Delete Gentle climb, piece 3" }).click();
+  await expect(page.getByRole("button", { name: "Test coaster" })).toBeDisabled();
+  await expect(page.getByLabel("Track overlay")).toBeDisabled();
 });
