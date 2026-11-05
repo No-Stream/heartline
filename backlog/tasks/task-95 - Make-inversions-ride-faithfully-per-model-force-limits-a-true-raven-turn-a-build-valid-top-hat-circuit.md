@@ -3,10 +3,10 @@ id: TASK-95
 title: >-
   Make inversions ride faithfully: per-model force limits, a true raven turn, a
   build-valid top hat circuit
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-04 10:29'
-updated_date: '2026-11-04 19:39'
+updated_date: '2026-11-05 04:22'
 labels:
   - coaster
   - construction
@@ -37,4 +37,12 @@ Follow-up to TASK-89 (00c93be). (1) Models define minimum curve radii but no for
 2026-11-04: half-loop milestone met on branch (6be1f3e): 38 m rise, 3.95-3.96 g full-train peaks across the rated window 27.96-31.3 m/s, down from about 19 g. Job task-mw26x03f-9m6xa6 implements the remaining work items; TopHat untouched pending the owner's decision.
 
 2026-11-04 evening: the first implementation stopped unfinished after 4 hours. A Fable audit (plan section 'Audit and revised plan') found the 284 m heartline roll came from measuring longitudinal force along the tilted rail, the long corkscrews from a too-concentrated roll schedule and a modern-sized radius, and the slow construction from a brute-force support self-clearance check plus per-click catalog rebuilds. Work continues on branch forces-fixes (seven ordered tasks); the old inversion-forces worktree has a stray Codex thread and is no longer used.
+
+2026-11-04 late: merged to master as 0cb7533. Luna's embedded profile table (381aa05) was replaced after an independent Terra review found runtime curvature decoupled from the path; now 512-point uniform tables from one interpolant (46bcacb), solver no longer emits near-duplicate points, SixtyToSteepDown window restored to 28 m/s. Journeys re-routed for the resized pieces and the Timber Tumbler session re-recorded. Plan outcome section has the measured numbers.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Inversions, drops and 60 degree transitions keep full trains inside per-model rider force limits across rated entry-speed bands; corkscrews are transition helices and half corkscrews are half rolls; solved profiles are embedded; construction queries are within the synchronous worker budget. Gates: make lint, make test, make journeys (8/8) on the merged branch.
+<!-- SECTION:FINAL_SUMMARY:END -->
