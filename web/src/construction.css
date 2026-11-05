@@ -97,6 +97,9 @@
 .builder__elements { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem; }
 .builder__element { display: flex; align-items: center; gap: 0.3rem; text-align: left; cursor: pointer; }
 .builder__element[aria-pressed="true"] { outline: 2px solid var(--teal); }
+.builder__element-group { grid-column: 1 / -1; display: grid; gap: 0.25rem; }
+.builder__element-group h4 { margin: 0; font-size: 0.78rem; }
+.builder__element-group-items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem; }
 .track-chip__chain { font-size: 0.7rem; font-weight: bold; }
 .builder__group { display: grid; grid-template-columns: 4.6rem 1fr; align-items: start; gap: 0.4rem; }
 .builder__group h3 { padding-top: 0.55rem; }
