@@ -115,35 +115,28 @@ fn inversion_pieces_identify_their_heartlining() {
             "{:?}",
             piece.id
         );
-        if let Some(heartlining) = piece.heartlining {
-            let label = match heartlining {
-                Heartlining::Heartlined => "(heartlined)",
-                Heartlining::NotHeartlined => "(not heartlined)",
-            };
-            assert!(piece.name.contains(label), "{:?}: {}", piece.id, piece.name);
-        }
+        assert!(
+            !piece.name.contains("(heartlined)"),
+            "{:?}: {}",
+            piece.id,
+            piece.name
+        );
+        assert!(
+            !piece.name.contains("(not heartlined)"),
+            "{:?}: {}",
+            piece.id,
+            piece.name
+        );
     }
 }
 
 #[test]
 fn half_corkscrew_ids_display_as_up_and_down_half_rolls() {
     let expected_names = [
-        (
-            PieceId::HalfCorkscrewLeftUp,
-            "Left half roll up (not heartlined)",
-        ),
-        (
-            PieceId::HalfCorkscrewLeftDown,
-            "Left half roll down (not heartlined)",
-        ),
-        (
-            PieceId::HalfCorkscrewRightUp,
-            "Right half roll up (not heartlined)",
-        ),
-        (
-            PieceId::HalfCorkscrewRightDown,
-            "Right half roll down (not heartlined)",
-        ),
+        (PieceId::HalfCorkscrewLeftUp, "Left half roll up"),
+        (PieceId::HalfCorkscrewLeftDown, "Left half roll down"),
+        (PieceId::HalfCorkscrewRightUp, "Right half roll up"),
+        (PieceId::HalfCorkscrewRightDown, "Right half roll down"),
     ];
     let pieces = catalog();
 
