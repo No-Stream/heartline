@@ -45,7 +45,7 @@ window.renderRiderOrientations = async () => {
     ...buildTrainQuads(poses, view, viewport, fixturePaint(currentAtlas), demoTrain),
     ...buildRiderQuads(poses, view, viewport, currentAtlas, scale, demoTrain),
   ];
-  renderer.render(world, camera, 0, [geometry]);
+  renderer.render({ world: world, camera: camera, waterFrame: 0, geometryPasses: [geometry] });
   const pickRider = (rider: typeof riders[number]): boolean => {
     const minX = Math.floor(Math.min(...rider.vertices.map((vertex) => vertex.x)));
     const maxX = Math.ceil(Math.max(...rider.vertices.map((vertex) => vertex.x)));
@@ -65,13 +65,13 @@ window.renderRiderOrientations = async () => {
   const maxY = Math.max(...upright.vertices.map((vertex) => vertex.y));
   const renderWithOccluder = (depth: number) => {
     const vertices = [[minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY]].map(([x, y]) => ({ x, y, depth, height: 0, u: 0, v: 0 })) as typeof upright.vertices;
-    renderer.render(world, camera, 0, [geometry, () => [{ vertices, color: [0, 0, 0, 1] as const, kind: "support", id: "occluder", tileX: 0, tileY: 0 }]]);
+    renderer.render({ world: world, camera: camera, waterFrame: 0, geometryPasses: [geometry, () => [{ vertices, color: [0, 0, 0, 1] as const, kind: "support", id: "occluder", tileX: 0, tileY: 0 }]] });
   };
   renderWithOccluder(Math.max(...upright.vertices.map((vertex) => vertex.depth)) + 1);
   const hiddenByNearerGeometry = !pickRider(upright);
   renderWithOccluder(Math.min(...upright.vertices.map((vertex) => vertex.depth)) - 1);
   const visibleOverFartherGeometry = pickRider(upright);
-  renderer.render(world, camera, 0, [geometry]);
+  renderer.render({ world: world, camera: camera, waterFrame: 0, geometryPasses: [geometry] });
   return Object.fromEntries(riders.map((rider, index) => {
     const [topLeft, topRight, bottomRight, bottomLeft] = rider.vertices;
     const topMinusBottom = { x: (topLeft.x + topRight.x - bottomLeft.x - bottomRight.x) / 2, y: (topLeft.y + topRight.y - bottomLeft.y - bottomRight.y) / 2 };
@@ -145,11 +145,11 @@ window.renderTrackFixture = async (rotation) => {
     trainPoses: new Float32Array([1, 2.5, 3.5, 1, 1, 0, 0, 0, 0, 1, 3]),
   };
   const camera = { centerX: 4, centerY: 3.5, zoom: 2.5, rotation };
-  renderer.render(world, camera, 0, [(renderCamera, viewport, renderAtlas, scale) => [
+  renderer.render({ world: world, camera: camera, waterFrame: 0, geometryPasses: [(renderCamera, viewport, renderAtlas, scale) => [
     ...buildTrackQuads(world.coasterRails, world.coasterTies, world.coasterSupports, renderCamera, viewport, fixturePaint(renderAtlas)),
     ...buildTrainQuads(world.trainPoses, renderCamera, viewport, fixturePaint(renderAtlas), demoTrain),
     ...buildRiderQuads(world.trainPoses, renderCamera, viewport, renderAtlas, scale, demoTrain),
-  ]]);
+  ]] });
   const picks = new Set<string>();
   for (const point of [{ x: 3, y: 3.5, z: 1 }, { x: 4, y: 5, z: 2 }]) {
     const screen = projectWorld(camera, canvas, point);

@@ -9,6 +9,7 @@ export class RenderClock<Snapshot extends { tickCount: number }> {
   private snapshots: Snapshot[] = [];
   private renderTick: number | undefined;
   private speed = 1;
+  private paused = false;
   private bufferingAfterSpeedIncrease = false;
   private lastFrameTime: number | undefined;
 
@@ -18,6 +19,11 @@ export class RenderClock<Snapshot extends { tickCount: number }> {
     if (!Number.isInteger(speed) || speed < 1 || speed > 16) throw new RangeError("Invalid game speed");
     this.bufferingAfterSpeedIncrease = speed > this.speed && this.renderTick !== undefined;
     this.speed = speed;
+  }
+
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+    this.lastFrameTime = undefined;
   }
 
   push(snapshot: Snapshot): boolean {
@@ -35,7 +41,7 @@ export class RenderClock<Snapshot extends { tickCount: number }> {
   frame(now: number): RenderFrame<Snapshot> | undefined {
     if (this.renderTick === undefined) return undefined;
     const latest = this.snapshots[this.snapshots.length - 1];
-    if (this.lastFrameTime !== undefined) {
+    if (!this.paused && this.lastFrameTime !== undefined) {
       const elapsedTicks = Math.max(0, now - this.lastFrameTime) * this.ticksPerSecond * this.speed / 1000;
       const targetTick = latest.tickCount - 3 * this.speed;
       if (this.bufferingAfterSpeedIncrease && targetTick >= this.renderTick) this.bufferingAfterSpeedIncrease = false;

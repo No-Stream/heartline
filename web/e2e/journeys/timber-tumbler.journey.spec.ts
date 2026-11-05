@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readCircuit } from "../player/circuits";
 import { fileURLToPath } from "node:url";
-import { closeCircuit, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
+import { clickCanvas, closeCircuit, layPath, openTool, placeFacility, placePiece as placeSelectedPiece, placeStation, selectUnits, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
 
 test("Timber Tumbler player journey @journey", async ({ page }) => {
   test.setTimeout(180_000);
@@ -139,10 +139,37 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await setGameSpeed(page, 16);
   await openTool(page, "Coaster");
   await testRide(page);
+  await waitForState(page, async () => (await page.getByRole("region", { name: "Coaster construction" }).getByRole("status").textContent()) === "Train completed a lap.", { ticks: 30_000 });
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
   await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
   expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
+
+  const maximumHeight = page.locator("[data-report-maximum-height]");
+  const metricMaximumHeight = Number((await maximumHeight.textContent())?.match(/\d+(?:\.\d+)?/)?.[0]);
+  await selectUnits(page, "imperial");
+  const imperialMaximumHeight = Number((await maximumHeight.textContent())?.match(/\d+(?:\.\d+)?/)?.[0]);
+  expect(metricMaximumHeight).toBeCloseTo(imperialMaximumHeight * 0.3048, 0);
+  await selectUnits(page, "metric");
+
+  await page.getByLabel("Track overlay").selectOption("speed");
+  const overlaySize = await page.locator("canvas").evaluate((canvas: HTMLCanvasElement) => ({ width: canvas.width, height: canvas.height }));
+  const overlayPick = await page.evaluate((size) => {
+    const report = window.gameTest.testingReport();
+    if (!report) throw new Error("Missing coaster test report");
+    for (const sample of report.samples) {
+      const point = window.gameTest.project(sample);
+      if (point.x < 0 || point.x >= size.width || point.y < 0 || point.y >= size.height) continue;
+      if (window.gameTest.pick(point.x, point.y)?.kind === "testing") return point;
+    }
+    throw new Error("No speed overlay segment was pickable");
+  }, overlaySize);
+  await clickCanvas(page, overlayPick);
+  await expect(page.locator("[data-inspection]")).toContainText("Vertical:");
+
+  await page.getByRole("button", { name: "Delete Gentle climb, piece 3" }).click();
+  await expect(page.getByRole("button", { name: "Test coaster" })).toBeDisabled();
+  await expect(page.getByLabel("Track overlay")).toBeDisabled();
 
   phase("ride test");
   if (process.env.RECORD_JOURNEY_SESSIONS === "1") {

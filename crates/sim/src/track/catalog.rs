@@ -682,6 +682,7 @@ fn build_catalog() -> Vec<Piece> {
                     id,
                     name,
                     kind,
+                    launch_target_speed: None,
                     inversion,
                     heartlining: match id {
                         Loop
@@ -1036,6 +1037,18 @@ fn build_catalog() -> Vec<Piece> {
         (full_offset.exit.position() - full_offset.entry.position()).length();
     full_offset.clear_arc_table();
     pieces.push(full_offset);
+    let mut short_offset = pieces
+        .iter()
+        .find(|piece| piece.id == OffsetLeft)
+        .unwrap()
+        .clone();
+    short_offset.id = ShortOffsetLeft;
+    short_offset.name = "Left short half-tile offset";
+    short_offset.exit.x = 6;
+    short_offset.tangent_scale =
+        (short_offset.exit.position() - short_offset.entry.position()).length();
+    short_offset.clear_arc_table();
+    pieces.push(short_offset);
     for (base, id, name) in [
         (TurnSmallStandalone, TwisterFanLeft, "Left fan turn"),
         (TurnSmallStandalone, TightTwisterLeft, "Tight left turn"),
@@ -1157,6 +1170,11 @@ fn build_catalog() -> Vec<Piece> {
         ),
         (OffsetLeft, OffsetRight, "Right half-tile offset"),
         (FullOffsetLeft, FullOffsetRight, "Right full-tile offset"),
+        (
+            ShortOffsetLeft,
+            ShortOffsetRight,
+            "Right short half-tile offset",
+        ),
         (Loop, LoopRight, "Right vertical loop (not heartlined)"),
         (
             LargeLoop,

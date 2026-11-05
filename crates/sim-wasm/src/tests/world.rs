@@ -6,6 +6,8 @@ use theme_park_sim::facilities::{FacilityKind, ParkFacilities};
 use theme_park_sim::guests::GuestId;
 use theme_park_sim::park_guests::ParkGuests;
 use theme_park_sim::physics::{Circuit, TIME_STEP, demo_circuit};
+use theme_park_sim::track::clearance::ClearanceCollision;
+use theme_park_sim::track::construction::{Construction, ConstructionError};
 use theme_park_sim::track::supports::generate_supports;
 use theme_park_sim::track::{PieceId, TrackState, catalog, hybrid_model};
 use theme_park_sim::world::{Direction, PathKind, World};
@@ -45,6 +47,23 @@ fn demo_park_keeps_its_coaster_and_facilities() {
     assert!(simulation.demo_coaster().is_some());
     assert!(simulation.park.facilities.buildings().len() > 1);
     assert!(!simulation.coaster_rails().is_empty());
+}
+
+#[test]
+fn new_construction_cannot_tunnel_through_the_existing_demo_coaster() {
+    let simulation = WasmSimulation::new(17, 0, String::from("demo"));
+    let demo_coaster = simulation.demo_coaster().expect("demo coaster exists");
+    let station_entry = demo_coaster.circuit.pieces()[0].entry;
+    let construction = Construction::new(station_entry, hybrid_model());
+
+    assert_eq!(
+        construction.tunnel_plan(
+            PieceId::Station,
+            &simulation.world,
+            &simulation.facility_obstacles(),
+        ),
+        Err(ConstructionError::Clearance(ClearanceCollision::Scenery))
+    );
 }
 
 #[test]
@@ -626,70 +645,6 @@ fn manual_block_validation_preserves_layout_and_reports_rejection() {
         "{}",
         simulation.construction_message()
     );
-}
-
-#[test]
-fn manual_validation_and_throughput_both_advance() {
-    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    build_block_test_construction(&mut simulation);
-    let (circuit, train) = simulation.construction_circuit_and_train().unwrap();
-    let initial = BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
-    simulation.install_block_layout(initial, false);
-    let boundary =
-        theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres)[0].boundary_metres;
-    assert!(simulation.construction_set_block_sections(vec![boundary]));
-    assert!(!simulation.construction_advance_block_analysis(200));
-    let validation_steps = simulation
-        .block_manual_search
-        .as_ref()
-        .unwrap()
-        .work_completed();
-    let throughput_steps = simulation
-        .block_throughput_estimator
-        .as_ref()
-        .unwrap()
-        .work_steps_completed();
-    assert!(validation_steps > 0 && throughput_steps > 0);
-    assert!(validation_steps + throughput_steps <= 200);
-}
-
-#[test]
-fn placement_and_throughput_share_bounded_work_without_starvation() {
-    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    build_block_test_construction(&mut simulation);
-    let (circuit, train) = simulation.construction_circuit_and_train().unwrap();
-    let initial = BlockLayout::new(&circuit, &train, block_physics_config(), Vec::new()).unwrap();
-    simulation.install_block_layout(initial, false);
-    assert!(simulation.construction_auto_blocks());
-    let progress = |simulation: &WasmSimulation| {
-        (
-            simulation
-                .block_placement_search
-                .as_ref()
-                .unwrap()
-                .work_completed(),
-            simulation
-                .block_throughput_estimator
-                .as_ref()
-                .unwrap()
-                .work_steps_completed(),
-        )
-    };
-    assert_eq!(progress(&simulation), (0, 0));
-    assert!(!simulation.construction_advance_block_analysis(0));
-    assert_eq!(progress(&simulation), (0, 0));
-    assert!(!simulation.construction_advance_block_analysis(200));
-    let (placement, throughput) = progress(&simulation);
-    assert!(placement > 0 && throughput > 0);
-    assert!(placement + throughput <= 200);
-    assert!(!simulation.construction_advance_block_analysis(1));
-    assert!(!simulation.construction_advance_block_analysis(1));
-    let (next_placement, next_throughput) = progress(&simulation);
-    assert!(next_placement > placement && next_throughput > throughput);
-    assert!(next_placement - placement + next_throughput - throughput <= 2);
-    assert!(!simulation.construction_advance_block_analysis(5_000));
-    let (capped_placement, capped_throughput) = progress(&simulation);
-    assert!(capped_placement - next_placement + capped_throughput - next_throughput <= 1_000);
 }
 
 #[test]

@@ -11,6 +11,10 @@ pub struct LiftRules {
 pub enum LaunchType {
     LinearMotor,
 }
+/// Sustained launch acceleration limit for linear motor launches (1.5 g).
+pub const LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED: f64 = 1.5 * 9.81;
+/// Maximum launch speed, based on the 240 km/h record launch speed.
+pub const LAUNCH_MAX_SPEED_METRES_PER_SECOND: f64 = 240.0 / 3.6;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupportStyle {
     WoodenLattice,
@@ -69,6 +73,11 @@ pub struct ComfortableForceLimits {
     pub maximum_vertical_g: f64,
     pub maximum_lateral_g: f64,
     pub maximum_longitudinal_g: f64,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LaunchSpeedBounds {
+    pub minimum: f64,
+    pub maximum: f64,
 }
 #[derive(Clone, Debug)]
 pub struct CoasterModel {
@@ -236,6 +245,8 @@ pub fn wooden_twister_model() -> CoasterModel {
                 LargeRightBankedTurnStandalone,
                 OffsetLeft,
                 OffsetRight,
+                ShortOffsetLeft,
+                ShortOffsetRight,
                 FullOffsetLeft,
                 FullOffsetRight,
                 ShortRise,
@@ -372,6 +383,8 @@ pub fn hybrid_model() -> CoasterModel {
                 LargeRightBankedTurnStandalone,
                 OffsetLeft,
                 OffsetRight,
+                ShortOffsetLeft,
+                ShortOffsetRight,
                 FullOffsetLeft,
                 FullOffsetRight,
                 ShortRise,
@@ -534,6 +547,8 @@ pub fn multi_launch_model() -> CoasterModel {
                 LargeRightBankedTurnStandalone,
                 OffsetLeft,
                 OffsetRight,
+                ShortOffsetLeft,
+                ShortOffsetRight,
                 FullOffsetLeft,
                 FullOffsetRight,
                 ShortRise,

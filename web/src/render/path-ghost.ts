@@ -1,4 +1,5 @@
-import { projectWorld, type Camera, type Viewport } from "../camera";
+import { projectVertex } from "./projection";
+import type { Camera, Viewport } from "../camera";
 import type { GeometryQuad, Vertex } from "./scene";
 
 export interface PathPreview { x: number; y: number; z: number; slope: number; edges: number; facilityOpenings: number; refusal: string | null }
@@ -71,7 +72,7 @@ export function buildPathGhostQuads(paths: readonly PathPreview[], camera: Camer
     const project = (localX: number, localY: number, lift = 0): Vertex => {
       const height = heights[0] * (1 - localX) * (1 - localY) + heights[1] * localX * (1 - localY) + heights[2] * localX * localY + heights[3] * (1 - localX) * localY;
       const px = x + localX, py = y + localY;
-      return { ...projectWorld(camera, viewport, { x: px, y: py, z: height / 4 + lift }), depth: [px + py, px - py, -px - py, -px + py][camera.rotation] + height / 4 + 0.002 + lift, height, u: 0, v: 0 };
+      return { ...projectVertex(camera, viewport, { x: px, y: py, z: height / 4 + lift }, 0.002), height };
     };
     const quad = (points: number[][], quadColor: GeometryQuad["color"], id: string, lift = 0): GeometryQuad => ({
       vertices: points.map(([px, py]) => project(px, py, lift)) as GeometryQuad["vertices"], color: quadColor, kind: "path-preview", id, tileX: x, tileY: y,

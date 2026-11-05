@@ -20,7 +20,7 @@ window.batchFixture = async (rotation) => {
   const sprites = [2, 4, 6].map((coordinate, index) => ({ id: `sprite-${index}`, sprite: index === 1 ? "blue" : "red", x: coordinate + 0.5, y: coordinate + 0.5, height: 0 }));
   const world: WorldView = { dimensions: new Uint16Array([9, 9]), surfaces: new Int32Array(9 * 9 * 6), paths: new Int32Array(), sprites };
   const camera = { centerX: 4.5, centerY: 4.5, zoom: 2, rotation };
-  renderer.render(world, camera);
+  renderer.render({ world: world, camera: camera });
   const gl = canvas.getContext("webgl2")!;
   const ids: (string | undefined)[] = []; const colors: number[][] = [];
   for (const sprite of sprites) {

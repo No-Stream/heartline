@@ -29,20 +29,6 @@ export async function clickCanvas(page: Page, point: { x: number; y: number }): 
   await page.mouse.click(target.x, target.y);
 }
 
-/** A canvas point on a ground tile that nothing, such as a coaster support, covers at the current camera. */
-export async function visibleTilePoint(page: Page, tile: Tile): Promise<{ x: number; y: number }> {
-  const point = await page.evaluate(({ x, y, z }) => {
-    for (const fx of [0.5, 0.3, 0.7, 0.15, 0.85]) for (const fy of [0.5, 0.3, 0.7, 0.15, 0.85]) {
-      const screen = window.gameTest.project({ x: x + fx, y: y + fy, z });
-      const pick = window.gameTest.pick(screen.x, screen.y);
-      if (pick?.kind === "terrain" && pick.x === x && pick.y === y) return screen;
-    }
-    return null;
-  }, tile);
-  if (!point) throw new Error(`Ground tile ${tile.x},${tile.y} is covered at every probed point`);
-  return point;
-}
-
 export async function moveOverCanvas(page: Page, point: { x: number; y: number }, options?: { steps?: number }): Promise<void> {
   const target = await canvasToPage(page, point);
   await page.mouse.move(target.x, target.y, options);
@@ -169,9 +155,17 @@ async function setPrice(options: {
   await expect(options.input).toHaveValue(String(options.price));
 }
 
+/** Show one of the coaster builder's tabs: Build for track, Colours for paint, Operate for price, trains and blocks. */
+export async function showBuilderTab(page: Page, tab: "Build" | "Colours" | "Operate"): Promise<void> {
+  const button = page.getByRole("tablist", { name: "Coaster builder sections" }).getByRole("tab", { name: tab, exact: true });
+  if (await button.getAttribute("aria-selected") !== "true") await button.click();
+  await expect(button).toHaveAttribute("aria-selected", "true");
+}
+
 /** Enter the coaster ticket price in its visible control. */
 export async function setCoasterTicketPrice(page: Page, price: number): Promise<void> {
   await openTool(page, "Coaster");
+  await showBuilderTab(page, "Operate");
   await setPrice({
     input: page.getByRole("spinbutton", { name: "Coaster ticket price" }),
     price,
@@ -300,5 +294,6 @@ export async function testRide(page: Page): Promise<void> {
 }
 
 export async function openRide(page: Page): Promise<void> {
+  await showBuilderTab(page, "Build");
   await page.getByRole("button", { name: "Open coaster" }).click();
 }

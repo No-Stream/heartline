@@ -173,36 +173,37 @@ export function createGuestPanel(
   function placeBesideGuest(): void {
     if (root.hidden || !anchor) return;
     const bounds = canvas.getBoundingClientRect();
-    const screenWidth = window.innerWidth;
-    const screenHeight = window.innerHeight;
     const scaleX = bounds.width / canvas.width;
     const scaleY = bounds.height / canvas.height;
-    const guestX = clamp(bounds.left + anchor.x * scaleX, EDGE, screenWidth - EDGE);
-    const guestY = clamp(bounds.top + anchor.y * scaleY, EDGE, screenHeight - EDGE);
+    const guestX = clamp(bounds.left + anchor.x * scaleX, bounds.left + EDGE, bounds.right - EDGE);
+    const guestY = clamp(bounds.top + anchor.y * scaleY, bounds.top + EDGE, bounds.bottom - EDGE);
     const options = ([
-      { side: "right", availableWidth: screenWidth - guestX - GAP - EDGE, availableHeight: screenHeight - EDGE * 2, score: 0 },
-      { side: "left", availableWidth: guestX - GAP - EDGE, availableHeight: screenHeight - EDGE * 2, score: 0 },
-      { side: "below", availableWidth: screenWidth - EDGE * 2, availableHeight: screenHeight - guestY - GAP - EDGE, score: 0 },
-      { side: "above", availableWidth: screenWidth - EDGE * 2, availableHeight: guestY - GAP - EDGE, score: 0 },
+      { side: "right", availableWidth: bounds.right - guestX - GAP - EDGE, availableHeight: bounds.height - EDGE * 2, score: 0 },
+      { side: "left", availableWidth: guestX - bounds.left - GAP - EDGE, availableHeight: bounds.height - EDGE * 2, score: 0 },
+      { side: "below", availableWidth: bounds.width - EDGE * 2, availableHeight: bounds.bottom - guestY - GAP - EDGE, score: 0 },
+      { side: "above", availableWidth: bounds.width - EDGE * 2, availableHeight: guestY - bounds.top - GAP - EDGE, score: 0 },
     ] as const).map((option): Placement => ({
       ...option,
-      score: Math.min(MAX_PANEL_WIDTH, Math.max(0, option.availableWidth)) * Math.min(screenHeight * 0.82, Math.max(0, option.availableHeight)),
+      score: Math.min(MAX_PANEL_WIDTH, Math.max(0, option.availableWidth)) * Math.min(bounds.height * 0.82, Math.max(0, option.availableHeight)),
     }));
     const placement = [...options].sort((first, second) => second.score - first.score)[0];
     root.style.maxWidth = `${Math.max(160, Math.min(MAX_PANEL_WIDTH, placement.availableWidth))}px`;
-    root.style.maxHeight = `${Math.max(140, Math.min(screenHeight * 0.82, placement.availableHeight))}px`;
+    root.style.maxHeight = `${Math.max(140, Math.min(bounds.height * 0.82, placement.availableHeight))}px`;
     const panelBounds = root.getBoundingClientRect();
     const width = panelBounds.width;
     const height = panelBounds.height;
     const left = placement.side === "right" ? guestX + GAP
       : placement.side === "left" ? guestX - GAP - width
-        : clamp(guestX - width / 2, EDGE, screenWidth - width - EDGE);
+        : clamp(guestX - width / 2, bounds.left + EDGE, bounds.right - width - EDGE);
     const top = placement.side === "below" ? guestY + GAP
       : placement.side === "above" ? guestY - GAP - height
-        : clamp(guestY - height / 2, EDGE, screenHeight - height - EDGE);
-    root.style.left = `${clamp(left, EDGE, screenWidth - width - EDGE)}px`;
-    root.style.top = `${clamp(top, EDGE, screenHeight - height - EDGE)}px`;
+        : clamp(guestY - height / 2, bounds.top + EDGE, bounds.bottom - height - EDGE);
+    root.style.left = `${clamp(left, bounds.left + EDGE, bounds.right - width - EDGE)}px`;
+    root.style.top = `${clamp(top, bounds.top + EDGE, bounds.bottom - height - EDGE)}px`;
   }
+
+  new ResizeObserver(placeBesideGuest).observe(canvas);
+  window.addEventListener("resize", placeBesideGuest);
 
   return {
     setUnits(value) {

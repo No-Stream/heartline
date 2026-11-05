@@ -102,9 +102,17 @@ pub(crate) struct TestingRating {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TestingReport {
     pub samples: Vec<TestingSample>,
+    pub launches: Vec<LaunchReport>,
     pub notes: Vec<String>,
     pub proximity_events: Vec<ProximityEventReport>,
     pub rating: TestingRating,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LaunchReport {
+    pub piece_index: usize,
+    pub exit_speed: f64,
 }
 
 #[derive(serde::Serialize, ts_rs::TS)]
@@ -159,6 +167,10 @@ mod wire_tests {
         } else {
             std::env::temp_dir().join(format!("theme-park-report-types-{}", std::process::id()))
         };
+        // Process ids repeat (always, inside sandboxes), so a leftover folder from an earlier run would add stale files.
+        if output != destination && output.exists() {
+            std::fs::remove_dir_all(&output).unwrap();
+        }
         crate::TrainLayoutReport::export_all_to(&output).unwrap();
         BlockReport::export_all_to(&output).unwrap();
         TestingReport::export_all_to(&output).unwrap();
@@ -184,6 +196,7 @@ mod wire_tests {
                     expected.display()
                 );
             }
+            std::fs::remove_dir_all(&output).unwrap();
         }
     }
 
@@ -201,6 +214,10 @@ mod wire_tests {
                 longitudinal_g: 8.0,
                 airtime: true,
             }],
+            launches: vec![LaunchReport {
+                piece_index: 4,
+                exit_speed: 42.0,
+            }],
             notes: vec!["quoted \"note\"\n".to_owned()],
             proximity_events: vec![],
             rating: TestingRating {
@@ -212,6 +229,8 @@ mod wire_tests {
         let value = serde_json::to_value(report).unwrap();
         assert_eq!(value["samples"][0]["verticalG"], 6.0);
         assert_eq!(value["notes"][0], "quoted \"note\"\n");
+        assert_eq!(value["launches"][0]["pieceIndex"], 4);
+        assert_eq!(value["launches"][0]["exitSpeed"], 42.0);
         assert_eq!(value["proximityEvents"], serde_json::json!([]));
         assert_eq!(value["rating"]["intensity"], 2.0);
     }

@@ -1,6 +1,6 @@
 # Project status
 
-Last updated 2026-11-03. For in-flight work and the order to resume in, see the newest file in `docs/handoffs/` (dated, not committed). The design is in `docs/superpowers/specs/2026-11-02-theme-park-sim-design.md`, the roadmap in `docs/superpowers/plans/2026-11-02-theme-park-sim-roadmap.md`, and the live task list in Backlog.md (`backlog task list --plain`).
+Last updated 2026-11-04. The project is now called Heartline and is public at github.com/No-Stream/heartline (MIT). For in-flight work and the order to resume in, see the newest file in `docs/handoffs/` (dated, not committed). The design is in `docs/superpowers/specs/2026-11-02-theme-park-sim-design.md`, the roadmap in `docs/superpowers/plans/2026-11-02-theme-park-sim-roadmap.md`, and the live task list in Backlog.md (`backlog task list --plain`).
 
 ## What works
 
@@ -18,13 +18,16 @@ To regenerate the Timber Tumbler built-session fixture through the build journey
 
 On the owner's RTX 5090, the renderer drew 10,000 animated people with terrain and track in about 2.6 ms of GPU work per frame. In the browser worker on one thread, 10,000 guests take about 7 ms per simulation tick; natively on 4 threads, about 2 ms, with identical results at any thread count. The full-scale performance check with a realistic large park on real hardware has not been done yet (ticket TASK-26).
 
+## Added on 2026-11-04
+
+The builder panel has Build, Colours and Operate tabs, with every way of choosing the next piece on Build. Finish coaster stays available whenever its bounded search finds a connection (within 80 m and five pieces) and says why when it cannot. A short half-tile S-bend helps close circuits near the station. Coaster track carves tunnels automatically when it goes below ground, and undo restores the terrain. Each launch has an adjustable target speed limited by launch technology (1.5 g sustained, 240 km/h, and the launch's length). The game can be paused with Space or the clock button, which also freezes the rendered frame, and the game bar fits itself to the window by hiding parts in a fixed order. A master volume and mute control (key M) and the audio engine core exist, but no sounds play yet. The ground grid is clearer while a building tool is open, night lamp light fades smoothly, and surface lights no longer show in the underground view. Trains now coast onto chain lifts instead of snapping to lift speed, which removed a 286 g force spike.
+
 ## Known gaps and open items
 
-- The owner's first playtest bugs (TASK-42, 45, 46, 47, 48) are fixed, and the owner's second playtest found a dead end building a chain lift on Timber Tumbler. Its exact cause was never reproduced; the likely causes were the missing climbing turns (now added) or a panic during choice validation that stops the worker (fixed in f4044c4). The builder (TASK-37) and its palette (TASK-70) are waiting on the owner's next playtest. The park still resets when the dev server reloads (TASK-49, after saving exists).
-- The coaster stutter was the renderer interpolating from snapshot arrival time while frames cost 35-40 ms; it now interpolates on simulation time. Per-frame scene rebuild cost is still high (TASK-59), and on this WSL machine software WebGL takes about 350 ms per frame, so smoothness is best judged in the owner's browser.
-- The Timber Tumbler player journey (TASK-65) plays the loop to guests paying but is not yet committed: rider clicking fails and it runs 5-7 minutes against a 3-minute budget. The Velocity Viper and Briar Blitz journeys (TASK-73) and pruning tests the journeys cover (TASK-75, TASK-76) come after it.
-- One full-suite run produced an all-black canvas in a construction screenshot (TASK-62); the renderer now recovers from WebGL context loss, but that failure was not reproduced.
-- Broader coaster vocabularies with signatures and manufacturer styles remain in TASK-43; the flexible-track plan took over its turns, chain lifts and 60-degree parts.
-- Remaining code health refactors: typed worker protocol (TASK-57), `main.ts` around a shared tool interface (TASK-58), typed coaster and block state (TASK-55), shared helpers (TASK-52), projection and renderer stages (TASK-59).
-- Not started: saving and loading, the full-scale performance check, public deployment, sound, scenarios, touch input and a desktop wrapper.
+- Inversions on master are still physically too strong (a half loop peaks around 19 g). The force-limited redesign (TASK-95) is on branch `forces-fixes` and close to landing; ride statistics and 0-10 scores (TASK-104) wait on it.
+- Many owner requests depend on that branch: the scoring model (TASK-113), top hats (TASK-98), airtime hills and RMC elements (TASK-101), banked straights (TASK-102), a live g-force overlay while building (TASK-105), heartlined and classic inversion groups (TASK-111), physics realism (TASK-112) and the sounds themselves (TASK-28).
+- GitHub CI fails on 12 browser tests on the slower runner (TASK-118); local gates pass.
+- The park still resets when the dev server reloads (TASK-49, after saving exists). Per-frame scene rebuild cost is still high, and on this WSL machine software WebGL is slow, so smoothness is best judged in the owner's browser.
+- Broader coaster vocabularies remain in TASK-43, and an Intamin-style prefab wooden coaster in TASK-99. Remaining code health work: shared simulation helpers (TASK-52) and typed coaster and block state (TASK-55).
+- Not started: saving and loading, the full-scale performance check, public deployment, an underground cutaway view, scenarios, touch input and a desktop wrapper.
 - Simplifications worth knowing: ride loading is instant; building and ride clearance assume heights of 4 m and 12 m; automatic block placement searches generated brake positions within a budget, and throughput excludes loading time.

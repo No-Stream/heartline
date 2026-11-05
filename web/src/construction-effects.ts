@@ -1,4 +1,5 @@
-import { projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
+import { projectVertex } from "./render/projection";
+import type { Camera, Viewport, WorldPoint } from "./camera";
 import { railPoints } from "./construction-camera";
 import type { ConstructionState } from "./construction-protocol";
 import type { GeometryQuad, Vertex } from "./render/scene";
@@ -17,7 +18,6 @@ interface Confetti { readonly origin: WorldPoint; readonly velocity: WorldPoint;
 const rgba = (hex: string, alpha = 1): [number, number, number, number] => [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255, alpha];
 /** Lift a highlight just in front of the track it covers so it is not hidden by the depth test. */
 const raised = (quad: GeometryQuad): GeometryQuad => ({ ...quad, vertices: quad.vertices.map((vertex) => ({ ...vertex, depth: vertex.depth + 0.2 })) as GeometryQuad["vertices"] });
-const depthOf = (point: WorldPoint, rotation: Camera["rotation"]): number => [point.x + point.y, point.x - point.y, -point.x - point.y, -point.x + point.y][rotation] + point.z;
 
 /** Recognises a placed piece and a closed circuit from consecutive builder states. */
 export function constructionEvent(previous: ConstructionState | undefined, next: ConstructionState): "placed" | "closed" | undefined {
@@ -44,8 +44,8 @@ export function createConstructionEffects(style: TrackStyle) {
     const highlight = buildTrackQuads(effect.rails, effect.ties, noGeometry, camera, viewport, highlightPaint)
       .filter((quad) => quad.color.some((channel, index) => channel !== ink[index]))
       .map((quad) => raised({ ...quad, id: `effect-${quad.id}`, kind: "effect", color: rgba("#f6d77a", glow) }));
-    const centre = projectWorld(camera, viewport, effect.joint);
-    const depth = depthOf(effect.joint, camera.rotation) + 2;
+    const centre = projectVertex(camera, viewport, effect.joint, 2);
+    const depth = centre.depth;
     const reach = 1 - (1 - progress) ** 3;
     const inner = (6 + 10 * reach) * camera.zoom, outer = (11 + 16 * reach) * camera.zoom, width = 1.6 * camera.zoom;
     const ticks = Array.from({ length: 8 }, (_, index): GeometryQuad => {
@@ -69,11 +69,11 @@ export function createConstructionEffects(style: TrackStyle) {
     const confetti = effect.confetti.map((piece, index): GeometryQuad => {
       const drag = (1 - Math.exp(-1.6 * seconds)) / 1.6;
       const position = { x: piece.origin.x + piece.velocity.x * drag, y: piece.origin.y + piece.velocity.y * drag, z: piece.origin.z + piece.velocity.z * drag - 0.9 * seconds * seconds };
-      const centre = projectWorld(camera, viewport, position);
+      const centre = projectVertex(camera, viewport, position, 3);
       const flutter = Math.cos(piece.spin * seconds * 6);
       const angle = piece.spin * seconds * 3;
       const [half, thin] = [3.6 * camera.zoom, 2.2 * camera.zoom * Math.max(0.25, Math.abs(flutter))];
-      const corner = (along: number, across: number): Vertex => ({ x: centre.x + Math.cos(angle) * along - Math.sin(angle) * across, y: centre.y + Math.sin(angle) * along + Math.cos(angle) * across, depth: depthOf(position, camera.rotation) + 3, height: position.z * 4, u: 0, v: 0 });
+      const corner = (along: number, across: number): Vertex => ({ x: centre.x + Math.cos(angle) * along - Math.sin(angle) * across, y: centre.y + Math.sin(angle) * along + Math.cos(angle) * across, depth: centre.depth, height: position.z * 4, u: 0, v: 0 });
       return { vertices: flat([corner(-half, -thin), corner(half, -thin), corner(half, thin), corner(-half, thin)]), color: [piece.color[0], piece.color[1], piece.color[2], fade], kind: "effect", id: `effect-confetti-${index}`, tileX: Math.floor(position.x), tileY: Math.floor(position.y) };
     });
     return [...lit, ...confetti];

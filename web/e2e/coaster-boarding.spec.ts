@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Camera } from "../src/camera";
-import { canvasToPage, clickCanvas, openTool, selectUnits, visibleTilePoint } from "./game-page";
+import { canvasToPage, clickCanvas, clickTile, openTool, selectUnits, showBuilderTab } from "./game-page";
 
 test.use({ actionTimeout: 10_000 });
 test("guests ride a player-built coaster and can be selected @slow", async ({ page }) => {
@@ -13,7 +13,7 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await page.getByLabel("Station height above ground (metres)").fill("4");
   await page.getByLabel("Station height above ground (metres)").press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
-  await clickCanvas(page, await visibleTilePoint(page, { x: 241, y: 249, z: 2 }));
+  await clickTile(page, { x: 241, y: 249, z: 2 });
   await clickWorld(page, 241.5, 251.5, 2);
   const choices = page.getByRole("radiogroup", { name: "Next piece" });
   const track = page.locator("[data-track]");
@@ -69,10 +69,12 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await entrancePrice.press("Tab");
   await expect.poll(() => page.evaluate((id) => window.gameTest.facilities().find(({ id: currentId }) => currentId === id)?.price, entrance.id)).toBe(8);
   await openTool(page, "Coaster");
+  await showBuilderTab(page, "Operate");
   const coasterPrice = page.getByRole("spinbutton", { name: "Coaster ticket price" });
   await coasterPrice.fill("9");
   await coasterPrice.press("Tab");
   await expect(coasterPrice).toHaveValue("9");
+  await showBuilderTab(page, "Build");
   await page.getByRole("button", { name: "Open coaster" }).click();
   await expect(page.getByRole("button", { name: "Close coaster" })).toBeVisible();
   let riderId = "";

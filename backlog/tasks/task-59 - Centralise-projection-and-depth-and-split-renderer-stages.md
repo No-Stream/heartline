@@ -1,10 +1,10 @@
 ---
 id: TASK-59
 title: Centralise projection and depth and split renderer stages
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 16:47'
-updated_date: '2026-11-04 13:09'
+updated_date: '2026-11-04 13:55'
 labels:
   - refactor
   - rendering
@@ -32,4 +32,6 @@ Rendering review findings and browser review: the rotated projection and depth e
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-04: Codex job task-mw24un3c-aiw1d5, worktree renderer-stages; must stay pixel-identical.
+
+2026-11-04: merged; pixel-identical (111 screenshot and affected tests unchanged).
 <!-- SECTION:NOTES:END -->

@@ -57,6 +57,18 @@ describe("session replay helpers", () => {
     expect([...(command.corners as Int16Array)]).toEqual([1, 2, 3, 4]);
   });
 
+  it("preserves launch intensity commands so replay applies the same track target", () => {
+    const command = { type: "construction-set-launch-intensity", id: 12, targetSpeed: 52.4 };
+    const session = parseReplaySession({
+      ...validSession,
+      commands: [{ tick: 20, command }],
+      checkpoints: [],
+      finalTick: 20,
+    });
+
+    expect(prepareReplayCommand(session.commands[0]!.command)).toEqual(command);
+  });
+
   it("finds the earliest checkpoint difference, including missing checkpoints", () => {
     expect(firstCheckpointMismatch(
       [{ tick: 300, hash: "11" }, { tick: 600, hash: "22" }],

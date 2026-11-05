@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, formatClock, gradeColor, hexColor, lightingAt, lightInPool, printOnBackdrop, sunAt, type Rgb } from "./daylight";
+import { advanceDayPhase, BACKDROPS, DAY_LENGTH_TICKS, formatClock, gradeColor, hexColor, lightingAt, lightInPool, printOnBackdrop, radialPoolFalloff, sunAt, type Rgb } from "./daylight";
 
 const luminance = ([red, green, blue]: readonly number[]): number => 0.299 * red + 0.587 * green + 0.114 * blue;
 const paper = hexColor("#f2eadb");
@@ -105,17 +105,28 @@ describe("lamp pools", () => {
   const pool = (strength: number): Rgb => [lamp[0] * strength, lamp[1] * strength, lamp[2] * strength];
   const path = hexColor("#fff0c7");
 
+  it("uses a smooth radial falloff from the lamp foot to zero at the radius", () => {
+    const samples = [0, 0.2, 0.4, 0.6, 0.8, 0.9, 1].map(radialPoolFalloff);
+    expect(samples[0]).toBe(1);
+    expect(samples.every((strength, index) => index === 0 || strength < samples[index - 1])).toBe(true);
+    expect(radialPoolFalloff(0.2)).toBeGreaterThan(radialPoolFalloff(0.8) * 3);
+    expect(samples.at(-1)).toBe(0);
+  });
+
   it("leave unlit surfaces at the night grade", () => {
     expect(lightInPool(gradeColor(path, night), path, [0, 0, 0])).toEqual(gradeColor(path, night));
     expect(lightInPool(gradeColor(path, night), path, pool(0.05))).toEqual(gradeColor(path, night));
   });
 
-  it("print lamp light in two flat bands, so a lit path stands out strongly from the dark grass around it", () => {
+  it("fade lamp light continuously from the pool edge toward its brighter centre", () => {
     const graded = gradeColor(path, night);
+    const edge = lightInPool(graded, path, pool(0.2));
     const rim = lightInPool(graded, path, pool(0.3));
     const core = lightInPool(graded, path, pool(0.9));
-    lightInPool(graded, path, pool(0.25)).forEach((channel, index) => expect(channel).toBeCloseTo(rim[index], 9));
-    lightInPool(graded, path, pool(0.7)).forEach((channel, index) => expect(channel).toBeCloseTo(core[index], 9));
+    expect(rim).not.toEqual(edge);
+    expect(core).not.toEqual(rim);
+    rim.forEach((channel, index) => expect(channel).toBeGreaterThanOrEqual(edge[index]));
+    core.forEach((channel, index) => expect(channel).toBeGreaterThanOrEqual(rim[index]));
     expect(luminance(rim)).toBeGreaterThan(luminance(graded) * 1.4);
     expect(luminance(core)).toBeGreaterThan(luminance(rim) * 1.5);
     expect(luminance(core)).toBeGreaterThan(5 * luminance(gradeColor(grass, night)));

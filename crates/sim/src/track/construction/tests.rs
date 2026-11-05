@@ -142,6 +142,56 @@ fn construction_state_hash_covers_track_edits_but_ignores_validation_caches() {
 }
 
 #[test]
+fn launch_speed_limits_follow_track_length_and_are_shared_across_models() {
+    let world = world();
+    let mut hybrid = Construction::new(start(), hybrid_model());
+    hybrid.append(PieceId::LaunchShort, &world, &[]).unwrap();
+    let short_bounds = hybrid.launch_speed_bounds(0).unwrap();
+    assert!(short_bounds.minimum > 0.0);
+    assert!(short_bounds.maximum <= crate::track::LAUNCH_MAX_SPEED_METRES_PER_SECOND);
+    let mut long = Construction::new(start(), crate::track::multi_launch_model());
+    long.append(PieceId::LaunchLong, &world, &[]).unwrap();
+    let long_bounds = long.launch_speed_bounds(0).unwrap();
+    assert!(long_bounds.maximum > short_bounds.maximum);
+    assert_eq!(
+        long_bounds.maximum,
+        (2.0 * crate::track::LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED
+            * long.pieces()[0].length())
+        .sqrt()
+    );
+
+    let mut viper = Construction::new(start(), crate::track::multi_launch_model());
+    viper.append(PieceId::LaunchLong, &world, &[]).unwrap();
+    assert_eq!(viper.launch_speed_bounds(0), Some(long_bounds));
+    assert!(viper.set_launch_intensity(0, 20.0).is_ok());
+    assert!(
+        viper
+            .set_launch_intensity(0, long_bounds.maximum + 0.1)
+            .is_err()
+    );
+
+    let mut high_speed_viper = Construction::new(start(), crate::track::multi_launch_model());
+    for launch_index in 0..4 {
+        high_speed_viper
+            .append(PieceId::LaunchLong, &world, &[])
+            .unwrap();
+        let bounds = high_speed_viper.launch_speed_bounds(launch_index).unwrap();
+        if launch_index < 3 {
+            high_speed_viper
+                .set_launch_intensity(launch_index, bounds.maximum)
+                .unwrap();
+        }
+    }
+    let fourth_launch_bounds = high_speed_viper.launch_speed_bounds(3).unwrap();
+    assert!(fourth_launch_bounds.maximum > 58.1);
+    assert!(high_speed_viper.set_launch_intensity(3, 59.0).is_ok());
+
+    let original_hash = hybrid.state_hash();
+    assert!(hybrid.set_launch_intensity(0, short_bounds.maximum).is_ok());
+    assert_ne!(hybrid.state_hash(), original_hash);
+}
+
+#[test]
 fn wooden_twister_validates_every_dense_support_anchor() {
     let mut construction = Construction::new(start(), crate::track::wooden_twister_model());
     construction
@@ -523,6 +573,214 @@ fn collision_is_reported_and_does_not_place_a_piece() {
 }
 
 #[test]
+fn piece_choices_tunnel_through_hills_and_report_the_tunnel() {
+    let hill = World::new(
+        128,
+        128,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    let construction = Construction::new(TrackState { z: 11, ..start() }, hybrid_model());
+
+    let straight = construction
+        .choices(&hill, &[])
+        .into_iter()
+        .find(|choice| choice.id == PieceId::LevelToGentleDown)
+        .expect("descending choice exists");
+
+    assert_eq!(straight.result, Ok(()));
+    let plan = construction
+        .tunnel_plan(PieceId::LevelToGentleDown, &hill, &[])
+        .expect("tunnel is valid");
+    assert!(straight.would_tunnel, "choice={straight:?} plan={plan:?}");
+    assert!(!plan.carve_cells.is_empty());
+    assert!(
+        plan.swept_cells.iter().all(|cell| {
+            hill.ground(cell.x, cell.y, cell.height) == crate::world::Ground::Solid
+        })
+    );
+}
+
+#[test]
+fn level_track_can_rest_on_the_exact_floor_of_its_tunnel() {
+    let hill = World::new(
+        128,
+        128,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    let start = TrackState { z: 5, ..start() };
+    let piece = template_for(PieceId::Straight, start).at(start).unwrap();
+    let plan = tunnel_plan(&hill, &piece, &hybrid_model().train).unwrap();
+    assert_eq!(
+        plan.carve_cells.iter().map(|cell| cell.height).min(),
+        Some(10),
+        "the tunnel floor stays at the clearance envelope's lower boundary"
+    );
+
+    let choice = Construction::new(start, hybrid_model())
+        .choices(&hill, &[])
+        .into_iter()
+        .find(|choice| choice.id == PieceId::Straight)
+        .expect("level straight choice exists");
+
+    assert_eq!(choice.result, Ok(()), "choice={choice:?}");
+    assert!(choice.would_tunnel);
+}
+
+#[test]
+fn gentle_down_continues_as_it_enters_a_hill() {
+    fn append_with_carving(
+        construction: &mut Construction,
+        world: &mut World,
+        id: PieceId,
+    ) -> Result<(), ConstructionError> {
+        let plan = construction.tunnel_plan(id, world, &[])?;
+        let cells: Vec<_> = plan
+            .carve_cells
+            .iter()
+            .map(|cell| (cell.x, cell.y, cell.height))
+            .collect();
+        if !cells.is_empty() {
+            world.carve_cells(&cells).unwrap();
+        }
+        construction.append(id, world, &[])
+    }
+
+    let mut hill = World::new(
+        512,
+        512,
+        Surface {
+            corners: [8; 4],
+            water: None,
+        },
+    );
+    for x in 66..=74 {
+        for y in 63..=71 {
+            hill.set_surface(
+                x,
+                y,
+                Surface {
+                    corners: [20; 4],
+                    water: None,
+                },
+            );
+        }
+    }
+    let start = TrackState {
+        x: 100,
+        y: 100,
+        z: 6,
+        heading: Heading::East,
+        ..TrackState::origin()
+    };
+    let mut construction = Construction::new(start, hybrid_model());
+    append_with_carving(&mut construction, &mut hill, PieceId::Station).unwrap();
+    construction.set_chain(true);
+    for id in [
+        PieceId::LevelToGentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUpToLevel,
+        PieceId::Straight,
+    ] {
+        append_with_carving(&mut construction, &mut hill, id).unwrap();
+    }
+    construction.set_chain(false);
+    for id in [
+        PieceId::OneTileStraight,
+        PieceId::OneTileStraight,
+        PieceId::OffsetLeft,
+        PieceId::TurnLargeEntry,
+        PieceId::TurnLargeExit,
+        PieceId::LevelToGentleDown,
+        PieceId::GentleDown,
+        PieceId::GentleDown,
+    ] {
+        append_with_carving(&mut construction, &mut hill, id).unwrap();
+    }
+
+    let choice = construction
+        .choices(&hill, &[])
+        .into_iter()
+        .find(|choice| choice.id == PieceId::GentleDown)
+        .expect("next gentle descent exists");
+    assert_eq!(
+        choice.result,
+        Ok(()),
+        "choice={choice:?}; entry={:?}",
+        construction.end()
+    );
+}
+
+#[test]
+fn tunnel_plan_refuses_water_and_paths() {
+    let construction = Construction::new(TrackState { z: 10, ..start() }, hybrid_model());
+    let water = World::new(
+        128,
+        128,
+        Surface {
+            corners: [0; 4],
+            water: Some(20),
+        },
+    );
+    assert_eq!(
+        construction.tunnel_plan(PieceId::Straight, &water, &[]),
+        Err(ConstructionError::Clearance(ClearanceCollision::Water))
+    );
+
+    let mut path_world = World::new(
+        128,
+        128,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    path_world.place_path(crate::world::Path {
+        position: crate::world::Position {
+            x: 25,
+            y: 25,
+            height: 20,
+        },
+        slope: None,
+    });
+    assert_eq!(
+        construction.tunnel_plan(PieceId::Straight, &path_world, &[]),
+        Err(ConstructionError::Clearance(ClearanceCollision::Path))
+    );
+}
+
+#[test]
+fn tunnel_plan_refuses_facility_obstacles() {
+    let hill = World::new(
+        128,
+        128,
+        Surface {
+            corners: [20; 4],
+            water: None,
+        },
+    );
+    let construction = Construction::new(TrackState { z: 10, ..start() }, hybrid_model());
+    let facility = SupportObstacle {
+        min: Vec3::new(99.0, 98.0, 17.0),
+        max: Vec3::new(105.0, 103.0, 24.0),
+    };
+
+    assert!(matches!(
+        construction.tunnel_plan(PieceId::Straight, &hill, &[facility]),
+        Err(ConstructionError::Clearance(ClearanceCollision::Scenery))
+    ));
+}
+
+#[test]
 fn supports_route_around_existing_track_and_train_space() {
     let model = hybrid_model();
     let existing = model
@@ -698,10 +956,33 @@ fn choices_reflect_world_obstacle_and_track_changes() {
             water: None,
         },
     );
-    assert!(
+    assert_eq!(
         construction
-            .append_cached_choice(PieceId::Straight, &world, &[])
-            .is_err()
+            .choices(&world, &[])
+            .iter()
+            .find(|choice| choice.id == PieceId::Straight)
+            .unwrap()
+            .result,
+        Ok(()),
+        "terrain alone should be tunneled through"
+    );
+    let water_world = World::new(
+        128,
+        128,
+        Surface {
+            corners: [0; 4],
+            water: Some(20),
+        },
+    );
+    assert_eq!(
+        construction
+            .choices(&water_world, &[])
+            .iter()
+            .find(|choice| choice.id == PieceId::Straight)
+            .unwrap()
+            .result,
+        Err(ConstructionError::Clearance(ClearanceCollision::Water)),
+        "water in the candidate clearance should still block the choice"
     );
     assert_eq!(construction.pieces().len(), 1);
     construction.delete_from(0).unwrap();
@@ -1296,6 +1577,51 @@ fn completion_connects_an_offset_followed_by_turns() {
     construction
         .apply_completion(&completion, &world, &[])
         .unwrap();
+}
+
+#[test]
+fn completion_uses_short_offsets_for_a_tight_station_connection() {
+    use PieceId::*;
+    let world = world();
+    let allowed_pieces = [
+        Station,
+        Straight,
+        TurnSmallStandalone,
+        ShortOffsetLeft,
+        ShortOffsetRight,
+    ];
+    let mut model = hybrid_model();
+    model.allowed_pieces = allowed_pieces.to_vec();
+    let mut construction = Construction::new(start(), model);
+    for id in [
+        Station,
+        Straight,
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        ShortOffsetLeft,
+    ] {
+        construction.append(id, &world, &[]).unwrap();
+    }
+    let mut without_short_offsets = construction.copy_for_completion();
+    without_short_offsets
+        .model
+        .allowed_pieces
+        .retain(|id| !matches!(id, ShortOffsetLeft | ShortOffsetRight));
+    assert!(without_short_offsets.find_completion(&world, &[]).is_none());
+    let completion = construction
+        .find_completion(&world, &[])
+        .expect("short offset connection");
+    assert!(
+        completion
+            .pieces
+            .iter()
+            .any(|id| matches!(id, ShortOffsetLeft | ShortOffsetRight))
+    );
+    construction
+        .apply_completion(&completion, &world, &[])
+        .unwrap();
+    assert!(construction.is_closed());
 }
 
 #[test]
@@ -2002,4 +2328,167 @@ fn closed_inversion_circuit_support_positions_snapshot() {
         return;
     }
     assert_eq!(snapshot, include_str!("../support_positions_snapshot.txt"));
+}
+
+#[test]
+fn completion_finds_known_connections_across_models_and_rotations() {
+    use PieceId::*;
+    let world = World::new(
+        256,
+        256,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let cases: &[(&str, &[PieceId], &[PieceId])] = &[
+        (
+            "turns",
+            &[Station, TurnSmallStandalone, TurnSmallStandalone, Straight],
+            &[TurnSmallStandalone, TurnSmallStandalone],
+        ),
+        (
+            "one turn",
+            &[
+                Station,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                Straight,
+                TurnSmallStandalone,
+            ],
+            &[TurnSmallStandalone],
+        ),
+        (
+            "full tile offset",
+            &[
+                Station,
+                Straight,
+                Straight,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                FullOffsetLeft,
+            ],
+            &[FullOffsetRight, TurnSmallStandalone, TurnSmallStandalone],
+        ),
+        (
+            "two tile offset",
+            &[
+                Station,
+                Straight,
+                Straight,
+                Straight,
+                Straight,
+                Straight,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                FullOffsetLeft,
+                FullOffsetLeft,
+            ],
+            &[
+                FullOffsetRight,
+                FullOffsetRight,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+            ],
+        ),
+        (
+            "offset",
+            &[
+                Station,
+                Straight,
+                Straight,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                OffsetLeft,
+            ],
+            &[OffsetRight, TurnSmallStandalone, TurnSmallStandalone],
+        ),
+        (
+            "slope",
+            &[
+                Station,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                TurnSmallStandalone,
+                TurnSmallStandalone,
+                Straight,
+                LevelToGentleDown,
+            ],
+            &[GentleDownToLevel, TurnSmallStandalone, TurnSmallStandalone],
+        ),
+    ];
+    for (model_index, model) in [
+        hybrid_model(),
+        crate::track::multi_launch_model(),
+        crate::track::wooden_twister_model(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (heading_index, heading) in [
+            Heading::East,
+            Heading::NorthEast,
+            Heading::North,
+            Heading::NorthWest,
+            Heading::West,
+            Heading::SouthWest,
+            Heading::South,
+            Heading::SouthEast,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for (case_index, (case, prefix, witness)) in cases
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index == (model_index + heading_index) % cases.len())
+            {
+                let initial = TrackState {
+                    x: 125 + case_index as i32,
+                    y: 130 - case_index as i32,
+                    z: 15 + case_index as i32 * 5,
+                    heading,
+                    ..start()
+                };
+                let mut construction = Construction::new(initial, model.clone());
+                for &piece in *prefix {
+                    construction
+                        .append(piece, &world, &[])
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{} {heading:?} {case}: prefix {piece:?}: {error:?}",
+                                model.name
+                            )
+                        });
+                }
+                let mut expected = construction.copy_for_completion();
+                for &piece in *witness {
+                    expected.append(piece, &world, &[]).unwrap_or_else(|error| {
+                        panic!(
+                            "{} {heading:?} {case}: witness {piece:?}: {error:?}",
+                            model.name
+                        )
+                    });
+                }
+                expected.close().unwrap_or_else(|error| {
+                    panic!(
+                        "{} {heading:?} {case}: witness close: {error:?}",
+                        model.name
+                    )
+                });
+                let completion = construction
+                    .find_completion(&world, &[])
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{} {heading:?} {case}: search failed despite valid witness",
+                            model.name
+                        )
+                    });
+                construction
+                    .apply_completion(&completion, &world, &[])
+                    .unwrap();
+                assert!(construction.is_closed());
+            }
+        }
+    }
 }

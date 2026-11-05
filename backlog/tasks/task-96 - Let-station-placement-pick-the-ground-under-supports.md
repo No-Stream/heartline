@@ -1,10 +1,10 @@
 ---
 id: TASK-96
 title: Let station placement pick the ground under supports
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-04 11:50'
-updated_date: '2026-11-04 13:09'
+updated_date: '2026-11-04 14:06'
 labels:
   - interface
   - bug
@@ -23,4 +23,6 @@ From TASK-88 (model-accurate supports): the station tool picks whatever is drawn
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-04: Codex job task-mw24umx8-wj9f60, worktree station-ground-pick.
+
+2026-11-04: merged; affected specs and all journeys pass on master.
 <!-- SECTION:NOTES:END -->

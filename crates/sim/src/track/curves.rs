@@ -248,6 +248,8 @@ pub enum PieceId {
     BankedTurn,
     OffsetLeft,
     OffsetRight,
+    ShortOffsetLeft,
+    ShortOffsetRight,
     Loop,
     Corkscrew,
     HeartlineRoll,
@@ -378,6 +380,8 @@ pub struct Piece {
     pub id: PieceId,
     pub name: &'static str,
     pub kind: PieceKind,
+    /// Per-piece launch target speed in metres per second, or `None` for model defaults.
+    pub launch_target_speed: Option<f64>,
     pub inversion: Option<Inversion>,
     pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
@@ -442,6 +446,10 @@ impl Piece {
         hash.write_u8(self.id as u8);
         hash.write_bytes(self.name.as_bytes());
         hash.write_u8(self.kind as u8);
+        if let Some(speed) = self.launch_target_speed {
+            hash.write_u8(1);
+            hash.write_f64(speed);
+        }
         hash.write_option(self.inversion, |hash, inversion| {
             hash.write_u8(inversion as u8);
         });
@@ -1036,6 +1044,7 @@ mod shape_tests {
             shape: Shape::Plain,
             tangent_scale: 16.0,
             mirrored: false,
+            launch_target_speed: None,
             arc_table: Arc::new(OnceLock::new()),
         };
 

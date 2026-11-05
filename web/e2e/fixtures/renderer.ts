@@ -14,11 +14,11 @@ interface Sample {
 
 declare global {
   interface Window {
-    renderFixture: (rotation: Rotation, stacked: boolean, hideUpper: boolean, extra?: "behind" | "solid" | "textured" | "thin", checkRegion?: boolean) => Promise<Sample>;
+    renderFixture: (rotation: Rotation, stacked: boolean, hideUpper: boolean, extra?: "behind" | "solid" | "textured" | "thin", checkRegion?: boolean, disturbState?: boolean) => Promise<Sample>;
   }
 }
 
-window.renderFixture = async (rotation, stacked, hideUpper, extra, checkRegion = false) => {
+window.renderFixture = async (rotation, stacked, hideUpper, extra, checkRegion = false, disturbState = false) => {
   const imageCanvas = document.createElement("canvas");
   imageCanvas.width = 48;
   imageCanvas.height = 16;
@@ -72,14 +72,21 @@ window.renderFixture = async (rotation, stacked, hideUpper, extra, checkRegion =
   };
   const camera = { centerX: stacked ? 2 : 0.5, centerY: stacked ? 2 : 0.5, zoom: 3, rotation };
   const screen = projectWorld(camera, canvas, { x: stacked ? upper[0] + 0.5 : 0.5, y: stacked ? upper[1] + 0.5 : 0.5, z: stacked ? 1.125 : extra ? 1 : 0.125 });
-  renderer.render(world, camera, 0, extra ? [() => [{
+  const disturb = () => {
+    if (!disturbState) return;
+    gl.depthMask(false); gl.depthFunc(gl.NEVER); gl.enable(gl.DITHER);
+    gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.viewport(0, 0, 1, 1);
+  };
+  disturb();
+  renderer.render({ world: world, camera: camera, waterFrame: 0, geometryPasses: extra ? [() => [{
     vertices: (extra === "thin" ? [[0.516,-8], [0.696,-8], [0.696,8], [0.516,8]] : [[-8,-8], [8,-8], [8,8], [-8,8]]).map(([x, y]) => ({ x: (extra === "thin" ? Math.floor(screen.x) : screen.x) + x, y: screen.y + y, depth: extra === "behind" ? -100 : 100, height: 2, u: 0.5, v: 0.5 })) as GeometryQuad["vertices"],
     kind: "fixture", id: "extra", tileX: 0, tileY: 0,
     color: extra === "textured" ? [1, 1, 1, 1] : [0, 0, 1, 1], page: extra === "textured" ? 0 : undefined,
-  }]] : []);
+  }]] : [] });
   const pickingPasses = [pickingDraws];
   const color = new Uint8Array(4);
   gl.readPixels(Math.floor(screen.x), canvas.height - 1 - Math.floor(screen.y), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, color);
+  disturb();
   const pick = renderer.pick(screen.x, screen.y);
   const compareRegion = (x: number, y: number, width: number, height: number): boolean => {
     const region = renderer.pickRegion(x, y, width, height);
@@ -93,13 +100,13 @@ window.renderFixture = async (rotation, stacked, hideUpper, extra, checkRegion =
   pickingPasses.push(pickingDraws);
   renderer.pick(screen.x, screen.y);
   pickingPasses.push(pickingDraws);
-  renderer.render({ ...world, sprites: [], paths: new Int32Array() }, camera);
+  renderer.render({ world: { ...world, sprites: [], paths: new Int32Array() }, camera: camera });
   pickingPasses.push(pickingDraws);
   const terrainScreen = projectWorld(camera, canvas, { x: stacked ? upper[0] + 0.5 : 0.5, y: stacked ? upper[1] + 0.5 : 0.5, z: stacked ? 0 : 0.125 });
   const updatedPick = renderer.pick(terrainScreen.x, terrainScreen.y);
   pickingPasses.push(pickingDraws);
   canvas.width = 500;
-  renderer.render({ ...world, sprites: [], paths: new Int32Array() }, camera);
+  renderer.render({ world: { ...world, sprites: [], paths: new Int32Array() }, camera: camera });
   pickingPasses.push(pickingDraws);
   const resizedScreen = projectWorld(camera, canvas, { x: stacked ? upper[0] + 0.5 : 0.5, y: stacked ? upper[1] + 0.5 : 0.5, z: stacked ? 0 : 0.125 });
   const resizedPick = renderer.pick(resizedScreen.x, resizedScreen.y);
