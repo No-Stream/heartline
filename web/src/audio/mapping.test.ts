@@ -99,3 +99,20 @@ it("limits train entries to the four most audible and separates coaster identiti
   expect(result.frame.trains.map((train) => train.train)).toEqual([0, 1, 2, 4]);
   expect(result.frame.trains[0].audibility).toBeGreaterThan(0.5);
 });
+
+it("triggers two trains together and suppresses a repeat during only that train's cooldown", () => {
+  const twoTrains = (firstG: number, secondG: number, tick: number): MappingInput => {
+    const value = input([0, 5, 0, firstG, 0, 1, 1, 5, 0, secondG, 0, 1], tick);
+    value.snapshot = { ...value.snapshot!, trainPoses: new Float32Array([0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 5, 0, 0, 1, 0, 0, 0, 0, 1, 0]) };
+    return value;
+  };
+  let result = next(twoTrains(1, 1, 0));
+  result = next(twoTrains(0, 0, 10), result.memory);
+  expect(result.frame.screams.map((event) => event.train)).toEqual([0, 2]);
+  result = next(twoTrains(1, 1, 20), result.memory);
+  result = next(twoTrains(0, 1, 30), result.memory);
+  expect(result.frame.screams).toEqual([]);
+  result = next(twoTrains(1, 1, 600), result.memory);
+  result = next(twoTrains(0, 1, 610), result.memory);
+  expect(result.frame.screams.map((event) => event.train)).toEqual([0]);
+});
