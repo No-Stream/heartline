@@ -1,0 +1,3 @@
+[build]
+# Limits concurrent compiler processes machine-wide; see tools/rustc-budget.sh.
+rustc-wrapper = "tools/rustc-budget.sh"
