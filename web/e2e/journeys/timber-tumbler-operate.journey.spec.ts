@@ -58,7 +58,7 @@ async function selectQueuedGuest(page: Page): Promise<string> {
         continue;
       }
       expect(activity.kind, "selected guest's coaster activity").toBe("queuing");
-      await page.keyboard.press("Space");
+      await page.getByRole("button", { name: "Resume" }).click();
       await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
       return id;
     }
