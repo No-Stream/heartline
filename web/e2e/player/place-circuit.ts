@@ -29,6 +29,9 @@ async function stepHill(page: Page, attribute: HillAttribute, target: string): P
 
 async function selectPiece(page: Page, piece: string): Promise<void> {
   const selected = page.locator("[data-construction]");
+  // After a placement the worker re-picks the next piece's size for the new end speed, so the previous
+  // selection only counts once the builder has settled.
+  await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   if (await selected.getAttribute("data-selected") === piece) return;
   const turn = /^SpeedTurnLarge(\d+)(Left|Right)$/.exec(piece);
   if (turn) {
@@ -43,23 +46,28 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
     await page.locator(`[data-speed-match-variant="${piece}"]`).click();
   } else {
     const direct = page.locator(`[data-piece="${piece}"]`);
-    if (await direct.isVisible()) {
+    const hill = /^(WoodenEjector|Ejector|Floater|Family|Speed)Hill(\d+)x(\d+)$/.exec(piece);
+    const roll = /^ZeroGRoll(Fast|Compact)(Left|Right)$/.exec(piece);
+    // A palette click on a hill is re-sized by the worker for the predicted speed, so hills are sized in the inspector.
+    if (!hill && !roll) {
+      await expect(direct, `Piece ${piece} is not offered by the palette`).toBeVisible();
       await direct.click();
     } else {
-      const hill = /^(WoodenEjector|Ejector|Floater|Family|Speed)Hill(\d+)x(\d+)$/.exec(piece);
-      const roll = /^ZeroGRoll(Fast|Compact)(Left|Right)$/.exec(piece);
-      if (!hill && !roll) throw new Error(`Piece ${piece} is not offered by the palette`);
       const hillSection = page.locator("[data-hill]");
       if (await hillSection.getAttribute("open") === null) await hillSection.locator("summary").click();
       await expect(hillSection.locator('[data-hill-value="feel"]')).toHaveText(/\S/);
       const feel = roll ? "Zero-g roll" : piece === "WoodenEjectorHill8x64" ? "Strong floater"
         : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" || hill![1] === "Family" ? "Floater" : "Speed hill";
-      await stepHill(page, "feel", feel);
-      await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : "Upright");
-      // A feel or twist step lets the worker pick a size for the predicted speed; let that land before sizing exactly.
-      await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
-      await stepHill(page, "height", `${roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
-      await stepHill(page, "span", `${roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
+      // Opening the section or stepping the feel or twist lets the worker re-pick a size for the predicted speed,
+      // which can land after the exact size steps; step again until the exact piece stays selected.
+      await expect(async () => {
+        await stepHill(page, "feel", feel);
+        await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : "Upright");
+        await stepHill(page, "height", `${roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
+        await stepHill(page, "span", `${roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
+        await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
+        await expect(selected).toHaveAttribute("data-selected", piece, { timeout: 1_000 });
+      }).toPass({ timeout: 15_000 });
     }
   }
   await expect(selected).toHaveAttribute("data-selected", piece);
