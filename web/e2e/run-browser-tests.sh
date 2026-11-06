@@ -34,8 +34,8 @@ if [[ "${THEME_PARK_PLAYWRIGHT_DOCKER:-0}" == "1" ]]; then
     previous_argument="$argument"
   done
 
-  if [[ "$selected_project" != "feature" ]]; then
-    echo "Docker browser runs currently support only --project=feature." >&2
+  if [[ "$selected_project" != "feature" && "$selected_project" != "journey" ]]; then
+    echo "Docker browser runs currently support only --project=feature or --project=journey." >&2
     exit 2
   fi
 
@@ -91,9 +91,11 @@ if [[ "${THEME_PARK_PLAYWRIGHT_DOCKER:-0}" == "1" ]]; then
     --env THEME_PARK_BROWSER_TESTS_IN_BUDGET=1
     --env THEME_PARK_PLAYWRIGHT_DOCKER=1
     --env THEME_PARK_PIECE_CATALOG_FIXTURE="$container_fixture_path"
-    "$playwright_image"
-    npx playwright test
   )
+  if [[ "$selected_project" == "journey" ]]; then
+    docker_arguments+=(--env THEME_PARK_LIVE_PAUSE_RENDER=1)
+  fi
+  docker_arguments+=("$playwright_image" npx playwright test)
   "$repo_root/tools/run-in-budget.sh" docker "${docker_arguments[@]}" "$@"
   exit 0
 fi

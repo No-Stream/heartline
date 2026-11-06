@@ -58,10 +58,17 @@ type Tile = { x: number; y: number; z: number };
 type GameSpeed = 1 | 2 | 4 | 8 | 16;
 
 export async function startPark(page: Page, options: { park: "new" | "demo"; seed: number; speed: GameSpeed; livePauseRender?: boolean }): Promise<void> {
-  await page.goto(`/?park=${options.park}&seed=${options.seed}${options.livePauseRender ? "&livePauseRender=1" : ""}`);
+  const path = `/?park=${options.park}&seed=${options.seed}${options.livePauseRender ? "&livePauseRender=1" : ""}`;
+  await gotoGame(page, path);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Watch");
   await setGameSpeed(page, options.speed);
+}
+
+export async function gotoGame(page: Page, path: string): Promise<void> {
+  const url = new URL(path, "http://localhost");
+  if (process.env.THEME_PARK_LIVE_PAUSE_RENDER === "1") url.searchParams.set("livePauseRender", "1");
+  await page.goto(`${url.pathname}${url.search}${url.hash}`);
 }
 
 export async function setGameSpeed(page: Page, targetSpeed: GameSpeed): Promise<void> {
