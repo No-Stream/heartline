@@ -707,6 +707,11 @@ pub fn tunnel_plan(
                 let minimum = bounds.min.z.floor().max(f64::from(i16::MIN)) as i16;
                 let maximum = bounds.max.z.ceil().min(f64::from(i16::MAX)) as i16;
                 for z in minimum..maximum {
+                    // The terrain lookup is much cheaper than the envelope test, so it goes first.
+                    let ground = world.ground(x, y, z);
+                    if ground == Ground::Air {
+                        continue;
+                    }
                     let cell = ClearanceBox {
                         min: Vec3::new(f64::from(x) * 4.0, f64::from(y) * 4.0, f64::from(z)),
                         max: Vec3::new(
@@ -719,15 +724,9 @@ pub fn tunnel_plan(
                         continue;
                     }
                     let terrain_cell = TerrainCell { x, y, height: z };
-                    match world.ground(x, y, z) {
-                        Ground::Solid | Ground::SurfaceSlope => {
-                            swept_cells.insert(terrain_cell);
-                            carve_cells.insert(terrain_cell);
-                        }
-                        Ground::Carved => {
-                            swept_cells.insert(terrain_cell);
-                        }
-                        Ground::Air => {}
+                    swept_cells.insert(terrain_cell);
+                    if ground != Ground::Carved {
+                        carve_cells.insert(terrain_cell);
                     }
                 }
             }
