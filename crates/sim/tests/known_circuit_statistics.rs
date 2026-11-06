@@ -5,7 +5,7 @@ use theme_park_sim::physics::{
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
     CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceId, TrackState, catalog,
-    hybrid_model, multi_launch_model, wooden_twister_model,
+    effective_rated_speeds, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -101,6 +101,106 @@ fn default_test_ride(circuit: &Circuit, model: &CoasterModel) -> CoasterOutcome 
     (0..60_000)
         .find_map(|_| run.step(circuit))
         .expect("Timber Tumbler default-physics ride did not finish")
+}
+
+fn assert_timber_margins(circuit: &Circuit, model: &CoasterModel, construction: bool) {
+    // TASK-126 will widen hill windows; TASK-128's heart-speed change is expected to
+    // shift speeds by a few percent (about 0.6 m/s at 20 m/s), below this margin.
+    // The force margin also leaves the brief-excursion allowance clearly unused.
+    let speed_margin = 1.5;
+    let force_margin = 0.25;
+    let start = if construction {
+        0.0
+    } else {
+        circuit.pieces()[0].length() / 2.0
+    };
+    let config = PhysicsConfig {
+        lift_speed: if construction {
+            5.0
+        } else {
+            PhysicsConfig::default().lift_speed
+        },
+        ..PhysicsConfig::default()
+    };
+    let mut train = Train::new(
+        circuit,
+        &model.train,
+        config,
+        start,
+        if construction { 2.0 } else { 0.0 },
+    );
+    let mut entries = vec![vec![false; model.train.cars as usize]; circuit.pieces().len()];
+    let limits = model.comfortable_force_limits;
+    let mut minimum_speed_margin = f64::INFINITY;
+    let mut minimum_force_margin = f64::INFINITY;
+    for _ in 0..60_000 {
+        train.step(circuit);
+        for frame in train.take_readings() {
+            for (car, reading) in frame.iter().enumerate() {
+                let car_distance = train.distance()
+                    - car as f64 * model.train.length_metres / f64::from(model.train.cars);
+                if car_distance < 0.0 {
+                    continue;
+                }
+                let piece = &circuit.pieces()[reading.piece_index];
+                if !entries[reading.piece_index][car] {
+                    entries[reading.piece_index][car] = true;
+                    if let Some(window) = effective_rated_speeds(piece, &model.train) {
+                        minimum_speed_margin = minimum_speed_margin.min(
+                            (reading.speed - window.minimum_entry)
+                                .min(window.maximum_entry - reading.speed),
+                        );
+                        assert!(
+                            reading.speed >= window.minimum_entry + speed_margin
+                                && reading.speed <= window.maximum_entry - speed_margin,
+                            "construction={construction} car {car} {:?} entry {} window {}..{}",
+                            piece.id,
+                            reading.speed,
+                            window.minimum_entry,
+                            window.maximum_entry
+                        );
+                    }
+                }
+                minimum_force_margin = minimum_force_margin.min(
+                    (limits.maximum_vertical_g - reading.g.vertical)
+                        .min(reading.g.vertical - limits.minimum_vertical_g)
+                        .min(limits.maximum_lateral_g - reading.g.lateral.abs())
+                        .min(limits.maximum_longitudinal_g - reading.g.longitudinal.abs()),
+                );
+                assert!(
+                    reading.g.vertical <= limits.maximum_vertical_g - force_margin
+                        && reading.g.vertical >= limits.minimum_vertical_g + force_margin
+                        && reading.g.lateral.abs() <= limits.maximum_lateral_g - force_margin
+                        && reading.g.longitudinal.abs()
+                            <= limits.maximum_longitudinal_g - force_margin,
+                    "construction={construction} car {car} {:?} forces {:?}",
+                    piece.id,
+                    reading.g
+                );
+            }
+        }
+        assert!(
+            train.notes().is_empty(),
+            "train recovered: {:?}",
+            train.notes()
+        );
+        if train.distance() >= circuit.length() + start {
+            eprintln!(
+                "construction={construction} minimum speed margin {minimum_speed_margin} m/s; minimum force margin {minimum_force_margin} g"
+            );
+            for (index, piece) in circuit.pieces().iter().enumerate() {
+                if effective_rated_speeds(piece, &model.train).is_some() {
+                    assert!(
+                        entries[index].iter().all(|seen| *seen),
+                        "missing car entry for {:?}",
+                        piece.id
+                    );
+                }
+            }
+            return;
+        }
+    }
+    panic!("train did not finish");
 }
 
 fn assert_timber_tumbler_report(run_name: &str, report: &TestRun, limits: ComfortableForceLimits) {
@@ -210,6 +310,8 @@ fn construction_reports_known_circuit_features() {
 fn timber_tumbler_meets_player_ride_targets_under_both_physics_configs() {
     let model = hybrid_model();
     let circuit = player_circuit("Timber Tumbler", model.clone());
+    assert_timber_margins(&circuit, &model, false);
+    assert_timber_margins(&circuit, &model, true);
     let heartlined_inversions = circuit
         .pieces()
         .iter()

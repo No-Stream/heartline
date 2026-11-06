@@ -3,13 +3,22 @@ use std::collections::BTreeSet;
 #[path = "../examples/circuit_report.rs"]
 mod circuit_report;
 
-const TIMBER_TUMBLER: &str = include_str!("../../../web/e2e/player/circuits.txt");
+const HISTORICAL_TIMBER_TUMBLER: &str =
+    include_str!("fixtures/timber-tumbler-calibration-39d9e51.txt");
 const SPEED_MATCHED_PREFIX: &str = "+chain\nLevelToGentleUp\nGentleUp\nGentleUpToLevel\n-chain\nLevelToGentleDown\nGentleDown\nGentleDown\nGentleDownToLevel\n";
 
 #[test]
 fn timber_report_marks_its_four_out_of_window_pieces_and_extreme_lateral_force() {
-    let report = circuit_report::report_for_circuit(TIMBER_TUMBLER, "Timber Tumbler", true, false)
-        .expect("the Timber Tumbler report should run");
+    // This calibration assertion describes the layout at 39d9e51. Keep that
+    // layout as a fixture so later improvements to the shipped ride do not
+    // change what this report regression test measures.
+    let report = circuit_report::report_for_circuit(
+        HISTORICAL_TIMBER_TUMBLER,
+        "Timber Tumbler",
+        true,
+        false,
+    )
+    .expect("the historical Timber Tumbler report should run");
 
     let rows: Vec<&str> = report.lines().filter(|line| is_piece_row(line)).collect();
     let outside_rows: Vec<&str> = rows

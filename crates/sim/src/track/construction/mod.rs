@@ -349,7 +349,9 @@ impl Construction {
             previous_cache.map_or_else(Vec::new, |cache| cache.available_choices);
         let mut seen_ids = HashSet::new();
         for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
-            if base.family.is_some() && base.id != self.selected_hill_variant {
+            if matches!(base.family, Some(PieceFamily::Hill(_)))
+                && base.id != self.selected_hill_variant
+            {
                 continue;
             }
             if choices.iter().any(|choice| choice.id == base.id) {
@@ -424,9 +426,9 @@ impl Construction {
             .copied()
             .filter(|choice| {
                 choice.id == self.selected_hill_variant
-                    || !templates()
-                        .iter()
-                        .any(|piece| piece.id == choice.id && piece.family.is_some())
+                    || !templates().iter().any(|piece| {
+                        piece.id == choice.id && matches!(piece.family, Some(PieceFamily::Hill(_)))
+                    })
             })
             .collect()
     }
@@ -443,7 +445,7 @@ impl Construction {
     ) -> Result<(), ConstructionError> {
         if !templates()
             .iter()
-            .any(|piece| piece.id == id && piece.family.is_some())
+            .any(|piece| piece.id == id && matches!(piece.family, Some(PieceFamily::Hill(_))))
         {
             return Err(ConstructionError::Unavailable);
         }
@@ -466,7 +468,8 @@ impl Construction {
             .available_choices
             .iter()
             .filter(|candidate| {
-                candidate.piece.family.is_none() || candidate.piece.id == self.selected_hill_variant
+                !matches!(candidate.piece.family, Some(PieceFamily::Hill(_)))
+                    || candidate.piece.id == self.selected_hill_variant
             })
             .map(|candidate| (candidate.piece.clone(), candidate.choice))
             .collect()

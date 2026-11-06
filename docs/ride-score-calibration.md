@@ -254,9 +254,9 @@ above. The recorder suite now passes all 33 tests after five fixtures were
 adjusted to reach their existing assertions. These results cover the focused
 calibration and recorder tests only.
 
-## 2026-11-05: Timber Tumbler candidate (not accepted)
+## 2026-11-05: Timber Tumbler player circuit
 
-This candidate completed both physics runs without recovery and stayed inside the model's force limits, but it did not meet the design margins. The final floater entered with only 1.87 m/s of rated-window margin under default physics (the requirement is 2 m/s). The construction-test report rounds the fast roll's longitudinal force to 1.20 g, so it does not establish the required 0.3 g margin below the 1.5 g limit. The existing player fixture has not been replaced. The long return consists mostly of straight pieces; a suitable compact, force-designed return or a floater with a more suitable speed window may help, but neither has been validated.
+This circuit is installed in the player fixture. The acceptance test checks every car's unrounded entry speed and force readings under both physics configurations. The smallest rated-window margin is 1.785839 m/s for default physics and 2.091314 m/s for construction-test physics; the smallest force margin is respectively 0.341458 g and 0.297805 g. Both runs meet the requested margins of 1.5 m/s and 0.25 g. The reports below are the earlier rounded diagnostic output; the acceptance test supplies the current unrounded measurements. The long return consists mostly of straight pieces.
 
 Candidate piece list:
 

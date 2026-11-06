@@ -83,6 +83,28 @@ fn barrel_roll_drops_are_constructible_from_level_track_in_both_directions() {
 }
 
 #[test]
+fn speed_turns_are_available_without_selecting_a_hill_variant() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    let id = PieceId::SpeedTurnLarge24Left;
+    for _ in 0..2 {
+        let choices = construction.choices(&world, &[]);
+        assert!(choices.iter().any(|choice| choice.id == id));
+        assert!(
+            construction
+                .available_choices(&world, &[])
+                .iter()
+                .any(|(piece, choice)| piece.id == id
+                    && choice.result == construction.validate(id, &world, &[]))
+        );
+    }
+    assert_eq!(
+        construction.select_hill_variant(id, &world, &[]),
+        Err(ConstructionError::Unavailable)
+    );
+}
+
+#[test]
 fn briar_blitz_choices_after_vertical_exit() {
     let world = world();
     let mut construction = Construction::new(
@@ -1280,7 +1302,10 @@ fn available_choices_match_model_candidates_before_and_after_closing() {
         .model()
         .available_pieces(construction.end())
         .into_iter()
-        .filter(|piece| piece.family.is_none() || piece.id == construction.selected_hill_variant())
+        .filter(|piece| {
+            !matches!(piece.family, Some(PieceFamily::Hill(_)))
+                || piece.id == construction.selected_hill_variant()
+        })
         .map(|piece| (piece.id, piece.exit))
         .collect();
     for closed in [false, true] {
@@ -2639,7 +2664,7 @@ fn hill_choices_validate_only_the_selected_variant() {
     let world = world();
     let variants: Vec<_> = templates()
         .iter()
-        .filter(|piece| piece.family.is_some())
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::Hill(_))))
         .map(|piece| piece.id)
         .collect();
     for prefix in [
@@ -2668,12 +2693,9 @@ fn hill_choices_validate_only_the_selected_variant() {
                 family_choices[0].result,
                 construction.validate(id, &world, &[])
             );
-            assert!(
-                construction
-                    .available_choices(&world, &[])
-                    .iter()
-                    .all(|(piece, _)| piece.family.is_none() || piece.id == id)
-            );
+            assert!(construction.available_choices(&world, &[]).iter().all(
+                |(piece, _)| !matches!(piece.family, Some(PieceFamily::Hill(_))) || piece.id == id
+            ));
         }
     }
 }

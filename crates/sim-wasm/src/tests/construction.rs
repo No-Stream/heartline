@@ -1887,6 +1887,21 @@ fn construction_lists_are_structured_and_preserve_selection_ids() {
 }
 
 #[test]
+fn construction_choices_include_speed_turns_on_the_wire() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(200, 200, 20, 0);
+    let choices: serde_json::Value =
+        serde_json::from_str(&simulation.construction_choices()).unwrap();
+    assert!(
+        choices
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| { choice["id"] == "SpeedTurnLarge24Left" && choice["group"] == "turn" })
+    );
+}
+
+#[test]
 fn construction_reports_include_nullable_heartlining_metadata() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
     simulation.construction_start(200, 200, 20, 0);
