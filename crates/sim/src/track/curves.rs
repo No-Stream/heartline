@@ -776,8 +776,6 @@ const SPEED_TURN_RAMP: f64 = 0.39;
 const SPEED_TURN_EASING: f64 = 0.08;
 
 struct SpeedTurnGeometry {
-    radius: f64,
-    design_speed: f64,
     peak_bank: f64,
     length: f64,
     knots: Vec<(f64, f64, f64)>,
@@ -834,40 +832,40 @@ fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
     let peak_bank = (low + high) / 2.0;
     let (_, length, knots) = integrate(peak_bank);
     SpeedTurnGeometry {
-        radius,
-        design_speed,
         peak_bank,
         length,
         knots,
     }
 }
 
+/// Footprint radius and design speed of each speed turn; the radius grows with the speed.
+const SPEED_TURN_DESIGNS: [(f64, f64); 5] = [
+    (32.0, 16.0),
+    (32.0, 20.0),
+    (32.0, 24.0),
+    (48.0, 28.0),
+    (64.0, 32.0),
+];
+
 fn speed_turn_geometry(radius: f64, design_speed: f64) -> &'static SpeedTurnGeometry {
-    static GEOMETRIES: std::sync::LazyLock<Vec<SpeedTurnGeometry>> =
-        std::sync::LazyLock::new(|| {
-            [
-                (32.0, 16.0),
-                (32.0, 20.0),
-                (32.0, 24.0),
-                (48.0, 28.0),
-                (64.0, 32.0),
-            ]
-            .into_iter()
-            .flat_map(|(radius, speed)| {
-                [radius, radius * std::f64::consts::SQRT_2]
-                    .into_iter()
-                    .map(move |actual_radius| build_speed_turn(actual_radius, speed))
-            })
-            .collect()
-        });
-    GEOMETRIES
+    // Each fit takes a few milliseconds, so only the turns a construction actually samples are fitted.
+    static GEOMETRIES: [OnceLock<SpeedTurnGeometry>; 2 * SPEED_TURN_DESIGNS.len()] =
+        [const { OnceLock::new() }; 2 * SPEED_TURN_DESIGNS.len()];
+    let (index, fitted_radius) = SPEED_TURN_DESIGNS
         .iter()
-        .find(|geometry| {
-            (geometry.radius - radius).abs() < 1e-8 && geometry.design_speed == design_speed
+        .flat_map(|&(design_radius, speed)| {
+            [design_radius, design_radius * std::f64::consts::SQRT_2]
+                .map(|fitted_radius| (fitted_radius, speed))
         })
+        .enumerate()
+        .find(|(_, (fitted_radius, speed))| {
+            (fitted_radius - radius).abs() < 1e-8 && *speed == design_speed
+        })
+        .map(|(index, (fitted_radius, _))| (index, fitted_radius))
         .unwrap_or_else(|| {
             panic!("speed turn must have a fitted geometry: radius {radius}, speed {design_speed}")
-        })
+        });
+    GEOMETRIES[index].get_or_init(|| build_speed_turn(fitted_radius, design_speed))
 }
 
 impl Piece {
