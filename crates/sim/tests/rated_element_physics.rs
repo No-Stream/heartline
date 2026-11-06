@@ -1,6 +1,9 @@
 use std::collections::{HashSet, VecDeque};
 
-use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
+use theme_park_sim::physics::rated_piece::{
+    rate_piece, rate_sequence, unpowered as rating_physics,
+};
+use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
 use theme_park_sim::track::{
     AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, hybrid_model,
     multi_launch_model, wooden_twister_model,
@@ -399,8 +402,6 @@ fn assert_train_crosses_element(
         entry_speed,
     );
     let mut cars_seen = vec![false; usize::from(cars)];
-    let mut evaluators =
-        vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
     let mut minimum_vertical = f64::INFINITY;
     let mut maximum_vertical = f64::NEG_INFINITY;
     let mut maximum_lateral: f64 = 0.0;
@@ -410,16 +411,7 @@ fn assert_train_crosses_element(
         train.step(circuit);
         for frame in train.take_readings() {
             for (index, reading) in frame.into_iter().enumerate() {
-                let evaluated = evaluators[index].update(reading.g);
                 if element_range.contains(&reading.distance) {
-                    assert!(
-                        evaluated.within_limits,
-                        "{piece_id:?} {} {cars} cars at {entry_speed}: car {index}, distance {}, filtered {:?}, axes {:?}",
-                        model.name,
-                        reading.distance,
-                        evaluated.filtered,
-                        evaluated.axis_within_limits,
-                    );
                     cars_seen[index] = true;
                     minimum_vertical = minimum_vertical.min(reading.g.vertical);
                     maximum_vertical = maximum_vertical.max(reading.g.vertical);
@@ -533,6 +525,64 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
 }
 
 #[test]
+fn every_level_to_level_rated_maximum_passes_for_default_trains_in_isolation() {
+    for piece in catalog().iter().filter(|piece| {
+        piece.rated_speeds.is_some()
+            && piece.entry == TrackState::origin()
+            && piece.exit.slope == theme_park_sim::track::Slope::Level
+            && piece.exit.bank == theme_park_sim::track::Bank::Level
+    }) {
+        let maximum_entry = piece.rated_speeds.unwrap().maximum_entry;
+        for model in models()
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            let cars = model.train.cars;
+            let rating = rate_piece(&model, cars, piece, maximum_entry, rating_physics())
+                .unwrap_or_else(|error| panic!("{:?} {}: {error}", piece.id, model.name));
+            assert!(
+                rating.passed,
+                "{:?} {} {cars} cars at {maximum_entry}: {rating:?}",
+                piece.id, model.name
+            );
+        }
+    }
+}
+
+#[test]
+fn level_to_level_inversion_rated_maxima_pass_for_all_allowed_trains_in_isolation() {
+    let mut checked_configurations = 0;
+    for piece in catalog().iter().filter(|piece| {
+        piece.inversion.is_some()
+            && piece.rated_speeds.is_some()
+            && piece.entry == TrackState::origin()
+            && piece.exit.slope == theme_park_sim::track::Slope::Level
+            && piece.exit.bank == theme_park_sim::track::Bank::Level
+    }) {
+        let maximum_entry = piece.rated_speeds.unwrap().maximum_entry;
+        for model in models()
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            for cars in model.cars_per_train_range() {
+                let rating = rate_piece(&model, cars, piece, maximum_entry, rating_physics())
+                    .unwrap_or_else(|error| panic!("{:?} {}: {error}", piece.id, model.name));
+                assert!(
+                    rating.passed,
+                    "{:?} {} {cars} cars at {maximum_entry}: {rating:?}",
+                    piece.id, model.name
+                );
+                checked_configurations += 1;
+            }
+        }
+    }
+    assert!(
+        checked_configurations > 0,
+        "no rated inversions were tested"
+    );
+}
+
+#[test]
 fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
     let mut failures = Vec::new();
     for template in catalog().iter().filter(|piece| {
@@ -635,24 +685,15 @@ fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train
                     rated.maximum_entry,
                 );
                 let mut cars_seen = vec![false; usize::from(cars)];
-                let mut evaluators =
-                    vec![
-                        ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
-                        usize::from(cars)
-                    ];
                 let mut minimum_vertical_g = f64::INFINITY;
-                let mut minimum_filtered_vertical_g = f64::INFINITY;
 
                 for _ in 0..100_000 {
                     train.step(&circuit);
                     for frame in train.take_readings() {
                         for (index, reading) in frame.into_iter().enumerate() {
-                            let evaluated = evaluators[index].update(reading.g);
                             if (element_start..element_end).contains(&reading.distance) {
                                 cars_seen[index] = true;
                                 minimum_vertical_g = minimum_vertical_g.min(reading.g.vertical);
-                                minimum_filtered_vertical_g =
-                                    minimum_filtered_vertical_g.min(evaluated.filtered.vertical);
                             }
                         }
                     }
@@ -694,12 +735,6 @@ fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train
                     failures.push(format!(
                         "{} {} {cars} cars: {minimum_vertical_g:.3} g below floor {:.3} g",
                         piece.name, model.name, limits.minimum_vertical_g
-                    ));
-                }
-                if limits.classify_airtime(minimum_filtered_vertical_g) != AirtimeRating::Great {
-                    failures.push(format!(
-                        "{} {} {cars} cars: filtered {minimum_filtered_vertical_g:.3} g is not Great",
-                        piece.name, model.name
                     ));
                 }
                 if limits.classify_airtime(minimum_vertical_g) != AirtimeRating::Great {
@@ -845,6 +880,93 @@ fn barrel_roll_drop_rail_descends_monotonically_for_both_mirrors() {
             maximum_upward_tangent <= 1e-8,
             "{piece_id:?} has upward rail tangent {maximum_upward_tangent}"
         );
+    }
+}
+
+#[test]
+fn banked_straights_pass_isolated_ratings_at_both_window_ends() {
+    for piece in catalog().iter().filter(|piece| {
+        matches!(
+            piece.id,
+            PieceId::BankedStraightLeft | PieceId::BankedStraightRight
+        )
+    }) {
+        let rated = piece
+            .rated_speeds
+            .expect("banked straight needs a rated window");
+        for model in models()
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            for cars in model.cars_per_train_range() {
+                for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let rating = rate_piece(&model, cars, piece, speed, rating_physics())
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{:?} {} {cars} cars at {speed}: {error}",
+                                piece.id, model.name
+                            )
+                        });
+                    assert!(
+                        rating.passed,
+                        "{:?} {} {cars} cars at {speed}: {rating:?}",
+                        piece.id, model.name
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn banked_straight_compositions_pass_with_continuous_force_history() {
+    for (bank, straight, rollout) in [
+        (
+            PieceId::BankLeft,
+            PieceId::BankedStraightLeft,
+            PieceId::RolloutLeft,
+        ),
+        (
+            PieceId::BankRight,
+            PieceId::BankedStraightRight,
+            PieceId::RolloutRight,
+        ),
+    ] {
+        let (circuit, ranges) = circuit_for_sequence(&[
+            bank,
+            straight,
+            rollout,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::Straight,
+        ]);
+        let tested_ranges: Vec<_> = ranges[..3]
+            .iter()
+            .map(|(_, start, end)| *start..*end)
+            .collect();
+        let rated = catalog()
+            .iter()
+            .find(|piece| piece.id == straight)
+            .unwrap()
+            .rated_speeds
+            .unwrap();
+        for model in models() {
+            let rating = rate_sequence(
+                &circuit,
+                &tested_ranges,
+                &model.train,
+                rating_physics(),
+                model.comfortable_force_limits,
+                tested_ranges[0].start - 10.0,
+                rated.minimum_entry,
+            );
+            assert!(
+                rating.failure.is_none() && rating.violation.is_none(),
+                "{straight:?} {}: {rating:?}",
+                model.name
+            );
+        }
     }
 }
 

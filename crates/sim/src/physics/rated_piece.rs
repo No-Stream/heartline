@@ -21,6 +21,7 @@ pub struct PieceRating {
     pub passed: bool,
     pub entry_speed: f64,
     pub minimum_speed: f64,
+    pub minimum_filtered_vertical: f64,
     pub violation: Option<ForceViolation>,
     pub failure: Option<&'static str>,
 }
@@ -217,7 +218,9 @@ pub fn rate_piece(
     let mut excursions = vec![[0.0; 3]; usize::from(cars)];
     let mut cleared = vec![false; usize::from(cars)];
     let mut minimum_speed = f64::INFINITY;
+    let mut minimum_filtered_vertical = f64::INFINITY;
     let mut violation: Option<ForceViolation> = None;
+    let mut violation_excursion_active = false;
     let mut failure = None;
     for _ in 0..100_000 {
         train.step(&track.circuit);
@@ -254,6 +257,10 @@ pub fn rate_piece(
                     } else {
                         minimum_speed = minimum_speed.min(reading.speed);
                     }
+                    if !in_tail {
+                        minimum_filtered_vertical =
+                            minimum_filtered_vertical.min(result.filtered.vertical);
+                    }
                     for axis in 0..3 {
                         if !result.axis_within_limits[axis] && violation.is_none() {
                             let GForces {
@@ -261,6 +268,7 @@ pub fn rate_piece(
                                 lateral,
                                 longitudinal,
                             } = result.filtered;
+                            violation_excursion_active = true;
                             violation = Some(ForceViolation {
                                 car,
                                 axis,
@@ -278,14 +286,23 @@ pub fn rate_piece(
                                 result.filtered.lateral,
                                 result.filtered.longitudinal,
                             ][first_violation.axis];
-                            if force.abs() > first_violation.force.abs() {
-                                first_violation.force = force;
-                                first_violation.distance = reading.distance - track.element_start;
-                                first_violation.in_tail = in_tail;
+                            if violation_excursion_active
+                                && result.axis_exceeding_sustained[first_violation.axis]
+                                && force.is_sign_positive()
+                                    == first_violation.force.is_sign_positive()
+                            {
+                                if force.abs() > first_violation.force.abs() {
+                                    first_violation.force = force;
+                                    first_violation.distance =
+                                        reading.distance - track.element_start;
+                                    first_violation.in_tail = in_tail;
+                                }
+                                first_violation.excursion_seconds = first_violation
+                                    .excursion_seconds
+                                    .max(excursions[car][first_violation.axis]);
+                            } else {
+                                violation_excursion_active = false;
                             }
-                            first_violation.excursion_seconds = first_violation
-                                .excursion_seconds
-                                .max(excursions[car][first_violation.axis]);
                         }
                     }
                     if in_tail
@@ -339,6 +356,7 @@ pub fn rate_piece(
         passed: failure.is_none() && violation.is_none(),
         entry_speed: actual,
         minimum_speed,
+        minimum_filtered_vertical,
         violation,
         failure,
     })
@@ -601,6 +619,30 @@ mod tests {
         let excessive = rate_piece(&model, model.train.cars, piece, 40.0, unpowered()).unwrap();
         assert!(excessive.violation.is_some(), "{excessive:?}");
         assert!(!excessive.passed);
+    }
+
+    #[test]
+    fn violation_diagnostics_preserve_the_force_side_that_failed() {
+        let model = hybrid_model();
+        let piece = catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::EjectorHill12x64)
+            .unwrap();
+        let speed = piece.rated_speeds.unwrap().maximum_entry;
+        let result = rate_piece(&model, 8, piece, speed, unpowered()).unwrap();
+        let violation = result
+            .violation
+            .as_ref()
+            .expect("the eight-car train exceeds the vertical limit");
+        assert_eq!(violation.axis, 0);
+        assert!(
+            violation.force < model.comfortable_force_limits.minimum_vertical_g,
+            "{violation:?}"
+        );
+        assert!(
+            result.minimum_filtered_vertical < model.comfortable_force_limits.minimum_vertical_g,
+            "{result:?}"
+        );
     }
 
     #[test]

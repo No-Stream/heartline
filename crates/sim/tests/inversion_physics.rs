@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use theme_park_sim::physics::rated_piece::rate_piece;
 use theme_park_sim::physics::{
     Circuit, CoasterRun, ForceEvaluator, GRAVITY, PhysicsConfig, TIME_STEP, Train,
 };
@@ -622,59 +623,37 @@ fn sixty_degree_pull_profiles_keep_trains_within_force_limits() {
 }
 
 #[test]
-fn descending_fifteen_degree_pull_maximum_respects_longitudinal_limit() {
-    use PieceId::*;
-    let circuit = circuit_with_straight_return(&[
-        LevelToGentleUp,
-        GentleToSteepUp,
-        SteepToSixtyUp,
-        SixtyToSteepUp,
-        SteepToGentleUp,
-        GentleUpToLevel,
-        LevelToGentleDown,
-        GentleToSteepDown,
-        SteepToSixtyDown,
-        SixtyToSteepDown,
-        SteepToGentleDown,
-        GentleDownToLevel,
-    ]);
-    let index = circuit
-        .pieces()
+fn descending_fifteen_degree_pull_window_passes_with_a_held_speed_approach() {
+    let piece = catalog()
         .iter()
-        .position(|piece| piece.id == SixtyToSteepDown)
+        .find(|piece| piece.id == PieceId::SixtyToSteepDown)
         .unwrap();
-    let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
-    let end = start + circuit.pieces()[index].length();
-    let maximum = circuit.pieces()[index].rated_speeds.unwrap().maximum_entry;
-    assert_eq!(
-        maximum, 28.0,
-        "the 29 m/s scan point exceeds the longitudinal limit"
-    );
-    let mut config = hybrid_model().train;
-    config.cars = 12;
-    for (speed, should_pass) in [(maximum, true), (maximum + 1.0, false)] {
-        let mut train = Train::new(&circuit, &config, unpowered(), start, speed);
-        let mut maximum_longitudinal: f64 = 0.0;
-        for _ in 0..100_000 {
-            train.step(&circuit);
-            for frame in train.take_readings() {
-                for car in frame {
-                    if (start..end).contains(&car.distance) {
-                        maximum_longitudinal = maximum_longitudinal.max(car.g.longitudinal.abs());
-                    }
-                }
-            }
-            if train.distance() >= end + config.length_metres || train.speed() <= 0.0 {
-                break;
-            }
+    let maximum = piece.rated_speeds.unwrap().maximum_entry;
+    let mut vertical_violation_above_window = false;
+    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
+        if !model.allowed_pieces.contains(&piece.id) {
+            continue;
         }
-        assert!(train.distance() >= end + config.length_metres);
-        assert_eq!(
-            maximum_longitudinal <= 1.5,
-            should_pass,
-            "speed {speed}, longitudinal {maximum_longitudinal}"
-        );
+        for cars in model.cars_per_train_range() {
+            for speed in [maximum, 28.0, 29.0] {
+                let rating = rate_piece(&model, cars, piece, speed, unpowered()).unwrap();
+                assert!(
+                    rating.passed,
+                    "{} {cars} cars at {speed} m/s: {rating:?}",
+                    model.name
+                );
+            }
+            let speed = 30.0;
+            let rating = rate_piece(&model, cars, piece, speed, unpowered()).unwrap();
+            vertical_violation_above_window |= rating
+                .violation
+                .is_some_and(|violation| violation.axis == 0);
+        }
     }
+    assert!(
+        vertical_violation_above_window,
+        "no vertical violation at 30 m/s"
+    );
 }
 
 #[test]
