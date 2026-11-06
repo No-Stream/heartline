@@ -1830,6 +1830,7 @@ fn build_catalog() -> Vec<Piece> {
             pieces.push(piece);
         }
     }
+    // The radius grows with the design speed so the bank stays under 75 degrees and rolls in at under 95 degrees/s.
     for (base, id, name, radius_metres, hand, design_speed) in [
         (
             TurnLargeStandalone,
@@ -1879,6 +1880,38 @@ fn build_catalog() -> Vec<Piece> {
             Hand::Right,
             24.0,
         ),
+        (
+            TurnLargeStandalone,
+            SpeedTurnLarge28Left,
+            "Large left turn banked for 28 m/s",
+            48,
+            Hand::Left,
+            28.0,
+        ),
+        (
+            TurnLargeRightStandalone,
+            SpeedTurnLarge28Right,
+            "Large right turn banked for 28 m/s",
+            48,
+            Hand::Right,
+            28.0,
+        ),
+        (
+            TurnLargeStandalone,
+            SpeedTurnLarge32Left,
+            "Large left turn banked for 32 m/s",
+            64,
+            Hand::Left,
+            32.0,
+        ),
+        (
+            TurnLargeRightStandalone,
+            SpeedTurnLarge32Right,
+            "Large right turn banked for 32 m/s",
+            64,
+            Hand::Right,
+            32.0,
+        ),
     ] {
         let mut piece = pieces
             .iter()
@@ -1887,6 +1920,12 @@ fn build_catalog() -> Vec<Piece> {
             .clone();
         piece.id = id;
         piece.name = name;
+        let grid_offset = i32::from(radius_metres) / 2;
+        piece.exit.x = grid_offset;
+        piece.exit.y = match hand {
+            Hand::Left => grid_offset,
+            Hand::Right => -grid_offset,
+        };
         piece.shape = Shape::SpeedBank { design_speed };
         piece.clear_arc_table();
         piece.family = Some(PieceFamily::SpeedTurn {

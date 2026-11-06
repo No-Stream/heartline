@@ -355,12 +355,12 @@ fn resolve_directive(line: &str, speed: f64, model: &CoasterModel) -> Result<Pie
                     "right" => Some(Hand::Right),
                     _ => None,
                 };
-                let expected_radius = match *size {
-                    "small" => Some(16),
-                    "large" => Some(32),
-                    _ => None,
+                let size_matches = match *size {
+                    "small" => radius_metres < 32,
+                    "large" => radius_metres >= 32,
+                    _ => false,
                 };
-                Some(hand) == expected_hand && Some(radius_metres) == expected_radius
+                Some(hand) == expected_hand && size_matches
             }
             (["@hill", feel], Some(PieceFamily::Hill(family))) => {
                 let expected = match *feel {

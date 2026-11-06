@@ -446,10 +446,10 @@ test("turns after a drop default to the bank for the predicted speed, and the ba
   await expect(selected).toHaveAttribute("data-selected", "Straight");
 
   await page.getByRole("button", { name: "Turn left" }).click();
-  await expect(selected).toHaveAttribute("data-selected", /^SpeedTurnLarge(16|20|24)Left$/);
+  await expect(selected).toHaveAttribute("data-selected", /^SpeedTurnLarge(16|20|24|28|32)Left$/);
   await expect(bank).toHaveText("For speed");
   await expect(sizes).toContainText("Banked for");
-  await expect(sizes.getByRole("button")).toHaveText(["58 km/h", "72 km/h", "86 km/h"]);
+  await expect(sizes.getByRole("button")).toHaveText(["58 km/h", "72 km/h", "86 km/h", "101 km/h", "115 km/h"]);
   await expect(sizes.getByRole("button").first()).toHaveAccessibleName("Banked for 58 km/h");
   await expect(sizes.locator('[aria-pressed="true"]')).toHaveCount(1);
   await expect(page.locator("[data-speed-match-message]")).toHaveText(/^Banked for \d+ km\/h suits the predicted entry speed\.$/);
