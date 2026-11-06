@@ -218,7 +218,7 @@ fn run_one_car_coaster(
         },
     );
     for _ in 0..100_000 {
-        if let Some(outcome) = run.step(circuit) {
+        if let Some(outcome) = run.step(circuit, "Timber Tumbler") {
             return outcome;
         }
     }
@@ -1113,7 +1113,7 @@ fn ride_test_reports_whether_the_train_clears_the_top_hat() {
             PhysicsConfig::default(),
         );
         let outcome = (0..200_000)
-            .find_map(|_| run.step(&circuit))
+            .find_map(|_| run.step(&circuit, wooden_twister_model().name))
             .expect("ride test did not finish");
         let report = &outcome.reports[0];
         assert_eq!(

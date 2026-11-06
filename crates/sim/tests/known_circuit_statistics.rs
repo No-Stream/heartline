@@ -160,7 +160,7 @@ fn ride_test(
     let mut slow_steps = 0;
     for _ in 0..60_000 {
         train.step(circuit);
-        recorder.record(&train.take_readings());
+        recorder.record(&train.take_readings(), model.name);
         assert!(
             train.notes().is_empty(),
             "test train failed: {:?}",
@@ -185,7 +185,7 @@ fn ride_test(
 fn default_test_ride(circuit: &Circuit, model: &CoasterModel) -> CoasterOutcome {
     let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
     (0..60_000)
-        .find_map(|_| run.step(circuit))
+        .find_map(|_| run.step(circuit, model.name))
         .expect("Timber Tumbler default-physics ride did not finish")
 }
 

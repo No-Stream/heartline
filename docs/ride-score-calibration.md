@@ -679,3 +679,47 @@ Nausea: 0.64
   excessive forces (+0.0, 0.0 s)
   forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
 ```
+
+## 2026-11-06 positive vertical force band change
+
+Positive vertical force is now rated in absolute g instead of as a share of
+each model's limit. It is weak up to 2 g, good below the model's "great from"
+value, great from that value up to the model's comfortable limit, too much up
+to 1.3 times the limit, and dangerous beyond. "Great from" is 3.0 g on the
+steel-track models (Timber Tumbler, limit 4.5 g; Velocity Viper, limit 5.0 g)
+and 2.5 g on the wooden Briar Blitz (limit 4.0 g). Before, great started at
+80% of the limit: 3.6 g, 4.0 g and 3.2 g respectively. Airtime, lateral and
+longitudinal bands are unchanged.
+
+Scores are excitement / intensity / nausea, as printed by the calibration
+tests before and after the change. No scoring weights were adjusted.
+
+| Synthetic archetype | Before | After |
+| --- | --- | --- |
+| Family wooden coaster | 2.96 / 2.78 / 0.38 | 2.96 / 2.78 / 0.38 |
+| Classic Arrow looper | 4.05 / 7.24 / 5.53 | 4.05 / 7.24 / 5.53 |
+| B&M hyper | 6.62 / 6.31 / 0.53 | 6.62 / 6.31 / 0.53 |
+| RMC hybrid | 10.80 / 7.26 / 3.55 | 10.80 / 7.26 / 3.55 |
+| Intamin accelerator | 5.78 / 7.39 / 0.18 | 5.78 / 7.39 / 0.18 |
+| Intamin Blitz multi-launch | 11.09 / 7.92 / 2.98 | 11.09 / 7.92 / 2.98 |
+
+The synthetic archetypes supply their force-band durations directly, and none
+of them has any time in the good positive vertical band, so the change cannot
+move them. To check whether more great pullout time could disturb the ordering,
+a temporary run added 1, 2 and 4 seconds of great positive vertical force to
+every archetype except the family coaster. With 4 extra seconds the scores were
+Arrow 4.18, B&M hyper 6.81, RMC 10.99, Intamin accelerator 6.36 and Intamin
+Blitz 11.28 excitement; the family coaster stays at 2.96. Positive force credit
+saturates, so the owner's ordering holds with a wide margin: Intamin Blitz and
+RMC far above the Arrow looper, clearly above the B&M hyper, family lowest.
+
+The measured circuits do move, because their force histories are reclassified.
+These are the rebuilt Timber Tumbler and Velocity Viper circuits on master
+7f4502d, before and after the change:
+
+| Measured circuit | Before | After |
+| --- | --- | --- |
+| Demo | 0.54 / 8.88 / 6.98 | 0.58 / 8.97 / 7.05 |
+| Timber Tumbler | 8.21 / 6.46 / 4.07 | 8.24 / 6.56 / 4.14 |
+| Velocity Viper | 6.69 / 6.61 / 4.19 | 6.73 / 6.67 / 4.24 |
+| Briar Blitz | 0.18 / 9.36 / 6.85 | 0.24 / 9.42 / 6.92 |

@@ -159,7 +159,15 @@ impl Park {
             let outcomes = self
                 .coaster_operation
                 .as_mut()
-                .map(|operation| operation.step(&demo_trains))
+                .map(|operation| {
+                    let model_key = self
+                        .construction
+                        .as_ref()
+                        .expect("coaster has construction")
+                        .model()
+                        .name;
+                    operation.step(&demo_trains, model_key)
+                })
                 .unwrap_or_default();
             for (train_id, outcome) in outcomes {
                 self.finish_live_train(train_id, outcome);
@@ -194,7 +202,13 @@ impl Park {
                     }
                     let readings = train.take_readings();
                     if let Some(recorder) = &mut self.construction_recorder {
-                        recorder.record(&readings);
+                        let model_key = self
+                            .construction
+                            .as_ref()
+                            .expect("test run has construction")
+                            .model()
+                            .name;
+                        recorder.record(&readings, model_key);
                         for frame in &readings {
                             if let Some(reading) = frame.first() {
                                 recorder.record_dueling(circuit, *reading, &demo_trains);

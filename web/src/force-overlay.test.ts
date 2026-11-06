@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { forceLabelText, forceReadoutLines, limitBand, limitCloseness, nearestSampleIndex, placeForceLabels, rateForce, rateVertical, selectForceLabels, type ForceLimits } from "./force-overlay";
+import { MODEL_FORCE_LIMITS } from "./generated/modelForceLimits";
 import type { TestingSample } from "./generated/TestingSample";
 
-const steel: ForceLimits = { minimumVerticalG: -1.5, maximumVerticalG: 5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
+const steel: ForceLimits = MODEL_FORCE_LIMITS["Velocity Viper"];
+const wood: ForceLimits = MODEL_FORCE_LIMITS["Briar Blitz"];
 const sample = (distance: number, forces: Partial<TestingSample> = {}): TestingSample => ({
   distance, x: distance, y: 0, z: 1, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, ...forces,
 });
@@ -36,11 +38,13 @@ describe("force ratings", () => {
     expect(rateForce("airtime", -2.1, steel)).toBe("dangerous");
   });
   it("judges airtime against each model's own floor", () => {
-    expect(rateForce("airtime", -1.1, { ...steel, minimumVerticalG: -1 })).toBe("too much");
+    expect(rateForce("airtime", -1.1, wood)).toBe("too much");
   });
   it("rates positive vertical and lateral force relative to the limits", () => {
     expect(rateForce("vertical", 1.5, steel)).toBe("weak");
-    expect(rateForce("vertical", 3, steel)).toBe("good");
+    expect(rateForce("vertical", 2.999, steel)).toBe("good");
+    expect(rateForce("vertical", 3, steel)).toBe("great");
+    expect(rateForce("vertical", 2.5, wood)).toBe("great");
     expect(rateForce("vertical", 4.5, steel)).toBe("great");
     expect(rateForce("vertical", 5.5, steel)).toBe("too much");
     expect(rateForce("lateral", -0.4, steel)).toBe("fine");
@@ -50,7 +54,7 @@ describe("force ratings", () => {
   });
   it("treats low vertical force as airtime", () => {
     expect(rateVertical(0.1, steel)).toEqual({ axis: "airtime", rating: "weak" });
-    expect(rateVertical(3.2, steel)).toEqual({ axis: "vertical", rating: "good" });
+    expect(rateVertical(3.2, steel)).toEqual({ axis: "vertical", rating: "great" });
   });
 });
 

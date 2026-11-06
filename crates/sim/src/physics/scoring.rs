@@ -1,86 +1,39 @@
-use crate::track::{AirtimeRating, ComfortableForceLimits};
+use crate::track::ComfortableForceLimits;
+pub use crate::track::{ForceRating as ForceBand, ForceRatingAxis as ForceAxis};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ForceAxis {
-    Airtime,
-    Vertical,
-    Lateral,
-    Longitudinal,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ForceBand {
-    Weak,
-    Good,
-    Great,
-    Fine,
-    Strong,
-    TooMuch,
-    Dangerous,
-}
-
-pub fn force_band(axis: ForceAxis, value_g: f64, limits: ComfortableForceLimits) -> ForceBand {
-    assert!(
-        limits.minimum_vertical_g < 0.0
-            && limits.maximum_vertical_g > 0.0
-            && limits.maximum_lateral_g > 0.0
-            && limits.maximum_longitudinal_g > 0.0
-    );
-    if axis == ForceAxis::Airtime {
-        return match limits.classify_airtime(value_g) {
-            AirtimeRating::Weak => ForceBand::Weak,
-            AirtimeRating::Good => ForceBand::Good,
-            AirtimeRating::Great => ForceBand::Great,
-            AirtimeRating::TooMuch => ForceBand::TooMuch,
-            AirtimeRating::Dangerous => ForceBand::Dangerous,
-        };
-    }
-    let (magnitude, limit) = match axis {
-        ForceAxis::Airtime => unreachable!(),
-        ForceAxis::Vertical => (value_g, limits.maximum_vertical_g),
-        ForceAxis::Lateral => (value_g.abs(), limits.maximum_lateral_g),
-        ForceAxis::Longitudinal => (value_g.abs(), limits.maximum_longitudinal_g),
-    };
-    match axis {
-        ForceAxis::Vertical if magnitude <= SCORING.vertical_weak_limit => ForceBand::Weak,
-        ForceAxis::Vertical if magnitude <= SCORING.vertical_good_limit_fraction * limit => {
-            ForceBand::Good
-        }
-        ForceAxis::Vertical if magnitude <= limit => ForceBand::Great,
-        ForceAxis::Lateral | ForceAxis::Longitudinal
-            if magnitude <= SCORING.horizontal_fine_limit_fraction * limit =>
-        {
-            ForceBand::Fine
-        }
-        ForceAxis::Lateral | ForceAxis::Longitudinal if magnitude <= limit => ForceBand::Strong,
-        _ if magnitude <= SCORING.excessive_limit_fraction * limit => ForceBand::TooMuch,
-        _ => ForceBand::Dangerous,
-    }
+pub fn force_band(
+    axis: ForceAxis,
+    value_g: f64,
+    limits: ComfortableForceLimits,
+    model_key: &str,
+) -> ForceBand {
+    limits.classify_force(axis, value_g, model_key)
 }
 
 pub(super) fn score_band_detail(
     axis: ForceAxis,
     band: ForceBand,
     limits: ComfortableForceLimits,
+    model_key: &str,
 ) -> Option<(usize, f64)> {
+    let boundary = |rating| {
+        limits
+            .rating_bands(axis, model_key)
+            .into_iter()
+            .find(|entry| entry.rating == rating)
+            .unwrap()
+            .up_to
+            .unwrap()
+    };
     match (axis, band) {
-        (ForceAxis::Airtime, ForceBand::Good) => Some((0, 0.2)),
-        (ForceAxis::Airtime, ForceBand::Great) => Some((1, 0.9)),
-        (ForceAxis::Vertical, ForceBand::Good) => Some((2, SCORING.vertical_weak_limit)),
-        (ForceAxis::Vertical, ForceBand::Great) => Some((
-            3,
-            SCORING.vertical_good_limit_fraction * limits.maximum_vertical_g,
-        )),
+        (ForceAxis::Airtime, ForceBand::Good) => Some((0, boundary(ForceBand::Weak))),
+        (ForceAxis::Airtime, ForceBand::Great) => Some((1, boundary(ForceBand::Good))),
+        (ForceAxis::Vertical, ForceBand::Good) => Some((2, boundary(ForceBand::Weak))),
+        (ForceAxis::Vertical, ForceBand::Great) => Some((3, boundary(ForceBand::Good))),
         (ForceAxis::Lateral, ForceBand::Strong | ForceBand::TooMuch | ForceBand::Dangerous) => {
-            Some((
-                4,
-                SCORING.horizontal_fine_limit_fraction * limits.maximum_lateral_g,
-            ))
+            Some((4, boundary(ForceBand::Fine)))
         }
-        (ForceAxis::Longitudinal, ForceBand::Strong) => Some((
-            5,
-            SCORING.horizontal_fine_limit_fraction * limits.maximum_longitudinal_g,
-        )),
+        (ForceAxis::Longitudinal, ForceBand::Strong) => Some((5, boundary(ForceBand::Fine))),
         _ => None,
     }
 }
@@ -106,8 +59,8 @@ mod tests {
             (ForceAxis::Airtime, -1.951, ForceBand::Dangerous),
             (ForceAxis::Vertical, 2.0, ForceBand::Weak),
             (ForceAxis::Vertical, 2.001, ForceBand::Good),
-            (ForceAxis::Vertical, 4.0, ForceBand::Good),
-            (ForceAxis::Vertical, 4.001, ForceBand::Great),
+            (ForceAxis::Vertical, 2.999, ForceBand::Good),
+            (ForceAxis::Vertical, 3.0, ForceBand::Great),
             (ForceAxis::Vertical, 5.0, ForceBand::Great),
             (ForceAxis::Vertical, 6.5, ForceBand::TooMuch),
             (ForceAxis::Vertical, 6.501, ForceBand::Dangerous),
@@ -116,43 +69,66 @@ mod tests {
             (ForceAxis::Longitudinal, -2.6, ForceBand::TooMuch),
             (ForceAxis::Longitudinal, -2.601, ForceBand::Dangerous),
         ] {
-            assert_eq!(force_band(axis, value, limits), expected);
+            assert_eq!(force_band(axis, value, limits, "Timber Tumbler"), expected);
         }
-        assert_eq!(force_band(ForceAxis::Airtime, 0.0, limits), ForceBand::Weak);
         assert_eq!(
-            force_band(ForceAxis::Airtime, -0.9, limits),
+            force_band(ForceAxis::Airtime, 0.0, limits, "Timber Tumbler"),
+            ForceBand::Weak
+        );
+        assert_eq!(
+            force_band(ForceAxis::Airtime, -0.9, limits, "Timber Tumbler"),
             ForceBand::Good
         );
         assert_eq!(
-            force_band(ForceAxis::Airtime, -1.0, limits),
+            force_band(ForceAxis::Airtime, -1.0, limits, "Timber Tumbler"),
             ForceBand::Great
         );
         assert_eq!(
-            force_band(ForceAxis::Airtime, -1.5, limits),
+            force_band(ForceAxis::Airtime, -1.5, limits, "Timber Tumbler"),
             ForceBand::Great
         );
         assert_eq!(
-            force_band(ForceAxis::Airtime, -1.6, limits),
+            force_band(ForceAxis::Airtime, -1.6, limits, "Timber Tumbler"),
             ForceBand::TooMuch
         );
         assert_eq!(
-            force_band(ForceAxis::Lateral, -0.75, limits),
+            force_band(ForceAxis::Lateral, -0.75, limits, "Timber Tumbler"),
             ForceBand::Fine
         );
         assert_eq!(
-            force_band(ForceAxis::Lateral, -1.5, limits),
+            force_band(ForceAxis::Lateral, -1.5, limits, "Timber Tumbler"),
             ForceBand::Strong
         );
         assert_eq!(
-            force_band(ForceAxis::Lateral, -2.0, limits),
+            force_band(ForceAxis::Lateral, -2.0, limits, "Timber Tumbler"),
             ForceBand::Dangerous
+        );
+        assert_eq!(
+            force_band(ForceAxis::Vertical, 2.5, limits, "Briar Blitz"),
+            ForceBand::Great
+        );
+        assert_eq!(
+            force_band(ForceAxis::Vertical, 2.5, limits, "Timber Tumbler"),
+            ForceBand::Good
+        );
+        let wooden = ComfortableForceLimits {
+            maximum_vertical_g: 4.0,
+            ..limits
+        };
+        assert_eq!(
+            force_band(ForceAxis::Vertical, 2.499, wooden, "Briar Blitz"),
+            ForceBand::Good
+        );
+        assert_eq!(
+            force_band(ForceAxis::Vertical, 2.5, wooden, "Briar Blitz"),
+            ForceBand::Great
         );
         let stricter = ComfortableForceLimits {
             minimum_vertical_g: -1.0,
             ..limits
         };
         assert_eq!(
-            force_band(ForceAxis::Airtime, -1.1, stricter),
+            force_band(ForceAxis::Airtime, -1.1, stricter, "Timber Tumbler"),
             ForceBand::TooMuch
         );
     }
@@ -661,10 +637,6 @@ pub(super) struct Scores {
 // Each pair is a contribution weight and its characteristic scale. Calibration
 // anchors are maintained in calibration_tests.rs.
 struct ScoringConstants {
-    vertical_weak_limit: f64,
-    vertical_good_limit_fraction: f64,
-    horizontal_fine_limit_fraction: f64,
-    excessive_limit_fraction: f64,
     dangerous_duration_weight: f64,
     good_band_weight: f64,
     heartlined_nausea_weight: f64,
@@ -723,10 +695,6 @@ struct ScoringConstants {
     envelope: (f64, f64),
 }
 const SCORING: ScoringConstants = ScoringConstants {
-    vertical_weak_limit: 2.0,
-    vertical_good_limit_fraction: 0.8,
-    horizontal_fine_limit_fraction: 0.5,
-    excessive_limit_fraction: 1.3,
     dangerous_duration_weight: 2.0,
     good_band_weight: 0.55,
     heartlined_nausea_weight: 0.6,

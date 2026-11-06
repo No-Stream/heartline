@@ -447,7 +447,7 @@ fn run_and_check(composition: Composition) -> Vec<String> {
     let (circuit, element_ranges) = build_composition(&composition);
     let mut run = CoasterRun::new(&circuit, &composition.model.train, PhysicsConfig::default());
     let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit))
+        .find_map(|_| run.step(&circuit, composition.model.name))
         .unwrap_or_else(|| panic!("{} test run did not finish", composition.name));
     let report = &outcome.reports[0];
     let mut failures = Vec::new();
@@ -753,7 +753,7 @@ fn lifted_composition_enters_its_rated_loop_window() {
             .unwrap();
         let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
         let outcome = (0..200_000)
-            .find_map(|_| run.step(&circuit))
+            .find_map(|_| run.step(&circuit, model.name))
             .unwrap_or_else(|| panic!("{name} test run did not finish"));
         assert!(
             outcome.reports[0].completed,

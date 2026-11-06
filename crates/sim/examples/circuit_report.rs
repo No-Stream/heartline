@@ -100,8 +100,9 @@ pub fn report_for_circuit(
             _ => {}
         }
         let id = if line.starts_with('@') {
-            let preview = preview_open_track(construction.pieces(), &model.train, config)
-                .ok_or("No station")?;
+            let preview =
+                preview_open_track(construction.pieces(), &model.train, config, model.name)
+                    .ok_or("No station")?;
             let speed = construction
                 .estimated_end_speed(Some(&preview))
                 .speed
@@ -220,7 +221,7 @@ pub fn report_for_circuit(
                 row.seen = true;
             }
         }
-        recorder.record(&frames);
+        recorder.record(&frames, model.name);
         if train.speed().abs() < 0.01 {
             stationary += 1;
         } else {
@@ -299,12 +300,12 @@ pub fn report_for_circuit(
         } else {
             (ForceAxis::Vertical, row.vertical_max)
         };
-        let mut band = force_band(axis, value, limits);
+        let mut band = force_band(axis, value, limits, model.name);
         for (axis, value) in [
             (ForceAxis::Lateral, row.lateral),
             (ForceAxis::Longitudinal, row.longitudinal),
         ] {
-            match force_band(axis, value, limits) {
+            match force_band(axis, value, limits, model.name) {
                 ForceBand::Dangerous => band = ForceBand::Dangerous,
                 ForceBand::TooMuch if band != ForceBand::Dangerous => band = ForceBand::TooMuch,
                 _ => {}

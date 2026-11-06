@@ -314,7 +314,7 @@ fn capacity_verification_observes_two_real_train_cohorts() {
             captured_cohorts.push(active.clone());
         }
         cohorts.observe_active(&active);
-        for (id, outcome) in operation.step(&[]) {
+        for (id, outcome) in operation.step(&[], "Timber Tumbler") {
             assert!(!outcome.recovered);
             cohorts.complete(id);
         }
@@ -575,7 +575,7 @@ fn stalled_circuit_reports_zero_capacity_after_asynchronous_fallback_trial() {
 
     let mut test_train = crate::physics::CoasterRun::new(&circuit, &train, config);
     let outcome = (0..1_000)
-        .find_map(|_| test_train.step(&circuit))
+        .find_map(|_| test_train.step(&circuit, "Timber Tumbler"))
         .expect("stalled train is recovered");
     assert!(outcome.recovered);
 }
@@ -1193,7 +1193,7 @@ fn powered_sections_get_a_candidate_at_their_end() {
             super::BlockLayout::new(&circuit, &train, Default::default(), Vec::new()).unwrap();
         let mut test_train = crate::physics::CoasterRun::new(&circuit, &train, Default::default());
         let outcome = (0..120_000)
-            .find_map(|_| test_train.step(&circuit))
+            .find_map(|_| test_train.step(&circuit, "Timber Tumbler"))
             .expect("train finishes or is recovered");
         assert_eq!(layout.capacity(), usize::from(!outcome.recovered));
         assert!(layout.capacity_search_complete());

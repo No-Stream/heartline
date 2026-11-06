@@ -588,7 +588,7 @@ fn calibration_table_recorder_uses_each_model_force_limits() {
                 roll: 0.0,
                 piece_index: 10,
             };
-            recorder.record(&[vec![reading; usize::from(model.train.cars)]]);
+            recorder.record(&[vec![reading; usize::from(model.train.cars)]], model.name);
         }
         recorder.finish(false, false)
     });
@@ -631,7 +631,7 @@ fn run_lap(circuit: &super::Circuit, model: &CoasterModel, initial_speed: f64) -
     let mut completed = false;
     for _ in 0..60_000 {
         train.step(circuit);
-        recorder.record(&train.take_readings());
+        recorder.record(&train.take_readings(), model.name);
         if train.distance() >= circuit.length() {
             completed = true;
             break;

@@ -141,7 +141,7 @@ fn lift_sections_allow_two_trains_without_added_brakes() {
                 );
             }
         }
-        for (_, outcome) in operation.step(&[]) {
+        for (_, outcome) in operation.step(&[], "Timber Tumbler") {
             assert!(!outcome.recovered);
             completed += 1;
         }
@@ -186,7 +186,7 @@ fn launch_sections_allow_two_trains_without_added_brakes() {
             operation.dispatch();
         }
         maximum_active = maximum_active.max(operation.trains().count());
-        for (_, outcome) in operation.step(&[]) {
+        for (_, outcome) in operation.step(&[], "Timber Tumbler") {
             assert!(!outcome.recovered);
             completed += 1;
         }
@@ -213,7 +213,7 @@ fn launch_approach_that_cannot_stop_safely_uses_one_train() {
     operation.panic_on_interlock = true;
     operation.dispatch();
     let outcome = (0..120_000)
-        .find_map(|_| operation.step(&[]).into_iter().next())
+        .find_map(|_| operation.step(&[], "Timber Tumbler").into_iter().next())
         .expect("train completes")
         .1;
     assert!(!outcome.recovered);
@@ -248,7 +248,7 @@ fn two_brakes_on_unpowered_oval_have_one_train_capacity() {
     let mut operation = BlockOperation::new(layout);
     operation.dispatch();
     let outcome = (0..120_000)
-        .find_map(|_| operation.step(&[]).into_iter().next())
+        .find_map(|_| operation.step(&[], "Timber Tumbler").into_iter().next())
         .expect("train completes")
         .1;
     assert!(!outcome.recovered);
@@ -307,7 +307,7 @@ fn two_native_lift_trains_complete_after_dispatch_stops() {
             dispatched += 1;
         }
         maximum_active = maximum_active.max(operation.trains().count());
-        for (_, outcome) in operation.step(&[]) {
+        for (_, outcome) in operation.step(&[], "Timber Tumbler") {
             assert!(!outcome.recovered);
             completed += 1;
         }
@@ -353,7 +353,7 @@ fn native_lift_trains_drain_after_varied_dispatch_delays() {
                 second_dispatch_step = Some(step);
             }
             maximum_active = maximum_active.max(operation.trains().count());
-            for (_, outcome) in operation.step(&[]) {
+            for (_, outcome) in operation.step(&[], "Timber Tumbler") {
                 assert!(!outcome.recovered, "delay {delay} recovered");
                 completed += 1;
             }

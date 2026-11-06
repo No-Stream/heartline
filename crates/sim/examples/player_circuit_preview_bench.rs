@@ -81,14 +81,14 @@ fn build_player_circuit(name: &str, model: CoasterModel) -> Vec<Piece> {
 
 fn measure_preview(name: &str, pieces: &[Piece], model: &CoasterModel) {
     let config = PhysicsConfig::default();
-    let warmup = preview_open_track(pieces, &model.train, config)
+    let warmup = preview_open_track(pieces, &model.train, config, model.name)
         .unwrap_or_else(|| panic!("{name} has no station"));
     let status = warmup.status;
     let sample_count = warmup.report.samples.len();
     let furthest_distance_metres = warmup.report.furthest_distance;
     black_box(warmup);
     for _ in 1..WARMUP_RUNS {
-        let report = preview_open_track(pieces, &model.train, config)
+        let report = preview_open_track(pieces, &model.train, config, model.name)
             .unwrap_or_else(|| panic!("{name} has no station"));
         assert_eq!(report.status, status, "{name} preview status changed");
         assert_eq!(report.report.samples.len(), sample_count);
@@ -99,7 +99,7 @@ fn measure_preview(name: &str, pieces: &[Piece], model: &CoasterModel) {
     let mut elapsed = Vec::with_capacity(MEASURED_RUNS);
     for _ in 0..MEASURED_RUNS {
         let started_at = Instant::now();
-        let report = preview_open_track(pieces, &model.train, config)
+        let report = preview_open_track(pieces, &model.train, config, model.name)
             .unwrap_or_else(|| panic!("{name} has no station"));
         let duration = started_at.elapsed();
         assert_eq!(report.status, status, "{name} preview status changed");

@@ -52,9 +52,11 @@ fn main() {
             } else {
                 &[]
             };
-            if let Some(outcome) =
-                black_box(run.step_with_other_trains(&circuit, black_box(other_trains)))
-            {
+            if let Some(outcome) = black_box(run.step_with_other_trains(
+                &circuit,
+                black_box(other_trains),
+                "Timber Tumbler",
+            )) {
                 completed_runs += 1;
                 dueling_events += outcome
                     .reports

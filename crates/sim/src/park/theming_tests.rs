@@ -36,7 +36,7 @@ fn report_for(circuit: &crate::physics::Circuit) -> TestRun {
         }]);
         distance += 1.0;
     }
-    recorder.record(&frames);
+    recorder.record(&frames, "Timber Tumbler");
     recorder.finish(true, false)
 }
 

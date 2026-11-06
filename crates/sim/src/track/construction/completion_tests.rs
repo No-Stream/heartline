@@ -181,7 +181,7 @@ fn constructed_reference_laps_report_ratings() {
     let mut completed = false;
     for _ in 0..60_000 {
         train.step(&circuit);
-        recorder.record(&train.take_readings());
+        recorder.record(&train.take_readings(), model.name);
         if train.distance() >= circuit.length() {
             completed = true;
             break;

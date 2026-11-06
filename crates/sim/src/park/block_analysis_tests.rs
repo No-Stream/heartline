@@ -365,7 +365,7 @@ fn coaster_facility_uses_and_preserves_the_latest_front_car_ratings() {
             roll: sample.roll,
             piece_index: circuit.piece_index(distance),
         };
-        recorder.record(&[vec![reading(1.0), reading(5.0)]]);
+        recorder.record(&[vec![reading(1.0), reading(5.0)]], "Timber Tumbler");
         distance += 1.0;
     }
     let (averaged_report, front_car_report) = recorder.finish_with_front_car(true, false);

@@ -41,7 +41,7 @@ impl ConstructionTestRunRecorder {
         }
     }
 
-    pub fn record(&mut self, frames: &[Vec<CarReading>]) {
+    pub fn record(&mut self, frames: &[Vec<CarReading>], model_key: &str) {
         for frame in frames {
             if frame.is_empty() {
                 continue;
@@ -52,7 +52,7 @@ impl ConstructionTestRunRecorder {
                 "train car count changed during test"
             );
             for (recorder, &reading) in self.cars.iter_mut().zip(frame) {
-                recorder.record(&[vec![reading]]);
+                recorder.record(&[vec![reading]], model_key);
             }
         }
     }
@@ -105,10 +105,13 @@ mod tests {
             model.comfortable_force_limits,
         );
         for distance in 0..10 {
-            original.record(&[vec![
-                reading(distance as f64, 1.0, 0.0),
-                reading(distance as f64, 4.0, 2.0),
-            ]]);
+            original.record(
+                &[vec![
+                    reading(distance as f64, 1.0, 0.0),
+                    reading(distance as f64, 4.0, 2.0),
+                ]],
+                "Timber Tumbler",
+            );
         }
         let bytes = postcard::to_allocvec(&original).unwrap();
         let mut restored: ConstructionTestRunRecorder = postcard::from_bytes(&bytes).unwrap();
@@ -117,8 +120,8 @@ mod tests {
                 reading(distance as f64, 1.0, 0.0),
                 reading(distance as f64, 4.0, 2.0),
             ];
-            original.record(std::slice::from_ref(&frame));
-            restored.record(&[frame]);
+            original.record(std::slice::from_ref(&frame), "Timber Tumbler");
+            restored.record(&[frame], "Timber Tumbler");
         }
         let report = original.finish(false, false);
         assert_eq!(report, restored.finish(false, false));
@@ -156,27 +159,39 @@ mod tests {
         let mut quiet = ConstructionTestRunRecorder::new(10.0, 2);
         let mut force = ConstructionTestRunRecorder::new(10.0, 2);
         for recorder in [&mut quiet, &mut force] {
-            recorder.record(&[vec![
-                scoring_reading(0.0, 1.0, 0.0),
-                scoring_reading(0.0, 1.0, 0.0),
-            ]]);
+            recorder.record(
+                &[vec![
+                    scoring_reading(0.0, 1.0, 0.0),
+                    scoring_reading(0.0, 1.0, 0.0),
+                ]],
+                "Timber Tumbler",
+            );
         }
         for _ in 0..400 {
-            quiet.record(&[vec![
-                scoring_reading(0.0, 1.0, 0.0),
-                scoring_reading(0.0, 1.0, 0.0),
-            ]]);
-            force.record(&[vec![
-                scoring_reading(0.0, 1.0, 0.0),
-                scoring_reading(0.0, 8.0, 3.0),
-            ]]);
+            quiet.record(
+                &[vec![
+                    scoring_reading(0.0, 1.0, 0.0),
+                    scoring_reading(0.0, 1.0, 0.0),
+                ]],
+                "Timber Tumbler",
+            );
+            force.record(
+                &[vec![
+                    scoring_reading(0.0, 1.0, 0.0),
+                    scoring_reading(0.0, 8.0, 3.0),
+                ]],
+                "Timber Tumbler",
+            );
         }
         for distance in 1..10 {
             for recorder in [&mut quiet, &mut force] {
-                recorder.record(&[vec![
-                    scoring_reading(distance as f64, 1.0, 0.0),
-                    scoring_reading(distance as f64, 1.0, 0.0),
-                ]]);
+                recorder.record(
+                    &[vec![
+                        scoring_reading(distance as f64, 1.0, 0.0),
+                        scoring_reading(distance as f64, 1.0, 0.0),
+                    ]],
+                    "Timber Tumbler",
+                );
             }
         }
         let quiet = quiet.finish(true, false);
@@ -191,8 +206,14 @@ mod tests {
         use crate::state_hash::StateHasher;
         let mut first = ConstructionTestRunRecorder::new(10.0, 2);
         let mut second = ConstructionTestRunRecorder::new(10.0, 2);
-        first.record(&[vec![reading(0.0, 1.0, 0.0), reading(0.0, 1.0, 0.0)]]);
-        second.record(&[vec![reading(0.0, 1.0, 0.0), reading(0.0, 2.0, 0.0)]]);
+        first.record(
+            &[vec![reading(0.0, 1.0, 0.0), reading(0.0, 1.0, 0.0)]],
+            "Timber Tumbler",
+        );
+        second.record(
+            &[vec![reading(0.0, 1.0, 0.0), reading(0.0, 2.0, 0.0)]],
+            "Timber Tumbler",
+        );
         let mut first_hash = StateHasher::new();
         let mut second_hash = StateHasher::new();
         first.hash_into(&mut first_hash);
@@ -206,10 +227,13 @@ mod tests {
         use crate::track::proximity::{ProximityEvent, ProximityKind};
         let mut recorder = ConstructionTestRunRecorder::new(10.0, 2);
         for distance in 0..10 {
-            recorder.record(&[vec![
-                scoring_reading(distance as f64, 4.0, 0.0),
-                scoring_reading(distance as f64, 1.0, 3.0),
-            ]]);
+            recorder.record(
+                &[vec![
+                    scoring_reading(distance as f64, 4.0, 0.0),
+                    scoring_reading(distance as f64, 1.0, 3.0),
+                ]],
+                "Timber Tumbler",
+            );
         }
         let mut report = recorder.finish(true, false);
         let excitement = report.excitement;
@@ -232,8 +256,11 @@ mod tests {
         let mut rear = reading(0.0, -1.2, -1.8);
         rear.speed = 12.0;
         rear.g.longitudinal = -0.4;
-        recorder.record(&[vec![front, rear]]);
-        recorder.record(&[vec![reading(1.0, 1.0, 0.0), reading(1.0, 1.0, 0.0)]]);
+        recorder.record(&[vec![front, rear]], "Timber Tumbler");
+        recorder.record(
+            &[vec![reading(1.0, 1.0, 0.0), reading(1.0, 1.0, 0.0)]],
+            "Timber Tumbler",
+        );
         let report = recorder.finish(false, false);
         assert_eq!(report.statistics.max_negative_vertical_g, -1.2);
         assert_eq!(report.statistics.max_lateral_g, 1.8);
@@ -249,9 +276,9 @@ mod tests {
                 reading(distance as f64, 4.0, 0.0),
                 reading(distance as f64, 1.0, 3.0),
             ];
-            construction.record(std::slice::from_ref(&frame));
+            construction.record(std::slice::from_ref(&frame), "Timber Tumbler");
             for (recorder, car) in cars.iter_mut().zip(frame) {
-                recorder.record(&[vec![car]]);
+                recorder.record(&[vec![car]], "Timber Tumbler");
             }
         }
         let report = construction.finish(true, false);

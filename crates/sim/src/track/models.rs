@@ -76,30 +76,128 @@ pub struct ComfortableForceLimits {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AirtimeRating {
+pub enum ForceRating {
     Weak,
     Good,
     Great,
+    Fine,
+    Strong,
     TooMuch,
     Dangerous,
 }
 
-impl ComfortableForceLimits {
-    /// Rates negative vertical force using the airtime bands shown by the force overlay.
-    pub fn classify_airtime(self, vertical_g: f64) -> AirtimeRating {
-        let airtime_g = -vertical_g;
-        let comfortable_airtime_limit_g = -self.minimum_vertical_g;
-        if airtime_g <= 0.2 {
-            AirtimeRating::Weak
-        } else if airtime_g <= 0.9 {
-            AirtimeRating::Good
-        } else if airtime_g <= comfortable_airtime_limit_g {
-            AirtimeRating::Great
-        } else if airtime_g <= 1.3 * comfortable_airtime_limit_g {
-            AirtimeRating::TooMuch
-        } else {
-            AirtimeRating::Dangerous
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForceRatingAxis {
+    /// Negative vertical force, measured as a positive magnitude.
+    Airtime,
+    Vertical,
+    Lateral,
+    Longitudinal,
+}
+
+/// One rating band: magnitudes up to `up_to` g (inclusive or not), or every larger magnitude when `up_to` is `None`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ForceRatingBand {
+    pub rating: ForceRating,
+    pub up_to: Option<f64>,
+    pub inclusive: bool,
+}
+
+impl ForceRatingBand {
+    fn covers(self, magnitude: f64) -> bool {
+        match self.up_to {
+            None => true,
+            Some(bound) if self.inclusive => magnitude <= bound,
+            Some(bound) => magnitude < bound,
         }
+    }
+}
+
+/// Positive vertical force from which riders rate a pullout great, by model key. Riders judge pullouts in absolute
+/// g: a steel ride can pull 3 to 3.5 g, and 2.5 g feels mild, so this does not scale with the model's limit.
+pub fn great_positive_vertical_g(model_key: &str) -> f64 {
+    match model_key {
+        "Briar Blitz" => 2.5,
+        "Timber Tumbler" | "Velocity Viper" => 3.0,
+        _ => panic!("unknown coaster model: {model_key}"),
+    }
+}
+
+impl ComfortableForceLimits {
+    /// How riders feel each force, from the gentlest band up; the force overlay shows these same bands. Anything past
+    /// the model's comfortable limit is too much, and past 1.3 times the limit it is dangerous.
+    pub fn rating_bands(self, axis: ForceRatingAxis, model_key: &str) -> Vec<ForceRatingBand> {
+        assert!(
+            self.minimum_vertical_g < 0.0
+                && self.maximum_vertical_g > 0.0
+                && self.maximum_lateral_g > 0.0
+                && self.maximum_longitudinal_g > 0.0
+        );
+        use ForceRating::*;
+        let band = |rating, up_to: f64, inclusive| ForceRatingBand {
+            rating,
+            up_to: Some(up_to),
+            inclusive,
+        };
+        let (mut bands, limit, at_limit) = match axis {
+            ForceRatingAxis::Airtime => (
+                vec![band(Weak, 0.2, true), band(Good, 0.9, true)],
+                -self.minimum_vertical_g,
+                Great,
+            ),
+            ForceRatingAxis::Vertical => {
+                let great_from = great_positive_vertical_g(model_key);
+                assert!(
+                    great_from > 2.0 && great_from < self.maximum_vertical_g,
+                    "great positive vertical force must start between 2 g and the {} g limit",
+                    self.maximum_vertical_g
+                );
+                (
+                    vec![band(Weak, 2.0, true), band(Good, great_from, false)],
+                    self.maximum_vertical_g,
+                    Great,
+                )
+            }
+            ForceRatingAxis::Lateral => (
+                vec![band(Fine, 0.5 * self.maximum_lateral_g, true)],
+                self.maximum_lateral_g,
+                Strong,
+            ),
+            ForceRatingAxis::Longitudinal => (
+                vec![band(Fine, 0.5 * self.maximum_longitudinal_g, true)],
+                self.maximum_longitudinal_g,
+                Strong,
+            ),
+        };
+        bands.extend([
+            band(at_limit, limit, true),
+            band(TooMuch, 1.3 * limit, true),
+            ForceRatingBand {
+                rating: Dangerous,
+                up_to: None,
+                inclusive: true,
+            },
+        ]);
+        bands
+    }
+
+    /// Rates a force in g on one axis. Airtime takes the vertical g itself, so −1.1 g is great airtime.
+    pub fn classify_force(
+        self,
+        axis: ForceRatingAxis,
+        value_g: f64,
+        model_key: &str,
+    ) -> ForceRating {
+        let magnitude = match axis {
+            ForceRatingAxis::Airtime => -value_g,
+            ForceRatingAxis::Vertical => value_g,
+            ForceRatingAxis::Lateral | ForceRatingAxis::Longitudinal => value_g.abs(),
+        };
+        self.rating_bands(axis, model_key)
+            .into_iter()
+            .find(|band| band.covers(magnitude))
+            .expect("the last band covers every magnitude")
+            .rating
     }
 }
 

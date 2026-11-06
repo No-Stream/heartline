@@ -123,7 +123,7 @@ fn wooden_twister_completes_a_constructed_top_hat_circuit_with_resistance() {
             .length();
     let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
     let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit))
+        .find_map(|_| run.step(&circuit, model.name))
         .expect("ride test did not finish");
     let report = &outcome.reports[0];
     assert!(

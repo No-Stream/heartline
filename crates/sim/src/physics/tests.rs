@@ -245,13 +245,21 @@ fn open_track_preview_matches_closed_run_until_the_open_end() {
         lift_speed: 5.0,
         ..PhysicsConfig::default()
     };
-    let preview =
-        preview::preview_at_step(circuit.pieces(), &configuration, config, 200_000, TIME_STEP)
-            .unwrap();
+    let preview = preview::preview_at_step(
+        circuit.pieces(),
+        &configuration,
+        config,
+        200_000,
+        TIME_STEP,
+        "Timber Tumbler",
+    )
+    .unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let preview = preview.report;
     let mut run = CoasterRun::new(&circuit, &configuration, config);
-    let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit, "Timber Tumbler"))
+        .unwrap();
     for sample in &preview.samples {
         let recorded = outcome.reports[0]
             .samples
@@ -272,12 +280,21 @@ fn open_track_prefix_matches_closed_run_until_its_end() {
         ..PhysicsConfig::default()
     };
     let pieces = &circuit.pieces()[..circuit.pieces().len() - 1];
-    let preview =
-        preview::preview_at_step(pieces, &configuration, config, 200_000, TIME_STEP).unwrap();
+    let preview = preview::preview_at_step(
+        pieces,
+        &configuration,
+        config,
+        200_000,
+        TIME_STEP,
+        "Timber Tumbler",
+    )
+    .unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let preview = preview.report;
     let mut run = CoasterRun::new(&circuit, &configuration, config);
-    let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit, "Timber Tumbler"))
+        .unwrap();
     for sample in &preview.samples {
         let recorded = outcome.reports[0]
             .samples
@@ -301,10 +318,13 @@ fn approximate_open_preview_stays_close_to_closed_demo_run() {
         &circuit.pieces()[..circuit.pieces().len() - 1],
         &model.train,
         config,
+        "Timber Tumbler",
     )
     .unwrap();
     let mut run = CoasterRun::new(&circuit, &model.train, config);
-    let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit, "Timber Tumbler"))
+        .unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let mut maximum_differences = [0.0_f64; 4];
     for sample in &preview.report.samples {
@@ -344,6 +364,7 @@ fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
             powered_sections: false,
             ..PhysicsConfig::default()
         },
+        "Timber Tumbler",
     )
     .unwrap();
     assert_eq!(preview.status, PreviewStatus::Stalled);
@@ -355,7 +376,15 @@ fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
             .all(|sample| sample.distance < circuit.pieces()[0].length())
     );
     assert!(preview.furthest_distance < circuit.pieces()[0].length());
-    assert!(preview_open_track(&[], &configuration, PhysicsConfig::default()).is_none());
+    assert!(
+        preview_open_track(
+            &[],
+            &configuration,
+            PhysicsConfig::default(),
+            "Timber Tumbler"
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -365,8 +394,13 @@ fn open_track_preview_does_not_extrapolate_past_an_uphill_stall() {
     for piece in &mut pieces[1..] {
         piece.kind = PieceKind::Track;
     }
-    let preview =
-        preview_open_track(&pieces, &hybrid_model().train, PhysicsConfig::default()).unwrap();
+    let preview = preview_open_track(
+        &pieces,
+        &hybrid_model().train,
+        PhysicsConfig::default(),
+        "Timber Tumbler",
+    )
+    .unwrap();
     let length: f64 = pieces.iter().map(Piece::length).sum();
     assert_eq!(preview.status, PreviewStatus::Stalled);
     let preview = preview.report;
@@ -383,6 +417,7 @@ fn open_track_preview_distinguishes_timeout_from_stall() {
         PhysicsConfig::default(),
         1,
         TIME_STEP,
+        "Timber Tumbler",
     )
     .unwrap();
     assert_eq!(preview.status, PreviewStatus::TimedOut);
@@ -619,7 +654,7 @@ fn wooden_twister_completes_a_lap_through_its_structure() {
 
     let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
     let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit))
+        .find_map(|_| run.step(&circuit, "Timber Tumbler"))
         .expect("train completed a lap");
     assert!(
         outcome.reports[0].completed,
@@ -1350,7 +1385,7 @@ fn coaster_run_starts_at_station_completes_and_records_forces() {
     );
     let mut outcome = None;
     for _ in 0..200_000 {
-        if let Some(result) = run.step(&circuit) {
+        if let Some(result) = run.step(&circuit, "Timber Tumbler") {
             outcome = Some(result);
             break;
         }
@@ -1400,7 +1435,7 @@ fn coaster_run_recovers_a_train_that_cannot_leave_the_station() {
         },
     );
     let outcome = (0..1000)
-        .find_map(|_| run.step(&circuit))
+        .find_map(|_| run.step(&circuit, "Timber Tumbler"))
         .expect("stationary train is recovered");
     assert!(outcome.recovered);
     assert!(outcome.reports.iter().all(|report| !report.completed));
@@ -1457,7 +1492,7 @@ fn block_operation_keeps_trains_separate_and_completes_runs() {
             operation.dispatch();
             dispatched += 1;
         }
-        for (_, outcome) in operation.step(&[]) {
+        for (_, outcome) in operation.step(&[], "Timber Tumbler") {
             assert!(!outcome.recovered);
             completed += 1;
         }
@@ -1702,13 +1737,13 @@ fn coaster_run_waits_for_a_block_and_resumes_without_recovery() {
     );
     for _ in 0..1000 {
         assert!(
-            run.step_with_block_brake(&circuit, &[], &[0], true)
+            run.step_with_block_brake(&circuit, &[], &[0], true, "Timber Tumbler")
                 .is_none()
         );
     }
     assert_eq!(run.train().speed(), 0.0);
     let outcome = (0..200_000)
-        .find_map(|_| run.step_with_block_brake(&circuit, &[], &[0], false))
+        .find_map(|_| run.step_with_block_brake(&circuit, &[], &[0], false, "Timber Tumbler"))
         .expect("train completes after block releases");
     assert!(outcome.reports[0].completed);
     assert!(!outcome.recovered);

@@ -88,7 +88,7 @@ fn timber_tumbler_completes_a_test_ride_lap() {
     let circuit = build_player_circuit("Timber Tumbler", model.clone());
     let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
     let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit))
+        .find_map(|_| run.step(&circuit, model.name))
         .expect("Timber Tumbler test ride did not finish");
     let report = &outcome.reports[0];
 
@@ -179,7 +179,7 @@ fn player_journeys_build_and_ride_both_top_hats() {
         let top_hat_end = top_hat_start + top_hat.length();
         let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
         let outcome = (0..200_000)
-            .find_map(|_| run.step(&circuit))
+            .find_map(|_| run.step(&circuit, model.name))
             .unwrap_or_else(|| panic!("{name} test ride did not finish"));
         let report = &outcome.reports[0];
         assert!(
@@ -229,10 +229,17 @@ fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
 fn timber_preview_agrees_with_closed_test_run() {
     let model = hybrid_model();
     let circuit = build_player_circuit("Timber Tumbler", model.clone());
-    let preview =
-        preview_open_track(circuit.pieces(), &model.train, PhysicsConfig::default()).unwrap();
+    let preview = preview_open_track(
+        circuit.pieces(),
+        &model.train,
+        PhysicsConfig::default(),
+        model.name,
+    )
+    .unwrap();
     let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
-    let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit, model.name))
+        .unwrap();
     assert_eq!(
         preview.status,
         if outcome.recovered {
@@ -270,7 +277,7 @@ fn assert_ride_force_bound(
     model: &theme_park_sim::track::CoasterModel,
 ) {
     let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
-    let outcome = (0..60_000).find_map(|_| run.step(circuit));
+    let outcome = (0..60_000).find_map(|_| run.step(circuit, model.name));
     let outcome = outcome.unwrap_or_else(|| panic!("{name} test ride did not finish"));
     let maximum_sample = outcome
         .reports
