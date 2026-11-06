@@ -19,6 +19,7 @@ pub(super) fn score_band_detail(
     let boundary = |rating| {
         limits
             .rating_bands(axis, model_key)
+            .into_iter()
             .find(|entry| entry.rating == rating)
             .unwrap()
             .up_to

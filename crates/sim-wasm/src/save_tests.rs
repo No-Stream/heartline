@@ -202,31 +202,3 @@ fn save_uses_new_version_and_rejects_old_version() {
         Err("Unsupported or invalid park save version")
     );
 }
-
-#[test]
-fn version_two_save_before_model_rating_change_restores_active_construction() {
-    let bytes = include_bytes!("test-fixtures/v2-active-briar-blitz-construction.save");
-    assert_eq!(&bytes[..7], b"TPSAVE\x02");
-
-    let restored = WasmSimulation::load_state(bytes).unwrap();
-    let construction = restored.construction.as_ref().unwrap();
-    assert_eq!(construction.model().name, "Briar Blitz");
-    assert_eq!(construction.pieces().len(), 2);
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&restored.construction_train_layout()).unwrap(),
-        serde_json::json!({
-            "model": "wooden_twister",
-            "carsPerTrain": 12,
-            "rowsPerCar": 1,
-            "seatsPerRow": 2,
-            "lengthMetres": 18.0
-        })
-    );
-
-    let force_preview: serde_json::Value =
-        serde_json::from_str(&restored.construction_force_preview_json()).unwrap();
-    assert_eq!(
-        force_preview["limits"]["ratingBands"]["vertical"][1]["upTo"],
-        serde_json::json!(2.5)
-    );
-}

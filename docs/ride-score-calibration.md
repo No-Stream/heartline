@@ -256,11 +256,17 @@ calibration and recorder tests only.
 
 ## 2026-11-06 positive vertical force band change
 
-The synthetic archetype test was run before and after the positive vertical
-force band change. Scores below are excitement / intensity / nausea, rounded
-to two decimal places as printed by the test. The test passed both times,
-including its excitement and intensity ordering assertions; no scoring weights
-were adjusted for this change.
+Positive vertical force is now rated in absolute g instead of as a share of
+each model's limit. It is weak up to 2 g, good below the model's "great from"
+value, great from that value up to the model's comfortable limit, too much up
+to 1.3 times the limit, and dangerous beyond. "Great from" is 3.0 g on the
+steel-track models (Timber Tumbler, limit 4.5 g; Velocity Viper, limit 5.0 g)
+and 2.5 g on the wooden Briar Blitz (limit 4.0 g). Before, great started at
+80% of the limit: 3.6 g, 4.0 g and 3.2 g respectively. Airtime, lateral and
+longitudinal bands are unchanged.
+
+Scores are excitement / intensity / nausea, as printed by the calibration
+tests before and after the change. No scoring weights were adjusted.
 
 | Synthetic archetype | Before | After |
 | --- | --- | --- |
@@ -271,8 +277,21 @@ were adjusted for this change.
 | Intamin accelerator | 5.78 / 7.39 / 0.18 | 5.78 / 7.39 / 0.18 |
 | Intamin Blitz multi-launch | 11.09 / 7.92 / 2.98 | 11.09 / 7.92 / 2.98 |
 
-These fixtures supply force-band durations directly. Their peak forces and
-aggregate statistics do not specify the force history needed to recalculate
-those durations when thresholds change. The unchanged scores therefore verify
-the scoring formula and ordering for the supplied durations; they do not measure
-the effect of reclassifying forces on a physical ride.
+The synthetic archetypes supply their force-band durations directly, and none
+of them has any time in the good positive vertical band, so the change cannot
+move them. To check whether more great pullout time could disturb the ordering,
+a temporary run added 1, 2 and 4 seconds of great positive vertical force to
+every archetype except the family coaster. With 4 extra seconds the scores were
+Arrow 4.18, B&M hyper 6.81, RMC 10.99, Intamin accelerator 6.36 and Intamin
+Blitz 11.28 excitement; the family coaster stays at 2.96. Positive force credit
+saturates, so the owner's ordering holds with a wide margin: Intamin Blitz and
+RMC far above the Arrow looper, clearly above the B&M hyper, family lowest.
+
+The measured circuits do move, because their force histories are reclassified:
+
+| Measured circuit | Before | After |
+| --- | --- | --- |
+| Demo | 0.54 / 8.88 / 6.98 | 0.59 / 8.97 / 7.05 |
+| Timber Tumbler | 1.48 / 10.43 / 7.90 | 1.50 / 10.43 / 7.92 |
+| Velocity Viper | 1.98 / 9.71 / 5.95 | 2.07 / 9.81 / 6.03 |
+| Briar Blitz | 0.17 / 9.36 / 6.85 | 0.23 / 9.41 / 6.92 |

@@ -219,6 +219,7 @@ fn force_limits_wire(
     let bands = |axis| {
         limits
             .rating_bands(axis, model_key)
+            .into_iter()
             .map(|band| ConstructionForceRatingBandWire {
                 rating: match band.rating {
                     ForceRating::Weak => "weak",

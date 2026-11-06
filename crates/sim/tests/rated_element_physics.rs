@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
 use theme_park_sim::track::{
-    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, hybrid_model,
-    multi_launch_model, wooden_twister_model,
+    CoasterModel, ForceRating, ForceRatingAxis, HillFeel, Piece, PieceId, TrackState, catalog,
+    hybrid_model, multi_launch_model, wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -676,7 +676,9 @@ fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train
                         piece.name, model.name, limits.minimum_vertical_g
                     ));
                 }
-                if limits.classify_airtime(minimum_vertical_g) != AirtimeRating::Great {
+                if limits.classify_force(ForceRatingAxis::Airtime, minimum_vertical_g, model.name)
+                    != ForceRating::Great
+                {
                     failures.push(format!(
                         "{} {} {cars} cars: {minimum_vertical_g:.3} g is not Great",
                         piece.name, model.name

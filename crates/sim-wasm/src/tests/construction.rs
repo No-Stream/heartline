@@ -130,6 +130,16 @@ fn construction_force_preview_reports_placed_track_and_last_piece_peaks() {
         pair[1]["distance"].as_f64().unwrap() - pair[0]["distance"].as_f64().unwrap() <= 1.001
     }));
     assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
+    assert_eq!(
+        preview["limits"]["ratingBands"]["vertical"],
+        serde_json::json!([
+            { "rating": "weak", "upTo": 2.0, "inclusive": true },
+            { "rating": "good", "upTo": 3.0, "inclusive": false },
+            { "rating": "great", "upTo": 4.5, "inclusive": true },
+            { "rating": "too much", "upTo": 1.3 * 4.5, "inclusive": true },
+            { "rating": "dangerous", "upTo": null, "inclusive": true },
+        ])
+    );
     assert!(preview["lastPlaced"]["maximumSpeed"].as_f64().is_some());
     assert!(preview["lastPlaced"]["minimumVerticalG"].as_f64().is_some());
     assert!(preview["lastPlaced"]["maximumVerticalG"].as_f64().is_some());
