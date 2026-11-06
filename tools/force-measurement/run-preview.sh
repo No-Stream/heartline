@@ -7,4 +7,11 @@ git -C "$repo" show b240068:crates/sim/src/physics/force_evaluation.rs > "$scrat
 cp "$repo/tools/force-measurement/measure_preview_force.rs" "$scratch/crates/sim/examples/measure_preview_force.rs"
 python3 "$repo/tools/force-measurement/instrument-preview.py" "$scratch"
 cd "$scratch"
-tools/run-in-budget.sh cargo run --release -p theme-park-sim --example measure_preview_force -- "$@"
+if [[ ${1:-} == --timing ]]; then
+  for run in 1 2 3; do
+    printf '\nCandidate timing run %s\n' "$run"
+    make bench-player-circuits
+  done
+else
+  tools/run-in-budget.sh cargo run --release -p theme-park-sim --example measure_preview_force -- "$@"
+fi

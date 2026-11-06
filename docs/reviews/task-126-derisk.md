@@ -56,3 +56,19 @@ The full-train comparison uses existing scoring eligibility (speed above 1 m/s o
 | Briar Blitz | 35 Straight | 11 UnbankLeft, 12 GentleDownToLevel |
 
 Timber's test run was incomplete and reached 205.07 m, so its result does not describe the full circuit.
+
+## Fine geometry sampling with coarse dynamics
+
+The third-pass prototype integrates the train at 50 ms, divides each step's distance into ten intervals, interpolates speed over those intervals, and evaluates the existing heart-force geometry and 5 Hz filter at 5 ms for each car. It uses the coarse step's change in speed for acceleration. The 5 ms reference uses the normal train dynamics and one evaluator per car. Both are compared at whole-metre positions on each car's first outward passage; flags from the two samples bracketing a metre are ORed, then combined across cars. Negative starting positions of rear cars are excluded from the comparison but still provide filter history.
+
+| Circuit | Common car-metres | Maximum difference vertical / lateral / longitudinal (g) | Maximum speed difference (m/s) | Flag disagreements: preview only / reference only |
+| --- | ---: | --- | ---: | --- |
+| Timber Tumbler, reached portion | 1,167 | 0.00318 / 0.00016 / 0.06912 | 0.14177 | 0 / 0 |
+| Velocity Viper | 5,769 | 0.00351 / 0.00431 / 0.14684 | 0.21953 | 0 / 0 |
+| Briar Blitz | 13,875 | 0.00097 / 0.00136 / 0.07937 | 0.09000 | 0 / 2 |
+
+The prototype misses the 0.1 g bound on Velocity's longitudinal force and under-warns at two metres on Briar (736 and 1,085 m). Velocity's maximum longitudinal difference occurs for car 1 at 102 m: 0.46607 g in the reference and 0.31922 g in the prototype, with both speeds rounding to 31.3 m/s there. This suggests the coarse acceleration or powered-section transition contributes to the error; the maximum speed difference occurs elsewhere. Timber still does not complete, so its full circuit is not evaluated.
+
+Three serial timing runs used the same player-circuit benchmark, five warmups and 100 measured previews per run. The prototype records the fine lead-car readings and computes and aggregates per-metre flags for every car. The baseline is a fresh measurement of the archived master benchmark in the same session. Median p95s were 45.182 / 24.048 / 70.724 ms for master and 370.474 / 188.337 / 879.372 ms for the prototype (Timber / Velocity / Briar), respectively 8.20 / 7.83 / 12.43 times the baseline. Master p95s by run were 56.408 / 45.182 / 42.985, 27.661 / 22.769 / 24.048 and 60.013 / 74.090 / 70.724 ms; prototype p95s were 397.046 / 204.319 / 370.474, 188.337 / 99.330 / 242.122 and 452.747 / 879.372 / 888.247 ms. The large variation and the higher baseline than the earlier measurements limit precision, but the candidate is far outside the 20% latency bound.
+
+This prototype does not meet the plan's accuracy, flag, or latency bounds and is not recommended for task 5. Reproduce the accuracy comparison with `tools/force-measurement/run-preview.sh --comparison-only` and candidate timings with `tools/force-measurement/run-preview.sh --timing`. These scripts instrument a disposable archive; production preview code is unchanged.
