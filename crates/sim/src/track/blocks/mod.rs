@@ -1198,7 +1198,7 @@ impl BlockLayout {
         operation.dispatch();
         for _ in 0..(MAXIMUM_SECONDS / TIME_STEP) as usize {
             yield_step().await;
-            if let Some((_, outcome)) = operation.step(&[]).into_iter().next() {
+            if let Some((_, outcome)) = operation.step_without_reports(&[]).into_iter().next() {
                 return if outcome.recovered {
                     Err("A train cannot complete the circuit without being recovered.")
                 } else {
@@ -1215,7 +1215,7 @@ impl BlockLayout {
         operation.dispatch();
         for _ in 0..(MAXIMUM_SECONDS / TIME_STEP) as usize {
             yield_step().await;
-            if let Some((_, outcome)) = operation.step(&[]).into_iter().next() {
+            if let Some((_, outcome)) = operation.step_without_reports(&[]).into_iter().next() {
                 layout.capacity = usize::from(!outcome.recovered);
                 layout.capacity_search_complete = true;
                 return Ok(layout);
@@ -1379,7 +1379,7 @@ impl BlockLayout {
                 maximum_active = maximum_active.max(active.len());
                 cohorts.observe_active(&active);
                 yield_step().await;
-                let outcomes = operation.step(&[]);
+                let outcomes = operation.step_without_reports(&[]);
                 if operation.interlock_triggered() {
                     higher_capacity_unverified = true;
                     unsafe_trial = true;

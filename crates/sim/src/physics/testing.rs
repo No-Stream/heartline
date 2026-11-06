@@ -207,6 +207,7 @@ fn record_force_bands(
     durations: &mut ForceBandDurations,
     reading: CarReading,
     limits: ComfortableForceLimits,
+    model_key: &str,
     seconds: f64,
     location: super::features::Location,
 ) {
@@ -220,9 +221,12 @@ fn record_force_bands(
         (ForceAxis::Lateral, reading.g.lateral),
         (ForceAxis::Longitudinal, reading.g.longitudinal),
     ] {
-        if let Some((index, limit)) =
-            super::scoring::score_band_detail(axis, force_band(axis, value, limits), limits)
-        {
+        if let Some((index, limit)) = super::scoring::score_band_detail(
+            axis,
+            force_band(axis, value, limits, model_key),
+            limits,
+            model_key,
+        ) {
             let detail =
                 durations.band_details[index].get_or_insert(super::scoring::ExcessiveForceDetail {
                     value: value.abs(),
@@ -237,7 +241,7 @@ fn record_force_bands(
             }
         }
         if matches!(
-            force_band(axis, value, limits),
+            force_band(axis, value, limits, model_key),
             ForceBand::TooMuch | ForceBand::Dangerous
         ) {
             let (index, limit) = match axis {
@@ -255,7 +259,7 @@ fn record_force_bands(
                 },
             );
             detail.seconds += seconds;
-            if force_band(axis, value, limits) == ForceBand::Dangerous {
+            if force_band(axis, value, limits, model_key) == ForceBand::Dangerous {
                 durations.dangerous_seconds_by_axis[index] += seconds;
             }
             if value.abs() > detail.value {
@@ -263,7 +267,7 @@ fn record_force_bands(
                 detail.location = location;
             }
         }
-        match (axis, force_band(axis, value, limits)) {
+        match (axis, force_band(axis, value, limits, model_key)) {
             (ForceAxis::Airtime, ForceBand::Good) => durations.airtime_good += seconds,
             (ForceAxis::Airtime, ForceBand::Great) => durations.airtime_great += seconds,
             (ForceAxis::Vertical, ForceBand::Good) => durations.vertical_good += seconds,
@@ -946,7 +950,7 @@ impl TestRunRecorder {
     /// Records readings for one car at each physics step.
     ///
     /// Interpolation at crossed metre marks keeps the overlay compact.
-    pub fn record(&mut self, frames: &[Vec<CarReading>]) {
+    pub fn record(&mut self, frames: &[Vec<CarReading>], model_key: &str) {
         for frame in frames {
             if frame.is_empty() {
                 continue;
@@ -1000,6 +1004,7 @@ impl TestRunRecorder {
                     &mut self.force_bands,
                     reading,
                     self.force_limits,
+                    model_key,
                     super::TIME_STEP,
                     location,
                 );
@@ -1726,6 +1731,7 @@ mod tests {
                 &mut bands,
                 reading,
                 limits,
+                "Timber Tumbler",
                 sample_interval(samples, index, circuit_length, true).seconds,
                 super::super::features::Location {
                     piece_index: sample.piece_index,
@@ -1738,6 +1744,30 @@ mod tests {
         let result = score(&features, &bands);
         let notes = scoring_notes(&features);
         (result.excitement, result.intensity, result.nausea, notes)
+    }
+
+    #[test]
+    fn recorder_uses_model_key_for_vertical_force_band() {
+        let reading = CarReading {
+            distance: 10.0,
+            speed: 10.0,
+            g: GForces {
+                vertical: 2.75,
+                lateral: 0.0,
+                longitudinal: 0.0,
+            },
+            airtime: false,
+            height_m: 0.0,
+            inverted: false,
+            roll: 0.0,
+            piece_index: 0,
+        };
+        let mut wooden = TestRunRecorder::new(100.0);
+        let mut hybrid = TestRunRecorder::new(100.0);
+        wooden.record(&[vec![reading]], "Briar Blitz");
+        hybrid.record(&[vec![reading]], "Timber Tumbler");
+        assert!(wooden.force_bands.vertical_great > 0.0);
+        assert!(hybrid.force_bands.vertical_good > 0.0);
     }
 
     #[test]
@@ -1764,9 +1794,9 @@ mod tests {
             roll: 0.0,
             piece_index: 0,
         };
-        record_force_bands(&mut bands, reading, limits, 2.0, location);
+        record_force_bands(&mut bands, reading, limits, "Timber Tumbler", 2.0, location);
         reading.g.lateral = limits.maximum_lateral_g * 1.5;
-        record_force_bands(&mut bands, reading, limits, 1.0, location);
+        record_force_bands(&mut bands, reading, limits, "Timber Tumbler", 1.0, location);
         let detail = bands.excessive_details[2].unwrap();
         assert_eq!(detail.seconds, 3.0);
         assert_eq!(bands.dangerous_seconds_by_axis[2], 1.0);
@@ -2179,7 +2209,7 @@ mod tests {
     }
 
     fn record(recorder: &mut TestRunRecorder, car_reading: CarReading) {
-        recorder.record(&[vec![car_reading]]);
+        recorder.record(&[vec![car_reading]], "Timber Tumbler");
     }
 
     fn circuit_from_ids(ids: &[PieceId]) -> crate::physics::Circuit {
@@ -2229,7 +2259,7 @@ mod tests {
         let mut completed = false;
         for _ in 0..60_000 {
             train.step(&circuit);
-            recorder.record(&train.take_readings());
+            recorder.record(&train.take_readings(), "Timber Tumbler");
             if train.distance() - start_distance >= circuit.length() {
                 completed = true;
                 break;
@@ -2730,7 +2760,7 @@ mod tests {
         let mut recorder = TestRunRecorder::for_circuit(&circuit);
         for _ in 0..100 {
             train.step(&circuit);
-            recorder.record(&train.take_readings());
+            recorder.record(&train.take_readings(), "Timber Tumbler");
             if !train.notes().is_empty() {
                 break;
             }

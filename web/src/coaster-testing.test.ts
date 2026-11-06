@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildProximityMarkers, buildTestingRibbon, formatConstructionEstimate, formatProximityEvent, formatRideRating, formatRideStatistics, formatSample, formatTestingNote, overlaySamples, proximityContribution, summarizeRideHeights, type ProximityEvent, type RideStatistics, type TestingSample } from "./coaster-testing";
 import type { WorldView } from "./render/scene";
 import { LIMIT_BAND_COLORS } from "./force-overlay";
+import { forceLimitsFixture } from "./test-fixtures/force-limits";
 
 const samples: TestingSample[] = [
   { distance: 0, x: 2, y: 3, z: 1, speed: 4, verticalG: 1, lateralG: 0.2, longitudinalG: 0, airtime: false },
@@ -11,6 +12,8 @@ const samples: TestingSample[] = [
 const camera = { centerX: 3, centerY: 3, zoom: 1, rotation: 0 as const };
 const viewport = { width: 800, height: 500 };
 const style = { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 };
+const woodLimits = forceLimitsFixture({ minimumVerticalG: -1, maximumVerticalG: 4, greatPositiveVerticalG: 2.5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 });
+const steelLimits = forceLimitsFixture({ minimumVerticalG: -1.5, maximumVerticalG: 5, greatPositiveVerticalG: 3, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 });
 const proximityEvents: ProximityEvent[] = [
   { kind: "nearMiss", pieceIndex: 13, distance: 14, x: 2, y: 3, z: 1, strength: 0.8 },
   { kind: "dueling", pieceIndex: 7, distance: 8, x: 3, y: 3, z: 1, strength: 0.4 },
@@ -75,7 +78,7 @@ describe("coaster testing overlay", () => {
     expect(overlaySamples(null, null)).toEqual([]);
   });
   it("describes the latest estimated forces, limit violations, and a stalled train", () => {
-    const limits = { minimumVerticalG: -1, maximumVerticalG: 4, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
+    const limits = woodLimits;
     const estimate = { samples: [samples[0], { ...samples[1], verticalG: -2.5, lateralG: -2 }], completed: false, status: "stalled" as const, limits, launches: [], lastPlaced: { maximumSpeed: 12, minimumVerticalG: -2.5, maximumVerticalG: 1, maximumAbsoluteLateralG: 2, maximumAbsoluteLongitudinalG: 0.1 } };
     expect(formatConstructionEstimate(estimate, "metric")).toContain("43.2 km/h");
     expect(formatConstructionEstimate(estimate, "metric")).toContain("−2.5–1.0 g");
@@ -94,7 +97,7 @@ describe("coaster testing overlay", () => {
   it("shows launch speed capability and the configured launch's estimated force", () => {
     const estimate = {
       samples, completed: false, status: "stalled" as const,
-      limits: { minimumVerticalG: -1, maximumVerticalG: 4, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 },
+      limits: woodLimits,
       lastPlaced: null,
       launches: [{ pieceIndex: 1, maximumSpeed: 20, peakLongitudinalG: 1.3 }, { pieceIndex: 3, maximumSpeed: 30, peakLongitudinalG: null }],
     };
@@ -152,7 +155,7 @@ describe("coaster testing overlay", () => {
   });
 
   it("marks force-limit violations on the corresponding force ribbon", () => {
-    const limits = { minimumVerticalG: -1, maximumVerticalG: 4, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
+    const limits = woodLimits;
     const readings = [{ ...samples[0], verticalG: -2, lateralG: 2 }, samples[1], samples[2]];
     const vertical = buildTestingRibbon(readings, "verticalG", camera, viewport, style, undefined, limits);
     const lateral = buildTestingRibbon(readings, "lateralG", camera, viewport, style, undefined, limits);
@@ -164,7 +167,7 @@ describe("coaster testing overlay", () => {
   });
 
   it("colours limit closeness by band and outlines stretches past a limit in ink", () => {
-    const limits = { minimumVerticalG: -1.5, maximumVerticalG: 5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
+    const limits = steelLimits;
     const at = (distance: number, verticalG: number): TestingSample => ({ ...samples[0], distance, x: 2 + distance, verticalG, lateralG: 0 });
     const quads = buildTestingRibbon([at(0, 1), at(1, 1), at(2, -1.3), at(3, -1.3), at(4, 6)], "limitCloseness", camera, viewport, style, undefined, limits);
     const colorOf = (hex: string): number[] => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255).concat(1);

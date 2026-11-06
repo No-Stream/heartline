@@ -95,12 +95,14 @@ mod tests {
         let pieces = &circuit.pieces()[..loop_index];
         let mut construction = Construction::new(pieces[0].entry, model.clone());
         construction.pieces = pieces.to_vec();
-        let preview = preview_open_track(pieces, &model.train, config).unwrap();
+        let preview = preview_open_track(pieces, &model.train, config, model.name).unwrap();
         assert_eq!(preview.status, PreviewStatus::ReachedEnd);
         let estimate = construction.estimated_end_speed(Some(&preview));
         let sample = preview.report.samples.last().unwrap();
         let mut run = CoasterRun::new(&circuit, &model.train, config);
-        let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+        let outcome = (0..200_000)
+            .find_map(|_| run.step(&circuit, model.name))
+            .unwrap();
         let measured = outcome.reports[0]
             .samples
             .iter()
@@ -123,7 +125,7 @@ mod tests {
         let mut construction = Construction::new(pieces[0].entry, model.clone());
         construction.pieces = pieces.to_vec();
         let mut preview =
-            preview_open_track(pieces, &model.train, PhysicsConfig::default()).unwrap();
+            preview_open_track(pieces, &model.train, PhysicsConfig::default(), model.name).unwrap();
         assert_eq!(preview.status, PreviewStatus::ReachedEnd);
         let speed = preview.report.samples.last().unwrap().speed;
         assert_eq!(

@@ -1,8 +1,8 @@
 use super::*;
 use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
-use theme_park_sim::track::ComfortableForceLimits;
 use theme_park_sim::track::{Bank, Heartlining, HillFeel, HillTwist};
+use theme_park_sim::track::{ComfortableForceLimits, ForceRating, ForceRatingAxis};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -113,8 +113,29 @@ pub struct ConstructionColorsWire {
 pub struct ConstructionForceLimitsWire {
     minimum_vertical_g: f64,
     maximum_vertical_g: f64,
+    rating_bands: ConstructionForceRatingBandsWire,
     maximum_lateral_g: f64,
     maximum_longitudinal_g: f64,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionForceRatingBandWire {
+    #[ts(
+        type = "\"weak\" | \"good\" | \"great\" | \"fine\" | \"strong\" | \"too much\" | \"dangerous\""
+    )]
+    rating: String,
+    up_to: Option<f64>,
+    inclusive: bool,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionForceRatingBandsWire {
+    airtime: Vec<ConstructionForceRatingBandWire>,
+    vertical: Vec<ConstructionForceRatingBandWire>,
+    lateral: Vec<ConstructionForceRatingBandWire>,
+    longitudinal: Vec<ConstructionForceRatingBandWire>,
 }
 
 #[derive(Serialize, TS)]
@@ -191,10 +212,38 @@ fn rated_speed_wire(piece: &Piece) -> Option<ConstructionRatedSpeedWire> {
     })
 }
 
-fn force_limits_wire(limits: ComfortableForceLimits) -> ConstructionForceLimitsWire {
+fn force_limits_wire(
+    limits: ComfortableForceLimits,
+    model_key: &str,
+) -> ConstructionForceLimitsWire {
+    let bands = |axis| {
+        limits
+            .rating_bands(axis, model_key)
+            .map(|band| ConstructionForceRatingBandWire {
+                rating: match band.rating {
+                    ForceRating::Weak => "weak",
+                    ForceRating::Good => "good",
+                    ForceRating::Great => "great",
+                    ForceRating::Fine => "fine",
+                    ForceRating::Strong => "strong",
+                    ForceRating::TooMuch => "too much",
+                    ForceRating::Dangerous => "dangerous",
+                }
+                .to_owned(),
+                up_to: band.up_to,
+                inclusive: band.inclusive,
+            })
+            .collect()
+    };
     ConstructionForceLimitsWire {
         minimum_vertical_g: limits.minimum_vertical_g,
         maximum_vertical_g: limits.maximum_vertical_g,
+        rating_bands: ConstructionForceRatingBandsWire {
+            airtime: bands(ForceRatingAxis::Airtime),
+            vertical: bands(ForceRatingAxis::Vertical),
+            lateral: bands(ForceRatingAxis::Lateral),
+            longitudinal: bands(ForceRatingAxis::Longitudinal),
+        },
         maximum_lateral_g: limits.maximum_lateral_g,
         maximum_longitudinal_g: limits.maximum_longitudinal_g,
     }
@@ -440,6 +489,7 @@ impl WasmSimulation {
                 lift_speed: 5.0,
                 ..PhysicsConfig::default()
             },
+            construction.model().name,
         ) else {
             return "null".into();
         };
@@ -508,7 +558,10 @@ impl WasmSimulation {
             status,
             last_placed,
             launches,
-            limits: force_limits_wire(construction.model().comfortable_force_limits),
+            limits: force_limits_wire(
+                construction.model().comfortable_force_limits,
+                construction.model().name,
+            ),
         })
         .expect("construction force preview serializes")
     }
@@ -546,6 +599,7 @@ impl WasmSimulation {
                 lift_speed: 5.0,
                 ..PhysicsConfig::default()
             },
+            construction.model().name,
         )
         .expect("construction contains a station");
         let samples: Vec<_> = preview
@@ -578,7 +632,10 @@ impl WasmSimulation {
             outer_bank,
             entry_speed,
             peaks: last_placed_force_wire(&samples, start_distance, end_distance),
-            limits: force_limits_wire(construction.model().comfortable_force_limits),
+            limits: force_limits_wire(
+                construction.model().comfortable_force_limits,
+                construction.model().name,
+            ),
             rated_speed,
         })
         .expect("candidate force preview serializes")
@@ -781,6 +838,7 @@ impl WasmSimulation {
                                 airtime_seconds: forces.as_ref().map(|force| force.airtime_seconds),
                                 limits: force_limits_wire(
                                     construction.model().comfortable_force_limits,
+                                    construction.model().name,
                                 ),
                             })
                         } else {

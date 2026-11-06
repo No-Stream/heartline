@@ -23,6 +23,7 @@ pub fn preview_open_track(
     pieces: &[Piece],
     configuration: &TrainConfiguration,
     config: PhysicsConfig,
+    model_key: &str,
 ) -> Option<TrackPreview> {
     preview_at_step(
         pieces,
@@ -30,6 +31,7 @@ pub fn preview_open_track(
         config,
         (PREVIEW_MAX_SECONDS / PREVIEW_TIME_STEP) as usize,
         PREVIEW_TIME_STEP,
+        model_key,
     )
 }
 
@@ -39,6 +41,7 @@ pub(super) fn preview_at_step(
     config: PhysicsConfig,
     step_limit: usize,
     time_step: f64,
+    model_key: &str,
 ) -> Option<TrackPreview> {
     let station = pieces
         .iter()
@@ -67,14 +70,15 @@ pub(super) fn preview_at_step(
             if circuit.open {
                 let mut readings = train.take_readings();
                 readings[0][0].distance = length - 1e-6;
-                recorder.record(&readings);
+                recorder.record(&readings, model_key);
             }
             return Some(TrackPreview {
                 report: recorder.finish(true, false),
                 status: PreviewStatus::ReachedEnd,
             });
         }
-        recorder.record(&train.take_readings());
+        let readings = train.take_readings();
+        recorder.record(&readings, model_key);
         if train.speed().abs() < 0.01 {
             stationary_steps += 1;
         } else {

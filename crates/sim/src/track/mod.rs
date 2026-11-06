@@ -20,10 +20,11 @@ pub use curves::{
     TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
-    AirtimeRating, CoasterModel, ComfortableForceLimits,
-    LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
-    LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules, Material, SupportStyle,
-    TrainConfiguration, hybrid_model, multi_launch_model, wooden_twister_model,
+    AirtimeRating, CoasterModel, ComfortableForceLimits, ForceRating, ForceRatingAxis,
+    ForceRatingBand, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules,
+    Material, SupportStyle, TrainConfiguration, hybrid_model, multi_launch_model,
+    wooden_twister_model,
 };
 
 #[cfg(test)]

@@ -31,55 +31,11 @@ export function limitBand(closeness: number): LimitBand {
 
 export type ForceAxis = "airtime" | "vertical" | "lateral" | "longitudinal";
 export type ForceRating = "weak" | "good" | "great" | "fine" | "strong" | "too much" | "dangerous";
-/** A band reaches up to a force magnitude in g, given either as fixed g or as a share of the model's comfortable limit. */
-type RatingBound = { readonly g: number } | { readonly shareOfLimit: number } | "unbounded";
-
-/**
- * How riders feel each force, from the gentlest band up. Each band covers magnitudes up to and including its bound;
- * airtime is measured as negative vertical g. Anything past the model's comfortable limit is too much, and past 1.3
- * times the limit it is dangerous.
- */
-export const FORCE_RATING_BANDS: Readonly<Record<ForceAxis, readonly { readonly rating: ForceRating; readonly upTo: RatingBound }[]>> = {
-  airtime: [
-    { rating: "weak", upTo: { g: 0.2 } },
-    { rating: "good", upTo: { g: 0.9 } },
-    { rating: "great", upTo: { shareOfLimit: 1 } },
-    { rating: "too much", upTo: { shareOfLimit: 1.3 } },
-    { rating: "dangerous", upTo: "unbounded" },
-  ],
-  vertical: [
-    { rating: "weak", upTo: { g: 2 } },
-    { rating: "good", upTo: { shareOfLimit: 0.8 } },
-    { rating: "great", upTo: { shareOfLimit: 1 } },
-    { rating: "too much", upTo: { shareOfLimit: 1.3 } },
-    { rating: "dangerous", upTo: "unbounded" },
-  ],
-  lateral: [
-    { rating: "fine", upTo: { shareOfLimit: 0.5 } },
-    { rating: "strong", upTo: { shareOfLimit: 1 } },
-    { rating: "too much", upTo: { shareOfLimit: 1.3 } },
-    { rating: "dangerous", upTo: "unbounded" },
-  ],
-  longitudinal: [
-    { rating: "fine", upTo: { shareOfLimit: 0.5 } },
-    { rating: "strong", upTo: { shareOfLimit: 1 } },
-    { rating: "too much", upTo: { shareOfLimit: 1.3 } },
-    { rating: "dangerous", upTo: "unbounded" },
-  ],
-};
-
-function axisLimit(axis: ForceAxis, limits: ForceLimits): number {
-  if (axis === "airtime") return -limits.minimumVerticalG;
-  if (axis === "vertical") return limits.maximumVerticalG;
-  return axis === "lateral" ? limits.maximumLateralG : limits.maximumLongitudinalG;
-}
-
-/** Rates a force in g on one axis. Airtime takes the vertical g itself, so −1.1 g is great airtime. */
+/** Rates a force in g on one axis. Airtime takes the vertical g itself. */
 export function rateForce(axis: ForceAxis, valueG: number, limits: ForceLimits): ForceRating {
   validateLimits(limits);
   const magnitude = axis === "airtime" ? -valueG : axis === "vertical" ? valueG : Math.abs(valueG);
-  const limit = axisLimit(axis, limits);
-  const band = FORCE_RATING_BANDS[axis].find(({ upTo }) => upTo === "unbounded" || magnitude <= ("g" in upTo ? upTo.g : upTo.shareOfLimit * limit));
+  const band = limits.ratingBands[axis].find(({ upTo, inclusive }) => upTo === null || (inclusive ? magnitude <= upTo : magnitude < upTo));
   if (!band) throw new Error(`No force rating band covers ${valueG} g`);
   return band.rating;
 }

@@ -985,8 +985,8 @@ fn throughput_simulation_matches_recording_train_motion() {
         if recorded.can_dispatch() {
             assert_eq!(recorded.dispatch(), unrecorded.dispatch());
         }
-        let recorded_outcomes = recorded.step(&[]);
-        let unrecorded_outcomes = unrecorded.step(&[]);
+        let recorded_outcomes = recorded.step(&[], hybrid_model().name);
+        let unrecorded_outcomes = unrecorded.step(&[], hybrid_model().name);
         assert_eq!(recorded_outcomes.len(), unrecorded_outcomes.len());
         for ((id, outcome), (other_id, other_outcome)) in
             recorded_outcomes.iter().zip(&unrecorded_outcomes)
@@ -1097,7 +1097,7 @@ fn stalled_baseline_waits_for_active_train_before_reducing_capacity() {
             .coaster_operation
             .as_mut()
             .unwrap()
-            .step(&[])
+            .step(&[], hybrid_model().name)
             .is_empty()
         {
             break;
@@ -1178,7 +1178,7 @@ fn baseline_validation_waits_to_adopt_powered_holds_until_the_train_completes() 
                 .coaster_operation
                 .as_mut()
                 .unwrap()
-                .step(&[])
+                .step(&[], hybrid_model().name)
                 .into_iter()
                 .next()
         })
@@ -1234,7 +1234,7 @@ fn throughput_uses_sustained_dispatches_after_the_initial_fill() {
     for step in 1..=200_000 {
         assert!(
             operation
-                .step(&[])
+                .step(&[], hybrid_model().name)
                 .iter()
                 .all(|(_, outcome)| !outcome.recovered)
         );
@@ -1930,7 +1930,7 @@ fn construction_train_states_follow_block_operation_trains() {
     let mut operation = super::BlockOperation::new(layout.clone());
     operation.dispatch();
     for _ in 0..200_000 {
-        operation.step(&[]);
+        operation.step(&[], hybrid_model().name);
         if operation.can_dispatch() {
             operation.dispatch();
             break;

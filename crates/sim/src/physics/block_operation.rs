@@ -250,7 +250,26 @@ impl BlockOperation {
         id
     }
 
-    pub fn step(&mut self, others: &[TrainPosition]) -> Vec<(u64, CoasterOutcome)> {
+    pub fn step(
+        &mut self,
+        others: &[TrainPosition],
+        model_key: &str,
+    ) -> Vec<(u64, CoasterOutcome)> {
+        self.step_internal(others, Some(model_key))
+    }
+
+    pub(crate) fn step_without_reports(
+        &mut self,
+        others: &[TrainPosition],
+    ) -> Vec<(u64, CoasterOutcome)> {
+        self.step_internal(others, None)
+    }
+
+    fn step_internal(
+        &mut self,
+        others: &[TrainPosition],
+        model_key: Option<&str>,
+    ) -> Vec<(u64, CoasterOutcome)> {
         let circuit = &self.circuit;
         let mut outcomes = Vec::new();
         let mut index = 0;
@@ -372,12 +391,21 @@ impl BlockOperation {
                     }
                 }
             }
-            let outcome = self.trains[index].run.step_with_block_brake(
-                circuit,
-                &nearby,
-                self.layout.hold_pieces(next),
-                hold,
-            );
+            let outcome = match model_key {
+                Some(model_key) => self.trains[index].run.step_with_block_brake(
+                    circuit,
+                    &nearby,
+                    self.layout.hold_pieces(next),
+                    hold,
+                    model_key,
+                ),
+                None => self.trains[index].run.step_without_reports(
+                    circuit,
+                    &nearby,
+                    self.layout.hold_pieces(next),
+                    hold,
+                ),
+            };
             if let Some(outcome) = outcome {
                 let train = self.trains.remove(index);
                 outcomes.push((train.id, outcome));
@@ -403,6 +431,19 @@ mod state_hash_tests {
     use crate::state_hash::StateHasher;
     use crate::track::blocks::BlockLayout;
     use crate::track::hybrid_model;
+
+    #[test]
+    #[should_panic(expected = "recording requires a model key")]
+    fn validation_step_rejects_a_run_with_recorders() {
+        let circuit = demo_circuit();
+        let model = hybrid_model();
+        let layout =
+            BlockLayout::unverified_baseline(&circuit, &model.train, PhysicsConfig::default())
+                .unwrap();
+        let mut operation = BlockOperation::new(layout);
+        operation.dispatch();
+        operation.step_without_reports(&[]);
+    }
 
     #[test]
     fn dispatched_recorders_use_the_operation_force_limits() {
@@ -579,7 +620,7 @@ mod tests {
         let mut operation = BlockOperation::new(layout);
         operation.dispatch();
         for _ in 1..=60_000 {
-            if let Some((_, outcome)) = operation.step(&[]).into_iter().next() {
+            if let Some((_, outcome)) = operation.step(&[], "Timber Tumbler").into_iter().next() {
                 assert!(!outcome.recovered);
                 assert!(outcome.reports[0].completed);
                 return;
@@ -624,7 +665,7 @@ mod tests {
                 operation.dispatch();
             }
             maximum_active = maximum_active.max(operation.trains().count());
-            for (_, outcome) in operation.step(&[]) {
+            for (_, outcome) in operation.step(&[], "Timber Tumbler") {
                 assert!(!outcome.recovered);
                 assert!(outcome.reports[0].completed);
                 completed += 1;
@@ -667,7 +708,7 @@ mod tests {
                 operation.dispatch();
             }
             maximum = maximum.max(operation.trains.len());
-            for (_, outcome) in operation.step(&[]) {
+            for (_, outcome) in operation.step(&[], "Timber Tumbler") {
                 assert!(!outcome.recovered);
                 completed += 1;
             }
@@ -703,7 +744,7 @@ mod tests {
         let mut operation = BlockOperation::new(layout);
         operation.dispatch();
         while !operation.can_dispatch() {
-            assert!(operation.step(&[]).is_empty());
+            assert!(operation.step(&[], "Timber Tumbler").is_empty());
         }
         operation.dispatch();
         // Force a violated reservation to exercise the final interlock independently
@@ -713,14 +754,14 @@ mod tests {
         operation.trains[1].run.train_mut().speed = 2.0;
         let before = operation.trains[1].run.train().distance();
         for _ in 0..500 {
-            assert!(operation.step(&[]).is_empty());
+            assert!(operation.step(&[], "Timber Tumbler").is_empty());
             assert_eq!(operation.trains[1].run.train().distance(), before);
             assert_eq!(operation.trains[1].run.train().speed(), 0.0);
         }
         operation.trains.remove(0);
-        assert!(operation.step(&[]).is_empty());
+        assert!(operation.step(&[], "Timber Tumbler").is_empty());
         assert!(operation.trains[0].run.train().speed() > 0.0);
-        assert!(operation.step(&[]).is_empty());
+        assert!(operation.step(&[], "Timber Tumbler").is_empty());
         assert!(operation.trains[0].run.train().distance() > before);
     }
 
@@ -736,7 +777,7 @@ mod tests {
         let mut operation = BlockOperation::new(layout);
         operation.dispatch();
         while !operation.can_dispatch() {
-            assert!(operation.step(&[]).is_empty());
+            assert!(operation.step(&[], "Timber Tumbler").is_empty());
         }
         operation.dispatch();
         let turn_index = circuit
@@ -752,13 +793,13 @@ mod tests {
         operation.trains[0].run.train_mut().distance = turn_distance + 1.0;
         operation.trains[1].run.train_mut().distance = turn_distance;
         operation.trains[1].run.train_mut().speed = 2.0;
-        assert!(operation.step(&[]).is_empty());
+        assert!(operation.step(&[], "Timber Tumbler").is_empty());
         assert_eq!(operation.trains[1].run.train().distance(), turn_distance);
         assert_eq!(operation.trains[1].run.train().speed(), 0.0);
         operation.trains.remove(0);
         let outcomes = (0..500)
             .find_map(|_| {
-                let outcomes = operation.step(&[]);
+                let outcomes = operation.step(&[], "Timber Tumbler");
                 (!outcomes.is_empty()).then_some(outcomes)
             })
             .expect("stranded train should be recovered");
@@ -818,8 +859,8 @@ mod tests {
                 if first.trains.len() < train_limit && first.can_dispatch() {
                     assert_eq!(first.dispatch(), second.dispatch());
                 }
-                let first_outcomes = first.step(&[]);
-                let second_outcomes = second.step(&[]);
+                let first_outcomes = first.step(&[], "Timber Tumbler");
+                let second_outcomes = second.step(&[], "Timber Tumbler");
                 maximum_active = maximum_active.max(first.trains.len());
                 assert_eq!(first_outcomes.len(), second_outcomes.len());
                 assert!(first_outcomes.iter().all(|(_, outcome)| !outcome.recovered));
@@ -908,8 +949,8 @@ mod tests {
                 if first.trains.len() < requested_trains && first.can_dispatch() {
                     assert_eq!(first.dispatch(), second.dispatch());
                 }
-                let outcomes = first.step(&[]);
-                let replay_outcomes = second.step(&[]);
+                let outcomes = first.step(&[], "Timber Tumbler");
+                let replay_outcomes = second.step(&[], "Timber Tumbler");
                 assert!(outcomes.iter().all(|(_, outcome)| !outcome.recovered));
                 assert_eq!(outcomes.len(), replay_outcomes.len());
                 maximum_active = maximum_active.max(first.trains.len());
@@ -1013,7 +1054,7 @@ mod tests {
                     }
                 }
             }
-            let outcomes = operation.step(&[]);
+            let outcomes = operation.step(&[], "Timber Tumbler");
             assert!(outcomes.iter().all(|(_, outcome)| !outcome.recovered));
             for (id, target, previous_speed) in observed_holds {
                 if let Some((_, train)) = operation.trains().find(|(train_id, _)| *train_id == id) {

@@ -117,16 +117,17 @@ impl CoasterRun {
     }
 
     /// Advances one physics step; returns the outcome exactly once.
-    pub fn step(&mut self, circuit: &Circuit) -> Option<CoasterOutcome> {
-        self.step_with_other_trains(circuit, &[])
+    pub fn step(&mut self, circuit: &Circuit, model_key: &str) -> Option<CoasterOutcome> {
+        self.step_with_other_trains(circuit, &[], model_key)
     }
 
     pub fn step_with_other_trains(
         &mut self,
         circuit: &Circuit,
         others: &[TrainPosition],
+        model_key: &str,
     ) -> Option<CoasterOutcome> {
-        self.step_with_block_brake(circuit, others, &[], false)
+        self.step_with_block_brake(circuit, others, &[], false, model_key)
     }
 
     pub fn step_with_block_brake(
@@ -135,8 +136,34 @@ impl CoasterRun {
         others: &[TrainPosition],
         brake_pieces: &[usize],
         hold: bool,
+        model_key: &str,
+    ) -> Option<CoasterOutcome> {
+        self.step_internal(circuit, others, brake_pieces, hold, Some(model_key))
+    }
+
+    pub(super) fn step_without_reports(
+        &mut self,
+        circuit: &Circuit,
+        others: &[TrainPosition],
+        brake_pieces: &[usize],
+        hold: bool,
+    ) -> Option<CoasterOutcome> {
+        self.step_internal(circuit, others, brake_pieces, hold, None)
+    }
+
+    fn step_internal(
+        &mut self,
+        circuit: &Circuit,
+        others: &[TrainPosition],
+        brake_pieces: &[usize],
+        hold: bool,
+        model_key: Option<&str>,
     ) -> Option<CoasterOutcome> {
         let recorders = self.recorders.as_mut()?;
+        assert!(
+            model_key.is_some() || recorders.is_empty(),
+            "recording requires a model key"
+        );
         if recorders.is_empty() {
             self.train
                 .step_block_brake_without_readings(circuit, brake_pieces, hold);
@@ -145,7 +172,10 @@ impl CoasterRun {
             for frame in self.train.take_readings() {
                 for (recorder, reading) in recorders.iter_mut().zip(frame) {
                     recorder.record_dueling(circuit, reading, others);
-                    recorder.record(&[vec![reading]]);
+                    recorder.record(
+                        &[vec![reading]],
+                        model_key.expect("recording requires a model key"),
+                    );
                 }
             }
         }

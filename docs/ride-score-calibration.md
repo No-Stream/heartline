@@ -253,3 +253,26 @@ synthetic archetype scores and the current Demo and player-circuit measurements
 above. The recorder suite now passes all 33 tests after five fixtures were
 adjusted to reach their existing assertions. These results cover the focused
 calibration and recorder tests only.
+
+## 2026-11-06 positive vertical force band change
+
+The synthetic archetype test was run before and after the positive vertical
+force band change. Scores below are excitement / intensity / nausea, rounded
+to two decimal places as printed by the test. The test passed both times,
+including its excitement and intensity ordering assertions; no scoring weights
+were adjusted for this change.
+
+| Synthetic archetype | Before | After |
+| --- | --- | --- |
+| Family wooden coaster | 2.96 / 2.78 / 0.38 | 2.96 / 2.78 / 0.38 |
+| Classic Arrow looper | 4.05 / 7.24 / 5.53 | 4.05 / 7.24 / 5.53 |
+| B&M hyper | 6.62 / 6.31 / 0.53 | 6.62 / 6.31 / 0.53 |
+| RMC hybrid | 10.80 / 7.26 / 3.55 | 10.80 / 7.26 / 3.55 |
+| Intamin accelerator | 5.78 / 7.39 / 0.18 | 5.78 / 7.39 / 0.18 |
+| Intamin Blitz multi-launch | 11.09 / 7.92 / 2.98 | 11.09 / 7.92 / 2.98 |
+
+These fixtures supply force-band durations directly. Their peak forces and
+aggregate statistics do not specify the force history needed to recalculate
+those durations when thresholds change. The unchanged scores therefore verify
+the scoring formula and ordering for the supplied durations; they do not measure
+the effect of reclassifying forces on a physical ride.

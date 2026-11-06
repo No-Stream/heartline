@@ -842,7 +842,7 @@ mod tests {
             run.recover()
         } else {
             (0..200_000)
-                .find_map(|_| run.step(&circuit))
+                .find_map(|_| run.step(&circuit, "Timber Tumbler"))
                 .expect("train finishes")
         };
         if !recovered {

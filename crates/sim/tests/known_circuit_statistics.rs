@@ -73,7 +73,7 @@ fn construction_test(circuit: &Circuit, model: &CoasterModel) -> TestRun {
     let mut slow_steps = 0;
     for _ in 0..60_000 {
         train.step(circuit);
-        recorder.record(&train.take_readings());
+        recorder.record(&train.take_readings(), model.name);
         assert!(
             train.notes().is_empty(),
             "test train failed: {:?}",
