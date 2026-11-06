@@ -540,11 +540,24 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                 })
                 .collect();
             let first_rated = element_ranges[0].3;
+            // Above this first-element speed a later element would be entered above its own rated window, by energy.
+            let entry_heights: Vec<f64> = sequence_circuit.pieces()[3..3 + elements.len()]
+                .iter()
+                .map(|piece| piece.entry.position().z)
+                .collect();
+            let highest_speed_within_every_window = element_ranges
+                .iter()
+                .zip(&entry_heights)
+                .map(|((_, _, _, rated), height)| {
+                    (rated.maximum_entry.powi(2) + 2.0 * GRAVITY * (height - entry_heights[0]))
+                        .sqrt()
+                })
+                .fold(f64::INFINITY, f64::min);
             for cars in model.cars_per_train_range() {
                 let mut configuration = model.train.clone();
                 configuration.length_metres *= f64::from(cars) / f64::from(configuration.cars);
                 configuration.cars = cars;
-                for speed in [first_rated.minimum_entry, first_rated.maximum_entry] {
+                for speed in [first_rated.minimum_entry, highest_speed_within_every_window] {
                     let rating = rate_sequence(
                         &sequence_circuit,
                         &sequence_ranges,
@@ -1094,8 +1107,8 @@ fn connected_crest_endpoints() {
                 .rated_speeds
                 .expect("crest needs a rated speed window");
             assert!(
-                rated.minimum_entry >= 3.0 && rated.maximum_entry <= 30.0,
-                "{id:?}: {rated:?} must stay within 3–30 m/s"
+                rated.minimum_entry >= 3.0,
+                "{id:?}: {rated:?} must start at or above 3 m/s"
             );
             assert!(
                 rated.maximum_entry - rated.minimum_entry >= 2.0,

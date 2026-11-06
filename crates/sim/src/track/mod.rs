@@ -11,7 +11,7 @@ pub mod supports;
 #[cfg(test)]
 mod vertical_top_hat;
 
-pub use catalog::{catalog, effective_rated_speeds};
+pub use catalog::catalog;
 pub use colors::{CoasterColor, CoasterColors};
 pub(crate) use curves::Shape;
 pub use curves::{
@@ -34,6 +34,7 @@ pub mod clearance;
 pub mod proximity;
 
 mod profile;
+pub mod rated_windows;
 mod roll;
 
 mod hill_forces;

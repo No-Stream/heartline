@@ -542,13 +542,10 @@ impl WasmSimulation {
                 Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
             )
         });
-        let rated_speed =
-            theme_park_sim::track::effective_rated_speeds(first, &construction.model().train).map(
-                |speeds| ConstructionRatedSpeedWire {
-                    minimum_entry: speeds.minimum_entry,
-                    maximum_entry: speeds.maximum_entry,
-                },
-            );
+        let rated_speed = first.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
+            minimum_entry: speeds.minimum_entry,
+            maximum_entry: speeds.maximum_entry,
+        });
         let start_distance: f64 = construction.pieces().iter().map(Piece::length).sum();
         let mut pieces = construction.pieces().to_vec();
         pieces.extend(candidate);

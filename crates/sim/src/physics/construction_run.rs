@@ -18,7 +18,7 @@ impl ConstructionTestRunRecorder {
         assert!(train.cars > 0);
         Self {
             cars: (0..train.cars)
-                .map(|_| TestRunRecorder::for_circuit_with_train_and_limits(circuit, train, limits))
+                .map(|_| TestRunRecorder::for_circuit_with_limits(circuit, limits))
                 .collect(),
         }
     }

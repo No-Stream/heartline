@@ -818,7 +818,7 @@ mod tests {
     }
 
     use crate::track::catalog;
-    use crate::track::curves::{Bank, Heading, PieceId, Slope, TrackState, Vec3};
+    use crate::track::curves::{Bank, Heading, Piece, PieceId, Slope, TrackState, Vec3};
 
     use super::{RollGeometry, RollPath};
 
@@ -1017,17 +1017,10 @@ mod tests {
         ] {
             let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
             let speed = piece.rated_speeds.unwrap().maximum_entry;
-            let step = piece.length() / 4000.0;
-            let mut peak = 0.0_f64;
-            for index in 1..4000 {
-                let distance = f64::from(index) * step;
-                let before = piece.sample(distance - step);
-                let after = piece.sample(distance + step);
-                peak = peak.max((after.roll - before.roll).abs() * speed / (2.0 * step));
-            }
-            eprintln!("{id:?} peak roll rate {:.2} degrees/s", peak.to_degrees());
+            let peak = piece.constant_speed_peak_roll_rate(speed);
+            eprintln!("{id:?} peak roll rate {peak:.2} degrees/s");
             if id != PieceId::BarrelDropLeft {
-                assert!(peak.to_degrees() <= 200.0);
+                assert!(peak <= Piece::MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND);
             }
         }
     }

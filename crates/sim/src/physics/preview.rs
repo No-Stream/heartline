@@ -115,7 +115,7 @@ impl PreviewCache {
             let mut train = snapshot.train;
             train.controls.resize(pieces.len(), None);
             let mut recorder = snapshot.recorder;
-            recorder.rebind_preview_circuit(&circuit, configuration, limits);
+            recorder.rebind_preview_circuit(&circuit, limits);
             let mut flags = snapshot.flags;
             flags.resize(length.ceil() as usize, false);
             (
@@ -132,7 +132,7 @@ impl PreviewCache {
             let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
             (
                 Train::new(&circuit, configuration, config, station_distance, 0.0),
-                TestRunRecorder::for_circuit_with_train_and_limits(&circuit, configuration, limits),
+                TestRunRecorder::for_circuit_with_limits(&circuit, limits),
                 vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)],
                 vec![false; length.ceil() as usize],
                 vec![None; usize::from(configuration.cars)],
@@ -283,7 +283,7 @@ pub(super) fn preview_at_step(
     };
     let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
     let mut train = Train::new(&circuit, configuration, config, station_distance, 0.0);
-    let mut recorder = TestRunRecorder::for_circuit_with_train(&circuit, configuration);
+    let mut recorder = TestRunRecorder::for_circuit(&circuit);
     recorder.set_time_step(time_step);
     let mut stationary_steps = 0;
     for _ in 0..step_limit {

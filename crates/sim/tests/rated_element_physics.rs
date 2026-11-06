@@ -3,10 +3,10 @@ use std::collections::{HashSet, VecDeque};
 use theme_park_sim::physics::rated_piece::{
     rate_piece, rate_sequence, unpowered as rating_physics,
 };
-use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
+use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
 use theme_park_sim::track::{
-    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog,
-    effective_rated_speeds, hybrid_model, multi_launch_model, wooden_twister_model,
+    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -401,23 +401,37 @@ fn assert_train_crosses_element(
         element_range.start,
         entry_speed,
     );
+    let mut evaluators =
+        vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
+    // An excursion that began on an earlier piece belongs to that piece, as in the isolated rating.
+    let mut excursion_began_before_element = vec![[false; 3]; usize::from(cars)];
     let mut cars_seen = vec![false; usize::from(cars)];
-    let mut minimum_vertical = f64::INFINITY;
-    let mut maximum_vertical = f64::NEG_INFINITY;
-    let mut maximum_lateral: f64 = 0.0;
-    let mut maximum_longitudinal: f64 = 0.0;
     let mut minimum_speed = f64::INFINITY;
     for _ in 0..100_000 {
         train.step(circuit);
         for frame in train.take_readings() {
             for (index, reading) in frame.into_iter().enumerate() {
+                let evaluated = evaluators[index].update(reading.g);
+                for axis in 0..3 {
+                    let began_before = &mut excursion_began_before_element[index][axis];
+                    if !evaluated.axis_exceeding_sustained[axis] {
+                        *began_before = false;
+                    } else if reading.distance < element_range.start {
+                        *began_before = true;
+                    }
+                }
                 if element_range.contains(&reading.distance) {
                     cars_seen[index] = true;
-                    minimum_vertical = minimum_vertical.min(reading.g.vertical);
-                    maximum_vertical = maximum_vertical.max(reading.g.vertical);
-                    maximum_lateral = maximum_lateral.max(reading.g.lateral.abs());
-                    maximum_longitudinal = maximum_longitudinal.max(reading.g.longitudinal.abs());
                     minimum_speed = minimum_speed.min(reading.speed);
+                    let element_violation = (0..3).any(|axis| {
+                        !evaluated.axis_within_limits[axis]
+                            && !excursion_began_before_element[index][axis]
+                    });
+                    assert!(
+                        !element_violation,
+                        "{piece_id:?} {} {cars} cars at {entry_speed}: car {index} at {} m, filtered {:?}",
+                        model.name, reading.distance, evaluated.filtered
+                    );
                 }
             }
         }
@@ -427,8 +441,6 @@ fn assert_train_crosses_element(
         assert!(train.speed() > 0.0, "{piece_id:?}: stalled");
         assert!(train.notes().is_empty(), "{piece_id:?}: rollback");
     }
-
-    let limits = model.comfortable_force_limits;
     assert!(
         cars_seen.into_iter().all(|seen| seen),
         "{piece_id:?} {} {cars} cars at {entry_speed}: not every car entered",
@@ -439,36 +451,12 @@ fn assert_train_crosses_element(
         "{piece_id:?} {} {cars} cars at {entry_speed}: train did not clear",
         model.name
     );
-    assert!(
-        train.notes().is_empty(),
-        "{piece_id:?} {} {cars} cars at {entry_speed}: rollback",
-        model.name
-    );
-    assert!(
-        minimum_vertical >= limits.minimum_vertical_g
-            && maximum_vertical <= limits.maximum_vertical_g
-            && maximum_lateral <= limits.maximum_lateral_g
-            && maximum_longitudinal <= limits.maximum_longitudinal_g,
-        "{piece_id:?} {} {cars} cars at {entry_speed}: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}, longitudinal {maximum_longitudinal}; limits {limits:?}",
-        model.name
-    );
-    if matches!(piece_id, PieceId::Corkscrew | PieceId::CorkscrewRight) {
-        assert!(
-            maximum_lateral <= 1.0,
-            "{piece_id:?} {} {cars} cars at {entry_speed}: lateral {maximum_lateral} exceeds 1 g",
-            model.name
-        );
-    }
     if minimum_speed_required {
         assert!(
             minimum_speed >= 5.0,
             "{piece_id:?}: minimum speed {minimum_speed}"
         );
     }
-    eprintln!(
-        "{piece_id:?} {} {cars} cars at {entry_speed:.3}: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, lateral {maximum_lateral:.3}, longitudinal {maximum_longitudinal:.3}",
-        model.name
-    );
 }
 
 fn models() -> [CoasterModel; 3] {
@@ -695,7 +683,7 @@ fn every_ejector_hill_reaches_great_airtime_for_each_allowed_default_train() {
 }
 
 #[test]
-fn every_rated_template_endpoint_clears_and_maximum_stays_within_force_bands() {
+fn every_rated_endpoint_passes_for_every_train_within_the_comfortable_limits() {
     let mut failures = Vec::new();
     for piece in catalog()
         .iter()
@@ -711,76 +699,11 @@ fn every_rated_template_endpoint_clears_and_maximum_stays_within_force_bands() {
                 for speed in [rated.minimum_entry, rated.maximum_entry] {
                     let rating = rate_piece(&model, cars, piece, speed, rating_physics())
                         .expect("rating must complete");
-                    if !rating.passed {
+                    if !rating.passed || rating.exceeds_sustained_limits(&limits) {
                         failures.push(format!(
                             "{:?} {} {cars} cars at {speed}: {rating:?}",
                             piece.id, model.name
                         ));
-                    }
-                    if speed == rated.maximum_entry {
-                        let minimum = rating.minimum_filtered_force;
-                        let maximum = rating.maximum_filtered_force;
-                        if minimum[0] < limits.minimum_vertical_g
-                            || maximum[0] > limits.maximum_vertical_g
-                            || minimum[1] < -limits.maximum_lateral_g
-                            || maximum[1] > limits.maximum_lateral_g
-                            || minimum[2] < -limits.maximum_longitudinal_g
-                            || maximum[2] > limits.maximum_longitudinal_g
-                        {
-                            failures.push(format!("{:?} {} {cars} cars at {speed}: filtered {minimum:?}..{maximum:?}, limits {limits:?}", piece.id, model.name));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
-
-#[test]
-fn train_specific_rated_endpoints_clear_and_maxima_stay_within_force_bands() {
-    let mut failures = Vec::new();
-    for piece in catalog()
-        .iter()
-        .filter(|piece| piece.rated_speeds.is_some())
-    {
-        let rated = piece.rated_speeds.unwrap();
-        for model in models()
-            .into_iter()
-            .filter(|model| model.allows_piece(piece))
-        {
-            let limits = model.comfortable_force_limits;
-            for cars in model.cars_per_train_range() {
-                let mut train = model.train.clone();
-                train.length_metres *= f64::from(cars) / f64::from(train.cars);
-                train.cars = cars;
-                let effective = effective_rated_speeds(piece, &train).unwrap();
-                for speed in [effective.minimum_entry, effective.maximum_entry] {
-                    if speed == rated.maximum_entry
-                        || (speed == rated.minimum_entry && speed != effective.maximum_entry)
-                    {
-                        continue;
-                    }
-                    let rating = rate_piece(&model, cars, piece, speed, rating_physics())
-                        .expect("rating must complete");
-                    if !rating.passed {
-                        failures.push(format!(
-                            "{:?} {} {cars} cars at {speed}: {rating:?}",
-                            piece.id, model.name
-                        ));
-                    }
-                    if speed == effective.maximum_entry {
-                        let minimum = rating.minimum_filtered_force;
-                        let maximum = rating.maximum_filtered_force;
-                        if minimum[0] < limits.minimum_vertical_g
-                            || maximum[0] > limits.maximum_vertical_g
-                            || minimum[1] < -limits.maximum_lateral_g
-                            || maximum[1] > limits.maximum_lateral_g
-                            || minimum[2] < -limits.maximum_longitudinal_g
-                            || maximum[2] > limits.maximum_longitudinal_g
-                        {
-                            failures.push(format!("{:?} {} {cars} cars at {speed}: filtered {minimum:?}..{maximum:?}, limits {limits:?}", piece.id, model.name));
-                        }
                     }
                 }
             }

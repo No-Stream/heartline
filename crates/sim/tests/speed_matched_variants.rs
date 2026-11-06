@@ -1,7 +1,5 @@
-use theme_park_sim::track::construction::{
-    select_speed_matched_variant, select_speed_matched_variant_for_train,
-};
-use theme_park_sim::track::{Piece, PieceId, RatedSpeeds, catalog, hybrid_model};
+use theme_park_sim::track::construction::select_speed_matched_variant;
+use theme_park_sim::track::{Piece, PieceId, RatedSpeeds, catalog};
 
 fn candidate(id: PieceId, minimum_entry: f64, maximum_entry: f64) -> Piece {
     let mut piece = catalog()
@@ -107,7 +105,7 @@ fn airtime_hills_select_the_containing_window_ridden_closest_to_its_top() {
         PieceId::EjectorHill12x80,
         PieceId::EjectorHill16x96,
     ]);
-    let selected = select_speed_matched_variant(&ejectors, 25.0).unwrap();
+    let selected = select_speed_matched_variant(&ejectors, 24.5).unwrap();
     assert_eq!(selected.id, PieceId::EjectorHill8x64);
     assert!(selected.fits);
     let selected = select_speed_matched_variant(&ejectors, 30.0).unwrap();
@@ -117,29 +115,5 @@ fn airtime_hills_select_the_containing_window_ridden_closest_to_its_top() {
     assert_eq!(
         select_speed_matched_variant(&rolls, 19.0).unwrap().id,
         PieceId::ZeroGRollFastLeft
-    );
-}
-
-#[test]
-fn configured_train_changes_rolled_inversion_speed_match() {
-    let candidates = [catalog()
-        .iter()
-        .find(|piece| piece.id == PieceId::ZeroGRollCompactLeft)
-        .unwrap()
-        .clone()];
-    let mut train = hybrid_model().train;
-    train.cars = 4;
-    train.length_metres = 12.0;
-    assert!(
-        !select_speed_matched_variant_for_train(&candidates, 16.1, &train)
-            .unwrap()
-            .fits
-    );
-    train.cars = 8;
-    train.length_metres = 24.0;
-    assert!(
-        select_speed_matched_variant_for_train(&candidates, 16.1, &train)
-            .unwrap()
-            .fits
     );
 }

@@ -766,10 +766,9 @@ impl TestRunRecorder {
     pub(super) fn rebind_preview_circuit(
         &mut self,
         circuit: &Circuit,
-        train: &crate::track::TrainConfiguration,
         limits: ComfortableForceLimits,
     ) {
-        let fresh = Self::for_circuit_with_train_and_limits(circuit, train, limits);
+        let fresh = Self::for_circuit_with_limits(circuit, limits);
         if self.next_sample_distance == self.circuit_length && circuit.length > self.circuit_length
         {
             self.next_sample_distance = self.last_unwrapped_distance.ceil();
@@ -930,35 +929,6 @@ impl TestRunRecorder {
     }
 
     pub fn for_circuit_with_limits(circuit: &Circuit, limits: ComfortableForceLimits) -> Self {
-        Self::for_circuit_with_windows(circuit, limits, |piece| piece.rated_speeds)
-    }
-
-    pub fn for_circuit_with_train(
-        circuit: &Circuit,
-        train: &crate::track::TrainConfiguration,
-    ) -> Self {
-        Self::for_circuit_with_train_and_limits(
-            circuit,
-            train,
-            crate::track::hybrid_model().comfortable_force_limits,
-        )
-    }
-
-    pub fn for_circuit_with_train_and_limits(
-        circuit: &Circuit,
-        train: &crate::track::TrainConfiguration,
-        limits: ComfortableForceLimits,
-    ) -> Self {
-        Self::for_circuit_with_windows(circuit, limits, |piece| {
-            crate::track::effective_rated_speeds(piece, train)
-        })
-    }
-
-    fn for_circuit_with_windows(
-        circuit: &Circuit,
-        limits: ComfortableForceLimits,
-        rated_speeds: impl Fn(&crate::track::Piece) -> Option<crate::track::RatedSpeeds>,
-    ) -> Self {
         let mut recorder = Self::new(circuit.length());
         recorder.set_force_limits(limits);
         recorder.piece_starts.clone_from(&circuit.starts);
@@ -980,7 +950,7 @@ impl TestRunRecorder {
             .pieces
             .iter()
             .map(|piece| {
-                rated_speeds(piece).map(|speeds| RatedPieceSpeedWindow {
+                piece.rated_speeds.map(|speeds| RatedPieceSpeedWindow {
                     name: piece.name,
                     minimum_entry: speeds.minimum_entry,
                     maximum_entry: speeds.maximum_entry,
@@ -2996,32 +2966,6 @@ mod tests {
                 rated.minimum_entry, rated.maximum_entry
             )
         );
-    }
-
-    #[test]
-    fn configured_train_changes_rolled_inversion_speed_note() {
-        let piece = crate::track::catalog()
-            .iter()
-            .find(|piece| piece.id == crate::track::PieceId::ZeroGRollCompactLeft)
-            .unwrap()
-            .clone();
-        let circuit = Circuit {
-            length: piece.length(),
-            pieces: vec![piece],
-            starts: vec![0.0],
-            open: true,
-        };
-        let mut train = crate::track::hybrid_model().train;
-        train.cars = 4;
-        train.length_metres = 12.0;
-        let mut short = TestRunRecorder::for_circuit_with_train(&circuit, &train);
-        short.record_rated_speed_band(0, 16.1);
-        assert_eq!(short.speed_band_notes.len(), 1);
-        train.cars = 8;
-        train.length_metres = 24.0;
-        let mut long = TestRunRecorder::for_circuit_with_train(&circuit, &train);
-        long.record_rated_speed_band(0, 16.1);
-        assert!(long.speed_band_notes.is_empty());
     }
 
     #[test]

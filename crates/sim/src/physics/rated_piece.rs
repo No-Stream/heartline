@@ -2,8 +2,9 @@ use std::collections::{HashSet, VecDeque};
 use std::ops::Range;
 
 use super::{Circuit, ForceEvaluator, GForces, PhysicsConfig, TIME_STEP, Train, rider_g};
+use crate::track::catalog::unmeasured_catalog;
 use crate::track::{
-    CoasterModel, ComfortableForceLimits, Piece, PieceId, TrackState, TrainConfiguration, catalog,
+    CoasterModel, ComfortableForceLimits, Piece, PieceId, TrackState, TrainConfiguration,
 };
 
 #[derive(Debug)]
@@ -87,7 +88,7 @@ fn connector_key(state: TrackState) -> (u8, u8, u8, u8) {
 }
 
 fn straight_for(state: TrackState) -> Piece {
-    let mut straight = catalog()
+    let mut straight = unmeasured_catalog()
         .iter()
         .find(|p| {
             p.entry.slope == state.slope
@@ -123,7 +124,7 @@ fn measurement_track(
     piece: &Piece,
     speed: f64,
 ) -> MeasurementTrack {
-    let station = catalog()
+    let station = unmeasured_catalog()
         .iter()
         .find(|p| p.id == PieceId::Station)
         .unwrap()
@@ -137,7 +138,7 @@ fn measurement_track(
         if same_connector(current, piece.entry) {
             break path;
         }
-        for (index, template) in catalog().iter().enumerate() {
+        for (index, template) in unmeasured_catalog().iter().enumerate() {
             if let Some(next) = template.exit_at(current) {
                 if seen.insert(connector_key(next)) {
                     let mut next_path = path.clone();
@@ -148,7 +149,7 @@ fn measurement_track(
         }
     };
     for index in path {
-        let next = catalog()[index].at(state).unwrap();
+        let next = unmeasured_catalog()[index].at(state).unwrap();
         state = next.exit;
         pieces.push(next);
     }
@@ -664,12 +665,12 @@ mod tests {
             .iter()
             .find(|piece| piece.id == PieceId::EjectorHill12x64)
             .unwrap();
-        let speed = piece.rated_speeds.unwrap().maximum_entry;
+        let speed = piece.rated_speeds.unwrap().maximum_entry + 1.0;
         let result = rate_piece(&model, 8, piece, speed, unpowered()).unwrap();
         let violation = result
             .violation
             .as_ref()
-            .expect("the eight-car train exceeds the vertical limit");
+            .expect("1 m/s above the rated maximum the eight-car train exceeds the vertical limit");
         assert_eq!(violation.axis, 0);
         assert!(
             violation.force < model.comfortable_force_limits.minimum_vertical_g,
