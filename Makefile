@@ -7,7 +7,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-player-circuits bench-player-force-preview generate-report-types check-report-types generate-profiles
+.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-player-circuits bench-player-force-preview generate-report-types check-report-types generate-profiles generate-rated-windows
 
 install:
 	npm ci
@@ -26,6 +26,9 @@ check-report-types:
 
 generate-profiles:
 	UPDATE_SOLVED_PROFILES=1 $(CARGO) test -p theme-park-sim --lib track::profile::tests::solved_profiles_are_current
+
+generate-rated-windows:
+	UPDATE_RATED_WINDOWS=1 $(CARGO) run --release -p theme-park-sim --example measure_force_windows
 
 # The CLI version must match the wasm-bindgen crate version in Cargo.lock.
 wasm-bindgen:

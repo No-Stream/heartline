@@ -15,6 +15,12 @@ pub fn catalog() -> &'static [Piece] {
     &CATALOG
 }
 
+/// Builds the catalog before measured speed-window overrides, for regenerating the table.
+#[doc(hidden)]
+pub fn unmeasured_catalog() -> Vec<Piece> {
+    build_catalog()
+}
+
 fn rolled_inversion_minimum_entry(piece: &Piece) -> f64 {
     const SAMPLE_SPACING: f64 = 0.05;
     const TRAIN_LENGTH: f64 = 18.0;

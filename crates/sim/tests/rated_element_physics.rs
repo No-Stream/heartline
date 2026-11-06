@@ -668,73 +668,19 @@ fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train
         let rated = piece
             .rated_speeds
             .expect("ejector hill has a rated speed window");
-        let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
-
         for model in allowed_models
             .iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in [6, 12] {
-                let mut train_config = model.train.clone();
-                train_config.cars = cars;
-                let mut train = Train::new(
-                    &circuit,
-                    &train_config,
-                    unpowered(),
-                    element_start,
-                    rated.maximum_entry,
-                );
-                let mut cars_seen = vec![false; usize::from(cars)];
-                let mut minimum_vertical_g = f64::INFINITY;
-
-                for _ in 0..100_000 {
-                    train.step(&circuit);
-                    for frame in train.take_readings() {
-                        for (index, reading) in frame.into_iter().enumerate() {
-                            if (element_start..element_end).contains(&reading.distance) {
-                                cars_seen[index] = true;
-                                minimum_vertical_g = minimum_vertical_g.min(reading.g.vertical);
-                            }
-                        }
-                    }
-                    if train.distance() >= element_end + train_config.length_metres {
-                        break;
-                    }
-                    assert!(train.speed() > 0.0, "{} {cars} cars stalled", piece.name);
-                    assert!(
-                        train.notes().is_empty(),
-                        "{} {cars} cars rolled back",
-                        piece.name
-                    );
-                }
-
+            for cars in model.cars_per_train_range() {
+                let rating = rate_piece(model, cars, piece, rated.maximum_entry, rating_physics())
+                    .expect("rating must complete");
+                let minimum_vertical_g = rating.minimum_filtered_vertical;
                 let limits = model.comfortable_force_limits;
-                eprintln!(
-                    "{} {} {cars} cars / {:.1} m at rated maximum {:.3} m/s: minimum vertical force {minimum_vertical_g:.3} g",
-                    piece.name, model.name, train_config.length_metres, rated.maximum_entry
-                );
-                assert!(
-                    cars_seen.into_iter().all(|seen| seen),
-                    "{} {} {cars} cars: not every car entered the hill",
-                    piece.name,
-                    model.name
-                );
-                assert!(
-                    train.distance() >= element_end + train_config.length_metres,
-                    "{} {} {cars} cars: train did not clear the hill",
-                    piece.name,
-                    model.name
-                );
-                assert!(
-                    train.notes().is_empty(),
-                    "{} {} {cars} cars: train rolled back",
-                    piece.name,
-                    model.name
-                );
-                if minimum_vertical_g < limits.minimum_vertical_g {
+                if !rating.passed {
                     failures.push(format!(
-                        "{} {} {cars} cars: {minimum_vertical_g:.3} g below floor {:.3} g",
-                        piece.name, model.name, limits.minimum_vertical_g
+                        "{} {} {cars} cars: rating failed: {rating:?}",
+                        piece.name, model.name
                     ));
                 }
                 if limits.classify_airtime(minimum_vertical_g) != AirtimeRating::Great {
