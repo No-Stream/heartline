@@ -4,14 +4,15 @@
 
 The closed player circuit was measured with `make circuit-report` and a full
 train. Both default and construction-test physics completed a lap without
-recovery and gave excitement 6.75. The smallest rated entry-speed margin was
-2.13 m/s. The force limits are 5.0 / −1.5 g vertical and 1.5 g lateral and
-longitudinal; the peak longitudinal force has 0.24 g of margin, below the
-plan's preferred 0.3 g. The long return contributes 42.7 seconds of dead time.
+recovery, with excitement 6.70 and 6.69 respectively. The smallest rated
+entry-speed margin was 2.14 m/s. The force limits are 5.0 / −1.5 g vertical
+and 1.5 g lateral and longitudinal; moving a trim before the roll gives at
+least 0.30 g of longitudinal margin. The long return contributes 42.4 seconds
+of dead time under default physics.
 
 | Circuit | Excitement | Intensity | Nausea | Vertical max | Vertical min | Lateral peak | Longitudinal peak |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Velocity Viper | 6.75 | 6.68 | 4.13 | 3.23 g | −0.51 g | 1.09 g | 1.26 g |
+| Velocity Viper | 6.70 | 6.61 | 4.19 | 3.23 g | −0.66 g | 1.10 g | 1.20 g |
 
 The current scores are provisional. On this scale, 10 should represent a very
 high intensity or nausea score, or an excellent excitement score. Scores may

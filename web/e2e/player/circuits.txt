@@ -63,8 +63,8 @@ Brakes
 # First airtime and inversion run
 SpeedTurnLarge24Left
 EjectorHill16x96
-ZeroGRollFastRight
 Brakes
+ZeroGRollFastRight
 SpeedTurnLarge20Left
 FloaterHill12x96
 WaveTurnLeft
