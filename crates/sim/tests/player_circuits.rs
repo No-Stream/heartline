@@ -82,6 +82,23 @@ fn player_circuits_close() {
     }
 }
 
+#[test]
+fn timber_tumbler_completes_a_test_ride_lap() {
+    let model = hybrid_model();
+    let circuit = build_player_circuit("Timber Tumbler", model.clone());
+    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit))
+        .expect("Timber Tumbler test ride did not finish");
+    let report = &outcome.reports[0];
+
+    assert!(
+        report.completed && !outcome.recovered,
+        "Timber Tumbler did not complete a lap: {:?}",
+        report.notes
+    );
+}
+
 fn build_player_circuit(
     name: &str,
     model: theme_park_sim::track::CoasterModel,
@@ -233,7 +250,11 @@ fn timber_preview_agrees_with_closed_test_run() {
         assert!((sample.speed - recorded.speed).abs() < 0.5);
         assert!((sample.vertical_g - recorded.vertical_g).abs() < 0.3);
         assert!((sample.lateral_g - recorded.lateral_g).abs() < 0.3);
-        assert!((sample.longitudinal_g - recorded.longitudinal_g).abs() < 0.3);
+        assert!(
+            (sample.longitudinal_g - recorded.longitudinal_g).abs() < 0.3,
+            "preview {sample:?} run {recorded:?} piece {:?}",
+            circuit.pieces()[sample.piece_index].id
+        );
     }
     assert!(!preview.report.samples.is_empty());
     if outcome.recovered {
@@ -251,15 +272,17 @@ fn assert_ride_force_bound(
     let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
     let outcome = (0..60_000).find_map(|_| run.step(circuit));
     let outcome = outcome.unwrap_or_else(|| panic!("{name} test ride did not finish"));
-    let maximum = outcome
+    let maximum_sample = outcome
         .reports
         .iter()
         .flat_map(|report| &report.samples)
-        .map(|sample| sample.longitudinal_g.abs())
-        .fold(0.0_f64, f64::max);
+        .max_by(|a, b| a.longitudinal_g.abs().total_cmp(&b.longitudinal_g.abs()))
+        .unwrap();
+    let maximum = maximum_sample.longitudinal_g.abs();
     assert!(
         maximum <= 2.5,
-        "{name} peak longitudinal force was {maximum:.1} g"
+        "{name} peak longitudinal force was {maximum:.1} g at {maximum_sample:?}, piece {:?}",
+        circuit.pieces()[maximum_sample.piece_index].id
     );
 }
 

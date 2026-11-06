@@ -614,15 +614,6 @@ impl Train {
                 );
             } else {
                 match circuit.pieces[index].kind {
-                    // A train faster than the chain coasts and slows under gravity until the chain catches it.
-                    PieceKind::Lift => {
-                        if next_speed < self.config.lift_speed {
-                            let lift_acceleration =
-                                self.config.drive_acceleration + (-initial_gravity).max(0.0);
-                            next_speed = (previous_speed + lift_acceleration * time_step)
-                                .min(self.config.lift_speed);
-                        }
-                    }
                     PieceKind::Launch => {
                         let launch = self
                             .launch
@@ -663,7 +654,21 @@ impl Train {
                                 .max(target);
                         }
                     }
-                    PieceKind::Track => {}
+                    PieceKind::Lift | PieceKind::Track => {}
+                }
+                // A faster train coasts until the chain catches it.
+                if circuit.pieces[index].kind != PieceKind::Launch
+                    && next_speed < self.config.lift_speed
+                    && (0..self.cars).any(|car| {
+                        let (car_piece, _) =
+                            circuit.locate(next_distance - car as f64 * self.spacing);
+                        circuit.pieces[car_piece].kind == PieceKind::Lift
+                    })
+                {
+                    let lift_acceleration =
+                        self.config.drive_acceleration + (-initial_gravity).max(0.0);
+                    next_speed = (previous_speed + lift_acceleration * time_step)
+                        .min(self.config.lift_speed);
                 }
             }
         }
