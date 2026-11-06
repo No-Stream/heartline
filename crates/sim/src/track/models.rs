@@ -108,8 +108,14 @@ pub struct LaunchSpeedBounds {
     pub minimum: f64,
     pub maximum: f64,
 }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct CoasterModel {
+    #[serde(skip)]
+    pub key: &'static str,
+    #[serde(skip)]
+    pub cars_per_train: std::ops::RangeInclusive<u8>,
+    #[serde(skip)]
+    pub ui_description: &'static str,
     #[serde(with = "crate::save::catalog_text")]
     pub manufacturer: crate::save::CatalogText,
     #[serde(with = "crate::save::catalog_text")]
@@ -132,15 +138,6 @@ pub struct CoasterModel {
     pub default_colors: CoasterColors,
 }
 impl CoasterModel {
-    pub fn cars_per_train_range(&self) -> std::ops::RangeInclusive<u8> {
-        match self.name {
-            "Briar Blitz" => 4..=12,
-            "Timber Tumbler" => 4..=8,
-            "Velocity Viper" => 3..=6,
-            _ => panic!("unknown coaster model: {}", self.name),
-        }
-    }
-
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_bytes(self.manufacturer.as_bytes());
         hash.write_bytes(self.name.as_bytes());
@@ -214,8 +211,73 @@ impl CoasterModel {
             .collect()
     }
 }
+
+#[derive(serde::Deserialize)]
+struct SavedCoasterModel {
+    #[serde(with = "crate::save::catalog_text")]
+    manufacturer: crate::save::CatalogText,
+    #[serde(with = "crate::save::catalog_text")]
+    name: crate::save::CatalogText,
+    #[serde(with = "crate::save::catalog_text")]
+    description: crate::save::CatalogText,
+    allowed_pieces: Vec<PieceId>,
+    sloped_turn_slopes: Vec<Slope>,
+    minimum_radius_metres: f64,
+    comfortable_force_limits: ComfortableForceLimits,
+    minimum_height_cm: u16,
+    allowed_inversions: Vec<Inversion>,
+    lift_rules: Option<LiftRules>,
+    launch_types: Vec<LaunchType>,
+    support_style: SupportStyle,
+    train: TrainConfiguration,
+    track_material: Material,
+    structure_material: Material,
+    default_colors: CoasterColors,
+}
+
+impl<'de> serde::Deserialize<'de> for CoasterModel {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+
+        let saved = SavedCoasterModel::deserialize(deserializer)?;
+        let identity = coaster_models()
+            .into_iter()
+            .find(|model| model.name == saved.name)
+            .ok_or_else(|| D::Error::custom(format!("unknown coaster model: {}", saved.name)))?;
+
+        Ok(Self {
+            key: identity.key,
+            cars_per_train: identity.cars_per_train,
+            ui_description: identity.ui_description,
+            manufacturer: saved.manufacturer,
+            name: saved.name,
+            description: saved.description,
+            allowed_pieces: saved.allowed_pieces,
+            sloped_turn_slopes: saved.sloped_turn_slopes,
+            minimum_radius_metres: saved.minimum_radius_metres,
+            comfortable_force_limits: saved.comfortable_force_limits,
+            minimum_height_cm: saved.minimum_height_cm,
+            allowed_inversions: saved.allowed_inversions,
+            lift_rules: saved.lift_rules,
+            launch_types: saved.launch_types,
+            support_style: saved.support_style,
+            train: saved.train,
+            track_material: saved.track_material,
+            structure_material: saved.structure_material,
+            default_colors: saved.default_colors,
+        })
+    }
+}
+
+pub fn coaster_models() -> Vec<CoasterModel> {
+    vec![hybrid_model(), multi_launch_model(), wooden_twister_model()]
+}
+
 pub fn wooden_twister_model() -> CoasterModel {
     CoasterModel {
+        key: "wooden_twister",
+        cars_per_train: 4..=12,
+        ui_description: "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains.",
         manufacturer: "Great Coaster Workshop",
         name: "Briar Blitz",
         description: "An articulated wooden twister with a chain lift and dense timber structure. The steel-structure loop is a plausible extension.",
@@ -357,6 +419,9 @@ pub fn wooden_twister_model() -> CoasterModel {
 }
 pub fn hybrid_model() -> CoasterModel {
     CoasterModel {
+        key: "hybrid",
+        cars_per_train: 4..=8,
+        ui_description: "Steel box track on a wooden structure.",
         manufacturer: "Rocky Road Construction",
         name: "Timber Tumbler",
         description: "Steel box track on a wooden structure. Some elements are plausible extensions beyond the rides that inspired this model.",
@@ -568,6 +633,9 @@ pub fn hybrid_model() -> CoasterModel {
 
 pub fn multi_launch_model() -> CoasterModel {
     CoasterModel {
+        key: "velocity_viper",
+        cars_per_train: 3..=6,
+        ui_description: "Multi-launch steel track and columns with short, standard, and long launch sections.",
         manufacturer: "Impulse Engineering",
         name: "Velocity Viper",
         description: "A steel coaster with linear motor launches. Some elements are plausible extensions beyond the rides that inspired this model.",
@@ -771,5 +839,121 @@ pub fn multi_launch_model() -> CoasterModel {
             supports: CoasterColor::Cream,
             trains: CoasterColor::Coral,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[derive(serde::Serialize)]
+    struct LegacyCoasterModel {
+        #[serde(with = "crate::save::catalog_text")]
+        manufacturer: crate::save::CatalogText,
+        #[serde(with = "crate::save::catalog_text")]
+        name: crate::save::CatalogText,
+        #[serde(with = "crate::save::catalog_text")]
+        description: crate::save::CatalogText,
+        allowed_pieces: Vec<PieceId>,
+        sloped_turn_slopes: Vec<Slope>,
+        minimum_radius_metres: f64,
+        comfortable_force_limits: ComfortableForceLimits,
+        minimum_height_cm: u16,
+        allowed_inversions: Vec<Inversion>,
+        lift_rules: Option<LiftRules>,
+        launch_types: Vec<LaunchType>,
+        support_style: SupportStyle,
+        train: TrainConfiguration,
+        track_material: Material,
+        structure_material: Material,
+        default_colors: CoasterColors,
+    }
+
+    impl From<&CoasterModel> for LegacyCoasterModel {
+        fn from(model: &CoasterModel) -> Self {
+            Self {
+                manufacturer: model.manufacturer,
+                name: model.name,
+                description: model.description,
+                allowed_pieces: model.allowed_pieces.clone(),
+                sloped_turn_slopes: model.sloped_turn_slopes.clone(),
+                minimum_radius_metres: model.minimum_radius_metres,
+                comfortable_force_limits: model.comfortable_force_limits,
+                minimum_height_cm: model.minimum_height_cm,
+                allowed_inversions: model.allowed_inversions.clone(),
+                lift_rules: model.lift_rules,
+                launch_types: model.launch_types.clone(),
+                support_style: model.support_style,
+                train: model.train.clone(),
+                track_material: model.track_material,
+                structure_material: model.structure_material,
+                default_colors: model.default_colors,
+            }
+        }
+    }
+
+    #[test]
+    fn registry_preserves_keys_names_and_legacy_order() {
+        let models = coaster_models();
+
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| (model.key, model.name))
+                .collect::<Vec<_>>(),
+            [
+                ("hybrid", "Timber Tumbler"),
+                ("velocity_viper", "Velocity Viper"),
+                ("wooden_twister", "Briar Blitz"),
+            ]
+        );
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.key)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            models.len()
+        );
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.name)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            models.len()
+        );
+        assert_eq!(models[0].cars_per_train, 4..=8);
+        assert_eq!(models[1].cars_per_train, 3..=6);
+        assert_eq!(models[2].cars_per_train, 4..=12);
+        assert_eq!(
+            models[0].ui_description,
+            "Steel box track on a wooden structure."
+        );
+        assert_eq!(
+            models[1].ui_description,
+            "Multi-launch steel track and columns with short, standard, and long launch sections."
+        );
+        assert_eq!(
+            models[2].ui_description,
+            "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains."
+        );
+    }
+
+    #[test]
+    fn registry_metadata_preserves_legacy_save_bytes_and_loads_old_models() {
+        for model in coaster_models() {
+            let legacy = LegacyCoasterModel::from(&model);
+            let legacy_bytes = postcard::to_allocvec(&legacy).unwrap();
+
+            assert_eq!(postcard::to_allocvec(&model).unwrap(), legacy_bytes);
+
+            let restored: CoasterModel = postcard::from_bytes(&legacy_bytes).unwrap();
+            assert_eq!(restored.key, model.key);
+            assert_eq!(restored.cars_per_train, model.cars_per_train);
+            assert_eq!(restored.ui_description, model.ui_description);
+            assert_eq!(postcard::to_allocvec(&restored).unwrap(), legacy_bytes);
+        }
     }
 }

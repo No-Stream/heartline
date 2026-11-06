@@ -51,7 +51,7 @@ impl Park {
             .construction
             .as_ref()
             .ok_or(BlockCommandError::NoConstruction)?;
-        if !construction.model().cars_per_train_range().contains(&cars) {
+        if !construction.model().cars_per_train.contains(&cars) {
             return Err(BlockCommandError::InvalidCarsPerTrain);
         }
         if construction.model().train.cars == cars {

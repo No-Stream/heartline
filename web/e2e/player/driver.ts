@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import type { CoasterModelKey } from "../../src/generated/coaster-models";
 
 export type ToolName = "Watch" | "Coaster" | "Paths" | "Landscape" | "Facilities" | "Scenery";
 
@@ -289,7 +290,7 @@ export async function layQueue(page: Page, start: Tile, end: Tile): Promise<void
   await layPath(page, start, end, "queue");
 }
 
-export async function placeStation(page: Page, options: { tile: Tile; direction: Tile; height: number; model: "hybrid" | "velocity_viper" | "wooden_twister" }): Promise<void> {
+export async function placeStation(page: Page, options: { tile: Tile; direction: Tile; height: number; model: CoasterModelKey }): Promise<void> {
   await selectUnits(page, "metric");
   await openTool(page, "Coaster");
   await page.getByRole("combobox", { name: "Coaster model" }).selectOption(`model:${options.model}`);

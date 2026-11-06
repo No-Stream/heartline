@@ -4,7 +4,7 @@ import type { CoasterSnapshot } from "../protocol";
 
 const camera = { centerX: 0, centerY: 0, zoom: 2, rotation: 0 as const };
 const viewport = { width: 800, height: 600 };
-const layout = { model: "velocity_viper" as const, carsPerTrain: 2, rowsPerCar: 1, seatsPerRow: 2, lengthMetres: 4 };
+const layout = { model: "velocity_viper" as const, trackMaterial: "steel" as const, carsPerTrain: 2, rowsPerCar: 1, seatsPerRow: 2, lengthMetres: 4 };
 function input(state: number[], tick = 0): MappingInput {
   const snapshot: CoasterSnapshot = { tickCount: tick, guests: new Float32Array(), guestIds: new Uint32Array(), appearances: new Uint8Array(), trainPoses: new Float32Array([0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]), constructionTrainPoses: new Float32Array(), trainStates: new Float32Array(state), constructionTrainStates: new Float32Array(), constructionRiders: new Uint32Array() };
   return { snapshot, interpolation: 1, camera, viewport, dayPhase: 0.5, gameSpeed: 1, demoTrain: layout, constructionTrain: null, crestBursts: [], ui: [], paused: false, timeSeconds: tick / 200 };
@@ -19,7 +19,7 @@ it("spatialises points in camera screen space and attenuates distant sources", (
 });
 it("maps train speed, lift, launch, brakes and station edges", () => {
   let result = next(input([0, 2, 1, 1, 0, 1]));
-  expect(result.frame.trains[0]).toMatchObject({ speed: 2, distance: 0, onLift: true, clackRate: 5 });
+  expect(result.frame.trains[0]).toMatchObject({ speed: 2, distance: 0, material: "steel", onLift: true, clackRate: 5 });
   result = next({ ...input([0, 4, 2, 1, 0, 1], 10), gameSpeed: 4 }, result.memory);
   expect(result.frame.trains[0].launch).toBe(true);
   result = next(input([0, 8, 3, 1, 0, 1], 20), result.memory);

@@ -5,8 +5,8 @@ use super::testing::RideStatistics;
 use super::{CarReading, ConstructionTestRunRecorder, GForces, PhysicsConfig, Train, demo_circuit};
 use crate::track::construction::Construction;
 use crate::track::{
-    CoasterModel, Heading, Heartlining, Inversion, PieceId, TrackState, catalog, hybrid_model,
-    multi_launch_model, wooden_twister_model,
+    CoasterModel, Heading, Heartlining, Inversion, PieceId, TrackState, catalog, coaster_models,
+    hybrid_model, wooden_twister_model,
 };
 use crate::world::{Surface, World};
 use std::collections::{BTreeMap, BTreeSet};
@@ -498,12 +498,10 @@ fn read_player_circuits() -> BTreeMap<String, Vec<String>> {
 }
 
 fn model_for_circuit(name: &str) -> CoasterModel {
-    match name {
-        "Timber Tumbler" => hybrid_model(),
-        "Velocity Viper" => multi_launch_model(),
-        "Briar Blitz" => wooden_twister_model(),
-        _ => panic!("no coaster model for {name}"),
-    }
+    coaster_models()
+        .into_iter()
+        .find(|model| model.name == name)
+        .unwrap_or_else(|| panic!("no coaster model for {name}"))
 }
 
 fn piece_id_for_name(name: &str) -> PieceId {
@@ -659,7 +657,8 @@ fn calibration_table_prints_demo_and_player_circuit_scores() {
 
     let circuits = read_player_circuits();
     assert_eq!(circuits.len(), 3, "calibration parses all player circuits");
-    for name in ["Timber Tumbler", "Velocity Viper", "Briar Blitz"] {
+    for model in coaster_models() {
+        let name = model.name;
         let entries = circuits.get(name).expect("known player circuit");
         let (model, circuit) = build_player_circuit(name, entries);
         let report = run_lap(&circuit, &model, 2.0);

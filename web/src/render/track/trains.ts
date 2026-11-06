@@ -1,6 +1,7 @@
 import { projectVertex } from "../projection";
 import type { Camera, Viewport } from "../../camera";
-import type { CoasterModelKey, TrainLayout } from "../../train-layout";
+import type { CoasterModelKey } from "../../generated/coaster-models";
+import type { TrainLayout } from "../../train-layout";
 import type { Atlas } from "../scene";
 import { add, color, createQuadBuilder, cross, normalize, scale, shade, vector, type TrackPaint, type TrackQuad, type Vec } from "./geometry";
 

@@ -195,7 +195,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         ),
         ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
     ];
-    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    let models = coaster_models();
     let hill_pieces: Vec<_> = catalog()
         .iter()
         .filter(|piece| expected_hills.iter().any(|(name, _)| piece.name == *name))
@@ -1347,7 +1347,7 @@ fn short_offsets_have_grid_aligned_smooth_mirrored_geometry() {
 
 #[test]
 fn each_coaster_model_offers_short_offsets_when_its_radius_allows_them() {
-    for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()] {
+    for model in coaster_models() {
         let available_ids = model
             .available_pieces(TrackState::origin())
             .into_iter()

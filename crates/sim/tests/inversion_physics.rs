@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train};
 use theme_park_sim::track::{
-    Bank, Heading, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model,
+    Bank, Heading, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models, hybrid_model,
     multi_launch_model, wooden_twister_model,
 };
 
@@ -295,7 +295,7 @@ fn sixty_degree_crests_pass_full_trains_at_both_rated_endpoints() {
             GentleDownToLevel,
         ],
     ];
-    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    let models = coaster_models();
     for sequence in sequences {
         let (circuit, _, _) = circuit_with_elements(sequence);
         for id in [
@@ -1345,7 +1345,7 @@ fn half_rolls_pass_full_trains_at_both_rated_endpoints() {
             .unwrap();
         let end = start + piece.length();
         let rated = piece.rated_speeds.unwrap();
-        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+        for model in coaster_models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
@@ -1503,7 +1503,7 @@ fn banked_drops_pass_full_trains_at_both_rated_endpoints() {
             .unwrap();
         let end = start + piece.length();
         let rated = piece.rated_speeds.unwrap();
-        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+        for model in coaster_models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {

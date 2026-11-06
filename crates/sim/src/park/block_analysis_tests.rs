@@ -495,7 +495,7 @@ fn cars_per_train_ranges_preserve_existing_defaults() {
         (wooden_twister_model(), 4, 12, 12),
         (multi_launch_model(), 3, 6, 6),
     ] {
-        assert_eq!(model.cars_per_train_range(), minimum..=maximum);
+        assert_eq!(model.cars_per_train, minimum..=maximum);
         assert_eq!(model.train.cars, default);
     }
 }

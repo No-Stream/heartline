@@ -34,11 +34,10 @@ impl WasmSimulation {
     }
 
     /// The demo coaster's train layout, or null without one.
-    /// The demo coaster runs Timber Tumbler trains.
     pub fn coaster_train_layout(&self) -> String {
         let layout = self
             .demo_coaster()
-            .map(|coaster| train_layout(TrainModelKey::Hybrid, &coaster.train_configuration));
+            .map(|coaster| train_layout(&hybrid_model(), &coaster.train_configuration));
         serde_json::to_string(&layout).expect("serialize train layout")
     }
 

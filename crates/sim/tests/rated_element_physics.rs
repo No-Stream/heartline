@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
 use theme_park_sim::track::{
-    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, hybrid_model,
-    multi_launch_model, wooden_twister_model,
+    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, coaster_models,
+    hybrid_model, multi_launch_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -468,8 +468,8 @@ fn assert_train_crosses_element(
     );
 }
 
-fn models() -> [CoasterModel; 3] {
-    [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+fn models() -> Vec<CoasterModel> {
+    coaster_models()
 }
 
 #[test]
