@@ -4,35 +4,46 @@ Measurements use the 0.5 g, 0.2 s allowance and frictionless isolated-piece rati
 
 ## Isolated pieces
 
-The following are passing entry speeds at 1 m/s resolution over 1–100 m/s, intersected across allowed models and all car counts. The downhill approach makes 1–13 m/s unreachable for every configuration of `SixtyToSteepDown`; these speeds are unknown, not failures of the piece. The requested solver convergence over every target is therefore not met. An unpowered train descending the required 10 m approach gains speed even from rest. The descending half-corkscrew limit checks the existing 22 m/s speed after clearing the piece, not entry speed. No gaps were found in the measured passing sets.
+The scan holds speed constant on the matching-slope approach, evaluates each car's force history there, and releases the train at the piece entry. It tests whole-metre-per-second entry speeds from 1 to 100 m/s, intersecting all allowed models and car counts. Every target was reachable and the passing sets had no gaps. These are measured passing speeds, not refined catalog endpoints; the existing energy-derived or hand-set minimum remains in force even when a lower scan speed passes.
 
-| Piece | Passing entry speeds (m/s) |
-| --- | ---: |
-| SixtyToSteepDown | 14–29; 1–13 unreachable |
-| HalfCorkscrewLeftDown | 1–15 |
-| HalfCorkscrewRightDown | 1–15 |
-| Loop | 25–29 |
-| FloaterHill6x64 | 11–28 |
+| Piece | Passing entry speeds (m/s) | Existing catalog minimum (m/s) |
+| --- | ---: | ---: |
+| SixtyToSteepDown | 1–29 | 2 |
+| HalfCorkscrewLeftDown | 1–15 | 5 |
+| HalfCorkscrewRightDown | 1–15 | 5 |
+| Loop | 25–29 | 24.7311 |
+| FloaterHill6x64 | 11–28 | 12.1199 |
 
-These preliminary ranges differ from the plan's approximate loop and half-corkscrew expectations. They are measurements at whole metres per second, not refined catalog endpoints.
-
-The solver converged for 783 configuration and speed combinations for `SixtyToSteepDown`, with 117 unreachable; 900 for each descending half corkscrew and the loop; and 1,800 for the floater hill. All reported convergences met the 1e-6 m/s target.
+The scan evaluated 900 model, car-count and speed combinations for each piece except the hill, which had 1,800. At 30 m/s the descending transition exceeds the vertical limit; at 16 m/s the descending half corkscrews exceed the existing 22 m/s clearing-speed rule. The 60° approach is slightly curved: sampling 1,001 positions found tangent vertical components from −0.870854 to −0.866025 and maximum curvature of 0.002075 m⁻¹. At a fixed 25 m/s, its rider vertical force varies from 0.363 to 0.628 g, so the filter has this real approach history rather than a perfectly constant equilibrium. Integer-grid connectors cannot represent an exact straight at 60°. The four other approaches are level and have zero curvature.
 
 ## Preview accuracy and latency
 
-The instrumented preview evaluates the front car at every integration step. Filtered forces are interpolated at common metre marks. Violation flags are ORed over steps ending within each metre. A 50 ms step can cross an entire metre; bins with no reading at 50 ms are excluded from the disagreement counts and are not treated as agreements. Timber's preview stalls, so its comparison covers only the first 197 metres.
+The comparison runs the front-car evaluator continuously and linearly interpolates filtered forces at matching whole-metre distances. It keeps the first outward passage through each mark when a train rolls back. For a flag at a mark, it conservatively ORs the two step flags bracketing that mark; this is a measurement convention, not yet a production aggregation policy. The 237 and 165 missing metre bins in the earlier Velocity and Briar comparison were binning artifacts: 50 ms integration steps crossed entire bins, and interpolation covers the intervening distance. They were not gaps in the train's trajectory.
 
-| Circuit | Maximum difference vertical / lateral / longitudinal (g) | Matched metres | Disagreements: preview only / 5 ms only | Metres without a 50 ms reading | Within 3f accuracy bounds? |
-| --- | --- | ---: | --- | ---: | --- |
-| Timber Tumbler | 0.0021 / 0.0010 / 0.0535 | 197 | 1 / 24 | 0 | No |
-| Velocity Viper | 0.4486 / 0.7142 / 0.2136 | 727 | 1 / 3 | 237 | No |
-| Briar Blitz | 0.2840 / 0.7051 / 0.1355 | 994 | 0 / 3 | 165 | No |
+| Circuit | Step | Maximum difference vertical / lateral / longitudinal (g) | Common metres | Flag disagreements: preview only / 5 ms only | Within accuracy bounds? |
+| --- | ---: | --- | ---: | --- | --- |
+| Timber Tumbler | 50 ms | 0.00211 / 0.00099 / 0.05345 | 197 | 0 / 0 | Only the reached portion |
+| Timber Tumbler | 25 ms | 0.00061 / 0.00027 / 0.02095 | 197 | 0 / 0 | Only the reached portion |
+| Velocity Viper | 50 ms | 0.44863 / 0.71416 / 0.21364 | 964 | 6 / 1 | No |
+| Velocity Viper | 25 ms | 0.10468 / 0.16520 / 0.05990 | 965 | 2 / 0 | No |
+| Briar Blitz | 50 ms | 0.28398 / 0.70514 / 0.13553 | 1159 | 8 / 0 | No |
+| Briar Blitz | 25 ms | 0.06754 / 0.16974 / 0.05748 | 1159 | 2 / 0 | No |
 
-All three exceed the allowed one flag disagreement, and some disagreements are missed warnings. Velocity and Briar also exceed the 0.1 g force bound. The missing metre bins require an explicit aggregation policy. The plan's proposed fallback is a 25 ms preview; it has not been measured here.
+The plan requires at most 0.1 g on each axis and at most one disagreement per circuit, and any disagreement must be an over-warning. Neither step meets those bounds. The former Timber flag discrepancy mixed the return trip with outward readings; the corrected first-passage comparison has no disagreement over the reached portion.
 
-`make bench-player-circuits` measured baseline p95 of 27.834 ms for Timber, 23.217 ms for Velocity and 79.918 ms for Briar. In a separately instrumented preview, three baseline-to-evaluated p95 pairs in milliseconds were 18.483→17.102, 52.230→60.577 and 84.316→65.484 for Timber; 10.110→8.371, 28.049→37.572 and 40.071→50.188 for Velocity; and 35.844→36.867, 111.453→120.873 and 104.816→128.292 for Briar. Each used five warmups and 100 runs. Variation makes the 20% latency comparison inconclusive; the instrumentation does not include future per-metre flag storage.
+Timber does not complete at either resolution: at 5 ms it leaves the final lift piece at 202.677 m and 2.989 m/s, reaches 205.066 m, rolls back and is recovered at the station. The preview and the normal test run share this behavior. The chain is present on the intended nine pieces; lift drive stops when the front car leaves the last one while rear cars remain on the uphill track. A disposable experiment keeping drive active while any rear car remains on a lift completed the circuit, but also materially changed its forces. The code and existing test do not establish whether that lift engagement rule is intended, so the experiment is not a validated production fix. Full-circuit Timber accuracy remains unmeasured and the lift behavior needs an owner decision.
 
-Reproduce the comparison with `tools/force-measurement/run-preview.sh`; `--flags-only` omits timings. It instruments a temporary archive of master and leaves production code unchanged.
+Latency was measured with three interleaved runs of `make bench-player-circuits` in disposable archives of `bc3a68e` and the instrumented evaluator, with five warmups and 100 measured previews per run. The current master (`6f974f8`) differs from that revision only in backlog notes. Each cell is the median of the three p95 values, in milliseconds. The evaluator runs at every step and supplies filtered forces to the recorder; this prototype does not yet store per-metre violation flags, so these are not final task 5 timings.
+
+| Circuit | Master 50 ms | Evaluator 50 ms | Change | Evaluator 25 ms | Change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Timber Tumbler | 21.529 | 19.363 | −10.1% | 32.168 | +49.4% |
+| Velocity Viper | 9.154 | 11.074 | +21.0% | 17.183 | +87.7% |
+| Briar Blitz | 33.139 | 37.431 | +13.0% | 61.438 | +85.4% |
+
+The 50 ms prototype narrowly exceeds the 20% latency bound on Velocity; all 25 ms results exceed it. The individual master p95s were 21.529/15.927/23.274 ms for Timber, 9.154/8.773/10.232 ms for Velocity and 33.139/32.541/38.981 ms for Briar. The evaluator p95s were 19.363/16.355/26.206, 8.663/11.908/11.074 and 34.501/37.431/37.588 ms at 50 ms, and 33.479/32.168/31.801, 13.521/17.183/20.296 and 59.278/63.924/61.438 ms at 25 ms, in the same circuit order. Variation makes the near-boundary 50 ms Velocity result uncertain. Neither step satisfies the accuracy requirements, so no step is selected.
+
+Reproduce the comparison with `tools/force-measurement/run-preview.sh --comparison-only`. The runner instruments a temporary archive of master and leaves production code unchanged.
 
 ## Changed piece flags
 

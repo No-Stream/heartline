@@ -30,11 +30,16 @@ fn main() {
         }
         matched = true;
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-        let current_maximum = piece.rated_speeds.unwrap().maximum_entry;
+        let rated_speeds = piece.rated_speeds.unwrap();
+        let current_maximum = rated_speeds.maximum_entry;
+        println!(
+            "{id:?}: existing catalog minimum {} m/s",
+            rated_speeds.minimum_entry
+        );
         let ceiling = 100.0_f64.max(3.0 * current_maximum);
         let mut passing = Vec::new();
         let mut unreachable = Vec::new();
-        let mut converged = 0;
+        let mut evaluated = 0;
         let mut unavailable = 0;
         let mut first_failure = None;
         let mut near_current = None;
@@ -50,7 +55,7 @@ fn main() {
                 for cars in model.cars_per_train_range() {
                     match rate_piece(&model, cars, piece, speed, unpowered()) {
                         Ok(rating) => {
-                            converged += 1;
+                            evaluated += 1;
                             if !rating.passed {
                                 passed = false;
                                 if diagnostic.is_none() {
@@ -94,7 +99,7 @@ fn main() {
             .filter(|pair| pair[1] - pair[0] > step * 1.000001)
             .collect::<Vec<_>>();
         println!(
-            "{id:?}: scanned {step}..{:.2} m/s, passing {passing:?}; unreachable {unreachable:?}; converged {converged}, unreachable configurations {unavailable}; gaps {gaps:?}",
+            "{id:?}: scanned {step}..{:.2} m/s, passing {passing:?}; unreachable {unreachable:?}; evaluated {evaluated}, unreachable configurations {unavailable}; gaps {gaps:?}",
             (ceiling / step).ceil() * step
         );
         println!(

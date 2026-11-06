@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use super::{Circuit, ForceEvaluator, GForces, GRAVITY, PhysicsConfig, TIME_STEP, Train};
+use super::{Circuit, ForceEvaluator, GForces, PhysicsConfig, TIME_STEP, Train, rider_g};
 use crate::track::{CoasterModel, Piece, PieceId, TrackState, catalog};
 
 #[derive(Debug)]
@@ -170,95 +170,6 @@ fn measurement_track(
     }
 }
 
-fn entry_speed(
-    track: &MeasurementTrack,
-    model: &CoasterModel,
-    cars: u8,
-    speed: f64,
-    physics: PhysicsConfig,
-) -> Option<f64> {
-    let mut train = Train::new(
-        &track.circuit,
-        &scaled_train(model, cars),
-        physics,
-        track.start,
-        speed,
-    );
-    for _ in 0..100_000 {
-        let previous_distance = train.distance();
-        let previous_speed = train.speed();
-        train.step_block_brake_without_readings(&track.circuit, &[], false);
-        if train.distance() >= track.element_start {
-            let fraction =
-                (track.element_start - previous_distance) / (train.distance() - previous_distance);
-            return Some(
-                (previous_speed.powi(2)
-                    + fraction * (train.speed().powi(2) - previous_speed.powi(2)))
-                .sqrt(),
-            );
-        }
-        if train.speed() <= 0.0 || !train.notes().is_empty() {
-            return None;
-        }
-    }
-    None
-}
-
-fn solve_approach(
-    track: &MeasurementTrack,
-    model: &CoasterModel,
-    cars: u8,
-    piece: &Piece,
-    target: f64,
-    physics: PhysicsConfig,
-) -> Result<(f64, f64), String> {
-    let config = scaled_train(model, cars);
-    let spacing = config.length_metres / f64::from(cars);
-    let mean_height = |distance: f64| {
-        (0..cars)
-            .map(|car| {
-                track
-                    .circuit
-                    .sample(distance - f64::from(car) * spacing)
-                    .position
-                    .z
-            })
-            .sum::<f64>()
-            / f64::from(cars)
-    };
-    let squared = target * target
-        + 2.0 * GRAVITY * (mean_height(track.element_start) - mean_height(track.start));
-    if squared <= 0.0 {
-        return Err(format!(
-            "{:?} {} {cars} cars: target {target:.6} m/s is unreachable from the required downhill approach",
-            piece.id, model.name
-        ));
-    }
-    let mut squared = squared;
-    for _ in 0..4 {
-        let actual = entry_speed(track, model, cars, squared.sqrt(), physics).ok_or_else(|| {
-            format!(
-                "{:?} {} {cars} cars: stalled approaching target {target}",
-                piece.id, model.name
-            )
-        })?;
-        if (actual - target).abs() <= 1e-6 {
-            return Ok((squared.sqrt(), actual));
-        }
-        squared += target * target - actual * actual;
-        if squared <= 0.0 {
-            return Err(format!(
-                "{:?} {} {cars} cars: target {target} unreachable",
-                piece.id, model.name
-            ));
-        }
-    }
-    Err(format!(
-        "{:?} {} {cars} cars: failed to converge for target {target}",
-        piece.id, model.name
-    ))
-}
-
 pub fn rate_piece(
     model: &CoasterModel,
     cars: u8,
@@ -275,16 +186,29 @@ pub fn rate_piece(
     );
     assert!(model.cars_per_train_range().contains(&cars));
     let track = measurement_track(model, cars, piece, target);
-    let (start_speed, actual) = solve_approach(&track, model, cars, piece, target, physics)?;
-    let mut train = Train::new(
-        &track.circuit,
-        &scaled_train(model, cars),
-        physics,
-        track.start,
-        start_speed,
-    );
+    let config = scaled_train(model, cars);
+    let spacing = config.length_metres / f64::from(cars);
     let mut evaluators =
         vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
+    let approach_steps =
+        ((track.element_start - track.start) / (target * TIME_STEP)).ceil() as usize;
+    let start = track.element_start - approach_steps as f64 * target * TIME_STEP;
+    for step in 1..=approach_steps {
+        let distance = start + step as f64 * target * TIME_STEP;
+        for (car, evaluator) in evaluators.iter_mut().enumerate() {
+            let car_distance = distance - car as f64 * spacing;
+            let (index, local) = track.circuit.locate(car_distance);
+            evaluator.update(rider_g(&track.circuit.pieces[index], local, target, 0.0));
+        }
+    }
+    let mut train = Train::new(
+        &track.circuit,
+        &config,
+        physics,
+        track.element_start,
+        target,
+    );
+    let actual = train.speed();
     let mut elapsed_tail = vec![0.0; usize::from(cars)];
     let mut done = vec![false; usize::from(cars)];
     let mut excursions = vec![[0.0; 3]; usize::from(cars)];
@@ -419,34 +343,31 @@ mod tests {
     use crate::track::{PieceId, catalog, hybrid_model};
 
     #[test]
-    fn approach_solver_hits_target_on_level_sixty_down_and_inverted_straights() {
+    fn held_approach_hits_target_on_level_sixty_down_and_inverted_straights() {
         let model = hybrid_model();
-        for (id, target) in [
-            (PieceId::Loop, 25.0),
-            (PieceId::SixtyToSteepDown, 25.0),
-            (PieceId::HalfCorkscrewLeftDown, 25.0),
+        for id in [
+            PieceId::Loop,
+            PieceId::SixtyToSteepDown,
+            PieceId::HalfCorkscrewLeftDown,
         ] {
             let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-            let track = measurement_track(&model, model.train.cars, piece, target);
-            let (_, actual) =
-                solve_approach(&track, &model, model.train.cars, piece, target, unpowered())
-                    .unwrap();
+            let rating = rate_piece(&model, model.train.cars, piece, 25.0, unpowered()).unwrap();
             assert!(
-                (actual - target).abs() <= 1e-6,
-                "{id:?}: {actual} vs {target}"
+                (rating.entry_speed - 25.0).abs() <= 1e-6,
+                "{id:?}: {rating:?}"
             );
         }
     }
 
     #[test]
-    fn downhill_approach_reports_unreachable_target() {
+    fn downhill_approach_holds_low_entry_speed() {
         let model = hybrid_model();
         let piece = catalog()
             .iter()
             .find(|piece| piece.id == PieceId::SixtyToSteepDown)
             .unwrap();
-        let error = rate_piece(&model, model.train.cars, piece, 1.0, unpowered()).unwrap_err();
-        assert!(error.contains("unreachable"), "{error}");
+        let rating = rate_piece(&model, model.train.cars, piece, 1.0, unpowered()).unwrap();
+        assert!((rating.entry_speed - 1.0).abs() <= 1e-6, "{rating:?}");
     }
 
     #[test]
