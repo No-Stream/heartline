@@ -253,3 +253,288 @@ synthetic archetype scores and the current Demo and player-circuit measurements
 above. The recorder suite now passes all 33 tests after five fixtures were
 adjusted to reach their existing assertions. These results cover the focused
 calibration and recorder tests only.
+
+## 2026-11-05: Timber Tumbler candidate (not accepted)
+
+This candidate completed both physics runs without recovery and stayed inside the model's force limits, but it did not meet the design margins. The final floater entered with only 1.87 m/s of rated-window margin under default physics (the requirement is 2 m/s). The construction-test report rounds the fast roll's longitudinal force to 1.20 g, so it does not establish the required 0.3 g margin below the 1.5 g limit. The existing player fixture has not been replaced. The long return consists mostly of straight pieces; a suitable compact, force-designed return or a floater with a more suitable speed window may help, but neither has been validated.
+
+Candidate piece list:
+
+```text
+[Timber Tumbler]
++chain
+LevelToGentleUp
+GentleToSteepUp
+SteepToGentleUp
+GentleUpToLevel
+-chain
+LevelToGentleDown
+GentleToSteepDown
+SteepToGentleDown
+GentleDownToLevel
+EjectorHill16x96
+EjectorHill16x96
+ZeroGRollFastLeft
+ZeroGRollFastRight
+SpeedTurnLarge24Left
+EjectorHill12x80OuterLeft
+StallLeft
+Brakes
+SpeedTurnLarge20Left
+FloaterHill12x96
+WaveTurnLeft
+FloaterHill12x80
+Straight
+Brakes
+Brakes
+Straight
+TurnLargeRightStandalone
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+OneTileStraight
+HalfTileStraight
+HalfTileStraight
+Straight
+OneTileStraight
+TurnSmallStandalone
+Straight
+OneTileStraight
+OneTileStraight
+TurnSmallStandalone
+```
+
+Default physics report:
+
+```text
+Timber Tumbler (default physics)
+Station exit offset: x +0.0 m, y -16.0 m, z +0.0 m; heading North (station exit North)
+# piece kind entry_m/s window_m/s margin_m/s v+_g v-_g lat_g long_g band roll_deg/s notes
+0 Station Station 0.01[2.00] — — 1.00 1.00 0.00 0.31 Weak 0.0
+1 LevelToGentleUp Lift 2.01[3.00] — — 1.03 0.89 0.00 0.45 Weak 0.0
+2 GentleToSteepUp Lift 3.00 — — 0.90 0.71 0.00 0.71 Weak 0.0
+3 SteepToGentleUp Lift 3.00 — — 0.89 0.71 0.00 0.71 Weak 0.0
+4 GentleUpToLevel Lift 3.00 — — 1.00 0.89 0.00 0.45 Weak 0.0
+5 LevelToGentleDown Track 3.00[5.00] — — 1.00 0.53 0.00 0.32 Weak 0.0
+6 GentleToSteepDown Track 5.74[12.53] — — 0.89 -0.07 0.00 0.29 Weak 0.0
+7 SteepToGentleDown Track 14.73[20.28] — — 2.50 0.71 0.00 0.45 Good 0.0
+8 GentleDownToLevel Track 21.69[24.35] — — 3.95 0.89 0.00 1.05 Great 0.0
+9 EjectorHill16x96 Track 24.50 18.42..28.34 +3.50 3.24 -0.63 0.00 0.79 Good 0.0
+10 EjectorHill16x96 Track 24.30 18.42..28.34 +3.95 3.15 -0.54 0.00 0.71 Good 0.0
+11 ZeroGRollFastLeft Track 23.82 15.25..27.00 +3.09 3.27 -0.41 0.48 1.16 Good 158.3
+12 ZeroGRollFastRight Track 23.22 15.25..27.00 +3.57 3.18 -0.45 0.49 1.13 Good 154.8
+13 SpeedTurnLarge24Left Track 22.79 21.00..27.00 +1.79 3.05 1.00 0.25 0.66 Good 86.3
+14 EjectorHill12x80OuterLeft Track 22.73 17.14..26.59 +3.83 3.11 -0.25 0.34 0.86 Good 176.0
+15 StallLeft Track 22.17 18.00..27.00 +4.08 2.98 -0.63 0.74 1.14 Good 154.2
+16 Brakes Brakes 21.66[19.66] — — 1.00 1.00 0.00 0.32 Weak 0.0
+17 SpeedTurnLarge20Left Track 19.52 17.00..23.00 +2.37 2.16 1.00 0.20 0.35 Good 66.2
+18 FloaterHill12x96 Track 19.15 16.27..26.75 +2.63 2.27 0.46 0.00 0.59 Good 0.1
+19 WaveTurnLeft Track 18.54 8.00..23.00 +4.29 1.49 1.01 0.97 0.34 Weak 107.2
+20 FloaterHill12x80 Track 18.30 16.17..23.01 +1.87 2.54 0.27 0.00 0.74 Good 0.0
+21 Straight Track 17.75 — — 1.00 1.00 0.00 0.32 Weak 0.0
+22 Brakes Brakes 18.04[15.26] — — 1.00 1.00 0.00 0.32 Weak 0.0
+23 Brakes Brakes 15.05[11.59] — — 1.00 1.00 0.00 0.31 Weak 0.0
+24 Straight Track 11.34 — — 1.00 1.00 0.00 0.01 Weak 0.0
+25 TurnLargeRightStandalone Track 11.25 — — 1.00 1.00 0.52 0.01 Weak 0.0
+26 Straight Track 10.93 — — 1.00 1.00 0.00 0.01 Weak 0.0
+27 Straight Track 10.84 — — 1.00 1.00 0.00 0.01 Weak 0.0
+28 Straight Track 10.74 — — 1.00 1.00 0.00 0.01 Weak 0.0
+29 Straight Track 10.64 — — 1.00 1.00 0.00 0.01 Weak 0.0
+30 Straight Track 10.55 — — 1.00 1.00 0.00 0.01 Weak 0.0
+31 Straight Track 10.45 — — 1.00 1.00 0.00 0.01 Weak 0.0
+32 Straight Track 10.35 — — 1.00 1.00 0.00 0.01 Weak 0.0
+33 Straight Track 10.25 — — 1.00 1.00 0.00 0.01 Weak 0.0
+34 Straight Track 10.15 — — 1.00 1.00 0.00 0.01 Weak 0.0
+35 Straight Track 10.05 — — 1.00 1.00 0.00 0.01 Weak 0.0
+36 Straight Track 9.95 — — 1.00 1.00 0.00 0.01 Weak 0.0
+37 Straight Track 9.85 — — 1.00 1.00 0.00 0.01 Weak 0.0
+38 Straight Track 9.75 — — 1.00 1.00 0.00 0.01 Weak 0.0
+39 Straight Track 9.64 — — 1.00 1.00 0.00 0.01 Weak 0.0
+40 Straight Track 9.54 — — 1.00 1.00 0.00 0.01 Weak 0.0
+41 Straight Track 9.44 — — 1.00 1.00 0.00 0.01 Weak 0.0
+42 Straight Track 9.33 — — 1.00 1.00 0.00 0.01 Weak 0.0
+43 Straight Track 9.23 — — 1.00 1.00 0.00 0.01 Weak 0.0
+44 Straight Track 9.12 — — 1.00 1.00 0.00 0.01 Weak 0.0
+45 Straight Track 9.02 — — 1.00 1.00 0.00 0.01 Weak 0.0
+46 OneTileStraight Track 8.91 — — 1.00 1.00 0.00 0.01 Weak 0.0
+47 HalfTileStraight Track 8.88 — — 1.00 1.00 0.00 0.01 Weak 0.0
+48 HalfTileStraight Track 8.87 — — 1.00 1.00 0.00 0.01 Weak 0.0
+49 Straight Track 8.85 — — 1.00 1.00 0.00 0.01 Weak 0.0
+50 OneTileStraight Track 8.74 — — 1.00 1.00 0.00 0.01 Weak 0.0
+51 TurnSmallStandalone Track 8.72 — — 1.00 1.00 0.63 0.01 Weak 0.0
+52 Straight Track 8.54 — — 1.00 1.00 0.00 0.01 Weak 0.0
+53 OneTileStraight Track 8.42 — — 1.00 1.00 0.00 0.01 Weak 0.0
+54 OneTileStraight Track 8.40 — — 1.00 1.00 0.00 0.01 Weak 0.0
+55 TurnSmallStandalone Track 8.37 — — 1.00 1.00 0.58 0.31 Weak 0.0
+Completed lap: true; recovered: false
+Note: Long slow stretches reduce excitement. Consider shortening them or adding elements.
+Note: Ratings average all cars. The track ribbon and proximity events describe the front car; statistics and force advice report the most extreme values across cars.
+Score breakdown:
+Excitement: 8.13
+  airtime (+2.0, 3.5 s)
+  airtime moments (+0.6, 7.2)
+  positive forces (+0.9, 5.1 s)
+  lateral forces (+0.3, 1.1 s)
+  longitudinal forces (+0.1, 0.8 s)
+  excessive forces (-0.0, 0.0 s)
+  inversions (+1.3, 1.9)
+  top speed (+0.6, 12.8 m/s)
+  biggest drop (+0.4, 32.0 m)
+  pace (+0.2, 5.9 m/s)
+  launch (+0.0, 0.0 g)
+  variety (+0.4, 2.0)
+  whip (+0.6, 17.5)
+  roll rate (+0.4, 1529.3 degrees/s)
+  ride time (+0.7, 112.5 s)
+  short ride (-0.0, 112.5 s)
+  proximity (+0.0, 0.0)
+  theming (+0.0, 0.0)
+  dead time (-0.5, 42.0 s at Standalone large right turn)
+  forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+  nausea (-0.0, 4.0)
+  minimum excitement (+0.0, 0.0)
+Intensity: 6.41
+  peak force (+2.4, 0.6 at End gentle descent)
+  sustained force (+2.5, 10.6 s)
+  excessive forces (+0.0, 0.0 s)
+  top speed (+0.7, 14.8 m/s)
+  biggest drop (+0.5, 32.0 m)
+  launch (+0.0, 0.0 g)
+  inversions (+0.4, 3.0)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Nausea: 4.04
+  lateral forces (+0.8, 1.1 s)
+  inversions (+0.7, 1.8)
+  fast rolls (+1.5, 9.5 s)
+  reversals (+0.0, 0.0)
+  strong positive forces (+0.7, 5.1 s)
+  time inverted (+0.4, 5.8 s)
+  excessive forces (+0.0, 0.0 s)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+```
+
+Construction-test physics report:
+
+```text
+Timber Tumbler (construction-test physics)
+Station exit offset: x +0.0 m, y -16.0 m, z +0.0 m; heading North (station exit North)
+# piece kind entry_m/s window_m/s margin_m/s v+_g v-_g lat_g long_g band roll_deg/s notes
+0 Station Station 2.00 — — 1.00 1.00 0.00 0.31 Weak 0.0
+1 LevelToGentleUp Lift 2.01[5.00] — — 1.10 0.89 0.00 0.46 Weak 0.0
+2 GentleToSteepUp Lift 5.00 — — 0.93 0.71 0.00 0.71 Weak 0.0
+3 SteepToGentleUp Lift 5.00 — — 0.89 0.69 0.00 0.71 Weak 0.0
+4 GentleUpToLevel Lift 5.00 — — 1.00 0.83 0.00 0.46 Weak 0.0
+5 LevelToGentleDown Track 5.00[6.40] — — 1.00 0.46 0.00 0.34 Weak 0.0
+6 GentleToSteepDown Track 7.00[13.17] — — 0.89 -0.12 0.00 0.31 Weak 0.0
+7 SteepToGentleDown Track 15.25[20.67] — — 2.55 0.71 0.00 0.47 Good 0.0
+8 GentleDownToLevel Track 22.07[24.67] — — 4.03 0.89 0.00 1.07 Great 0.0
+9 EjectorHill16x96 Track 24.82 18.42..28.34 +3.19 3.30 -0.69 0.00 0.74 Good 0.0
+10 EjectorHill16x96 Track 24.61 18.42..28.34 +3.64 3.21 -0.60 0.00 0.80 Good 0.0
+11 ZeroGRollFastLeft Track 24.13 15.25..27.00 +2.79 3.33 -0.39 0.47 1.20 Good 160.9
+12 ZeroGRollFastRight Track 23.53 15.25..27.00 +3.26 3.24 -0.42 0.48 1.15 Good 157.3
+13 SpeedTurnLarge24Left Track 23.09 21.00..27.00 +2.09 3.13 1.00 0.23 0.68 Good 87.4
+14 EjectorHill12x80OuterLeft Track 23.04 17.14..26.59 +3.53 3.16 -0.28 0.38 0.88 Good 179.2
+15 StallLeft Track 22.48 18.00..27.00 +4.36 3.03 -0.61 0.73 1.15 Good 156.6
+16 Brakes Brakes 21.96[20.00] — — 1.00 1.00 0.00 0.32 Weak 0.0
+17 SpeedTurnLarge20Left Track 19.86 17.00..23.00 +2.71 2.22 1.00 0.17 0.36 Good 67.3
+18 FloaterHill12x96 Track 19.50 16.27..26.75 +2.97 2.31 0.43 0.00 0.60 Good 0.1
+19 WaveTurnLeft Track 18.88 8.00..23.00 +3.95 1.50 1.01 0.97 0.35 Weak 109.2
+20 FloaterHill12x80 Track 18.64 16.17..23.01 +2.22 2.60 0.23 0.00 0.76 Good 0.0
+21 Straight Track 18.10 — — 1.00 1.00 0.00 0.32 Weak 0.0
+22 Brakes Brakes 18.38[15.66] — — 1.00 1.00 0.00 0.32 Weak 0.0
+23 Brakes Brakes 15.46[12.13] — — 1.00 1.00 0.00 0.31 Weak 0.0
+24 Straight Track 11.88 — — 1.00 1.00 0.00 0.01 Weak 0.0
+25 TurnLargeRightStandalone Track 11.79 — — 1.00 1.00 0.57 0.01 Weak 0.0
+26 Straight Track 11.48 — — 1.00 1.00 0.00 0.01 Weak 0.0
+27 Straight Track 11.38 — — 1.00 1.00 0.00 0.01 Weak 0.0
+28 Straight Track 11.29 — — 1.00 1.00 0.00 0.01 Weak 0.0
+29 Straight Track 11.20 — — 1.00 1.00 0.00 0.01 Weak 0.0
+30 Straight Track 11.10 — — 1.00 1.00 0.00 0.01 Weak 0.0
+31 Straight Track 11.00 — — 1.00 1.00 0.00 0.01 Weak 0.0
+32 Straight Track 10.91 — — 1.00 1.00 0.00 0.01 Weak 0.0
+33 Straight Track 10.81 — — 1.00 1.00 0.00 0.01 Weak 0.0
+34 Straight Track 10.72 — — 1.00 1.00 0.00 0.01 Weak 0.0
+35 Straight Track 10.62 — — 1.00 1.00 0.00 0.01 Weak 0.0
+36 Straight Track 10.52 — — 1.00 1.00 0.00 0.01 Weak 0.0
+37 Straight Track 10.42 — — 1.00 1.00 0.00 0.01 Weak 0.0
+38 Straight Track 10.32 — — 1.00 1.00 0.00 0.01 Weak 0.0
+39 Straight Track 10.22 — — 1.00 1.00 0.00 0.01 Weak 0.0
+40 Straight Track 10.12 — — 1.00 1.00 0.00 0.01 Weak 0.0
+41 Straight Track 10.02 — — 1.00 1.00 0.00 0.01 Weak 0.0
+42 Straight Track 9.92 — — 1.00 1.00 0.00 0.01 Weak 0.0
+43 Straight Track 9.82 — — 1.00 1.00 0.00 0.01 Weak 0.0
+44 Straight Track 9.72 — — 1.00 1.00 0.00 0.01 Weak 0.0
+45 Straight Track 9.62 — — 1.00 1.00 0.00 0.01 Weak 0.0
+46 OneTileStraight Track 9.51 — — 1.00 1.00 0.00 0.01 Weak 0.0
+47 HalfTileStraight Track 9.49 — — 1.00 1.00 0.00 0.01 Weak 0.0
+48 HalfTileStraight Track 9.47 — — 1.00 1.00 0.00 0.01 Weak 0.0
+49 Straight Track 9.46 — — 1.00 1.00 0.00 0.01 Weak 0.0
+50 OneTileStraight Track 9.36 — — 1.00 1.00 0.00 0.01 Weak 0.0
+51 TurnSmallStandalone Track 9.33 — — 1.00 1.00 0.72 0.01 Weak 0.0
+52 Straight Track 9.16 — — 1.00 1.00 0.00 0.01 Weak 0.0
+53 OneTileStraight Track 9.05 — — 1.00 1.00 0.00 0.01 Weak 0.0
+54 OneTileStraight Track 9.02 — — 1.00 1.00 0.00 0.01 Weak 0.0
+55 TurnSmallStandalone Track 9.00 — — 1.00 1.00 0.67 0.31 Weak 0.0
+Completed lap: true; recovered: false
+Note: Long slow stretches reduce excitement. Consider shortening them or adding elements.
+Note: Ratings average all cars. The track ribbon and proximity events describe the front car; statistics and force advice report the most extreme values across cars.
+Score breakdown:
+Excitement: 8.21
+  airtime (+2.0, 3.5 s)
+  airtime moments (+0.6, 7.2)
+  positive forces (+0.9, 5.2 s)
+  lateral forces (+0.3, 1.2 s)
+  longitudinal forces (+0.1, 0.9 s)
+  excessive forces (-0.0, 0.0 s)
+  inversions (+1.3, 1.9)
+  top speed (+0.6, 13.2 m/s)
+  biggest drop (+0.4, 32.0 m)
+  pace (+0.2, 6.3 m/s)
+  launch (+0.0, 0.0 g)
+  variety (+0.4, 2.0)
+  whip (+0.6, 20.2)
+  roll rate (+0.4, 1605.6 degrees/s)
+  ride time (+0.7, 109.2 s)
+  short ride (-0.0, 109.2 s)
+  proximity (+0.0, 0.0)
+  theming (+0.0, 0.0)
+  dead time (-0.5, 38.1 s at Standalone large right turn)
+  forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+  nausea (-0.0, 4.1)
+  minimum excitement (+0.0, 0.0)
+Intensity: 6.46
+  peak force (+2.4, 0.7 at End gentle descent)
+  sustained force (+2.5, 10.8 s)
+  excessive forces (+0.0, 0.0 s)
+  top speed (+0.7, 15.2 m/s)
+  biggest drop (+0.5, 32.0 m)
+  launch (+0.0, 0.0 g)
+  inversions (+0.4, 3.0)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Nausea: 4.07
+  lateral forces (+0.8, 1.2 s)
+  inversions (+0.7, 1.8)
+  fast rolls (+1.5, 9.4 s)
+  reversals (+0.0, 0.0)
+  strong positive forces (+0.7, 5.2 s)
+  time inverted (+0.4, 5.7 s)
+  excessive forces (+0.0, 0.0 s)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+```

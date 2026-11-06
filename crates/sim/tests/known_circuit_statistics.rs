@@ -1,10 +1,11 @@
 use theme_park_sim::physics::{
-    Circuit, ConstructionTestRunRecorder, PhysicsConfig, TestRun, Train, demo_circuit,
+    Circuit, CoasterOutcome, CoasterRun, ConstructionTestRunRecorder, PhysicsConfig, TestRun,
+    Train, demo_circuit,
 };
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
-    CoasterModel, Heading, PieceId, TrackState, catalog, hybrid_model, multi_launch_model,
-    wooden_twister_model,
+    CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceId, TrackState, catalog,
+    hybrid_model, multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -95,6 +96,51 @@ fn construction_test(circuit: &Circuit, model: &CoasterModel) -> TestRun {
     panic!("test train did not complete a lap");
 }
 
+fn default_test_ride(circuit: &Circuit, model: &CoasterModel) -> CoasterOutcome {
+    let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
+    (0..60_000)
+        .find_map(|_| run.step(circuit))
+        .expect("Timber Tumbler default-physics ride did not finish")
+}
+
+fn assert_timber_tumbler_report(run_name: &str, report: &TestRun, limits: ComfortableForceLimits) {
+    assert!(report.completed, "{run_name} ride did not complete");
+    let stats = report.statistics;
+    assert!(
+        stats.max_positive_vertical_g <= limits.maximum_vertical_g,
+        "{run_name} positive vertical force: {} g",
+        stats.max_positive_vertical_g
+    );
+    assert!(
+        stats.max_negative_vertical_g >= limits.minimum_vertical_g,
+        "{run_name} negative vertical force: {} g",
+        stats.max_negative_vertical_g
+    );
+    assert!(
+        stats.max_lateral_g <= limits.maximum_lateral_g,
+        "{run_name} lateral force: {} g",
+        stats.max_lateral_g
+    );
+    assert!(
+        stats.max_forward_g <= limits.maximum_longitudinal_g,
+        "{run_name} forward force: {} g",
+        stats.max_forward_g
+    );
+    assert!(
+        stats.max_braking_g <= limits.maximum_longitudinal_g,
+        "{run_name} braking force: {} g",
+        stats.max_braking_g
+    );
+    assert!(
+        report
+            .notes
+            .iter()
+            .all(|note| !note.contains("rated speed band")),
+        "{run_name} ride has a rated speed note: {:?}",
+        report.notes
+    );
+}
+
 #[test]
 fn construction_reports_known_circuit_features() {
     let timber = hybrid_model();
@@ -146,10 +192,88 @@ fn construction_reports_known_circuit_features() {
             assert_eq!(stats.inverted_seconds, 0.0);
         }
         if name == "Timber Tumbler" {
-            // Sustained excessive forces make this a reference above the soft scale's 10-point mark.
-            assert!(report.intensity > 10.0, "intensity: {}", report.intensity);
+            assert!(
+                stats.inversions >= 2,
+                "Timber inversions: {}",
+                stats.inversions
+            );
+            assert!(
+                stats.airtime_moments >= 4,
+                "Timber airtime moments: {}",
+                stats.airtime_moments
+            );
         }
     }
+}
+
+#[test]
+fn timber_tumbler_meets_player_ride_targets_under_both_physics_configs() {
+    let model = hybrid_model();
+    let circuit = player_circuit("Timber Tumbler", model.clone());
+    let heartlined_inversions = circuit
+        .pieces()
+        .iter()
+        .filter(|piece| {
+            piece.inversion.is_some() && piece.heartlining == Some(Heartlining::Heartlined)
+        })
+        .count();
+    assert!(
+        heartlined_inversions >= 2,
+        "Timber Tumbler has {heartlined_inversions} heartlined inversion pieces"
+    );
+
+    let default_outcome = default_test_ride(&circuit, &model);
+    assert!(!default_outcome.recovered, "default-physics ride recovered");
+    assert!(!default_outcome.reports.is_empty());
+    let default_excitement = default_outcome
+        .reports
+        .iter()
+        .map(|report| report.excitement)
+        .sum::<f64>()
+        / default_outcome.reports.len() as f64;
+    assert!(
+        (8.0..=10.0).contains(&default_excitement),
+        "default-physics Timber Tumbler excitement: {default_excitement}"
+    );
+    for (car_index, report) in default_outcome.reports.iter().enumerate() {
+        assert_timber_tumbler_report(
+            &format!("default physics car {car_index}"),
+            report,
+            model.comfortable_force_limits,
+        );
+    }
+    assert!(
+        default_outcome.reports[0].statistics.inversions >= 2,
+        "default-physics inversions: {}",
+        default_outcome.reports[0].statistics.inversions
+    );
+    assert!(
+        default_outcome.reports[0].statistics.airtime_moments >= 4,
+        "default-physics airtime moments: {}",
+        default_outcome.reports[0].statistics.airtime_moments
+    );
+
+    let construction_report = construction_test(&circuit, &model);
+    assert_timber_tumbler_report(
+        "construction-test physics",
+        &construction_report,
+        model.comfortable_force_limits,
+    );
+    assert!(
+        (8.0..=10.0).contains(&construction_report.excitement),
+        "construction-test Timber Tumbler excitement: {}",
+        construction_report.excitement
+    );
+    assert!(
+        construction_report.statistics.inversions >= 2,
+        "construction-test physics inversions: {}",
+        construction_report.statistics.inversions
+    );
+    assert!(
+        construction_report.statistics.airtime_moments >= 4,
+        "construction-test physics airtime moments: {}",
+        construction_report.statistics.airtime_moments
+    );
 }
 
 #[test]

@@ -288,8 +288,8 @@ fn assert_ride_force_bound(
 
 #[test]
 fn construction_test_rides_keep_raw_longitudinal_forces_physically_plausible() {
-    // Timber Tumbler's Airtime Hill has a separate heart-path force issue tracked in TASK-101.
     let circuits = [
+        ("Timber Tumbler", hybrid_model()),
         ("Velocity Viper", multi_launch_model()),
         ("Briar Blitz", wooden_twister_model()),
     ];
