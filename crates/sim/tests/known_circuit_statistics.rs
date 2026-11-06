@@ -3,8 +3,8 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
-    CoasterModel, Heading, PieceId, TrackState, catalog, hybrid_model, multi_launch_model,
-    wooden_twister_model,
+    CoasterModel, Heading, PieceId, TrackState, catalog, effective_rated_speeds, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -52,6 +52,78 @@ fn player_circuit(name: &str, model: CoasterModel) -> Circuit {
     }
     construction.close().unwrap();
     construction.circuit().unwrap()
+}
+
+fn assert_design_margins(circuit: &Circuit, model: &CoasterModel, construction_test: bool) {
+    let start = if construction_test {
+        0.0
+    } else {
+        circuit.pieces()[0].length() / 2.0
+    };
+    let config = if construction_test {
+        PhysicsConfig {
+            lift_speed: 5.0,
+            ..PhysicsConfig::default()
+        }
+    } else {
+        PhysicsConfig::default()
+    };
+    let mut train = Train::new(
+        circuit,
+        &model.train,
+        config,
+        start,
+        if construction_test { 2.0 } else { 0.0 },
+    );
+    let mut entries = vec![vec![None; model.train.cars as usize]; circuit.pieces().len()];
+    for _ in 0..60_000 {
+        train.step(circuit);
+        for frame in train.take_readings() {
+            for (car, reading) in frame.iter().enumerate() {
+                let car_distance = train.distance()
+                    - car as f64 * model.train.length_metres / f64::from(model.train.cars);
+                if car_distance < 0.0 {
+                    continue;
+                }
+                entries[reading.piece_index][car].get_or_insert(reading.speed);
+            }
+        }
+        assert!(
+            train.notes().is_empty(),
+            "train recovered: {:?}",
+            train.notes()
+        );
+        if train.distance() >= circuit.length() + start {
+            break;
+        }
+    }
+    assert!(
+        train.distance() >= circuit.length() + start,
+        "train did not complete its lap"
+    );
+    for (piece, speeds) in circuit.pieces().iter().zip(entries) {
+        if let Some(window) = effective_rated_speeds(piece, &model.train) {
+            for speed in speeds {
+                let speed = speed.expect("every car should enter every rated piece");
+                // Windows narrower than 3 m/s cannot provide 1.5 m/s on both sides;
+                // keep their entry within 0.3 m/s of the centre instead.
+                if window.maximum_entry - window.minimum_entry < 3.0 {
+                    let centre = (window.minimum_entry + window.maximum_entry) / 2.0;
+                    assert!(
+                        (speed - centre).abs() <= 0.3,
+                        "{:?}: {speed:.3} m/s, centre {centre:.3}",
+                        piece.id
+                    );
+                } else {
+                    assert!(
+                        speed >= window.minimum_entry + 1.5 && speed <= window.maximum_entry - 1.5,
+                        "{:?}: {speed:.3} m/s, window {window:?}",
+                        piece.id
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn construction_test(circuit: &Circuit, model: &CoasterModel) -> TestRun {
@@ -117,22 +189,29 @@ fn velocity_viper_completes_with_comfortable_forces() {
         let report = ride_test(&circuit, &model, lift_speed, initial_speed);
         let stats = report.statistics;
         let limits = model.comfortable_force_limits;
-        assert!((6.0..=9.0).contains(&report.excitement), "{report:?}");
         assert!(
-            stats.max_positive_vertical_g <= limits.maximum_vertical_g,
+            (6.0..=9.0).contains(&report.excitement),
+            "excitement: {}",
+            report.excitement
+        );
+        assert!(
+            stats.max_positive_vertical_g <= limits.maximum_vertical_g - 0.25,
             "{stats:?}"
         );
         assert!(
-            stats.max_negative_vertical_g >= limits.minimum_vertical_g,
-            "{stats:?}"
-        );
-        assert!(stats.max_lateral_g <= limits.maximum_lateral_g, "{stats:?}");
-        assert!(
-            stats.max_forward_g <= limits.maximum_longitudinal_g,
+            stats.max_negative_vertical_g >= limits.minimum_vertical_g + 0.25,
             "{stats:?}"
         );
         assert!(
-            stats.max_braking_g.abs() <= limits.maximum_longitudinal_g,
+            stats.max_lateral_g <= limits.maximum_lateral_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_forward_g <= limits.maximum_longitudinal_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_braking_g.abs() <= limits.maximum_longitudinal_g - 0.25,
             "{stats:?}"
         );
         assert!(
@@ -144,6 +223,67 @@ fn velocity_viper_completes_with_comfortable_forces() {
             report.notes
         );
         assert_eq!(stats.launches, 2);
+        assert_design_margins(&circuit, &model, initial_speed != 0.0);
+    }
+}
+
+#[test]
+fn briar_blitz_completes_with_comfortable_forces() {
+    let model = wooden_twister_model();
+    let circuit = player_circuit("Briar Blitz", model.clone());
+    assert_eq!(
+        circuit
+            .pieces()
+            .iter()
+            .filter(|piece| piece.id == PieceId::TopHat)
+            .count(),
+        1
+    );
+    assert!(
+        circuit
+            .pieces()
+            .iter()
+            .filter(|piece| matches!(
+                piece.id,
+                PieceId::TwisterFanLeft
+                    | PieceId::TwisterFanRight
+                    | PieceId::TightTwisterLeft
+                    | PieceId::TightTwisterRight
+            ))
+            .count()
+            >= 2
+    );
+    for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
+        let report = ride_test(&circuit, &model, lift_speed, initial_speed);
+        let stats = report.statistics;
+        let limits = model.comfortable_force_limits;
+        assert!(
+            (5.0..=7.0).contains(&report.excitement),
+            "excitement: {}",
+            report.excitement
+        );
+        assert_eq!(stats.inversions, 0);
+        assert!(
+            stats.max_positive_vertical_g <= limits.maximum_vertical_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_negative_vertical_g >= limits.minimum_vertical_g + 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_lateral_g <= limits.maximum_lateral_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_forward_g <= limits.maximum_longitudinal_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_braking_g.abs() <= limits.maximum_longitudinal_g - 0.25,
+            "{stats:?}"
+        );
+        assert_design_margins(&circuit, &model, initial_speed != 0.0);
     }
 }
 
