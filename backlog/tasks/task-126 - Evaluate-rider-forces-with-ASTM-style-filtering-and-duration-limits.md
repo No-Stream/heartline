@@ -4,7 +4,7 @@ title: Evaluate rider forces with ASTM-style filtering and duration limits
 status: To Do
 assignee: []
 created_date: '2026-11-05 16:09'
-updated_date: '2026-11-06 16:55'
+updated_date: '2026-11-06 22:05'
 labels:
   - physics
   - research
@@ -30,4 +30,6 @@ Research for TASK-125 (2026-11-05) suggests ASTM F2291 evaluates vertical accele
 
 2026-11-05: plan committed (bc3a68e). Implementing on branch force-rule; task 1 dispatched.
 2026-11-06 task 4 (branch force-rule, commits 5c69f0d and 3cf31de): rated windows now come from crates/sim/src/track/rated_windows.generated.rs (make generate-rated-windows). Rule: maximum = highest speed where every allowed train length stays within the comfortable limits on every axis after filtering (nothing above Great); minimum rises only for clearance or tail; zero-g rolls, stalls and half corkscrews keep the 200 deg/s roll-rate rule; heartline rolls, banked straights and descending half corkscrews are design caps. One minimum for every train length (effective_rated_speeds removed). No ejector hill needed relabelling. 7 maxima fell, 13 minima rose, most maxima rose. Details: docs/reviews/task-126-rated-windows.md. Open owner calls: cap the rollouts (now up to 44.7 m/s), raise any design cap; LoopRight keeps 24.73 m/s minimum while Loop rose to 24.87 (mirror asymmetry unexplained).
+
+2026-11-06 afternoon: merged master (7f4502d) into force-rule (a72f1cb). Table now covers 101 templates: speed-matched turns keep their design windows (design caps); floater and strong floater hills stop where a default train would get more than Good airtime (FloaterHill12x80 25.25 m/s, WoodenEjectorHill8x64 22.85 m/s). Rebuilt Timber Tumbler and Velocity Viper and Briar Blitz enter every rated piece inside its window (make circuit-report). Master's coarse-step preview force correction dropped (branch previews at 5 ms, filtered). Three screenshot baselines re-recorded (f47f114, bb933ce).
 <!-- SECTION:NOTES:END -->
