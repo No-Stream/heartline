@@ -2,7 +2,7 @@ use super::*;
 use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
 use theme_park_sim::track::ComfortableForceLimits;
-use theme_park_sim::track::{Bank, Heartlining, HillFeel, HillTwist, PieceFamily};
+use theme_park_sim::track::{Bank, Hand, Heartlining, HillFeel, HillTwist, PieceFamily};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -42,6 +42,14 @@ pub struct ConstructionHillOptionWire {
     span: u16,
     twist: &'static str,
     rated_speed: Option<ConstructionRatedSpeedWire>,
+}
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionSpeedTurnWire {
+    id: &'static str,
+    #[ts(type = "\"left\" | \"right\"")]
+    hand: &'static str,
+    design_speed: f64,
 }
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -629,6 +637,39 @@ impl WasmSimulation {
             })
             .collect();
         serde_json::to_string(&options).expect("hill options serialize")
+    }
+
+    /// The model's speed-matched turns, so the builder can offer "For speed" before one is selected.
+    pub fn construction_speed_turns(&self) -> String {
+        let Some(construction) = self.construction.as_ref() else {
+            return "[]".into();
+        };
+        let turns: Vec<_> = theme_park_sim::track::catalog()
+            .iter()
+            .filter_map(|piece| {
+                let PieceFamily::SpeedTurn {
+                    hand,
+                    design_speed_metres_per_second,
+                    ..
+                } = piece.family?
+                else {
+                    return None;
+                };
+                construction
+                    .model()
+                    .allowed_pieces
+                    .contains(&piece.id)
+                    .then(|| ConstructionSpeedTurnWire {
+                        id: wire_pieceid(piece.id),
+                        hand: match hand {
+                            Hand::Left => "left",
+                            Hand::Right => "right",
+                        },
+                        design_speed: design_speed_metres_per_second,
+                    })
+            })
+            .collect();
+        serde_json::to_string(&turns).expect("speed turns serialize")
     }
 
     pub fn construction_select(&mut self, id: &str) {
