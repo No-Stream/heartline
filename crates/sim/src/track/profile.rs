@@ -1516,7 +1516,7 @@ mod tests {
         model_radius: f64,
     }
 
-    const HILL_CASES: [HillCase; 17] = [
+    const HILL_CASES: [HillCase; 19] = [
         HillCase {
             name: "BriarTopHat",
             height: 30.0,
@@ -1686,6 +1686,26 @@ mod tests {
             pull_force: 3.7,
             crest_force: -0.7,
             model_radius: 5.0,
+        },
+        HillCase {
+            name: "FamilyHill3x32",
+            height: 3.0,
+            span: 32.0,
+            design_speed: 13.0,
+            flank_angle: 25.0_f64.to_radians(),
+            pull_force: 2.7,
+            crest_force: -0.5,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "FamilyHill4x40",
+            height: 4.0,
+            span: 40.0,
+            design_speed: 15.0,
+            flank_angle: 25.0_f64.to_radians(),
+            pull_force: 2.7,
+            crest_force: -0.5,
+            model_radius: 8.0,
         },
     ];
 

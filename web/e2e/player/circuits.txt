@@ -168,3 +168,49 @@ Straight
 TurnLargeRightStandalone
 Straight
 TurnSmallStandalone
+
+[Daisy Dash]
+# Curving tyre-driven lift and a gentle first drop
++chain
+LevelToGentleUp
+TurnSmallStandalone
+GentleUpToLevel
+-chain
+LevelToGentleDown
+OneTileGentleDown
+GentleDownToLevel
+# First family hill, then a second drop into the turn banked for 20 m/s
+FamilyHill4x40
+LevelToGentleDown
+OneTileGentleDown
+GentleDownToLevel
+SpeedTurnLarge20Left
+# Climb back up for two family hills in a row
+LevelToGentleUp
+OneTileGentleUp
+GentleUpToLevel
+OneTileStraight
+FamilyHill4x40
+FamilyHill4x40
+TerrainRise
+# Drop into the first turn banked for 16 m/s, a trim brake and a hill on the far side
+LevelToGentleDown
+GentleDownToLevel
+SpeedTurnLarge16Left
+Brakes
+FamilyHill4x40
+OneTileStraight
+OneTileStraight
+Straight
+TerrainFall
+TerrainFall
+# Second turn banked for 16 m/s, a last hill and the brake run home
+SpeedTurnLarge16Left
+TerrainRise
+Straight
+Straight
+FamilyHill4x40
+TerrainFall
+Straight
+Brakes
+Brakes

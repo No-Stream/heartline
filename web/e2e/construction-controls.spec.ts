@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build, preview, type PreviewServer } from "vite";
 import { expect, test } from "@playwright/test";
+import { COASTER_MODELS } from "../src/generated/coaster-models";
 import { choosePiece, closeCircuit, openRide, placePiece, placeStation, showBuilderTab, startPark, testRide } from "./player/driver";
 
 let server: PreviewServer;
@@ -141,14 +142,24 @@ test("player driver uses the construction steppers and actions", async ({ page }
   ]);
 });
 
-test("offers the wooden twister in the model chooser @fast", async ({ page }) => {
+test("offers generated coaster models in the model chooser @fast", async ({ page }) => {
   await page.goto(fixtureUrl);
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ active: false }));
   const model = page.getByRole("combobox", { name: "Coaster model" });
-  await model.selectOption("model:wooden_twister");
-  await expect(model.locator("option:checked")).toHaveText("Briar Blitz · Great Coaster Workshop");
-  await expect(page.locator("[data-model-description]")).toContainText("wooden");
-  expect(await recorded(page)).toContainEqual({ type: "construction-set-model", model: "wooden_twister" });
+  await expect(model.locator("option")).toHaveCount(COASTER_MODELS.length);
+  await expect(model.locator("option").evaluateAll((options) => options.map((option) => ({
+    value: (option as HTMLOptionElement).value,
+    label: option.textContent,
+  })))).resolves.toEqual(COASTER_MODELS.map(({ key, name, manufacturer }) => ({
+    value: `model:${key}`,
+    label: `${name} · ${manufacturer}`,
+  })));
+
+  for (const { key, description } of COASTER_MODELS) {
+    await model.selectOption(`model:${key}`);
+    await expect(page.locator("[data-model-description]")).toHaveText(description);
+    expect(await recorded(page)).toContainEqual({ type: "construction-set-model", model: key });
+  }
 });
 
 test("opens and closes a completed coaster", async ({ page }) => {

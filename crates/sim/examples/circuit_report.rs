@@ -10,7 +10,7 @@ use theme_park_sim::physics::{
 use theme_park_sim::track::construction::{Construction, select_speed_matched_variant_for_train};
 use theme_park_sim::track::{
     CoasterModel, Hand, Heading, HillFeel, HillTwist, Piece, PieceFamily, PieceId, TrackState,
-    catalog, effective_rated_speeds, hybrid_model, multi_launch_model, wooden_twister_model,
+    catalog, coaster_models, effective_rated_speeds, hybrid_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -31,11 +31,13 @@ pub fn report_for_circuit(
     construction_test: bool,
     close: bool,
 ) -> Result<String, String> {
-    let model = match name {
-        "Demo" | "Timber Tumbler" => hybrid_model(),
-        "Velocity Viper" => multi_launch_model(),
-        "Briar Blitz" => wooden_twister_model(),
-        _ => return Err(format!("Unknown circuit model: {name}")),
+    let model = if name == "Demo" {
+        hybrid_model()
+    } else {
+        coaster_models()
+            .into_iter()
+            .find(|model| model.name == name)
+            .ok_or_else(|| format!("Unknown circuit model: {name}"))?
     };
     // The demo is laid out in the default park; the player circuits use the fixtures' flat world.
     let (world, start) = if name == "Demo" {

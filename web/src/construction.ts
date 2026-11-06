@@ -2,6 +2,8 @@ import { carsPerTrainControl } from "./cars-per-train";
 import { constructionEndSpeed, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
 import { candidateForceReadout, hillReadout } from "./candidate-force-readout";
 import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
+import { coasterModelOptionsMarkup } from "./coaster-model-options";
+import { COASTER_MODELS } from "./generated/coaster-models";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
 import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
@@ -31,26 +33,6 @@ export interface ConstructionPanel {
 const groupNames: Record<string, string> = { straight: "Straight", turn: "Turns", slope: "Slopes", bank: "Banks", inversion: "Inversions", special: "Special" };
 const groupPlates: Record<string, string> = { straight: "var(--slate)", turn: "var(--teal)", slope: "var(--mustard)", bank: "var(--coral)", inversion: "var(--coral)", special: "var(--slate)" };
 const blockTrackKindNames: Record<string, string> = { blockBrake: "Brake run", station: "Station", lift: "Lift", launch: "Launch", brake: "Brake", track: "Track" };
-const coasterModels = {
-  "model:hybrid": {
-    id: "hybrid",
-    name: "Timber Tumbler",
-    manufacturer: "Rocky Road Construction",
-    description: "Steel box track on a wooden structure.",
-  },
-  "model:velocity_viper": {
-    id: "velocity_viper",
-    name: "Velocity Viper",
-    manufacturer: "Impulse Engineering",
-    description: "Multi-launch steel track and columns with short, standard, and long launch sections.",
-  },
-  "model:wooden_twister": {
-    id: "wooden_twister",
-    name: "Briar Blitz",
-    manufacturer: "Great Coaster Workshop",
-    description: "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains.",
-  },
-} as const;
 const coasterPartNames: Record<CoasterPart, string> = { track: "Track", supports: "Supports", trains: "Trains" };
 const stationHeight = { minimum: 4, maximum: 100, step: 2, initial: 12 };
 const steppers: readonly { attribute: StepAttribute; label: string; previous: string; next: string; keys: readonly [keyof typeof builderShortcuts, keyof typeof builderShortcuts] }[] = [
@@ -92,13 +74,9 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     <header class="tool-panel__header"><div><p class="tool-panel__eyebrow">Coaster workshop</p><h2>Build a coaster</h2></div></header>
     <section class="tool-panel__section" aria-label="Coaster model">
       <label class="builder__model"><span class="tool-panel__label">Coaster model</span>
-        <select data-model>
-          <option value="model:hybrid">${coasterModels["model:hybrid"].name} · ${coasterModels["model:hybrid"].manufacturer}</option>
-          <option value="model:velocity_viper">${coasterModels["model:velocity_viper"].name} · ${coasterModels["model:velocity_viper"].manufacturer}</option>
-          <option value="model:wooden_twister">${coasterModels["model:wooden_twister"].name} · ${coasterModels["model:wooden_twister"].manufacturer}</option>
-        </select>
+        <select data-model>${coasterModelOptionsMarkup()}</select>
       </label>
-      <p class="tool-panel__hint" data-model-description>${coasterModels["model:hybrid"].description}</p>
+      <p class="tool-panel__hint" data-model-description>${COASTER_MODELS[0].description}</p>
     </section>
     <section class="tool-panel__section builder__underground">
       <label><span class="tool-panel__label">Underground cutaway</span>
@@ -435,11 +413,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     dispatch({ type: "underground-cutaway-mode-set", mode });
   });
   modelSelect.addEventListener("change", () => {
-    const model = coasterModels[modelSelect.value as keyof typeof coasterModels];
+    const model = COASTER_MODELS.find(({ key }) => modelSelect.value === `model:${key}`);
     if (!model) throw new Error(`Unknown coaster model ${modelSelect.value}`);
     container.dataset.model = modelSelect.value;
     modelDescription.textContent = model.description;
-    dispatch({ type: "construction-set-model", model: model.id });
+    dispatch({ type: "construction-set-model", model: model.key });
   });
   let dispatchedHeight = stationHeight.initial;
   const setHeight = (value: number): void => {

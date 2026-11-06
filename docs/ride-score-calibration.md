@@ -723,3 +723,64 @@ These are the rebuilt Timber Tumbler and Velocity Viper circuits on master
 | Timber Tumbler | 8.21 / 6.46 / 4.07 | 8.24 / 6.56 / 4.14 |
 | Velocity Viper | 6.69 / 6.61 / 4.19 | 6.73 / 6.67 / 4.24 |
 | Briar Blitz | 0.18 / 9.36 / 6.85 | 0.24 / 9.42 / 6.92 |
+
+## Daisy Dash (family coaster)
+
+Daisy Dash by Windmill Ride Works was added on 2026-11-06 with its reference circuit in
+`web/e2e/player/circuits.txt`. The band test (`daisy_dash_is_a_gentle_family_ride_under_both_physics_configs`)
+expects excitement from 2.5 to 4.5, every force inside the model limits (3.0 / −0.6 g vertical, 1.0 g lateral,
+1.5 g longitudinal) and every rated piece entered at least 1.5 m/s inside its window. The circuit report measured:
+
+| Physics | Excitement | Intensity | Nausea | Peak vertical g | Minimum vertical g | Peak lateral g | Peak longitudinal g |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Default | 3.00 | 3.62 | 0.35 | 2.82 | −0.41 | 0.19 | 0.94 |
+| Construction test | 3.66 | 3.89 | 0.40 | 2.90 | −0.51 | 0.18 | 0.99 |
+
+The family hills only float near the top of their windows: entered 1.5 m/s inside the window, the worst car
+crests between about +0.1 g and −0.25 g, so most of the airtime moments come from the crests of the gentle rises and
+descents between the elements. Construction-test breakdown (`make circuit-report CIRCUIT="Daisy Dash" ARGS=--construction-test`):
+
+```text
+Score breakdown:
+Excitement: 3.66
+  airtime (+0.4, 0.4 s)
+  airtime moments (+0.7, 8.8)
+  positive forces (+0.6, 2.0 s)
+  lateral forces (+0.0, 0.0 s)
+  longitudinal forces (+0.1, 0.3 s)
+  excessive forces (-0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  top speed (+0.4, 8.0 m/s)
+  biggest drop (+0.3, 20.0 m)
+  pace (+0.2, 5.1 m/s)
+  launch (+0.0, 0.0 g)
+  variety (+0.0, 0.1)
+  whip (+0.4, 4.2)
+  roll rate (+0.0, 7.2 degrees/s)
+  ride time (+0.6, 55.5 s)
+  short ride (-0.0, 55.5 s)
+  proximity (+0.0, 0.0)
+  theming (+0.0, 0.0)
+  dead time (-0.0, 0.4 s at Shallow descent)
+  forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+  nausea (-0.0, 0.4)
+  minimum excitement (+0.0, 0.0)
+Intensity: 3.89
+  peak force (+2.0, 0.5 at End gentle descent)
+  sustained force (+1.1, 2.7 s)
+  excessive forces (+0.0, 0.0 s)
+  top speed (+0.5, 10.0 m/s)
+  biggest drop (+0.3, 20.0 m)
+  launch (+0.0, 0.0 g)
+  inversions (+0.0, 0.0)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Nausea: 0.40
+  lateral forces (+0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  fast rolls (+0.0, 0.0 s)
+  reversals (+0.0, 0.0)
+  strong positive forces (+0.4, 2.0 s)
+  time inverted (+0.0, -0.0 s)
+  excessive forces (+0.0, 0.0 s)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+```

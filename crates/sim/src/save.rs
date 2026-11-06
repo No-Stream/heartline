@@ -11,14 +11,10 @@ pub(crate) mod catalog_text {
             .map(|piece| piece.name)
             .find(|name| *name == value)
             .or_else(|| {
-                [
-                    crate::track::hybrid_model(),
-                    crate::track::multi_launch_model(),
-                    crate::track::wooden_twister_model(),
-                ]
-                .into_iter()
-                .flat_map(|model| [model.manufacturer, model.name, model.description])
-                .find(|name| *name == value)
+                crate::track::coaster_models()
+                    .into_iter()
+                    .flat_map(|model| [model.manufacturer, model.name, model.description])
+                    .find(|name| *name == value)
             })
     }
 

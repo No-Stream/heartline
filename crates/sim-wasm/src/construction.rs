@@ -384,11 +384,7 @@ impl WasmSimulation {
                 heading,
                 ..TrackState::origin()
             },
-            match self.construction_model {
-                ConstructionModel::Hybrid => hybrid_model(),
-                ConstructionModel::MultiLaunch => multi_launch_model(),
-                ConstructionModel::WoodenTwister => wooden_twister_model(),
-            },
+            coaster_model(&self.construction_model),
         );
         let world = self.park.world.clone();
         let obstacles = self.facility_obstacles();
@@ -477,12 +473,10 @@ impl WasmSimulation {
 
     /// The coaster's train layout, or null without a coaster.
     pub fn construction_train_layout(&self) -> String {
-        let layout = self.construction.as_ref().map(|construction| {
-            train_layout(
-                train_model_key(construction.model()),
-                &construction.model().train,
-            )
-        });
+        let layout = self
+            .construction
+            .as_ref()
+            .map(|construction| train_layout(construction.model(), &construction.model().train));
         serde_json::to_string(&layout).expect("serialize train layout")
     }
 
@@ -671,11 +665,7 @@ impl WasmSimulation {
             .construction
             .as_ref()
             .map(|construction| construction.model().clone())
-            .unwrap_or_else(|| match self.construction_model {
-                ConstructionModel::Hybrid => hybrid_model(),
-                ConstructionModel::MultiLaunch => multi_launch_model(),
-                ConstructionModel::WoodenTwister => wooden_twister_model(),
-            });
+            .unwrap_or_else(|| coaster_model(&self.construction_model));
         let options: Vec<_> = theme_park_sim::track::catalog()
             .iter()
             .filter_map(|piece| {
@@ -733,26 +723,12 @@ impl WasmSimulation {
 
     pub fn construction_select(&mut self, id: &str) {
         self.selected_element = None;
-        match id {
-            "model:hybrid" => {
-                self.construction_model = ConstructionModel::Hybrid;
-                self.construction_message.clear();
-                self.refresh_construction_support_rendering();
-                return;
-            }
-            "model:velocity_viper" => {
-                self.construction_model = ConstructionModel::MultiLaunch;
-                self.construction_message.clear();
-                self.refresh_construction_support_rendering();
-                return;
-            }
-            "model:wooden_twister" => {
-                self.construction_model = ConstructionModel::WoodenTwister;
-                self.construction_message.clear();
-                self.refresh_construction_support_rendering();
-                return;
-            }
-            _ => {}
+        if let Some(key) = id.strip_prefix("model:") {
+            let model = coaster_model(key);
+            self.construction_model = model.key.to_owned();
+            self.construction_message.clear();
+            self.refresh_construction_support_rendering();
+            return;
         }
         if let Some(element_id) = id.strip_prefix("element:") {
             let obstacles = self.facility_obstacles();
@@ -1090,14 +1066,14 @@ impl WasmSimulation {
 
     pub fn construction_min_cars_per_train(&self) -> u8 {
         self.construction.as_ref().map_or(0, |construction| {
-            *construction.model().cars_per_train_range().start()
+            *construction.model().cars_per_train.start()
         })
     }
 
     pub fn construction_max_cars_per_train(&self) -> u8 {
-        self.construction.as_ref().map_or(0, |construction| {
-            *construction.model().cars_per_train_range().end()
-        })
+        self.construction
+            .as_ref()
+            .map_or(0, |construction| *construction.model().cars_per_train.end())
     }
 
     pub fn construction_set_cars_per_train(&mut self, cars: u8) -> bool {
@@ -2085,6 +2061,8 @@ define_piece_id_wire_names!(
     ZeroGRollCompactRight,
     StallLeft,
     StallRight,
+    FamilyHill3x32,
+    FamilyHill4x40,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

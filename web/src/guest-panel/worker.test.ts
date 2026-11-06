@@ -74,7 +74,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     coaster_ties() { return new Float32Array(); }
     coaster_supports() { return new Float32Array(); }
     coaster_colors() { return JSON.stringify({ track: "coral", supports: "timber", trains: "sage" }); }
-    coaster_train_layout() { return JSON.stringify({ model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }); }
+    coaster_train_layout() { return JSON.stringify({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }); }
     coaster_train_poses() { return new Float32Array(); }
     coaster_train_states() { return wasmMock.coasterTrainStates(); }
     construction_riders() { return new Uint32Array(); }
@@ -109,7 +109,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_set_chain(enabled: boolean) { wasmMock.setChain(enabled); this.chain = enabled; }
     construction_set_launch_intensity(id: number, targetSpeed: number) { wasmMock.setLaunchIntensity(id, targetSpeed); return true; }
     construction_colors() { return wasmMock.constructionActive() ? this.colors : "null"; }
-    construction_train_layout() { return wasmMock.constructionActive() ? JSON.stringify({ model: "velocity_viper", carsPerTrain: this.carsPerTrain, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: this.carsPerTrain * 3 }) : "null"; }
+    construction_train_layout() { return wasmMock.constructionActive() ? JSON.stringify({ model: "velocity_viper", trackMaterial: "steel", carsPerTrain: this.carsPerTrain, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: this.carsPerTrain * 3 }) : "null"; }
     construction_set_colors(track: string, supports: string, trains: string) { this.colors = JSON.stringify({ track, supports, trains }); }
     construction_train_poses() { return wasmMock.constructionTrainPoses(); }
     construction_train_states() { return wasmMock.constructionTrainStates(); }
@@ -515,12 +515,12 @@ it("sends coaster colours to the simulation and publishes them parsed, with the 
   await Promise.resolve();
   const world = postMessage.mock.calls.find(([message]) => message.type === "world")?.[0];
   expect(world.coasterColors).toEqual({ track: "coral", supports: "timber", trains: "sage" });
-  expect(world.coasterTrain).toEqual({ model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
+  expect(world.coasterTrain).toEqual({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
   onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
   await Promise.resolve();
   const construction = postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0];
   expect(construction.colors).toEqual({ track: "coral", supports: "timber", trains: "sage" });
-  expect(construction.trainLayout).toEqual({ model: "velocity_viper", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
+  expect(construction.trainLayout).toEqual({ model: "velocity_viper", trackMaterial: "steel", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
   onMessage({ data: { type: "construction-set-colors", colors: { track: "teal", supports: "cream", trains: "plum" } } } as MessageEvent);
   await Promise.resolve();
   expect(postMessage.mock.calls.findLast(([message]) => message.type === "construction-state")?.[0].colors).toEqual({ track: "teal", supports: "cream", trains: "plum" });

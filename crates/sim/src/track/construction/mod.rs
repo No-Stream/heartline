@@ -270,7 +270,7 @@ impl Construction {
     }
 
     pub fn set_cars_per_train(&mut self, cars: u8) {
-        assert!(self.model.cars_per_train_range().contains(&cars));
+        assert!(self.model.cars_per_train.contains(&cars));
         let train = &mut self.model.train;
         if train.cars == cars {
             return;

@@ -31,7 +31,7 @@ panel.setShapes([
 ]);
 const state: ConstructionState = {
   type: "construction-state", complete: true, active: true, chain: false, colors: { track: "coral", supports: "timber", trains: "sage" },
-  trainLayout: { model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 },
+  trainLayout: { model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 },
   pieces: [
     { id: "Straight", label: "Straight", group: "straight", heading: "East", slope: "Level", bank: "Level", refusal: "", wouldTunnel: false, heartlined: null, hillEstimate: null },
     { id: "TurnSmallStandalone", label: "Standalone small left turn", group: "turn", heading: "North", slope: "Level", bank: "Level", refusal: "", wouldTunnel: false, heartlined: null, hillEstimate: null },

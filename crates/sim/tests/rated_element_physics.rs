@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
 use theme_park_sim::track::{
     CoasterModel, ForceRating, ForceRatingAxis, HillFeel, Piece, PieceFamily, PieceId, TrackState,
-    catalog, hybrid_model, multi_launch_model, wooden_twister_model,
+    catalog, coaster_models, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -562,8 +562,8 @@ fn peak_roll_rate_degrees_per_second(piece: &Piece, speed: f64) -> f64 {
     peak_rate
 }
 
-fn models() -> [CoasterModel; 3] {
-    [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+fn models() -> Vec<CoasterModel> {
+    coaster_models()
 }
 
 #[test]

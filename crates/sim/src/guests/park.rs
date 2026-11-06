@@ -1425,6 +1425,10 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "coaster_boarding_tests.rs"]
+mod coaster_boarding_tests;
+
 #[cfg(all(test, feature = "threads"))]
 #[path = "park_determinism_tests.rs"]
 mod park_determinism_tests;
