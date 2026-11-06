@@ -15,11 +15,11 @@ use crate::track::{
     TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
-#[cfg(test)]
-use std::cell::Cell;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashSet};
 
+#[cfg(test)]
+mod cache_tests;
 #[cfg(test)]
 mod tests;
 
@@ -198,6 +198,9 @@ pub struct Construction {
     choices_cache: RefCell<Option<ChoicesCache>>,
     #[serde(skip)]
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
+    /// `state_hash` of the current editable state; every mutation of a hashed field clears it.
+    #[serde(skip)]
+    state_hash_memo: Cell<Option<u64>>,
     #[cfg(test)]
     support_cache_misses: Cell<usize>,
     #[cfg(test)]
@@ -225,6 +228,7 @@ impl Construction {
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
+            state_hash_memo: Cell::new(None),
             #[cfg(test)]
             support_cache_misses: Cell::new(0),
             #[cfg(test)]
@@ -257,10 +261,12 @@ impl Construction {
         self.colors
     }
     pub fn set_colors(&mut self, colors: CoasterColors) {
+        self.invalidate_state_hash();
         self.colors = colors;
     }
     pub fn set_chain(&mut self, enabled: bool) {
         if self.chain != enabled {
+            self.invalidate_state_hash();
             self.chain = enabled;
             *self.choices_cache.get_mut() = None;
         }
@@ -277,6 +283,7 @@ impl Construction {
         }
         train.length_metres = train.length_metres / f64::from(train.cars) * f64::from(cars);
         train.cars = cars;
+        self.invalidate_state_hash();
         *self.validation_cache.get_mut() = None;
         *self.choices_cache.get_mut() = None;
         *self.element_choices_cache.get_mut() = None;
@@ -288,6 +295,25 @@ impl Construction {
 
     /// Stable fingerprint of the editable track state, excluding derived validation caches.
     pub fn state_hash(&self) -> u64 {
+        if let Some(memo) = self.state_hash_memo.get() {
+            #[cfg(test)]
+            assert_eq!(
+                memo,
+                self.compute_state_hash(),
+                "a mutation did not clear the state hash memo"
+            );
+            return memo;
+        }
+        let hash = self.compute_state_hash();
+        self.state_hash_memo.set(Some(hash));
+        hash
+    }
+
+    fn invalidate_state_hash(&mut self) {
+        *self.state_hash_memo.get_mut() = None;
+    }
+
+    fn compute_state_hash(&self) -> u64 {
         let mut hash = StateHasher::new();
         hash.write_tag(b"Construction-v1");
         self.start.hash_into(&mut hash);
@@ -343,19 +369,29 @@ impl Construction {
                     && same_obstacles(&cache.obstacles, obstacles)
             })
             .cloned();
-        let mut choices = previous_cache
-            .as_ref()
-            .map_or_else(Vec::new, |cache| cache.choices.clone());
-        let mut available_choices =
-            previous_cache.map_or_else(Vec::new, |cache| cache.available_choices);
+        // Choices already validated for this state are reused in catalog order, so the
+        // list is the same as a fresh computation whichever hill variants were selected.
+        let (previous_choices, previous_available_choices) = previous_cache
+            .map_or_else(Default::default, |cache| {
+                (cache.choices, cache.available_choices)
+            });
+        let mut choices = Vec::new();
+        let mut available_choices: Vec<AvailableChoice> = Vec::new();
         let mut seen_ids = HashSet::new();
         for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
+            if let Some(previous) = previous_choices.iter().find(|choice| choice.id == base.id) {
+                choices.push(*previous);
+                available_choices.extend(
+                    previous_available_choices
+                        .iter()
+                        .find(|candidate| candidate.piece.id == base.id)
+                        .cloned(),
+                );
+                continue;
+            }
             if matches!(base.family, Some(PieceFamily::Hill(_)))
                 && base.id != self.selected_hill_variant
             {
-                continue;
-            }
-            if choices.iter().any(|choice| choice.id == base.id) {
                 continue;
             }
             let template = template_for(base.id, self.end());
@@ -377,6 +413,7 @@ impl Construction {
                     Ok(piece) => {
                         if let Some(previous) = available_choices
                             .iter()
+                            .chain(&previous_available_choices)
                             .find(|previous| same_geometry(&previous.piece, piece))
                         {
                             would_tunnel = previous.choice.would_tunnel;
@@ -652,6 +689,7 @@ impl Construction {
         {
             return Err(ConstructionError::InvalidLaunchIntensity);
         }
+        self.invalidate_state_hash();
         self.pieces[index].launch_target_speed = Some(target_speed);
         *self.validation_cache.get_mut() = None;
         *self.choices_cache.get_mut() = None;
@@ -974,6 +1012,7 @@ impl Construction {
             *self.validation_cache.get_mut() = None;
         }
         *self.choices_cache.get_mut() = None;
+        self.invalidate_state_hash();
         self.pieces.push(piece);
         self.ids.push(self.next_id);
         self.next_id += 1;
@@ -989,6 +1028,7 @@ impl Construction {
     }
 
     pub fn delete_from(&mut self, id: usize) -> Result<Vec<Piece>, ConstructionError> {
+        self.invalidate_state_hash();
         let old_ids: Vec<_> = self
             .ids
             .iter()
@@ -1105,6 +1145,7 @@ impl Construction {
     pub fn close(&mut self) -> Result<(), ConstructionError> {
         Circuit::new(self.pieces.clone()).map_err(|_| ConstructionError::InvalidCircuit)?;
         *self.choices_cache.get_mut() = None;
+        self.invalidate_state_hash();
         self.closed = true;
         Ok(())
     }
