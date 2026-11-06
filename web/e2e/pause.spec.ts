@@ -54,10 +54,25 @@ test("Resume works with a guest panel open at different game bar widths", async 
     const canvas = document.querySelector("canvas")!;
     const guest = window.gameTest.guests().find((entry) => entry.id === id)!;
     const projected = window.gameTest.project({ x: guest.x, y: guest.y, z: guest.height / 4 });
-    for (let y = Math.max(0, Math.floor(projected.y) - 72); y < Math.min(canvas.height, projected.y + 8); y += 2) {
-      for (let x = Math.max(0, Math.floor(projected.x) - 36); x < Math.min(canvas.width, projected.x + 36); x += 2) {
-        const picked = window.gameTest.pick(x, y);
-        if (picked?.kind === "sprite" && picked.id === id) return { x, y };
+    const left = Math.max(0, Math.floor(projected.x) - 36);
+    const top = Math.max(0, Math.floor(projected.y) - 72);
+    const right = Math.ceil(Math.min(canvas.width, projected.x + 36));
+    const bottom = Math.ceil(Math.min(canvas.height, projected.y + 8));
+    const width = right - left;
+    const height = bottom - top;
+    if (width < 1 || height < 1) return null;
+
+    const picks = window.gameTest.pickRegion(left, top, width, height);
+    for (let y = top; y < bottom; y += 2) {
+      for (let x = left; x < right; x += 2) {
+        const picked = picks[(y - top) * width + x - left];
+        if (picked?.kind === "sprite" && picked.id === id) {
+          const directPick = window.gameTest.pick(x, y);
+          if (JSON.stringify(directPick) !== JSON.stringify(picked)) {
+            throw new Error("Batched and point picking disagree for the visible guest");
+          }
+          return { x, y };
+        }
       }
     }
     return null;

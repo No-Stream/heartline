@@ -258,7 +258,7 @@ test("places a 60-degree climb and complete banked turn with lift markers @fast"
 
 test("offers direct level-to-60-degree lift and drop transitions on both eligible models @fast", async ({ page }) => {
   for (const model of ["hybrid", "velocity_viper"] as const) {
-    await page.goto("/?test=1");
+    await page.goto("/?test=1&park=new&agents=1");
     await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
     await openTool(page, "Coaster");
     await selectUnits(page, "metric");
