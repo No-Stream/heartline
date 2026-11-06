@@ -1,3 +1,38 @@
+/// A long gentle chain lift that levels out for three lift pieces (7 to 9) before the track turns back.
+fn level_crest_lift_circuit() -> Circuit {
+    use PieceId::*;
+    let mut circuit = circuit(&[
+        Station,
+        LevelToGentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUpToLevel,
+        Straight,
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LevelToGentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Straight,
+        Straight,
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ]);
+    for piece in &mut circuit.pieces[1..=9] {
+        piece.kind = PieceKind::Lift;
+    }
+    circuit
+}
+
 use super::*;
 use crate::track::construction::{Construction, track_support_obstacles};
 use crate::track::supports::generate_dense_wooden_lattice;
@@ -7,7 +42,7 @@ use crate::world::{Surface, World};
 
 #[test]
 fn lift_drives_until_the_last_car_clears_the_crest() {
-    let mut circuit = demo_circuit();
+    let mut circuit = level_crest_lift_circuit();
     for piece in &mut circuit.pieces[7..=9] {
         piece.kind = PieceKind::Track;
     }
@@ -57,7 +92,7 @@ fn lift_drives_until_the_last_car_clears_the_crest() {
 
 #[test]
 fn lift_does_not_slow_a_fast_train_or_drive_after_the_last_car_clears() {
-    let mut circuit = demo_circuit();
+    let mut circuit = level_crest_lift_circuit();
     for piece in &mut circuit.pieces[7..=9] {
         piece.kind = PieceKind::Track;
     }
@@ -85,7 +120,7 @@ fn trailing_lift_drives_train_on_station_and_brakes_until_last_car_clears() {
     let configuration = hybrid_model().train;
     let config = PhysicsConfig::default();
     for leading_piece_kind in [PieceKind::Station, PieceKind::Brakes] {
-        let mut circuit = demo_circuit();
+        let mut circuit = level_crest_lift_circuit();
         for piece in &mut circuit.pieces[7..=9] {
             piece.kind = PieceKind::Track;
         }
@@ -132,7 +167,7 @@ fn trailing_lift_drives_train_on_station_and_brakes_until_last_car_clears() {
 
 #[test]
 fn launch_control_and_block_hold_take_priority_over_a_trailing_lift() {
-    let mut circuit = demo_circuit();
+    let mut circuit = level_crest_lift_circuit();
     for piece in &mut circuit.pieces[7..=9] {
         piece.kind = PieceKind::Track;
     }
@@ -1145,7 +1180,7 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
             .all(|piece| piece.inversion.is_none())
     );
     assert_eq!(
-        circuit.pieces()[1..8]
+        circuit.pieces()[1..6]
             .iter()
             .map(|piece| piece.id)
             .collect::<Vec<_>>(),
@@ -1153,19 +1188,17 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
             PieceId::LevelToGentleUp,
             PieceId::GentleUp,
             PieceId::GentleUp,
+            PieceId::GentleUp,
             PieceId::GentleUpToLevel,
-            PieceId::TerrainRise,
-            PieceId::TurnLargeStandalone,
-            PieceId::TurnLargeStandalone,
         ]
     );
     assert!(
-        circuit.pieces()[1..8]
+        circuit.pieces()[1..6]
             .iter()
             .all(|piece| piece.kind == PieceKind::Lift)
     );
     assert!(
-        circuit.pieces()[8..]
+        circuit.pieces()[6..]
             .iter()
             .all(|piece| piece.kind != PieceKind::Lift)
     );

@@ -1,16 +1,14 @@
 # Demo coaster in the default park. The station at (450, 500, 10) heading east comes first and is not listed.
 [Demo]
-# Chain lift east, then a slow turnaround on the chain over the park path
+# Chain lift east, high over the area west of x = 980 m where the browser tests build player coasters
 +chain
 LevelToGentleUp
 GentleUp
 GentleUp
+GentleUp
 GentleUpToLevel
-TerrainRise
-TurnLargeStandalone
-TurnLargeStandalone
 -chain
-# Drop west and the first airtime run
+# Drop east and the first airtime run
 LevelToGentleDown
 GentleDown
 GentleDown
@@ -18,43 +16,47 @@ GentleDownToLevel
 EjectorHill8x64
 EjectorHill12x80
 SpeedTurnLarge20Left
-# Southbound
+# Northbound
 EjectorHill8x64
 Straight
 Straight
 SpeedTurnLarge20Left
-# Eastbound
+# Westbound
 EjectorHill12x64
+EjectorHill8x64
 Straight
 Straight
 Straight
-Straight
-Straight
+OneTileStraight
+OneTileStraight
 SpeedTurnLarge20Left
-# Return north under the lift and home
+# Return south: brake run, over the park path, under the lift, then home in 2 m steps down to the station
 Brakes
 Brakes
 Brakes
 Brakes
-Straight
-OneTileStraight
-OneTileStraight
-OneTileStraight
-TurnSmallStandalone
+TerrainFall
+TerrainFall
+Brakes
 TerrainFall
 Straight
 Straight
 Straight
 Straight
-OneTileStraight
-OneTileStraight
-TurnSmallStandalone
-OneTileStraight
-OneTileStraight
-OneTileStraight
-TurnSmallStandalone
+TurnSmallRightStandalone
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+Straight
+TurnSmallRightStandalone
+Straight
+Straight
+Straight
+TurnSmallRightStandalone
+TerrainFall
 Brakes
-Brakes
 OneTileStraight
 OneTileStraight
-
