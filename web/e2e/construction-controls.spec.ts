@@ -442,14 +442,14 @@ test("testing panel groups proximity events and shows their excitement contribut
     "Forces",
     "Speed and layout",
   ]);
-  await expect(page.locator("[data-statistics-airtime] li")).toHaveText([
+  await expect(page.locator("[data-statistics-airtime] > div")).toHaveText([
     "Ejector airtime: 0.0 s",
     "Floater airtime: 0.0 s",
     "Airtime moments: 0",
   ]);
 });
 
-test("testing panel sorts score contributions and inspects a located penalty @fast", async ({ page }) => {
+test("testing panel ranks score findings, expands their numbers and inspects a located penalty @fast", async ({ page }) => {
   await page.goto(fixtureUrl);
   await page.evaluate(() => (window as unknown as { setTestingReport(report: object): void }).setTestingReport({
     samples: [], notes: [], proximityEvents: [],
@@ -471,14 +471,25 @@ test("testing panel sorts score contributions and inspects a located penalty @fa
     },
   }));
 
-  const excitement = page.locator('[data-score-breakdown="excitement"]');
-  await expect(page.locator("[data-score-averaging]")).toHaveText("Contributions and their scoring inputs are averaged across cars. Force details show individual cars; car 1 is the front car.");
-  await expect(excitement.locator("li")).toHaveText([
-    "Forces above the ASTM comfort envelope (−1.2): vertical force magnitude 5.0 g, limit 4.0 g at Loop, 656 ft; 2.4 s above the envelope for car 1 during the test",
-    "Ejector airtime (+0.5, 1.2 weighted seconds)",
+  await expect(page.locator("[data-score-averaging]")).toHaveText("Effects are averaged over all cars. Force numbers come from the car that felt them most; car 1 is the front car.");
+  const findings = page.locator("[data-score-findings] [data-score-finding]");
+  await expect(findings.locator(".testing-finding__text")).toHaveText([
+    "Past the ASTM comfort envelope at Loop: vertical force 5.0 g for 2.4 s (limit 4.0 g)",
+    "Airtime: 1.2 s, weighted",
   ]);
-  await excitement.getByRole("button").first().click();
+  await expect(findings.locator(".testing-finding__effects")).toHaveText(["Excitement −1.2", "Excitement +0.5"]);
+  await expect(findings.first().locator(".testing-effect")).toHaveAttribute("data-tone", "bad");
+  await expect(findings.last().locator(".testing-effect")).toHaveAttribute("data-tone", "good");
+  await expect(page.locator("[data-score-more]")).not.toHaveAttribute("open");
+  const envelopeDetails = findings.first().locator(".testing-finding__details");
+  await expect(envelopeDetails).toBeHidden();
+  await page.locator('[data-score-location="envelope"]').click();
+  await expect(page.locator('[data-score-location="envelope"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(envelopeDetails).toBeHidden();
   await expect(page.locator("[data-inspection]")).toHaveText("Selected score location: Loop · 656 ft · 8.0 s");
+  await findings.first().locator(".testing-finding__text strong").click();
+  await expect(envelopeDetails).toBeVisible();
+  await expect(envelopeDetails.locator("li").first()).toHaveText("Vertical force 5.0 g for 2.4 s (limit 4.0 g) (car 1) at Loop, 656 ft.");
   expect(await page.evaluate(() => (window as unknown as { selectedScoreLocation(): object }).selectedScoreLocation()))
     .toEqual({ pieceIndex: 6, pieceName: "Loop", distance: 200, seconds: 8 });
 });

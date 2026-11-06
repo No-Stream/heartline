@@ -144,7 +144,7 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await testRide(page);
   await waitForState(page, async () => (await page.getByRole("region", { name: "Coaster construction" }).getByRole("status").textContent()) === "Train completed a lap.", { ticks: 30_000 });
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
-  await expect(page.locator('[data-score-breakdown="excitement"]')).toContainText("Ejector airtime");
+  await expect(page.locator('[data-score-finding="airtime"] .testing-effect[data-score="excitement"]')).toHaveText(/^Excitement \+/);
   const { rating } = await expectRideReportExplained(page);
   console.log(`Timber Tumbler ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
   const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);

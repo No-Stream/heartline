@@ -10,8 +10,8 @@ import { LIMIT_BAND_COLORS, LIMIT_BAND_LABELS, limitBand, limitCloseness, type L
 import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
 import type { ScoreContributionReport } from "./generated/ScoreContributionReport";
-import type { ScoreForceDetailReport } from "./generated/ScoreForceDetailReport";
 import type { ProximityEventReport as ProximityEvent } from "./generated/ProximityEventReport";
+import { findingDetails, findingEffects, findingHeadline, groupScoreFindings, scoreLabels, scoreNames, splitScoreFindings, type ScoreFinding, type ScoreName } from "./score-findings";
 export type { TestingSample, TestingReport, ProximityEvent };
 export type RideStatistics = TestingReport["statistics"];
 
@@ -112,170 +112,48 @@ export function buildTestingRibbon(
 
 const number = (value: number): string => value.toFixed(1).replace("-", "−");
 const count = (value: number): string => Math.round(value).toLocaleString("en-US");
-const forceDetailCar = (detail: ScoreForceDetailReport): string => detail.carIndex === undefined ? "this car" : `car ${detail.carIndex + 1}`;
-
 export function formatRideRating(rating: TestingReport["rating"]): string {
   return `Excitement: ${number(rating.excitement)} · Intensity: ${number(rating.intensity)} · Nausea: ${number(rating.nausea)}`;
 }
 
-export const scoreTermLabels: Readonly<Record<string, string>> = {
-  excitementFloor: "Excitement floor",
-  airtime: "Ejector airtime",
-  positiveForces: "Positive forces",
-  laterals: "Lateral forces",
-  longitudinalForces: "Longitudinal forces",
-  excessiveForces: "Excessive forces",
-  airtimeMoments: "Airtime moments",
-  inversions: "Inversions",
-  topSpeed: "Top speed",
-  biggestDrop: "Biggest drop",
-  pace: "Pace",
-  launch: "Launch",
-  variety: "Variety",
-  whip: "Whip",
-  rollRate: "Roll rate",
-  fastRolls: "Fast rolls",
-  rideTime: "Ride time",
-  shortRide: "Short ride",
-  proximity: "Proximity",
-  theming: "Theming",
-  deadTime: "Dead time",
-  envelope: "Forces above the ASTM comfort envelope",
-  sickening: "Nausea",
-  peakForce: "Peak force",
-  sustainedForce: "Sustained force",
-  reversals: "Reversals",
-  greyOut: "Strong positive forces",
-  timeInverted: "Time inverted",
-};
-
-export function formatContribution(contribution: ScoreContributionReport, units: Units): string {
-  const label = scoreTermLabels[contribution.term];
-  if (label === undefined) throw new Error(`Unknown coaster score term: ${contribution.term}`);
-  const score = contribution.value >= 0 ? `+${number(contribution.value)}` : number(contribution.value);
-  if (contribution.term === "topSpeed" || contribution.term === "pace") {
-    return `${label} (${score}): ${formatSpeed(contribution.measure, units)} above the scoring threshold`;
-  }
-  if (contribution.term === "rollRate") {
-    return `${label} (${score}): ${number(contribution.measure)} degrees/s above the scoring threshold`;
-  }
-  if (contribution.term === "inversions") return `${label} (${score}, weighted inversion count ${number(contribution.measure)})`;
-  if (contribution.term === "variety") return `${label} (${score}, ${number(contribution.measure)} additional element types)`;
-  if (contribution.term === "proximity") return `${label} (${score}, total event strength ${number(contribution.measure)})`;
-  if (contribution.term === "whip") return `${label} (${score}, ${number(contribution.measure)} rapid vertical force changes)`;
-  if (contribution.term === "deadTime") {
-    const location = contribution.location ? `; longest section at ${contribution.location.pieceName}, ${formatLength(contribution.location.distance, units)}` : "";
-    return `${label} (${score}, ${number(contribution.measure)} s beyond the allowance for uneventful sections${location})`;
-  }
-  if (contribution.term === "launch") {
-    const detail = contribution.forceDetails?.[0];
-    return detail
-      ? `${label} (${score}): maximum forward force ${number(detail.measuredValue)} g for ${forceDetailCar(detail)} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}`
-      : `${label} (${score}): maximum forward force if the ride has a launch, ${number(contribution.measure)} g`;
-  }
-  const weightedDuration = ["airtime", "positiveForces", "greyOut", "sustainedForce"].includes(contribution.term);
-  const bandDuration = weightedDuration || ["laterals", "longitudinalForces"].includes(contribution.term);
-  if (bandDuration) {
-    const suffix = contribution.term === "sustainedForce" ? " across force bands" : "";
-    const summary = `${label} (${score}, ${number(contribution.measure)} ${weightedDuration ? "weighted seconds" : "s"}${suffix})`;
-    if (!contribution.forceDetails?.length) return summary;
-    const bands: Readonly<Record<string, string>> = {
-      airtimeGood: "good airtime", airtimeGreat: "great airtime",
-      verticalGood: "good positive vertical force", verticalGreat: "great positive vertical force",
-      lateralStrong: "strong or excessive lateral force", longitudinalStrong: "strong longitudinal force",
-    };
-    const details = contribution.forceDetails.map((detail) => {
-      const band = bands[detail.axis];
-      if (band === undefined) throw new Error(`Unknown scoring force band: ${detail.axis}`);
-      if (detail.durationSeconds === undefined) throw new Error(`Missing duration for scoring force band: ${detail.axis}`);
-      const weight = detail.weight !== undefined && detail.weight !== 1 ? ` (${number(detail.weight * 100).replace(/\.0$/, "")}% counts toward the score input)` : "";
-      return `${band} starts above ${number(detail.limit)} ${detail.unit}; peak magnitude ${number(detail.measuredValue)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s in this band for ${forceDetailCar(detail)} during the test${weight}`;
-    });
-    return `${summary}: ${details.join(". ")}`;
-  }
-  if (contribution.term === "peakForce") {
-    const detail = contribution.forceDetails?.[0];
-    if (!detail) return `${label} (${score}, ${number(contribution.measure)} times the scoring reference)`;
-    const axes: Readonly<Record<string, string>> = {
-      peakVertical: "positive vertical force", peakNegativeVertical: "negative vertical force magnitude",
-      peakLateral: "lateral force magnitude", peakForward: "forward force", peakBraking: "braking force magnitude",
-    };
-    const axis = axes[detail.axis];
-    if (axis === undefined) throw new Error(`Unknown peak force axis: ${detail.axis}`);
-    return `${label} (${score}): ${axis} ${number(detail.measuredValue)} ${detail.unit}, scoring reference ${number(detail.limit)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)} for ${forceDetailCar(detail)}`;
-  }
-  if (contribution.term === "excessiveForces" && contribution.forceDetails?.length) {
-    const axes: Readonly<Record<string, string>> = {
-      vertical: "positive vertical force", negativeVertical: "negative vertical force magnitude",
-      lateral: "lateral force magnitude", longitudinal: "longitudinal force magnitude",
-    };
-    const details = contribution.forceDetails.map((detail, index) => {
-      const axis = axes[detail.axis];
-      if (axis === undefined) throw new Error(`Unknown model limit axis: ${detail.axis}`);
-      if (detail.durationSeconds === undefined) throw new Error(`Missing duration for model limit axis: ${detail.axis}`);
-      const description = index === 0 ? axis : axis[0].toUpperCase() + axis.slice(1);
-      const dangerous = detail.dangerousSeconds ? ` (${number(detail.dangerousSeconds)} s in the dangerous band counts twice in scoring)` : "";
-      return `${description} ${number(detail.measuredValue)} ${detail.unit}, limit ${number(detail.limit)} ${detail.unit} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s above this limit for ${forceDetailCar(detail)} during the test${dangerous}`;
-    });
-    return `${label} (${score}): ${details.join(". ")}`;
-  }
-  if (contribution.term === "envelope") {
-    const detail = contribution.forceDetail;
-    if (!detail) return `${label} (${score})`;
-    if (detail.durationSeconds === undefined) throw new Error("Missing duration for comfort envelope");
-    const axes: Readonly<Record<string, string>> = {
-      vertical: "vertical force magnitude", lateral: "lateral force magnitude", longitudinal: "longitudinal force magnitude",
-      verticalLateral: "vertical and lateral force", verticalLongitudinal: "vertical and longitudinal force",
-      lateralLongitudinal: "lateral and longitudinal force", onset: "vertical force increase",
-    };
-    const axis = axes[detail.axis];
-    if (axis === undefined) throw new Error(`Unknown comfort envelope axis: ${detail.axis}`);
-    const unit = detail.unit === "g/s" ? "g per second" : detail.unit;
-    const measured = detail.unit === "ratio"
-      ? `combined ${axis} level ${number(detail.measuredValue / detail.limit)} times its limit (limit ${number(detail.limit)})`
-      : `${axis} ${number(detail.measuredValue)} ${unit}, limit ${number(detail.limit)} ${unit}`;
-    return `${label} (${score}): ${measured} at ${detail.location.pieceName}, ${formatLength(detail.location.distance, units)}; ${number(detail.durationSeconds)} s above the envelope for ${forceDetailCar(detail)} during the test`;
-  }
-  const measure = `${number(contribution.measure)}${contribution.unit ? ` ${contribution.unit}` : ""}`;
-  const location = contribution.location
-    ? ` at ${contribution.location.pieceName}, ${number(contribution.location.distance)} m`
-    : "";
-  return formatTestingNote(`${label} (${score}, ${measure}${location})`, units);
+export interface RideStatistic {
+  readonly label: string;
+  readonly value: string;
 }
 
 export interface FormattedRideStatistics {
-  readonly airtime: readonly string[];
-  readonly forces: readonly string[];
-  readonly speedAndLayout: readonly string[];
+  readonly airtime: readonly RideStatistic[];
+  readonly forces: readonly RideStatistic[];
+  readonly speedAndLayout: readonly RideStatistic[];
 }
 
 export function formatRideStatistics(statistics: RideStatistics, units: Units): FormattedRideStatistics {
   return {
     airtime: [
-      `Ejector airtime: ${number(statistics.ejectorAirtimeSeconds)} s`,
-      `Floater airtime: ${number(statistics.floaterAirtimeSeconds)} s`,
-      `Airtime moments: ${count(statistics.airtimeMoments)}`,
+      { label: "Ejector airtime", value: `${number(statistics.ejectorAirtimeSeconds)} s` },
+      { label: "Floater airtime", value: `${number(statistics.floaterAirtimeSeconds)} s` },
+      { label: "Airtime moments", value: count(statistics.airtimeMoments) },
     ],
     forces: [
-      `Strong positive g: ${number(statistics.strongPositiveGSeconds)} s (longest ${number(statistics.longestStrongPositiveGSeconds)} s)`,
-      `Strong laterals: ${number(statistics.strongLateralGSeconds)} s`,
-      `Max positive vertical: ${number(statistics.maxPositiveVerticalG)} g`,
-      `Max negative vertical: ${number(statistics.maxNegativeVerticalG)} g`,
-      `Max lateral: ${number(statistics.maxLateralG)} g`,
-      `Max forward: ${number(statistics.maxForwardG)} g`,
-      `Max braking: ${number(statistics.maxBrakingG)} g`,
+      { label: "Strong positive g", value: `${number(statistics.strongPositiveGSeconds)} s (longest ${number(statistics.longestStrongPositiveGSeconds)} s)` },
+      { label: "Strong laterals", value: `${number(statistics.strongLateralGSeconds)} s` },
+      { label: "Max positive vertical", value: `${number(statistics.maxPositiveVerticalG)} g` },
+      { label: "Max negative vertical", value: `${number(statistics.maxNegativeVerticalG)} g` },
+      { label: "Max lateral", value: `${number(statistics.maxLateralG)} g` },
+      { label: "Max forward", value: `${number(statistics.maxForwardG)} g` },
+      { label: "Max braking", value: `${number(statistics.maxBrakingG)} g` },
     ],
     speedAndLayout: [
-      `Max speed: ${formatSpeed(statistics.maxSpeed, units)}`,
-      `Average speed: ${formatSpeed(statistics.averageSpeed, units)}`,
-      `Ride duration: ${number(statistics.durationSeconds)} s`,
-      `Track length: ${formatLength(statistics.trackLength, units)}`,
-      `Max height: ${formatLength(statistics.maxHeight, units)}`,
-      `Biggest drop: ${formatLength(statistics.biggestDrop, units)}`,
-      `Steepest drop: ${number(statistics.steepestDropAngleDegrees)}°`,
-      `Inversions: ${count(statistics.inversions)} (${number(statistics.invertedSeconds)} s inverted)`,
-      `Drops: ${count(statistics.drops)}`,
-      `Launches: ${count(statistics.launches)} (peak ${statistics.launches ? formatSpeed(statistics.launchPeakSpeed, units) : "—"})`,
+      { label: "Max speed", value: formatSpeed(statistics.maxSpeed, units) },
+      { label: "Average speed", value: formatSpeed(statistics.averageSpeed, units) },
+      { label: "Ride duration", value: `${number(statistics.durationSeconds)} s` },
+      { label: "Track length", value: formatLength(statistics.trackLength, units) },
+      { label: "Max height", value: formatLength(statistics.maxHeight, units) },
+      { label: "Biggest drop", value: formatLength(statistics.biggestDrop, units) },
+      { label: "Steepest drop", value: `${number(statistics.steepestDropAngleDegrees)}°` },
+      { label: "Inversions", value: `${count(statistics.inversions)} (${number(statistics.invertedSeconds)} s inverted)` },
+      { label: "Drops", value: count(statistics.drops) },
+      { label: "Launches", value: `${count(statistics.launches)} (peak ${statistics.launches ? formatSpeed(statistics.launchPeakSpeed, units) : "—"})` },
     ],
   };
 }
@@ -421,6 +299,45 @@ function legendBounds(metric: SingleTestingMetric, units: Units): { low: string;
   return metrics[metric];
 }
 
+const lowerFirst = (text: string): string => text[0].toLowerCase() + text.slice(1);
+
+const scoreTone = (score: ScoreName, value: number): "good" | "bad" | "neutral" =>
+  score === "intensity" ? "neutral" : (value > 0) === (score === "excitement") ? "good" : "bad";
+
+function effectChip(score: ScoreName, value: number): HTMLElement {
+  const chip = document.createElement("span");
+  chip.className = "testing-effect";
+  chip.dataset.score = score;
+  chip.dataset.tone = scoreTone(score, value);
+  chip.textContent = `${scoreLabels[score]} ${value >= 0 ? "+" : ""}${number(value)}`;
+  return chip;
+}
+
+/** The visually hidden separators keep the rating's text "Excitement: 3.3 · Intensity: 8.6 · Nausea: 5.5" for screen readers. */
+function scoreTile(score: ScoreName, value: number, last: boolean): HTMLElement {
+  const tile = document.createElement("div");
+  tile.className = "testing-score";
+  tile.dataset.score = score;
+  tile.innerHTML = `<span class="testing-score__label"></span><span class="testing-sr">: </span><span class="testing-score__value"></span>${last ? "" : `<span class="testing-sr"> · </span>`}<span class="testing-score__meter" aria-hidden="true"><span></span></span>`;
+  tile.querySelector<HTMLElement>(".testing-score__label")!.textContent = scoreLabels[score];
+  tile.querySelector<HTMLElement>(".testing-score__value")!.textContent = number(value);
+  tile.querySelector<HTMLElement>(".testing-score__meter > span")!.style.width = `${Math.max(0, Math.min(100, value * 10))}%`;
+  return tile;
+}
+
+function statisticRow(statistic: RideStatistic): HTMLElement {
+  const row = document.createElement("div");
+  const label = document.createElement("dt");
+  const separator = document.createElement("span");
+  separator.className = "testing-sr";
+  separator.textContent = ": ";
+  label.append(statistic.label, separator);
+  const value = document.createElement("dd");
+  value.textContent = statistic.value;
+  row.append(label, value);
+  return row;
+}
+
 export function createTestingPanel(container: HTMLElement, style: TrackStyle, dispatch: (action: InputAction) => void, onScoreLocationChange: () => void): {
   update(report: TestingReport | null): void;
   updateEstimate(estimate: ConstructionForcePreview | null): void;
@@ -431,14 +348,17 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   inspectProximity(index: number): void;
   selectedScoreLocation(): NonNullable<ScoreContributionReport["location"]> | undefined;
 } {
-  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><ul data-launch-results aria-label="Launch exit speeds"></ul><section data-statistics hidden><h4>Scores (about 0–10)</h4><p data-rating></p>
-    <p data-score-averaging>Contributions and their scoring inputs are averaged across cars. Force details show individual cars; car 1 is the front car.</p>
-    <h5>Excitement contributions</h5><ul data-score-breakdown="excitement" aria-label="Excitement contributions"></ul>
-    <h5>Intensity contributions</h5><ul data-score-breakdown="intensity" aria-label="Intensity contributions"></ul>
-    <h5>Nausea contributions</h5><ul data-score-breakdown="nausea" aria-label="Nausea contributions"></ul>
-    <p data-whole-train>Statistics cover the whole train using the worst car.</p>
-    <h4>Airtime</h4><ul data-statistics-airtime></ul><h4>Forces</h4><ul data-statistics-forces></ul>
-    <h4>Speed and layout</h4><ul data-statistics-speed-layout></ul></section>
+  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><ul data-launch-results aria-label="Launch exit speeds"></ul><section data-statistics hidden><h4>Scores (about 0–10)</h4>
+    <div class="testing-scores" data-rating></div>
+    <h5 class="testing-findings-heading">Biggest reasons</h5>
+    <ol class="testing-findings" data-score-findings aria-label="Biggest reasons for these scores"></ol>
+    <details class="testing-more" data-score-more><summary>More detail</summary>
+    <ol class="testing-findings" data-score-findings-more aria-label="Smaller reasons"></ol>
+    <p class="testing-note" data-score-unchanged></p>
+    <p class="testing-note" data-score-averaging>Effects are averaged over all cars. Force numbers come from the car that felt them most; car 1 is the front car.</p></details>
+    <div class="testing-statistics"><div><h4>Airtime</h4><dl data-statistics-airtime></dl></div><div><h4>Forces</h4><dl data-statistics-forces></dl></div>
+    <div><h4>Speed and layout</h4><dl data-statistics-speed-layout></dl></div></div>
+    <p class="testing-note" data-whole-train>Statistics cover the whole train using the worst car.</p></section>
     <p data-height-summary hidden>Maximum height above ground (sampled): <span data-report-maximum-height></span> · Biggest drop (sampled): <span data-report-drop-height></span></p>
     <p data-construction-estimate hidden></p><label>Track overlay <select data-metric><option value="off">Off</option><option value="limitCloseness">Limit closeness</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
     <div class="testing-band-legend" data-band-legend hidden>${(["comfortable", "near", "past"] as const).map((band) => `<span data-band="${band}"><span class="testing-band-legend__swatch" aria-hidden="true" style="background:${LIMIT_BAND_COLORS[band]}"></span>${LIMIT_BAND_LABELS[band]}</span>`).join("")}</div>
@@ -499,52 +419,77 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     const heightSummary = container.querySelector<HTMLElement>("[data-height-summary]")!;
     notes.textContent = report ? report.notes.map((note) => formatTestingNote(note, activeUnits)).join(" ") || "No concerns were noted during this test." : "Run a test to see the results.";
     statisticsSection.hidden = !report;
-    rating.textContent = report?.rating ? formatRideRating(report.rating) : "";
+    rating.replaceChildren(...(report ? scoreNames.map((score, index) => scoreTile(score, report!.rating[score], index === scoreNames.length - 1)) : []));
     const statistics = report?.statistics;
     const formattedStatistics = statistics ? formatRideStatistics(statistics, activeUnits) : null;
-    const renderList = (selector: string, items: readonly string[] | undefined): void => {
-      const list = container.querySelector<HTMLElement>(selector)!;
-      list.replaceChildren();
-      for (const item of items ?? []) {
-        const row = document.createElement("li");
-        row.textContent = item;
-        list.append(row);
-      }
+    const renderStatistics = (selector: string, items: readonly RideStatistic[] | undefined): void => {
+      container.querySelector<HTMLElement>(selector)!.replaceChildren(...(items ?? []).map(statisticRow));
     };
-    renderList("[data-statistics-airtime]", formattedStatistics?.airtime);
-    renderList("[data-statistics-forces]", formattedStatistics?.forces);
-    renderList("[data-statistics-speed-layout]", formattedStatistics?.speedAndLayout);
-    const renderBreakdown = (score: keyof TestingReport["breakdown"]): void => {
-      const list = container.querySelector<HTMLElement>(`[data-score-breakdown="${score}"]`)!;
-      list.replaceChildren();
-      const contributions = [...(report?.breakdown[score] ?? [])]
-        .sort((left, right) => Math.abs(right.value) - Math.abs(left.value));
-      for (const contribution of contributions) {
-        const row = document.createElement("li");
-        const description = formatContribution(contribution, activeUnits);
-        if (contribution.location) {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.dataset.scoreContribution = contribution.term;
-          button.textContent = description;
-          button.addEventListener("click", () => {
-            inspectedSampleIndex = undefined;
-            inspectedProximityIndex = undefined;
-            inspectedScoreLocation = contribution.location;
-            renderInspection();
-            onScoreLocationChange();
-            if (select.value === "off") dispatch({ type: "testing-metric-set", metric: "speed" });
-          });
-          row.append(button);
-        } else {
-          row.textContent = description;
-        }
-        list.append(row);
+    renderStatistics("[data-statistics-airtime]", formattedStatistics?.airtime);
+    renderStatistics("[data-statistics-forces]", formattedStatistics?.forces);
+    renderStatistics("[data-statistics-speed-layout]", formattedStatistics?.speedAndLayout);
+    const findings = splitScoreFindings(report ? groupScoreFindings(report.breakdown) : []);
+    const findingRow = (finding: ScoreFinding): HTMLElement => {
+      const headline = findingHeadline(finding, report!.statistics, activeUnits);
+      const row = document.createElement("li");
+      row.className = "testing-finding";
+      row.dataset.scoreFinding = finding.key;
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      const text = document.createElement("span");
+      text.className = "testing-finding__text";
+      const title = document.createElement("strong");
+      title.textContent = headline.title;
+      text.append(title);
+      if (headline.location) {
+        const location = headline.location;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "testing-location";
+        button.dataset.scoreLocation = finding.key;
+        button.title = "Show this spot on the track";
+        button.textContent = location.pieceName;
+        button.setAttribute("aria-pressed", String(inspectedScoreLocation === location));
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          inspectedSampleIndex = undefined;
+          inspectedProximityIndex = undefined;
+          inspectedScoreLocation = location;
+          for (const other of container.querySelectorAll<HTMLElement>("[data-score-location]")) other.setAttribute("aria-pressed", String(other === button));
+          renderInspection();
+          onScoreLocationChange();
+          if (select.value === "off") dispatch({ type: "testing-metric-set", metric: "speed" });
+        });
+        text.append(" at ", button);
       }
+      if (headline.measurement) text.append(`: ${headline.measurement}`);
+      const effects = document.createElement("span");
+      effects.className = "testing-finding__effects";
+      effects.append(...findingEffects(finding).map(({ score, value }) => effectChip(score, value)));
+      summary.append(text, effects);
+      const numbers = document.createElement("ul");
+      numbers.className = "testing-finding__details";
+      numbers.append(...findingDetails(finding, activeUnits).map((line) => {
+        const item = document.createElement("li");
+        item.textContent = line;
+        return item;
+      }));
+      details.append(summary, numbers);
+      row.append(details);
+      return row;
     };
-    renderBreakdown("excitement");
-    renderBreakdown("intensity");
-    renderBreakdown("nausea");
+    container.querySelector<HTMLElement>("[data-score-findings]")!.replaceChildren(...findings.main.map(findingRow));
+    const moreFindings = container.querySelector<HTMLElement>("[data-score-findings-more]")!;
+    moreFindings.replaceChildren(...findings.more.map(findingRow));
+    moreFindings.hidden = findings.more.length === 0;
+    const unchanged = container.querySelector<HTMLElement>("[data-score-unchanged]")!;
+    unchanged.textContent = findings.unchanged.length
+      ? `No effect on this ride: ${findings.unchanged.map((finding) => lowerFirst(findingHeadline(finding, report!.statistics, activeUnits).title)).join(", ")}.`
+      : "";
+    unchanged.hidden = findings.unchanged.length === 0;
+    container.querySelector<HTMLElement>("[data-score-more] > summary")!.textContent = findings.more.length
+      ? `More detail: ${findings.more.length} smaller ${findings.more.length === 1 ? "reason" : "reasons"}`
+      : "More detail";
     const launchResults = container.querySelector<HTMLElement>("[data-launch-results]")!;
     launchResults.replaceChildren(...(report?.launches ?? []).map((launch) => {
       const item = document.createElement("li");
