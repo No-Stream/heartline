@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
 use theme_park_sim::track::{
-    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, hybrid_model,
-    multi_launch_model, wooden_twister_model,
+    AirtimeRating, CoasterModel, HillFeel, Piece, PieceFamily, PieceId, TrackState, catalog,
+    hybrid_model, multi_launch_model, wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -380,15 +380,33 @@ fn unpowered() -> PhysicsConfig {
     }
 }
 
-fn assert_train_crosses_element(
+#[derive(Clone, Copy, Debug)]
+struct ElementForces {
+    minimum_vertical: f64,
+    maximum_vertical: f64,
+    maximum_lateral: f64,
+    maximum_longitudinal: f64,
+    peak_lateral_distance: f64,
+    peak_lateral_speed: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ElementScan {
+    forces: ElementForces,
+    all_cars_seen: bool,
+    train_cleared: bool,
+    stalled: bool,
+    rolled_back: bool,
+    minimum_speed: f64,
+}
+
+fn scan_train_element(
     model: &CoasterModel,
     circuit: &Circuit,
-    piece_id: PieceId,
     element_range: std::ops::Range<f64>,
     cars: u8,
     entry_speed: f64,
-    minimum_speed_required: bool,
-) {
+) -> ElementScan {
     let mut train_config = model.train.clone();
     train_config.cars = cars;
     let mut train = Train::new(
@@ -403,7 +421,10 @@ fn assert_train_crosses_element(
     let mut maximum_vertical = f64::NEG_INFINITY;
     let mut maximum_lateral: f64 = 0.0;
     let mut maximum_longitudinal: f64 = 0.0;
+    let mut peak_lateral_distance = element_range.start;
+    let mut peak_lateral_speed = entry_speed;
     let mut minimum_speed = f64::INFINITY;
+    let mut stalled = false;
     for _ in 0..100_000 {
         train.step(circuit);
         for frame in train.take_readings() {
@@ -412,7 +433,11 @@ fn assert_train_crosses_element(
                     cars_seen[index] = true;
                     minimum_vertical = minimum_vertical.min(reading.g.vertical);
                     maximum_vertical = maximum_vertical.max(reading.g.vertical);
-                    maximum_lateral = maximum_lateral.max(reading.g.lateral.abs());
+                    if reading.g.lateral.abs() > maximum_lateral {
+                        maximum_lateral = reading.g.lateral.abs();
+                        peak_lateral_distance = reading.distance;
+                        peak_lateral_speed = reading.speed;
+                    }
                     maximum_longitudinal = maximum_longitudinal.max(reading.g.longitudinal.abs());
                     minimum_speed = minimum_speed.min(reading.speed);
                 }
@@ -421,51 +446,120 @@ fn assert_train_crosses_element(
         if train.distance() >= element_range.end + train_config.length_metres {
             break;
         }
-        assert!(train.speed() > 0.0, "{piece_id:?}: stalled");
-        assert!(train.notes().is_empty(), "{piece_id:?}: rollback");
+        if train.speed() <= 0.0 {
+            stalled = true;
+            break;
+        }
+        if !train.notes().is_empty() {
+            break;
+        }
     }
 
+    ElementScan {
+        forces: ElementForces {
+            minimum_vertical,
+            maximum_vertical,
+            maximum_lateral,
+            maximum_longitudinal,
+            peak_lateral_distance,
+            peak_lateral_speed,
+        },
+        all_cars_seen: cars_seen.into_iter().all(|seen| seen),
+        train_cleared: train.distance() >= element_range.end + train_config.length_metres,
+        stalled,
+        rolled_back: !train.notes().is_empty(),
+        minimum_speed,
+    }
+}
+
+fn assert_train_crosses_element(
+    model: &CoasterModel,
+    circuit: &Circuit,
+    piece_id: PieceId,
+    element_range: std::ops::Range<f64>,
+    cars: u8,
+    entry_speed: f64,
+    minimum_speed_required: bool,
+) -> ElementForces {
+    let scan = scan_train_element(model, circuit, element_range, cars, entry_speed);
+    let forces = scan.forces;
     let limits = model.comfortable_force_limits;
     assert!(
-        cars_seen.into_iter().all(|seen| seen),
+        scan.all_cars_seen,
         "{piece_id:?} {} {cars} cars at {entry_speed}: not every car entered",
         model.name
     );
     assert!(
-        train.distance() >= element_range.end + train_config.length_metres,
+        scan.train_cleared,
         "{piece_id:?} {} {cars} cars at {entry_speed}: train did not clear",
         model.name
     );
     assert!(
-        train.notes().is_empty(),
+        !scan.rolled_back,
         "{piece_id:?} {} {cars} cars at {entry_speed}: rollback",
         model.name
     );
     assert!(
-        minimum_vertical >= limits.minimum_vertical_g
-            && maximum_vertical <= limits.maximum_vertical_g
-            && maximum_lateral <= limits.maximum_lateral_g
-            && maximum_longitudinal <= limits.maximum_longitudinal_g,
-        "{piece_id:?} {} {cars} cars at {entry_speed}: vertical {minimum_vertical}..{maximum_vertical}, lateral {maximum_lateral}, longitudinal {maximum_longitudinal}; limits {limits:?}",
+        !scan.stalled,
+        "{piece_id:?} {} {cars} cars at {entry_speed}: stalled",
         model.name
+    );
+    assert!(
+        forces.minimum_vertical >= limits.minimum_vertical_g
+            && forces.maximum_vertical <= limits.maximum_vertical_g
+            && forces.maximum_lateral <= limits.maximum_lateral_g
+            && forces.maximum_longitudinal <= limits.maximum_longitudinal_g,
+        "{piece_id:?} {} {cars} cars at {entry_speed}: vertical {}..{}, lateral {}, longitudinal {}; limits {limits:?}",
+        model.name,
+        forces.minimum_vertical,
+        forces.maximum_vertical,
+        forces.maximum_lateral,
+        forces.maximum_longitudinal
     );
     if matches!(piece_id, PieceId::Corkscrew | PieceId::CorkscrewRight) {
         assert!(
-            maximum_lateral <= 1.0,
-            "{piece_id:?} {} {cars} cars at {entry_speed}: lateral {maximum_lateral} exceeds 1 g",
-            model.name
+            forces.maximum_lateral <= 1.0,
+            "{piece_id:?} {} {cars} cars at {entry_speed}: lateral {} exceeds 1 g",
+            model.name,
+            forces.maximum_lateral
         );
     }
     if minimum_speed_required {
         assert!(
-            minimum_speed >= 5.0,
-            "{piece_id:?}: minimum speed {minimum_speed}"
+            scan.minimum_speed >= 5.0,
+            "{piece_id:?}: minimum speed {}",
+            scan.minimum_speed
         );
     }
     eprintln!(
-        "{piece_id:?} {} {cars} cars at {entry_speed:.3}: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, lateral {maximum_lateral:.3}, longitudinal {maximum_longitudinal:.3}",
-        model.name
+        "{piece_id:?} {} {cars} cars at {entry_speed:.3}: vertical {:.3}..{:.3}, lateral {:.3}, longitudinal {:.3}",
+        model.name,
+        forces.minimum_vertical,
+        forces.maximum_vertical,
+        forces.maximum_lateral,
+        forces.maximum_longitudinal
     );
+    forces
+}
+
+fn peak_roll_rate_degrees_per_second(piece: &Piece, speed: f64) -> f64 {
+    let sample_count = (piece.length() / 0.05).ceil() as usize;
+    let mut previous_distance = 0.0;
+    let mut previous_roll = piece.sample(0.0).roll;
+    let mut peak_rate: f64 = 0.0;
+    for index in 1..=sample_count {
+        let distance = if index == sample_count {
+            piece.length()
+        } else {
+            piece.length() * index as f64 / sample_count as f64
+        };
+        let roll = piece.sample(distance).roll;
+        let roll_rate = (roll - previous_roll).abs() / (distance - previous_distance) * speed;
+        peak_rate = peak_rate.max(roll_rate.to_degrees());
+        previous_distance = distance;
+        previous_roll = roll;
+    }
+    peak_rate
 }
 
 fn models() -> [CoasterModel; 3] {
@@ -587,14 +681,78 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
 }
 
 #[test]
+fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::WoodenEjectorHill8x64)
+        .expect("wooden strong floater is in the catalog");
+    assert!(piece.name.contains("floater"));
+    assert!(piece.rated_speeds.is_some());
+    assert!(wooden_twister_model().allows_piece(piece));
+    assert!(!hybrid_model().allows_piece(piece));
+    assert!(!multi_launch_model().allows_piece(piece));
+    let rated = piece.rated_speeds.unwrap();
+    let model = wooden_twister_model();
+    let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
+    for cars in [6, 12] {
+        let mut speeds = vec![rated.minimum_entry];
+        let mut speed = rated.maximum_entry;
+        while speed > rated.minimum_entry {
+            speeds.push(speed);
+            speed -= 1.0;
+        }
+        for entry_speed in speeds {
+            assert_train_crosses_element(
+                &model,
+                &circuit,
+                piece.id,
+                element_start..element_end,
+                cars,
+                entry_speed,
+                false,
+            );
+        }
+        let mut train_config = model.train.clone();
+        train_config.cars = cars;
+        let mut train = Train::new(
+            &circuit,
+            &train_config,
+            unpowered(),
+            element_start,
+            rated.maximum_entry,
+        );
+        let mut minimum_vertical_g = f64::INFINITY;
+        for _ in 0..100_000 {
+            train.step(&circuit);
+            for frame in train.take_readings() {
+                for reading in frame {
+                    if (element_start..element_end).contains(&reading.distance) {
+                        minimum_vertical_g = minimum_vertical_g.min(reading.g.vertical);
+                    }
+                }
+            }
+            if train.distance() >= element_end + train_config.length_metres {
+                break;
+            }
+        }
+        assert_eq!(
+            model
+                .comfortable_force_limits
+                .classify_airtime(minimum_vertical_g),
+            AirtimeRating::Good,
+            "{cars} cars: {minimum_vertical_g:.3} g"
+        );
+    }
+}
+
+#[test]
 fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train_layout() {
     let allowed_models = models();
     let ejector_hills: Vec<_> = catalog()
         .iter()
         .filter(|piece| {
-            piece
-                .family
-                .is_some_and(|family| family.feel == HillFeel::Ejector && family.twist.is_none())
+            matches!(piece.family, Some(PieceFamily::Hill(family))
+                if family.feel == HillFeel::Ejector && family.twist.is_none())
                 && allowed_models
                     .iter()
                     .any(|model| model.allowed_pieces.contains(&piece.id))
@@ -930,6 +1088,200 @@ fn wave_and_overbank_turns_have_contiguous_rated_windows() {
             speed += 1.0;
         }
     }
+}
+
+#[test]
+fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
+    const MAXIMUM_DESIGN_SPEED_ROLL_RATE_DEGREES_PER_SECOND: f64 = 95.0;
+    const MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND: f64 = 200.0;
+
+    let speed_turns: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| {
+            matches!(
+                piece.family,
+                Some(theme_park_sim::track::PieceFamily::SpeedTurn { .. })
+            )
+        })
+        .collect();
+    assert_eq!(speed_turns.len(), 6);
+    let mut failures = Vec::new();
+    let all_models = models();
+    let mut scanned_candidates = 0;
+
+    for piece in speed_turns {
+        let Some(theme_park_sim::track::PieceFamily::SpeedTurn {
+            design_speed_metres_per_second: design_speed,
+            ..
+        }) = piece.family
+        else {
+            unreachable!("filtered speed-turn piece lost its family metadata");
+        };
+        let rated = piece.rated_speeds.expect("speed turn has a rated window");
+        let (circuit, start, end) = circuit_for_level_piece(piece.id);
+        let allowed_by_any_model = all_models.iter().any(|model| model.allows_piece(piece));
+        let mut maximum_design_speed_lateral: f64 = 0.0;
+        let mut design_lateral_context = String::from("no model scanned");
+        let mut window_forces = ElementForces {
+            minimum_vertical: f64::INFINITY,
+            maximum_vertical: f64::NEG_INFINITY,
+            maximum_lateral: 0.0,
+            maximum_longitudinal: 0.0,
+            peak_lateral_distance: start,
+            peak_lateral_speed: rated.minimum_entry,
+        };
+        let mut model_window_forces = vec![window_forces; all_models.len()];
+        let mut window_lateral_context = String::from("no model scanned");
+        let mut speed = rated.minimum_entry;
+        while speed <= rated.maximum_entry {
+            for (model_index, model) in all_models.iter().enumerate() {
+                let model_allows_piece = model.allows_piece(piece);
+                for cars in [6, 12] {
+                    let scan = scan_train_element(model, &circuit, start..end, cars, speed);
+                    let forces = scan.forces;
+                    if !scan.all_cars_seen {
+                        failures.push(format!(
+                            "{:?} {} {cars} cars at {speed:.1} m/s: not every car entered in the candidate scan",
+                            piece.id, model.name
+                        ));
+                    }
+                    if !scan.train_cleared {
+                        failures.push(format!(
+                            "{:?} {} {cars} cars at {speed:.1} m/s: train did not clear in the candidate scan",
+                            piece.id, model.name
+                        ));
+                    }
+                    if scan.stalled {
+                        failures.push(format!(
+                            "{:?} {} {cars} cars at {speed:.1} m/s: train stalled in the candidate scan",
+                            piece.id, model.name
+                        ));
+                    }
+                    if scan.rolled_back {
+                        failures.push(format!(
+                            "{:?} {} {cars} cars at {speed:.1} m/s: train rolled back in the candidate scan",
+                            piece.id, model.name
+                        ));
+                    }
+                    let limits = model.comfortable_force_limits;
+                    if model_allows_piece
+                        && (forces.minimum_vertical < limits.minimum_vertical_g
+                            || forces.maximum_vertical > limits.maximum_vertical_g
+                            || forces.maximum_lateral > limits.maximum_lateral_g
+                            || forces.maximum_longitudinal > limits.maximum_longitudinal_g)
+                    {
+                        failures.push(format!(
+                            "{:?} {} {cars} cars at {speed:.1} m/s: vertical {:.3}..{:.3} g, lateral {:.3} g at {:.2} m (car speed {:.2} m/s), longitudinal {:.3} g; limits {limits:?}",
+                            piece.id,
+                            model.name,
+                            forces.minimum_vertical,
+                            forces.maximum_vertical,
+                            forces.maximum_lateral,
+                            forces.peak_lateral_distance,
+                            forces.peak_lateral_speed,
+                            forces.maximum_longitudinal
+                        ));
+                    }
+                    window_forces.minimum_vertical =
+                        window_forces.minimum_vertical.min(forces.minimum_vertical);
+                    window_forces.maximum_vertical =
+                        window_forces.maximum_vertical.max(forces.maximum_vertical);
+                    if forces.maximum_lateral > window_forces.maximum_lateral {
+                        window_forces.maximum_lateral = forces.maximum_lateral;
+                        window_forces.peak_lateral_distance = forces.peak_lateral_distance;
+                        window_forces.peak_lateral_speed = forces.peak_lateral_speed;
+                        window_lateral_context =
+                            format!("{} {cars} cars at {speed:.1} m/s", model.name);
+                    }
+                    window_forces.maximum_longitudinal = window_forces
+                        .maximum_longitudinal
+                        .max(forces.maximum_longitudinal);
+                    let model_window = &mut model_window_forces[model_index];
+                    model_window.minimum_vertical =
+                        model_window.minimum_vertical.min(forces.minimum_vertical);
+                    model_window.maximum_vertical =
+                        model_window.maximum_vertical.max(forces.maximum_vertical);
+                    if forces.maximum_lateral > model_window.maximum_lateral {
+                        model_window.maximum_lateral = forces.maximum_lateral;
+                        model_window.peak_lateral_distance = forces.peak_lateral_distance;
+                        model_window.peak_lateral_speed = forces.peak_lateral_speed;
+                    }
+                    model_window.maximum_longitudinal = model_window
+                        .maximum_longitudinal
+                        .max(forces.maximum_longitudinal);
+                    if (speed - design_speed).abs() < 1e-8
+                        && forces.maximum_lateral > maximum_design_speed_lateral
+                    {
+                        maximum_design_speed_lateral = forces.maximum_lateral;
+                        design_lateral_context = format!(
+                            "{} {cars} cars at {:.2} m, car speed {:.2} m/s",
+                            model.name, forces.peak_lateral_distance, forces.peak_lateral_speed
+                        );
+                    }
+                }
+            }
+            speed += 1.0;
+        }
+        scanned_candidates += 1;
+        let design_speed_peak_roll_rate_degrees_per_second =
+            peak_roll_rate_degrees_per_second(piece, design_speed);
+        let window_peak_roll_rate_degrees_per_second =
+            peak_roll_rate_degrees_per_second(piece, rated.maximum_entry);
+        eprintln!(
+            "{:?}: scanned across all models; allowed by any model: {allowed_by_any_model}; full-train vertical {:.3}..{:.3} g, lateral {:.3} g across window at {window_lateral_context}, {:.3} g at design speed at {design_lateral_context}, longitudinal {:.3} g, design-speed roll rate {design_speed_peak_roll_rate_degrees_per_second:.1} degrees/s, peak rated-window roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s",
+            piece.id,
+            window_forces.minimum_vertical,
+            window_forces.maximum_vertical,
+            window_forces.maximum_lateral,
+            maximum_design_speed_lateral,
+            window_forces.maximum_longitudinal
+        );
+        for (model, forces) in all_models.iter().zip(model_window_forces) {
+            eprintln!(
+                "{:?} {} allowed={}: full-train vertical {:.4}..{:.4} g, lateral {:.4} g at {:.2} m (car speed {:.2} m/s), longitudinal {:.4} g",
+                piece.id,
+                model.name,
+                model.allows_piece(piece),
+                forces.minimum_vertical,
+                forces.maximum_vertical,
+                forces.maximum_lateral,
+                forces.peak_lateral_distance,
+                forces.peak_lateral_speed,
+                forces.maximum_longitudinal
+            );
+        }
+        if maximum_design_speed_lateral > 0.35 {
+            failures.push(format!(
+                "{} design-speed worst-car lateral {maximum_design_speed_lateral:.3} g at {design_lateral_context} exceeds 0.35 g",
+                piece.name
+            ));
+        }
+        if design_speed_peak_roll_rate_degrees_per_second
+            > MAXIMUM_DESIGN_SPEED_ROLL_RATE_DEGREES_PER_SECOND
+        {
+            failures.push(format!(
+                "{} design-speed roll rate {design_speed_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds {MAXIMUM_DESIGN_SPEED_ROLL_RATE_DEGREES_PER_SECOND:.1} degrees/s",
+                piece.name
+            ));
+        }
+        if window_peak_roll_rate_degrees_per_second
+            > MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND
+        {
+            failures.push(format!(
+                "{} peak rated-window roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds {MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND:.1} degrees/s",
+                piece.name
+            ));
+        }
+    }
+    assert_eq!(
+        scanned_candidates, 6,
+        "full-train scan covers every speed-turn candidate"
+    );
+    assert!(
+        failures.is_empty(),
+        "speed-turn force scan failures:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]

@@ -10,6 +10,371 @@ fn catalog_returns_the_same_static_template_slice() {
 }
 
 #[test]
+fn speed_matched_turn_catalog_banks_for_each_design_speed() {
+    let expected_turns = [
+        (PieceId::SpeedTurnLarge16Left, 32, Hand::Left, 16.0),
+        (PieceId::SpeedTurnLarge20Left, 32, Hand::Left, 20.0),
+        (PieceId::SpeedTurnLarge24Left, 32, Hand::Left, 24.0),
+        (PieceId::SpeedTurnLarge16Right, 32, Hand::Right, 16.0),
+        (PieceId::SpeedTurnLarge20Right, 32, Hand::Right, 20.0),
+        (PieceId::SpeedTurnLarge24Right, 32, Hand::Right, 24.0),
+    ];
+    let templates = catalog();
+    let speed_turns: Vec<_> = templates
+        .iter()
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
+        .collect();
+    assert_eq!(speed_turns.len(), expected_turns.len());
+    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    let mut bank_measurements = Vec::with_capacity(expected_turns.len());
+
+    for (id, expected_radius, expected_hand, design_speed) in expected_turns {
+        let piece = templates
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap_or_else(|| panic!("catalog is missing {id:?}"));
+        let Some(PieceFamily::SpeedTurn {
+            radius_metres,
+            hand,
+            design_speed_metres_per_second,
+        }) = piece.family
+        else {
+            panic!("{id:?} should have speed-turn family metadata");
+        };
+        assert_eq!(radius_metres, expected_radius, "{id:?}");
+        assert_eq!(hand, expected_hand, "{id:?}");
+        near(design_speed_metres_per_second, design_speed);
+        let hand_name = match hand {
+            Hand::Left => "left",
+            Hand::Right => "right",
+        };
+        let radius_name = if radius_metres == 32 {
+            "Large"
+        } else {
+            "Small"
+        };
+        assert_eq!(
+            piece.name,
+            format!("{radius_name} {hand_name} turn banked for {design_speed:.0} m/s"),
+            "{id:?} name"
+        );
+        assert!(
+            matches!(
+                piece.shape,
+                Shape::SpeedBank {
+                    design_speed: shape_speed
+                } if shape_speed == design_speed
+            ),
+            "{id:?} shape"
+        );
+        assert_eq!(piece.entry.slope, Slope::Level, "{id:?} entry slope");
+        assert_eq!(piece.entry.bank, Bank::Level, "{id:?} entry bank");
+        assert_eq!(piece.exit.slope, Slope::Level, "{id:?} exit slope");
+        assert_eq!(piece.exit.bank, Bank::Level, "{id:?} exit bank");
+        let rated = piece.rated_speeds.expect("speed turns are rated");
+        near(rated.minimum_entry, design_speed - 3.0);
+        near(rated.maximum_entry, design_speed + 3.0);
+
+        let mut peak_bank_radians: f64 = 0.0;
+        let heart_curvature_step = piece.length() / 100.0;
+        for index in 0..=100 {
+            let distance = if index == 100 {
+                piece.length()
+            } else {
+                piece.length() * f64::from(index) / 100.0
+            };
+            let sample = piece.sample(distance);
+            if (1..100).contains(&index) {
+                let before = piece.sample(distance - heart_curvature_step).heart;
+                let after = piece.sample(distance + heart_curvature_step).heart;
+                let heart_first = (after - before) / (2.0 * heart_curvature_step);
+                let heart_second =
+                    (before - sample.heart * 2.0 + after) / heart_curvature_step.powi(2);
+                let heart_horizontal_speed = (heart_first.x.powi(2) + heart_first.y.powi(2)).sqrt();
+                let heart_signed_curvature = (heart_first.x * heart_second.y
+                    - heart_first.y * heart_second.x)
+                    / heart_horizontal_speed.powi(3);
+                let expected_bank = (design_speed.powi(2) * heart_signed_curvature
+                    / crate::physics::GRAVITY)
+                    .atan();
+                assert!(
+                    (sample.roll - expected_bank).abs() < 0.002,
+                    "{id:?} bank should follow heart-path curvature at {distance:.2} m: {:.6} vs {:.6} rad",
+                    sample.roll,
+                    expected_bank
+                );
+            }
+            peak_bank_radians = peak_bank_radians.max(sample.roll.abs());
+        }
+        let peak_bank_degrees = peak_bank_radians.to_degrees();
+        let allowed_by_any_model = models.iter().any(|model| model.allows_piece(piece));
+        eprintln!(
+            "{id:?}: peak design bank {peak_bank_degrees:.2} degrees, allowed by any model: {allowed_by_any_model}"
+        );
+        bank_measurements.push((id, peak_bank_degrees, allowed_by_any_model));
+    }
+    let overbanked_allowed_turns: Vec<_> = bank_measurements
+        .into_iter()
+        .filter(|(_, peak_bank_degrees, allowed)| *allowed && *peak_bank_degrees > 75.0)
+        .collect();
+    assert!(
+        overbanked_allowed_turns.is_empty(),
+        "allowed speed turns exceed the 75-degree bank cap: {overbanked_allowed_turns:?}"
+    );
+}
+
+#[test]
+fn speed_matched_turns_mirror_and_join_every_compatible_piece() {
+    let templates = catalog();
+    for (left_id, right_id) in [
+        (
+            PieceId::SpeedTurnLarge16Left,
+            PieceId::SpeedTurnLarge16Right,
+        ),
+        (
+            PieceId::SpeedTurnLarge20Left,
+            PieceId::SpeedTurnLarge20Right,
+        ),
+        (
+            PieceId::SpeedTurnLarge24Left,
+            PieceId::SpeedTurnLarge24Right,
+        ),
+    ] {
+        let left = templates.iter().find(|piece| piece.id == left_id).unwrap();
+        let right = templates.iter().find(|piece| piece.id == right_id).unwrap();
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let left_sample = left.sample(left.length() * fraction);
+            let right_sample = right.sample(right.length() * fraction);
+            near_vec(
+                right_sample.position,
+                Vec3::new(
+                    left_sample.position.x,
+                    -left_sample.position.y,
+                    left_sample.position.z,
+                ),
+            );
+            near_vec(
+                right_sample.tangent,
+                Vec3::new(
+                    left_sample.tangent.x,
+                    -left_sample.tangent.y,
+                    left_sample.tangent.z,
+                ),
+            );
+            near_vec(
+                right_sample.up,
+                Vec3::new(left_sample.up.x, -left_sample.up.y, left_sample.up.z),
+            );
+            near(right_sample.roll, -left_sample.roll);
+        }
+
+        for turn in [left, right] {
+            for heading_offset in [-1, 1] {
+                let diagonal_entry = TrackState {
+                    heading: Heading::from_index(turn.entry.heading.index() + heading_offset),
+                    ..turn.entry
+                };
+                let diagonal_turn = turn.at(diagonal_entry).unwrap_or_else(|| {
+                    panic!("{:?} cannot be placed at {diagonal_entry:?}", turn.id)
+                });
+                let incoming = diagonal_turn.sample(0.0);
+                let outgoing = diagonal_turn.sample(diagonal_turn.length());
+                near_vec(incoming.position, diagonal_entry.position());
+                near_vec(incoming.tangent, diagonal_entry.tangent());
+                near_vec(outgoing.position, diagonal_turn.exit.position());
+                near_vec(outgoing.tangent, diagonal_turn.exit.tangent());
+            }
+
+            let following_pieces: Vec<_> = templates
+                .iter()
+                .filter_map(|template| template.at(turn.exit))
+                .collect();
+            assert!(
+                !following_pieces.is_empty(),
+                "{:?} has no continuation",
+                turn.id
+            );
+            for following_piece in following_pieces {
+                let incoming = turn.sample(turn.length());
+                let outgoing = following_piece.sample(0.0);
+                near_vec(incoming.position, outgoing.position);
+                near_vec(incoming.tangent, outgoing.tangent);
+                near_vec(incoming.up, outgoing.up);
+                near(incoming.roll, outgoing.roll);
+                near(incoming.curvature, outgoing.curvature);
+            }
+        }
+    }
+}
+
+#[test]
+fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center() {
+    let turns: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
+        .collect();
+    assert_eq!(turns.len(), 6);
+
+    let connector_step_metres = 0.05;
+    let center_step_metres = 0.05;
+    for piece in turns {
+        let roll_at = |distance: f64| piece.sample(distance).roll;
+        let start_roll = roll_at(0.0);
+        let start_acceleration_at_step = (roll_at(2.0 * connector_step_metres)
+            - 2.0 * roll_at(connector_step_metres)
+            + start_roll)
+            / connector_step_metres.powi(2);
+        let half_connector_step = connector_step_metres / 2.0;
+        let start_acceleration_at_half_step =
+            (roll_at(connector_step_metres) - 2.0 * roll_at(half_connector_step) + start_roll)
+                / half_connector_step.powi(2);
+        assert!(
+            start_acceleration_at_half_step.abs() <= start_acceleration_at_step.abs() * 0.75 + 1e-4,
+            "{:?} entry roll acceleration does not approach the level connector smoothly: {:.6} then {:.6} rad/m²",
+            piece.id,
+            start_acceleration_at_step,
+            start_acceleration_at_half_step
+        );
+
+        let end_roll = roll_at(piece.length());
+        let end_acceleration_at_step = (end_roll
+            - 2.0 * roll_at(piece.length() - connector_step_metres)
+            + roll_at(piece.length() - 2.0 * connector_step_metres))
+            / connector_step_metres.powi(2);
+        let end_acceleration_at_half_step = (end_roll
+            - 2.0 * roll_at(piece.length() - half_connector_step)
+            + roll_at(piece.length() - connector_step_metres))
+            / half_connector_step.powi(2);
+        assert!(
+            end_acceleration_at_half_step.abs() <= end_acceleration_at_step.abs() * 0.75 + 1e-4,
+            "{:?} exit roll acceleration does not approach the level connector smoothly: {:.6} then {:.6} rad/m²",
+            piece.id,
+            end_acceleration_at_step,
+            end_acceleration_at_half_step
+        );
+
+        let center = piece.length() / 2.0;
+        let left_center_acceleration = (roll_at(center)
+            - 2.0 * roll_at(center - center_step_metres)
+            + roll_at(center - 2.0 * center_step_metres))
+            / center_step_metres.powi(2);
+        let right_center_acceleration = (roll_at(center + 2.0 * center_step_metres)
+            - 2.0 * roll_at(center + center_step_metres)
+            + roll_at(center))
+            / center_step_metres.powi(2);
+        assert!(
+            (left_center_acceleration - right_center_acceleration).abs() <= 0.01,
+            "{:?} roll acceleration is discontinuous at the turn center: left {:.6}, right {:.6} rad/m²",
+            piece.id,
+            left_center_acceleration,
+            right_center_acceleration
+        );
+    }
+}
+
+#[test]
+fn speed_matched_turns_keep_the_heart_on_a_planar_path_with_a_steady_center() {
+    let turns: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
+        .collect();
+    assert!(!turns.is_empty());
+
+    for piece in turns {
+        let Some(PieceFamily::SpeedTurn { hand, .. }) = piece.family else {
+            unreachable!("filtered speed-turn piece lost its family metadata");
+        };
+        let length = piece.length();
+        let heart_height = piece.sample(0.0).heart.z;
+        for index in 0..=100 {
+            let distance = if index == 100 {
+                length
+            } else {
+                length * f64::from(index) / 100.0
+            };
+            let heart = piece.sample(distance).heart;
+            assert!(
+                (heart.z - heart_height).abs() <= 1e-8,
+                "{:?} rider heart leaves its horizontal path at {distance:.3} m: z {:.9} vs {:.9}",
+                piece.id,
+                heart.z,
+                heart_height
+            );
+        }
+
+        let heart_tangent_at = |distance: f64| {
+            let step = length / 1000.0;
+            let before_distance = (distance - step).max(0.0);
+            let after_distance = (distance + step).min(length);
+            let before = piece.sample(before_distance).heart;
+            let after = piece.sample(after_distance).heart;
+            Vec3::new(after.x - before.x, after.y - before.y, 0.0).unit()
+        };
+        let entry_tangent = piece.entry.tangent().unit();
+        let exit_tangent = piece.exit.tangent().unit();
+        let hand_sign = if hand == Hand::Left { 1.0 } else { -1.0 };
+        let signed_turn = |from: Vec3, to: Vec3| {
+            (from.x * to.y - from.y * to.x).atan2(from.x * to.x + from.y * to.y)
+        };
+        let expected_turn = hand_sign * signed_turn(entry_tangent, exit_tangent);
+        assert!(
+            expected_turn > 0.0,
+            "{:?} connectors contradict its hand",
+            piece.id
+        );
+        assert!(heart_tangent_at(0.0).dot(entry_tangent) > 0.9999);
+        assert!(heart_tangent_at(length).dot(exit_tangent) > 0.9999);
+
+        let mut previous_turn = 0.0;
+        for index in 0..=100 {
+            let distance = if index == 100 {
+                length
+            } else {
+                length * f64::from(index) / 100.0
+            };
+            let directed_turn = hand_sign * signed_turn(entry_tangent, heart_tangent_at(distance));
+            assert!(
+                directed_turn >= previous_turn - 1e-4,
+                "{:?} rider-heart heading reverses at {distance:.3} m: {:.6} after {:.6} radians",
+                piece.id,
+                directed_turn,
+                previous_turn
+            );
+            assert!(
+                directed_turn >= -1e-4 && directed_turn <= expected_turn + 1e-4,
+                "{:?} rider-heart heading leaves the intended turn at {distance:.3} m: {:.6} of {:.6} radians",
+                piece.id,
+                directed_turn,
+                expected_turn
+            );
+            previous_turn = directed_turn;
+        }
+
+        let steady_bank_samples =
+            [0.45, 0.475, 0.5, 0.525, 0.55].map(|fraction| piece.sample(length * fraction).roll);
+        let minimum_steady_bank = steady_bank_samples
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let maximum_steady_bank = steady_bank_samples
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            hand_sign * piece.sample(length / 2.0).roll > 0.1,
+            "{:?} steady bank does not turn with the rider-heart path",
+            piece.id
+        );
+        assert!(
+            maximum_steady_bank - minimum_steady_bank <= 0.001,
+            "{:?} has no steady bank across the center section: {:?}",
+            piece.id,
+            steady_bank_samples
+        );
+    }
+}
+
+#[test]
 fn airtime_rating_matches_the_force_overlay_bands() {
     use super::models::AirtimeRating;
 
@@ -47,8 +412,10 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
         .iter()
         .filter(|piece| {
             piece.family.is_some_and(|family| {
-                matches!(family.feel, HillFeel::Ejector | HillFeel::Floater)
-                    && family.twist.is_none()
+                matches!(family, PieceFamily::Hill(family) if
+                    matches!(family.feel, HillFeel::Ejector | HillFeel::Floater)
+                        && family.twist.is_none()
+                )
             }) && steel_models.iter().all(|model| model.allows_piece(piece))
         })
         .collect();
@@ -58,9 +425,11 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
         .iter()
         .filter(|piece| {
             piece.family.is_some_and(|family| {
-                matches!(
-                    family.twist,
-                    Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                matches!(family, PieceFamily::Hill(family) if
+                    matches!(
+                        family.twist,
+                        Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                    )
                 )
             })
         })
@@ -68,12 +437,16 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
     assert_eq!(outer_banks.len(), upright_hills.len() * 2);
 
     for upright in upright_hills {
-        let family = upright.family.unwrap();
+        let Some(PieceFamily::Hill(family)) = upright.family else {
+            panic!("{} should be a hill family", upright.name);
+        };
         for twist in [HillTwist::OuterBankLeft, HillTwist::OuterBankRight] {
             let matching: Vec<_> = outer_banks
                 .iter()
                 .filter(|piece| {
-                    let candidate = piece.family.unwrap();
+                    let Some(PieceFamily::Hill(candidate)) = piece.family else {
+                        return false;
+                    };
                     candidate.feel == family.feel
                         && candidate.height_metres == family.height_metres
                         && candidate.span_metres == family.span_metres
@@ -100,13 +473,15 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
     for (feel, size_count) in [(HillFeel::ZeroGRoll, 2), (HillFeel::Stall, 1)] {
         let pieces: Vec<_> = catalog()
             .iter()
-            .filter(|piece| piece.family.is_some_and(|family| family.feel == feel))
+            .filter(|piece| matches!(piece.family, Some(PieceFamily::Hill(family)) if family.feel == feel))
             .collect();
         assert_eq!(pieces.len(), 2 * size_count, "{feel:?}");
         let mut dimensions: Vec<_> = pieces
             .iter()
             .map(|piece| {
-                let family = piece.family.unwrap();
+                let Some(PieceFamily::Hill(family)) = piece.family else {
+                    panic!("{} should be a hill family", piece.name);
+                };
                 (family.height_metres, family.span_metres)
             })
             .collect();
@@ -118,7 +493,9 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
                 let matching: Vec<_> = pieces
                     .iter()
                     .filter(|piece| {
-                        let family = piece.family.unwrap();
+                        let Some(PieceFamily::Hill(family)) = piece.family else {
+                            return false;
+                        };
                         family.height_metres == height
                             && family.span_metres == span
                             && family.twist == Some(twist)
@@ -140,7 +517,7 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
 
 #[test]
 fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
-    let expected_hills: [(&str, &[&str]); 14] = [
+    let expected_hills: [(&str, &[&str]); 15] = [
         (
             "Ejector hill 8 × 48 m",
             &["Timber Tumbler", "Velocity Viper"],
@@ -194,6 +571,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
         ),
         ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
+        ("Strong floater hill 8 × 64 m", &["Briar Blitz"]),
     ];
     let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
     let hill_pieces: Vec<_> = catalog()
@@ -220,12 +598,16 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         assert!(matches!(piece.shape, Shape::Profile(_)), "{name}");
         let rated = piece.rated_speeds.expect("hill has a rated speed window");
         assert!(rated.maximum_entry - rated.minimum_entry >= 2.0, "{name}");
-        let family = piece.family.expect("hill has family metadata");
+        let Some(PieceFamily::Hill(family)) = piece.family else {
+            panic!("{name} should have hill family metadata");
+        };
         let dimensions: Vec<u16> = name
             .split_whitespace()
             .filter_map(|word| word.parse().ok())
             .collect();
-        let expected_feel = if name.starts_with("Floater") {
+        let expected_feel = if name.starts_with("Strong floater") {
+            HillFeel::StrongFloater
+        } else if name.starts_with("Floater") {
             HillFeel::Floater
         } else if name.starts_with("Speed") {
             HillFeel::Speed
@@ -376,10 +758,12 @@ fn inversion_pieces_identify_their_heartlining() {
             );
         } else if piece.heartlining.is_some() {
             assert!(
-                piece.family.is_some_and(|family| matches!(
-                    family.twist,
-                    Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
-                )) && piece.heartlining == Some(Heartlining::Heartlined),
+                piece.family.is_some_and(
+                    |family| matches!(family, PieceFamily::Hill(family) if matches!(
+                        family.twist,
+                        Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                    ))
+                ) && piece.heartlining == Some(Heartlining::Heartlined),
                 "{:?}: unexpected heartlining on a non-inversion",
                 piece.id
             );

@@ -5,8 +5,9 @@ use crate::physics::GRAVITY;
 use super::profile::{GENERATED_HILL_DESIGNS, SolvedProfile, embedded_profile};
 use super::roll::{RollGeometry, Twist};
 use super::{
-    Bank, Heading, Heartlining, HillFamily, HillFeel, HillTwist, HorizontalCurvature, Inversion,
-    Material, Piece, PieceId, PieceKind, RatedSpeeds, Shape, Slope, TrackState, VerticalCurvature,
+    Bank, Hand, Heading, Heartlining, HillFamily, HillFeel, HillTwist, HorizontalCurvature,
+    Inversion, Material, Piece, PieceFamily, PieceId, PieceKind, RatedSpeeds, Shape, Slope,
+    TrackState, VerticalCurvature,
 };
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
@@ -856,6 +857,20 @@ fn build_catalog() -> Vec<Piece> {
             },
         )
         .collect();
+    let mut long_gentle_down_to_level = pieces
+        .iter()
+        .find(|piece| piece.id == GentleDownToLevel)
+        .unwrap()
+        .clone();
+    long_gentle_down_to_level.id = LongGentleDownToLevel;
+    long_gentle_down_to_level.name = "Long gentle descent level-out";
+    long_gentle_down_to_level.exit.x = 16;
+    long_gentle_down_to_level.exit.z = -4;
+    long_gentle_down_to_level.tangent_scale = (long_gentle_down_to_level.exit.position()
+        - long_gentle_down_to_level.entry.position())
+    .length();
+    long_gentle_down_to_level.clear_arc_table();
+    pieces.push(long_gentle_down_to_level);
     for (id, name, profile, maximum_entry, model_radius, material) in [
         (
             LargeLoop,
@@ -1577,6 +1592,16 @@ fn build_catalog() -> Vec<Piece> {
             19.66550391454844,
             8.0,
         ),
+        (
+            WoodenEjectorHill8x64,
+            "WoodenEjectorHill8x64",
+            "Strong floater hill 8 × 64 m",
+            HillFeel::StrongFloater,
+            8,
+            64,
+            22.894120166796476,
+            8.0,
+        ),
     ] {
         let profile = Arc::new(embedded_profile(profile_name));
         let maximum_entry = design_speed
@@ -1594,13 +1619,13 @@ fn build_catalog() -> Vec<Piece> {
         piece.exit.z = (endpoint[1] / 2.0).round() as i32;
         piece.shape = Shape::Profile(profile);
         piece.rated_speeds = Some(rated_speeds);
-        piece.family = Some(HillFamily {
+        piece.family = Some(PieceFamily::Hill(HillFamily {
             feel,
             height_metres,
             span_metres,
             twist: None,
             design_speed_metres_per_second: design_speed,
-        });
+        }));
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
         piece.clear_arc_table();
         pieces.push(piece);
@@ -1705,7 +1730,10 @@ fn build_catalog() -> Vec<Piece> {
                     end: design.crest_end,
                 },
             );
-            piece.family.as_mut().unwrap().twist = Some(twist);
+            let Some(PieceFamily::Hill(family)) = piece.family.as_mut() else {
+                unreachable!()
+            };
+            family.twist = Some(twist);
             piece.heartlining = Some(Heartlining::Heartlined);
             let rated = piece.rated_speeds.as_mut().unwrap();
             // The train needs more entry energy when its rear cars are below a steep crest.
@@ -1786,13 +1814,13 @@ fn build_catalog() -> Vec<Piece> {
             );
             piece.inversion = Some(Inversion::HeartlineRoll);
             piece.heartlining = Some(Heartlining::Heartlined);
-            piece.family = Some(HillFamily {
+            piece.family = Some(PieceFamily::Hill(HillFamily {
                 feel,
                 height_metres: height,
                 span_metres: span,
                 twist: Some(twist),
                 design_speed_metres_per_second: design.design_speed,
-            });
+            }));
             piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
             piece.clear_arc_table();
             let mut rated = profile.rated_speeds(profile_name, design.design_speed, 2.0, 8.0);
@@ -1801,6 +1829,76 @@ fn build_catalog() -> Vec<Piece> {
             piece.rated_speeds = Some(rated);
             pieces.push(piece);
         }
+    }
+    for (base, id, name, radius_metres, hand, design_speed) in [
+        (
+            TurnLargeStandalone,
+            SpeedTurnLarge16Left,
+            "Large left turn banked for 16 m/s",
+            32,
+            Hand::Left,
+            16.0,
+        ),
+        (
+            TurnLargeRightStandalone,
+            SpeedTurnLarge16Right,
+            "Large right turn banked for 16 m/s",
+            32,
+            Hand::Right,
+            16.0,
+        ),
+        (
+            TurnLargeStandalone,
+            SpeedTurnLarge20Left,
+            "Large left turn banked for 20 m/s",
+            32,
+            Hand::Left,
+            20.0,
+        ),
+        (
+            TurnLargeRightStandalone,
+            SpeedTurnLarge20Right,
+            "Large right turn banked for 20 m/s",
+            32,
+            Hand::Right,
+            20.0,
+        ),
+        (
+            TurnLargeStandalone,
+            SpeedTurnLarge24Left,
+            "Large left turn banked for 24 m/s",
+            32,
+            Hand::Left,
+            24.0,
+        ),
+        (
+            TurnLargeRightStandalone,
+            SpeedTurnLarge24Right,
+            "Large right turn banked for 24 m/s",
+            32,
+            Hand::Right,
+            24.0,
+        ),
+    ] {
+        let mut piece = pieces
+            .iter()
+            .find(|piece| piece.id == base)
+            .unwrap()
+            .clone();
+        piece.id = id;
+        piece.name = name;
+        piece.shape = Shape::SpeedBank { design_speed };
+        piece.clear_arc_table();
+        piece.family = Some(PieceFamily::SpeedTurn {
+            radius_metres,
+            hand,
+            design_speed_metres_per_second: design_speed,
+        });
+        piece.rated_speeds = Some(RatedSpeeds {
+            minimum_entry: design_speed - 3.0,
+            maximum_entry: design_speed + 3.0,
+        });
+        pieces.push(piece);
     }
     for (id, name, bank) in [
         (BankedStraightLeft, "Left-banked straight", Left),

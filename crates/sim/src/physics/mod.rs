@@ -20,7 +20,9 @@ pub use construction_run::ConstructionTestRunRecorder;
 mod features;
 mod scoring;
 pub use features::Location;
-pub use scoring::{Contribution, ForceDetail, ScoreBreakdown, Term};
+pub use scoring::{
+    Contribution, ForceAxis, ForceBand, ForceDetail, ScoreBreakdown, Term, force_band,
+};
 mod testing;
 pub use testing::{TestRun, TestRunRecorder, TestSample};
 mod coaster_run;
@@ -39,6 +41,27 @@ pub struct Circuit {
 }
 
 impl Circuit {
+    /// Construct a connected track for simulation before its ends are joined.
+    pub fn open(pieces: Vec<Piece>) -> Result<Self, &'static str> {
+        if pieces.is_empty() || !pieces.iter().any(|piece| piece.kind == PieceKind::Station) {
+            return Err("track requires a station");
+        }
+        if !pieces.windows(2).all(|pair| pair[0].exit == pair[1].entry) {
+            return Err("track pieces must join");
+        }
+        let mut starts = Vec::with_capacity(pieces.len());
+        let mut length = 0.0;
+        for piece in &pieces {
+            starts.push(length);
+            length += piece.length();
+        }
+        Ok(Self {
+            pieces,
+            starts,
+            length,
+            open: true,
+        })
+    }
     pub fn new(pieces: Vec<Piece>) -> Result<Self, &'static str> {
         if pieces.is_empty() {
             return Err("circuit requires track pieces");
@@ -614,15 +637,6 @@ impl Train {
                 );
             } else {
                 match circuit.pieces[index].kind {
-                    // A train faster than the chain coasts and slows under gravity until the chain catches it.
-                    PieceKind::Lift => {
-                        if next_speed < self.config.lift_speed {
-                            let lift_acceleration =
-                                self.config.drive_acceleration + (-initial_gravity).max(0.0);
-                            next_speed = (previous_speed + lift_acceleration * time_step)
-                                .min(self.config.lift_speed);
-                        }
-                    }
                     PieceKind::Launch => {
                         let launch = self
                             .launch
@@ -663,7 +677,21 @@ impl Train {
                                 .max(target);
                         }
                     }
-                    PieceKind::Track => {}
+                    PieceKind::Lift | PieceKind::Track => {}
+                }
+                // A faster train coasts until the chain catches it.
+                if circuit.pieces[index].kind != PieceKind::Launch
+                    && next_speed < self.config.lift_speed
+                    && (0..self.cars).any(|car| {
+                        let (car_piece, _) =
+                            circuit.locate(next_distance - car as f64 * self.spacing);
+                        circuit.pieces[car_piece].kind == PieceKind::Lift
+                    })
+                {
+                    let lift_acceleration =
+                        self.config.drive_acceleration + (-initial_gravity).max(0.0);
+                    next_speed = (previous_speed + lift_acceleration * time_step)
+                        .min(self.config.lift_speed);
                 }
             }
         }
