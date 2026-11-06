@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { canvasToPage, clickCanvas, openTool, selectUnits } from "./game-page";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 
 test.use({
   deviceScaleFactor: 1,
-  launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
+  launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]),
 });
 
 test("sculpts a hill, carves a tunnel and builds an underground path @slow", async ({ page }) => {

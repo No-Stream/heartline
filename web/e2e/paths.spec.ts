@@ -1,9 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { canvasToPage, clickCanvas, openTool } from "./game-page";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 
 test.use({
   deviceScaleFactor: 1,
-  launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
+  launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]),
 });
 
 test("rebuilds the entrance path through the UI and guests walk to the food stall @slow", async ({ page }) => {

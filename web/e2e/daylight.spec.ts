@@ -1,10 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openTool } from "./game-page";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 
 test.use({
   viewport: { width: 1280, height: 750 },
   deviceScaleFactor: 1,
-  launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
+  launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]),
 });
 
 /** 21:42, when a firework from the fixed test-mode schedule is in full bloom over the demo park. */

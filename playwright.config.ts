@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { browserLaunchOptions } from "./web/e2e/fixtures/browser-launch-options";
 
 if (!process.env.THEME_PARK_BROWSER_TESTS_IN_BUDGET) {
   throw new Error("Run browser tests with `npm run e2e -- <playwright args>` (or a make target): it runs them one at a time inside the shared memory and CPU budget.");
@@ -9,20 +10,22 @@ const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: "./web/e2e",
-  snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{-platform}{ext}",
+  snapshotPathTemplate: process.env.THEME_PARK_PLAYWRIGHT_DOCKER === "1"
+    ? "{testDir}/{testFilePath}-snapshots/docker/{arg}{-platform}{ext}"
+    : "{testDir}/{testFilePath}-snapshots/{arg}{-platform}{ext}",
   // Each test boots the WebAssembly simulation and a software-rendered WebGL2 context;
   // one worker per core starved startup and caused timeouts. Two workers fit the six compute cores in
   // tools/compute-cpus; each software-rendered browser uses several cores.
   workers: 2,
   use: {
     baseURL,
-    launchOptions: { channel: "chrome" },
+    launchOptions: browserLaunchOptions(),
   },
   projects: [
     {
       name: "feature",
       testIgnore: ["**/*.journey.spec.ts", "**/smoothness.spec.ts"],
-      workers: 2,
+      workers: process.env.THEME_PARK_PLAYWRIGHT_DOCKER === "1" ? 1 : 2,
     },
     {
       name: "journey",
