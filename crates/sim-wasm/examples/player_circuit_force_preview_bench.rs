@@ -35,12 +35,46 @@ fn main() {
         let speed_match: serde_json::Value =
             serde_json::from_str(&simulation.construction_speed_match_json(candidate, entry_speed))
                 .unwrap();
-        let selected = speed_match["recommendedId"].as_str().unwrap_or(candidate);
-        simulation.construction_select(selected);
-        measure_candidate_preview(&simulation, name, selected);
-        measure_speed_match(&simulation, name, selected, entry_speed);
-        measure_added_action_work(&simulation, name, selected, entry_speed, 1, "placement");
-        measure_added_action_work(&simulation, name, selected, entry_speed, 2, "selection");
+        let requested_candidate = speed_match["recommendedId"].as_str().unwrap_or(candidate);
+        let available_choices: serde_json::Value =
+            serde_json::from_str(&simulation.construction_choices()).unwrap();
+        let is_available = |id: &str| {
+            available_choices.as_array().is_some_and(|choices| {
+                choices
+                    .iter()
+                    .any(|choice| choice["id"] == id && choice["refusal"] == "")
+            })
+        };
+        let selected = if is_available(requested_candidate) {
+            requested_candidate.to_owned()
+        } else {
+            available_choices
+                .as_array()
+                .and_then(|choices| {
+                    choices
+                        .iter()
+                        .find(|choice| choice["refusal"] == "")
+                        .and_then(|choice| choice["id"].as_str())
+                })
+                .unwrap_or_else(|| {
+                    panic!("{name} has no valid candidate after the measured prefix")
+                })
+                .to_owned()
+        };
+        if selected != requested_candidate {
+            println!(
+                "{name}: speed-matched candidate {requested_candidate} is unavailable after the prefix; measuring available {selected} geometry"
+            );
+        }
+        simulation.construction_select(&selected);
+        assert!(
+            simulation.construction_preview_valid(),
+            "{name} {selected} must be a valid candidate at the measured prefix"
+        );
+        measure_candidate_preview(&simulation, name, &selected);
+        measure_speed_match(&simulation, name, candidate, entry_speed);
+        measure_added_action_work(&simulation, name, candidate, entry_speed, 1, "placement");
+        measure_added_action_work(&simulation, name, candidate, entry_speed, 2, "selection");
     }
 }
 

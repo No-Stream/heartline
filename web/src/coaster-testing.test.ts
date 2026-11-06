@@ -297,6 +297,9 @@ describe("coaster testing overlay", () => {
   });
 
   it("formats measured values in ride testing notes using the selected units", () => {
+    const note = "At Standalone small left turn (447.0 m along the track), lateral force magnitude was 7.5 g, above the 3.0 g limit. High forces exceeded the estimated ASTM F2291 comfort envelope for 2.8 s total during this car's ride. Lower speeds or gentler transitions can improve comfort.";
+    expect(formatTestingNote(note, "metric")).toContain("(447 m along the track)");
+    expect(formatTestingNote(note, "imperial")).toContain("(1,467 ft along the track)");
     expect(formatTestingNote(
       "At Loop (200.0 m along the track), vertical force magnitude was 5.0 g, above the 4.0 g limit. High forces exceeded the estimated ASTM F2291 comfort envelope for 2.4 s total during this car's ride. Lower speeds or gentler transitions can improve comfort.",
       "imperial",
