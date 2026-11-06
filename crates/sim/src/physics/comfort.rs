@@ -47,69 +47,6 @@ const MINIMUM_SUSTAINED_INTERVALS: usize = 40;
 #[cfg(test)]
 type DurationCurve = (usize, f64, &'static [(f64, f64)]);
 
-#[cfg(test)]
-struct LowPass {
-    stages: [Biquad; 2],
-}
-
-#[cfg(test)]
-struct Biquad {
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    a1: f64,
-    a2: f64,
-    state1: f64,
-    state2: f64,
-}
-
-#[cfg(test)]
-impl Biquad {
-    fn new(quality: f64, initial: f64) -> Self {
-        let k = (std::f64::consts::PI * 5.0 / SAMPLE_RATE_HZ).tan();
-        let norm = 1.0 / (1.0 + k / quality + k * k);
-        let b0 = k * k * norm;
-        let b1 = 2.0 * b0;
-        let b2 = b0;
-        let a1 = 2.0 * (k * k - 1.0) * norm;
-        let a2 = (1.0 - k / quality + k * k) * norm;
-        Self {
-            b0,
-            b1,
-            b2,
-            a1,
-            a2,
-            state1: initial * (1.0 - b0),
-            state2: initial * (b2 - a2),
-        }
-    }
-
-    fn apply(&mut self, input: f64) -> f64 {
-        let output = self.b0 * input + self.state1;
-        self.state1 = self.b1 * input - self.a1 * output + self.state2;
-        self.state2 = self.b2 * input - self.a2 * output;
-        output
-    }
-}
-
-#[cfg(test)]
-impl LowPass {
-    fn new(initial: f64) -> Self {
-        Self {
-            stages: [
-                Biquad::new(0.541196100146197, initial),
-                Biquad::new(1.306562964876377, initial),
-            ],
-        }
-    }
-
-    fn apply(&mut self, input: f64) -> f64 {
-        self.stages
-            .iter_mut()
-            .fold(input, |value, stage| stage.apply(value))
-    }
-}
-
 /// Streaming approximation of F2291-06a single-axis and combined-axis limits.
 /// The input is a 200 Hz history of vertical, lateral and longitudinal g for one car.
 /// Events under 200 ms, transitions, and restraint differences are not assessed.
@@ -120,7 +57,7 @@ impl LowPass {
 /// The positive vertical plateau is extrapolated beyond the chart's 40 s marker.
 #[cfg(test)]
 pub(super) struct ComfortTracker {
-    filters: Option<[LowPass; 3]>,
+    filter: super::ForceFilter,
     durations: [[u32; 87]; 6],
     pair_durations: [[u32; 141]; 3],
     active_axes: [usize; 6],
@@ -133,7 +70,7 @@ pub(super) struct ComfortTracker {
 impl Default for ComfortTracker {
     fn default() -> Self {
         Self {
-            filters: None,
+            filter: super::ForceFilter::new(super::TIME_STEP),
             durations: [[0; 87]; 6],
             pair_durations: [[0; 141]; 3],
             active_axes: [0; 6],
@@ -147,10 +84,12 @@ impl Default for ComfortTracker {
 #[cfg(test)]
 impl ComfortTracker {
     pub(super) fn record(&mut self, reading: [f64; 3]) {
-        let filters = self
-            .filters
-            .get_or_insert_with(|| reading.map(LowPass::new));
-        let filtered: [f64; 3] = std::array::from_fn(|index| filters[index].apply(reading[index]));
+        let filtered = self.filter.update(super::GForces {
+            vertical: reading[0],
+            lateral: reading[1],
+            longitudinal: reading[2],
+        });
+        let filtered = [filtered.vertical, filtered.lateral, filtered.longitudinal];
         let [vertical, lateral, longitudinal] = filtered;
         let normalised = [
             vertical / if vertical >= 0.0 { 6.6 } else { 2.2 },
@@ -253,10 +192,12 @@ impl ComfortTracker {
 
     #[cfg(test)]
     fn record_reference(&mut self, reading: [f64; 3]) {
-        let filters = self
-            .filters
-            .get_or_insert_with(|| reading.map(LowPass::new));
-        let filtered: [f64; 3] = std::array::from_fn(|index| filters[index].apply(reading[index]));
+        let filtered = self.filter.update(super::GForces {
+            vertical: reading[0],
+            lateral: reading[1],
+            longitudinal: reading[2],
+        });
+        let filtered = [filtered.vertical, filtered.lateral, filtered.longitudinal];
         let [vertical, lateral, longitudinal] = filtered;
         let normalised = [
             vertical / if vertical >= 0.0 { 6.6 } else { 2.2 },
@@ -348,15 +289,7 @@ impl ComfortTracker {
     }
 
     pub(super) fn hash_into(&self, hash: &mut crate::state_hash::StateHasher) {
-        hash.write_bool(self.filters.is_some());
-        if let Some(filters) = &self.filters {
-            for filter in filters {
-                for stage in &filter.stages {
-                    hash.write_f64(stage.state1);
-                    hash.write_f64(stage.state2);
-                }
-            }
-        }
+        self.filter.hash_into(hash);
         for axis in &self.durations {
             for duration in axis {
                 hash.write_u32(*duration);
@@ -553,6 +486,7 @@ mod envelope_tests {
                     lateral_g,
                     longitudinal_g,
                     airtime: false,
+                    force_limit_exceeded: [false; 3],
                     height_m: 0.0,
                     inverted: false,
                     roll: 0.0,

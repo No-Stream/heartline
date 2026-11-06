@@ -4,7 +4,7 @@ import type { TestingSample } from "./generated/TestingSample";
 
 const steel: ForceLimits = { minimumVerticalG: -1.5, maximumVerticalG: 5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 };
 const sample = (distance: number, forces: Partial<TestingSample> = {}): TestingSample => ({
-  distance, x: distance, y: 0, z: 1, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, ...forces,
+  distance, x: distance, y: 0, z: 1, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false], ...forces,
 });
 
 describe("limit closeness", () => {
@@ -14,6 +14,10 @@ describe("limit closeness", () => {
     expect(limitCloseness(sample(0, { verticalG: 1, lateralG: -1.2 }), steel)).toBeCloseTo(0.8);
     expect(limitCloseness(sample(0, { verticalG: 1, longitudinalG: 3 }), steel)).toBeCloseTo(2);
     expect(limitCloseness(sample(0), steel)).toBeCloseTo(0.2);
+  });
+  it("continues to calculate closeness from forces regardless of violation flags", () => {
+    expect(limitCloseness(sample(0, { verticalG: 1, forceLimitExceeded: [true, false, false] }), steel)).toBeCloseTo(0.2);
+    expect(limitCloseness(sample(0, { verticalG: 5.5, forceLimitExceeded: [false, false, false] }), steel)).toBeCloseTo(1.1);
   });
   it("bands the closeness into comfortable, near and past the limit", () => {
     expect(limitBand(0.5)).toBe("comfortable");

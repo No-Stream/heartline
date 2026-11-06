@@ -78,6 +78,7 @@ pub(crate) struct TestingSample {
     pub lateral_g: f64,
     pub longitudinal_g: f64,
     pub airtime: bool,
+    pub force_limit_exceeded: [bool; 3],
 }
 
 #[derive(serde::Serialize, ts_rs::TS)]
@@ -400,6 +401,7 @@ mod wire_tests {
                 lateral_g: 7.0,
                 longitudinal_g: 8.0,
                 airtime: true,
+                force_limit_exceeded: [true, false, true],
             }],
             launches: vec![LaunchReport {
                 piece_index: 4,
@@ -458,6 +460,10 @@ mod wire_tests {
         };
         let value = serde_json::to_value(report).unwrap();
         assert_eq!(value["samples"][0]["verticalG"], 6.0);
+        assert_eq!(
+            value["samples"][0]["forceLimitExceeded"],
+            serde_json::json!([true, false, true])
+        );
         assert_eq!(value["notes"][0], "quoted \"note\"\n");
         assert_eq!(value["launches"][0]["pieceIndex"], 4);
         assert_eq!(value["launches"][0]["exitSpeed"], 42.0);

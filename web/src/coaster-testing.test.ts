@@ -4,9 +4,9 @@ import type { WorldView } from "./render/scene";
 import { LIMIT_BAND_COLORS } from "./force-overlay";
 
 const samples: TestingSample[] = [
-  { distance: 0, x: 2, y: 3, z: 1, speed: 4, verticalG: 1, lateralG: 0.2, longitudinalG: 0, airtime: false },
-  { distance: 1, x: 3, y: 3, z: 1, speed: 12, verticalG: -0.2, lateralG: 0.5, longitudinalG: 0.1, airtime: true },
-  { distance: 2, x: 4, y: 3, z: 1, speed: 20, verticalG: 3, lateralG: 1, longitudinalG: -0.1, airtime: false },
+  { distance: 0, x: 2, y: 3, z: 1, speed: 4, verticalG: 1, lateralG: 0.2, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+  { distance: 1, x: 3, y: 3, z: 1, speed: 12, verticalG: -0.2, lateralG: 0.5, longitudinalG: 0.1, airtime: true, forceLimitExceeded: [false, false, false] },
+  { distance: 2, x: 4, y: 3, z: 1, speed: 20, verticalG: 3, lateralG: 1, longitudinalG: -0.1, airtime: false, forceLimitExceeded: [false, false, false] },
 ];
 const camera = { centerX: 3, centerY: 3, zoom: 1, rotation: 0 as const };
 const viewport = { width: 800, height: 500 };

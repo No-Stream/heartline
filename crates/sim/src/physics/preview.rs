@@ -185,8 +185,6 @@ impl PreviewCache {
                     frame.iter_mut().zip(&mut evaluators).enumerate()
                 {
                     let evaluated = evaluator.update(reading.g);
-                    reading.g = evaluated.filtered;
-                    reading.airtime = reading.g.vertical < 0.0;
                     let exceeded = !evaluated.within_limits;
                     if let Some((previous_distance, previous_exceeded)) = previous_flags[car_index]
                     {
@@ -286,6 +284,7 @@ pub(super) fn preview_at_step(
     let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
     let mut train = Train::new(&circuit, configuration, config, station_distance, 0.0);
     let mut recorder = TestRunRecorder::for_circuit_with_train(&circuit, configuration);
+    recorder.set_time_step(time_step);
     let mut stationary_steps = 0;
     for _ in 0..step_limit {
         train.step_preview(&circuit, time_step);

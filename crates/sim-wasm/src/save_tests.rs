@@ -195,8 +195,8 @@ fn save_round_trips_built_timber_tumbler_with_ejector_hill() {
 fn save_uses_new_version_and_rejects_old_version() {
     let simulation = WasmSimulation::new(42, 20, String::from("demo"));
     let mut bytes = simulation.save_state().unwrap();
-    assert_eq!(&bytes[..7], b"TPSAVE\x02");
-    bytes[6] = 1;
+    assert_eq!(&bytes[..7], b"TPSAVE\x03");
+    bytes[6] = 2;
     assert_eq!(
         super::save::checked_payload(&bytes),
         Err("Unsupported or invalid park save version")

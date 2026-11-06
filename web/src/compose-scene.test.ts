@@ -80,8 +80,8 @@ function sceneInput(overrides: Partial<ComposeSceneInput> = {}): ComposeSceneInp
 describe("composeScene", () => {
   it("draws the live construction estimate as a pickable track ribbon", () => {
     const samples = [
-      { distance: 0, x: 1, y: 1, z: 1, speed: 4, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
-      { distance: 1, x: 2, y: 1, z: 1, speed: 8, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+      { distance: 0, x: 1, y: 1, z: 1, speed: 4, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+      { distance: 1, x: 2, y: 1, z: 1, speed: 8, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
     ];
     const construction = { constructionForcePreview: { samples }, testingReport: null, pieces: [], elements: [], previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array() } as unknown as ConstructionState;
     const scene = composeScene(sceneInput({ construction, testingMetric: "speed" }));
@@ -150,9 +150,9 @@ describe("composeScene", () => {
       previewSupports: new Float32Array(),
       testingReport: {
         samples: [
-          { distance: 0, x: 1, y: 2, z: 0, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
-          { distance: 1, x: 2, y: 2, z: 0, speed: 12, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
-          { distance: 2, x: 3, y: 2, z: 0, speed: 14, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+          { distance: 0, x: 1, y: 2, z: 0, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+          { distance: 1, x: 2, y: 2, z: 0, speed: 12, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+          { distance: 2, x: 3, y: 2, z: 0, speed: 14, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
         ],
         proximityEvents: [],
       },

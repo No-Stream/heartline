@@ -457,6 +457,7 @@ impl WasmSimulation {
                     lateral_g: sample.lateral_g,
                     longitudinal_g: sample.longitudinal_g,
                     airtime: sample.airtime,
+                    force_limit_exceeded: sample.force_limit_exceeded,
                 }
             })
             .collect();
@@ -562,6 +563,7 @@ impl WasmSimulation {
                     lateral_g: sample.lateral_g,
                     longitudinal_g: sample.longitudinal_g,
                     airtime: sample.airtime,
+                    force_limit_exceeded: sample.force_limit_exceeded,
                 }
             })
             .collect();
@@ -1445,6 +1447,7 @@ impl WasmSimulation {
                     lateral_g: sample.lateral_g,
                     longitudinal_g: sample.longitudinal_g,
                     airtime: sample.airtime,
+                    force_limit_exceeded: sample.force_limit_exceeded,
                 }
             })
             .collect();

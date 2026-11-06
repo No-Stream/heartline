@@ -1,7 +1,7 @@
 use super::comfort::{EnvelopeExceedance, EnvelopeTracker};
 use super::features::{PieceSummary, sample_interval};
 use super::scoring::{ForceAxis, ForceBand, ForceBandDurations, ScoreBreakdown, force_band, score};
-use super::{CarReading, Circuit};
+use super::{CarReading, Circuit, ForceEvaluator};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
 use crate::track::{ComfortableForceLimits, Piece};
@@ -25,6 +25,7 @@ pub struct TestSample {
     pub lateral_g: f64,
     pub longitudinal_g: f64,
     pub airtime: bool,
+    pub force_limit_exceeded: [bool; 3],
     pub height_m: f64,
     pub inverted: bool,
     pub roll: f64,
@@ -721,6 +722,10 @@ fn force_advice(envelopes: &[&EnvelopeExceedance]) -> Vec<String> {
 pub struct TestRunRecorder {
     circuit_length: f64,
     force_limits: ComfortableForceLimits,
+    force_evaluator: ForceEvaluator,
+    time_step: f64,
+    violation_seconds: [f64; 3],
+    metre_violations: Vec<[bool; 3]>,
     force_bands: ForceBandDurations,
     comfort: EnvelopeTracker,
     piece_starts: Vec<f64>,
@@ -776,9 +781,22 @@ impl TestRunRecorder {
         self.launch_ranges = fresh.launch_ranges;
         self.noted_rated_pieces.resize(circuit.pieces.len(), false);
         self.samples.resize(circuit.length.ceil() as usize, None);
+        self.metre_violations
+            .resize(circuit.length.ceil() as usize, [false; 3]);
     }
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRunRecorder-v6");
+        hash.write_tag(b"TestRunRecorder-v7");
+        self.force_evaluator.hash_into(hash);
+        hash.write_f64(self.time_step);
+        for seconds in self.violation_seconds {
+            hash.write_f64(seconds);
+        }
+        hash.write_len(self.metre_violations.len());
+        for flags in &self.metre_violations {
+            for flag in flags {
+                hash.write_bool(*flag);
+            }
+        }
         hash.write_f64(self.circuit_length);
         for value in [
             self.force_limits.minimum_vertical_g,
@@ -850,6 +868,13 @@ impl TestRunRecorder {
         Self {
             circuit_length,
             force_limits: crate::track::hybrid_model().comfortable_force_limits,
+            force_evaluator: ForceEvaluator::new(
+                crate::track::hybrid_model().comfortable_force_limits,
+                super::TIME_STEP,
+            ),
+            time_step: super::TIME_STEP,
+            violation_seconds: [0.0; 3],
+            metre_violations: vec![[false; 3]; circuit_length.ceil() as usize],
             force_bands: ForceBandDurations::default(),
             comfort: EnvelopeTracker::default(),
             piece_starts: Vec::new(),
@@ -877,6 +902,24 @@ impl TestRunRecorder {
             dueling_events: Vec::new(),
             visited_ranges: Vec::new(),
         }
+    }
+
+    pub fn set_time_step(&mut self, time_step: f64) {
+        assert!(
+            !self.started,
+            "cannot change time step after recording starts"
+        );
+        self.force_evaluator = ForceEvaluator::new(self.force_limits, time_step);
+        self.time_step = time_step;
+    }
+
+    pub fn set_force_limits(&mut self, limits: ComfortableForceLimits) {
+        assert!(
+            !self.started,
+            "cannot change force limits after recording starts"
+        );
+        self.force_evaluator = ForceEvaluator::new(limits, self.time_step);
+        self.force_limits = limits;
     }
 
     pub fn for_circuit(circuit: &Circuit) -> Self {
@@ -917,7 +960,7 @@ impl TestRunRecorder {
         rated_speeds: impl Fn(&crate::track::Piece) -> Option<crate::track::RatedSpeeds>,
     ) -> Self {
         let mut recorder = Self::new(circuit.length());
-        recorder.force_limits = limits;
+        recorder.set_force_limits(limits);
         recorder.piece_starts.clone_from(&circuit.starts);
         recorder.piece_summaries = circuit
             .pieces
@@ -971,7 +1014,17 @@ impl TestRunRecorder {
                 continue;
             }
             assert_eq!(frame.len(), 1, "a test recorder tracks one car");
-            let reading = frame[0];
+            let mut reading = frame[0];
+            let evaluated = self.force_evaluator.update(reading.g);
+            reading.g = evaluated.filtered;
+            reading.airtime = reading.g.vertical < 0.0;
+            let metre = reading.distance.rem_euclid(self.circuit_length).floor() as usize;
+            for axis in 0..3 {
+                if !evaluated.axis_within_limits[axis] {
+                    self.violation_seconds[axis] += self.time_step;
+                    self.metre_violations[metre][axis] = true;
+                }
+            }
             let active = reading.speed > 1.0
                 && (self.piece_summaries.is_empty()
                     || matches!(
@@ -1019,7 +1072,7 @@ impl TestRunRecorder {
                     &mut self.force_bands,
                     reading,
                     self.force_limits,
-                    super::TIME_STEP,
+                    self.time_step,
                     location,
                 );
             }
@@ -1029,7 +1082,7 @@ impl TestRunRecorder {
                     reading.g.lateral,
                     reading.g.longitudinal,
                 ],
-                super::TIME_STEP,
+                self.time_step,
                 active,
                 super::features::Location {
                     piece_index: reading.piece_index,
@@ -1156,8 +1209,28 @@ impl TestRunRecorder {
     /// caller-reported rollback adds a separate recovery note.
     pub fn finish(self, completed: bool, rolled_back: bool) -> TestRun {
         let circuit_length = self.circuit_length;
-        let samples: Vec<_> = self.samples.into_iter().flatten().collect();
+        let samples: Vec<_> = self
+            .samples
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, sample)| {
+                sample.map(|mut sample| {
+                    sample.force_limit_exceeded = self.metre_violations[index];
+                    sample
+                })
+            })
+            .collect();
         let mut notes = Vec::new();
+        for (axis, seconds) in ["Vertical", "Lateral", "Longitudinal"]
+            .into_iter()
+            .zip(self.violation_seconds)
+        {
+            if seconds > 0.0 {
+                notes.push(format!(
+                    "{axis} force exceeded the duration-aware limit for {seconds:.2} s."
+                ));
+            }
+        }
         let mut statistics = ride_statistics(&samples, circuit_length, completed);
         statistics.max_positive_vertical_g = self.maximum_positive_vertical_g;
         statistics.max_negative_vertical_g = self.maximum_negative_vertical_g;
@@ -1315,6 +1388,7 @@ impl TestRunRecorder {
                 lateral_g: reading.g.lateral,
                 longitudinal_g: reading.g.longitudinal,
                 airtime: reading.g.vertical < 0.0,
+                force_limit_exceeded: [false; 3],
                 height_m: reading.height_m,
                 inverted: reading.inverted,
                 roll: reading.roll,
@@ -1342,6 +1416,9 @@ fn write_sample(hash: &mut StateHasher, sample: TestSample) {
     hash.write_f64(sample.lateral_g);
     hash.write_f64(sample.longitudinal_g);
     hash.write_bool(sample.airtime);
+    for exceeded in sample.force_limit_exceeded {
+        hash.write_bool(exceeded);
+    }
     hash.write_f64(sample.height_m);
     hash.write_bool(sample.inverted);
     hash.write_f64(sample.roll);
@@ -1809,6 +1886,7 @@ mod tests {
                 lateral_g: 0.0,
                 longitudinal_g: 0.0,
                 airtime: false,
+                force_limit_exceeded: [false; 3],
                 height_m: 0.0,
                 inverted: false,
                 roll: 0.0,
@@ -1897,6 +1975,7 @@ mod tests {
                 lateral_g: 1.2,
                 longitudinal_g: 0.4,
                 airtime: true,
+                force_limit_exceeded: [false; 3],
                 height_m: 10.0,
                 inverted: false,
                 roll: 0.0,
@@ -1909,6 +1988,7 @@ mod tests {
                 lateral_g: 0.0,
                 longitudinal_g: -0.7,
                 airtime: true,
+                force_limit_exceeded: [false; 3],
                 height_m: 11.0,
                 inverted: true,
                 roll: 0.0,
@@ -1921,6 +2001,7 @@ mod tests {
                 lateral_g: -1.5,
                 longitudinal_g: 1.1,
                 airtime: false,
+                force_limit_exceeded: [false; 3],
                 height_m: 9.0,
                 inverted: true,
                 roll: 0.0,
@@ -1933,6 +2014,7 @@ mod tests {
                 lateral_g: 0.2,
                 longitudinal_g: -1.4,
                 airtime: false,
+                force_limit_exceeded: [false; 3],
                 height_m: 7.0,
                 inverted: false,
                 roll: 0.0,
@@ -2028,6 +2110,7 @@ mod tests {
             lateral_g: 0.0,
             longitudinal_g: 0.0,
             airtime: false,
+            force_limit_exceeded: [false; 3],
             height_m: 0.0,
             inverted: false,
             roll: 0.0,
@@ -2044,6 +2127,7 @@ mod tests {
             lateral_g: 2.0,
             longitudinal_g: 1.0,
             airtime: false,
+            force_limit_exceeded: [false; 3],
             height_m: 0.0,
             inverted: false,
             roll: 0.0,
@@ -2201,6 +2285,87 @@ mod tests {
         recorder.record(&[vec![car_reading]]);
     }
 
+    #[test]
+    #[should_panic(expected = "cannot change time step after recording starts")]
+    fn recorder_rejects_time_step_change_after_first_reading() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        record(&mut recorder, reading(0.2, 0.0, 1.0, 0.0, 0.0));
+        recorder.set_time_step(0.05);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot change force limits after recording starts")]
+    fn recorder_rejects_force_limit_change_after_first_reading() {
+        let mut recorder = TestRunRecorder::new(10.0);
+        record(&mut recorder, reading(0.2, 0.0, 1.0, 0.0, 0.0));
+        recorder.set_force_limits(crate::track::wooden_twister_model().comfortable_force_limits);
+    }
+
+    #[test]
+    fn recorder_allows_brief_force_but_marks_sustained_force() {
+        let mut recorder = TestRunRecorder::new(100.0);
+        recorder.set_force_limits(crate::track::wooden_twister_model().comfortable_force_limits);
+        for step in 0..200 {
+            let vertical = if (40..60).contains(&step) || step >= 120 {
+                4.5
+            } else {
+                1.0
+            };
+            record(
+                &mut recorder,
+                reading(step as f64 * 0.05, 10.0, vertical, 0.0, 0.0),
+            );
+        }
+        let report = recorder.finish(false, false);
+        assert!(
+            report
+                .samples
+                .iter()
+                .filter(|sample| sample.distance < 5.0)
+                .all(|sample| !sample.force_limit_exceeded[0])
+        );
+        assert!(
+            report
+                .samples
+                .iter()
+                .filter(|sample| sample.distance >= 6.0)
+                .any(|sample| sample.force_limit_exceeded[0])
+        );
+    }
+
+    #[test]
+    fn recorder_preserves_violations_and_filter_through_save() {
+        let mut original = TestRunRecorder::for_circuit(&super::super::demo_circuit());
+        original.set_force_limits(crate::track::wooden_twister_model().comfortable_force_limits);
+        for step in 0..80 {
+            record(
+                &mut original,
+                reading(
+                    step as f64 * 0.05,
+                    10.0,
+                    if step < 20 { 1.0 } else { 4.5 },
+                    0.0,
+                    0.0,
+                ),
+            );
+        }
+        let bytes = postcard::to_allocvec(&original).unwrap();
+        let mut restored: TestRunRecorder = postcard::from_bytes(&bytes).unwrap();
+        for step in 80..150 {
+            let value = reading(step as f64 * 0.05, 10.0, 4.5, 0.0, 0.0);
+            record(&mut original, value);
+            record(&mut restored, value);
+        }
+        let report = original.finish(false, false);
+        assert!(
+            report
+                .samples
+                .iter()
+                .any(|sample| sample.force_limit_exceeded[0])
+        );
+        assert_eq!(report, restored.finish(false, false));
+    }
+
     fn circuit_from_ids(ids: &[PieceId]) -> crate::physics::Circuit {
         let catalog = catalog();
         let mut state = TrackState::origin();
@@ -2278,10 +2443,23 @@ mod tests {
             [1.0, 2.0, 3.0]
         );
         assert_eq!(result.samples[0].speed, 18.0);
-        assert_eq!(result.samples[0].vertical_g, 1.8);
+        let mut filter = super::super::ForceFilter::new(super::super::TIME_STEP);
+        filter.update(reading(0.2, 10.0, 1.0, 0.0, 0.0).g);
+        let second = filter.update(reading(1.2, 20.0, 2.0, 1.0, 0.5).g);
+        let third = filter.update(reading(3.2, 30.0, 4.0, 3.0, 1.5).g);
+        assert_eq!(
+            result.samples[0].vertical_g,
+            1.0 + (second.vertical - 1.0) * 0.8
+        );
         assert_eq!(result.samples[1].speed, 24.0);
-        assert_eq!(result.samples[1].lateral_g, 1.8);
-        assert_eq!(result.samples[2].longitudinal_g, 1.4);
+        assert_eq!(
+            result.samples[1].lateral_g,
+            second.lateral + (third.lateral - second.lateral) * 0.4
+        );
+        assert_eq!(
+            result.samples[2].longitudinal_g,
+            second.longitudinal + (third.longitudinal - second.longitudinal) * 0.9
+        );
     }
 
     #[test]
@@ -2319,8 +2497,11 @@ mod tests {
             .find(|sample| sample.distance == 0.0)
             .unwrap();
         assert_eq!(seam.speed, 15.0);
-        assert_eq!(seam.vertical_g, 0.0);
-        assert_eq!(seam.lateral_g, 1.0);
+        let mut filter = super::super::ForceFilter::new(super::super::TIME_STEP);
+        filter.update(reading(9.5, 10.0, 1.0, 0.0, 0.0).g);
+        let filtered = filter.update(reading(0.5, 20.0, -1.0, 2.0, 0.0).g);
+        assert_eq!(seam.vertical_g, 1.0 + (filtered.vertical - 1.0) * 0.5);
+        assert_eq!(seam.lateral_g, filtered.lateral * 0.5);
         assert!(!seam.airtime);
     }
 
