@@ -22,8 +22,29 @@ pub struct PieceRating {
     pub entry_speed: f64,
     pub minimum_speed: f64,
     pub minimum_filtered_vertical: f64,
+    pub minimum_filtered_force: [f64; 3],
+    pub maximum_filtered_force: [f64; 3],
     pub violation: Option<ForceViolation>,
     pub failure: Option<&'static str>,
+}
+
+impl PieceRating {
+    pub fn exceeds_sustained_limits(&self, limits: &ComfortableForceLimits) -> bool {
+        let lower = [
+            limits.minimum_vertical_g,
+            -limits.maximum_lateral_g,
+            -limits.maximum_longitudinal_g,
+        ];
+        let upper = [
+            limits.maximum_vertical_g,
+            limits.maximum_lateral_g,
+            limits.maximum_longitudinal_g,
+        ];
+        (0..3).any(|axis| {
+            self.minimum_filtered_force[axis] < lower[axis]
+                || self.maximum_filtered_force[axis] > upper[axis]
+        })
+    }
 }
 
 struct MeasurementTrack {
@@ -219,6 +240,8 @@ pub fn rate_piece(
     let mut cleared = vec![false; usize::from(cars)];
     let mut minimum_speed = f64::INFINITY;
     let mut minimum_filtered_vertical = f64::INFINITY;
+    let mut minimum_filtered_force = [f64::INFINITY; 3];
+    let mut maximum_filtered_force = [f64::NEG_INFINITY; 3];
     let mut violation: Option<ForceViolation> = None;
     let mut violation_excursion_active = false;
     let mut failure = None;
@@ -238,6 +261,17 @@ pub fn rate_piece(
                     };
                 }
                 if reading.distance >= track.element_start && !done[car] {
+                    for (axis, force) in [
+                        result.filtered.vertical,
+                        result.filtered.lateral,
+                        result.filtered.longitudinal,
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        minimum_filtered_force[axis] = minimum_filtered_force[axis].min(force);
+                        maximum_filtered_force[axis] = maximum_filtered_force[axis].max(force);
+                    }
                     let in_tail = reading.distance >= track.element_end;
                     if in_tail {
                         if !cleared[car] {
@@ -357,6 +391,8 @@ pub fn rate_piece(
         entry_speed: actual,
         minimum_speed,
         minimum_filtered_vertical,
+        minimum_filtered_force,
+        maximum_filtered_force,
         violation,
         failure,
     })
@@ -643,6 +679,74 @@ mod tests {
             result.minimum_filtered_vertical < model.comfortable_force_limits.minimum_vertical_g,
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn held_approach_matches_real_train_at_force_boundaries() {
+        let model = hybrid_model();
+        let cars = 8;
+        for id in [
+            PieceId::EjectorHill12x64,
+            PieceId::EjectorHill12x80,
+            PieceId::EjectorHill16x96,
+            PieceId::LevelToSixtyDown,
+        ] {
+            let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+            let target = piece.rated_speeds.unwrap().maximum_entry;
+            let rating = rate_piece(&model, cars, piece, target, unpowered()).unwrap();
+            let track = measurement_track(&model, cars, piece, target);
+            let config = scaled_train(&model, cars);
+            let steps =
+                ((track.element_start - track.start) / (target * TIME_STEP)).ceil() as usize;
+            let start = track.element_start - steps as f64 * target * TIME_STEP;
+            let mut train = Train::new(&track.circuit, &config, unpowered(), start, target);
+            let mut evaluators = vec![
+                ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                usize::from(cars)
+            ];
+            let mut minimum_vertical = f64::INFINITY;
+            let mut first_violation = None;
+            let mut cleared_element = false;
+            for _ in 0..20_000 {
+                train.step(&track.circuit);
+                for frame in train.take_readings() {
+                    for (car, reading) in frame.into_iter().enumerate() {
+                        let evaluation = evaluators[car].update(reading.g);
+                        if (track.element_start..track.element_end).contains(&reading.distance) {
+                            minimum_vertical = minimum_vertical.min(evaluation.filtered.vertical);
+                        }
+                        if reading.distance >= track.element_start && first_violation.is_none() {
+                            for axis in 0..3 {
+                                if !evaluation.axis_within_limits[axis] {
+                                    first_violation = Some((car, axis));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if train.distance() >= track.element_end + config.length_metres + target {
+                    cleared_element = true;
+                    break;
+                }
+                assert!(train.speed() > 0.0 && train.notes().is_empty(), "{id:?}");
+            }
+            assert!(cleared_element && minimum_vertical.is_finite(), "{id:?}");
+            assert_eq!(
+                first_violation,
+                rating
+                    .violation
+                    .as_ref()
+                    .map(|violation| (violation.car, violation.axis)),
+                "{id:?}"
+            );
+            // The independent full-trace comparison differed by at most 1.782e-6 g.
+            assert!(
+                (minimum_vertical - rating.minimum_filtered_vertical).abs() < 3e-6,
+                "{id:?}: real={minimum_vertical}, held={}",
+                rating.minimum_filtered_vertical
+            );
+        }
     }
 
     #[test]

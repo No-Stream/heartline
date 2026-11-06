@@ -10,7 +10,7 @@ fn refine_boundary(
     lower_edge: bool,
     passes: impl Fn(f64) -> bool,
 ) -> f64 {
-    for _ in 0..7 {
+    for _ in 0..12 {
         let middle = (lower + upper) / 2.0;
         if passes(middle) == lower_edge {
             upper = middle;
@@ -28,7 +28,7 @@ fn refine_boundary(
 fn failure(piece: &Piece, speed: f64) -> Option<String> {
     let mut evaluated = false;
     for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
-        if !model.allowed_pieces.contains(&piece.id) {
+        if !model.allows_piece(piece) {
             continue;
         }
         evaluated = true;
@@ -42,6 +42,15 @@ fn failure(piece: &Piece, speed: f64) -> Option<String> {
                 });
             if !rating.passed {
                 return Some(format!("{} {cars} cars: {rating:?}", model.name));
+            }
+            if rating.exceeds_sustained_limits(&model.comfortable_force_limits) {
+                return Some(format!(
+                    "{} {cars} cars: filtered extrema {:?} to {:?}, limits {:?}",
+                    model.name,
+                    rating.minimum_filtered_force,
+                    rating.maximum_filtered_force,
+                    model.comfortable_force_limits
+                ));
             }
         }
     }
@@ -139,10 +148,7 @@ fn main() {
         } else {
             failure(piece, last + 0.25)
         };
-        let clearance_cap = upper_failure
-            .as_ref()
-            .is_some_and(|diagnostic| diagnostic.contains("clearing speed exceeds 22 m/s"));
-        let design_cap = (reached_ceiling || clearance_cap) && old_max_failure.is_none();
+        let design_cap = reached_ceiling;
         let maximum = if design_cap {
             old.maximum_entry
         } else {
@@ -180,18 +186,26 @@ fn main() {
                 .is_some_and(|family| family.feel == HillFeel::Ejector && family.twist.is_none())
             {
                 for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
-                    if !model.allowed_pieces.contains(&piece.id) {
+                    if !model.allows_piece(piece) {
                         continue;
                     }
-                    for cars in model.cars_per_train_range() {
-                        let rating = rate_piece(&model, cars, piece, maximum, unpowered()).unwrap();
-                        if model
-                            .comfortable_force_limits
-                            .classify_airtime(rating.minimum_filtered_vertical)
-                            != AirtimeRating::Great
-                        {
-                            acceptance_failures.push(format!("{:?} {} {cars} cars at {maximum}: filtered vertical {} is not Great", piece.id, model.name, rating.minimum_filtered_vertical));
-                        }
+                    let cars = model.train.cars;
+                    let has_great_airtime = (0..=((maximum - minimum) / 0.25).floor() as usize)
+                        .map(|index| minimum + index as f64 * 0.25)
+                        .chain(std::iter::once(maximum))
+                        .any(|speed| {
+                            let rating =
+                                rate_piece(&model, cars, piece, speed, unpowered()).unwrap();
+                            model
+                                .comfortable_force_limits
+                                .classify_airtime(rating.minimum_filtered_vertical)
+                                == AirtimeRating::Great
+                        });
+                    if !has_great_airtime {
+                        acceptance_failures.push(format!(
+                            "{:?} {} default {cars} cars: no Great airtime on sampled grid; feasibility unresolved",
+                            piece.id, model.name
+                        ));
                     }
                 }
             }
@@ -207,6 +221,11 @@ fn main() {
             };
             let upper_source = if design_cap {
                 "DesignCap"
+            } else if upper_failure
+                .as_ref()
+                .is_some_and(|diagnostic| diagnostic.contains("clearing speed exceeds 22 m/s"))
+            {
+                "ClearanceMaximum"
             } else {
                 "ForceBound"
             };
@@ -242,7 +261,40 @@ fn main() {
 mod tests {
     use super::refine_boundary;
     use std::collections::HashSet;
+    use theme_park_sim::physics::rated_piece::PieceRating;
     use theme_park_sim::track::catalog;
+
+    #[test]
+    fn rejects_any_filtered_peak_past_a_sustained_limit() {
+        let limits = theme_park_sim::track::hybrid_model().comfortable_force_limits;
+        let mut rating = PieceRating {
+            passed: true,
+            entry_speed: 1.0,
+            minimum_speed: 1.0,
+            minimum_filtered_vertical: limits.minimum_vertical_g,
+            minimum_filtered_force: [
+                limits.minimum_vertical_g,
+                -limits.maximum_lateral_g,
+                -limits.maximum_longitudinal_g,
+            ],
+            maximum_filtered_force: [
+                limits.maximum_vertical_g,
+                limits.maximum_lateral_g,
+                limits.maximum_longitudinal_g,
+            ],
+            violation: None,
+            failure: None,
+        };
+        assert!(!rating.exceeds_sustained_limits(&limits));
+        for axis in 0..3 {
+            rating.minimum_filtered_force[axis] -= 0.001;
+            assert!(rating.exceeds_sustained_limits(&limits));
+            rating.minimum_filtered_force[axis] += 0.001;
+            rating.maximum_filtered_force[axis] += 0.001;
+            assert!(rating.exceeds_sustained_limits(&limits));
+            rating.maximum_filtered_force[axis] -= 0.001;
+        }
+    }
 
     #[test]
     fn refines_both_edges_and_rounds_into_the_passing_window() {

@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use theme_park_sim::physics::rated_piece::{rate_piece, rate_sequence};
-use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train};
+use theme_park_sim::physics::{
+    Circuit, CoasterRun, ForceEvaluator, GRAVITY, PhysicsConfig, TIME_STEP, Train,
+};
 use theme_park_sim::track::{
-    Heading, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model, multi_launch_model,
-    wooden_twister_model,
+    Bank, Heading, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 
 fn circuit_with_elements(elements: &[PieceId]) -> (Circuit, f64, f64) {
@@ -235,6 +237,89 @@ fn unpowered() -> PhysicsConfig {
     }
 }
 
+fn connected_element_at_speed(
+    circuit: &Circuit,
+    range: std::ops::Range<f64>,
+    model: &theme_park_sim::track::CoasterModel,
+    cars: u8,
+    speed: f64,
+    minimum_clearance: bool,
+) -> Result<(), String> {
+    let mut configuration = model.train.clone();
+    configuration.cars = cars;
+    let mut train = Train::new(circuit, &configuration, unpowered(), range.start, speed);
+    let mut evaluators =
+        vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
+    let mut seen = vec![false; usize::from(cars)];
+    let mut minimum_speed = f64::INFINITY;
+    for _ in 0..100_000 {
+        train.step(circuit);
+        for frame in train.take_readings() {
+            for (index, reading) in frame.into_iter().enumerate() {
+                let evaluated = evaluators[index].update(reading.g);
+                if range.contains(&reading.distance) {
+                    seen[index] = true;
+                    minimum_speed = minimum_speed.min(reading.speed);
+                    if !evaluated.within_limits {
+                        return Err(format!(
+                            "{} {cars} cars at {speed}: car {index}, distance {}, filtered {:?}",
+                            model.name, reading.distance, evaluated.filtered
+                        ));
+                    }
+                }
+            }
+        }
+        if train.distance() >= range.end + configuration.length_metres
+            || train.speed() <= 0.0
+            || !train.notes().is_empty()
+        {
+            break;
+        }
+    }
+    if !(seen.iter().all(|entered| *entered)
+        && train.distance() >= range.end + configuration.length_metres
+        && train.notes().is_empty())
+    {
+        return Err(format!(
+            "{} {cars} cars at {speed}: did not clear {range:?}",
+            model.name
+        ));
+    }
+    let piece = &circuit.pieces()[circuit.piece_index(range.start)];
+    if matches!(
+        piece.id,
+        PieceId::HalfCorkscrewLeftDown | PieceId::HalfCorkscrewRightDown
+    ) && speed == piece.rated_speeds.unwrap().maximum_entry
+    {
+        if train.speed() > 22.0 {
+            return Err(format!(
+                "{:?} {} {cars} cars: {} m/s after clearing",
+                piece.id,
+                model.name,
+                train.speed()
+            ));
+        }
+    }
+    if minimum_clearance && minimum_speed < 5.0 {
+        return Err(format!(
+            "{} {cars} cars at {speed}: minimum {minimum_speed}",
+            model.name
+        ));
+    }
+    Ok(())
+}
+
+fn assert_connected_element_at_speed(
+    circuit: &Circuit,
+    range: std::ops::Range<f64>,
+    model: &theme_park_sim::track::CoasterModel,
+    cars: u8,
+    speed: f64,
+    minimum_clearance: bool,
+) {
+    connected_element_at_speed(circuit, range, model, cars, speed, minimum_clearance).unwrap();
+}
+
 fn assert_rated_piece_endpoints(ids: &[PieceId]) {
     for &id in ids {
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
@@ -279,6 +364,10 @@ fn sixty_degree_crests_pass_full_trains_at_both_rated_endpoints() {
             .unwrap()
             .rated_speeds
             .unwrap();
+        assert!(
+            rated.minimum_entry >= 3.0,
+            "{id:?}: {rated:?} must start at or above 3 m/s"
+        );
         assert!(
             rated.maximum_entry - rated.minimum_entry >= 2.0,
             "{id:?}: {rated:?}"
@@ -479,20 +568,17 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                     }
                 }
             }
-            for (id, _, ascending, rated) in &element_ranges {
-                let piece = templates.iter().find(|piece| piece.id == *id).unwrap();
+            for (_, range, ascending, rated) in &element_ranges {
                 for cars in model.cars_per_train_range() {
                     for speed in [rated.minimum_entry, rated.maximum_entry] {
-                        let rating = rate_piece(&model, cars, piece, speed, unpowered())
-                            .expect("rating must complete");
-                        assert!(
-                            rating.passed,
-                            "{id:?} {} {cars} cars at {speed}: {rating:?}",
-                            model.name
+                        assert_connected_element_at_speed(
+                            &circuit,
+                            range.clone(),
+                            &model,
+                            cars,
+                            speed,
+                            *ascending && speed == rated.minimum_entry,
                         );
-                        if *ascending && speed == rated.minimum_entry {
-                            assert!(rating.minimum_speed >= 5.0, "{id:?}: {rating:?}");
-                        }
                     }
                 }
             }
@@ -504,6 +590,29 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
 #[test]
 fn full_trains_cross_loop_profiles_within_their_rated_force_limits() {
     assert_rated_piece_endpoints(&[PieceId::SteelLoop, PieceId::Loop, PieceId::LargeLoop]);
+    for (model, id) in [
+        (wooden_twister_model(), PieceId::SteelLoop),
+        (hybrid_model(), PieceId::Loop),
+        (hybrid_model(), PieceId::LargeLoop),
+        (multi_launch_model(), PieceId::Loop),
+        (multi_launch_model(), PieceId::LargeLoop),
+    ] {
+        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+        let rated = piece.rated_speeds.unwrap();
+        let (circuit, start, end) = circuit_with_elements_from_catalog(catalog(), &[id]);
+        for cars in [6, 12] {
+            for speed in [rated.minimum_entry, rated.maximum_entry] {
+                assert_connected_element_at_speed(
+                    &circuit,
+                    start..end,
+                    &model,
+                    cars,
+                    speed,
+                    speed == rated.minimum_entry,
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -902,6 +1011,564 @@ fn full_trains_cross_composed_immelmann_and_dive_loops() {
                     "{down:?} {up:?} {} {cars} cars: {rating:?}",
                     model.name
                 );
+            }
+        }
+    }
+}
+
+fn circuit_with_straight_return(elements: &[PieceId]) -> Circuit {
+    let catalog = catalog();
+    let template = |id| catalog.iter().find(|piece| piece.id == id).unwrap();
+    let start = TrackState::origin();
+    let mut state = start;
+    let mut pieces = Vec::new();
+    for id in [PieceId::Station, PieceId::Straight, PieceId::Straight]
+        .into_iter()
+        .chain(elements.iter().copied())
+        .chain([
+            PieceId::Straight,
+            PieceId::Straight,
+            PieceId::TurnSmallStandalone,
+            PieceId::TurnSmallStandalone,
+        ])
+    {
+        let piece = template(id).at(state).unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    while state.x > start.x {
+        let piece = template(PieceId::HalfTileStraight).at(state).unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    for _ in 0..2 {
+        let piece = template(PieceId::TurnSmallStandalone).at(state).unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    assert_eq!(state, start);
+    Circuit::new(pieces).unwrap()
+}
+
+#[test]
+fn connected_crest_endpoints() {
+    use PieceId::*;
+    let sequences: [&[PieceId]; 2] = [
+        &[
+            LevelToSixtyUp,
+            SixtyUpToLevel,
+            Straight,
+            Straight,
+            LevelToSixtyDown,
+            SixtyDownToLevel,
+        ],
+        &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+            GentleToSteepDown,
+            SteepToSixtyDown,
+            SixtyToSteepDown,
+            SteepToGentleDown,
+            GentleDownToLevel,
+        ],
+    ];
+    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    for sequence in sequences {
+        let (circuit, _, _) = circuit_with_elements(sequence);
+        for id in [
+            SixtyUpToLevel,
+            LevelToSixtyDown,
+            SixtyToSteepUp,
+            SteepToSixtyDown,
+        ] {
+            let Some(index) = circuit.pieces().iter().position(|piece| piece.id == id) else {
+                continue;
+            };
+            let piece = &circuit.pieces()[index];
+            let rated = piece
+                .rated_speeds
+                .expect("crest needs a rated speed window");
+            assert!(
+                rated.minimum_entry >= 3.0 && rated.maximum_entry <= 30.0,
+                "{id:?}: {rated:?} must stay within 3–30 m/s"
+            );
+            assert!(
+                rated.maximum_entry - rated.minimum_entry >= 2.0,
+                "{id:?}: {rated:?} is narrower than 2 m/s"
+            );
+            let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+            let end = start + piece.length();
+
+            for model in models.iter().filter(|model| model.allows_piece(piece)) {
+                for cars in [6, 12] {
+                    for speed in [rated.minimum_entry, rated.maximum_entry] {
+                        assert_connected_element_at_speed(
+                            &circuit,
+                            start..end,
+                            model,
+                            cars,
+                            speed,
+                            piece.exit.position().z > piece.entry.position().z
+                                && speed == rated.minimum_entry,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn connected_ascending_crest_window() {
+    use PieceId::*;
+    let (circuit, _, _) = circuit_with_elements(&[
+        LevelToSixtyUp,
+        SixtyUpToLevel,
+        Straight,
+        Straight,
+        LevelToSixtyDown,
+        SixtyDownToLevel,
+    ]);
+    let index = circuit
+        .pieces()
+        .iter()
+        .position(|piece| piece.id == SixtyUpToLevel)
+        .unwrap();
+    let piece = &circuit.pieces()[index];
+    let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+    let rated = piece.rated_speeds.unwrap();
+    let count = (rated.maximum_entry - rated.minimum_entry).ceil() as usize;
+    for index in 0..=count {
+        let speed = (rated.minimum_entry + index as f64).min(rated.maximum_entry);
+        for cars in [6, 12] {
+            assert_connected_element_at_speed(
+                &circuit,
+                start..start + piece.length(),
+                &hybrid_model(),
+                cars,
+                speed,
+                true,
+            );
+        }
+    }
+}
+
+#[test]
+fn connected_pull_endpoints() {
+    use PieceId::*;
+    let sequences: [&[PieceId]; 2] = [
+        &[
+            LevelToSixtyUp,
+            SixtyUpToLevel,
+            LevelToSixtyDown,
+            SixtyDownToLevel,
+        ],
+        &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+            GentleToSteepDown,
+            SteepToSixtyDown,
+            SixtyToSteepDown,
+            SteepToGentleDown,
+            GentleDownToLevel,
+        ],
+    ];
+    for sequence in sequences {
+        let circuit = circuit_with_straight_return(sequence);
+        for id in [
+            LevelToSixtyUp,
+            SixtyDownToLevel,
+            SteepToSixtyUp,
+            SixtyToSteepDown,
+        ] {
+            let Some(index) = circuit.pieces().iter().position(|piece| piece.id == id) else {
+                continue;
+            };
+            let piece = &circuit.pieces()[index];
+            let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+            let end = start + piece.length();
+            let rated = piece.rated_speeds.unwrap();
+            for model in [hybrid_model(), multi_launch_model()] {
+                for cars in [6, 12] {
+                    for speed in [rated.minimum_entry, rated.maximum_entry] {
+                        assert_connected_element_at_speed(
+                            &circuit,
+                            start..end,
+                            &model,
+                            cars,
+                            speed,
+                            matches!(id, LevelToSixtyUp | SteepToSixtyUp)
+                                && speed == rated.minimum_entry,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn connected_half_loop_endpoints() {
+    let catalog = catalog();
+    let template = |id| catalog.iter().find(|piece| piece.id == id).unwrap();
+    let mut inverted_straight = template(PieceId::Straight).clone();
+    inverted_straight.entry.bank = Bank::Inverted;
+    inverted_straight.exit.bank = Bank::Inverted;
+    let mut state = TrackState::origin();
+    let mut pieces = Vec::new();
+    let mut ranges = Vec::new();
+    for piece in [
+        template(PieceId::Station),
+        template(PieceId::Straight),
+        template(PieceId::Straight),
+        template(PieceId::HalfLoopUp),
+        &inverted_straight,
+        &inverted_straight,
+        template(PieceId::HalfLoopDown),
+        template(PieceId::Straight),
+        template(PieceId::Straight),
+    ] {
+        let piece = piece.at(state).unwrap();
+        let start: f64 = pieces.iter().map(Piece::length).sum();
+        if matches!(piece.id, PieceId::HalfLoopUp | PieceId::HalfLoopDown) {
+            ranges.push((
+                piece.id,
+                start..start + piece.length(),
+                piece.rated_speeds.unwrap(),
+            ));
+        }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let return_path = [
+        PieceId::TurnSmallStandalone,
+        PieceId::OffsetLeft,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::OffsetRight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::OffsetLeft,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::OffsetRight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::Straight,
+        PieceId::TurnSmallStandalone,
+        PieceId::TurnSmallStandalone,
+    ];
+    for id in return_path {
+        let piece = template(id).at(state).unwrap();
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    let circuit = Circuit::new(pieces).unwrap();
+    for (id, range, rated) in ranges {
+        for model in [hybrid_model(), multi_launch_model()] {
+            for cars in [6, 12] {
+                for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    assert_connected_element_at_speed(
+                        &circuit,
+                        range.clone(),
+                        &model,
+                        cars,
+                        speed,
+                        id == PieceId::HalfLoopUp && speed == rated.minimum_entry,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn connected_half_rolls_pass_full_trains_at_both_rated_endpoints() {
+    use PieceId::*;
+    for (target, elements) in [
+        (
+            HalfCorkscrewLeftUp,
+            [
+                HalfLoopUp,
+                HalfCorkscrewLeftDown,
+                HalfCorkscrewLeftUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            HalfCorkscrewRightUp,
+            [
+                HalfLoopUp,
+                HalfCorkscrewRightDown,
+                HalfCorkscrewRightUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            HalfCorkscrewLeftDown,
+            [
+                HalfLoopUp,
+                HalfCorkscrewLeftDown,
+                HalfCorkscrewLeftUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            HalfCorkscrewRightDown,
+            [
+                HalfLoopUp,
+                HalfCorkscrewRightDown,
+                HalfCorkscrewRightUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            RavenRollLeftUp,
+            [HalfLoopUp, RavenRollLeftDown, RavenRollLeftUp, HalfLoopDown],
+        ),
+        (
+            RavenRollRightUp,
+            [
+                HalfLoopUp,
+                RavenRollRightDown,
+                RavenRollRightUp,
+                HalfLoopDown,
+            ],
+        ),
+        (
+            RavenRollLeftDown,
+            [HalfLoopUp, RavenRollLeftDown, RavenRollLeftUp, HalfLoopDown],
+        ),
+        (
+            RavenRollRightDown,
+            [
+                HalfLoopUp,
+                RavenRollRightDown,
+                RavenRollRightUp,
+                HalfLoopDown,
+            ],
+        ),
+    ] {
+        let circuit = half_roll_test_circuit(&elements);
+        let mut start = 0.0;
+        let piece = circuit
+            .pieces()
+            .iter()
+            .find(|piece| {
+                if piece.id == target {
+                    true
+                } else {
+                    start += piece.length();
+                    false
+                }
+            })
+            .unwrap();
+        let end = start + piece.length();
+        let rated = piece.rated_speeds.unwrap();
+        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            for cars in [6, 12] {
+                for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    assert_connected_element_at_speed(
+                        &circuit,
+                        start..end,
+                        &model,
+                        cars,
+                        speed,
+                        false,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn connected_banked_drops_pass_full_trains_at_both_rated_endpoints() {
+    use PieceId::*;
+    for (target, elements) in [
+        (
+            BankedDropLeft,
+            vec![
+                BankLeft,
+                BankedDropLeft,
+                UnbankLeft,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                GentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            BankedDropRight,
+            vec![
+                BankRight,
+                BankedDropRight,
+                UnbankRight,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                GentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            TwistedDropLeft,
+            vec![
+                BankLeft,
+                TwistedDropLeft,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            TwistedDropRight,
+            vec![
+                BankRight,
+                TwistedDropRight,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            BarrelDropLeft,
+            vec![
+                BankLeft,
+                BarrelDropLeft,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                OneTileGentleUp,
+                OneTileGentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+        (
+            BarrelDropRight,
+            vec![
+                BankRight,
+                BarrelDropRight,
+                GentleDownToLevel,
+                LevelToGentleUp,
+                OneTileGentleUp,
+                OneTileGentleUp,
+                GentleUpToLevel,
+            ],
+        ),
+    ] {
+        let circuit = half_roll_test_circuit(&elements);
+        let mut start = 0.0;
+        let piece = circuit
+            .pieces()
+            .iter()
+            .find(|piece| {
+                if piece.id == target {
+                    true
+                } else {
+                    start += piece.length();
+                    false
+                }
+            })
+            .unwrap();
+        let end = start + piece.length();
+        let rated = piece.rated_speeds.unwrap();
+        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            for cars in [6, 12] {
+                for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    assert_connected_element_at_speed(
+                        &circuit,
+                        start..end,
+                        &model,
+                        cars,
+                        speed,
+                        false,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn connected_corkscrew_rated_samples() {
+    use PieceId::*;
+    for (target, sequence) in [
+        (Corkscrew, vec![Corkscrew]),
+        (
+            HalfCorkscrewLeftUp,
+            vec![HalfCorkscrewLeftUp, HalfCorkscrewLeftDown],
+        ),
+    ] {
+        let (circuit, _, _) = circuit_with_elements(&sequence);
+        let index = circuit
+            .pieces()
+            .iter()
+            .position(|piece| piece.id == target)
+            .unwrap();
+        let piece = &circuit.pieces()[index];
+        let rated = piece.rated_speeds.unwrap();
+        let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+        let end = start + piece.length();
+        let passing: Vec<f64> = (4..=60)
+            .map(|index| f64::from(index) * 0.5)
+            .filter(|speed| {
+                [hybrid_model(), multi_launch_model()].iter().all(|model| {
+                    [6, 12].into_iter().all(|cars| {
+                        connected_element_at_speed(
+                            &circuit,
+                            start..end,
+                            model,
+                            cars,
+                            *speed,
+                            target == HalfCorkscrewLeftUp,
+                        )
+                        .is_ok()
+                    })
+                })
+            })
+            .collect();
+        assert!(!passing.is_empty(), "{target:?} has no passing speeds");
+        assert!(
+            passing
+                .windows(2)
+                .all(|pair| (pair[1] - pair[0] - 0.5).abs() < 1e-9),
+            "{target:?}: {passing:?}"
+        );
+        let sample_count = (rated.maximum_entry - rated.minimum_entry).ceil() as usize;
+        for index in 0..=sample_count {
+            let speed = (rated.minimum_entry + index as f64).min(rated.maximum_entry);
+            for model in [hybrid_model(), multi_launch_model()] {
+                for cars in [6, 12] {
+                    assert_connected_element_at_speed(
+                        &circuit,
+                        start..end,
+                        &model,
+                        cars,
+                        speed,
+                        target == HalfCorkscrewLeftUp,
+                    );
+                }
             }
         }
     }
