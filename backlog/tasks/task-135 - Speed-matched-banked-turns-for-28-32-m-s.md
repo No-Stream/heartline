@@ -1,10 +1,10 @@
 ---
 id: TASK-135
 title: Speed-matched banked turns for 28-32 m/s
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-06 07:12'
-updated_date: '2026-11-06 18:44'
+updated_date: '2026-11-06 21:34'
 labels: []
 dependencies: []
 priority: medium
