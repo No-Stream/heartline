@@ -315,7 +315,7 @@ fn report(name: &str, mut timings: Timings) {
             (call, durations, total)
         })
         .collect();
-    rows.sort_by(|first, second| second.2.cmp(&first.2));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.2));
     println!(
         "  {:<44} {:>6} {:>9} {:>9} {:>9}",
         "call", "count", "median", "p95", "total"
