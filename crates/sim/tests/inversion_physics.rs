@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train};
+use theme_park_sim::physics::{
+    Circuit, CoasterRun, ForceEvaluator, GRAVITY, PhysicsConfig, TIME_STEP, Train,
+};
 use theme_park_sim::track::{
     Bank, Heading, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model,
     multi_launch_model, wooden_twister_model,
@@ -335,11 +337,25 @@ fn sixty_degree_crests_pass_full_trains_at_both_rated_endpoints() {
                         let mut maximum_lateral: f64 = 0.0;
                         let mut maximum_longitudinal: f64 = 0.0;
                         let mut minimum_speed = f64::INFINITY;
+                        let mut evaluators =
+                            vec![
+                                ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                                usize::from(cars)
+                            ];
                         for _ in 0..100_000 {
                             train.step(&circuit);
                             for frame in train.take_readings() {
                                 for (car_index, car) in frame.into_iter().enumerate() {
+                                    let evaluated = evaluators[car_index].update(car.g);
                                     if (start..end).contains(&car.distance) {
+                                        assert!(
+                                            evaluated.within_limits,
+                                            "sixty_degree_crests_pass_full_trains_at_both_rated_endpoints: car {} distance {} filtered {:?} axis flags {:?}",
+                                            car_index,
+                                            car.distance,
+                                            evaluated.filtered,
+                                            evaluated.axis_within_limits
+                                        );
                                         cars_seen[car_index] = true;
                                         minimum_vertical = minimum_vertical.min(car.g.vertical);
                                         maximum_vertical = maximum_vertical.max(car.g.vertical);
@@ -434,11 +450,24 @@ fn sixty_degree_ascending_crest_has_a_contiguous_rated_window() {
             let mut maximum_vertical = f64::NEG_INFINITY;
             let mut maximum_lateral: f64 = 0.0;
             let mut maximum_longitudinal: f64 = 0.0;
+            let mut evaluators = vec![
+                ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                usize::from(cars)
+            ];
             for _ in 0..100_000 {
                 train.step(&circuit);
                 for frame in train.take_readings() {
                     for (car_index, car) in frame.into_iter().enumerate() {
+                        let evaluated = evaluators[car_index].update(car.g);
                         if (element_start..element_end).contains(&car.distance) {
+                            assert!(
+                                evaluated.within_limits,
+                                "sixty_degree_ascending_crest_has_a_contiguous_rated_window: car {} distance {} filtered {:?} axis flags {:?}",
+                                car_index,
+                                car.distance,
+                                evaluated.filtered,
+                                evaluated.axis_within_limits
+                            );
                             cars_seen[car_index] = true;
                             minimum_speed = minimum_speed.min(car.speed);
                             minimum_vertical = minimum_vertical.min(car.g.vertical);
@@ -523,11 +552,25 @@ fn sixty_degree_pull_profiles_keep_trains_within_force_limits() {
                         let mut maximum_lateral: f64 = 0.0;
                         let mut maximum_longitudinal: f64 = 0.0;
                         let mut minimum_speed = f64::INFINITY;
+                        let mut evaluators =
+                            vec![
+                                ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                                usize::from(cars)
+                            ];
                         for _ in 0..100_000 {
                             train.step(&circuit);
                             for frame in train.take_readings() {
                                 for (index, car) in frame.iter().enumerate() {
+                                    let evaluated = evaluators[index].update(car.g);
                                     if (start..end).contains(&car.distance) {
+                                        assert!(
+                                            evaluated.within_limits,
+                                            "sixty_degree_pull_profiles_keep_trains_within_force_limits: car {} distance {} filtered {:?} axis flags {:?}",
+                                            index,
+                                            car.distance,
+                                            evaluated.filtered,
+                                            evaluated.axis_within_limits
+                                        );
                                         seen[index] = true;
                                         minimum_speed = minimum_speed.min(car.speed);
                                         minimum_vertical = minimum_vertical.min(car.g.vertical);
@@ -716,11 +759,25 @@ fn trains_cross_half_loops_within_model_force_limits() {
                     let mut maximum_vertical = f64::NEG_INFINITY;
                     let mut maximum_lateral: f64 = 0.0;
                     let mut maximum_longitudinal: f64 = 0.0;
+                    let mut evaluators =
+                        vec![
+                            ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                            usize::from(cars)
+                        ];
                     for _ in 0..100_000 {
                         train.step(&circuit);
                         for frame in train.take_readings() {
                             for (index, car) in frame.iter().enumerate() {
+                                let evaluated = evaluators[index].update(car.g);
                                 if range.contains(&car.distance) {
+                                    assert!(
+                                        evaluated.within_limits,
+                                        "trains_cross_half_loops_within_model_force_limits: car {} distance {} filtered {:?} axis flags {:?}",
+                                        index,
+                                        car.distance,
+                                        evaluated.filtered,
+                                        evaluated.axis_within_limits
+                                    );
                                     seen[index] = true;
                                     minimum_speed = minimum_speed.min(car.speed);
                                     minimum_vertical = minimum_vertical.min(car.g.vertical);
@@ -861,11 +918,25 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                     let mut maximum_lateral: f64 = 0.0;
                     let mut maximum_longitudinal: f64 = 0.0;
                     let mut minimum_speed = f64::INFINITY;
+                    let mut evaluators =
+                        vec![
+                            ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                            usize::from(configuration.cars)
+                        ];
                     for _ in 0..100_000 {
                         train.step(&circuit);
                         for frame in train.take_readings() {
                             for (car_index, reading) in frame.into_iter().enumerate() {
+                                let evaluated = evaluators[car_index].update(reading.g);
                                 if range.contains(&reading.distance) {
+                                    assert!(
+                                        evaluated.within_limits,
+                                        "all_constructible_half_inversion_combinations_pass_at_rated_element_bands: car {} distance {} filtered {:?} axis flags {:?}",
+                                        car_index,
+                                        reading.distance,
+                                        evaluated.filtered,
+                                        evaluated.axis_within_limits
+                                    );
                                     cars_seen[car_index] = true;
                                     minimum_vertical = minimum_vertical.min(reading.g.vertical);
                                     maximum_vertical = maximum_vertical.max(reading.g.vertical);
@@ -955,11 +1026,25 @@ fn full_trains_cross_loop_profiles_within_their_rated_force_limits() {
                 let mut maximum_lateral: f64 = 0.0;
                 let mut maximum_longitudinal: f64 = 0.0;
                 let mut cleared = false;
+                let mut evaluators =
+                    vec![
+                        ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                        usize::from(cars)
+                    ];
                 for _ in 0..100_000 {
                     train.step(&circuit);
                     for frame in train.take_readings() {
                         for (car_index, reading) in frame.into_iter().enumerate() {
+                            let evaluated = evaluators[car_index].update(reading.g);
                             if (element_start..element_end).contains(&reading.distance) {
+                                assert!(
+                                    evaluated.within_limits,
+                                    "full_trains_cross_loop_profiles_within_their_rated_force_limits: car {} distance {} filtered {:?} axis flags {:?}",
+                                    car_index,
+                                    reading.distance,
+                                    evaluated.filtered,
+                                    evaluated.axis_within_limits
+                                );
                                 cars_seen[car_index] = true;
                                 minimum_speed = minimum_speed.min(reading.speed);
                                 minimum_vertical = minimum_vertical.min(reading.g.vertical);
@@ -1175,7 +1260,16 @@ fn coaster_run_reports_large_loop_overspeed_once() {
     );
     assert!(speed_band_notes[0].contains("Large vertical loop"));
     assert!(speed_band_notes[0].contains("above its rated speed band"));
-    assert!(speed_band_notes[0].contains("31.3 m/s"));
+    let rated = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::LargeLoop)
+        .unwrap()
+        .rated_speeds
+        .unwrap();
+    assert!(speed_band_notes[0].contains(&format!(
+        "{:.1}–{:.1} m/s",
+        rated.minimum_entry, rated.maximum_entry
+    )));
 }
 
 #[test]
@@ -1197,7 +1291,16 @@ fn coaster_run_reports_loop_underspeed_when_the_train_stalls_once() {
     );
     assert!(speed_band_notes[0].contains("Vertical loop"));
     assert!(speed_band_notes[0].contains("below its rated speed band"));
-    assert!(speed_band_notes[0].contains("24.7–27.5 m/s"));
+    let rated = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::Loop)
+        .unwrap()
+        .rated_speeds
+        .unwrap();
+    assert!(speed_band_notes[0].contains(&format!(
+        "{:.1}–{:.1} m/s",
+        rated.minimum_entry, rated.maximum_entry
+    )));
 }
 
 fn half_roll_test_circuit(elements: &[PieceId]) -> Circuit {
@@ -1359,11 +1462,25 @@ fn half_rolls_pass_full_trains_at_both_rated_endpoints() {
                     let mut max_vertical = f64::NEG_INFINITY;
                     let mut max_lateral: f64 = 0.0;
                     let mut max_longitudinal: f64 = 0.0;
+                    let mut evaluators =
+                        vec![
+                            ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                            usize::from(cars)
+                        ];
                     for _ in 0..100_000 {
                         train.step(&circuit);
                         for frame in train.take_readings() {
                             for (index, reading) in frame.into_iter().enumerate() {
+                                let evaluated = evaluators[index].update(reading.g);
                                 if (start..end).contains(&reading.distance) {
+                                    assert!(
+                                        evaluated.within_limits,
+                                        "half_rolls_pass_full_trains_at_both_rated_endpoints: car {} distance {} filtered {:?} axis flags {:?}",
+                                        index,
+                                        reading.distance,
+                                        evaluated.filtered,
+                                        evaluated.axis_within_limits
+                                    );
                                     seen[index] = true;
                                     min_vertical = min_vertical.min(reading.g.vertical);
                                     max_vertical = max_vertical.max(reading.g.vertical);
@@ -1517,11 +1634,25 @@ fn banked_drops_pass_full_trains_at_both_rated_endpoints() {
                     let mut max_vertical = f64::NEG_INFINITY;
                     let mut max_lateral: f64 = 0.0;
                     let mut max_longitudinal: f64 = 0.0;
+                    let mut evaluators =
+                        vec![
+                            ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                            usize::from(cars)
+                        ];
                     for _ in 0..100_000 {
                         train.step(&circuit);
                         for frame in train.take_readings() {
                             for (index, reading) in frame.into_iter().enumerate() {
+                                let evaluated = evaluators[index].update(reading.g);
                                 if (start..end).contains(&reading.distance) {
+                                    assert!(
+                                        evaluated.within_limits,
+                                        "banked_drops_pass_full_trains_at_both_rated_endpoints: car {} distance {} filtered {:?} axis flags {:?}",
+                                        index,
+                                        reading.distance,
+                                        evaluated.filtered,
+                                        evaluated.axis_within_limits
+                                    );
                                     seen[index] = true;
                                     min_vertical = min_vertical.min(reading.g.vertical);
                                     max_vertical = max_vertical.max(reading.g.vertical);
@@ -1595,11 +1726,19 @@ fn corkscrews_have_contiguous_rated_windows() {
                     let mut maximum_lateral: f64 = 0.0;
                     let mut maximum_longitudinal: f64 = 0.0;
                     let mut minimum_speed = f64::INFINITY;
+                    let mut evaluators =
+                        vec![
+                            ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                            usize::from(cars)
+                        ];
+                    let mut evaluated_within_limits = true;
                     for _ in 0..100_000 {
                         train.step(&circuit);
                         for frame in train.take_readings() {
                             for (car_index, car) in frame.into_iter().enumerate() {
+                                let evaluated = evaluators[car_index].update(car.g);
                                 if (start..end).contains(&car.distance) {
+                                    evaluated_within_limits &= evaluated.within_limits;
                                     seen[car_index] = true;
                                     minimum_speed = minimum_speed.min(car.speed);
                                     minimum_vertical = minimum_vertical.min(car.g.vertical);
@@ -1626,6 +1765,7 @@ fn corkscrews_have_contiguous_rated_windows() {
                         && maximum_lateral <= limits.maximum_lateral_g
                         && (target != Corkscrew || maximum_lateral <= 1.0)
                         && maximum_longitudinal <= limits.maximum_longitudinal_g
+                        && evaluated_within_limits
                 })
             })
         };
@@ -1698,13 +1838,27 @@ fn full_trains_cross_composed_immelmann_and_dive_loops() {
                 let mut maximum_vertical = f64::NEG_INFINITY;
                 let mut maximum_lateral: f64 = 0.0;
                 let mut maximum_longitudinal: f64 = 0.0;
+                let mut evaluators =
+                    vec![
+                        ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                        usize::from(cars)
+                    ];
                 for _ in 0..100_000 {
                     train.step(&circuit);
                     for frame in train.take_readings() {
                         rear_seen_on_climb |= ranges[0].contains(&frame.last().unwrap().distance);
                         for (index, reading) in frame.into_iter().enumerate() {
+                            let evaluated = evaluators[index].update(reading.g);
                             for (piece_index, range) in ranges.iter().enumerate() {
                                 if range.contains(&reading.distance) {
+                                    assert!(
+                                        evaluated.within_limits,
+                                        "full_trains_cross_composed_immelmann_and_dive_loops: car {} distance {} filtered {:?} axis flags {:?}",
+                                        index,
+                                        reading.distance,
+                                        evaluated.filtered,
+                                        evaluated.axis_within_limits
+                                    );
                                     seen[piece_index][index] = true;
                                     minimum_vertical = minimum_vertical.min(reading.g.vertical);
                                     maximum_vertical = maximum_vertical.max(reading.g.vertical);

@@ -2964,14 +2964,20 @@ mod tests {
 
     #[test]
     fn rated_piece_entry_outside_speed_window_is_reported_once() {
+        let rated = crate::track::catalog()
+            .iter()
+            .find(|piece| piece.id == crate::track::PieceId::Loop)
+            .unwrap()
+            .rated_speeds
+            .unwrap();
         let mut recorder = TestRunRecorder::new(20.0);
         recorder.piece_starts = vec![0.0, 10.0];
         recorder.rated_pieces = vec![
             None,
             Some(RatedPieceSpeedWindow {
                 name: "Loop",
-                minimum_entry: 24.7,
-                maximum_entry: 27.5,
+                minimum_entry: rated.minimum_entry,
+                maximum_entry: rated.maximum_entry,
             }),
         ];
         recorder.noted_rated_pieces = vec![false; 2];
@@ -2985,7 +2991,10 @@ mod tests {
         assert_eq!(report.notes.len(), 1, "notes: {:?}", report.notes);
         assert_eq!(
             report.notes[0],
-            "The train entered Loop at 35.0 m/s, above its rated speed band of 24.7–27.5 m/s."
+            format!(
+                "The train entered Loop at 35.0 m/s, above its rated speed band of {:.1}–{:.1} m/s.",
+                rated.minimum_entry, rated.maximum_entry
+            )
         );
     }
 
@@ -3017,14 +3026,20 @@ mod tests {
 
     #[test]
     fn rated_piece_entry_below_speed_window_is_reported() {
+        let rated = crate::track::catalog()
+            .iter()
+            .find(|piece| piece.id == crate::track::PieceId::Loop)
+            .unwrap()
+            .rated_speeds
+            .unwrap();
         let mut recorder = TestRunRecorder::new(20.0);
         recorder.piece_starts = vec![0.0, 10.0];
         recorder.rated_pieces = vec![
             None,
             Some(RatedPieceSpeedWindow {
                 name: "Loop",
-                minimum_entry: 24.7,
-                maximum_entry: 27.5,
+                minimum_entry: rated.minimum_entry,
+                maximum_entry: rated.maximum_entry,
             }),
         ];
         recorder.noted_rated_pieces = vec![false; 2];
@@ -3034,20 +3049,29 @@ mod tests {
         let report = recorder.finish(false, false);
         assert_eq!(
             report.notes[0],
-            "The train entered Loop at 2.0 m/s, below its rated speed band of 24.7–27.5 m/s."
+            format!(
+                "The train entered Loop at 2.0 m/s, below its rated speed band of {:.1}–{:.1} m/s.",
+                rated.minimum_entry, rated.maximum_entry
+            )
         );
     }
 
     #[test]
     fn rated_piece_note_uses_interpolated_speed_at_the_entry_boundary() {
+        let rated = crate::track::catalog()
+            .iter()
+            .find(|piece| piece.id == crate::track::PieceId::Loop)
+            .unwrap()
+            .rated_speeds
+            .unwrap();
         let mut recorder = TestRunRecorder::new(20.0);
         recorder.piece_starts = vec![0.0, 10.0];
         recorder.rated_pieces = vec![
             None,
             Some(RatedPieceSpeedWindow {
                 name: "Loop",
-                minimum_entry: 24.7,
-                maximum_entry: 27.5,
+                minimum_entry: rated.minimum_entry,
+                maximum_entry: rated.maximum_entry,
             }),
         ];
         recorder.noted_rated_pieces = vec![false; 2];
@@ -3057,7 +3081,10 @@ mod tests {
         let report = recorder.finish(true, false);
         assert_eq!(
             report.notes[0],
-            "The train entered Loop at 22.5 m/s, below its rated speed band of 24.7–27.5 m/s."
+            format!(
+                "The train entered Loop at 22.5 m/s, below its rated speed band of {:.1}–{:.1} m/s.",
+                rated.minimum_entry, rated.maximum_entry
+            )
         );
     }
 

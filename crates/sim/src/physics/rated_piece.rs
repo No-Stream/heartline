@@ -1,7 +1,10 @@
 use std::collections::{HashSet, VecDeque};
+use std::ops::Range;
 
 use super::{Circuit, ForceEvaluator, GForces, PhysicsConfig, TIME_STEP, Train, rider_g};
-use crate::track::{CoasterModel, Piece, PieceId, TrackState, catalog};
+use crate::track::{
+    CoasterModel, ComfortableForceLimits, Piece, PieceId, TrackState, TrainConfiguration, catalog,
+};
 
 #[derive(Debug)]
 pub struct ForceViolation {
@@ -340,6 +343,219 @@ pub fn rate_piece(
         failure,
     })
 }
+
+#[derive(Debug)]
+pub struct SequenceViolation {
+    pub car: usize,
+    pub axis: usize,
+    pub piece: Option<usize>,
+    pub distance: f64,
+    pub value: f64,
+}
+
+#[derive(Debug)]
+pub struct SequenceRating {
+    pub violation: Option<SequenceViolation>,
+    pub minimum_speeds: Vec<f64>,
+    pub failure: Option<&'static str>,
+}
+
+pub fn rate_sequence(
+    circuit: &Circuit,
+    ranges: &[Range<f64>],
+    configuration: &TrainConfiguration,
+    physics: PhysicsConfig,
+    limits: ComfortableForceLimits,
+    approach_start: f64,
+    start_speed: f64,
+) -> SequenceRating {
+    assert!(!ranges.is_empty());
+    assert!(ranges.windows(2).all(|pair| pair[0].end == pair[1].start));
+    assert!(approach_start < ranges[0].start && start_speed > 0.0);
+    assert!(ranges.last().unwrap().end < circuit.length());
+    let mut train = Train::new(circuit, configuration, physics, approach_start, start_speed);
+    let mut evaluators =
+        vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)];
+    let mut seen = vec![vec![false; ranges.len()]; usize::from(configuration.cars)];
+    let mut minimum_speeds = vec![f64::INFINITY; ranges.len()];
+    let mut tail_seconds = vec![0.0; usize::from(configuration.cars)];
+    let mut done = vec![false; usize::from(configuration.cars)];
+    let mut violation = None;
+    let last_end = ranges.last().unwrap().end;
+    let final_piece = circuit.piece_index(last_end - 1e-9);
+    let expected_tail = straight_for(circuit.pieces()[final_piece].exit).id;
+    let mut failure = None;
+    for _ in 0..100_000 {
+        train.step(circuit);
+        for frame in train.take_readings() {
+            for (car, reading) in frame.into_iter().enumerate() {
+                let evaluated = evaluators[car].update(reading.g);
+                let piece = ranges
+                    .iter()
+                    .position(|range| range.contains(&reading.distance));
+                if let Some(piece) = piece {
+                    seen[car][piece] = true;
+                    minimum_speeds[piece] = minimum_speeds[piece].min(reading.speed);
+                }
+                if reading.distance >= ranges[0].start && !done[car] {
+                    if reading.distance >= last_end {
+                        if circuit.pieces()[circuit.piece_index(reading.distance)].id
+                            != expected_tail
+                        {
+                            failure = Some("exit tail is not a matching straight");
+                            continue;
+                        }
+                        tail_seconds[car] += TIME_STEP;
+                    }
+                    if violation.is_none() {
+                        for axis in 0..3 {
+                            if !evaluated.axis_within_limits[axis] {
+                                violation = Some(SequenceViolation {
+                                    car,
+                                    axis,
+                                    piece,
+                                    distance: reading.distance,
+                                    value: [
+                                        evaluated.filtered.vertical,
+                                        evaluated.filtered.lateral,
+                                        evaluated.filtered.longitudinal,
+                                    ][axis],
+                                });
+                                break;
+                            }
+                        }
+                    }
+                    if tail_seconds[car] >= 0.5
+                        && !evaluated
+                            .axis_exceeding_sustained
+                            .iter()
+                            .any(|exceeding| *exceeding)
+                    {
+                        done[car] = true;
+                    }
+                }
+            }
+        }
+        if failure.is_some() || done.iter().all(|cleared| *cleared) {
+            break;
+        }
+        if train.speed() <= 0.0 || !train.notes().is_empty() {
+            failure = Some("stalled or rolled back");
+            break;
+        }
+        if train.distance() >= circuit.length() - 1.0 {
+            failure = Some("exit tail too short");
+            break;
+        }
+    }
+    if failure.is_none() && !done.iter().all(|cleared| *cleared) {
+        failure = Some("train did not clear the tail");
+    }
+    if failure.is_none() && !seen.iter().flatten().all(|entered| *entered) {
+        failure = Some("not every car entered every piece");
+    }
+    SequenceRating {
+        violation,
+        minimum_speeds,
+        failure,
+    }
+}
+
+/// Solve an unpowered start speed for a target speed at a later track boundary.
+/// Speeds at the boundary are interpolated between the two enclosing integration steps.
+pub fn solve_approach_speed(
+    circuit: &Circuit,
+    configuration: &TrainConfiguration,
+    physics: PhysicsConfig,
+    approach_start: f64,
+    target_distance: f64,
+    target_speed: f64,
+) -> Result<f64, String> {
+    assert!(
+        physics.rolling_resistance == 0.0
+            && physics.drag_coefficient == 0.0
+            && !physics.powered_sections
+    );
+    assert!(
+        0.0 <= approach_start
+            && approach_start < target_distance
+            && target_distance < circuit.length()
+    );
+    assert!(target_speed.is_finite() && target_speed > 0.0);
+    let cars = usize::from(configuration.cars);
+    let spacing = configuration.length_metres / cars as f64;
+    let average_height = |distance: f64| {
+        (0..cars)
+            .map(|car| circuit.sample(distance - car as f64 * spacing).position.z)
+            .sum::<f64>()
+            / cars as f64
+    };
+    let start_squared = target_speed.powi(2)
+        + 2.0 * super::GRAVITY * (average_height(target_distance) - average_height(approach_start));
+    if start_squared <= 0.0 {
+        return Err(format!(
+            "target {target_speed} m/s is unreachable from {approach_start} m"
+        ));
+    }
+    let speed_at_boundary = |start_squared: f64| -> Result<f64, String> {
+        if start_squared <= 0.0 {
+            return Err(format!(
+                "non-positive proposed squared approach speed {start_squared}"
+            ));
+        }
+        let mut train = Train::new(
+            circuit,
+            configuration,
+            physics,
+            approach_start,
+            start_squared.sqrt(),
+        );
+        for _ in 0..100_000 {
+            let before_distance = train.distance();
+            let before_speed = train.speed();
+            train.step_block_brake_without_readings(circuit, &[], false);
+            if train.distance() >= target_distance {
+                let fraction =
+                    (target_distance - before_distance) / (train.distance() - before_distance);
+                return Ok(before_speed + fraction * (train.speed() - before_speed));
+            }
+            if train.speed() <= 0.0 || !train.notes().is_empty() {
+                return Err("train stalled before target boundary".into());
+            }
+        }
+        Err("target boundary was not reached".into())
+    };
+    let mut previous_squared = start_squared;
+    let mut previous_error = speed_at_boundary(previous_squared)? - target_speed;
+    if previous_error.abs() <= 1e-6 {
+        return Ok(previous_squared.sqrt());
+    }
+    let mut current_squared = start_squared + start_squared.max(1.0) * 0.01;
+    let mut current_error = speed_at_boundary(current_squared)? - target_speed;
+    for _ in 0..4 {
+        if current_error.abs() <= 1e-6 {
+            return Ok(current_squared.sqrt());
+        }
+        if (current_error - previous_error).abs() < f64::EPSILON {
+            return Err("approach speed solver lost its secant slope".into());
+        }
+        let next_squared = current_squared
+            - current_error * (current_squared - previous_squared)
+                / (current_error - previous_error);
+        previous_squared = current_squared;
+        previous_error = current_error;
+        current_squared = next_squared;
+        current_error = speed_at_boundary(current_squared)? - target_speed;
+    }
+    if current_error.abs() <= 1e-6 {
+        Ok(current_squared.sqrt())
+    } else {
+        Err(format!(
+            "approach speed solver failed: target {target_speed}, error {current_error}"
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,5 +613,157 @@ mod tests {
             let track = measurement_track(&model, model.train.cars, piece, 25.0);
             assert!(track.element_end > track.element_start, "{:?}", piece.id);
         }
+    }
+    #[test]
+    fn sequence_rating_keeps_per_car_history_and_detects_loop_overspeed() {
+        let model = hybrid_model();
+        let piece = catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::Loop)
+            .unwrap();
+        let track = measurement_track(&model, model.train.cars, piece, 40.0);
+        let mut train = model.train.clone();
+        train.cars = 12;
+        for (speed, passes) in [(25.0, true), (40.0, false)] {
+            let rating = rate_sequence(
+                &track.circuit,
+                &[track.element_start..track.element_end],
+                &train,
+                unpowered(),
+                model.comfortable_force_limits,
+                track.start,
+                speed,
+            );
+            assert!(rating.failure.is_none(), "{rating:?}");
+            assert_eq!(rating.violation.is_none(), passes, "{rating:?}");
+            assert!(rating.minimum_speeds[0].is_finite());
+            if let Some(violation) = rating.violation {
+                assert_eq!(violation.piece, Some(0));
+                assert_eq!(violation.axis, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn sequence_rating_reports_violating_piece_after_two_straights() {
+        let model = hybrid_model();
+        let piece = catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::Loop)
+            .unwrap();
+        let track = measurement_track(&model, model.train.cars, piece, 40.0);
+        let index = track
+            .circuit
+            .starts
+            .iter()
+            .position(|start| *start == track.element_start)
+            .unwrap();
+        let ranges = [
+            track.circuit.starts[index - 2]..track.circuit.starts[index - 1],
+            track.circuit.starts[index - 1]..track.element_start,
+            track.element_start..track.element_end,
+        ];
+        let start = track.circuit.starts[index - 3];
+        let solved = solve_approach_speed(
+            &track.circuit,
+            &model.train,
+            unpowered(),
+            start,
+            track.element_start,
+            40.0,
+        )
+        .unwrap();
+        let rating = rate_sequence(
+            &track.circuit,
+            &ranges,
+            &model.train,
+            unpowered(),
+            model.comfortable_force_limits,
+            start,
+            solved,
+        );
+        assert!(rating.failure.is_none(), "{rating:?}");
+        assert_eq!(rating.violation.as_ref().unwrap().piece, Some(2));
+        assert_eq!(rating.violation.as_ref().unwrap().axis, 0);
+        assert!(rating.minimum_speeds.iter().all(|speed| speed.is_finite()));
+    }
+
+    #[test]
+    fn sequence_rating_reports_stall() {
+        let model = hybrid_model();
+        let piece = catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::Loop)
+            .unwrap();
+        let track = measurement_track(&model, model.train.cars, piece, 25.0);
+        let rating = rate_sequence(
+            &track.circuit,
+            &[track.element_start..track.element_end],
+            &model.train,
+            unpowered(),
+            model.comfortable_force_limits,
+            track.start,
+            10.0,
+        );
+        assert_eq!(rating.failure, Some("stalled or rolled back"));
+    }
+
+    #[test]
+    fn sequence_approach_solver_hits_requested_speed_on_level_up_and_down() {
+        let model = hybrid_model();
+        for id in [
+            PieceId::Loop,
+            PieceId::SixtyToSteepUp,
+            PieceId::SixtyToSteepDown,
+        ] {
+            let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
+            let track = measurement_track(&model, model.train.cars, piece, 25.0);
+            let solved = solve_approach_speed(
+                &track.circuit,
+                &model.train,
+                unpowered(),
+                track.start,
+                track.element_start,
+                25.0,
+            )
+            .unwrap();
+            let mut train = Train::new(
+                &track.circuit,
+                &model.train,
+                unpowered(),
+                track.start,
+                solved,
+            );
+            let actual = loop {
+                let distance = train.distance();
+                let speed = train.speed();
+                train.step_block_brake_without_readings(&track.circuit, &[], false);
+                if train.distance() >= track.element_start {
+                    let fraction = (track.element_start - distance) / (train.distance() - distance);
+                    break speed + fraction * (train.speed() - speed);
+                }
+                assert!(train.speed() > 0.0);
+            };
+            assert!((actual - 25.0).abs() <= 1e-6, "{id:?}: {actual}");
+        }
+    }
+
+    #[test]
+    fn sequence_approach_solver_reports_unreachable_speed_downhill() {
+        let model = hybrid_model();
+        let piece = catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::SixtyToSteepDown)
+            .unwrap();
+        let track = measurement_track(&model, model.train.cars, piece, 25.0);
+        let result = solve_approach_speed(
+            &track.circuit,
+            &model.train,
+            unpowered(),
+            track.start,
+            track.element_start,
+            1.0,
+        );
+        assert!(result.unwrap_err().contains("unreachable"));
     }
 }

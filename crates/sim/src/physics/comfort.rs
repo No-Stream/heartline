@@ -472,6 +472,7 @@ mod optimization_tests {
 mod envelope_tests {
     use super::evaluate_envelope;
     use crate::physics::TestSample;
+    use crate::physics::features::Location;
     use crate::physics::features::PieceSummary;
     use crate::track::{PieceId, PieceKind, Shape};
 
@@ -505,6 +506,83 @@ mod envelope_tests {
             turn_angle_radians: 0.0,
         };
         evaluate_envelope(&samples, &[piece], samples.len() as f64, true)
+    }
+
+    fn stream(readings: &[[f64; 3]]) -> super::EnvelopeExceedance {
+        let mut tracker = super::EnvelopeTracker::default();
+        for (index, &reading) in readings.iter().enumerate() {
+            tracker.record(
+                reading,
+                0.005,
+                true,
+                Location {
+                    piece_index: 0,
+                    piece_name: "Loop",
+                    distance_m: index as f64,
+                    seconds_from_start: 0.0,
+                },
+            );
+        }
+        tracker.finish()
+    }
+
+    #[test]
+    fn normal_forces_stay_inside_the_current_envelope() {
+        assert_eq!(stream(&[[1.0, 0.0, 0.0]; 400]).g_seconds, 0.0);
+    }
+
+    #[test]
+    fn sustained_simultaneous_axes_exceed_the_current_pair_envelope() {
+        let result = stream(&[[5.5, 3.2, 0.0]; 10]);
+        assert!(result.g_seconds > 0.0);
+        assert!(matches!(
+            result.worst.unwrap().axis,
+            super::EnvelopeAxis::VerticalLateral
+        ));
+    }
+
+    #[test]
+    fn separate_axis_exposures_do_not_create_a_simultaneous_pair_excess() {
+        let mut readings = vec![[5.0, 0.0, 0.0]; 500];
+        readings.extend(vec![[0.0, 3.0, 0.0]; 500]);
+        let result = stream(&readings);
+        assert!(result.g_seconds > 0.0);
+        assert!(matches!(
+            result.worst.unwrap().axis,
+            super::EnvelopeAxis::Vertical | super::EnvelopeAxis::Lateral
+        ));
+    }
+
+    #[test]
+    fn nested_single_axis_exposure_adds_to_the_current_duration_score() {
+        let baseline = stream(&[[3.2, 0.0, 0.0]; 2400]);
+        let mut readings = vec![[3.2, 0.0, 0.0]; 2400];
+        readings[600..1600].fill([5.0, 0.0, 0.0]);
+        assert!(stream(&readings).g_seconds > baseline.g_seconds);
+    }
+
+    #[test]
+    fn large_finite_readings_keep_finite_envelope_results() {
+        assert!(stream(&[[1.0, 286.0, 0.0]; 400]).g_seconds.is_finite());
+    }
+
+    #[test]
+    fn hash_covers_active_envelope_history() {
+        let mut first = super::EnvelopeTracker::default();
+        let mut second = super::EnvelopeTracker::default();
+        let location = Location {
+            piece_index: 0,
+            piece_name: "Loop",
+            distance_m: 0.0,
+            seconds_from_start: 0.0,
+        };
+        first.record([1.0, 0.0, 0.0], 0.005, true, location);
+        second.record([1.0, 1.0, 0.0], 0.005, true, location);
+        let mut first_hash = crate::state_hash::StateHasher::new();
+        let mut second_hash = crate::state_hash::StateHasher::new();
+        first.hash_into(&mut first_hash);
+        second.hash_into(&mut second_hash);
+        assert_ne!(first_hash.finish(), second_hash.finish());
     }
 
     #[test]

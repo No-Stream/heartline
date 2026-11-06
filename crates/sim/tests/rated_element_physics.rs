@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
+use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
 use theme_park_sim::track::{
     AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, TrackState, catalog, hybrid_model,
     multi_launch_model, wooden_twister_model,
@@ -399,6 +399,8 @@ fn assert_train_crosses_element(
         entry_speed,
     );
     let mut cars_seen = vec![false; usize::from(cars)];
+    let mut evaluators =
+        vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
     let mut minimum_vertical = f64::INFINITY;
     let mut maximum_vertical = f64::NEG_INFINITY;
     let mut maximum_lateral: f64 = 0.0;
@@ -408,7 +410,16 @@ fn assert_train_crosses_element(
         train.step(circuit);
         for frame in train.take_readings() {
             for (index, reading) in frame.into_iter().enumerate() {
+                let evaluated = evaluators[index].update(reading.g);
                 if element_range.contains(&reading.distance) {
+                    assert!(
+                        evaluated.within_limits,
+                        "{piece_id:?} {} {cars} cars at {entry_speed}: car {index}, distance {}, filtered {:?}, axes {:?}",
+                        model.name,
+                        reading.distance,
+                        evaluated.filtered,
+                        evaluated.axis_within_limits,
+                    );
                     cars_seen[index] = true;
                     minimum_vertical = minimum_vertical.min(reading.g.vertical);
                     maximum_vertical = maximum_vertical.max(reading.g.vertical);
@@ -624,15 +635,24 @@ fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train
                     rated.maximum_entry,
                 );
                 let mut cars_seen = vec![false; usize::from(cars)];
+                let mut evaluators =
+                    vec![
+                        ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
+                        usize::from(cars)
+                    ];
                 let mut minimum_vertical_g = f64::INFINITY;
+                let mut minimum_filtered_vertical_g = f64::INFINITY;
 
                 for _ in 0..100_000 {
                     train.step(&circuit);
                     for frame in train.take_readings() {
                         for (index, reading) in frame.into_iter().enumerate() {
+                            let evaluated = evaluators[index].update(reading.g);
                             if (element_start..element_end).contains(&reading.distance) {
                                 cars_seen[index] = true;
                                 minimum_vertical_g = minimum_vertical_g.min(reading.g.vertical);
+                                minimum_filtered_vertical_g =
+                                    minimum_filtered_vertical_g.min(evaluated.filtered.vertical);
                             }
                         }
                     }
@@ -674,6 +694,12 @@ fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train
                     failures.push(format!(
                         "{} {} {cars} cars: {minimum_vertical_g:.3} g below floor {:.3} g",
                         piece.name, model.name, limits.minimum_vertical_g
+                    ));
+                }
+                if limits.classify_airtime(minimum_filtered_vertical_g) != AirtimeRating::Great {
+                    failures.push(format!(
+                        "{} {} {cars} cars: filtered {minimum_filtered_vertical_g:.3} g is not Great",
+                        piece.name, model.name
                     ));
                 }
                 if limits.classify_airtime(minimum_vertical_g) != AirtimeRating::Great {

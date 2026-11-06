@@ -512,6 +512,7 @@ let executingConstructionInput = false;
 let constructionInputSent = false;
 function sendConstructionInput(action: Extract<InputAction, WorkerAction>): void {
   constructionInputSent = true;
+  panel.setInputPending(true);
   sendWorkerAction(worker, action);
 }
 const constructionInputQueue = createConstructionInputQueue((action) => {
@@ -930,6 +931,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     output.value = String(message.tickCount);
     gameCanvas.dataset.agentCount = String(current?.guestIds.length ?? 0);
   } else if (message.type === "construction-input-barrier") {
+    panel.setInputPending(false);
     constructionInputQueue.complete(construction?.track.length ?? 0, construction?.active ?? false);
   } else if (message.type === "surface-edited" || message.type === "test-resumed" || message.type === "construction-finish-ready") {
     if (message.type === "surface-edited" && message.changed) autosaveScheduler?.markChanged();
