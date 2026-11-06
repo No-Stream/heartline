@@ -45,18 +45,12 @@ pub(super) fn preview_at_step(
         .position(|piece| piece.kind == PieceKind::Station)?;
     assert!(pieces.windows(2).all(|pair| pair[0].exit == pair[1].entry));
     let closed = pieces.last().unwrap().exit == pieces[0].entry;
-    let mut starts = Vec::with_capacity(pieces.len());
-    let mut length = 0.0;
-    for piece in pieces {
-        starts.push(length);
-        length += piece.length();
-    }
-    let circuit = Circuit {
-        pieces: pieces.to_vec(),
-        starts,
-        length,
-        open: !closed,
+    let circuit = if closed {
+        Circuit::new(pieces.to_vec()).expect("connected closed track")
+    } else {
+        Circuit::open(pieces.to_vec()).expect("connected open track")
     };
+    let length = circuit.length();
     let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
     let mut train = Train::new(&circuit, configuration, config, station_distance, 0.0);
     let mut recorder = TestRunRecorder::for_circuit_with_train(&circuit, configuration);

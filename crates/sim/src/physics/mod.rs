@@ -20,7 +20,9 @@ pub use construction_run::ConstructionTestRunRecorder;
 mod features;
 mod scoring;
 pub use features::Location;
-pub use scoring::{Contribution, ForceDetail, ScoreBreakdown, Term};
+pub use scoring::{
+    Contribution, ForceAxis, ForceBand, ForceDetail, ScoreBreakdown, Term, force_band,
+};
 mod testing;
 pub use testing::{TestRun, TestRunRecorder, TestSample};
 mod coaster_run;
@@ -39,6 +41,27 @@ pub struct Circuit {
 }
 
 impl Circuit {
+    /// Construct a connected track for simulation before its ends are joined.
+    pub fn open(pieces: Vec<Piece>) -> Result<Self, &'static str> {
+        if pieces.is_empty() || !pieces.iter().any(|piece| piece.kind == PieceKind::Station) {
+            return Err("track requires a station");
+        }
+        if !pieces.windows(2).all(|pair| pair[0].exit == pair[1].entry) {
+            return Err("track pieces must join");
+        }
+        let mut starts = Vec::with_capacity(pieces.len());
+        let mut length = 0.0;
+        for piece in &pieces {
+            starts.push(length);
+            length += piece.length();
+        }
+        Ok(Self {
+            pieces,
+            starts,
+            length,
+            open: true,
+        })
+    }
     pub fn new(pieces: Vec<Piece>) -> Result<Self, &'static str> {
         if pieces.is_empty() {
             return Err("circuit requires track pieces");

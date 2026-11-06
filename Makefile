@@ -98,6 +98,11 @@ bench-construction:
 bench-player-circuits:
 	$(CARGO) run --release -p theme-park-sim --example player_circuit_preview_bench
 
+CIRCUIT ?= Timber Tumbler
+FILE ?= web/e2e/player/circuits.txt
+circuit-report:
+	$(CARGO) run --release -p theme-park-sim --example circuit_report -- --circuit "$(CIRCUIT)" --file "$(FILE)" $(ARGS)
+
 bench-guests: wasm-bindgen
 	$(CARGO) run --release -p theme-park-sim --features threads --example guest_bench
 	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
