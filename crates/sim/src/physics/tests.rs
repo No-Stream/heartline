@@ -1743,3 +1743,35 @@ fn banked_drops_complete_physics_laps_with_finite_forces() {
         }
     }
 }
+
+#[test]
+fn incremental_preview_matches_fresh_runs_after_track_edits() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let pieces = circuit.pieces();
+    let mut cache = PreviewCache::default();
+    for length in [3, 4, 5, 8, 6, 9, pieces.len()] {
+        let track = &pieces[..length.min(pieces.len())];
+        let cached = cache
+            .preview(track, &model.train, config, model.comfortable_force_limits)
+            .unwrap();
+        let fresh = PreviewCache::default()
+            .preview(track, &model.train, config, model.comfortable_force_limits)
+            .unwrap();
+        assert_eq!(cached.status, fresh.status);
+        assert_eq!(
+            cached.report.samples, fresh.report.samples,
+            "samples at length {length}"
+        );
+        assert!(
+            cached.report == fresh.report,
+            "report differs at length {length}"
+        );
+        assert_eq!(cached.force_limit_exceeded, fresh.force_limit_exceeded);
+    }
+    assert!(cache.snapshot_count() > 0);
+}

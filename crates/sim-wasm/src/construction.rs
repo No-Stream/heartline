@@ -1,6 +1,6 @@
 use super::*;
 use serde::Serialize;
-use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
+use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun};
 use theme_park_sim::track::ComfortableForceLimits;
 use theme_park_sim::track::{Bank, Heartlining, HillFeel, HillTwist};
 use ts_rs::TS;
@@ -432,9 +432,8 @@ impl WasmSimulation {
             return "null".into();
         };
         let pieces = construction.pieces();
-        let Some(preview) = preview_open_track(
+        let Some(preview) = construction.force_preview(
             pieces,
-            &construction.model().train,
             PhysicsConfig {
                 lift_speed: 5.0,
                 ..PhysicsConfig::default()
@@ -538,15 +537,15 @@ impl WasmSimulation {
         let mut pieces = construction.pieces().to_vec();
         pieces.extend(candidate);
         let end_distance: f64 = pieces.iter().map(Piece::length).sum();
-        let preview = preview_open_track(
-            &pieces,
-            &construction.model().train,
-            PhysicsConfig {
-                lift_speed: 5.0,
-                ..PhysicsConfig::default()
-            },
-        )
-        .expect("construction contains a station");
+        let preview = construction
+            .force_preview(
+                &pieces,
+                PhysicsConfig {
+                    lift_speed: 5.0,
+                    ..PhysicsConfig::default()
+                },
+            )
+            .expect("construction contains a station");
         let samples: Vec<_> = preview
             .report
             .samples

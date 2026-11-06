@@ -184,6 +184,8 @@ pub struct Construction {
     choices_cache: RefCell<Option<ChoicesCache>>,
     #[serde(skip)]
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
+    #[serde(skip)]
+    force_preview_cache: RefCell<crate::physics::PreviewCache>,
     #[cfg(test)]
     support_cache_misses: Cell<usize>,
     #[cfg(test)]
@@ -211,6 +213,7 @@ impl Construction {
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
+            force_preview_cache: RefCell::new(crate::physics::PreviewCache::default()),
             #[cfg(test)]
             support_cache_misses: Cell::new(0),
             #[cfg(test)]
@@ -220,6 +223,18 @@ impl Construction {
 
     pub fn start(&self) -> TrackState {
         self.start
+    }
+    pub fn force_preview(
+        &self,
+        pieces: &[Piece],
+        config: crate::physics::PhysicsConfig,
+    ) -> Option<crate::physics::TrackPreview> {
+        self.force_preview_cache.borrow_mut().preview(
+            pieces,
+            &self.model.train,
+            config,
+            self.model.comfortable_force_limits,
+        )
     }
     pub fn end(&self) -> TrackState {
         self.pieces.last().map_or(self.start, |piece| piece.exit)

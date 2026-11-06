@@ -26,7 +26,7 @@ pub use testing::{TestRun, TestRunRecorder, TestSample};
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};
 mod preview;
-pub use preview::{PreviewStatus, TrackPreview, preview_open_track};
+pub use preview::{PreviewCache, PreviewStatus, TrackPreview, preview_open_track};
 mod block_operation;
 pub use block_operation::BlockOperation;
 
@@ -564,6 +564,9 @@ impl Train {
     }
     fn step_preview(&mut self, circuit: &Circuit, time_step: f64) {
         self.step_block_brake_impl(circuit, &[], false, 1, time_step);
+    }
+    fn step_preview_all_cars(&mut self, circuit: &Circuit, time_step: f64) {
+        self.step_block_brake_impl(circuit, &[], false, self.cars, time_step);
     }
     fn step_block_brake_impl(
         &mut self,

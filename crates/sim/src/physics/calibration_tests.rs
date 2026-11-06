@@ -688,3 +688,69 @@ fn print_circuit(name: &str, report: &super::TestRun) {
         },
     );
 }
+
+#[test]
+fn incremental_force_preview_matches_fresh_player_circuit_prefixes() {
+    for (name, entries) in read_player_circuits() {
+        let (model, circuit) = build_player_circuit(&name, &entries);
+        let pieces = circuit.pieces();
+        let config = PhysicsConfig {
+            lift_speed: 5.0,
+            ..PhysicsConfig::default()
+        };
+        let mut cache = super::PreviewCache::default();
+        for length in (1..=pieces.len()).chain((1..pieces.len()).rev()) {
+            let track = &pieces[..length];
+            let cached = cache
+                .preview(track, &model.train, config, model.comfortable_force_limits)
+                .unwrap();
+            let fresh = super::PreviewCache::default()
+                .preview(track, &model.train, config, model.comfortable_force_limits)
+                .unwrap();
+            assert_eq!(cached.status, fresh.status, "{name} length {length}");
+            assert_eq!(
+                cached.report.samples, fresh.report.samples,
+                "{name} length {length}"
+            );
+            assert_eq!(
+                cached.force_limit_exceeded, fresh.force_limit_exceeded,
+                "{name} length {length}"
+            );
+        }
+        let mut edited = pieces.to_vec();
+        let middle = edited.len() / 2;
+        edited[middle].kind = if edited[middle].kind == crate::track::PieceKind::Brakes {
+            crate::track::PieceKind::Track
+        } else {
+            crate::track::PieceKind::Brakes
+        };
+        cache
+            .preview(pieces, &model.train, config, model.comfortable_force_limits)
+            .unwrap();
+        let cached = cache
+            .preview(
+                &edited,
+                &model.train,
+                config,
+                model.comfortable_force_limits,
+            )
+            .unwrap();
+        let fresh = super::PreviewCache::default()
+            .preview(
+                &edited,
+                &model.train,
+                config,
+                model.comfortable_force_limits,
+            )
+            .unwrap();
+        assert_eq!(cached.status, fresh.status, "{name} middle edit");
+        assert_eq!(
+            cached.report.samples, fresh.report.samples,
+            "{name} middle edit"
+        );
+        assert_eq!(
+            cached.force_limit_exceeded, fresh.force_limit_exceeded,
+            "{name} middle edit"
+        );
+    }
+}

@@ -758,6 +758,25 @@ struct RatedPieceSpeedWindow {
 }
 
 impl TestRunRecorder {
+    pub(super) fn rebind_preview_circuit(
+        &mut self,
+        circuit: &Circuit,
+        train: &crate::track::TrainConfiguration,
+        limits: ComfortableForceLimits,
+    ) {
+        let fresh = Self::for_circuit_with_train_and_limits(circuit, train, limits);
+        if self.next_sample_distance == self.circuit_length && circuit.length > self.circuit_length
+        {
+            self.next_sample_distance = self.last_unwrapped_distance.ceil();
+        }
+        self.circuit_length = fresh.circuit_length;
+        self.piece_starts = fresh.piece_starts;
+        self.piece_summaries = fresh.piece_summaries;
+        self.rated_pieces = fresh.rated_pieces;
+        self.launch_ranges = fresh.launch_ranges;
+        self.noted_rated_pieces.resize(circuit.pieces.len(), false);
+        self.samples.resize(circuit.length.ceil() as usize, None);
+    }
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_tag(b"TestRunRecorder-v6");
         hash.write_f64(self.circuit_length);
