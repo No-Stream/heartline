@@ -656,7 +656,11 @@ fn calibration_table_prints_demo_and_player_circuit_scores() {
     print_circuit("Demo", &demo);
 
     let circuits = read_player_circuits();
-    assert_eq!(circuits.len(), 3, "calibration parses all player circuits");
+    assert_eq!(
+        circuits.len(),
+        coaster_models().len(),
+        "calibration parses all player circuits"
+    );
     for model in coaster_models() {
         let name = model.name;
         let entries = circuits.get(name).expect("known player circuit");

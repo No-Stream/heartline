@@ -25,7 +25,7 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
         .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
         .collect();
     assert_eq!(speed_turns.len(), expected_turns.len());
-    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    let models = coaster_models();
     let mut bank_measurements = Vec::with_capacity(expected_turns.len());
 
     for (id, expected_radius, expected_hand, design_speed) in expected_turns {
@@ -417,6 +417,8 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
                         && family.twist.is_none()
                 )
             }) && steel_models.iter().all(|model| model.allows_piece(piece))
+                // Family hills are gentle low-speed hills and stay upright.
+                && !matches!(piece.id, PieceId::FamilyHill3x32 | PieceId::FamilyHill4x40)
         })
         .collect();
     assert_eq!(upright_hills.len(), 11);
@@ -517,7 +519,7 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
 
 #[test]
 fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
-    let expected_hills: [(&str, &[&str]); 15] = [
+    let expected_hills: [(&str, &[&str]); 17] = [
         (
             "Ejector hill 8 × 48 m",
             &["Timber Tumbler", "Velocity Viper"],
@@ -572,6 +574,24 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         ),
         ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
         ("Strong floater hill 8 × 64 m", &["Briar Blitz"]),
+        (
+            "Family hill 3 × 32 m",
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Daisy Dash",
+            ],
+        ),
+        (
+            "Family hill 4 × 40 m",
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Daisy Dash",
+            ],
+        ),
     ];
     let models = coaster_models();
     let hill_pieces: Vec<_> = catalog()
@@ -607,7 +627,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             .collect();
         let expected_feel = if name.starts_with("Strong floater") {
             HillFeel::StrongFloater
-        } else if name.starts_with("Floater") {
+        } else if name.starts_with("Floater") || name.starts_with("Family") {
             HillFeel::Floater
         } else if name.starts_with("Speed") {
             HillFeel::Speed
@@ -621,6 +641,8 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         let reduction = match piece.id {
             PieceId::EjectorHill8x48 | PieceId::FloaterHill4x48 | PieceId::SpeedHill6x80 => 1.0,
             PieceId::SpeedHill4x64 => 3.0,
+            PieceId::FamilyHill3x32 => 0.8,
+            PieceId::FamilyHill4x40 => 0.6,
             _ => 0.0,
         };
         assert_eq!(
@@ -1844,16 +1866,21 @@ fn sixty_degree_pull_profiles_match_connectors_and_reverse() {
 
 #[test]
 fn coaster_models_use_peak_rider_force_limits() {
-    for (model, minimum_vertical, maximum_vertical) in [
-        (wooden_twister_model(), -1.0, 4.0),
-        (hybrid_model(), -1.5, 4.5),
-        (multi_launch_model(), -1.5, 5.0),
-    ] {
+    let expected_limits = [
+        ("Briar Blitz", -1.0, 4.0, 1.5),
+        ("Timber Tumbler", -1.5, 4.5, 1.5),
+        ("Velocity Viper", -1.5, 5.0, 1.5),
+        ("Daisy Dash", -0.6, 3.0, 1.0),
+    ];
+    let models = coaster_models();
+    assert_eq!(models.len(), expected_limits.len());
+    for (name, minimum_vertical, maximum_vertical, maximum_lateral) in expected_limits {
+        let model = models.iter().find(|model| model.name == name).unwrap();
         let limits = model.comfortable_force_limits;
-        assert_eq!(limits.minimum_vertical_g, minimum_vertical);
-        assert_eq!(limits.maximum_vertical_g, maximum_vertical);
-        assert_eq!(limits.maximum_lateral_g, 1.5);
-        assert_eq!(limits.maximum_longitudinal_g, 1.5);
+        assert_eq!(limits.minimum_vertical_g, minimum_vertical, "{name}");
+        assert_eq!(limits.maximum_vertical_g, maximum_vertical, "{name}");
+        assert_eq!(limits.maximum_lateral_g, maximum_lateral, "{name}");
+        assert_eq!(limits.maximum_longitudinal_g, 1.5, "{name}");
     }
 }
 
@@ -2193,6 +2220,95 @@ fn powered_lift_pieces_match_unpowered_geometry_and_are_available() {
 fn coaster_models_have_a_minimum_rider_height() {
     assert_eq!(super::hybrid_model().minimum_height_cm, 122);
     assert_eq!(super::multi_launch_model().minimum_height_cm, 132);
+    assert_eq!(super::family_coaster_model().minimum_height_cm, 100);
+    for model in coaster_models() {
+        assert!(
+            (100..=140).contains(&model.minimum_height_cm),
+            "{}",
+            model.name
+        );
+    }
+}
+
+#[test]
+fn family_coaster_is_gentle_and_built_from_low_speed_pieces() {
+    let family = family_coaster_model();
+    assert_eq!(family.key, "family_coaster");
+    assert_eq!(family.name, "Daisy Dash");
+    assert_eq!(family.manufacturer, "Windmill Ride Works");
+    assert_eq!(family.train.cars, 10);
+    assert_eq!(family.train.rows_per_car, 1);
+    assert_eq!(family.train.seats_per_row, 2);
+    assert_eq!(family.cars_per_train, 4..=10);
+    assert!(family.allowed_inversions.is_empty());
+    assert!(family.launch_types.is_empty());
+    assert_eq!(family.support_style, SupportStyle::SteelColumns);
+    assert_eq!(
+        family.lift_rules,
+        Some(LiftRules {
+            max_slope: Slope::UpGentle,
+            curved: true,
+        })
+    );
+
+    let pieces = catalog();
+    let allowed: Vec<_> = pieces
+        .iter()
+        .filter(|piece| family.allows_piece(piece))
+        .collect();
+    for piece in &allowed {
+        assert!(
+            [piece.entry.slope, piece.exit.slope]
+                .iter()
+                .all(|slope| slope.gradient().abs() <= 1.0),
+            "{} is steeper than 45 degrees",
+            piece.name
+        );
+        assert!(piece.inversion.is_none(), "{}", piece.name);
+        assert_ne!(piece.kind, PieceKind::Launch, "{}", piece.name);
+        if let Some(PieceFamily::Hill(hill)) = piece.family {
+            assert_eq!(hill.feel, HillFeel::Floater, "{}", piece.name);
+            assert!(hill.height_metres <= 4, "{}", piece.name);
+        }
+    }
+    for id in [
+        PieceId::FamilyHill3x32,
+        PieceId::FamilyHill4x40,
+        PieceId::TwisterHelixLeft,
+        PieceId::TwisterHelixRight,
+        PieceId::SpeedTurnLarge16Left,
+        PieceId::SpeedTurnLarge16Right,
+    ] {
+        assert!(family.allowed_pieces.contains(&id), "{id:?}");
+    }
+    for id in [
+        PieceId::FloaterHill4x48,
+        PieceId::AirtimeHill,
+        PieceId::SteelLoop,
+        PieceId::TopHat,
+        // Above 3 g at the top of its window.
+        PieceId::SpeedTurnLarge24Left,
+        PieceId::SpeedTurnLarge24Right,
+        // Above 1 g lateral at the top of its window.
+        PieceId::RolloutLeft,
+        PieceId::RolloutRight,
+    ] {
+        assert!(!family.allowed_pieces.contains(&id), "{id:?}");
+    }
+    let curved_climb = family
+        .available_pieces(TrackState {
+            slope: Slope::UpGentle,
+            ..TrackState::origin()
+        })
+        .into_iter()
+        .find(|piece| piece.id == PieceId::TurnSmallStandalone)
+        .expect("the family coaster offers a climbing small turn");
+    assert!(family.allows_chain(&curved_climb));
+    let steep_climb = pieces
+        .iter()
+        .find(|piece| piece.id == PieceId::GentleToSteepUp)
+        .unwrap();
+    assert!(!family.allows_chain(steep_climb));
 }
 
 #[test]

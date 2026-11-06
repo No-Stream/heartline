@@ -383,6 +383,8 @@ pub enum PieceId {
     SpeedTurnSmall24Left,
     SpeedTurnSmall24Right,
     LongGentleDownToLevel,
+    FamilyHill3x32,
+    FamilyHill4x40,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {

@@ -270,7 +270,12 @@ impl<'de> serde::Deserialize<'de> for CoasterModel {
 }
 
 pub fn coaster_models() -> Vec<CoasterModel> {
-    vec![hybrid_model(), multi_launch_model(), wooden_twister_model()]
+    vec![
+        hybrid_model(),
+        multi_launch_model(),
+        wooden_twister_model(),
+        family_coaster_model(),
+    ]
 }
 
 pub fn wooden_twister_model() -> CoasterModel {
@@ -376,6 +381,8 @@ pub fn wooden_twister_model() -> CoasterModel {
                 TwisterHelixRight,
                 AirtimeHill,
                 FloaterHill4x48,
+                FamilyHill3x32,
+                FamilyHill4x40,
                 FloaterHill8x64,
                 FloaterHill12x80,
                 FloaterHill6x64,
@@ -588,6 +595,8 @@ pub fn hybrid_model() -> CoasterModel {
                 EjectorHill12x80,
                 EjectorHill16x96,
                 FloaterHill4x48,
+                FamilyHill3x32,
+                FamilyHill4x40,
                 FloaterHill8x64,
                 FloaterHill12x80,
                 FloaterHill6x64,
@@ -809,6 +818,8 @@ pub fn multi_launch_model() -> CoasterModel {
                 EjectorHill12x80,
                 EjectorHill16x96,
                 FloaterHill4x48,
+                FamilyHill3x32,
+                FamilyHill4x40,
                 FloaterHill8x64,
                 FloaterHill12x80,
                 FloaterHill6x64,
@@ -856,6 +867,134 @@ pub fn multi_launch_model() -> CoasterModel {
             track: CoasterColor::Teal,
             supports: CoasterColor::Cream,
             trains: CoasterColor::Coral,
+        },
+    }
+}
+
+/// A gentle steel family coaster: a curved low lift, 45-degree drops at most, floaty family hills,
+/// turns banked for speed and no inversions, so children from 100 cm can ride.
+pub fn family_coaster_model() -> CoasterModel {
+    CoasterModel {
+        key: "family_coaster",
+        cars_per_train: 4..=10,
+        ui_description: "A gentle steel family coaster with a curving lift, soft floaty hills and turns banked for speed. Children from 100 cm can ride.",
+        manufacturer: "Windmill Ride Works",
+        name: "Daisy Dash",
+        description: "A low steel family coaster with a tyre-driven curving lift, gentle drops, floaty family hills and turns banked for speed. No inversions.",
+        allowed_pieces: {
+            use PieceId::*;
+            vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                Straight,
+                BankedStraightLeft,
+                BankedStraightRight,
+                HalfTileStraight,
+                OneTileStraight,
+                OneTileGentleUp,
+                OneTileGentleDown,
+                GentleUp,
+                GentleDown,
+                SteepUp,
+                SteepDown,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                GentleToSteepUp,
+                SteepToGentleUp,
+                LevelToGentleDown,
+                GentleDownToLevel,
+                LongGentleDownToLevel,
+                GentleToSteepDown,
+                SteepToGentleDown,
+                TurnSmallEntry,
+                TurnSmall,
+                TurnSmallExit,
+                TurnSmallStandalone,
+                TurnSmallRightEntry,
+                TurnSmallRight,
+                TurnSmallRightExit,
+                TurnSmallRightStandalone,
+                TurnLargeEntry,
+                TurnLarge,
+                TurnLargeExit,
+                TurnLargeStandalone,
+                TurnLargeRightEntry,
+                TurnLargeRight,
+                TurnLargeRightExit,
+                TurnLargeRightStandalone,
+                BankLeft,
+                UnbankLeft,
+                BankRight,
+                UnbankRight,
+                BankedTurnEntry,
+                BankedTurn,
+                BankedTurnExit,
+                BankedTurnStandalone,
+                SmallRightBankedTurnEntry,
+                SmallRightBankedTurn,
+                SmallRightBankedTurnExit,
+                SmallRightBankedTurnStandalone,
+                LargeLeftBankedTurnEntry,
+                LargeLeftBankedTurn,
+                LargeLeftBankedTurnExit,
+                LargeLeftBankedTurnStandalone,
+                LargeRightBankedTurnEntry,
+                LargeRightBankedTurn,
+                LargeRightBankedTurnExit,
+                LargeRightBankedTurnStandalone,
+                OffsetLeft,
+                OffsetRight,
+                ShortOffsetLeft,
+                ShortOffsetRight,
+                FullOffsetLeft,
+                FullOffsetRight,
+                ShortRise,
+                ShortFall,
+                Brakes,
+                Station,
+                TerrainRise,
+                TerrainFall,
+                TwisterHelixLeft,
+                TwisterHelixRight,
+                FamilyHill3x32,
+                FamilyHill4x40,
+            ]
+        },
+        sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
+        minimum_radius_metres: 8.0,
+        comfortable_force_limits: ComfortableForceLimits {
+            minimum_vertical_g: -0.6,
+            maximum_vertical_g: 3.0,
+            maximum_lateral_g: 1.0,
+            // Every hill's heart-line surge reaches about 1.4 g at its window top, so a lower
+            // longitudinal limit would leave the family hills without their float.
+            maximum_longitudinal_g: 1.5,
+        },
+        minimum_height_cm: 100,
+        allowed_inversions: vec![],
+        lift_rules: Some(LiftRules {
+            max_slope: Slope::UpGentle,
+            curved: true,
+        }),
+        launch_types: vec![],
+        support_style: SupportStyle::SteelColumns,
+        train: TrainConfiguration {
+            cars: 10,
+            rows_per_car: 1,
+            seats_per_row: 2,
+            length_metres: 15.0,
+            width_metres: 1.8,
+            height_metres: 1.6,
+            launch: None,
+        },
+        track_material: Material::Steel,
+        structure_material: Material::Steel,
+        default_colors: CoasterColors {
+            track: CoasterColor::Mustard,
+            supports: CoasterColor::Sky,
+            trains: CoasterColor::Rose,
         },
     }
 }
@@ -924,6 +1063,7 @@ mod tests {
                 ("hybrid", "Timber Tumbler"),
                 ("velocity_viper", "Velocity Viper"),
                 ("wooden_twister", "Briar Blitz"),
+                ("family_coaster", "Daisy Dash"),
             ]
         );
         assert_eq!(

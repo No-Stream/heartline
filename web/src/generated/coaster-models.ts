@@ -36,6 +36,18 @@ export const COASTER_MODELS = [
     "manufacturer": "Great Coaster Workshop",
     "name": "Briar Blitz",
     "track_material": "wood"
+  },
+  {
+    "default_colors": {
+      "supports": "sky",
+      "track": "mustard",
+      "trains": "rose"
+    },
+    "description": "A gentle steel family coaster with a curving lift, soft floaty hills and turns banked for speed. Children from 100 cm can ride.",
+    "key": "family_coaster",
+    "manufacturer": "Windmill Ride Works",
+    "name": "Daisy Dash",
+    "track_material": "steel"
   }
 ] as const;
 

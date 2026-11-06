@@ -4,8 +4,9 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
-    CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceId, TrackState, catalog,
-    effective_rated_speeds, hybrid_model, multi_launch_model, wooden_twister_model,
+    CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceFamily, PieceId, PieceKind,
+    TrackState, catalog, effective_rated_speeds, family_coaster_model, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -369,6 +370,67 @@ fn velocity_viper_completes_with_comfortable_forces() {
             report.notes
         );
         assert_eq!(stats.launches, 2);
+        assert_design_margins(&circuit, &model, initial_speed != 0.0);
+    }
+}
+
+#[test]
+fn daisy_dash_is_a_gentle_family_ride_under_both_physics_configs() {
+    let model = family_coaster_model();
+    let circuit = player_circuit("Daisy Dash", model.clone());
+    let pieces = circuit.pieces();
+    let family_hills = pieces
+        .iter()
+        .filter(|piece| matches!(piece.id, PieceId::FamilyHill3x32 | PieceId::FamilyHill4x40))
+        .count();
+    let speed_matched_turns = pieces
+        .iter()
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
+        .count();
+    assert!(family_hills >= 2, "family hills: {family_hills}");
+    assert!(
+        speed_matched_turns >= 3,
+        "speed-matched turns: {speed_matched_turns}"
+    );
+    assert!(
+        pieces
+            .iter()
+            .any(|piece| piece.kind == PieceKind::Lift && piece.entry.heading != piece.exit.heading),
+        "the chain lift curves"
+    );
+    for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
+        let report = ride_test(&circuit, &model, lift_speed, initial_speed);
+        let stats = report.statistics;
+        let limits = model.comfortable_force_limits;
+        eprintln!(
+            "Daisy Dash at lift speed {lift_speed}: excitement {:.2}, intensity {:.2}, nausea {:.2}; stats {stats:?}",
+            report.excitement, report.intensity, report.nausea
+        );
+        assert!(report.completed);
+        assert!(
+            (2.5..=4.5).contains(&report.excitement),
+            "excitement: {}",
+            report.excitement
+        );
+        assert!(
+            stats.max_positive_vertical_g <= limits.maximum_vertical_g
+                && stats.max_negative_vertical_g >= limits.minimum_vertical_g
+                && stats.max_lateral_g <= limits.maximum_lateral_g
+                && stats.max_forward_g <= limits.maximum_longitudinal_g
+                && stats.max_braking_g.abs() <= limits.maximum_longitudinal_g,
+            "{stats:?}"
+        );
+        assert_eq!(stats.inversions, 0);
+        assert_eq!(stats.launches, 0);
+        assert!(stats.airtime_moments >= 2, "{stats:?}");
+        assert!(
+            !report
+                .notes
+                .iter()
+                .any(|note| note.contains("rated speed band")),
+            "{:?}",
+            report.notes
+        );
         assert_design_margins(&circuit, &model, initial_speed != 0.0);
     }
 }

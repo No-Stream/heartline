@@ -40,6 +40,8 @@ const seatPair = (along: readonly [number, number], up: readonly [number, number
  * Each model's cars follow its real inspiration: Rocky Mountain Construction's short, low-sided two-row cars with lap bars;
  * Intamin's sleek launch-coaster cars with high-backed seats and a long pointed lead car; and Great Coaster
  * International's Millennium Flyer, a chain of short single-row cars with tall sides behind a tall, sloping front.
+ * The family coaster follows the small junior-coaster cars: one pair of seats per car, low padded sides with a light rim,
+ * and a lead car with a short rounded nose.
  */
 export const TRAIN_LOOKS: Readonly<Record<CoasterModelKey, TrainLook>> = {
   hybrid: {
@@ -76,6 +78,21 @@ export const TRAIN_LOOKS: Readonly<Record<CoasterModelKey, TrainLook>> = {
       { paint: "ink", along: [0.18, 0.26], halfWidth: 0.58, up: [1.0, 1.07] },
     ],
     lead: [{ paint: "body", along: [0.58, 1.0], halfWidth: 0.74, up: [0.3, 1.35], front: { halfWidth: 0.6, up: [0.3, 0.9] } }],
+  },
+  family_coaster: {
+    rowPitchMetres: 0,
+    seatSpacingMetres: 0.7,
+    car: [
+      bogie(0.4),
+      { paint: "body", along: [-0.6, 0.6], halfWidth: 0.66, up: [0.28, 0.64] },
+      { paint: "trim", along: [-0.6, 0.6], halfWidth: 0.68, up: [0.64, 0.7] },
+      interior([-0.44, 0.42], 0.54, 0.64),
+    ],
+    row: [
+      ...[-0.34, 0.34].map((across): CarPart => ({ paint: "seat", along: [-0.46, -0.3], across, halfWidth: 0.26, up: [0.6, 0.98] })),
+      { paint: "ink", along: [0.14, 0.22], halfWidth: 0.5, up: [0.78, 0.84] },
+    ],
+    lead: [{ paint: "body", along: [0.6, 1.15], halfWidth: 0.66, up: [0.28, 0.82], front: { halfWidth: 0.36, up: [0.28, 0.56] } }],
   },
 };
 

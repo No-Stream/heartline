@@ -1602,12 +1602,36 @@ fn build_catalog() -> Vec<Piece> {
             22.894120166796476,
             8.0,
         ),
+        (
+            FamilyHill3x32,
+            "FamilyHill3x32",
+            "Family hill 3 × 32 m",
+            HillFeel::Floater,
+            3,
+            32,
+            15.346681821938985,
+            8.0,
+        ),
+        (
+            FamilyHill4x40,
+            "FamilyHill4x40",
+            "Family hill 4 × 40 m",
+            HillFeel::Floater,
+            4,
+            40,
+            16.75644507723801,
+            8.0,
+        ),
     ] {
         let profile = Arc::new(embedded_profile(profile_name));
         let maximum_entry = design_speed
             - match id {
                 EjectorHill8x48 | FloaterHill4x48 | SpeedHill6x80 => 1.0,
                 SpeedHill4x64 => 3.0,
+                // The rear cars of a full train crest a family hill harder than the point-mass design, so
+                // the window tops out where the worst car floats at about -0.55 g.
+                FamilyHill3x32 => 0.8,
+                FamilyHill4x40 => 0.6,
                 _ => 0.0,
             };
         let rated_speeds = profile.rated_speeds(name, maximum_entry, 2.0, model_radius);

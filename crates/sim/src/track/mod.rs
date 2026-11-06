@@ -23,7 +23,8 @@ pub use models::{
     AirtimeRating, CoasterModel, ComfortableForceLimits,
     LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
     LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules, Material, SupportStyle,
-    TrainConfiguration, coaster_models, hybrid_model, multi_launch_model, wooden_twister_model,
+    TrainConfiguration, coaster_models, family_coaster_model, hybrid_model, multi_launch_model,
+    wooden_twister_model,
 };
 
 #[cfg(test)]

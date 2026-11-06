@@ -2002,6 +2002,8 @@ define_piece_id_wire_names!(
     ZeroGRollCompactRight,
     StallLeft,
     StallRight,
+    FamilyHill3x32,
+    FamilyHill4x40,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

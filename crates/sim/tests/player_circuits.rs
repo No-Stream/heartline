@@ -3,7 +3,8 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
-    PieceId, PieceKind, TrackState, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
+    PieceId, PieceKind, TrackState, catalog, family_coaster_model, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -13,6 +14,7 @@ fn player_circuits_close() {
         ("Timber Tumbler", hybrid_model(), true),
         ("Velocity Viper", multi_launch_model(), false),
         ("Briar Blitz", wooden_twister_model(), true),
+        ("Daisy Dash", family_coaster_model(), true),
     ] {
         let world = World::new(
             512,
@@ -80,6 +82,23 @@ fn player_circuits_close() {
             panic!("{name} circuit does not close from {end:?}: {error:?}")
         });
     }
+}
+
+#[test]
+fn daisy_dash_completes_a_test_ride_lap() {
+    let model = family_coaster_model();
+    let circuit = build_player_circuit("Daisy Dash", model.clone());
+    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit))
+        .expect("Daisy Dash test ride did not finish");
+    let report = &outcome.reports[0];
+
+    assert!(
+        report.completed && !outcome.recovered,
+        "Daisy Dash did not complete a lap: {:?}",
+        report.notes
+    );
 }
 
 #[test]
@@ -215,6 +234,7 @@ fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
         ("Timber Tumbler", hybrid_model()),
         ("Velocity Viper", multi_launch_model()),
         ("Briar Blitz", wooden_twister_model()),
+        ("Daisy Dash", family_coaster_model()),
     ];
     for (name, model) in circuits {
         let circuit = build_player_circuit(name, model.clone());
@@ -292,6 +312,7 @@ fn construction_test_rides_keep_raw_longitudinal_forces_physically_plausible() {
         ("Timber Tumbler", hybrid_model()),
         ("Velocity Viper", multi_launch_model()),
         ("Briar Blitz", wooden_twister_model()),
+        ("Daisy Dash", family_coaster_model()),
     ];
     for (name, model) in circuits {
         let circuit = build_player_circuit(name, model.clone());
