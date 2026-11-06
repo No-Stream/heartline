@@ -681,6 +681,71 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
 }
 
 #[test]
+fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::WoodenEjectorHill8x64)
+        .expect("wooden strong floater is in the catalog");
+    assert!(piece.name.contains("floater"));
+    assert!(piece.rated_speeds.is_some());
+    assert!(wooden_twister_model().allows_piece(piece));
+    assert!(!hybrid_model().allows_piece(piece));
+    assert!(!multi_launch_model().allows_piece(piece));
+    let rated = piece.rated_speeds.unwrap();
+    let model = wooden_twister_model();
+    let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
+    for cars in [6, 12] {
+        let mut speeds = vec![rated.minimum_entry];
+        let mut speed = rated.maximum_entry;
+        while speed > rated.minimum_entry {
+            speeds.push(speed);
+            speed -= 1.0;
+        }
+        for entry_speed in speeds {
+            assert_train_crosses_element(
+                &model,
+                &circuit,
+                piece.id,
+                element_start..element_end,
+                cars,
+                entry_speed,
+                false,
+            );
+        }
+        let mut train_config = model.train.clone();
+        train_config.cars = cars;
+        let mut train = Train::new(
+            &circuit,
+            &train_config,
+            unpowered(),
+            element_start,
+            rated.maximum_entry,
+        );
+        let mut minimum_vertical_g = f64::INFINITY;
+        for _ in 0..100_000 {
+            train.step(&circuit);
+            for frame in train.take_readings() {
+                for reading in frame {
+                    if (element_start..element_end).contains(&reading.distance) {
+                        minimum_vertical_g = minimum_vertical_g.min(reading.g.vertical);
+                    }
+                }
+            }
+            if train.distance() >= element_end + train_config.length_metres {
+                break;
+            }
+        }
+        assert_eq!(
+            model
+                .comfortable_force_limits
+                .classify_airtime(minimum_vertical_g),
+            AirtimeRating::Good,
+            "{cars} cars: {minimum_vertical_g:.3} g"
+        );
+    }
+}
+
+#[test]
 fn every_ejector_hill_is_great_at_rated_maximum_for_each_allowed_model_and_train_layout() {
     let allowed_models = models();
     let ejector_hills: Vec<_> = catalog()

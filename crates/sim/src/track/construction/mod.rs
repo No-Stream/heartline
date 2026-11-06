@@ -109,6 +109,7 @@ fn select_speed_matched_variant_with_windows(
                 // Target −1.2 g on steel and −0.7 g on wood, leaving 0.3 g above the model limit.
                 HillFeel::Ejector => Some((minimum_vertical_g + 0.3).max(-1.2)),
                 HillFeel::Floater => Some(-0.3),
+                HillFeel::StrongFloater => Some(-0.7),
                 HillFeel::Speed => Some(0.3),
                 _ => None,
             },

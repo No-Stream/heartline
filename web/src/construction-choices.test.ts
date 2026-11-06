@@ -314,6 +314,14 @@ describe("airtime hill steppers", () => {
     expect(step("ejector12x64outerRight", "twist", 1)).toBeUndefined();
   });
 
+  it("selects a strong floater independently from a floater of the same size", () => {
+    const wooden = [hill("ejector", 6, 48), hill("strongFloater", 8, 64), hill("floater", 8, 64)];
+    expect(hillStepperOptions(wooden, "strongFloater8x64none", "feel", "metric"))
+      .toEqual({ values: ["Ejector", "Strong floater", "Floater"], index: 1 });
+    expect(steppedHillSelection(wooden, "floater8x64none", "feel", -1))
+      .toEqual({ type: "construction-select", piece: "strongFloater8x64none", exact: false });
+  });
+
   it("opens on the current hill or the most similar hill of the preferred feel", () => {
     const pieces = [piece("Straight", "straight"), piece("floater8x64none", "special")];
     expect(hillToOpen(hybrid, pieces, "ejector")).toBe("ejector8x64none");

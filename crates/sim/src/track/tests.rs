@@ -517,7 +517,7 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
 
 #[test]
 fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
-    let expected_hills: [(&str, &[&str]); 14] = [
+    let expected_hills: [(&str, &[&str]); 15] = [
         (
             "Ejector hill 8 × 48 m",
             &["Timber Tumbler", "Velocity Viper"],
@@ -571,6 +571,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
         ),
         ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
+        ("Strong floater hill 8 × 64 m", &["Briar Blitz"]),
     ];
     let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
     let hill_pieces: Vec<_> = catalog()
@@ -604,7 +605,9 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             .split_whitespace()
             .filter_map(|word| word.parse().ok())
             .collect();
-        let expected_feel = if name.starts_with("Floater") {
+        let expected_feel = if name.starts_with("Strong floater") {
+            HillFeel::StrongFloater
+        } else if name.starts_with("Floater") {
             HillFeel::Floater
         } else if name.starts_with("Speed") {
             HillFeel::Speed

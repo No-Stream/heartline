@@ -1,5 +1,28 @@
 # Ride score calibration observations
 
+## 2026-11-05 Velocity Viper rebuild
+
+The closed player circuit was measured with `make circuit-report` and a full
+train. Both default and construction-test physics completed a lap without
+recovery, with excitement 6.70 and 6.69 respectively. The smallest rated
+entry-speed margin was 2.14 m/s. The force limits are 5.0 / −1.5 g vertical
+and 1.5 g lateral and longitudinal; moving a trim before the roll gives at
+least 0.30 g of longitudinal margin. The long return contributes 42.4 seconds
+of dead time under default physics.
+
+| Circuit | Excitement | Intensity | Nausea | Vertical max | Vertical min | Lateral peak | Longitudinal peak |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Velocity Viper | 6.70 | 6.61 | 4.19 | 3.23 g | −0.66 g | 1.10 g | 1.20 g |
+
+The proposed Briar Blitz rebuild is not installed. A closed candidate using
+the longer pullout and the new 8 × 64 m strong floater scored 3.57 under
+default physics and 4.10 under construction-test physics. Its 16 m/s turn
+had only 1.11 m/s of entry margin. Removing a trim raised excitement but
+left the twister above the lateral-force limit. The longer pullout reduced
+the candidate's peak vertical force at that transition to 2.61 g by default
+and 2.65 g in the construction test. These measurements do not establish
+that the full candidate meets the force and entry-speed requirements.
+
 The current scores are provisional. On this scale, 10 should represent a very
 high intensity or nausea score, or an excellent excitement score. Scores may
 exceed 10. Earlier provisional targets for the four player circuits did not

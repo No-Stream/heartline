@@ -183,10 +183,10 @@ export function steppedPieceSelection(pieces: readonly ConstructionPiece[], shap
 
 export type HillAttribute = "feel" | "height" | "span" | "twist";
 
-const hillFeelOrder = ["ejector", "floater", "speed", "zeroGRoll", "stall"];
+const hillFeelOrder = ["ejector", "strongFloater", "floater", "speed", "zeroGRoll", "stall"];
 /** Left-hand twists sit on the "previous" side, as on the bank stepper. */
 const hillTwistOrder = ["outerLeft", "none", "outerRight", "left", "right"];
-export const hillFeelLabels: Readonly<Record<string, string>> = { ejector: "Ejector", floater: "Floater", speed: "Speed hill", zeroGRoll: "Zero-g roll", stall: "Stall" };
+export const hillFeelLabels: Readonly<Record<string, string>> = { ejector: "Ejector", strongFloater: "Strong floater", floater: "Floater", speed: "Speed hill", zeroGRoll: "Zero-g roll", stall: "Stall" };
 export const hillTwistLabels: Readonly<Record<string, string>> = { none: "Upright", outerLeft: "Outer bank left", outerRight: "Outer bank right", left: "Roll left", right: "Roll right" };
 
 function orderRank(order: readonly string[], value: string): number {

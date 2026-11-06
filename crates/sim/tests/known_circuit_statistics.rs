@@ -55,16 +55,102 @@ fn player_circuit(name: &str, model: CoasterModel) -> Circuit {
     construction.circuit().unwrap()
 }
 
+fn assert_design_margins(circuit: &Circuit, model: &CoasterModel, construction_test: bool) {
+    let start = if construction_test {
+        0.0
+    } else {
+        circuit.pieces()[0].length() / 2.0
+    };
+    let config = if construction_test {
+        PhysicsConfig {
+            lift_speed: 5.0,
+            ..PhysicsConfig::default()
+        }
+    } else {
+        PhysicsConfig::default()
+    };
+    let mut train = Train::new(
+        circuit,
+        &model.train,
+        config,
+        start,
+        if construction_test { 2.0 } else { 0.0 },
+    );
+    let mut entries = vec![vec![None; model.train.cars as usize]; circuit.pieces().len()];
+    for _ in 0..60_000 {
+        train.step(circuit);
+        for frame in train.take_readings() {
+            for (car, reading) in frame.iter().enumerate() {
+                let car_distance = train.distance()
+                    - car as f64 * model.train.length_metres / f64::from(model.train.cars);
+                if car_distance < 0.0 {
+                    continue;
+                }
+                entries[reading.piece_index][car].get_or_insert(reading.speed);
+            }
+        }
+        assert!(
+            train.notes().is_empty(),
+            "train recovered: {:?}",
+            train.notes()
+        );
+        if train.distance() >= circuit.length() + start {
+            break;
+        }
+    }
+    assert!(
+        train.distance() >= circuit.length() + start,
+        "train did not complete its lap"
+    );
+    for (piece, speeds) in circuit.pieces().iter().zip(entries) {
+        if let Some(window) = effective_rated_speeds(piece, &model.train) {
+            for speed in speeds {
+                let speed = speed.expect("every car should enter every rated piece");
+                // Windows narrower than 3 m/s cannot provide 1.5 m/s on both sides;
+                // keep their entry within 0.3 m/s of the centre instead.
+                if window.maximum_entry - window.minimum_entry < 3.0 {
+                    let centre = (window.minimum_entry + window.maximum_entry) / 2.0;
+                    assert!(
+                        (speed - centre).abs() <= 0.3,
+                        "{:?}: {speed:.3} m/s, centre {centre:.3}",
+                        piece.id
+                    );
+                } else {
+                    assert!(
+                        speed >= window.minimum_entry + 1.5 && speed <= window.maximum_entry - 1.5,
+                        "{:?}: {speed:.3} m/s, window {window:?}",
+                        piece.id
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn construction_test(circuit: &Circuit, model: &CoasterModel) -> TestRun {
+    ride_test(circuit, model, 5.0, 2.0)
+}
+
+fn ride_test(
+    circuit: &Circuit,
+    model: &CoasterModel,
+    lift_speed: f64,
+    initial_speed: f64,
+) -> TestRun {
+    let start_distance = if initial_speed == 0.0 {
+        circuit.pieces()[0].length() / 2.0
+    } else {
+        0.0
+    };
     let mut train = Train::new(
         circuit,
         &model.train,
         PhysicsConfig {
-            lift_speed: 5.0,
+            lift_speed,
             ..PhysicsConfig::default()
         },
-        0.0,
-        2.0,
+        start_distance,
+        initial_speed,
     );
     let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
         circuit,
@@ -89,7 +175,7 @@ fn construction_test(circuit: &Circuit, model: &CoasterModel) -> TestRun {
         } else {
             slow_steps = 0;
         }
-        if train.distance() >= circuit.length() {
+        if train.distance() >= circuit.length() + start_distance {
             return recorder.finish(true, false);
         }
     }
@@ -242,6 +328,52 @@ fn assert_timber_tumbler_report(run_name: &str, report: &TestRun, limits: Comfor
 }
 
 #[test]
+fn velocity_viper_completes_with_comfortable_forces() {
+    let model = multi_launch_model();
+    let circuit = player_circuit("Velocity Viper", model.clone());
+    for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
+        let report = ride_test(&circuit, &model, lift_speed, initial_speed);
+        let stats = report.statistics;
+        let limits = model.comfortable_force_limits;
+        assert!(
+            (6.0..=9.0).contains(&report.excitement),
+            "excitement: {}",
+            report.excitement
+        );
+        assert!(
+            stats.max_positive_vertical_g <= limits.maximum_vertical_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_negative_vertical_g >= limits.minimum_vertical_g + 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_lateral_g <= limits.maximum_lateral_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_forward_g <= limits.maximum_longitudinal_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_braking_g.abs() <= limits.maximum_longitudinal_g - 0.25,
+            "{stats:?}"
+        );
+        assert!(
+            !report
+                .notes
+                .iter()
+                .any(|note| note.contains("rated speed band")),
+            "{:?}",
+            report.notes
+        );
+        assert_eq!(stats.launches, 2);
+        assert_design_margins(&circuit, &model, initial_speed != 0.0);
+    }
+}
+
+#[test]
 fn construction_reports_known_circuit_features() {
     let timber = hybrid_model();
     let velocity = multi_launch_model();
@@ -282,8 +414,8 @@ fn construction_reports_known_circuit_features() {
         );
         assert!(stats.biggest_drop > 0.0 && stats.drops > 0, "{name}");
         if name == "Velocity Viper" {
-            // Adjacent launch pieces in this player circuit form one continuous launch.
-            assert_eq!(stats.launches, 1);
+            // The long launch and short launch form two separate launch sections.
+            assert_eq!(stats.launches, 2);
             assert!(stats.launch_peak_speed > 0.0);
         }
         if name == "Briar Blitz" {
@@ -393,9 +525,9 @@ fn demo_and_velocity_match_provisional_excitement_references() {
         "demo excitement: {}",
         demo.excitement
     );
-    // The calibrated scale includes penalties for Velocity Viper's excessive forces.
+    // The force-designed player circuit targets a positive score in its calibration band.
     assert!(
-        (1.8..=2.2).contains(&velocity.excitement),
+        (6.0..=9.0).contains(&velocity.excitement),
         "Velocity Viper excitement: {}",
         velocity.excitement
     );

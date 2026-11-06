@@ -59,22 +59,31 @@ OneTileStraight
 TurnSmallStandalone
 
 [Velocity Viper]
+# Launch and launched top hat
 LaunchLong
 LaunchLong
-LaunchLong
+Launch
 LaunchedTopHat
-+chain
-LevelToGentleUp
-GentleUp
-GentleUp
-GentleUpToLevel
--chain
-LevelToGentleDown
-GentleDown
-GentleDown
-GentleDownToLevel
-TurnSmallStandalone
-TurnSmallStandalone
+Brakes
+Brakes
+Brakes
+# First airtime and inversion run
+SpeedTurnLarge24Left
+EjectorHill16x96
+Brakes
+ZeroGRollFastRight
+SpeedTurnLarge20Left
+FloaterHill12x96
+WaveTurnLeft
+# Second launch and return
+Brakes
+LaunchShort
+EjectorHill12x64
+Brakes
+SpeedTurnLarge16Left
+Brakes
+TurnSmallRightStandalone
+TurnSmallRightStandalone
 Straight
 Straight
 Straight
@@ -91,19 +100,12 @@ Straight
 Straight
 Straight
 Straight
-Straight
-Straight
-Straight
-Straight
-Straight
-Straight
-Straight
-Straight
-Straight
-Straight
-TurnSmallStandalone
-TurnSmallStandalone
-Straight
+# Measured station connection
+TurnLargeStandalone
+TurnLargeStandalone
+OffsetLeft
+OneTileStraight
+OneTileStraight
 
 [Briar Blitz]
 +chain

@@ -344,15 +344,37 @@ fn assert_construction_test_force_bound(
 
 #[test]
 fn chain_lift_brakes_a_fast_train_at_a_physical_rate() {
-    let circuit = build_player_circuit("Velocity Viper", multi_launch_model());
     let model = multi_launch_model();
-    let station_distance = circuit
-        .pieces()
-        .iter()
-        .take_while(|piece| piece.kind != PieceKind::Station)
-        .map(|piece| piece.length())
-        .sum::<f64>()
-        + circuit.pieces()[0].length() / 2.0;
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [8; 4],
+            water: None,
+        },
+    );
+    let start = TrackState {
+        x: 482,
+        y: 498,
+        z: 6,
+        heading: theme_park_sim::track::Heading::North,
+        ..TrackState::origin()
+    };
+    let mut construction = Construction::new(start, model.clone());
+    for piece in [PieceId::Station, PieceId::LaunchLong, PieceId::LaunchLong] {
+        construction.append(piece, &world, &[]).unwrap();
+    }
+    construction.set_chain(true);
+    for piece in [
+        PieceId::LevelToGentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUp,
+        PieceId::GentleUpToLevel,
+    ] {
+        construction.append(piece, &world, &[]).unwrap();
+    }
+    let circuit = theme_park_sim::physics::Circuit::open(construction.pieces().to_vec()).unwrap();
+    let station_distance = circuit.pieces()[0].length() / 2.0;
     let mut train = theme_park_sim::physics::Train::new(
         &circuit,
         &model.train,
@@ -376,16 +398,13 @@ fn chain_lift_brakes_a_fast_train_at_a_physical_rate() {
                 maximum = maximum.max(reading.g.longitudinal.abs());
             }
         }
-        if train.distance() - station_distance >= circuit.length() || !train.notes().is_empty() {
+        if train.distance() >= circuit.length() || !train.notes().is_empty() {
             break;
         }
     }
     assert!(
         saw_fast_train_on_lift,
-        "Velocity Viper did not test a chain-lift entry above lift speed"
+        "The launched train did not enter the chain lift above lift speed"
     );
-    assert!(
-        maximum <= 2.5,
-        "Velocity Viper peak longitudinal force was {maximum:.1} g"
-    );
+    assert!(maximum <= 2.5, "Peak longitudinal force was {maximum:.1} g");
 }
