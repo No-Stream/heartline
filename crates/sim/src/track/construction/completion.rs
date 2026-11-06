@@ -77,20 +77,6 @@ impl Construction {
         Ok(updated)
     }
 
-    pub(super) fn append_sequence_with_cached_validation(
-        &self,
-        pieces: &[PieceId],
-        world: &World,
-        obstacles: &[SupportObstacle],
-    ) -> Result<Self, ConstructionError> {
-        let mut updated = self.copy_for_completion();
-        updated.validation_cache = RefCell::new(self.validation_cache.borrow().clone());
-        for &id in pieces {
-            updated.append(id, world, obstacles)?;
-        }
-        Ok(updated)
-    }
-
     pub fn completion_search(&self) -> Option<CompletionSearch> {
         if self.closed
             || self
