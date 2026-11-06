@@ -62,32 +62,35 @@ pub struct SpeedMatchedVariant {
     pub fits: bool,
 }
 
-/// Select the rated candidate with the largest margin to either window edge.
-/// Ejector, floater and speed hills are the exception: a hill gives its named
-/// feel only near the top of its window, so among the windows that contain the
-/// speed they select the one with the least headroom to its top. If no window
-/// contains the speed, select the nearest window instead. Ties preserve the
-/// order supplied by the caller.
+/// Select a fitting hill closest to its target force, or the rated candidate
+/// with the largest margin. If no window fits, select the nearest window.
 pub fn select_speed_matched_variant(
     candidates: &[Piece],
     entry_speed: f64,
 ) -> Option<SpeedMatchedVariant> {
-    select_speed_matched_variant_with_windows(candidates, entry_speed, |piece| piece.rated_speeds)
+    select_speed_matched_variant_with_windows(candidates, entry_speed, -1.5, |piece| {
+        piece.rated_speeds
+    })
 }
 
 pub fn select_speed_matched_variant_for_train(
     candidates: &[Piece],
     entry_speed: f64,
     train: &super::TrainConfiguration,
+    limits: super::ComfortableForceLimits,
 ) -> Option<SpeedMatchedVariant> {
-    select_speed_matched_variant_with_windows(candidates, entry_speed, |piece| {
-        super::effective_rated_speeds(piece, train)
-    })
+    select_speed_matched_variant_with_windows(
+        candidates,
+        entry_speed,
+        limits.minimum_vertical_g,
+        |piece| super::effective_rated_speeds(piece, train),
+    )
 }
 
 fn select_speed_matched_variant_with_windows(
     candidates: &[Piece],
     entry_speed: f64,
+    minimum_vertical_g: f64,
     rated_speeds: impl Fn(&Piece) -> Option<super::RatedSpeeds>,
 ) -> Option<SpeedMatchedVariant> {
     assert!(entry_speed.is_finite() && entry_speed >= 0.0);
@@ -101,15 +104,22 @@ fn select_speed_matched_variant_with_windows(
         let headroom = window.maximum_entry - entry_speed;
         let margin = (entry_speed - window.minimum_entry).min(headroom);
         let fits = margin >= 0.0;
-        let rides_best_near_top = piece.family.is_some_and(|family| {
-            matches!(
-                family.feel,
-                HillFeel::Ejector | HillFeel::Floater | HillFeel::Speed
-            )
+        let target = piece.family.and_then(|family| match family.feel {
+            // Target −1.2 g on steel and −0.7 g on wood, leaving 0.3 g above the model limit.
+            HillFeel::Ejector => Some((minimum_vertical_g + 0.3).max(-1.2)),
+            HillFeel::Floater => Some(-0.3),
+            HillFeel::Speed => Some(0.3),
+            _ => None,
         });
-        // Fitting windows score at least zero and outrank every window that does not fit.
-        let score = if fits && rides_best_near_top {
-            1.0 / (1.0 + headroom)
+        // Fitting windows outrank every window that does not fit.
+        let score = if fits {
+            match target {
+                Some(target) => super::predicted_hill_forces(piece, entry_speed)
+                    .map_or(0.0, |forces| {
+                        1.0 / (1.0 + (forces.minimum_vertical_g - target).abs())
+                    }),
+                None => margin,
+            }
         } else {
             margin
         };

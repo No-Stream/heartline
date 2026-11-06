@@ -931,3 +931,43 @@ fn wave_and_overbank_turns_have_contiguous_rated_windows() {
         }
     }
 }
+
+#[test]
+fn floater_point_mass_forecast_compared_with_full_train() {
+    use theme_park_sim::track::predicted_hill_forces;
+
+    let piece = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::FloaterHill8x64)
+        .unwrap();
+    let entry_speed = piece.rated_speeds.unwrap().maximum_entry;
+    let forecast = predicted_hill_forces(piece, entry_speed).unwrap();
+    let (circuit, start, end) = circuit_for_level_piece(piece.id);
+    for cars in [6, 12] {
+        let mut config = hybrid_model().train;
+        config.cars = cars;
+        let mut train = Train::new(&circuit, &config, unpowered(), start, entry_speed);
+        let mut minimum = f64::INFINITY;
+        for _ in 0..100_000 {
+            train.step(&circuit);
+            for frame in train.take_readings() {
+                for reading in frame {
+                    if (start..end).contains(&reading.distance) {
+                        minimum = minimum.min(reading.g.vertical);
+                    }
+                }
+            }
+            if train.distance() >= end + config.length_metres {
+                break;
+            }
+            assert!(train.speed() > 0.0 && train.notes().is_empty());
+        }
+        assert!(minimum.is_finite());
+        assert!(train.distance() >= end + config.length_metres);
+        eprintln!(
+            "FloaterHill8x64 {cars} cars at {entry_speed:.3} m/s: forecast {:.3} g, full train {minimum:.3} g, difference {:+.3} g",
+            forecast.minimum_vertical_g,
+            minimum - forecast.minimum_vertical_g
+        );
+    }
+}

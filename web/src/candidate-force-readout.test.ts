@@ -51,7 +51,7 @@ describe("airtime hill readout", () => {
     entrySpeed: 20,
     source: "energy",
     ratedSpeed: { minimumEntry: 16, maximumEntry: 26 },
-    minimumVerticalG: -1.1, maximumVerticalG: 3.4, airtimeSeconds: 1.25,
+    minimumVerticalG: -1.1, maximumVerticalG: 3.4, airtimeSeconds: 1.25, maximumAbsoluteLateralG: null,
     limits: { minimumVerticalG: -1.5, maximumVerticalG: 4.5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 },
   };
 
@@ -69,6 +69,12 @@ describe("airtime hill readout", () => {
     const imperial = hillReadout(hill, "imperial").rows;
     expect(imperial[0].value).toBe("45 mph");
     expect(imperial[1].value).toBe("36–58 mph");
+  });
+
+  it("shows the outer bank lateral force", () => {
+    expect(hillReadout({ ...hill, maximumAbsoluteLateralG: 1.1 }, "metric").rows).toContainEqual(
+      { label: "Lateral", value: "1.1 g", note: "strong", tone: "great" },
+    );
   });
 
   it("flags speeds outside the rated window and forces past the limit", () => {

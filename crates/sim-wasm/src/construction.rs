@@ -28,6 +28,7 @@ pub struct ConstructionHillEstimateWire {
     rated_speed: Option<ConstructionRatedSpeedWire>,
     minimum_vertical_g: Option<f64>,
     maximum_vertical_g: Option<f64>,
+    maximum_absolute_lateral_g: Option<f64>,
     airtime_seconds: Option<f64>,
     limits: ConstructionForceLimitsWire,
 }
@@ -769,6 +770,14 @@ impl WasmSimulation {
                                 maximum_vertical_g: forces
                                     .as_ref()
                                     .map(|force| force.maximum_vertical_g),
+                                maximum_absolute_lateral_g: forces.as_ref().and_then(|force| {
+                                    piece.family.and_then(|family| match family.twist {
+                                        Some(
+                                            HillTwist::OuterBankLeft | HillTwist::OuterBankRight,
+                                        ) => Some(force.maximum_absolute_lateral_g),
+                                        _ => None,
+                                    })
+                                }),
                                 airtime_seconds: forces.as_ref().map(|force| force.airtime_seconds),
                                 limits: force_limits_wire(
                                     construction.model().comfortable_force_limits,
