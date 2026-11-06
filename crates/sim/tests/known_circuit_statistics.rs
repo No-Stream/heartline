@@ -55,15 +55,29 @@ fn player_circuit(name: &str, model: CoasterModel) -> Circuit {
 }
 
 fn construction_test(circuit: &Circuit, model: &CoasterModel) -> TestRun {
+    ride_test(circuit, model, 5.0, 2.0)
+}
+
+fn ride_test(
+    circuit: &Circuit,
+    model: &CoasterModel,
+    lift_speed: f64,
+    initial_speed: f64,
+) -> TestRun {
+    let start_distance = if initial_speed == 0.0 {
+        circuit.pieces()[0].length() / 2.0
+    } else {
+        0.0
+    };
     let mut train = Train::new(
         circuit,
         &model.train,
         PhysicsConfig {
-            lift_speed: 5.0,
+            lift_speed,
             ..PhysicsConfig::default()
         },
-        0.0,
-        2.0,
+        start_distance,
+        initial_speed,
     );
     let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
         circuit,
@@ -88,11 +102,49 @@ fn construction_test(circuit: &Circuit, model: &CoasterModel) -> TestRun {
         } else {
             slow_steps = 0;
         }
-        if train.distance() >= circuit.length() {
+        if train.distance() >= circuit.length() + start_distance {
             return recorder.finish(true, false);
         }
     }
     panic!("test train did not complete a lap");
+}
+
+#[test]
+fn velocity_viper_completes_with_comfortable_forces() {
+    let model = multi_launch_model();
+    let circuit = player_circuit("Velocity Viper", model.clone());
+    for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
+        let report = ride_test(&circuit, &model, lift_speed, initial_speed);
+        let stats = report.statistics;
+        let limits = model.comfortable_force_limits;
+        assert!((6.0..=9.0).contains(&report.excitement), "{report:?}");
+        assert!(
+            stats.max_positive_vertical_g <= limits.maximum_vertical_g,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_negative_vertical_g >= limits.minimum_vertical_g,
+            "{stats:?}"
+        );
+        assert!(stats.max_lateral_g <= limits.maximum_lateral_g, "{stats:?}");
+        assert!(
+            stats.max_forward_g <= limits.maximum_longitudinal_g,
+            "{stats:?}"
+        );
+        assert!(
+            stats.max_braking_g.abs() <= limits.maximum_longitudinal_g,
+            "{stats:?}"
+        );
+        assert!(
+            !report
+                .notes
+                .iter()
+                .any(|note| note.contains("rated speed band")),
+            "{:?}",
+            report.notes
+        );
+        assert_eq!(stats.launches, 2);
+    }
 }
 
 #[test]
@@ -136,8 +188,8 @@ fn construction_reports_known_circuit_features() {
         );
         assert!(stats.biggest_drop > 0.0 && stats.drops > 0, "{name}");
         if name == "Velocity Viper" {
-            // Adjacent launch pieces in this player circuit form one continuous launch.
-            assert_eq!(stats.launches, 1);
+            // The long launch and short launch form two separate launch sections.
+            assert_eq!(stats.launches, 2);
             assert!(stats.launch_peak_speed > 0.0);
         }
         if name == "Briar Blitz" {
@@ -167,9 +219,9 @@ fn demo_and_velocity_match_provisional_excitement_references() {
         "demo excitement: {}",
         demo.excitement
     );
-    // The calibrated scale includes penalties for Velocity Viper's excessive forces.
+    // The force-designed player circuit targets a positive score in its calibration band.
     assert!(
-        (1.8..=2.2).contains(&velocity.excitement),
+        (6.0..=9.0).contains(&velocity.excitement),
         "Velocity Viper excitement: {}",
         velocity.excitement
     );
