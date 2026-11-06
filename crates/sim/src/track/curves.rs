@@ -364,6 +364,25 @@ pub enum PieceId {
     StallRight,
     WaveTurnLeft,
     WaveTurnRight,
+    SpeedTurnLarge16Left,
+    SpeedTurnLarge16Right,
+    SpeedTurnLarge20Left,
+    SpeedTurnLarge20Right,
+    SpeedTurnLarge24Left,
+    SpeedTurnLarge24Right,
+    SpeedTurnLarge28Left,
+    SpeedTurnLarge28Right,
+    SpeedTurnLarge32Left,
+    SpeedTurnLarge32Right,
+    SpeedTurnSmall12Left,
+    SpeedTurnSmall12Right,
+    SpeedTurnSmall16Left,
+    SpeedTurnSmall16Right,
+    SpeedTurnSmall20Left,
+    SpeedTurnSmall20Right,
+    SpeedTurnSmall24Left,
+    SpeedTurnSmall24Right,
+    LongGentleDownToLevel,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {
@@ -395,6 +414,7 @@ pub(crate) enum Shape {
     Profile(Arc<SolvedProfile>),
     Roll(Arc<RollGeometry>),
     RolledProfile(Arc<SolvedProfile>, Twist),
+    SpeedBank { design_speed: f64 },
 }
 impl Shape {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
@@ -403,6 +423,7 @@ impl Shape {
             Self::AirtimeHill => 1,
             Self::Overbank => 2,
             Self::WaveTurn { .. } => 14,
+            Self::SpeedBank { .. } => 15,
             Self::Profile(_) => 11,
             Self::Roll(_) => 12,
             Self::RolledProfile(_, _) => 13,
@@ -413,6 +434,7 @@ impl Shape {
                 hash.write_f64(*bump);
                 hash.write_f64(*peak);
             }
+            Self::SpeedBank { design_speed } => hash.write_f64(*design_speed),
             Self::Profile(profile) => profile.hash_into(hash),
             Self::Roll(roll) => roll.hash_into(hash),
             Self::RolledProfile(profile, twist) => {
@@ -436,6 +458,7 @@ pub enum HillFeel {
     Speed,
     ZeroGRoll,
     Stall,
+    StrongFloater,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -461,6 +484,136 @@ impl HillFamily {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Hand {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PieceFamily {
+    Hill(HillFamily),
+    SpeedTurn {
+        radius_metres: u8,
+        hand: Hand,
+        design_speed_metres_per_second: f64,
+    },
+}
+
+// Keep the original HillFamily postcard layout so version 2 parks remain readable.
+#[derive(serde::Serialize, serde::Deserialize)]
+enum FamilyWireFeel {
+    Ejector,
+    Floater,
+    Speed,
+    ZeroGRoll,
+    Stall,
+    SpeedTurn,
+    StrongFloater,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FamilyWire {
+    feel: FamilyWireFeel,
+    height_metres: u8,
+    span_metres: u16,
+    twist: Option<HillTwist>,
+    design_speed_metres_per_second: f64,
+}
+
+impl serde::Serialize for PieceFamily {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let wire = match *self {
+            Self::Hill(hill) => FamilyWire {
+                feel: match hill.feel {
+                    HillFeel::Ejector => FamilyWireFeel::Ejector,
+                    HillFeel::Floater => FamilyWireFeel::Floater,
+                    HillFeel::Speed => FamilyWireFeel::Speed,
+                    HillFeel::ZeroGRoll => FamilyWireFeel::ZeroGRoll,
+                    HillFeel::Stall => FamilyWireFeel::Stall,
+                    HillFeel::StrongFloater => FamilyWireFeel::StrongFloater,
+                },
+                height_metres: hill.height_metres,
+                span_metres: hill.span_metres,
+                twist: hill.twist,
+                design_speed_metres_per_second: hill.design_speed_metres_per_second,
+            },
+            Self::SpeedTurn {
+                radius_metres,
+                hand,
+                design_speed_metres_per_second,
+            } => FamilyWire {
+                feel: FamilyWireFeel::SpeedTurn,
+                height_metres: radius_metres,
+                span_metres: 0,
+                twist: Some(match hand {
+                    Hand::Left => HillTwist::LeftRoll,
+                    Hand::Right => HillTwist::RightRoll,
+                }),
+                design_speed_metres_per_second,
+            },
+        };
+        serde::Serialize::serialize(&wire, serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PieceFamily {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = <FamilyWire as serde::Deserialize>::deserialize(deserializer)?;
+        let feel = match wire.feel {
+            FamilyWireFeel::Ejector => HillFeel::Ejector,
+            FamilyWireFeel::Floater => HillFeel::Floater,
+            FamilyWireFeel::Speed => HillFeel::Speed,
+            FamilyWireFeel::ZeroGRoll => HillFeel::ZeroGRoll,
+            FamilyWireFeel::Stall => HillFeel::Stall,
+            FamilyWireFeel::StrongFloater => HillFeel::StrongFloater,
+            FamilyWireFeel::SpeedTurn => {
+                let hand = match wire.twist {
+                    Some(HillTwist::LeftRoll) => Hand::Left,
+                    Some(HillTwist::RightRoll) => Hand::Right,
+                    _ => return Err(serde::de::Error::custom("invalid speed turn hand")),
+                };
+                if wire.span_metres != 0 {
+                    return Err(serde::de::Error::custom("invalid speed turn span"));
+                }
+                return Ok(Self::SpeedTurn {
+                    radius_metres: wire.height_metres,
+                    hand,
+                    design_speed_metres_per_second: wire.design_speed_metres_per_second,
+                });
+            }
+        };
+        Ok(Self::Hill(HillFamily {
+            feel,
+            height_metres: wire.height_metres,
+            span_metres: wire.span_metres,
+            twist: wire.twist,
+            design_speed_metres_per_second: wire.design_speed_metres_per_second,
+        }))
+    }
+}
+
+impl PieceFamily {
+    pub fn same_recommendation_family(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Hill(first), Self::Hill(second)) => first.same_recommendation_family(second),
+            (
+                Self::SpeedTurn {
+                    radius_metres: first_radius,
+                    hand: first_hand,
+                    ..
+                },
+                Self::SpeedTurn {
+                    radius_metres: second_radius,
+                    hand: second_hand,
+                    ..
+                },
+            ) => first_radius == second_radius && first_hand == second_hand,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct ArcLengthTable {
     lengths: Vec<f64>,
@@ -480,7 +633,7 @@ pub struct Piece {
     pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
     pub rated_speeds: Option<RatedSpeeds>,
-    pub family: Option<HillFamily>,
+    pub family: Option<PieceFamily>,
     pub entry: TrackState,
     pub exit: TrackState,
     pub(crate) shape: Shape,
@@ -621,7 +774,154 @@ fn smooth(t: f64) -> (f64, f64, f64) {
 fn curvature(velocity: Vec3, acceleration: Vec3) -> f64 {
     velocity.cross(acceleration).length() / velocity.length().powi(3)
 }
+const SPEED_TURN_STEPS: usize = 4096;
+const SPEED_TURN_RAMP: f64 = 0.39;
+const SPEED_TURN_EASING: f64 = 0.08;
+
+struct SpeedTurnGeometry {
+    radius: f64,
+    design_speed: f64,
+    peak_bank: f64,
+    length: f64,
+    knots: Vec<(f64, f64, f64)>,
+}
+
+fn speed_turn_bank_fraction(t: f64) -> f64 {
+    let u = (t.min(1.0 - t) / SPEED_TURN_RAMP).clamp(0.0, 1.0);
+    let easing = SPEED_TURN_EASING;
+    if u < easing {
+        let v = u / easing;
+        easing * (v.powi(3) - 0.5 * v.powi(4)) / (1.0 - easing)
+    } else if u > 1.0 - easing {
+        let v = (1.0 - u) / easing;
+        1.0 - easing * (v.powi(3) - 0.5 * v.powi(4)) / (1.0 - easing)
+    } else {
+        (u - easing / 2.0) / (1.0 - easing)
+    }
+}
+
+fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
+    let integrate = |peak_bank: f64| {
+        let step = 1.0 / SPEED_TURN_STEPS as f64;
+        let curvatures: Vec<_> = (0..SPEED_TURN_STEPS)
+            .map(|index| {
+                let t = (index as f64 + 0.5) * step;
+                (peak_bank * speed_turn_bank_fraction(t)).tan() * crate::physics::GRAVITY
+                    / design_speed.powi(2)
+            })
+            .collect();
+        let length = std::f64::consts::FRAC_PI_2 / (curvatures.iter().sum::<f64>() * step);
+        let distance = length * step;
+        let (mut x, mut y, mut heading) = (0.0, 0.0, 0.0);
+        let mut knots = Vec::with_capacity(SPEED_TURN_STEPS + 1);
+        knots.push((x, y, heading));
+        for curvature in curvatures {
+            let angle = curvature * distance;
+            let midpoint = heading + angle / 2.0;
+            x += distance * midpoint.cos();
+            y += distance * midpoint.sin();
+            heading += angle;
+            knots.push((x, y, heading));
+        }
+        ((x + y) / 2.0, length, knots)
+    };
+    let (mut low, mut high) = (0.0, std::f64::consts::FRAC_PI_2 - 0.0001);
+    for _ in 0..40 {
+        let peak_bank = (low + high) / 2.0;
+        if integrate(peak_bank).0 > radius {
+            low = peak_bank;
+        } else {
+            high = peak_bank;
+        }
+    }
+    let peak_bank = (low + high) / 2.0;
+    let (_, length, knots) = integrate(peak_bank);
+    SpeedTurnGeometry {
+        radius,
+        design_speed,
+        peak_bank,
+        length,
+        knots,
+    }
+}
+
+fn speed_turn_geometry(radius: f64, design_speed: f64) -> &'static SpeedTurnGeometry {
+    static GEOMETRIES: std::sync::LazyLock<Vec<SpeedTurnGeometry>> =
+        std::sync::LazyLock::new(|| {
+            [(32.0, 16.0), (32.0, 20.0), (32.0, 24.0)]
+                .into_iter()
+                .flat_map(|(radius, speed)| {
+                    [radius, radius * std::f64::consts::SQRT_2]
+                        .into_iter()
+                        .map(move |actual_radius| build_speed_turn(actual_radius, speed))
+                })
+                .collect()
+        });
+    GEOMETRIES
+        .iter()
+        .find(|geometry| {
+            (geometry.radius - radius).abs() < 1e-8 && geometry.design_speed == design_speed
+        })
+        .unwrap_or_else(|| {
+            panic!("speed turn must have a fitted geometry: radius {radius}, speed {design_speed}")
+        })
+}
+
 impl Piece {
+    fn speed_turn_frame(&self, design_speed: f64, t: f64) -> (Vec3, Vec3, Vec3, f64) {
+        let forward = self.entry.tangent().unit();
+        let left = Vec3::new(-forward.y, forward.x, 0.0);
+        let vertical = Vec3::new(0.0, 0.0, 1.0);
+        let displacement = self.exit.position() - self.entry.position();
+        let hand = displacement.dot(left).signum();
+        let radius = displacement.dot(forward);
+        let geometry = speed_turn_geometry(radius, design_speed);
+        let scaled = t.clamp(0.0, 1.0) * SPEED_TURN_STEPS as f64;
+        let index = (scaled.floor() as usize).min(SPEED_TURN_STEPS - 1);
+        let fraction = scaled - index as f64;
+        let (x0, y0, heading0) = geometry.knots[index];
+        let (x1, y1, heading1) = geometry.knots[index + 1];
+        let h = geometry.length / SPEED_TURN_STEPS as f64;
+        let h00 = 2.0 * fraction.powi(3) - 3.0 * fraction.powi(2) + 1.0;
+        let h10 = fraction.powi(3) - 2.0 * fraction.powi(2) + fraction;
+        let h01 = -2.0 * fraction.powi(3) + 3.0 * fraction.powi(2);
+        let h11 = fraction.powi(3) - fraction.powi(2);
+        let x = h00 * x0 + h10 * h * heading0.cos() + h01 * x1 + h11 * h * heading1.cos();
+        let y = h00 * y0 + h10 * h * heading0.sin() + h01 * y1 + h11 * h * heading1.sin();
+        let heading = heading0 + (heading1 - heading0) * fraction;
+        let tangent = forward * heading.cos() + left * (hand * heading.sin());
+        let roll = hand * geometry.peak_bank * speed_turn_bank_fraction(t);
+        let up = vertical * roll.cos() + vertical.cross(tangent) * roll.sin();
+        let heart = self.entry.position()
+            + forward * x
+            + left * (hand * y)
+            + vertical * HEART_HEIGHT_METRES;
+        (heart - up * HEART_HEIGHT_METRES, heart, up, roll)
+    }
+
+    fn speed_turn_raw(&self, design_speed: f64, t: f64) -> (Vec3, Vec3, Vec3) {
+        let position = |u| self.speed_turn_frame(design_speed, u).0;
+        let point = position(t);
+        let step = 0.0001;
+        if t == 0.0 || t == 1.0 {
+            let tangent = if t == 0.0 {
+                self.entry.tangent()
+            } else {
+                self.exit.tangent()
+            };
+            let radius =
+                (self.exit.position() - self.entry.position()).dot(self.entry.tangent().unit());
+            let length = speed_turn_geometry(radius, design_speed).length;
+            return (point, tangent * length, Vec3::new(0.0, 0.0, 0.0));
+        }
+        let (previous, next) = (position(t - step), position(t + step));
+        (
+            point,
+            (next - previous) / (2.0 * step),
+            (previous - point * 2.0 + next) / step.powi(2),
+        )
+    }
+
     fn rolled_profile_sample(&self, profile: &SolvedProfile, twist: Twist, t: f64) -> RollSample {
         let length = profile.length();
         let (position, first, second, third) = profile.sample_with_third(t * length);
@@ -702,13 +1002,26 @@ impl Piece {
         self.shape.hash_into(hash);
         hash.write_f64(self.tangent_scale);
         hash.write_bool(self.mirrored);
-        if let Some(family) = self.family {
-            hash.write_u8(1);
-            hash.write_u8(family.feel as u8);
-            hash.write_u8(family.height_metres);
-            hash.write_u16(family.span_metres);
-            hash.write_u8(family.twist.map_or(0, |twist| twist as u8 + 1));
-            hash.write_f64(family.design_speed_metres_per_second);
+        match self.family {
+            Some(PieceFamily::Hill(family)) => {
+                hash.write_u8(1);
+                hash.write_u8(family.feel as u8);
+                hash.write_u8(family.height_metres);
+                hash.write_u16(family.span_metres);
+                hash.write_u8(family.twist.map_or(0, |twist| twist as u8 + 1));
+                hash.write_f64(family.design_speed_metres_per_second);
+            }
+            Some(PieceFamily::SpeedTurn {
+                radius_metres,
+                hand,
+                design_speed_metres_per_second,
+            }) => {
+                hash.write_u8(2);
+                hash.write_u8(radius_metres);
+                hash.write_u8(hand as u8);
+                hash.write_f64(design_speed_metres_per_second);
+            }
+            None => {}
         }
         let arc_table = self.arc_table();
         hash.write_f64(arc_table.maximum_curvature);
@@ -723,6 +1036,9 @@ impl Piece {
     }
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
+        if let Shape::SpeedBank { design_speed } = self.shape {
+            return self.speed_turn_raw(design_speed, t);
+        }
         if let Shape::RolledProfile(profile, twist) = &self.shape {
             let sample = self.rolled_profile_sample(profile, *twist, t);
             return (sample.position, sample.first, sample.second);
@@ -975,6 +1291,19 @@ impl Piece {
     }
     pub fn sample(&self, distance: f64) -> TrackSample {
         let t = self.parameter_at_distance(distance);
+        if let Shape::SpeedBank { design_speed } = self.shape {
+            let (position, heart, desired_up, roll) = self.speed_turn_frame(design_speed, t);
+            let (_, first, second) = self.speed_turn_raw(design_speed, t);
+            let tangent = first.unit();
+            return TrackSample {
+                position,
+                heart,
+                tangent,
+                up: (desired_up - tangent * desired_up.dot(tangent)).unit(),
+                curvature: curvature(first, second),
+                roll,
+            };
+        }
         if let Shape::RolledProfile(profile, twist) = &self.shape {
             let sample = self.rolled_profile_sample(profile, *twist, t);
             return TrackSample {
@@ -1116,6 +1445,72 @@ mod shape_tests {
     };
     use crate::state_hash::StateHasher;
     use crate::track::roll::RollGeometry;
+
+    #[test]
+    fn piece_family_preserves_legacy_hill_postcard_encoding() {
+        use super::{Hand, HillFamily, HillFeel, HillTwist, PieceFamily};
+
+        // The exact bytes are the version 2 encoding of Some(HillFamily).
+        let legacy_bytes = [1, 0, 8, 48, 0, 0, 0, 0, 0, 0, 0, 52, 64];
+        let hill = HillFamily {
+            feel: HillFeel::Ejector,
+            height_metres: 8,
+            span_metres: 48,
+            twist: None,
+            design_speed_metres_per_second: 20.0,
+        };
+        assert_eq!(postcard::to_allocvec(&Some(hill)).unwrap(), legacy_bytes);
+        let restored: Option<PieceFamily> = postcard::from_bytes(&legacy_bytes).unwrap();
+        assert_eq!(restored, Some(PieceFamily::Hill(hill)));
+        assert_eq!(postcard::to_allocvec(&restored).unwrap(), legacy_bytes);
+
+        for feel in [
+            HillFeel::Ejector,
+            HillFeel::Floater,
+            HillFeel::Speed,
+            HillFeel::ZeroGRoll,
+            HillFeel::Stall,
+        ] {
+            for twist in [
+                None,
+                Some(HillTwist::OuterBankLeft),
+                Some(HillTwist::OuterBankRight),
+                Some(HillTwist::LeftRoll),
+                Some(HillTwist::RightRoll),
+            ] {
+                let hill = HillFamily {
+                    feel,
+                    twist,
+                    ..hill
+                };
+                let old_bytes = postcard::to_allocvec(&Some(hill)).unwrap();
+                let new_bytes = postcard::to_allocvec(&Some(PieceFamily::Hill(hill))).unwrap();
+                assert_eq!(old_bytes, new_bytes);
+                assert_eq!(
+                    postcard::from_bytes::<Option<PieceFamily>>(&old_bytes).unwrap(),
+                    Some(PieceFamily::Hill(hill))
+                );
+            }
+        }
+        for hand in [Hand::Left, Hand::Right] {
+            let family = PieceFamily::SpeedTurn {
+                radius_metres: 32,
+                hand,
+                design_speed_metres_per_second: 24.0,
+            };
+            let bytes = postcard::to_allocvec(&family).unwrap();
+            assert_eq!(postcard::from_bytes::<PieceFamily>(&bytes).unwrap(), family);
+        }
+        let strong_floater = PieceFamily::Hill(HillFamily {
+            feel: HillFeel::StrongFloater,
+            ..hill
+        });
+        let bytes = postcard::to_allocvec(&strong_floater).unwrap();
+        assert_eq!(
+            postcard::from_bytes::<PieceFamily>(&bytes).unwrap(),
+            strong_floater
+        );
+    }
 
     #[test]
     fn save_preserves_shared_uninitialized_arc_tables() {
@@ -1464,8 +1859,11 @@ mod shape_tests {
         for piece in crate::track::catalog::catalog().iter().filter(|piece| {
             piece.family.is_some_and(|family| {
                 matches!(
-                    family.feel,
-                    super::HillFeel::ZeroGRoll | super::HillFeel::Stall
+                    family,
+                    super::PieceFamily::Hill(super::HillFamily {
+                        feel: super::HillFeel::ZeroGRoll | super::HillFeel::Stall,
+                        ..
+                    })
                 )
             })
         }) {

@@ -1,21 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { forceLabelText, forceReadoutLines, limitBand, limitCloseness, nearestSampleIndex, placeForceLabels, rateForce, rateVertical, selectForceLabels, type ForceLimits, type ForceRating } from "./force-overlay";
+import { forceLabelText, forceReadoutLines, limitBand, limitCloseness, nearestSampleIndex, placeForceLabels, rateForce, rateVertical, selectForceLabels, type ForceLimits } from "./force-overlay";
+import { MODEL_FORCE_LIMITS } from "./generated/modelForceLimits";
 import type { TestingSample } from "./generated/TestingSample";
 
-const bands = (entries: [ForceRating, number | null, boolean][]) => entries.map(([rating, upTo, inclusive]) => ({ rating, upTo, inclusive }));
-const steel: ForceLimits = {
-  minimumVerticalG: -1.5, maximumVerticalG: 5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5,
-  ratingBands: {
-    airtime: bands([["weak", 0.2, true], ["good", 0.9, true], ["great", 1.5, true], ["too much", 1.95, true], ["dangerous", null, true]]),
-    vertical: bands([["weak", 2, true], ["good", 3, false], ["great", 5, true], ["too much", 6.5, true], ["dangerous", null, true]]),
-    lateral: bands([["fine", 0.75, true], ["strong", 1.5, true], ["too much", 1.95, true], ["dangerous", null, true]]),
-    longitudinal: bands([["fine", 0.75, true], ["strong", 1.5, true], ["too much", 1.95, true], ["dangerous", null, true]]),
-  },
-};
-const wood: ForceLimits = { ...steel, minimumVerticalG: -1, maximumVerticalG: 4, ratingBands: { ...steel.ratingBands,
-  airtime: bands([["weak", 0.2, true], ["good", 0.9, true], ["great", 1, true], ["too much", 1.3, true], ["dangerous", null, true]]),
-  vertical: bands([["weak", 2, true], ["good", 2.5, false], ["great", 4, true], ["too much", 5.2, true], ["dangerous", null, true]]),
-} };
+const steel: ForceLimits = MODEL_FORCE_LIMITS["Velocity Viper"];
+const wood: ForceLimits = MODEL_FORCE_LIMITS["Briar Blitz"];
 const sample = (distance: number, forces: Partial<TestingSample> = {}): TestingSample => ({
   distance, x: distance, y: 0, z: 1, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, ...forces,
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildProximityMarkers, buildTestingRibbon, formatConstructionEstimate, formatProximityEvent, formatRideRating, formatRideStatistics, formatSample, formatTestingNote, overlaySamples, proximityContribution, summarizeRideHeights, type ProximityEvent, type RideStatistics, type TestingSample } from "./coaster-testing";
 import type { WorldView } from "./render/scene";
 import { LIMIT_BAND_COLORS } from "./force-overlay";
-import { forceLimitsFixture } from "./test-fixtures/force-limits";
+import { MODEL_FORCE_LIMITS } from "./generated/modelForceLimits";
 
 const samples: TestingSample[] = [
   { distance: 0, x: 2, y: 3, z: 1, speed: 4, verticalG: 1, lateralG: 0.2, longitudinalG: 0, airtime: false },
@@ -12,8 +12,8 @@ const samples: TestingSample[] = [
 const camera = { centerX: 3, centerY: 3, zoom: 1, rotation: 0 as const };
 const viewport = { width: 800, height: 500 };
 const style = { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 };
-const woodLimits = forceLimitsFixture({ minimumVerticalG: -1, maximumVerticalG: 4, greatPositiveVerticalG: 2.5, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 });
-const steelLimits = forceLimitsFixture({ minimumVerticalG: -1.5, maximumVerticalG: 5, greatPositiveVerticalG: 3, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 });
+const woodLimits = MODEL_FORCE_LIMITS["Briar Blitz"];
+const steelLimits = MODEL_FORCE_LIMITS["Velocity Viper"];
 const proximityEvents: ProximityEvent[] = [
   { kind: "nearMiss", pieceIndex: 13, distance: 14, x: 2, y: 3, z: 1, strength: 0.8 },
   { kind: "dueling", pieceIndex: 7, distance: 8, x: 3, y: 3, z: 1, strength: 0.4 },

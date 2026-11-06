@@ -6,6 +6,175 @@ use crate::track::{PieceId, TrackState, catalog, hybrid_model};
 use crate::world::{Surface, World};
 
 #[test]
+fn lift_drives_until_the_last_car_clears_the_crest() {
+    let mut circuit = demo_circuit();
+    for piece in &mut circuit.pieces[7..=9] {
+        piece.kind = PieceKind::Track;
+    }
+    let configuration = hybrid_model().train;
+    let crest = circuit.starts[7];
+    let mut train = Train::new(
+        &circuit,
+        &configuration,
+        PhysicsConfig::default(),
+        crest + 0.1,
+        0.2,
+    );
+    assert_eq!(
+        circuit.pieces[circuit.locate(train.distance()).0].kind,
+        PieceKind::Track
+    );
+    assert_eq!(
+        circuit.pieces[circuit
+            .locate(train.distance() - (train.cars - 1) as f64 * train.spacing)
+            .0]
+            .kind,
+        PieceKind::Lift
+    );
+    train.step(&circuit);
+    assert!(
+        train.speed() > 0.2,
+        "train slowed while its rear cars were on the lift: {}",
+        train.speed()
+    );
+    let rear_offset = (train.cars - 1) as f64 * train.spacing;
+    for _ in 0..10_000 {
+        if train.distance() - rear_offset >= crest {
+            break;
+        }
+        train.step_block_brake_without_readings(&circuit, &[], false);
+        assert!(
+            train.speed() > 0.0,
+            "train rolled back before clearing the lift"
+        );
+        assert!(train.notes().is_empty());
+    }
+    assert!(
+        train.distance() - rear_offset >= crest,
+        "rear car did not clear the lift"
+    );
+}
+
+#[test]
+fn lift_does_not_slow_a_fast_train_or_drive_after_the_last_car_clears() {
+    let mut circuit = demo_circuit();
+    for piece in &mut circuit.pieces[7..=9] {
+        piece.kind = PieceKind::Track;
+    }
+    let configuration = hybrid_model().train;
+    let config = PhysicsConfig::default();
+    let unpowered = PhysicsConfig {
+        powered_sections: false,
+        ..config
+    };
+    let crest = circuit.starts[7];
+    for (distance, speed) in [
+        (crest + 0.1, 8.0),
+        (crest + configuration.length_metres, 0.2),
+    ] {
+        let mut powered_train = Train::new(&circuit, &configuration, config, distance, speed);
+        let mut coasting_train = Train::new(&circuit, &configuration, unpowered, distance, speed);
+        powered_train.step(&circuit);
+        coasting_train.step(&circuit);
+        assert_eq!(powered_train.speed(), coasting_train.speed());
+    }
+}
+
+#[test]
+fn trailing_lift_drives_train_on_station_and_brakes_until_last_car_clears() {
+    let configuration = hybrid_model().train;
+    let config = PhysicsConfig::default();
+    for leading_piece_kind in [PieceKind::Station, PieceKind::Brakes] {
+        let mut circuit = demo_circuit();
+        for piece in &mut circuit.pieces[7..=9] {
+            piece.kind = PieceKind::Track;
+        }
+        circuit.pieces[7].kind = leading_piece_kind;
+        let mut no_lift = circuit.clone();
+        for piece in &mut no_lift.pieces[..7] {
+            if piece.kind == PieceKind::Lift {
+                piece.kind = PieceKind::Track;
+            }
+        }
+        let crest = circuit.starts[7];
+        let rear_offset = configuration.length_metres * f64::from(configuration.cars - 1)
+            / f64::from(configuration.cars);
+        for (distance, speed, lift_drives) in [
+            (crest + 0.1, 0.2, true),
+            (crest + 0.1, 8.0, false),
+            (crest + rear_offset + 0.1, 0.2, false),
+        ] {
+            assert_eq!(
+                circuit.pieces[circuit.locate(distance).0].kind,
+                leading_piece_kind
+            );
+            let mut train = Train::new(&circuit, &configuration, config, distance, speed);
+            let mut without_lift = Train::new(&no_lift, &configuration, config, distance, speed);
+            train.step(&circuit);
+            without_lift.step(&no_lift);
+            if lift_drives {
+                assert!(
+                    train.speed() > without_lift.speed(),
+                    "{leading_piece_kind:?}: lift {} versus no lift {}",
+                    train.speed(),
+                    without_lift.speed()
+                );
+            } else {
+                assert_eq!(
+                    train.speed(),
+                    without_lift.speed(),
+                    "{leading_piece_kind:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn launch_control_and_block_hold_take_priority_over_a_trailing_lift() {
+    let mut circuit = demo_circuit();
+    for piece in &mut circuit.pieces[7..=9] {
+        piece.kind = PieceKind::Track;
+    }
+    let configuration = hybrid_model().train;
+    let config = PhysicsConfig::default();
+    let distance = circuit.starts[7] + 0.1;
+    let mut launched = Train::new(&circuit, &configuration, config, distance, 0.2);
+    launched.set_control(
+        7,
+        Some(SectionControl::Launch {
+            target_speed: 10.0,
+            acceleration: 1.0,
+        }),
+    );
+    launched.step(&circuit);
+    assert_eq!(launched.speed(), 0.2 + TIME_STEP);
+
+    circuit.pieces[7].kind = PieceKind::Launch;
+    let launch_configuration = crate::track::multi_launch_model().train;
+    let mut no_lift = circuit.clone();
+    for piece in &mut no_lift.pieces[..7] {
+        if piece.kind == PieceKind::Lift {
+            piece.kind = PieceKind::Track;
+        }
+    }
+    let mut launched = Train::new(&circuit, &launch_configuration, config, distance, 0.2);
+    let mut launched_without_lift =
+        Train::new(&no_lift, &launch_configuration, config, distance, 0.2);
+    launched.step(&circuit);
+    launched_without_lift.step(&no_lift);
+    assert_eq!(launched.speed(), launched_without_lift.speed());
+
+    circuit.pieces[7].kind = PieceKind::Track;
+    let mut held = Train::new(&circuit, &configuration, config, distance, 0.0);
+    for _ in 0..100 {
+        held.step_block_brake_without_readings(&circuit, &[7], true);
+    }
+    assert_eq!(held.speed(), 0.0);
+    assert_eq!(held.distance(), distance);
+}
+
+#[test]
 fn lead_car_forces_match_recorded_forces_and_do_not_change_state_hash() {
     let circuit = demo_circuit();
     let mut train = Train::new(

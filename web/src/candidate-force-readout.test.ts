@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { candidateForceReadout, hillReadout } from "./candidate-force-readout";
-import { forceLimitsFixture } from "./test-fixtures/force-limits";
+import { MODEL_FORCE_LIMITS } from "./generated/modelForceLimits";
 
 const preview = {
   status: "reachedEnd" as const,
@@ -8,7 +8,7 @@ const preview = {
   entrySpeed: 20,
   ratedSpeed: { minimumEntry: 19, maximumEntry: 21 },
   peaks: { maximumSpeed: 22, minimumVerticalG: -0.5, maximumVerticalG: 3.4, maximumAbsoluteLateralG: 0.3, maximumAbsoluteLongitudinalG: 0.2 },
-  limits: forceLimitsFixture({ minimumVerticalG: -1, maximumVerticalG: 4, greatPositiveVerticalG: 2.5, maximumLateralG: 1, maximumLongitudinalG: 1 }),
+  limits: MODEL_FORCE_LIMITS["Briar Blitz"],
 };
 
 describe("candidate force readout", () => {
@@ -53,7 +53,7 @@ describe("airtime hill readout", () => {
     source: "energy",
     ratedSpeed: { minimumEntry: 16, maximumEntry: 26 },
     minimumVerticalG: -1.1, maximumVerticalG: 3.4, airtimeSeconds: 1.25, maximumAbsoluteLateralG: null,
-    limits: forceLimitsFixture({ minimumVerticalG: -1.5, maximumVerticalG: 4.5, greatPositiveVerticalG: 3, maximumLateralG: 1.5, maximumLongitudinalG: 1.5 }),
+    limits: MODEL_FORCE_LIMITS["Timber Tumbler"],
   };
 
   it("rates the predicted forces and shows speeds in the chosen units", () => {

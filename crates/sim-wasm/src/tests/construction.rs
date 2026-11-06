@@ -708,6 +708,8 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
     for piece in catalog.iter().filter(|piece| piece.family.is_some()) {
         let expected = if piece.inversion.is_some() {
             "inversion"
+        } else if piece.entry.heading != piece.exit.heading {
+            "turn"
         } else {
             "special"
         };
@@ -1895,6 +1897,21 @@ fn construction_lists_are_structured_and_preserve_selection_ids() {
 }
 
 #[test]
+fn construction_choices_include_speed_turns_on_the_wire() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(200, 200, 20, 0);
+    let choices: serde_json::Value =
+        serde_json::from_str(&simulation.construction_choices()).unwrap();
+    assert!(
+        choices
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|choice| { choice["id"] == "SpeedTurnLarge24Left" && choice["group"] == "turn" })
+    );
+}
+
+#[test]
 fn construction_reports_include_nullable_heartlining_metadata() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
     simulation.construction_start(200, 200, 20, 0);
@@ -1988,6 +2005,60 @@ fn hill_options_follow_model_and_select_variants_by_parameters() {
     let wooden: Vec<serde_json::Value> =
         serde_json::from_str(&simulation.construction_hill_options()).unwrap();
     assert!(!wooden.iter().any(|option| option["feel"] == "zeroGRoll"));
+    assert!(
+        wooden
+            .iter()
+            .any(|option| option["id"] == "WoodenEjectorHill8x64"
+                && option["feel"] == "strongFloater")
+    );
+    assert!(
+        wooden
+            .iter()
+            .any(|option| option["id"] == "FloaterHill8x64" && option["feel"] == "floater")
+    );
+    simulation.construction_select("hill:strongFloater:8x64:none");
+    assert_eq!(simulation.construction_selected(), "WoodenEjectorHill8x64");
+    simulation.construction_select("hill:floater:8x64:none");
+    assert_eq!(simulation.construction_selected(), "FloaterHill8x64");
+}
+
+#[test]
+fn speed_turns_list_the_model_sizes_with_hand_and_design_speed() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    assert_eq!(simulation.construction_speed_turns(), "[]");
+    simulation.construction_start(200, 200, 20, 0);
+    let hybrid: Vec<serde_json::Value> =
+        serde_json::from_str(&simulation.construction_speed_turns()).unwrap();
+    let summary: Vec<_> = hybrid
+        .iter()
+        .map(|turn| {
+            (
+                turn["id"].as_str().unwrap().to_owned(),
+                turn["hand"].as_str().unwrap().to_owned(),
+                turn["designSpeed"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    let expected = [
+        ("SpeedTurnLarge16Left", "left", 16.0),
+        ("SpeedTurnLarge16Right", "right", 16.0),
+        ("SpeedTurnLarge20Left", "left", 20.0),
+        ("SpeedTurnLarge20Right", "right", 20.0),
+        ("SpeedTurnLarge24Left", "left", 24.0),
+        ("SpeedTurnLarge24Right", "right", 24.0),
+    ]
+    .map(|(id, hand, speed)| (id.to_owned(), hand.to_owned(), speed));
+    assert_eq!(summary, expected);
+    simulation.construction_select("model:wooden_twister");
+    simulation.construction_start(200, 200, 20, 0);
+    let wooden: Vec<serde_json::Value> =
+        serde_json::from_str(&simulation.construction_speed_turns()).unwrap();
+    assert_eq!(wooden.len(), 4);
+    assert!(
+        wooden
+            .iter()
+            .all(|turn| turn["designSpeed"].as_f64().unwrap() < 24.0)
+    );
 }
 
 #[test]

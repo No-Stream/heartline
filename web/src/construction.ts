@@ -1,15 +1,15 @@
 import { carsPerTrainControl } from "./cars-per-train";
-import { speedMatchMessage } from "./construction-speed-match";
+import { constructionEndSpeed, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
 import { candidateForceReadout, hillReadout } from "./candidate-force-readout";
 import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
-import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
+import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
 import type { BlockReport, ConstructionElement, ConstructionHillOption, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
-import { displaySpeedToMetresPerSecond, displayToMetres, formatLength, metresPerSecondToDisplay, metresToInput, speedUnitLabel, unitLabel, type Units } from "./units";
+import { displaySpeedToMetresPerSecond, displayToMetres, formatLength, formatSpeed, metresPerSecondToDisplay, metresToInput, speedUnitLabel, unitLabel, type Units } from "./units";
 import type { UndergroundCutawayMode } from "./underground-cutaway";
 import "./print-modern.css";
 import "./construction.css";
@@ -378,8 +378,15 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const select = (piece: string | undefined): void => { if (piece) dispatch({ type: "construction-select", piece }); };
   const stepSelection = (attribute: PieceStep, step: -1 | 1): void => {
     if (!state) return;
-    const action = steppedPieceSelection(state.pieces, shapes, state.selected, attribute, step);
+    const pieces = attribute === "piece" ? state.pieces : speedTurnPalette(state.pieces, state.speedTurns);
+    const action = steppedPieceSelection(pieces, shapes, state.selected, attribute, step, constructionEndSpeed(state.constructionForcePreview));
     if (action) dispatch(action);
+  };
+  const speedTurnOf = (id: string) => state?.speedTurns.find((turn) => turn.id === id);
+  /** Speed-matched turns are named by their design speed in the player's units. */
+  const displayName = (id: string, piece: Parameters<typeof pieceDisplayName>[0]): string => {
+    const speedTurn = speedTurnOf(id);
+    return speedTurn ? speedTurnName(piece.label, speedTurn.designSpeed, units) : pieceDisplayName(piece);
   };
   const showTab = (shown: BuilderTab, focus: boolean): void => {
     for (const { id, tab, panel } of tabs) {
@@ -524,7 +531,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       row.innerHTML = `<h3>${groupNames[group]} <kbd>${groupKeyHint(group)}</kbd></h3><div class="builder__tiles"></div>`;
       row.lastElementChild!.append(...members.map((piece) => {
         const shape = shapeOf(piece.id, piece.slope);
-        const displayName = pieceDisplayName(piece);
+        const name = displayName(piece.id, piece);
         const tile = document.createElement("button");
         tile.type = "button";
         tile.className = `piece-tile${piece.refusal ? " piece-tile--refused" : ""}`;
@@ -532,11 +539,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         if (levelOut) tile.classList.add("piece-tile--level-out");
         tile.dataset.piece = piece.id;
         tile.setAttribute("role", "radio");
-        tile.setAttribute("aria-label", displayName);
+        tile.setAttribute("aria-label", name);
         const tipId = `piece-tip-${piece.id}`;
         tile.setAttribute("aria-describedby", tipId);
         tile.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}${levelOut ? '<span class="piece-tile__level-out">Level out</span>' : ""}<span class="piece-tile__tip" role="tooltip" id="${tipId}"><strong></strong><span></span></span>`;
-        tile.querySelector("strong")!.textContent = displayName;
+        tile.querySelector("strong")!.textContent = name;
         tile.querySelector(".piece-tile__tip span")!.textContent = piece.refusal;
         return tile;
       }));
@@ -623,18 +630,27 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const selectedHill = current.hillOptions.find(({ id }) => id === current.selected);
     const speedMatch = element("[data-speed-match]");
     speedMatch.hidden = !current.speedMatch || !!selectedHill;
-    element("[data-speed-match-message]").textContent = current.speedMatch ? speedMatchMessage(current.speedMatch, current.selected) : "";
-    element("[data-speed-match-variants]").replaceChildren(...(current.speedMatch?.variants ?? []).map(({ id, label }) => {
+    const selectedSpeedTurn = current.selected ? speedTurnOf(current.selected) : undefined;
+    element("[data-speed-match-message]").textContent = !current.speedMatch ? ""
+      : selectedSpeedTurn ? speedTurnMessage(current.speedMatch, current.selected, current.speedTurns, units)
+        : speedMatchMessage(current.speedMatch, current.selected);
+    // Speed-matched turn sizes read as one row: "Banked for 58 km/h 72 km/h 86 km/h".
+    const caption = document.createElement("span");
+    caption.className = "builder__size-caption";
+    caption.textContent = "Banked for";
+    element("[data-speed-match-variants]").replaceChildren(...(selectedSpeedTurn ? [caption] : []), ...(current.speedMatch?.variants ?? []).map(({ id, label }) => {
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.speedMatchVariant = id;
-      button.textContent = label;
+      const variantSpeedTurn = speedTurnOf(id);
+      button.textContent = variantSpeedTurn ? formatSpeed(variantSpeedTurn.designSpeed, units, 0) : label;
+      if (variantSpeedTurn) button.setAttribute("aria-label", speedTurnSizeLabel(variantSpeedTurn.designSpeed, units));
       button.setAttribute("aria-pressed", String(id === current.selected));
       return button;
     }));
     const selected = current.pieces.find(({ id }) => id === current.selected);
-    // A hill shows its own prediction in the hill section.
-    const forcePreview = current.speedMatch && !selectedHill ? current.candidateForcePreview : null;
+    // A hill shows its own prediction in the hill section; every turn shows one so a bank can be compared with level.
+    const forcePreview = (current.speedMatch || selected?.group === "turn") && !selectedHill ? current.candidateForcePreview : null;
     const candidateForce = element("[data-candidate-force-preview]");
     candidateForce.hidden = !forcePreview;
     candidateForce.replaceChildren(...(forcePreview ? candidateForceReadout(forcePreview, units) : []).map((line) => {
@@ -649,7 +665,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       const shape = shapeOf(selected.id, selected.slope);
       preview.style.setProperty("--plate", groupPlates[selected.group]);
       element("[data-preview-icons]").innerHTML = iconViews(shape).map((view) => pieceIconSvg(shape, view, 70, 52)).join("");
-      element("[data-preview-name]").textContent = pieceDisplayName(selected);
+      element("[data-preview-name]").textContent = displayName(selected.id, selected);
       element("[data-preview-group]").textContent = groupNames[selected.group];
     }
     if (selectedElement) {
@@ -661,8 +677,9 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }
     element("[data-steppers]").hidden = !!selectedHill;
     renderHill(current, selectedHill, selected?.hillEstimate ?? null);
+    const stepPalette = speedTurnPalette(current.pieces, current.speedTurns);
     for (const { attribute } of steppers) {
-      const options = stepperOptions(current.pieces, shapes, current.selected, attribute);
+      const options = stepperOptions(stepPalette, shapes, current.selected, attribute);
       const value = element(`[data-stepper-value="${attribute}"]`);
       const text = options ? options.values[options.index] : "None";
       if (value.textContent !== text) {
@@ -772,12 +789,12 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   function renderTrack(current: ConstructionState, grew: boolean): void {
     track.replaceChildren(...current.track.map(({ id, label, name, group, slope, kind }, index) => {
       const shape = shapeOf(label, slope);
-      const displayName = pieceDisplayName({ label: name, group, slope });
+      const chipName = displayName(label, { label: name, group, slope });
       const item = document.createElement("li");
       item.className = `track-chip${grew && index === current.track.length - 1 ? " track-chip--new" : ""}`;
-      item.title = displayName;
+      item.title = chipName;
       item.innerHTML = `<span class="track-chip__number">${index + 1}</span>${pieceIconSvg(shape, iconViews(shape)[0], 26, 20)}<span class="track-chip__name"></span>`;
-      item.querySelector(".track-chip__name")!.textContent = displayName;
+      item.querySelector(".track-chip__name")!.textContent = chipName;
       if (kind === "Lift") {
         const marker = document.createElement("span");
         marker.dataset.chainMarker = "";
@@ -788,7 +805,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "×";
-      remove.setAttribute("aria-label", `Delete ${displayName}, piece ${index + 1}`);
+      remove.setAttribute("aria-label", `Delete ${chipName}, piece ${index + 1}`);
       remove.addEventListener("click", () => dispatch({ type: "construction-delete", id }));
       item.append(remove);
       return item;
@@ -937,7 +954,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element(".builder__station-height .stepper__unit").textContent = unitLabel(units);
       element("[data-block-add-label]").textContent = `New boundary (${unitLabel(units)})`;
       setHeight(dispatchedHeight);
-      if (state) { renderSelection(state, false); renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
+      if (state) { renderPalette(state.pieces); renderTrack(state, false); renderSelection(state, false); renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
     },
     setUndergroundCutawayMode(mode) { undergroundCutaway.value = mode; },
     setHeightMarkers(trackHeight, stationHeightText) {

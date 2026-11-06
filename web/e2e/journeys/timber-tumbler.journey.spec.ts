@@ -15,19 +15,43 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   };
   await page.setViewportSize({ width: 800, height: 480 });
   const circuit = readCircuit("Timber Tumbler");
-  let circuitIndex = 0;
-  let chain = false;
-  const placePiece = async (): Promise<void> => {
-    while (circuit[circuitIndex] === "+chain" || circuit[circuitIndex] === "-chain") {
-      chain = circuit[circuitIndex++] === "+chain";
-    }
-    const piece = circuit[circuitIndex++];
-    if (!piece) throw new Error("Timber Tumbler circuit is missing a piece");
-    await expect(page.locator("[data-construction]")).toHaveAttribute("data-chain", String(chain));
-    await expect(page.locator('[data-piece][aria-checked="true"]')).toHaveAttribute("data-piece", piece);
-    await placeSelectedPiece(page);
+  const hillTargets: Record<string, { feel: string; twist: string; height: number; span: number }> = {
+    EjectorHill16x96: { feel: "Ejector", twist: "Upright", height: 16, span: 96 },
+    EjectorHill12x80OuterLeft: { feel: "Ejector", twist: "Outer bank left", height: 12, span: 80 },
+    ZeroGRollFastLeft: { feel: "Zero-g roll", twist: "Roll left", height: 8, span: 86 },
+    ZeroGRollFastRight: { feel: "Zero-g roll", twist: "Roll right", height: 8, span: 86 },
+    StallLeft: { feel: "Stall", twist: "Roll left", height: 13, span: 104 },
+    FloaterHill12x96: { feel: "Floater", twist: "Upright", height: 12, span: 96 },
+    FloaterHill12x80: { feel: "Floater", twist: "Upright", height: 12, span: 80 },
   };
-  const previewName = page.locator("[data-next] [data-preview-name]");
+  const hillOrders: Record<string, string[]> = {
+    feel: ["Ejector", "Floater", "Speed hill", "Zero-g roll", "Stall"],
+    twist: ["Outer bank left", "Upright", "Outer bank right", "Roll left", "Roll right"],
+  };
+  const selectHill = async (piece: string): Promise<void> => {
+    const target = hillTargets[piece];
+    const hill = page.locator("[data-hill]");
+    if (await hill.getAttribute("open") === null) await hill.locator("summary").click();
+    for (const attribute of ["feel", "twist", "height", "span"] as const) {
+      const value = hill.locator(`[data-hill-value="${attribute}"]`);
+      await expect(value).not.toBeEmpty();
+      const desired = target[attribute];
+      for (let step = 0; step < 8; step += 1) {
+        const current = (await value.textContent())?.trim();
+        if (!current) throw new Error(`Missing ${attribute} for ${piece}`);
+        if (current === String(desired) || current === `${desired} m`) break;
+        const order = hillOrders[attribute];
+        const currentRank = order ? order.indexOf(current) : Number.parseFloat(current);
+        const targetRank = order ? order.indexOf(String(desired)) : Number(desired);
+        if (currentRank < 0 || targetRank < 0 || !Number.isFinite(currentRank)) throw new Error(`Unknown ${attribute}: ${current}`);
+        const direction = currentRank < targetRank ? 1 : -1;
+        await hill.locator(`[data-hill-stepper="${attribute}-${direction}"]`).click();
+        await expect(value).not.toHaveText(current);
+      }
+      await expect(value).toHaveText(typeof desired === "number" ? `${desired} m` : desired);
+    }
+    await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", piece);
+  };
   await startPark(page, { park: "new", seed: 2026, speed: 1 });
   await layPath(page, { x: 218, y: 251, z: 2 }, { x: 218, y: 256, z: 2 });
   await placeFacility(page, "Food stall", { x: 216, y: 252, z: 2 });
@@ -35,106 +59,33 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   await placeFacility(page, "Restroom", { x: 216, y: 256, z: 2 });
   phase("park setup");
   await placeStation(page, { model: "hybrid", height: 4, tile: { x: 241, y: 249, z: 2 }, direction: { x: 241, y: 251, z: 2 } });
-  await page.keyboard.press("h");
-  await expect(page.locator("[data-construction]")).toHaveAttribute("data-chain", "true");
-  await page.getByRole("radio", { name: "Begin gentle climb", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(2);
-  await page.getByRole("radio", { name: "Gentle climb", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(3);
-  await expect(page.getByRole("button", { name: "Turn left", exact: true }), "no climbing turn offered while the chain lift climbs").toBeEnabled();
-  await page.getByRole("button", { name: "Turn left", exact: true }).click();
-  await expect(previewName).toHaveText("Climbing small left turn");
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(4);
 
-  await page.getByRole("button", { name: "Turn right", exact: true }).click();
-  await expect(previewName).toHaveText("Gentle climb");
-  await page.getByRole("button", { name: "Slope up", exact: true }).click();
-  await expect(previewName).toHaveText("Begin steep climb");
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(5);
-
-  await page.getByRole("radio", { name: "Steep climb", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Slope up", exact: true }),
-    "the 60-degree climb transition is not offered from the 45-degree chain lift",
-  ).toBeEnabled();
-  await page.getByRole("button", { name: "Slope up", exact: true }).click();
-  await expect(previewName).toHaveText("Begin 60-degree climb");
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(6);
-  await expect(previewName).toHaveText("60-degree climb");
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(7);
-
-  await page.getByRole("radio", { name: "End 60-degree climb", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(8);
-  await page.getByRole("radio", { name: "End steep climb", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(9);
-  await page.getByRole("radio", { name: "End gentle climb", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(10);
-  await page.keyboard.press("h");
-  await expect(page.locator("[data-construction]")).toHaveAttribute("data-chain", "false");
-
-  await page.getByRole("radio", { name: "Begin gentle descent", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(11);
-  await page.getByRole("radio", { name: "Begin steep descent", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(12);
-  await page.getByRole("radio", { name: "Steep descent", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(13);
-  await page.getByRole("radio", { name: "Begin 60-degree descent", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(14);
-  await page.getByRole("radio", { name: "60-degree descent", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(15);
-  await page.getByRole("radio", { name: "End 60-degree descent", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(16);
-  await page.getByRole("radio", { name: "End steep descent", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(17);
-  await page.getByRole("radio", { name: "End gentle descent", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(18);
-
-  await page.getByRole("radio", { name: "Bank left", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(19);
-  await page.getByRole("radio", { name: "Small left-banked turn", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(20);
-  await page.getByRole("radio", { name: "Small left-banked turn", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(21);
-  await page.getByRole("radio", { name: "Level from left bank", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(22);
-  await page.getByRole("radio", { name: "Small airtime hill", exact: true }).click();
-  await placePiece();
-  await expect(page.locator("[data-track] li")).toHaveCount(23);
-
-  const returnPieces = [
-    "Begin gentle climb", "Climbing small right turn", "End gentle climb",
-    "Begin gentle descent", "Gentle descent", "Gentle descent", "End gentle descent", "Small left turn",
-    ...Array<string>(7).fill("Straight"), "Large left turn", ...Array<string>(3).fill("Straight"),
-    "Straight", "Straight", "Small left turn", "One-tile straight",
-    "Large left turn", "Large left turn", "Small left turn",
-  ];
-  for (const [index, name] of returnPieces.entries()) {
-    if (index === 0 || name !== returnPieces[index - 1]) await page.getByRole("radio", { name, exact: true }).click();
-    await placePiece();
-    await expect(page.locator("[data-track] li")).toHaveCount(index + 24);
+  let chainEnabled = false;
+  let trackCount = 1;
+  for (const entry of circuit) {
+    if (entry === "+chain" || entry === "-chain") {
+      chainEnabled = entry === "+chain";
+      await page.keyboard.press("h");
+      await expect(page.locator("[data-construction]")).toHaveAttribute("data-chain", String(chainEnabled));
+      continue;
+    }
+    if (entry in hillTargets) {
+      await selectHill(entry);
+    } else {
+      const choice = page.locator(`[data-piece="${entry}"]`);
+      await expect(choice, `Timber Tumbler does not offer ${entry}`).toBeVisible();
+      await choice.click();
+      await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
+      const variant = page.locator(`[data-speed-match-variant="${entry}"]`);
+      if (await variant.isVisible()) await variant.click();
+      await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", entry);
+    }
+    await expect(page.locator("[data-construction]")).toHaveAttribute("data-chain", String(chainEnabled));
+    await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
+    await placeSelectedPiece(page);
+    await expect(page.locator("[data-track] li")).toHaveCount(++trackCount);
   }
-  expect(circuitIndex).toBe(circuit.length);
+  expect(chainEnabled).toBe(false);
   phase("construction");
   await page.setViewportSize({ width: 1280, height: 720 });
   await closeCircuit(page);
@@ -188,8 +139,8 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   }
 
   const estimateBeforeDeletion = await page.evaluate(() => window.gameTest.constructionForcePreview());
-  await page.getByRole("button", { name: "Delete Gentle climb, piece 3" }).click();
-  await expect(page.locator("[data-track] li")).toHaveCount(48);
+  await page.getByRole("button", { name: "Delete Begin steep climb, piece 3" }).click();
+  await expect(page.locator("[data-track] li")).toHaveCount(trackCount - 1);
   await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeDisabled();
   expect(await page.evaluate(() => window.gameTest.testingReport())).toBeNull();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConstructionHillOption, ConstructionPiece, PieceShape } from "./construction-protocol";
 import { speedMatchedSelection } from "./construction-speed-match";
-import { steppedPieceSelection, groupedPieces, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, steppedHillSelection, steppedPiece, stepperOptions, type HillAttribute } from "./construction-choices";
+import { speedTurnPalette, steppedPieceSelection, groupedPieces, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, steppedHillSelection, steppedPiece, stepperOptions, type HillAttribute } from "./construction-choices";
 
 function shape(id: string, turn: number, kind = "Track"): PieceShape {
   return { id, name: id, kind, turn, entrySlope: "Level", exitSlope: "Level", entryBank: "Level", exitBank: "Level", points: [] };
@@ -69,7 +69,7 @@ describe("construction steppers", () => {
   it("orders turns from left to right and slopes from down to up, and clamps at the ends", () => {
     expect(stepperOptions(pieces, shapes, "Straight", "turn")).toEqual({ values: ["Left 90°", "Ahead"], index: 1 });
     expect(stepperOptions(pieces, shapes, "Straight", "slope")).toEqual({ values: ["Gentle down 27°", "Level", "Gentle up 27°"], index: 1 });
-    expect(stepperOptions(pieces, shapes, "Straight", "bank")).toEqual({ values: ["Left", "Level", "Right"], index: 1 });
+    expect(stepperOptions(pieces, shapes, "Straight", "bank")).toEqual({ values: ["Left 45°", "Level", "Right 45°"], index: 1 });
     expect(steppedPiece(pieces, shapes, "Straight", "turn", -1)).toBe("TurnSmallStandalone");
     expect(steppedPiece(pieces, shapes, "Straight", "turn", 1)).toBeUndefined();
     expect(steppedPiece(pieces, shapes, "Straight", "bank", 1)).toBe("BankRight");
@@ -207,11 +207,68 @@ describe("construction steppers", () => {
   });
 });
 
+describe("speed-matched turns on the steppers", () => {
+  const speedTurns = [
+    { id: "SpeedTurnLarge16Left", hand: "left", designSpeed: 16 }, { id: "SpeedTurnLarge16Right", hand: "right", designSpeed: 16 },
+    { id: "SpeedTurnLarge20Left", hand: "left", designSpeed: 20 }, { id: "SpeedTurnLarge20Right", hand: "right", designSpeed: 20 },
+  ] as const;
+  const turnShape = (id: string, turn: number, radius: number): PieceShape =>
+    ({ ...shape(id, turn), points: [[0, 0, 0, 0, 0, 1], [radius, Math.sign(turn) * radius, 0, 0, 0, 1]] });
+  const turnShapes = new Map([
+    ...shapes,
+    ...([["TurnSmallStandalone", 2, 16], ["TurnLargeStandalone", 2, 32], ["BankedTurnLeft", 2, 16], ["SpeedTurnLarge16Left", 2, 32], ["SpeedTurnLarge20Left", 2, 32],
+      ["TurnSmallRightStandalone", -2, 16], ["BankedTurnRight", -2, 16], ["SpeedTurnLarge16Right", -2, 32], ["SpeedTurnLarge20Right", -2, 32]] as const)
+      .map(([id, turn, radius]) => [id, turnShape(id, turn, radius)] as const),
+  ]);
+  const turnPieces = [
+    piece("Straight", "straight"), piece("TurnSmallStandalone", "turn"), piece("TurnLargeStandalone", "turn"),
+    piece("TurnSmallRightStandalone", "turn"),
+    piece("BankedTurnLeft", "turn", "Level", "Left", "Bank left before this turn."), piece("BankedTurnRight", "turn", "Level", "Right", "Bank right before this turn."),
+  ];
+  const palette = speedTurnPalette(turnPieces, speedTurns);
+  const step = (selected: string, attribute: "turn" | "bank", direction: -1 | 1, entrySpeed: number | undefined, pieces = palette) =>
+    steppedPieceSelection(pieces, turnShapes, selected, attribute, direction, entrySpeed);
+
+  it("defaults a turn step to the speed-matched bank from 12 m/s and to the plain turn below", () => {
+    expect(step("Straight", "turn", -1, 12)).toEqual({ type: "construction-select", piece: "SpeedTurnLarge16Left", exact: false });
+    expect(step("Straight", "turn", 1, 25)).toEqual({ type: "construction-select", piece: "SpeedTurnLarge16Right", exact: false });
+    expect(step("Straight", "turn", -1, 11.9)).toEqual({ type: "construction-select", piece: "TurnSmallStandalone", exact: true });
+    expect(step("Straight", "turn", -1, undefined)).toEqual({ type: "construction-select", piece: "TurnSmallStandalone", exact: true });
+  });
+
+  it("puts For speed between level and the 45-degree bank on the turn's side", () => {
+    expect(stepperOptions(palette, turnShapes, "TurnSmallStandalone", "bank")).toEqual({ values: ["Left 45°", "For speed", "Level"], index: 2 });
+    expect(stepperOptions(palette, turnShapes, "TurnSmallRightStandalone", "bank")).toEqual({ values: ["Level", "For speed", "Right 45°"], index: 0 });
+    expect(step("TurnLargeStandalone", "bank", -1, 8)).toEqual({ type: "construction-select", piece: "SpeedTurnLarge16Left", exact: false });
+    expect(step("TurnSmallRightStandalone", "bank", 1, 20)).toEqual({ type: "construction-select", piece: "SpeedTurnLarge16Right", exact: false });
+  });
+
+  it("lets the player override a selected speed-matched turn back to level or to 45 degrees, keeping the nearest footprint", () => {
+    const selectedPalette = speedTurnPalette([...turnPieces, piece("SpeedTurnLarge20Left", "turn")], speedTurns);
+    expect(selectedPalette.filter(({ id }) => id.startsWith("SpeedTurn")).map(({ id }) => id)).toEqual(["SpeedTurnLarge20Left", "SpeedTurnLarge16Right"]);
+    expect(stepperOptions(selectedPalette, turnShapes, "SpeedTurnLarge20Left", "bank")).toEqual({ values: ["Left 45°", "For speed", "Level"], index: 1 });
+    expect(step("SpeedTurnLarge20Left", "bank", 1, 20, selectedPalette)).toEqual({ type: "construction-select", piece: "TurnLargeStandalone", exact: true });
+    expect(step("SpeedTurnLarge20Left", "bank", -1, 20, selectedPalette)).toEqual({ type: "construction-select", piece: "BankedTurnLeft", exact: true });
+  });
+
+  it("steps a speed-matched turn's direction through ahead to the other hand", () => {
+    const selectedPalette = speedTurnPalette([...turnPieces, piece("SpeedTurnLarge20Left", "turn")], speedTurns);
+    expect(stepperOptions(selectedPalette, turnShapes, "SpeedTurnLarge20Left", "turn")).toEqual({ values: ["Left 90°", "Ahead", "Right 90°"], index: 0 });
+    expect(step("SpeedTurnLarge20Left", "turn", 1, 20, selectedPalette)).toEqual({ type: "construction-select", piece: "Straight", exact: true });
+    expect(step("Straight", "turn", 1, 20, selectedPalette)).toEqual({ type: "construction-select", piece: "SpeedTurnLarge16Right", exact: false });
+  });
+
+  it("leaves the palette alone when the model has no speed-matched turns", () => {
+    expect(speedTurnPalette(turnPieces, [])).toEqual(turnPieces);
+    expect(stepperOptions(speedTurnPalette(turnPieces, []), turnShapes, "TurnSmallStandalone", "bank")).toEqual({ values: ["Left 45°", "Level"], index: 1 });
+  });
+});
+
 it("cycles past speed-matched variants without redirecting to a previous size", () => {
   const palette = [piece("Loop", "inversion"), piece("HeartlineRoll", "inversion"), piece("LargeLoop", "inversion"), piece("LaunchShort", "special")];
   let selected = "Loop";
   for (let index = 0; index < 3; index++) {
-    const action = steppedPieceSelection(palette, shapes, selected, "piece", 1)!;
+    const action = steppedPieceSelection(palette, shapes, selected, "piece", 1, undefined)!;
     expect(action.exact).toBe(true);
     selected = speedMatchedSelection(action.piece, { entrySpeed: 10, recommendedId: "Loop", fits: true, variants: [] }, action.exact);
   }
@@ -255,6 +312,14 @@ describe("airtime hill steppers", () => {
     expect(step("zeroGRoll8x86right", "feel", 1)).toEqual({ type: "construction-select", piece: "stall13x104right", exact: false });
     expect(step("ejector12x64none", "twist", -1)).toEqual({ type: "construction-select", piece: "ejector12x64outerLeft", exact: false });
     expect(step("ejector12x64outerRight", "twist", 1)).toBeUndefined();
+  });
+
+  it("selects a strong floater independently from a floater of the same size", () => {
+    const wooden = [hill("ejector", 6, 48), hill("strongFloater", 8, 64), hill("floater", 8, 64)];
+    expect(hillStepperOptions(wooden, "strongFloater8x64none", "feel", "metric"))
+      .toEqual({ values: ["Ejector", "Strong floater", "Floater"], index: 1 });
+    expect(steppedHillSelection(wooden, "floater8x64none", "feel", -1))
+      .toEqual({ type: "construction-select", piece: "strongFloater8x64none", exact: false });
   });
 
   it("opens on the current hill or the most similar hill of the preferred feel", () => {

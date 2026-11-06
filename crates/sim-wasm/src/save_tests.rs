@@ -1,7 +1,7 @@
 use crate::WasmSimulation;
-use theme_park_sim::track::PieceId;
+use theme_park_sim::track::{HillFeel, PieceFamily, PieceId};
 
-fn append_timber_tumbler_fixture_with_ejector_hill(simulation: &mut WasmSimulation) {
+fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId> {
     simulation.construction_select("model:hybrid");
     simulation.construction_start(200, 200, 40, 2);
 
@@ -16,8 +16,6 @@ fn append_timber_tumbler_fixture_with_ejector_hill(simulation: &mut WasmSimulati
         "Timber Tumbler fixture is unique"
     );
 
-    let mut inserted_hill = false;
-    let mut straight_pieces_to_skip = 0;
     for name in circuit
         .lines()
         .map(str::trim)
@@ -36,40 +34,40 @@ fn append_timber_tumbler_fixture_with_ejector_hill(simulation: &mut WasmSimulati
             _ => {}
         }
 
-        if straight_pieces_to_skip > 0 {
-            assert_eq!(
-                name, "Straight",
-                "three consecutive straights form the hill span"
-            );
-            straight_pieces_to_skip -= 1;
-            continue;
-        }
-        let piece_name = if name == "Straight" && !inserted_hill {
-            inserted_hill = true;
-            straight_pieces_to_skip = 2;
-            "EjectorHill8x48"
-        } else {
-            name
-        };
-        simulation.construction_select(piece_name);
+        simulation.construction_select(name);
         assert!(
             simulation.construction_can_append(),
-            "{piece_name}: {}",
+            "{name}: {}",
             simulation.construction_preview_reason()
         );
         simulation.construction_append();
         assert!(
             simulation.construction_message().is_empty(),
-            "{piece_name}: {}",
+            "{name}: {}",
             simulation.construction_message()
         );
     }
 
-    assert!(
-        inserted_hill,
-        "Timber Tumbler fixture has a straight run to replace"
-    );
     let pieces = simulation.construction.as_ref().unwrap().pieces();
+    assert!(
+        pieces.iter().any(|piece| matches!(
+            piece.family,
+            Some(PieceFamily::Hill(family)) if family.feel == HillFeel::Ejector
+        )),
+        "Timber Tumbler fixture has no ejector hill"
+    );
+    let hill_piece_ids: Vec<_> = pieces
+        .iter()
+        .filter(|piece| {
+            piece.id == PieceId::AirtimeHill
+                || matches!(piece.family.as_ref(), Some(PieceFamily::Hill(_)))
+        })
+        .map(|piece| piece.id)
+        .collect();
+    assert!(
+        !hill_piece_ids.is_empty(),
+        "Timber Tumbler fixture has no hills"
+    );
     let closure_mismatch = pieces.iter().enumerate().find_map(|(index, piece)| {
         let next = &pieces[(index + 1) % pieces.len()];
         (piece.exit != next.entry).then_some((piece.name, piece.exit, next.name, next.entry))
@@ -80,6 +78,7 @@ fn append_timber_tumbler_fixture_with_ejector_hill(simulation: &mut WasmSimulati
     );
     simulation.construction_close();
     assert!(simulation.construction_message().is_empty());
+    hill_piece_ids
 }
 
 #[test]
@@ -159,30 +158,25 @@ fn save_preserves_non_default_cars_per_train() {
 #[test]
 fn save_round_trips_built_timber_tumbler_with_ejector_hill() {
     let mut original = WasmSimulation::new(42, 0, String::from("new"));
-    append_timber_tumbler_fixture_with_ejector_hill(&mut original);
+    let hill_piece_ids = append_timber_tumbler_fixture(&mut original);
     assert!(original.construction.as_ref().unwrap().is_closed());
-    assert!(
-        original
-            .construction
-            .as_ref()
-            .unwrap()
-            .pieces()
-            .iter()
-            .any(|piece| piece.id == PieceId::EjectorHill8x48)
-    );
 
     let bytes = original.save_state().unwrap();
     let mut restored = WasmSimulation::load_state(&bytes).unwrap();
     assert_eq!(original.state_hash(), restored.state_hash());
-    assert!(
-        restored
-            .construction
-            .as_ref()
-            .unwrap()
-            .pieces()
-            .iter()
-            .any(|piece| piece.id == PieceId::EjectorHill8x48)
-    );
+    let restored_hill_piece_ids: Vec<_> = restored
+        .construction
+        .as_ref()
+        .unwrap()
+        .pieces()
+        .iter()
+        .filter(|piece| {
+            piece.id == PieceId::AirtimeHill
+                || matches!(piece.family.as_ref(), Some(PieceFamily::Hill(_)))
+        })
+        .map(|piece| piece.id)
+        .collect();
+    assert_eq!(restored_hill_piece_ids, hill_piece_ids);
 
     for _ in 0..30 {
         original.tick();

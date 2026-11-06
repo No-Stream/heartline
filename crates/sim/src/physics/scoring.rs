@@ -1,7 +1,7 @@
 use crate::track::ComfortableForceLimits;
-pub(super) use crate::track::{ForceRating as ForceBand, ForceRatingAxis as ForceAxis};
+pub use crate::track::{ForceRating as ForceBand, ForceRatingAxis as ForceAxis};
 
-pub(super) fn force_band(
+pub fn force_band(
     axis: ForceAxis,
     value_g: f64,
     limits: ComfortableForceLimits,

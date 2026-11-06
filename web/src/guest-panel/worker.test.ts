@@ -124,6 +124,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_candidate_force_preview_json() { return "null"; }
     construction_speed_match_json() { return "null"; }
     construction_hill_options() { return "[]"; }
+    construction_speed_turns() { return "[]"; }
     construction_can_test() { return false; }
     construction_finish_preview_active() { return false; }
     construction_can_finish() { return wasmMock.finishAvailable; }
