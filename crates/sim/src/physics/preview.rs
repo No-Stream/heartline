@@ -2,7 +2,6 @@ use super::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, TestRun, TestRunR
 use crate::state_hash::StateHasher;
 use crate::track::{ComfortableForceLimits, Piece, PieceKind, TrainConfiguration};
 
-const PREVIEW_TIME_STEP: f64 = 0.05;
 const PREVIEW_MAX_SECONDS: f64 = 1000.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,15 +247,15 @@ pub fn preview_open_track(
     configuration: &TrainConfiguration,
     config: PhysicsConfig,
 ) -> Option<TrackPreview> {
-    preview_at_step(
+    PreviewCache::default().preview(
         pieces,
         configuration,
         config,
-        (PREVIEW_MAX_SECONDS / PREVIEW_TIME_STEP) as usize,
-        PREVIEW_TIME_STEP,
+        crate::track::hybrid_model().comfortable_force_limits,
     )
 }
 
+#[cfg(test)]
 pub(super) fn preview_at_step(
     pieces: &[Piece],
     configuration: &TrainConfiguration,
@@ -264,6 +263,7 @@ pub(super) fn preview_at_step(
     step_limit: usize,
     time_step: f64,
 ) -> Option<TrackPreview> {
+    assert_eq!(time_step, TIME_STEP);
     let station = pieces
         .iter()
         .position(|piece| piece.kind == PieceKind::Station)?;

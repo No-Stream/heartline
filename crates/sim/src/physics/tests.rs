@@ -1775,3 +1775,57 @@ fn incremental_preview_matches_fresh_runs_after_track_edits() {
     }
     assert!(cache.snapshot_count() > 0);
 }
+
+#[test]
+fn incremental_preview_matches_fresh_when_a_step_crosses_multiple_metres() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let config = PhysicsConfig {
+        station_speed: 300.0,
+        drive_acceleration: 100_000.0,
+        drag_coefficient: 0.0,
+        rolling_resistance: 0.0,
+        ..PhysicsConfig::default()
+    };
+    let mut train = Train::new(
+        &circuit,
+        &model.train,
+        config,
+        circuit.pieces()[0].length() / 2.0,
+        0.0,
+    );
+    train.step(&circuit);
+    let previous_distance = train.distance();
+    train.step(&circuit);
+    assert!(train.distance() - previous_distance > 1.0);
+
+    let mut cache = PreviewCache::default();
+    let pieces = circuit.pieces();
+    cache
+        .preview(
+            &pieces[..2],
+            &model.train,
+            config,
+            model.comfortable_force_limits,
+        )
+        .unwrap();
+    let cached = cache
+        .preview(
+            &pieces[..3],
+            &model.train,
+            config,
+            model.comfortable_force_limits,
+        )
+        .unwrap();
+    let fresh = PreviewCache::default()
+        .preview(
+            &pieces[..3],
+            &model.train,
+            config,
+            model.comfortable_force_limits,
+        )
+        .unwrap();
+    assert_eq!(cached.status, fresh.status);
+    assert_eq!(cached.report.samples, fresh.report.samples);
+    assert_eq!(cached.force_limit_exceeded, fresh.force_limit_exceeded);
+}

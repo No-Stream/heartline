@@ -124,6 +124,10 @@ pub struct ConstructionLastPlacedForceWire {
     maximum_vertical_g: f64,
     maximum_absolute_lateral_g: f64,
     maximum_absolute_longitudinal_g: f64,
+    minimum_vertical_limit_exceeded: bool,
+    maximum_vertical_limit_exceeded: bool,
+    lateral_limit_exceeded: bool,
+    longitudinal_limit_exceeded: bool,
 }
 
 #[derive(Serialize, TS)]
@@ -225,7 +229,18 @@ fn last_placed_force_wire(
     if samples.is_empty() {
         return None;
     }
+    let peak_flag = |value: fn(&crate::reports::TestingSample) -> f64, axis: usize| {
+        samples
+            .iter()
+            .max_by(|left, right| value(left).total_cmp(&value(right)))
+            .expect("nonempty samples")
+            .force_limit_exceeded[axis]
+    };
     Some(ConstructionLastPlacedForceWire {
+        minimum_vertical_limit_exceeded: peak_flag(|sample| -sample.vertical_g, 0),
+        maximum_vertical_limit_exceeded: peak_flag(|sample| sample.vertical_g, 0),
+        lateral_limit_exceeded: peak_flag(|sample| sample.lateral_g.abs(), 1),
+        longitudinal_limit_exceeded: peak_flag(|sample| sample.longitudinal_g.abs(), 2),
         maximum_speed: samples
             .iter()
             .map(|sample| sample.speed)

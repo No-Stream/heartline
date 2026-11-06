@@ -562,6 +562,7 @@ impl Train {
     ) {
         self.step_block_brake_impl(circuit, brake_pieces, hold, 0, TIME_STEP);
     }
+    #[cfg(test)]
     fn step_preview(&mut self, circuit: &Circuit, time_step: f64) {
         self.step_block_brake_impl(circuit, &[], false, 1, time_step);
     }

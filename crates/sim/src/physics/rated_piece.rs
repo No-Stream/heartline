@@ -221,9 +221,12 @@ pub fn rate_piece(
         for frame in train.take_readings() {
             for (car, reading) in frame.into_iter().enumerate() {
                 let result = evaluators[car].update(reading.g);
-                for axis in 0..3 {
-                    excursions[car][axis] = if result.axis_exceeding_sustained[axis] {
-                        excursions[car][axis] + TIME_STEP
+                for (duration, exceeding) in excursions[car]
+                    .iter_mut()
+                    .zip(result.axis_exceeding_sustained)
+                {
+                    *duration = if exceeding {
+                        *duration + TIME_STEP
                     } else {
                         0.0
                     };

@@ -80,9 +80,9 @@ describe("force labels", () => {
   });
   it("labels each stretch past a limit anywhere on the track, worst first, and fades the old ones", () => {
     const samples = [
-      sample(0, { verticalG: 5.5 }), sample(1, { verticalG: 6.5 }), sample(2),
+      sample(0, { verticalG: 5.5, forceLimitExceeded: [true, false, false] }), sample(1, { verticalG: 6.5, forceLimitExceeded: [true, false, false] }), sample(2),
       ...Array.from({ length: 40 }, (_, index) => sample(index + 3)),
-      sample(43, { verticalG: -1.8 }), sample(44, { verticalG: 5.2 }),
+      sample(43, { verticalG: -1.8, forceLimitExceeded: [true, false, false] }), sample(44, { verticalG: 5.2, forceLimitExceeded: [true, false, false] }),
     ];
     const labels = selectForceLabels(samples, steel);
     const pastLimit = labels.filter((label) => label.pastLimit);
@@ -91,6 +91,20 @@ describe("force labels", () => {
     ]);
     expect(labels.filter((label) => label.kind === "peakVertical")).toHaveLength(2);
     expect(forceLabelText(pastLimit[1], samples[43], steel, "metric")).toBe("−1.8 g · too much airtime");
+  });
+  it("uses violation flags for labels and rates unflagged excursions as brief", () => {
+    const samples = [
+      sample(0, { verticalG: 5.4, lateralG: 1.7 }),
+      sample(1, { verticalG: 4.9, lateralG: 1.4, forceLimitExceeded: [true, true, false] }),
+    ];
+    const labels = selectForceLabels(samples, steel);
+    expect(labels.filter((label) => label.pastLimit).map((label) => [label.kind, label.sampleIndex])).toEqual([
+      ["peakVertical", 1], ["peakLateral", 1],
+    ]);
+    expect(forceReadoutLines(samples[0], steel, "metric")[1].value).toBe("5.4 g · brief");
+    expect(forceReadoutLines(samples[0], steel, "metric")[2].value).toBe("1.7 g · brief");
+    expect(forceReadoutLines(samples[1], steel, "metric")[1].value).toBe("4.9 g · too much");
+    expect(forceLabelText(labels.find((label) => label.kind === "peakLateral" && label.pastLimit)!, samples[1], steel, "metric")).toBe("1.4 g · too much lateral");
   });
   it("shows every value at a point with its rating", () => {
     expect(forceReadoutLines(sample(0, { speed: 20, verticalG: -0.6, lateralG: 1.2, longitudinalG: -0.2 }), steel, "metric")).toEqual([

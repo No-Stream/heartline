@@ -1,4 +1,4 @@
-import { rateForce, rateVertical, type ForceLimits, type ForceRating } from "./force-overlay";
+import { evaluatedForceRating, rateVertical, type ForceLimits, type ForceRating } from "./force-overlay";
 import { formatSpeed, type Units } from "./units";
 
 import type { ConstructionCandidateForcePreviewWire } from "./generated/ConstructionCandidateForcePreviewWire";
@@ -12,8 +12,9 @@ function formatForce(force: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(force).replace("-", "−");
 }
 
-function verticalRating(force: number, limits: CandidateForcePreview["limits"]): string {
-  const { axis, rating } = rateVertical(force, limits);
+function verticalRating(force: number, limits: CandidateForcePreview["limits"], exceeded: boolean): string {
+  const { axis } = rateVertical(force, limits);
+  const rating = evaluatedForceRating(axis, force, limits, exceeded);
   return axis === "airtime" ? `${rating} airtime` : rating;
 }
 
@@ -40,7 +41,7 @@ export interface HillReadout {
 }
 
 const ratingTones: Readonly<Record<ForceRating, HillReadoutTone>> = {
-  weak: "weak", good: "fine", fine: "fine", great: "great", strong: "great", "too much": "past", dangerous: "dangerous",
+  brief: "great", weak: "weak", good: "fine", fine: "fine", great: "great", strong: "great", "too much": "past", dangerous: "dangerous",
 };
 
 function verticalRow(label: string, force: number, limits: ForceLimits): HillReadoutRow {
@@ -84,9 +85,9 @@ export function candidateForceReadout(preview: CandidateForcePreview, units: Uni
   const lines = [
     "Front-car force estimates (sampled along the track)",
     speedReadout(preview.entrySpeed, preview.ratedSpeed, units),
-    `Estimated minimum vertical force: ${formatForce(preview.peaks.minimumVerticalG)} g (${verticalRating(preview.peaks.minimumVerticalG, preview.limits)})`,
-    `Estimated maximum vertical force: ${formatForce(preview.peaks.maximumVerticalG)} g (${verticalRating(preview.peaks.maximumVerticalG, preview.limits)})`,
-    `Estimated ${preview.outerBank ? "outer-bank lateral" : "lateral"} force: ${formatForce(preview.peaks.maximumAbsoluteLateralG)} g (${rateForce("lateral", preview.peaks.maximumAbsoluteLateralG, preview.limits)}); longitudinal force: ${formatForce(preview.peaks.maximumAbsoluteLongitudinalG)} g (${rateForce("longitudinal", preview.peaks.maximumAbsoluteLongitudinalG, preview.limits)})`,
+    `Estimated minimum vertical force: ${formatForce(preview.peaks.minimumVerticalG)} g (${verticalRating(preview.peaks.minimumVerticalG, preview.limits, preview.peaks.minimumVerticalLimitExceeded)})`,
+    `Estimated maximum vertical force: ${formatForce(preview.peaks.maximumVerticalG)} g (${verticalRating(preview.peaks.maximumVerticalG, preview.limits, preview.peaks.maximumVerticalLimitExceeded)})`,
+    `Estimated ${preview.outerBank ? "outer-bank lateral" : "lateral"} force: ${formatForce(preview.peaks.maximumAbsoluteLateralG)} g (${evaluatedForceRating("lateral", preview.peaks.maximumAbsoluteLateralG, preview.limits, preview.peaks.lateralLimitExceeded)}); longitudinal force: ${formatForce(preview.peaks.maximumAbsoluteLongitudinalG)} g (${evaluatedForceRating("longitudinal", preview.peaks.maximumAbsoluteLongitudinalG, preview.limits, preview.peaks.longitudinalLimitExceeded)})`,
   ];
   if (preview.status === "stalled") lines.unshift("The train stalls in this piece; force estimates are partial.");
   if (preview.status === "timedOut") lines.unshift("The estimate timed out in this piece; force estimates are partial.");
