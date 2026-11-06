@@ -2479,10 +2479,8 @@ mod tests {
     }
 
     #[test]
-    fn reference_oval_and_drop_loop_produce_distinct_ratings() {
-        let mut train_configuration = hybrid_model().train;
-        train_configuration.cars = 1;
-        train_configuration.length_metres = 4.0;
+    fn reference_oval_and_demo_lap_produce_distinct_ratings() {
+        let train_configuration = hybrid_model().train;
         let gentle_circuit = circuit_from_ids(&[
             PieceId::Station,
             PieceId::LevelToGentleUp,
@@ -2506,7 +2504,7 @@ mod tests {
             },
             20.0,
         );
-        let drop_and_loop = simulate_reference_lap(
+        let demo = simulate_reference_lap(
             demo_circuit(),
             &train_configuration,
             PhysicsConfig {
@@ -2517,30 +2515,23 @@ mod tests {
         );
 
         assert!(gentle.completed, "gentle notes={:?}", gentle.notes);
+        assert!(demo.completed, "demo notes={:?}", demo.notes);
+        assert!(demo.samples.iter().any(|sample| sample.airtime));
+        assert!(!demo.samples.iter().any(|sample| sample.inverted));
+        // The demo is a friendly force-designed ride; the gentle oval has no elements at all.
         assert!(
-            drop_and_loop.completed,
-            "drop and loop notes={:?}",
-            drop_and_loop.notes
-        );
-        assert!(!gentle.samples.iter().any(|sample| sample.inverted));
-        assert!(drop_and_loop.samples.iter().any(|sample| sample.inverted));
-        // The calibrated model accounts for this lap's excessive forces and envelope penalty.
-        assert!(
-            (2.0..=3.0).contains(&drop_and_loop.excitement),
+            (4.0..=6.0).contains(&demo.excitement),
             "demo excitement was {}",
-            drop_and_loop.excitement
+            demo.excitement
         );
-        assert!((8.0..=9.0).contains(&drop_and_loop.intensity));
-        assert!(drop_and_loop.excitement > gentle.excitement);
-        assert!(drop_and_loop.samples.len() > gentle.samples.len());
+        assert!(demo.excitement > gentle.excitement + 2.0);
+        assert!(demo.samples.len() > gentle.samples.len());
     }
 
     #[test]
     fn demo_lap_records_piece_indices_matching_the_circuit() {
         let circuit = demo_circuit();
-        let mut train_configuration = hybrid_model().train;
-        train_configuration.cars = 1;
-        train_configuration.length_metres = 4.0;
+        let train_configuration = hybrid_model().train;
         let report = simulate_reference_lap(
             circuit.clone(),
             &train_configuration,

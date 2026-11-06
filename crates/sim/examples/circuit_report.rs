@@ -2,9 +2,10 @@ use std::fmt::Write as _;
 #[cfg(not(test))]
 use std::fs;
 
+use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::physics::{
-    Circuit, ConstructionTestRunRecorder, ForceAxis, ForceBand, PhysicsConfig, TIME_STEP, Train,
-    force_band, preview_open_track,
+    Circuit, ConstructionTestRunRecorder, DEMO_STATION_ENTRY, ForceAxis, ForceBand, PhysicsConfig,
+    TIME_STEP, Train, force_band, preview_open_track,
 };
 use theme_park_sim::track::construction::{Construction, select_speed_matched_variant_for_train};
 use theme_park_sim::track::{
@@ -31,25 +32,32 @@ pub fn report_for_circuit(
     close: bool,
 ) -> Result<String, String> {
     let model = match name {
-        "Timber Tumbler" => hybrid_model(),
+        "Demo" | "Timber Tumbler" => hybrid_model(),
         "Velocity Viper" => multi_launch_model(),
         "Briar Blitz" => wooden_twister_model(),
         _ => return Err(format!("Unknown circuit model: {name}")),
     };
-    let world = World::new(
-        512,
-        512,
-        Surface {
-            corners: [8; 4],
-            water: None,
-        },
-    );
-    let start = TrackState {
-        x: 482,
-        y: 498,
-        z: 6,
-        heading: Heading::North,
-        ..TrackState::origin()
+    // The demo is laid out in the default park; the player circuits use the fixtures' flat world.
+    let (world, start) = if name == "Demo" {
+        (demo_world(), DEMO_STATION_ENTRY)
+    } else {
+        (
+            World::new(
+                512,
+                512,
+                Surface {
+                    corners: [8; 4],
+                    water: None,
+                },
+            ),
+            TrackState {
+                x: 482,
+                y: 498,
+                z: 6,
+                heading: Heading::North,
+                ..TrackState::origin()
+            },
+        )
     };
     let mut construction = Construction::new(start, model.clone());
     construction

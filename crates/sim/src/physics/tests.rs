@@ -1,3 +1,38 @@
+/// A long gentle chain lift that levels out for three lift pieces (7 to 9) before the track turns back.
+fn level_crest_lift_circuit() -> Circuit {
+    use PieceId::*;
+    let mut circuit = circuit(&[
+        Station,
+        LevelToGentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUpToLevel,
+        Straight,
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LevelToGentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Straight,
+        Straight,
+        Straight,
+        Straight,
+        TurnLargeEntry,
+        TurnLargeExit,
+    ]);
+    for piece in &mut circuit.pieces[1..=9] {
+        piece.kind = PieceKind::Lift;
+    }
+    circuit
+}
+
 use super::*;
 use crate::track::construction::{Construction, track_support_obstacles};
 use crate::track::supports::generate_dense_wooden_lattice;
@@ -7,7 +42,7 @@ use crate::world::{Surface, World};
 
 #[test]
 fn lift_drives_until_the_last_car_clears_the_crest() {
-    let mut circuit = demo_circuit();
+    let mut circuit = level_crest_lift_circuit();
     for piece in &mut circuit.pieces[7..=9] {
         piece.kind = PieceKind::Track;
     }
@@ -57,7 +92,7 @@ fn lift_drives_until_the_last_car_clears_the_crest() {
 
 #[test]
 fn lift_does_not_slow_a_fast_train_or_drive_after_the_last_car_clears() {
-    let mut circuit = demo_circuit();
+    let mut circuit = level_crest_lift_circuit();
     for piece in &mut circuit.pieces[7..=9] {
         piece.kind = PieceKind::Track;
     }
@@ -85,7 +120,7 @@ fn trailing_lift_drives_train_on_station_and_brakes_until_last_car_clears() {
     let configuration = hybrid_model().train;
     let config = PhysicsConfig::default();
     for leading_piece_kind in [PieceKind::Station, PieceKind::Brakes] {
-        let mut circuit = demo_circuit();
+        let mut circuit = level_crest_lift_circuit();
         for piece in &mut circuit.pieces[7..=9] {
             piece.kind = PieceKind::Track;
         }
@@ -132,7 +167,7 @@ fn trailing_lift_drives_train_on_station_and_brakes_until_last_car_clears() {
 
 #[test]
 fn launch_control_and_block_hold_take_priority_over_a_trailing_lift() {
-    let mut circuit = demo_circuit();
+    let mut circuit = level_crest_lift_circuit();
     for piece in &mut circuit.pieces[7..=9] {
         piece.kind = PieceKind::Track;
     }
@@ -1142,16 +1177,10 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
         circuit
             .pieces()
             .iter()
-            .any(|piece| piece.id == PieceId::GentleUp)
-    );
-    assert!(
-        circuit
-            .pieces()
-            .iter()
-            .any(|piece| piece.id == PieceId::Loop)
+            .all(|piece| piece.inversion.is_none())
     );
     assert_eq!(
-        circuit.pieces()[1..7]
+        circuit.pieces()[1..6]
             .iter()
             .map(|piece| piece.id)
             .collect::<Vec<_>>(),
@@ -1160,21 +1189,19 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
             PieceId::GentleUp,
             PieceId::GentleUp,
             PieceId::GentleUp,
-            PieceId::GentleUp,
             PieceId::GentleUpToLevel,
         ]
     );
     assert!(
-        circuit.pieces()[1..7]
+        circuit.pieces()[1..6]
             .iter()
             .all(|piece| piece.kind == PieceKind::Lift)
     );
     assert!(
-        circuit.pieces()[7..10]
+        circuit.pieces()[6..]
             .iter()
-            .all(|piece| piece.kind == PieceKind::Lift)
+            .all(|piece| piece.kind != PieceKind::Lift)
     );
-    assert_ne!(circuit.pieces()[10].kind, PieceKind::Lift);
     assert_eq!(
         circuit.pieces().last().unwrap().exit,
         circuit.pieces()[0].entry
@@ -1193,34 +1220,53 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
 }
 
 #[test]
-fn demo_return_path_uses_searchable_level_pieces() {
-    let circuit = demo_circuit();
-    let loop_index = circuit
-        .pieces()
-        .iter()
-        .position(|piece| piece.id == PieceId::Loop)
-        .expect("demo circuit contains its loop");
-    let return_path = &circuit.pieces()[loop_index + 1..];
-    let allowed_return_pieces = [
-        PieceId::Straight,
-        PieceId::TurnSmallStandalone,
-        PieceId::TurnSmallRightStandalone,
-        PieceId::TurnLargeStandalone,
-        PieceId::TurnLargeRightStandalone,
-        PieceId::OffsetLeft,
-        PieceId::OffsetRight,
-    ];
-
-    assert!(!return_path.is_empty());
-    assert!(
-        return_path
-            .iter()
-            .all(|piece| allowed_return_pieces.contains(&piece.id))
-    );
-    assert_eq!(
-        circuit.pieces().last().unwrap().exit,
-        circuit.pieces()[0].entry
-    );
+fn demo_circuit_builds_piece_by_piece_in_the_demo_world() {
+    let world = crate::demo_world::demo_world();
+    let mut construction = Construction::new(DEMO_STATION_ENTRY, hybrid_model());
+    construction
+        .append(PieceId::Station, &world, &[])
+        .expect("demo station validates");
+    let section = DEMO_CIRCUIT_TEXT.split("[Demo]").nth(1).unwrap();
+    for line in section
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        match line {
+            "+chain" => construction.set_chain(true),
+            "-chain" => construction.set_chain(false),
+            name => {
+                let id = catalog()
+                    .iter()
+                    .find(|piece| format!("{:?}", piece.id) == name)
+                    .unwrap()
+                    .id;
+                construction
+                    .append(id, &world, &[])
+                    .unwrap_or_else(|error| panic!("demo piece {name}: {error:?}"));
+            }
+        }
+    }
+    construction.close().expect("demo closes at its station");
+    let built = construction.circuit().unwrap();
+    let demo = demo_circuit();
+    assert_eq!(built.pieces().len(), demo.pieces().len());
+    for (built_piece, demo_piece) in built.pieces().iter().zip(demo.pieces()) {
+        assert_eq!(
+            (
+                built_piece.id,
+                built_piece.kind,
+                built_piece.entry,
+                built_piece.exit
+            ),
+            (
+                demo_piece.id,
+                demo_piece.kind,
+                demo_piece.entry,
+                demo_piece.exit
+            )
+        );
+    }
 }
 
 #[test]
@@ -1558,7 +1604,7 @@ fn downhill_brake_stops_holds_and_restarts_without_recovery() {
         .iter()
         .enumerate()
         .filter(|(_, piece)| piece.id == crate::track::PieceId::GentleDown)
-        .nth(2)
+        .nth(1)
         .unwrap()
         .0;
     let distance = circuit.starts[piece_index] + circuit.pieces()[piece_index].length() / 2.0;
@@ -1591,7 +1637,7 @@ fn downhill_brake_with_insufficient_holding_force_does_not_freeze_train() {
         .iter()
         .enumerate()
         .filter(|(_, piece)| piece.id == crate::track::PieceId::GentleDown)
-        .nth(2)
+        .nth(1)
         .unwrap()
         .0;
     let distance = circuit.starts[piece_index] + circuit.pieces()[piece_index].length() / 2.0;
@@ -1622,7 +1668,7 @@ fn uphill_brake_drive_restarts_without_initial_rollback() {
         .iter()
         .enumerate()
         .filter(|(_, piece)| piece.id == crate::track::PieceId::GentleUp)
-        .nth(2)
+        .nth(1)
         .unwrap()
         .0;
     let distance = circuit.starts[piece_index] + circuit.pieces()[piece_index].length() / 2.0;
