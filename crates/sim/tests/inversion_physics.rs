@@ -290,15 +290,14 @@ fn connected_element_at_speed(
         piece.id,
         PieceId::HalfCorkscrewLeftDown | PieceId::HalfCorkscrewRightDown
     ) && speed == piece.rated_speeds.unwrap().maximum_entry
+        && train.speed() > 22.0
     {
-        if train.speed() > 22.0 {
-            return Err(format!(
-                "{:?} {} {cars} cars: {} m/s after clearing",
-                piece.id,
-                model.name,
-                train.speed()
-            ));
-        }
+        return Err(format!(
+            "{:?} {} {cars} cars: {} m/s after clearing",
+            piece.id,
+            model.name,
+            train.speed()
+        ));
     }
     if minimum_clearance && minimum_speed < 5.0 {
         return Err(format!(

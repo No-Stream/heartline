@@ -412,9 +412,11 @@ fn assert_train_crosses_element(
         for frame in train.take_readings() {
             for (index, reading) in frame.into_iter().enumerate() {
                 let evaluated = evaluators[index].update(reading.g);
-                for axis in 0..3 {
-                    let began_before = &mut excursion_began_before_element[index][axis];
-                    if !evaluated.axis_exceeding_sustained[axis] {
+                for (began_before, exceeding) in excursion_began_before_element[index]
+                    .iter_mut()
+                    .zip(evaluated.axis_exceeding_sustained)
+                {
+                    if !exceeding {
                         *began_before = false;
                     } else if reading.distance < element_range.start {
                         *began_before = true;
