@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import type { TestingReport } from "../../src/generated/TestingReport";
+import { groupScoreFindings, splitScoreFindings } from "../../src/score-findings";
 
 function hasOnlyFiniteNumbers(value: unknown): boolean {
   if (typeof value === "number") return Number.isFinite(value);
@@ -17,13 +18,15 @@ export async function expectRideReportExplained(page: Page): Promise<TestingRepo
   expect(hasOnlyFiniteNumbers(report)).toBe(true);
   const contributionCount = Object.values(report.breakdown).reduce((count, contributions) => count + contributions.length, 0);
   expect(contributionCount).toBeGreaterThan(0);
-  for (const [category, contributions] of Object.entries(report.breakdown)) {
-    await expect(page.locator(`[data-score-breakdown="${category}"] li`)).toHaveCount(contributions.length);
-  }
+  const { main, more } = splitScoreFindings(groupScoreFindings(report.breakdown));
+  await expect(page.locator("[data-score-findings] [data-score-finding]")).toHaveCount(main.length);
+  await expect(page.locator("[data-score-findings-more] [data-score-finding]")).toHaveCount(more.length);
+  await expect(page.locator("[data-score-findings] [data-score-finding]").first().locator(".testing-effect")).not.toHaveCount(0);
 
-  const astmContributions = Object.values(report.breakdown).flat().filter(({ term }) => term === "envelope");
-  if (astmContributions.length > 0) {
-    await expect(page.locator("[data-score-breakdown]").filter({ hasText: /ASTM/i })).not.toHaveCount(0);
+  const envelope = [...main, ...more].find(({ key }) => key === "envelope");
+  if (envelope) {
+    await expect(page.locator('[data-score-finding="envelope"]')).toHaveCount(1);
+    await expect(page.locator('[data-score-finding="envelope"] .testing-finding__text')).toContainText("ASTM");
   }
   for (const note of report.notes.filter((entry) => /ASTM/i.test(entry))) {
     await expect(page.locator("[data-notes]")).toContainText(note);
