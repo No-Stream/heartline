@@ -69,6 +69,16 @@ The grid is design speeds every 4 m/s: large 16–32, small 12–24, left and ri
 
 The acceptance limits are 0.35 g lateral at design speed and 200°/s peak roll rate. Even the large 16 m/s turn exceeds the 1.5 g lateral model limit within its window (1.673 g at 19 m/s). The heart path moves as the track rolls, so its acceleration includes effects absent from the rail-curvature point-mass estimate. A corrected geometry and another full-train scan are needed before allowing these pieces.
 
+**Redesign measurements:** The revised geometry constructs a planar heart path with eased bank transitions and a steady central curve. The table replaces the estimates above for the retained sizes; values cover both hands, six- and twelve-car trains, and all allowed models. Peak roll rate is measured across the rated window.
+
+| Turn | Entry window | Peak bank | Vertical range across window | Lateral at design speed | Roll rate at design speed | Peak roll rate |
+|---|---|---:|---:|---:|---:|---:|
+| Large 16 m/s | 13–19 m/s | 54.17° | 1.000–1.999 g | 0.105 g | 44.4°/s | 52.7°/s |
+| Large 20 m/s | 17–23 m/s | 66.98° | 1.000–2.890 g | 0.145 g | 67.8°/s | 78.0°/s |
+| Large 24 m/s | 21–27 m/s | 74.84° | 1.000–4.134 g | 0.181 g | 89.9°/s | 101.2°/s |
+
+The large 16 and 20 are available for all three models. The large 24 is available for Timber Tumbler and Velocity Viper; Briar Blitz's 4.0 g vertical limit excludes it. Faster large sizes and small 16–24 did not fit the roll-rate and force requirements. Small 12 met those requirements but its measured minimum rail radius was 4.095 m, below the hybrid's 5 m minimum, so it was removed as well. The remaining grid has six catalog pieces, including both hands.
+
 **Rated window = design speed ± 3 m/s**, not the force limit. Off the design speed the lateral at the middle is `cos φ · (v² − v_d²) κ / g`: on the large turn designed for 24 m/s that is 0.23 g at 27 m/s and −0.25 g at 21 m/s, so ±3 m/s keeps laterals comfortably small and the 4 m/s grid gives 2 m/s overlaps, which is what `select_speed_matched_variant` needs to pick the nearest design speed by margin. The full-train scan (the same `assert_train_crosses_element` style as the wave turn, 1 m/s steps, six and twelve cars, every allowed model) confirms every axis is within the model limits across the window and asserts the worst-car lateral at the design speed is at most 0.35 g. This is the same convention as the hills: the window is where the piece gives its designed feel, and the generic rated tests pick it up automatically.
 
 **Family plumbing:** `Piece.family: Option<HillFamily>` becomes `Option<PieceFamily>` with `PieceFamily::Hill(HillFamily)` and `PieceFamily::SpeedTurn { radius_metres: u8, hand: Hand, design_speed_metres_per_second: f64 }`; `same_recommendation_family` matches hills as today and speed turns by radius and hand. The hill code paths (`selected_hill_variant`, `construction_hill_options`, the inspector) keep working on the `Hill` arm. The wasm `construction_speed_match_json` already handles family candidates by validating each one; with 18 eager templates the hybrid cold `choices()` grows by about 18 × 1 ms from 66 ms toward the 100 ms target, which `make bench-construction` confirms; if it does not fit, the speed turns join the lazy family validation the hills use.

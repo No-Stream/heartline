@@ -1027,6 +1027,9 @@ fn wave_and_overbank_turns_have_contiguous_rated_windows() {
 
 #[test]
 fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
+    const MAXIMUM_DESIGN_SPEED_ROLL_RATE_DEGREES_PER_SECOND: f64 = 95.0;
+    const MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND: f64 = 200.0;
+
     let speed_turns: Vec<_> = catalog()
         .iter()
         .filter(|piece| {
@@ -1036,7 +1039,7 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
             )
         })
         .collect();
-    assert_eq!(speed_turns.len(), 18);
+    assert_eq!(speed_turns.len(), 6);
     let mut failures = Vec::new();
     let all_models = models();
     let mut scanned_candidates = 0;
@@ -1062,10 +1065,11 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
             peak_lateral_distance: start,
             peak_lateral_speed: rated.minimum_entry,
         };
+        let mut model_window_forces = vec![window_forces; all_models.len()];
         let mut window_lateral_context = String::from("no model scanned");
         let mut speed = rated.minimum_entry;
         while speed <= rated.maximum_entry {
-            for model in &all_models {
+            for (model_index, model) in all_models.iter().enumerate() {
                 let model_allows_piece = model.allows_piece(piece);
                 for cars in [6, 12] {
                     let scan = scan_train_element(model, &circuit, start..end, cars, speed);
@@ -1127,6 +1131,19 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
                     window_forces.maximum_longitudinal = window_forces
                         .maximum_longitudinal
                         .max(forces.maximum_longitudinal);
+                    let model_window = &mut model_window_forces[model_index];
+                    model_window.minimum_vertical =
+                        model_window.minimum_vertical.min(forces.minimum_vertical);
+                    model_window.maximum_vertical =
+                        model_window.maximum_vertical.max(forces.maximum_vertical);
+                    if forces.maximum_lateral > model_window.maximum_lateral {
+                        model_window.maximum_lateral = forces.maximum_lateral;
+                        model_window.peak_lateral_distance = forces.peak_lateral_distance;
+                        model_window.peak_lateral_speed = forces.peak_lateral_speed;
+                    }
+                    model_window.maximum_longitudinal = model_window
+                        .maximum_longitudinal
+                        .max(forces.maximum_longitudinal);
                     if (speed - design_speed).abs() < 1e-8
                         && forces.maximum_lateral > maximum_design_speed_lateral
                     {
@@ -1154,20 +1171,47 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
             maximum_design_speed_lateral,
             window_forces.maximum_longitudinal
         );
+        for (model, forces) in all_models.iter().zip(model_window_forces) {
+            eprintln!(
+                "{:?} {} allowed={}: full-train vertical {:.4}..{:.4} g, lateral {:.4} g at {:.2} m (car speed {:.2} m/s), longitudinal {:.4} g",
+                piece.id,
+                model.name,
+                model.allows_piece(piece),
+                forces.minimum_vertical,
+                forces.maximum_vertical,
+                forces.maximum_lateral,
+                forces.peak_lateral_distance,
+                forces.peak_lateral_speed,
+                forces.maximum_longitudinal
+            );
+        }
         if maximum_design_speed_lateral > 0.35 {
             failures.push(format!(
                 "{} design-speed worst-car lateral {maximum_design_speed_lateral:.3} g at {design_lateral_context} exceeds 0.35 g",
                 piece.name
             ));
         }
-        if allowed_by_any_model && window_peak_roll_rate_degrees_per_second > 200.0 {
+        if design_speed_peak_roll_rate_degrees_per_second
+            > MAXIMUM_DESIGN_SPEED_ROLL_RATE_DEGREES_PER_SECOND
+        {
             failures.push(format!(
-                "{} peak roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds 200 degrees/s",
+                "{} design-speed roll rate {design_speed_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds {MAXIMUM_DESIGN_SPEED_ROLL_RATE_DEGREES_PER_SECOND:.1} degrees/s",
+                piece.name
+            ));
+        }
+        if window_peak_roll_rate_degrees_per_second
+            > MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND
+        {
+            failures.push(format!(
+                "{} peak rated-window roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds {MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND:.1} degrees/s",
                 piece.name
             ));
         }
     }
-    assert_eq!(scanned_candidates, 18, "full-train scan covers every speed-turn candidate");
+    assert_eq!(
+        scanned_candidates, 6,
+        "full-train scan covers every speed-turn candidate"
+    );
     assert!(
         failures.is_empty(),
         "speed-turn force scan failures:\n{}",

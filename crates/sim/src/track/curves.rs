@@ -769,49 +769,128 @@ fn smooth(t: f64) -> (f64, f64, f64) {
 fn curvature(velocity: Vec3, acceleration: Vec3) -> f64 {
     velocity.cross(acceleration).length() / velocity.length().powi(3)
 }
+const SPEED_TURN_STEPS: usize = 4096;
+const SPEED_TURN_RAMP: f64 = 0.39;
+const SPEED_TURN_EASING: f64 = 0.08;
+
+struct SpeedTurnGeometry {
+    radius: f64,
+    design_speed: f64,
+    peak_bank: f64,
+    length: f64,
+    knots: Vec<(f64, f64, f64)>,
+}
+
+fn speed_turn_bank_fraction(t: f64) -> f64 {
+    let u = (t.min(1.0 - t) / SPEED_TURN_RAMP).clamp(0.0, 1.0);
+    let easing = SPEED_TURN_EASING;
+    if u < easing {
+        let v = u / easing;
+        easing * (v.powi(3) - 0.5 * v.powi(4)) / (1.0 - easing)
+    } else if u > 1.0 - easing {
+        let v = (1.0 - u) / easing;
+        1.0 - easing * (v.powi(3) - 0.5 * v.powi(4)) / (1.0 - easing)
+    } else {
+        (u - easing / 2.0) / (1.0 - easing)
+    }
+}
+
+fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
+    let integrate = |peak_bank: f64| {
+        let step = 1.0 / SPEED_TURN_STEPS as f64;
+        let curvatures: Vec<_> = (0..SPEED_TURN_STEPS)
+            .map(|index| {
+                let t = (index as f64 + 0.5) * step;
+                (peak_bank * speed_turn_bank_fraction(t)).tan() * crate::physics::GRAVITY
+                    / design_speed.powi(2)
+            })
+            .collect();
+        let length = std::f64::consts::FRAC_PI_2 / (curvatures.iter().sum::<f64>() * step);
+        let distance = length * step;
+        let (mut x, mut y, mut heading) = (0.0, 0.0, 0.0);
+        let mut knots = Vec::with_capacity(SPEED_TURN_STEPS + 1);
+        knots.push((x, y, heading));
+        for curvature in curvatures {
+            let angle = curvature * distance;
+            let midpoint = heading + angle / 2.0;
+            x += distance * midpoint.cos();
+            y += distance * midpoint.sin();
+            heading += angle;
+            knots.push((x, y, heading));
+        }
+        ((x + y) / 2.0, length, knots)
+    };
+    let (mut low, mut high) = (0.0, std::f64::consts::FRAC_PI_2 - 0.0001);
+    for _ in 0..40 {
+        let peak_bank = (low + high) / 2.0;
+        if integrate(peak_bank).0 > radius {
+            low = peak_bank;
+        } else {
+            high = peak_bank;
+        }
+    }
+    let peak_bank = (low + high) / 2.0;
+    let (_, length, knots) = integrate(peak_bank);
+    SpeedTurnGeometry {
+        radius,
+        design_speed,
+        peak_bank,
+        length,
+        knots,
+    }
+}
+
+fn speed_turn_geometry(radius: f64, design_speed: f64) -> &'static SpeedTurnGeometry {
+    static GEOMETRIES: std::sync::LazyLock<Vec<SpeedTurnGeometry>> =
+        std::sync::LazyLock::new(|| {
+            [(32.0, 16.0), (32.0, 20.0), (32.0, 24.0)]
+                .into_iter()
+                .flat_map(|(radius, speed)| {
+                    [radius, radius * std::f64::consts::SQRT_2]
+                        .into_iter()
+                        .map(move |actual_radius| build_speed_turn(actual_radius, speed))
+                })
+                .collect()
+        });
+    GEOMETRIES
+        .iter()
+        .find(|geometry| {
+            (geometry.radius - radius).abs() < 1e-8 && geometry.design_speed == design_speed
+        })
+        .unwrap_or_else(|| {
+            panic!("speed turn must have a fitted geometry: radius {radius}, speed {design_speed}")
+        })
+}
+
 impl Piece {
     fn speed_turn_frame(&self, design_speed: f64, t: f64) -> (Vec3, Vec3, Vec3, f64) {
-        // Integrate a symmetric, seventh-order heading transition in heart-path distance.
-        const NODES: [(f64, f64); 8] = [
-            (0.09501250983763744, 0.1894506104550685),
-            (0.2816035507792589, 0.1826034150449236),
-            (0.4580167776572274, 0.1691565193950025),
-            (0.6178762444026438, 0.1495959888165767),
-            (0.755404408355003, 0.1246289712555339),
-            (0.8656312023878318, 0.09515851168249278),
-            (0.9445750230732326, 0.06225352393864789),
-            (0.9894009349916499, 0.02715245941175409),
-        ];
-        let heading = |u: f64| {
-            std::f64::consts::FRAC_PI_2
-                * u.powi(4) * (35.0 + u * (-84.0 + u * (70.0 - 20.0 * u)))
-        };
-        let integral = |end: f64| {
-            let mut x = 0.0;
-            let mut y = 0.0;
-            for (node, weight) in NODES {
-                for sign in [-1.0, 1.0] {
-                    let angle = heading(end * (1.0 + sign * node) * 0.5);
-                    x += weight * angle.cos();
-                    y += weight * angle.sin();
-                }
-            }
-            (x * end * 0.5, y * end * 0.5)
-        };
         let forward = self.entry.tangent().unit();
         let left = Vec3::new(-forward.y, forward.x, 0.0);
         let vertical = Vec3::new(0.0, 0.0, 1.0);
         let displacement = self.exit.position() - self.entry.position();
         let hand = displacement.dot(left).signum();
-        let length = displacement.dot(forward) / integral(1.0).0;
-        let (x, y) = integral(t);
-        let angle = heading(t);
-        let tangent = forward * angle.cos() + left * (hand * angle.sin());
-        let curvature = std::f64::consts::FRAC_PI_2 * 140.0 * t.powi(3) * (1.0 - t).powi(3) / length;
-        let roll = hand * (design_speed.powi(2) * curvature / crate::physics::GRAVITY).atan();
+        let radius = displacement.dot(forward);
+        let geometry = speed_turn_geometry(radius, design_speed);
+        let scaled = t.clamp(0.0, 1.0) * SPEED_TURN_STEPS as f64;
+        let index = (scaled.floor() as usize).min(SPEED_TURN_STEPS - 1);
+        let fraction = scaled - index as f64;
+        let (x0, y0, heading0) = geometry.knots[index];
+        let (x1, y1, heading1) = geometry.knots[index + 1];
+        let h = geometry.length / SPEED_TURN_STEPS as f64;
+        let h00 = 2.0 * fraction.powi(3) - 3.0 * fraction.powi(2) + 1.0;
+        let h10 = fraction.powi(3) - 2.0 * fraction.powi(2) + fraction;
+        let h01 = -2.0 * fraction.powi(3) + 3.0 * fraction.powi(2);
+        let h11 = fraction.powi(3) - fraction.powi(2);
+        let x = h00 * x0 + h10 * h * heading0.cos() + h01 * x1 + h11 * h * heading1.cos();
+        let y = h00 * y0 + h10 * h * heading0.sin() + h01 * y1 + h11 * h * heading1.sin();
+        let heading = heading0 + (heading1 - heading0) * fraction;
+        let tangent = forward * heading.cos() + left * (hand * heading.sin());
+        let roll = hand * geometry.peak_bank * speed_turn_bank_fraction(t);
         let up = vertical * roll.cos() + vertical.cross(tangent) * roll.sin();
-        let heart = self.entry.position() + forward * (length * x)
-            + left * (hand * length * y) + vertical * HEART_HEIGHT_METRES;
+        let heart = self.entry.position()
+            + forward * x
+            + left * (hand * y)
+            + vertical * HEART_HEIGHT_METRES;
         (heart - up * HEART_HEIGHT_METRES, heart, up, roll)
     }
 
@@ -820,14 +899,22 @@ impl Piece {
         let point = position(t);
         let step = 0.0001;
         if t == 0.0 || t == 1.0 {
-            let tangent = if t == 0.0 { self.entry.tangent() } else { self.exit.tangent() };
-            let forward = self.entry.tangent().unit();
-            let length = (self.exit.position() - self.entry.position()).dot(forward)
-                / 0.5777328541808309;
+            let tangent = if t == 0.0 {
+                self.entry.tangent()
+            } else {
+                self.exit.tangent()
+            };
+            let radius =
+                (self.exit.position() - self.entry.position()).dot(self.entry.tangent().unit());
+            let length = speed_turn_geometry(radius, design_speed).length;
             return (point, tangent * length, Vec3::new(0.0, 0.0, 0.0));
         }
         let (previous, next) = (position(t - step), position(t + step));
-        (point, (next - previous) / (2.0 * step), (previous - point * 2.0 + next) / step.powi(2))
+        (
+            point,
+            (next - previous) / (2.0 * step),
+            (previous - point * 2.0 + next) / step.powi(2),
+        )
     }
 
     fn rolled_profile_sample(&self, profile: &SolvedProfile, twist: Twist, t: f64) -> RollSample {
@@ -1204,9 +1291,12 @@ impl Piece {
             let (_, first, second) = self.speed_turn_raw(design_speed, t);
             let tangent = first.unit();
             return TrackSample {
-                position, heart, tangent,
+                position,
+                heart,
+                tangent,
                 up: (desired_up - tangent * desired_up.dot(tangent)).unit(),
-                curvature: curvature(first, second), roll,
+                curvature: curvature(first, second),
+                roll,
             };
         }
         if let Shape::RolledProfile(profile, twist) = &self.shape {

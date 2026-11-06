@@ -15,21 +15,9 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
         (PieceId::SpeedTurnLarge16Left, 32, Hand::Left, 16.0),
         (PieceId::SpeedTurnLarge20Left, 32, Hand::Left, 20.0),
         (PieceId::SpeedTurnLarge24Left, 32, Hand::Left, 24.0),
-        (PieceId::SpeedTurnLarge28Left, 32, Hand::Left, 28.0),
-        (PieceId::SpeedTurnLarge32Left, 32, Hand::Left, 32.0),
         (PieceId::SpeedTurnLarge16Right, 32, Hand::Right, 16.0),
         (PieceId::SpeedTurnLarge20Right, 32, Hand::Right, 20.0),
         (PieceId::SpeedTurnLarge24Right, 32, Hand::Right, 24.0),
-        (PieceId::SpeedTurnLarge28Right, 32, Hand::Right, 28.0),
-        (PieceId::SpeedTurnLarge32Right, 32, Hand::Right, 32.0),
-        (PieceId::SpeedTurnSmall12Left, 16, Hand::Left, 12.0),
-        (PieceId::SpeedTurnSmall16Left, 16, Hand::Left, 16.0),
-        (PieceId::SpeedTurnSmall20Left, 16, Hand::Left, 20.0),
-        (PieceId::SpeedTurnSmall24Left, 16, Hand::Left, 24.0),
-        (PieceId::SpeedTurnSmall12Right, 16, Hand::Right, 12.0),
-        (PieceId::SpeedTurnSmall16Right, 16, Hand::Right, 16.0),
-        (PieceId::SpeedTurnSmall20Right, 16, Hand::Right, 20.0),
-        (PieceId::SpeedTurnSmall24Right, 16, Hand::Right, 24.0),
     ];
     let templates = catalog();
     let speed_turns: Vec<_> = templates
@@ -102,8 +90,7 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
                 let heart_first = (after - before) / (2.0 * heart_curvature_step);
                 let heart_second =
                     (before - sample.heart * 2.0 + after) / heart_curvature_step.powi(2);
-                let heart_horizontal_speed =
-                    (heart_first.x.powi(2) + heart_first.y.powi(2)).sqrt();
+                let heart_horizontal_speed = (heart_first.x.powi(2) + heart_first.y.powi(2)).sqrt();
                 let heart_signed_curvature = (heart_first.x * heart_second.y
                     - heart_first.y * heart_second.x)
                     / heart_horizontal_speed.powi(3);
@@ -152,30 +139,6 @@ fn speed_matched_turns_mirror_and_join_every_compatible_piece() {
             PieceId::SpeedTurnLarge24Left,
             PieceId::SpeedTurnLarge24Right,
         ),
-        (
-            PieceId::SpeedTurnLarge28Left,
-            PieceId::SpeedTurnLarge28Right,
-        ),
-        (
-            PieceId::SpeedTurnLarge32Left,
-            PieceId::SpeedTurnLarge32Right,
-        ),
-        (
-            PieceId::SpeedTurnSmall12Left,
-            PieceId::SpeedTurnSmall12Right,
-        ),
-        (
-            PieceId::SpeedTurnSmall16Left,
-            PieceId::SpeedTurnSmall16Right,
-        ),
-        (
-            PieceId::SpeedTurnSmall20Left,
-            PieceId::SpeedTurnSmall20Right,
-        ),
-        (
-            PieceId::SpeedTurnSmall24Left,
-            PieceId::SpeedTurnSmall24Right,
-        ),
     ] {
         let left = templates.iter().find(|piece| piece.id == left_id).unwrap();
         let right = templates.iter().find(|piece| piece.id == right_id).unwrap();
@@ -206,6 +169,22 @@ fn speed_matched_turns_mirror_and_join_every_compatible_piece() {
         }
 
         for turn in [left, right] {
+            for heading_offset in [-1, 1] {
+                let diagonal_entry = TrackState {
+                    heading: Heading::from_index(turn.entry.heading.index() + heading_offset),
+                    ..turn.entry
+                };
+                let diagonal_turn = turn.at(diagonal_entry).unwrap_or_else(|| {
+                    panic!("{:?} cannot be placed at {diagonal_entry:?}", turn.id)
+                });
+                let incoming = diagonal_turn.sample(0.0);
+                let outgoing = diagonal_turn.sample(diagonal_turn.length());
+                near_vec(incoming.position, diagonal_entry.position());
+                near_vec(incoming.tangent, diagonal_entry.tangent());
+                near_vec(outgoing.position, diagonal_turn.exit.position());
+                near_vec(outgoing.tangent, diagonal_turn.exit.tangent());
+            }
+
             let following_pieces: Vec<_> = templates
                 .iter()
                 .filter_map(|template| template.at(turn.exit))
@@ -234,24 +213,23 @@ fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center()
         .iter()
         .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
         .collect();
-    assert_eq!(turns.len(), 18);
+    assert_eq!(turns.len(), 6);
 
     let connector_step_metres = 0.05;
     let center_step_metres = 0.05;
     for piece in turns {
         let roll_at = |distance: f64| piece.sample(distance).roll;
         let start_roll = roll_at(0.0);
-        let start_acceleration_at_step =
-            (roll_at(2.0 * connector_step_metres) - 2.0 * roll_at(connector_step_metres)
-                + start_roll)
-                / connector_step_metres.powi(2);
+        let start_acceleration_at_step = (roll_at(2.0 * connector_step_metres)
+            - 2.0 * roll_at(connector_step_metres)
+            + start_roll)
+            / connector_step_metres.powi(2);
         let half_connector_step = connector_step_metres / 2.0;
         let start_acceleration_at_half_step =
             (roll_at(connector_step_metres) - 2.0 * roll_at(half_connector_step) + start_roll)
                 / half_connector_step.powi(2);
         assert!(
-            start_acceleration_at_half_step.abs()
-                <= start_acceleration_at_step.abs() * 0.75 + 1e-4,
+            start_acceleration_at_half_step.abs() <= start_acceleration_at_step.abs() * 0.75 + 1e-4,
             "{:?} entry roll acceleration does not approach the level connector smoothly: {:.6} then {:.6} rad/m²",
             piece.id,
             start_acceleration_at_step,
@@ -259,17 +237,16 @@ fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center()
         );
 
         let end_roll = roll_at(piece.length());
-        let end_acceleration_at_step =
-            (end_roll - 2.0 * roll_at(piece.length() - connector_step_metres)
-                + roll_at(piece.length() - 2.0 * connector_step_metres))
-                / connector_step_metres.powi(2);
-        let end_acceleration_at_half_step =
-            (end_roll - 2.0 * roll_at(piece.length() - half_connector_step)
-                + roll_at(piece.length() - connector_step_metres))
-                / half_connector_step.powi(2);
+        let end_acceleration_at_step = (end_roll
+            - 2.0 * roll_at(piece.length() - connector_step_metres)
+            + roll_at(piece.length() - 2.0 * connector_step_metres))
+            / connector_step_metres.powi(2);
+        let end_acceleration_at_half_step = (end_roll
+            - 2.0 * roll_at(piece.length() - half_connector_step)
+            + roll_at(piece.length() - connector_step_metres))
+            / half_connector_step.powi(2);
         assert!(
-            end_acceleration_at_half_step.abs()
-                <= end_acceleration_at_step.abs() * 0.75 + 1e-4,
+            end_acceleration_at_half_step.abs() <= end_acceleration_at_step.abs() * 0.75 + 1e-4,
             "{:?} exit roll acceleration does not approach the level connector smoothly: {:.6} then {:.6} rad/m²",
             piece.id,
             end_acceleration_at_step,
@@ -291,6 +268,108 @@ fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center()
             piece.id,
             left_center_acceleration,
             right_center_acceleration
+        );
+    }
+}
+
+#[test]
+fn speed_matched_turns_keep_the_heart_on_a_planar_path_with_a_steady_center() {
+    let turns: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
+        .collect();
+    assert!(!turns.is_empty());
+
+    for piece in turns {
+        let Some(PieceFamily::SpeedTurn { hand, .. }) = piece.family else {
+            unreachable!("filtered speed-turn piece lost its family metadata");
+        };
+        let length = piece.length();
+        let heart_height = piece.sample(0.0).heart.z;
+        for index in 0..=100 {
+            let distance = if index == 100 {
+                length
+            } else {
+                length * f64::from(index) / 100.0
+            };
+            let heart = piece.sample(distance).heart;
+            assert!(
+                (heart.z - heart_height).abs() <= 1e-8,
+                "{:?} rider heart leaves its horizontal path at {distance:.3} m: z {:.9} vs {:.9}",
+                piece.id,
+                heart.z,
+                heart_height
+            );
+        }
+
+        let heart_tangent_at = |distance: f64| {
+            let step = length / 1000.0;
+            let before_distance = (distance - step).max(0.0);
+            let after_distance = (distance + step).min(length);
+            let before = piece.sample(before_distance).heart;
+            let after = piece.sample(after_distance).heart;
+            Vec3::new(after.x - before.x, after.y - before.y, 0.0).unit()
+        };
+        let entry_tangent = piece.entry.tangent().unit();
+        let exit_tangent = piece.exit.tangent().unit();
+        let hand_sign = if hand == Hand::Left { 1.0 } else { -1.0 };
+        let signed_turn = |from: Vec3, to: Vec3| {
+            (from.x * to.y - from.y * to.x).atan2(from.x * to.x + from.y * to.y)
+        };
+        let expected_turn = hand_sign * signed_turn(entry_tangent, exit_tangent);
+        assert!(
+            expected_turn > 0.0,
+            "{:?} connectors contradict its hand",
+            piece.id
+        );
+        assert!(heart_tangent_at(0.0).dot(entry_tangent) > 0.9999);
+        assert!(heart_tangent_at(length).dot(exit_tangent) > 0.9999);
+
+        let mut previous_turn = 0.0;
+        for index in 0..=100 {
+            let distance = if index == 100 {
+                length
+            } else {
+                length * f64::from(index) / 100.0
+            };
+            let directed_turn = hand_sign * signed_turn(entry_tangent, heart_tangent_at(distance));
+            assert!(
+                directed_turn >= previous_turn - 1e-4,
+                "{:?} rider-heart heading reverses at {distance:.3} m: {:.6} after {:.6} radians",
+                piece.id,
+                directed_turn,
+                previous_turn
+            );
+            assert!(
+                directed_turn >= -1e-4 && directed_turn <= expected_turn + 1e-4,
+                "{:?} rider-heart heading leaves the intended turn at {distance:.3} m: {:.6} of {:.6} radians",
+                piece.id,
+                directed_turn,
+                expected_turn
+            );
+            previous_turn = directed_turn;
+        }
+
+        let steady_bank_samples =
+            [0.45, 0.475, 0.5, 0.525, 0.55].map(|fraction| piece.sample(length * fraction).roll);
+        let minimum_steady_bank = steady_bank_samples
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let maximum_steady_bank = steady_bank_samples
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            hand_sign * piece.sample(length / 2.0).roll > 0.1,
+            "{:?} steady bank does not turn with the rider-heart path",
+            piece.id
+        );
+        assert!(
+            maximum_steady_bank - minimum_steady_bank <= 0.001,
+            "{:?} has no steady bank across the center section: {:?}",
+            piece.id,
+            steady_bank_samples
         );
     }
 }
