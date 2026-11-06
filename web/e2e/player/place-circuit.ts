@@ -29,8 +29,7 @@ async function stepHill(page: Page, attribute: HillAttribute, target: string): P
 
 async function selectPiece(page: Page, piece: string): Promise<void> {
   const selected = page.locator("[data-construction]");
-  // After a placement the worker re-picks the next piece's size for the new end speed, so the previous
-  // selection only counts once the builder has settled.
+  // Read the selection only once the worker has answered every earlier command.
   await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   if (await selected.getAttribute("data-selected") === piece) return;
   const turn = /^SpeedTurnLarge(\d+)(Left|Right)$/.exec(piece);
@@ -58,18 +57,13 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
       await expect(hillSection.locator('[data-hill-value="feel"]')).toHaveText(/\S/);
       const feel = roll ? "Zero-g roll" : piece === "WoodenEjectorHill8x64" ? "Strong floater"
         : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" || hill![1] === "Family" ? "Floater" : "Speed hill";
-      // Opening the section or stepping the feel or twist lets the worker re-pick a size for the predicted speed,
-      // which can land after the exact size steps; step again until the exact piece stays selected.
-      await expect(async () => {
-        await stepHill(page, "feel", feel);
-        await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : "Upright");
-        await stepHill(page, "height", `${roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
-        await stepHill(page, "span", `${roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
-        await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
-        await expect(selected).toHaveAttribute("data-selected", piece, { timeout: 1_000 });
-      }).toPass({ timeout: 15_000 });
+      await stepHill(page, "feel", feel);
+      await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : "Upright");
+      await stepHill(page, "height", `${roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
+      await stepHill(page, "span", `${roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
     }
   }
+  await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   await expect(selected).toHaveAttribute("data-selected", piece);
 }
 
