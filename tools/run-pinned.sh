@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs a command on the compute CPUs (tools/compute-cpus) at low priority, leaving the remaining WSL CPUs free for the
-# Claude Code UI and agent processes. Cargo uses it as the runner for native test and run binaries (.cargo/config.toml),
-# so bare `cargo test` from any agent is pinned too.
+# Runs a command on the configured compute CPUs at low priority, leaving the remaining WSL CPUs free for the Claude Code
+# UI and agent processes. CI containers can override the local CPU list with their assigned CPU set.
 set -euo pipefail
-exec taskset --cpu-list "$(cat "$(dirname "$0")/compute-cpus")" nice -n 10 "$@"
+
+compute_cpus="${THEME_PARK_COMPUTE_CPUS:-$(cat "$(dirname "$0")/compute-cpus")}"
+exec taskset --cpu-list "$compute_cpus" nice -n 10 "$@"

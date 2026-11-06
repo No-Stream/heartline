@@ -3,9 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build, preview, type PreviewServer } from "vite";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 
 let server: PreviewServer; let fixtureUrl: string; let outDir: string;
-test.use({ launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] } });
+test.use({ launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]) });
 test.beforeAll(async () => {
   outDir = await mkdtemp(join(tmpdir(), "batches-e2e-"));
   const config = { configFile: false as const, root: "web", publicDir: false as const, build: { outDir, rollupOptions: { input: resolve("web/e2e/fixtures/batches.html") } } };

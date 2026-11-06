@@ -3,11 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build, preview, type PreviewServer } from "vite";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 
 let server: PreviewServer;
 let fixtureUrl: string;
 let outDir: string;
-test.use({ launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] } });
+test.use({ launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]) });
 
 test.beforeAll(async () => {
   outDir = await mkdtemp(join(tmpdir(), "track-depth-"));

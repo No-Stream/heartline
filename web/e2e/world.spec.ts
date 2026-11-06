@@ -3,12 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build, preview } from "vite";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 import type { GameTest } from "../src/game-test";
 
 test.use({
   viewport: { width: 1100, height: 750 },
   deviceScaleFactor: 1,
-  launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
+  launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]),
 });
 
 for (const rotation of [0, 1, 2, 3] as const) {

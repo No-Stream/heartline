@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { clickCanvas, moveOverCanvas, openTool, selectUnits } from "../game-page";
+import { browserLaunchOptions } from "../fixtures/browser-launch-options";
 
-test.use({ launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] } });
+test.use({ launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]) });
 
 test("raises a slow Velocity Viper launch through the builder and completes the test @slow @journey", async ({ page }) => {
   test.setTimeout(240_000);

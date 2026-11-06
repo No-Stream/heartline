@@ -7,3 +7,14 @@ export function createRenderRevision() {
     ready(): boolean { return renderedRevision === revision; },
   };
 }
+
+export function shouldSkipRenderFrame(state: {
+  revisionReady: boolean;
+  frozen: boolean;
+  testMode: boolean;
+  livePauseRender: boolean;
+  paused: boolean;
+  following: boolean;
+}): boolean {
+  return state.revisionReady && (state.frozen || ((state.testMode || state.livePauseRender) && state.paused && !state.following));
+}
