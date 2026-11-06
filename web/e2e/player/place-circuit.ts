@@ -56,6 +56,8 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
         : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" || hill![1] === "Family" ? "Floater" : "Speed hill";
       await stepHill(page, "feel", feel);
       await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : "Upright");
+      // A feel or twist step lets the worker pick a size for the predicted speed; let that land before sizing exactly.
+      await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
       await stepHill(page, "height", `${roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
       await stepHill(page, "span", `${roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
     }
