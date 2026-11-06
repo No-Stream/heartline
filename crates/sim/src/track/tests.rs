@@ -87,8 +87,8 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
         near(rated.minimum_entry, design_speed - 3.0);
         near(rated.maximum_entry, design_speed + 3.0);
 
-        let hand_sign = if hand == Hand::Left { 1.0 } else { -1.0 };
         let mut peak_bank_radians: f64 = 0.0;
+        let heart_curvature_step = piece.length() / 100.0;
         for index in 0..=100 {
             let distance = if index == 100 {
                 piece.length()
@@ -96,8 +96,27 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
                 piece.length() * f64::from(index) / 100.0
             };
             let sample = piece.sample(distance);
-            let expected_bank = hand_sign * (design_speed.powi(2) * sample.curvature / 9.81).atan();
-            near(sample.roll, expected_bank);
+            if (1..100).contains(&index) {
+                let before = piece.sample(distance - heart_curvature_step).heart;
+                let after = piece.sample(distance + heart_curvature_step).heart;
+                let heart_first = (after - before) / (2.0 * heart_curvature_step);
+                let heart_second =
+                    (before - sample.heart * 2.0 + after) / heart_curvature_step.powi(2);
+                let heart_horizontal_speed =
+                    (heart_first.x.powi(2) + heart_first.y.powi(2)).sqrt();
+                let heart_signed_curvature = (heart_first.x * heart_second.y
+                    - heart_first.y * heart_second.x)
+                    / heart_horizontal_speed.powi(3);
+                let expected_bank = (design_speed.powi(2) * heart_signed_curvature
+                    / crate::physics::GRAVITY)
+                    .atan();
+                assert!(
+                    (sample.roll - expected_bank).abs() < 0.002,
+                    "{id:?} bank should follow heart-path curvature at {distance:.2} m: {:.6} vs {:.6} rad",
+                    sample.roll,
+                    expected_bank
+                );
+            }
             peak_bank_radians = peak_bank_radians.max(sample.roll.abs());
         }
         let peak_bank_degrees = peak_bank_radians.to_degrees();
@@ -206,6 +225,73 @@ fn speed_matched_turns_mirror_and_join_every_compatible_piece() {
                 near(incoming.curvature, outgoing.curvature);
             }
         }
+    }
+}
+
+#[test]
+fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center() {
+    let turns: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
+        .collect();
+    assert_eq!(turns.len(), 18);
+
+    let connector_step_metres = 0.05;
+    let center_step_metres = 0.05;
+    for piece in turns {
+        let roll_at = |distance: f64| piece.sample(distance).roll;
+        let start_roll = roll_at(0.0);
+        let start_acceleration_at_step =
+            (roll_at(2.0 * connector_step_metres) - 2.0 * roll_at(connector_step_metres)
+                + start_roll)
+                / connector_step_metres.powi(2);
+        let half_connector_step = connector_step_metres / 2.0;
+        let start_acceleration_at_half_step =
+            (roll_at(connector_step_metres) - 2.0 * roll_at(half_connector_step) + start_roll)
+                / half_connector_step.powi(2);
+        assert!(
+            start_acceleration_at_half_step.abs()
+                <= start_acceleration_at_step.abs() * 0.75 + 1e-4,
+            "{:?} entry roll acceleration does not approach the level connector smoothly: {:.6} then {:.6} rad/m²",
+            piece.id,
+            start_acceleration_at_step,
+            start_acceleration_at_half_step
+        );
+
+        let end_roll = roll_at(piece.length());
+        let end_acceleration_at_step =
+            (end_roll - 2.0 * roll_at(piece.length() - connector_step_metres)
+                + roll_at(piece.length() - 2.0 * connector_step_metres))
+                / connector_step_metres.powi(2);
+        let end_acceleration_at_half_step =
+            (end_roll - 2.0 * roll_at(piece.length() - half_connector_step)
+                + roll_at(piece.length() - connector_step_metres))
+                / half_connector_step.powi(2);
+        assert!(
+            end_acceleration_at_half_step.abs()
+                <= end_acceleration_at_step.abs() * 0.75 + 1e-4,
+            "{:?} exit roll acceleration does not approach the level connector smoothly: {:.6} then {:.6} rad/m²",
+            piece.id,
+            end_acceleration_at_step,
+            end_acceleration_at_half_step
+        );
+
+        let center = piece.length() / 2.0;
+        let left_center_acceleration = (roll_at(center)
+            - 2.0 * roll_at(center - center_step_metres)
+            + roll_at(center - 2.0 * center_step_metres))
+            / center_step_metres.powi(2);
+        let right_center_acceleration = (roll_at(center + 2.0 * center_step_metres)
+            - 2.0 * roll_at(center + center_step_metres)
+            + roll_at(center))
+            / center_step_metres.powi(2);
+        assert!(
+            (left_center_acceleration - right_center_acceleration).abs() <= 0.01,
+            "{:?} roll acceleration is discontinuous at the turn center: left {:.6}, right {:.6} rad/m²",
+            piece.id,
+            left_center_acceleration,
+            right_center_acceleration
+        );
     }
 }
 

@@ -1960,6 +1960,7 @@ fn build_catalog() -> Vec<Piece> {
         piece.id = id;
         piece.name = name;
         piece.shape = Shape::SpeedBank { design_speed };
+        piece.clear_arc_table();
         piece.family = Some(PieceFamily::SpeedTurn {
             radius_metres,
             hand,

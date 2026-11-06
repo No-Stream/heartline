@@ -548,7 +548,11 @@ fn peak_roll_rate_degrees_per_second(piece: &Piece, speed: f64) -> f64 {
     let mut previous_roll = piece.sample(0.0).roll;
     let mut peak_rate: f64 = 0.0;
     for index in 1..=sample_count {
-        let distance = piece.length() * index as f64 / sample_count as f64;
+        let distance = if index == sample_count {
+            piece.length()
+        } else {
+            piece.length() * index as f64 / sample_count as f64
+        };
         let roll = piece.sample(distance).roll;
         let roll_rate = (roll - previous_roll).abs() / (distance - previous_distance) * speed;
         peak_rate = peak_rate.max(roll_rate.to_degrees());
@@ -1034,6 +1038,8 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
         .collect();
     assert_eq!(speed_turns.len(), 18);
     let mut failures = Vec::new();
+    let all_models = models();
+    let mut scanned_candidates = 0;
 
     for piece in speed_turns {
         let Some(theme_park_sim::track::PieceFamily::SpeedTurn {
@@ -1045,12 +1051,9 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
         };
         let rated = piece.rated_speeds.expect("speed turn has a rated window");
         let (circuit, start, end) = circuit_for_level_piece(piece.id);
-        let allowed_models: Vec<_> = models()
-            .into_iter()
-            .filter(|model| model.allows_piece(piece))
-            .collect();
+        let allowed_by_any_model = all_models.iter().any(|model| model.allows_piece(piece));
         let mut maximum_design_speed_lateral: f64 = 0.0;
-        let mut design_lateral_context = String::from("no allowed model");
+        let mut design_lateral_context = String::from("no model scanned");
         let mut window_forces = ElementForces {
             minimum_vertical: f64::INFINITY,
             maximum_vertical: f64::NEG_INFINITY,
@@ -1059,42 +1062,44 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
             peak_lateral_distance: start,
             peak_lateral_speed: rated.minimum_entry,
         };
-        let mut window_lateral_context = String::from("no allowed model");
+        let mut window_lateral_context = String::from("no model scanned");
         let mut speed = rated.minimum_entry;
         while speed <= rated.maximum_entry {
-            for model in &allowed_models {
+            for model in &all_models {
+                let model_allows_piece = model.allows_piece(piece);
                 for cars in [6, 12] {
                     let scan = scan_train_element(model, &circuit, start..end, cars, speed);
                     let forces = scan.forces;
                     if !scan.all_cars_seen {
                         failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: not every car entered",
+                            "{:?} {} {cars} cars at {speed:.1} m/s: not every car entered in the candidate scan",
                             piece.id, model.name
                         ));
                     }
                     if !scan.train_cleared {
                         failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: train did not clear",
+                            "{:?} {} {cars} cars at {speed:.1} m/s: train did not clear in the candidate scan",
                             piece.id, model.name
                         ));
                     }
                     if scan.stalled {
                         failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: train stalled",
+                            "{:?} {} {cars} cars at {speed:.1} m/s: train stalled in the candidate scan",
                             piece.id, model.name
                         ));
                     }
                     if scan.rolled_back {
                         failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: train rolled back",
+                            "{:?} {} {cars} cars at {speed:.1} m/s: train rolled back in the candidate scan",
                             piece.id, model.name
                         ));
                     }
                     let limits = model.comfortable_force_limits;
-                    if forces.minimum_vertical < limits.minimum_vertical_g
-                        || forces.maximum_vertical > limits.maximum_vertical_g
-                        || forces.maximum_lateral > limits.maximum_lateral_g
-                        || forces.maximum_longitudinal > limits.maximum_longitudinal_g
+                    if model_allows_piece
+                        && (forces.minimum_vertical < limits.minimum_vertical_g
+                            || forces.maximum_vertical > limits.maximum_vertical_g
+                            || forces.maximum_lateral > limits.maximum_lateral_g
+                            || forces.maximum_longitudinal > limits.maximum_longitudinal_g)
                     {
                         failures.push(format!(
                             "{:?} {} {cars} cars at {speed:.1} m/s: vertical {:.3}..{:.3} g, lateral {:.3} g at {:.2} m (car speed {:.2} m/s), longitudinal {:.3} g; limits {limits:?}",
@@ -1135,37 +1140,34 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
             }
             speed += 1.0;
         }
-        let peak_roll_rate_degrees_per_second =
+        scanned_candidates += 1;
+        let design_speed_peak_roll_rate_degrees_per_second =
+            peak_roll_rate_degrees_per_second(piece, design_speed);
+        let window_peak_roll_rate_degrees_per_second =
             peak_roll_rate_degrees_per_second(piece, rated.maximum_entry);
-        if !allowed_models.is_empty() {
-            eprintln!(
-                "{:?}: full-train vertical {:.3}..{:.3} g, lateral {:.3} g across window at {window_lateral_context}, {:.3} g at design speed at {design_lateral_context}, longitudinal {:.3} g, peak roll rate {peak_roll_rate_degrees_per_second:.1} degrees/s",
-                piece.id,
-                window_forces.minimum_vertical,
-                window_forces.maximum_vertical,
-                window_forces.maximum_lateral,
-                maximum_design_speed_lateral,
-                window_forces.maximum_longitudinal
-            );
-            if maximum_design_speed_lateral > 0.35 {
-                failures.push(format!(
-                    "{} design-speed worst-car lateral {maximum_design_speed_lateral:.3} g at {design_lateral_context} exceeds 0.35 g",
-                    piece.name
-                ));
-            }
-            if peak_roll_rate_degrees_per_second > 200.0 {
-                failures.push(format!(
-                    "{} peak roll rate {peak_roll_rate_degrees_per_second:.1} degrees/s exceeds 200 degrees/s",
-                    piece.name
-                ));
-            }
-        } else {
-            eprintln!(
-                "{:?}: peak roll rate {peak_roll_rate_degrees_per_second:.1} degrees/s, not allowed by any coaster model",
-                piece.id
-            );
+        eprintln!(
+            "{:?}: scanned across all models; allowed by any model: {allowed_by_any_model}; full-train vertical {:.3}..{:.3} g, lateral {:.3} g across window at {window_lateral_context}, {:.3} g at design speed at {design_lateral_context}, longitudinal {:.3} g, design-speed roll rate {design_speed_peak_roll_rate_degrees_per_second:.1} degrees/s, peak rated-window roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s",
+            piece.id,
+            window_forces.minimum_vertical,
+            window_forces.maximum_vertical,
+            window_forces.maximum_lateral,
+            maximum_design_speed_lateral,
+            window_forces.maximum_longitudinal
+        );
+        if maximum_design_speed_lateral > 0.35 {
+            failures.push(format!(
+                "{} design-speed worst-car lateral {maximum_design_speed_lateral:.3} g at {design_lateral_context} exceeds 0.35 g",
+                piece.name
+            ));
+        }
+        if allowed_by_any_model && window_peak_roll_rate_degrees_per_second > 200.0 {
+            failures.push(format!(
+                "{} peak roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds 200 degrees/s",
+                piece.name
+            ));
         }
     }
+    assert_eq!(scanned_candidates, 18, "full-train scan covers every speed-turn candidate");
     assert!(
         failures.is_empty(),
         "speed-turn force scan failures:\n{}",

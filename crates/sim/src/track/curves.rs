@@ -770,6 +770,66 @@ fn curvature(velocity: Vec3, acceleration: Vec3) -> f64 {
     velocity.cross(acceleration).length() / velocity.length().powi(3)
 }
 impl Piece {
+    fn speed_turn_frame(&self, design_speed: f64, t: f64) -> (Vec3, Vec3, Vec3, f64) {
+        // Integrate a symmetric, seventh-order heading transition in heart-path distance.
+        const NODES: [(f64, f64); 8] = [
+            (0.09501250983763744, 0.1894506104550685),
+            (0.2816035507792589, 0.1826034150449236),
+            (0.4580167776572274, 0.1691565193950025),
+            (0.6178762444026438, 0.1495959888165767),
+            (0.755404408355003, 0.1246289712555339),
+            (0.8656312023878318, 0.09515851168249278),
+            (0.9445750230732326, 0.06225352393864789),
+            (0.9894009349916499, 0.02715245941175409),
+        ];
+        let heading = |u: f64| {
+            std::f64::consts::FRAC_PI_2
+                * u.powi(4) * (35.0 + u * (-84.0 + u * (70.0 - 20.0 * u)))
+        };
+        let integral = |end: f64| {
+            let mut x = 0.0;
+            let mut y = 0.0;
+            for (node, weight) in NODES {
+                for sign in [-1.0, 1.0] {
+                    let angle = heading(end * (1.0 + sign * node) * 0.5);
+                    x += weight * angle.cos();
+                    y += weight * angle.sin();
+                }
+            }
+            (x * end * 0.5, y * end * 0.5)
+        };
+        let forward = self.entry.tangent().unit();
+        let left = Vec3::new(-forward.y, forward.x, 0.0);
+        let vertical = Vec3::new(0.0, 0.0, 1.0);
+        let displacement = self.exit.position() - self.entry.position();
+        let hand = displacement.dot(left).signum();
+        let length = displacement.dot(forward) / integral(1.0).0;
+        let (x, y) = integral(t);
+        let angle = heading(t);
+        let tangent = forward * angle.cos() + left * (hand * angle.sin());
+        let curvature = std::f64::consts::FRAC_PI_2 * 140.0 * t.powi(3) * (1.0 - t).powi(3) / length;
+        let roll = hand * (design_speed.powi(2) * curvature / crate::physics::GRAVITY).atan();
+        let up = vertical * roll.cos() + vertical.cross(tangent) * roll.sin();
+        let heart = self.entry.position() + forward * (length * x)
+            + left * (hand * length * y) + vertical * HEART_HEIGHT_METRES;
+        (heart - up * HEART_HEIGHT_METRES, heart, up, roll)
+    }
+
+    fn speed_turn_raw(&self, design_speed: f64, t: f64) -> (Vec3, Vec3, Vec3) {
+        let position = |u| self.speed_turn_frame(design_speed, u).0;
+        let point = position(t);
+        let step = 0.0001;
+        if t == 0.0 || t == 1.0 {
+            let tangent = if t == 0.0 { self.entry.tangent() } else { self.exit.tangent() };
+            let forward = self.entry.tangent().unit();
+            let length = (self.exit.position() - self.entry.position()).dot(forward)
+                / 0.5777328541808309;
+            return (point, tangent * length, Vec3::new(0.0, 0.0, 0.0));
+        }
+        let (previous, next) = (position(t - step), position(t + step));
+        (point, (next - previous) / (2.0 * step), (previous - point * 2.0 + next) / step.powi(2))
+    }
+
     fn rolled_profile_sample(&self, profile: &SolvedProfile, twist: Twist, t: f64) -> RollSample {
         let length = profile.length();
         let (position, first, second, third) = profile.sample_with_third(t * length);
@@ -884,6 +944,9 @@ impl Piece {
     }
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
+        if let Shape::SpeedBank { design_speed } = self.shape {
+            return self.speed_turn_raw(design_speed, t);
+        }
         if let Shape::RolledProfile(profile, twist) = &self.shape {
             let sample = self.rolled_profile_sample(profile, *twist, t);
             return (sample.position, sample.first, sample.second);
@@ -1136,6 +1199,16 @@ impl Piece {
     }
     pub fn sample(&self, distance: f64) -> TrackSample {
         let t = self.parameter_at_distance(distance);
+        if let Shape::SpeedBank { design_speed } = self.shape {
+            let (position, heart, desired_up, roll) = self.speed_turn_frame(design_speed, t);
+            let (_, first, second) = self.speed_turn_raw(design_speed, t);
+            let tangent = first.unit();
+            return TrackSample {
+                position, heart, tangent,
+                up: (desired_up - tangent * desired_up.dot(tangent)).unit(),
+                curvature: curvature(first, second), roll,
+            };
+        }
         if let Shape::RolledProfile(profile, twist) = &self.shape {
             let sample = self.rolled_profile_sample(profile, *twist, t);
             return TrackSample {
@@ -1179,10 +1252,6 @@ impl Piece {
             2.0 * std::f64::consts::PI / 3.0
                 * (std::f64::consts::PI * t).sin().powi(2)
                 * if self.mirrored { -1.0 } else { 1.0 }
-        } else if let Shape::SpeedBank { design_speed } = &self.shape {
-            let curvature = (velocity.x * acceleration.y - velocity.y * acceleration.x)
-                / (velocity.x * velocity.x + velocity.y * velocity.y).powf(1.5);
-            (design_speed.powi(2) * curvature / crate::physics::GRAVITY).atan()
         } else if let Shape::WaveTurn { peak, .. } = &self.shape {
             peak * 64.0 * t.powi(3) * (1.0 - t).powi(3) * if self.mirrored { -1.0 } else { 1.0 }
         } else {
