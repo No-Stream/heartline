@@ -46,14 +46,14 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
     if (await direct.isVisible()) {
       await direct.click();
     } else {
-      const hill = /^(WoodenEjector|Ejector|Floater|Speed)Hill(\d+)x(\d+)$/.exec(piece);
+      const hill = /^(WoodenEjector|Ejector|Floater|Family|Speed)Hill(\d+)x(\d+)$/.exec(piece);
       const roll = /^ZeroGRoll(Fast|Compact)(Left|Right)$/.exec(piece);
       if (!hill && !roll) throw new Error(`Piece ${piece} is not offered by the palette`);
       const hillSection = page.locator("[data-hill]");
       if (await hillSection.getAttribute("open") === null) await hillSection.locator("summary").click();
       await expect(hillSection.locator('[data-hill-value="feel"]')).toHaveText(/\S/);
       const feel = roll ? "Zero-g roll" : piece === "WoodenEjectorHill8x64" ? "Strong floater"
-        : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" ? "Floater" : "Speed hill";
+        : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" || hill![1] === "Family" ? "Floater" : "Speed hill";
       await stepHill(page, "feel", feel);
       await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : "Upright");
       await stepHill(page, "height", `${roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);

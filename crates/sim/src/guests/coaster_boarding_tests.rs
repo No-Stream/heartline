@@ -50,7 +50,7 @@ pub(super) fn construction_for(world: &World, model: CoasterModel) -> Constructi
 
 /// Lays a one-tile queue and exit at the coaster's station and returns the path tile guests enter the queue from.
 pub(super) fn open_station_paths(world: &mut World, construction: &Construction) -> Position {
-    let [queue, exit] = coaster_access_openings(&construction).unwrap();
+    let [queue, exit] = coaster_access_openings(construction).unwrap();
     let queue_entry = [
         Position {
             x: queue.position.x.saturating_sub(1),

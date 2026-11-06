@@ -2274,8 +2274,6 @@ fn family_coaster_is_gentle_and_built_from_low_speed_pieces() {
     for id in [
         PieceId::FamilyHill3x32,
         PieceId::FamilyHill4x40,
-        PieceId::TwisterHelixLeft,
-        PieceId::TwisterHelixRight,
         PieceId::SpeedTurnLarge16Left,
         PieceId::SpeedTurnLarge16Right,
     ] {
@@ -2292,6 +2290,9 @@ fn family_coaster_is_gentle_and_built_from_low_speed_pieces() {
         // Above 1 g lateral at the top of its window.
         PieceId::RolloutLeft,
         PieceId::RolloutRight,
+        // Unrated, and above 1 g lateral at any speed above a crawl.
+        PieceId::TwisterHelixLeft,
+        PieceId::TwisterHelixRight,
     ] {
         assert!(!family.allowed_pieces.contains(&id), "{id:?}");
     }

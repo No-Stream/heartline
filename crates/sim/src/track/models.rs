@@ -956,8 +956,6 @@ pub fn family_coaster_model() -> CoasterModel {
                 Station,
                 TerrainRise,
                 TerrainFall,
-                TwisterHelixLeft,
-                TwisterHelixRight,
                 FamilyHill3x32,
                 FamilyHill4x40,
             ]
