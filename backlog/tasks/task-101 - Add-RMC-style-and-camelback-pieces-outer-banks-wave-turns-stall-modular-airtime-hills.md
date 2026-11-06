@@ -3,10 +3,10 @@ id: TASK-101
 title: >-
   Add RMC-style and camelback pieces: outer banks, wave turns, stall, modular
   airtime hills
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-04 17:00'
-updated_date: '2026-11-05 22:27'
+updated_date: '2026-11-06 01:43'
 labels: []
 dependencies:
   - TASK-95
@@ -50,3 +50,9 @@ Owner approved the airtime hill interface on 2026-11-04: one parameterised 'Airt
 
 2026-11-05: tasks 1-6 merged and pushed (415e0e6). Next: task 7 (compositions and journeys) combined with rebuilding the demo and three player circuits as good rides with the new hills, banked turns and banked straights, plus the task 6 follow-ups above; then task 8 close-out. Start after ride-stats merges (both touch circuits and journeys).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+RMC elements plan tasks 1-6 and the task 6 follow-ups are on master (6986931, gated: feature 188, journeys 9): force-designed airtime hills, outer banks, zero-g rolls and stalls, wave turns, the Airtime hill inspector with size chosen by predicted force and a lateral readout. Task 7 (compositions) and rebuilding the circuits as good rides moved to the good-circuits plan (docs/superpowers/plans/2026-11-05-good-circuits.md); deferred hill sizes stay in the RMC plan's deferred list.
+<!-- SECTION:FINAL_SUMMARY:END -->
