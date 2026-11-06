@@ -82,7 +82,12 @@ impl WasmSimulation {
                 .collect()
         };
         let recommendation = entry_speed.and_then(|speed| {
-            select_speed_matched_variant_for_train(&candidates, speed, &construction.model().train)
+            select_speed_matched_variant_for_train(
+                &candidates,
+                speed,
+                &construction.model().train,
+                construction.model().comfortable_force_limits,
+            )
         });
         let result = ConstructionSpeedMatchWire {
             entry_speed,
