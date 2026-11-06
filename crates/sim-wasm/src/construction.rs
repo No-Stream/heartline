@@ -2,7 +2,7 @@ use super::*;
 use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
 use theme_park_sim::track::ComfortableForceLimits;
-use theme_park_sim::track::{Bank, Heartlining, HillFeel, HillTwist};
+use theme_park_sim::track::{Bank, Hand, Heartlining, HillFeel, HillTwist, PieceFamily};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -42,6 +42,14 @@ pub struct ConstructionHillOptionWire {
     span: u16,
     twist: &'static str,
     rated_speed: Option<ConstructionRatedSpeedWire>,
+}
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionSpeedTurnWire {
+    id: &'static str,
+    #[ts(type = "\"left\" | \"right\"")]
+    hand: &'static str,
+    design_speed: f64,
 }
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -168,6 +176,7 @@ fn hill_feel_wire(feel: HillFeel) -> &'static str {
     match feel {
         HillFeel::Ejector => "ejector",
         HillFeel::Floater => "floater",
+        HillFeel::StrongFloater => "strongFloater",
         HillFeel::Speed => "speed",
         HillFeel::ZeroGRoll => "zeroGRoll",
         HillFeel::Stall => "stall",
@@ -518,8 +527,11 @@ impl WasmSimulation {
         };
         let outer_bank = first.family.is_some_and(|family| {
             matches!(
-                family.twist,
-                Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                family,
+                PieceFamily::Hill(theme_park_sim::track::HillFamily {
+                    twist: Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight),
+                    ..
+                })
             )
         });
         let rated_speed =
@@ -599,7 +611,9 @@ impl WasmSimulation {
         let options: Vec<_> = theme_park_sim::track::catalog()
             .iter()
             .filter_map(|piece| {
-                let family = piece.family?;
+                let PieceFamily::Hill(family) = piece.family? else {
+                    return None;
+                };
                 model
                     .allowed_pieces
                     .contains(&piece.id)
@@ -614,6 +628,39 @@ impl WasmSimulation {
             })
             .collect();
         serde_json::to_string(&options).expect("hill options serialize")
+    }
+
+    /// The model's speed-matched turns, so the builder can offer "For speed" before one is selected.
+    pub fn construction_speed_turns(&self) -> String {
+        let Some(construction) = self.construction.as_ref() else {
+            return "[]".into();
+        };
+        let turns: Vec<_> = theme_park_sim::track::catalog()
+            .iter()
+            .filter_map(|piece| {
+                let PieceFamily::SpeedTurn {
+                    hand,
+                    design_speed_metres_per_second,
+                    ..
+                } = piece.family?
+                else {
+                    return None;
+                };
+                construction
+                    .model()
+                    .allowed_pieces
+                    .contains(&piece.id)
+                    .then(|| ConstructionSpeedTurnWire {
+                        id: wire_pieceid(piece.id),
+                        hand: match hand {
+                            Hand::Left => "left",
+                            Hand::Right => "right",
+                        },
+                        design_speed: design_speed_metres_per_second,
+                    })
+            })
+            .collect();
+        serde_json::to_string(&turns).expect("speed turns serialize")
     }
 
     pub fn construction_select(&mut self, id: &str) {
@@ -646,6 +693,9 @@ impl WasmSimulation {
         let id = if let Some(parameters) = id.strip_prefix("hill:") {
             let matching = theme_park_sim::track::catalog().iter().find(|piece| {
                 piece.family.is_some_and(|family| {
+                    let PieceFamily::Hill(family) = family else {
+                        return false;
+                    };
                     format!(
                         "{}:{}x{}:{}",
                         hill_feel_wire(family.feel),
@@ -724,7 +774,8 @@ impl WasmSimulation {
                             .map(construction_error)
                             .unwrap_or_default(),
                         would_tunnel: choice.would_tunnel,
-                        hill_estimate: if self.selected == Some(piece.id) && piece.family.is_some()
+                        hill_estimate: if self.selected == Some(piece.id)
+                            && matches!(piece.family, Some(PieceFamily::Hill(_)))
                         {
                             let (speed, source) = match status {
                                 "reachedEnd" => (entry_speed, "simulated"),
@@ -747,11 +798,15 @@ impl WasmSimulation {
                                     .as_ref()
                                     .map(|force| force.maximum_vertical_g),
                                 maximum_absolute_lateral_g: forces.as_ref().and_then(|force| {
-                                    piece.family.and_then(|family| match family.twist {
-                                        Some(
-                                            HillTwist::OuterBankLeft | HillTwist::OuterBankRight,
-                                        ) => Some(force.maximum_absolute_lateral_g),
-                                        _ => None,
+                                    piece.family.and_then(|family| match family {
+                                        PieceFamily::Hill(family) => match family.twist {
+                                            Some(
+                                                HillTwist::OuterBankLeft
+                                                | HillTwist::OuterBankRight,
+                                            ) => Some(force.maximum_absolute_lateral_g),
+                                            _ => None,
+                                        },
+                                        PieceFamily::SpeedTurn { .. } => None,
                                     })
                                 }),
                                 airtime_seconds: forces.as_ref().map(|force| force.airtime_seconds),
@@ -1774,6 +1829,7 @@ define_piece_id_wire_names!(
     SteepToGentleUp,
     LevelToGentleDown,
     GentleDownToLevel,
+    LongGentleDownToLevel,
     GentleToSteepDown,
     SteepToGentleDown,
     TurnSmallEntry,
@@ -1850,6 +1906,24 @@ define_piece_id_wire_names!(
     HybridOverbankRight,
     WaveTurnLeft,
     WaveTurnRight,
+    SpeedTurnLarge16Left,
+    SpeedTurnLarge16Right,
+    SpeedTurnLarge20Left,
+    SpeedTurnLarge20Right,
+    SpeedTurnLarge24Left,
+    SpeedTurnLarge24Right,
+    SpeedTurnLarge28Left,
+    SpeedTurnLarge28Right,
+    SpeedTurnLarge32Left,
+    SpeedTurnLarge32Right,
+    SpeedTurnSmall12Left,
+    SpeedTurnSmall12Right,
+    SpeedTurnSmall16Left,
+    SpeedTurnSmall16Right,
+    SpeedTurnSmall20Left,
+    SpeedTurnSmall20Right,
+    SpeedTurnSmall24Left,
+    SpeedTurnSmall24Right,
     HalfTileStraight,
     FullOffsetLeft,
     FullOffsetRight,

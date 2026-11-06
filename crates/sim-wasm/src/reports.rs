@@ -382,6 +382,7 @@ mod wire_tests {
         PieceShapeReport::export_all_to(&output).unwrap();
         crate::construction::ConstructionPieceWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionHillOptionWire::export_all_to(&output).unwrap();
+        crate::construction::ConstructionSpeedTurnWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionElementWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionTrackWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionColorsWire::export_all_to(&output).unwrap();

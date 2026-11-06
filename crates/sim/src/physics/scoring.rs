@@ -1,7 +1,7 @@
 use crate::track::{AirtimeRating, ComfortableForceLimits};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ForceAxis {
+pub enum ForceAxis {
     Airtime,
     Vertical,
     Lateral,
@@ -9,7 +9,7 @@ pub(super) enum ForceAxis {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ForceBand {
+pub enum ForceBand {
     Weak,
     Good,
     Great,
@@ -19,11 +19,7 @@ pub(super) enum ForceBand {
     Dangerous,
 }
 
-pub(super) fn force_band(
-    axis: ForceAxis,
-    value_g: f64,
-    limits: ComfortableForceLimits,
-) -> ForceBand {
+pub fn force_band(axis: ForceAxis, value_g: f64, limits: ComfortableForceLimits) -> ForceBand {
     assert!(
         limits.minimum_vertical_g < 0.0
             && limits.maximum_vertical_g > 0.0

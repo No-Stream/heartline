@@ -1380,11 +1380,10 @@ impl BlockLayout {
                 cohorts.observe_active(&active);
                 yield_step().await;
                 let outcomes = operation.step(&[]);
-                if operation.interlock_triggered() {
-                    higher_capacity_unverified = true;
-                    unsafe_trial = true;
-                    break;
-                }
+                assert!(
+                    !operation.interlock_triggered(),
+                    "validated block layout interlocked during a {capacity}-train capacity trial: {self:?}"
+                );
                 for (id, outcome) in outcomes {
                     if outcome.recovered {
                         if maximum_active == 1 {

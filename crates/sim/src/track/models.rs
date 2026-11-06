@@ -285,6 +285,10 @@ pub fn wooden_twister_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,
@@ -304,6 +308,7 @@ pub fn wooden_twister_model() -> CoasterModel {
                 SteepToGentleUp,
                 LevelToGentleDown,
                 GentleDownToLevel,
+                LongGentleDownToLevel,
                 GentleToSteepDown,
                 SteepToGentleDown,
                 TurnSmallEntry,
@@ -379,6 +384,7 @@ pub fn wooden_twister_model() -> CoasterModel {
                 SpeedHill4x64,
                 SpeedHill6x80,
                 WoodenEjectorHill6x48,
+                WoodenEjectorHill8x64,
                 TightTwisterLeft,
                 TightTwisterRight,
             ]
@@ -429,6 +435,12 @@ pub fn hybrid_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                SpeedTurnLarge24Left,
+                SpeedTurnLarge24Right,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,
@@ -643,6 +655,12 @@ pub fn multi_launch_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                SpeedTurnLarge24Left,
+                SpeedTurnLarge24Right,
                 LaunchedTopHat,
                 Straight,
                 BankedStraightLeft,

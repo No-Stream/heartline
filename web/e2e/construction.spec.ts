@@ -405,3 +405,74 @@ test("sizes an airtime hill for the entry speed, steps it, and repeats it into a
   await expect(track.nth(6).locator(".track-chip__name")).toHaveText("Ejector hill 8 × 64 m");
   await expect(track.nth(7).locator(".track-chip__name")).toHaveText("Ejector hill 8 × 64 m");
 });
+
+test("turns after a drop default to the bank for the predicted speed, and the bank stepper overrides it @fast", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await page.locator(".builder select[data-model]").selectOption("model:hybrid");
+  await page.getByLabel("Station height above ground (metres)").fill("72");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const track = page.locator("[data-track] li");
+  const choices = page.getByRole("radiogroup", { name: "Next piece" });
+  const placePiece = page.getByRole("button", { name: "Place piece" });
+  const selected = page.locator("[data-construction]");
+  const bank = page.locator('[data-stepper-value="bank"]');
+  const sizes = page.getByRole("group", { name: "Element size" });
+  const forces = page.locator("[data-candidate-force-preview]");
+
+  await page.getByRole("button", { name: "Turn left" }).click();
+  await expect(selected).toHaveAttribute("data-selected", "TurnSmallStandalone");
+  await expect(bank).toHaveText("Level");
+  await page.getByRole("button", { name: "Turn right" }).click();
+  await expect(selected).toHaveAttribute("data-selected", "Straight");
+
+  for (const [index, pieceId] of ["LevelToGentleDown", "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel"].entries()) {
+    await choices.locator(`[data-piece="${pieceId}"]`).click();
+    await expect(selected).toHaveAttribute("data-selected", pieceId);
+    await placePiece.click();
+    await expect(track).toHaveCount(index + 2);
+  }
+  await choices.locator('[data-piece="Straight"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "Straight");
+
+  await page.getByRole("button", { name: "Turn left" }).click();
+  await expect(selected).toHaveAttribute("data-selected", /^SpeedTurnLarge(16|20|24)Left$/);
+  await expect(bank).toHaveText("For speed");
+  await expect(sizes).toContainText("Banked for");
+  await expect(sizes.getByRole("button")).toHaveText(["58 km/h", "72 km/h", "86 km/h"]);
+  await expect(sizes.getByRole("button").first()).toHaveAccessibleName("Banked for 58 km/h");
+  await expect(sizes.locator('[aria-pressed="true"]')).toHaveCount(1);
+  await expect(page.locator("[data-speed-match-message]")).toHaveText(/^Banked for \d+ km\/h suits the predicted entry speed\.$/);
+  await expect(page.getByRole("region", { name: "Chosen piece" }).locator("[data-preview-name]")).toHaveText(/^Large left turn banked for \d+ km\/h$/);
+  await expect(forces).toContainText("within rated range");
+  await expect(forces).toContainText(/Estimated lateral force: 0(\.\d)? g \((weak|good|great|fine)\)/);
+  await page.mouse.move(0, 0);
+  await expect(page.locator(".builder__next")).toHaveScreenshot("speed-matched-turn-selection.png", { animations: "disabled" });
+
+  const speedMatchedTurn = await selected.getAttribute("data-selected");
+  await page.getByRole("button", { name: "Bank right" }).click();
+  await expect(selected).toHaveAttribute("data-selected", "TurnLargeStandalone");
+  await expect(bank).toHaveText("Level");
+  await expect(forces).toContainText(/Estimated lateral force: [1-9](\.\d)? g/);
+  await page.getByRole("button", { name: "Bank left" }).click();
+  await expect(selected).toHaveAttribute("data-selected", speedMatchedTurn!);
+  await expect(bank).toHaveText("For speed");
+
+  await sizes.getByRole("button", { name: "Banked for 58 km/h" }).click();
+  await expect(selected).toHaveAttribute("data-selected", "SpeedTurnLarge16Left");
+  await placePiece.click();
+  await expect(track).toHaveCount(7);
+  await expect(track.nth(6).locator(".track-chip__name")).toHaveText("Large left turn banked for 58 km/h");
+  await selectUnits(page, "imperial");
+  await expect(track.nth(6).locator(".track-chip__name")).toHaveText("Large left turn banked for 36 mph");
+});

@@ -15,9 +15,9 @@ pub use catalog::{catalog, effective_rated_speeds};
 pub use colors::{CoasterColor, CoasterColors};
 pub(crate) use curves::Shape;
 pub use curves::{
-    Bank, HEART_HEIGHT_METRES, Heading, Heartlining, HillFamily, HillFeel, HillTwist,
-    HorizontalCurvature, Inversion, Piece, PieceId, PieceKind, RatedSpeeds, Slope, TrackSample,
-    TrackState, Vec3, VerticalCurvature,
+    Bank, HEART_HEIGHT_METRES, Hand, Heading, Heartlining, HillFamily, HillFeel, HillTwist,
+    HorizontalCurvature, Inversion, Piece, PieceFamily, PieceId, PieceKind, RatedSpeeds, Slope,
+    TrackSample, TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
     AirtimeRating, CoasterModel, ComfortableForceLimits,

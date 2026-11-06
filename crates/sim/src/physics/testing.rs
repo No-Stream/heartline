@@ -758,6 +758,9 @@ struct RatedPieceSpeedWindow {
 }
 
 impl TestRunRecorder {
+    pub(super) fn samples_mut(&mut self) -> impl Iterator<Item = &mut TestSample> {
+        self.samples.iter_mut().flatten()
+    }
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_tag(b"TestRunRecorder-v6");
         hash.write_f64(self.circuit_length);
