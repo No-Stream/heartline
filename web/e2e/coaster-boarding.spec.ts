@@ -113,12 +113,25 @@ test("guests ride a player-built coaster and can be selected @slow", async ({ pa
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   const pick = await page.evaluate((id) => {
     const canvas = document.querySelector("canvas")!;
-    for (let y = 0; y < canvas.height; y += 2) for (let x = 0; x < canvas.width; x += 2) {
-      const matches = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]].every(([dx, dy]) => {
-        const selected = window.gameTest.pick(x + dx, y + dy);
-        return selected && "id" in selected && selected.id === id;
-      });
-      if (matches) return { x, y };
+    const width = canvas.width;
+    const height = canvas.height;
+    // Keep the full-canvas search, but batch the synchronous WebGL readback.
+    const picks = window.gameTest.pickRegion(0, 0, width, height);
+    const neighbors = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] as const;
+    const pickAt = (x: number, y: number) => {
+      if (x < 0 || y < 0 || x >= width || y >= height) return null;
+      return picks[y * width + x] ?? null;
+    };
+    const hasId = (selected: ReturnType<typeof window.gameTest.pick>): boolean =>
+      selected !== null && "id" in selected && selected.id === id;
+    for (let y = 0; y < height; y += 2) for (let x = 0; x < width; x += 2) {
+      const matches = neighbors.every(([dx, dy]) => hasId(pickAt(x + dx, y + dy)));
+      if (matches) {
+        // Check that the batch result agrees with the exact point API at the returned visible target.
+        const directMatches = neighbors.every(([dx, dy]) => hasId(window.gameTest.pick(x + dx, y + dy)));
+        if (!directMatches) throw new Error("Batched and point picking disagree for the visible rider");
+        return { x, y };
+      }
     }
     return null;
   }, riderId);

@@ -783,6 +783,7 @@ impl TestRunRecorder {
         self.metre_violations
             .resize(circuit.length.ceil() as usize, [false; 3]);
     }
+
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_tag(b"TestRunRecorder-v7");
         self.force_evaluator.hash_into(hash);

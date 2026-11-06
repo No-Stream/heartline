@@ -319,6 +319,7 @@ impl Construction {
             SixtyToSteepUp,
             LevelToGentleDown,
             GentleDownToLevel,
+            LongGentleDownToLevel,
             GentleToSteepDown,
             SteepToGentleDown,
             SteepToSixtyDown,

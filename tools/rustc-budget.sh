@@ -4,6 +4,7 @@
 # run at once across all worktrees and agents, so several parallel builds cannot exhaust memory. Each compile holds one
 # slot until it exits; set HEARTLINE_RUSTC_SLOTS to change the pool size.
 set -euo pipefail
+"$(dirname "$0")/require-free-disk.sh"
 slot_count="${HEARTLINE_RUSTC_SLOTS:-4}"
 slot_directory="/tmp/heartline-rustc-slots"
 mkdir -p "$slot_directory"

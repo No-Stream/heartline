@@ -1,4 +1,4 @@
-import { evaluatedForceRating, rateVertical, type ForceLimits, type ForceRating } from "./force-overlay";
+import { evaluatedForceRating, rateForce, rateVertical, type ForceLimits, type ForceRating } from "./force-overlay";
 import { formatSpeed, type Units } from "./units";
 
 import type { ConstructionCandidateForcePreviewWire } from "./generated/ConstructionCandidateForcePreviewWire";
@@ -71,6 +71,11 @@ export function hillReadout(preview: HillForcePreview, units: Units): HillReadou
       ...entryRows,
       verticalRow("Lowest", minimumVerticalG, preview.limits),
       verticalRow("Highest", maximumVerticalG, preview.limits),
+      ...(preview.maximumAbsoluteLateralG === null ? [] : [{
+        label: "Lateral", value: `${formatForce(preview.maximumAbsoluteLateralG)} g`,
+        note: rateForce("lateral", preview.maximumAbsoluteLateralG, preview.limits),
+        tone: ratingTones[rateForce("lateral", preview.maximumAbsoluteLateralG, preview.limits)],
+      }]),
       { label: "Airtime", value: `${formatForce(airtimeSeconds)} s`, note: "", tone: null },
     ],
     message: "",

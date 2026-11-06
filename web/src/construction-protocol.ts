@@ -42,7 +42,9 @@ export type { ConstructionPieceWire as ConstructionPiece } from "./generated/Con
 export type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
 export type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
 export type { ConstructionHillOptionWire as ConstructionHillOption } from "./generated/ConstructionHillOptionWire";
+export type { ConstructionSpeedTurnWire as ConstructionSpeedTurn } from "./generated/ConstructionSpeedTurnWire";
 import type { ConstructionHillOptionWire as ConstructionHillOption } from "./generated/ConstructionHillOptionWire";
+import type { ConstructionSpeedTurnWire as ConstructionSpeedTurn } from "./generated/ConstructionSpeedTurnWire";
 import type { ConstructionPieceWire as ConstructionPiece } from "./generated/ConstructionPieceWire";
 import type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
 import type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
@@ -92,6 +94,8 @@ export interface ConstructionState {
   readonly constructionForcePreview: ConstructionForcePreview | null;
   readonly candidateForcePreview: CandidateForcePreview | null;
   readonly speedMatch: ConstructionSpeedMatch | null;
+  /** The model's speed-matched turns; the palette lists only the selected one. */
+  readonly speedTurns: readonly ConstructionSpeedTurn[];
   readonly placedRails: Float32Array;
   readonly railDistances: Float32Array;
   readonly blockCandidates: Float64Array;

@@ -1,4 +1,4 @@
-import type { ConstructionHillOption, ConstructionPiece, PieceShape } from "./construction-protocol";
+import type { ConstructionHillOption, ConstructionPiece, ConstructionSpeedTurn, PieceShape } from "./construction-protocol";
 import { formatLength, metresToDisplay, unitLabel, type Units } from "./units";
 
 export type StepAttribute = "turn" | "slope" | "bank";
@@ -20,6 +20,42 @@ const steepCurveNames: Record<string, string> = {
   "End downward curve": "End of steep downward curve",
 };
 const bankOrder = ["Left", "Level", "Right", "Inverted"];
+const bankLabels: Record<string, string> = { Left: "Left 45°", Level: "Level", Right: "Right 45°", Inverted: "Inverted" };
+/** The stepper's own bank value for a speed-matched turn, whose connectors are level but whose bank follows the curve. */
+const speedBank = "ForSpeed";
+/** From this predicted entry speed (m/s) a turn step selects the speed-matched turn; slower trains get the plain turn. */
+export const speedTurnDefaultMinimumSpeed = 12;
+
+/**
+ * The pieces the steppers choose from: speed-matched turns carry the "For speed" bank, and each hand the palette
+ * does not list (it shows only the selected family variant) gets a stand-in that the worker sizes for the speed.
+ */
+export function speedTurnPalette(pieces: readonly ConstructionPiece[], speedTurns: readonly ConstructionSpeedTurn[]): ConstructionPiece[] {
+  const speedTurnIds = new Set(speedTurns.map(({ id }) => id));
+  const listed = pieces.map((piece) => speedTurnIds.has(piece.id) ? { ...piece, bank: speedBank } : piece);
+  const listedHands = new Set(speedTurns.filter(({ id }) => pieces.some((piece) => piece.id === id)).map(({ hand }) => hand));
+  const standIns = (["left", "right"] as const).flatMap((hand) => {
+    if (listedHands.has(hand)) return [];
+    const slowest = speedTurns.filter((turn) => turn.hand === hand).sort((first, second) => first.designSpeed - second.designSpeed)[0];
+    return slowest ? [{
+      id: slowest.id, label: slowest.id, group: "turn", heading: "", slope: "Level", bank: speedBank,
+      refusal: "", wouldTunnel: false, heartlined: null, hillEstimate: null,
+    }] : [];
+  });
+  return [...listed, ...standIns];
+}
+
+function shapeOf(shapes: ReadonlyMap<string, PieceShape>, id: string): PieceShape {
+  const shape = shapes.get(id);
+  if (!shape) throw new Error(`Missing shape for piece ${id}`);
+  return shape;
+}
+
+/** A speed-matched turn leans into its curve, so it sits between level and the 45° bank on the turn's side. */
+function bankRank(piece: ConstructionPiece, shapes: ReadonlyMap<string, PieceShape>): number {
+  if (piece.bank !== speedBank) return bankOrder.indexOf(piece.bank);
+  return bankOrder.indexOf("Level") + (shapeOf(shapes, piece.id).turn > 0 ? -0.5 : 0.5);
+}
 
 function turnLabel(turn: number): string {
   if (turn === 0) return "Ahead";
@@ -36,13 +72,17 @@ function normalizedTurnName(label: string): string {
 function attribute(piece: ConstructionPiece, shapes: ReadonlyMap<string, PieceShape>, name: StepAttribute): { rank: number; label: string } {
   switch (name) {
     case "turn": {
-      const shape = shapes.get(piece.id);
-      if (!shape) throw new Error(`Missing shape for piece ${piece.id}`);
+      const shape = shapeOf(shapes, piece.id);
       return { rank: -shape.turn, label: turnLabel(shape.turn) };
     }
     case "slope": return { rank: slopeOrder.indexOf(piece.slope), label: slopeLabels[piece.slope] ?? piece.slope };
-    case "bank": return { rank: bankOrder.indexOf(piece.bank), label: piece.bank };
+    case "bank": return { rank: bankRank(piece, shapes), label: piece.bank === speedBank ? "For speed" : bankLabels[piece.bank] ?? piece.bank };
   }
+}
+
+/** When another attribute steps, a speed-matched turn counts as level track, so its direction and slope can change. */
+function heldRank(piece: ConstructionPiece, shapes: ReadonlyMap<string, PieceShape>, name: StepAttribute): number {
+  return name === "bank" && piece.bank === speedBank ? bankOrder.indexOf("Level") : attribute(piece, shapes, name).rank;
 }
 
 const stepAttributes: readonly StepAttribute[] = ["turn", "slope", "bank"];
@@ -50,7 +90,7 @@ const stepAttributes: readonly StepAttribute[] = ["turn", "slope", "bank"];
 /** Pieces that differ from the selected one only in the given attribute, with that attribute's distinct values in stepper order. */
 function stepperValues(pieces: readonly ConstructionPiece[], shapes: ReadonlyMap<string, PieceShape>, selected: ConstructionPiece, name: StepAttribute) {
   const fixed = stepAttributes.filter((other) => other !== name);
-  const candidates = pieces.filter((candidate) => fixed.every((other) => attribute(candidate, shapes, other).rank === attribute(selected, shapes, other).rank));
+  const candidates = pieces.filter((candidate) => fixed.every((other) => heldRank(candidate, shapes, other) === heldRank(selected, shapes, other)));
   const ranks = [...new Set(candidates.map((candidate) => attribute(candidate, shapes, name).rank))].sort((first, second) => first - second);
   return { candidates, ranks };
 }
@@ -85,11 +125,18 @@ export function pieceDisplayName(piece: Pick<ConstructionPiece, "group" | "label
   return `${prefix} ${name.charAt(0).toLowerCase()}${name.slice(1)}`;
 }
 
+function exitPoint(shape: PieceShape | undefined): readonly [number, number] {
+  const last = shape?.points.at(-1);
+  return last ? [last[0], last[1]] : [0, 0];
+}
+
 /**
  * The piece one step away from the selection: along one attribute (clamped at the ends, preferring placeable
- * pieces of the same kind, such as staying on the chain lift) or through the whole palette (wrapping).
+ * pieces of the same kind, such as staying on the chain lift) or through the whole palette (wrapping). A step
+ * onto a turn takes the speed-matched turn when the predicted entry speed is high enough, and a bank step keeps
+ * the turn's footprint as close as it can.
  */
-export function steppedPiece(pieces: readonly ConstructionPiece[], shapes: ReadonlyMap<string, PieceShape>, selectedId: string | null, name: PieceStep, step: -1 | 1): string | undefined {
+export function steppedPiece(pieces: readonly ConstructionPiece[], shapes: ReadonlyMap<string, PieceShape>, selectedId: string | null, name: PieceStep, step: -1 | 1, entrySpeed?: number): string | undefined {
   const selected = pieces.find(({ id }) => id === selectedId);
   if (!selected) return pieceInGroup(pieces, "straight") ?? pieces[0]?.id;
   if (name === "piece") {
@@ -100,9 +147,23 @@ export function steppedPiece(pieces: readonly ConstructionPiece[], shapes: Reado
   const nextRank = ranks[ranks.indexOf(attribute(selected, shapes, name).rank) + step];
   if (nextRank === undefined) return undefined;
   const kind = shapes.get(selected.id)?.kind;
-  const preference = (candidate: ConstructionPiece) => (candidate.refusal ? 2 : 0) + (shapes.get(candidate.id)?.kind === kind ? 0 : 1);
+  const preferSpeedBank = entrySpeed !== undefined && entrySpeed >= speedTurnDefaultMinimumSpeed;
+  const [selectedX, selectedY] = exitPoint(shapes.get(selected.id));
+  const cost = (candidate: ConstructionPiece): number[] => {
+    const [x, y] = exitPoint(shapes.get(candidate.id));
+    return [
+      (candidate.bank === speedBank) === preferSpeedBank ? 0 : 1,
+      candidate.refusal ? 1 : 0,
+      shapes.get(candidate.id)?.kind === kind ? 0 : 1,
+      name === "bank" ? Math.hypot(x - selectedX, y - selectedY) : 0,
+    ];
+  };
+  const cheaper = (first: number[], second: number[]): boolean => {
+    const difference = first.findIndex((value, index) => value !== second[index]);
+    return difference >= 0 && first[difference] < second[difference];
+  };
   const matches = candidates.filter((candidate) => attribute(candidate, shapes, name).rank === nextRank);
-  return matches.reduce((best, candidate) => preference(candidate) < preference(best) ? candidate : best).id;
+  return matches.reduce((best, candidate) => cheaper(cost(candidate), cost(best)) ? candidate : best).id;
 }
 
 export function pieceInGroup(pieces: readonly ConstructionPiece[], group: string): string | undefined {
@@ -110,18 +171,22 @@ export function pieceInGroup(pieces: readonly ConstructionPiece[], group: string
   return (members.find((piece) => !piece.refusal) ?? members[0])?.id;
 }
 
-/** A step names an exact palette entry, so speed matching must not redirect navigation. */
-export function steppedPieceSelection(pieces: readonly ConstructionPiece[], shapes: ReadonlyMap<string, PieceShape>, selectedId: string | null, name: PieceStep, step: -1 | 1): { type: "construction-select"; piece: string; exact: true } | undefined {
-  const piece = steppedPiece(pieces, shapes, selectedId, name, step);
-  return piece && piece !== selectedId ? { type: "construction-select", piece, exact: true } : undefined;
+/**
+ * A step names an exact palette entry, so speed matching must not redirect navigation; only a step onto a
+ * speed-matched turn lets the worker pick the size for the predicted entry speed.
+ */
+export function steppedPieceSelection(pieces: readonly ConstructionPiece[], shapes: ReadonlyMap<string, PieceShape>, selectedId: string | null, name: PieceStep, step: -1 | 1, entrySpeed: number | undefined): { type: "construction-select"; piece: string; exact: boolean } | undefined {
+  const piece = steppedPiece(pieces, shapes, selectedId, name, step, entrySpeed);
+  if (!piece || piece === selectedId) return undefined;
+  return { type: "construction-select", piece, exact: pieces.find(({ id }) => id === piece)?.bank !== speedBank };
 }
 
 export type HillAttribute = "feel" | "height" | "span" | "twist";
 
-const hillFeelOrder = ["ejector", "floater", "speed", "zeroGRoll", "stall"];
+const hillFeelOrder = ["ejector", "strongFloater", "floater", "speed", "zeroGRoll", "stall"];
 /** Left-hand twists sit on the "previous" side, as on the bank stepper. */
 const hillTwistOrder = ["outerLeft", "none", "outerRight", "left", "right"];
-export const hillFeelLabels: Readonly<Record<string, string>> = { ejector: "Ejector", floater: "Floater", speed: "Speed hill", zeroGRoll: "Zero-g roll", stall: "Stall" };
+export const hillFeelLabels: Readonly<Record<string, string>> = { ejector: "Ejector", strongFloater: "Strong floater", floater: "Floater", speed: "Speed hill", zeroGRoll: "Zero-g roll", stall: "Stall" };
 export const hillTwistLabels: Readonly<Record<string, string>> = { none: "Upright", outerLeft: "Outer bank left", outerRight: "Outer bank right", left: "Roll left", right: "Roll right" };
 
 function orderRank(order: readonly string[], value: string): number {

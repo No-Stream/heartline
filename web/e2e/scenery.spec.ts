@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { clickCanvas, openTool } from "./game-page";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 
-test.use({ deviceScaleFactor: 1, launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] } });
+test.use({ deviceScaleFactor: 1, launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]) });
 
 test("places and removes scenery from both theme sets @slow", async ({ page }) => {
   await page.goto("/?test=1");

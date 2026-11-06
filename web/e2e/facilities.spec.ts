@@ -1,11 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Facility } from "../src/facilities";
 import type { GameTest } from "../src/game-test";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 import { canvasSize, clickCanvas, moveOverCanvas } from "./game-page";
 
 test.use({
   deviceScaleFactor: 1,
-  launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
+  launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]),
 });
 
 for (const rotation of [0, 2] as const) {

@@ -13,8 +13,8 @@ use theme_park_sim::physics::rated_piece::{rate_piece, unpowered};
 use theme_park_sim::track::catalog::unmeasured_catalog;
 use theme_park_sim::track::rated_windows::RatedWindowSource;
 use theme_park_sim::track::{
-    AirtimeRating, CoasterModel, HillFeel, Piece, PieceId, hybrid_model, multi_launch_model,
-    wooden_twister_model,
+    AirtimeRating, CoasterModel, HillFamily, HillFeel, Piece, PieceFamily, PieceId, hybrid_model,
+    multi_launch_model, wooden_twister_model,
 };
 
 const GRID_STEP: f64 = 0.25;
@@ -33,10 +33,37 @@ const DESIGN_CAPPED_PIECES: [PieceId; 6] = [
 const AXIS_NAMES: [&str; 3] = ["vertical", "lateral", "longitudinal"];
 const MAXIMUM_ROLL_RATE: f64 = Piece::MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND;
 
+/// Whether a floater hill gives some allowed model's default train more than Good airtime at this speed.
+fn floater_airtime_too_strong(piece: &Piece, speed: f64) -> bool {
+    if !hill_family(piece).is_some_and(|family| {
+        matches!(family.feel, HillFeel::Floater | HillFeel::StrongFloater) && family.twist.is_none()
+    }) {
+        return false;
+    }
+    models()
+        .into_iter()
+        .filter(|model| model.allows_piece(piece))
+        .any(|model| {
+            let rating = rate_piece(&model, model.train.cars, piece, speed, unpowered()).unwrap();
+            !matches!(
+                model
+                    .comfortable_force_limits
+                    .classify_airtime(rating.minimum_filtered_vertical),
+                AirtimeRating::Weak | AirtimeRating::Good
+            )
+        })
+}
+
+fn hill_family(piece: &Piece) -> Option<HillFamily> {
+    match piece.family {
+        Some(PieceFamily::Hill(family)) => Some(family),
+        _ => None,
+    }
+}
+
 /// The roll-rate design rule's peak roll rate for an entry speed, on the pieces the rule covers.
 fn roll_rate_rule(piece: &'static Piece) -> Option<Box<dyn Fn(f64) -> f64>> {
-    if piece
-        .family
+    if hill_family(piece)
         .is_some_and(|family| matches!(family.feel, HillFeel::ZeroGRoll | HillFeel::Stall))
     {
         return Some(Box::new(|speed| piece.rolled_hill_peak_roll_rate(speed)));
@@ -225,7 +252,11 @@ fn scan(template: &'static Piece) -> ScannedWindow {
             );
             (old.maximum_entry, RatedWindowSource::DesignCap, None)
         }
-        Some(_) if DESIGN_CAPPED_PIECES.contains(&template.id) && old_maximum_in_run => {
+        Some(_)
+            if (DESIGN_CAPPED_PIECES.contains(&template.id)
+                || matches!(template.family, Some(PieceFamily::SpeedTurn { .. })))
+                && old_maximum_in_run =>
+        {
             (old.maximum_entry, RatedWindowSource::DesignCap, None)
         }
         Some((failing_speed, diagnostic)) => {
@@ -258,6 +289,25 @@ fn scan(template: &'static Piece) -> ScannedWindow {
         _ => (maximum_entry, maximum_source, upper_failure),
     };
 
+    let (maximum_entry, maximum_source, upper_failure) =
+        if floater_airtime_too_strong(template, maximum_entry) {
+            assert!(
+                !floater_airtime_too_strong(template, minimum_entry),
+                "{:?}: more than Good airtime at its minimum",
+                template.id
+            );
+            let maximum = refine_boundary(minimum_entry, maximum_entry, false, |speed| {
+                !floater_airtime_too_strong(template, speed)
+            });
+            let above = format!(
+                "default-train airtime above Good at {:.2} m/s",
+                maximum + 0.01
+            );
+            (maximum, RatedWindowSource::AirtimeFeel, Some(above))
+        } else {
+            (maximum_entry, maximum_source, upper_failure)
+        };
+
     let mut acceptance_failures = Vec::new();
     for speed in [minimum_entry, maximum_entry] {
         if let Some(diagnostic) = failure(template, speed) {
@@ -285,8 +335,11 @@ fn scan(template: &'static Piece) -> ScannedWindow {
     }
 
     let mut airtime = Vec::new();
-    if let Some(family) = template.family.filter(|family| {
-        matches!(family.feel, HillFeel::Ejector | HillFeel::Floater) && family.twist.is_none()
+    if let Some(family) = hill_family(template).filter(|family| {
+        matches!(
+            family.feel,
+            HillFeel::Ejector | HillFeel::Floater | HillFeel::StrongFloater
+        ) && family.twist.is_none()
     }) {
         for model in models()
             .into_iter()

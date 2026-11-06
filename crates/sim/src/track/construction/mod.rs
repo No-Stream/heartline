@@ -11,7 +11,7 @@ use crate::track::supports::{
 use crate::track::{
     CoasterColors, CoasterModel, Heartlining, HillFeel,
     LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
-    LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState,
+    LaunchSpeedBounds, Piece, PieceFamily, PieceId, PieceKind, Shape, SupportStyle, TrackState,
     TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
@@ -62,15 +62,31 @@ pub struct SpeedMatchedVariant {
     pub fits: bool,
 }
 
-/// Select the rated candidate with the largest margin to either window edge.
-/// Ejector, floater and speed hills are the exception: a hill gives its named
-/// feel only near the top of its window, so among the windows that contain the
-/// speed they select the one with the least headroom to its top. If no window
-/// contains the speed, select the nearest window instead. Ties preserve the
-/// order supplied by the caller.
+/// Select a fitting hill closest to its target force, or the rated candidate
+/// with the largest margin. If no window fits, select the nearest window.
 pub fn select_speed_matched_variant(
     candidates: &[Piece],
     entry_speed: f64,
+) -> Option<SpeedMatchedVariant> {
+    select_speed_matched_variant_with_airtime_limit(candidates, entry_speed, -1.5)
+}
+
+pub fn select_speed_matched_variant_for_limits(
+    candidates: &[Piece],
+    entry_speed: f64,
+    limits: super::ComfortableForceLimits,
+) -> Option<SpeedMatchedVariant> {
+    select_speed_matched_variant_with_airtime_limit(
+        candidates,
+        entry_speed,
+        limits.minimum_vertical_g,
+    )
+}
+
+fn select_speed_matched_variant_with_airtime_limit(
+    candidates: &[Piece],
+    entry_speed: f64,
+    minimum_vertical_g: f64,
 ) -> Option<SpeedMatchedVariant> {
     assert!(entry_speed.is_finite() && entry_speed >= 0.0);
     let mut best: Option<(SpeedMatchedVariant, f64)> = None;
@@ -83,15 +99,26 @@ pub fn select_speed_matched_variant(
         let headroom = window.maximum_entry - entry_speed;
         let margin = (entry_speed - window.minimum_entry).min(headroom);
         let fits = margin >= 0.0;
-        let rides_best_near_top = piece.family.is_some_and(|family| {
-            matches!(
-                family.feel,
-                HillFeel::Ejector | HillFeel::Floater | HillFeel::Speed
-            )
+        let target = piece.family.and_then(|family| match family {
+            PieceFamily::Hill(family) => match family.feel {
+                // Target −1.2 g on steel and −0.7 g on wood, leaving 0.3 g above the model limit.
+                HillFeel::Ejector => Some((minimum_vertical_g + 0.3).max(-1.2)),
+                HillFeel::Floater => Some(-0.3),
+                HillFeel::StrongFloater => Some(-0.7),
+                HillFeel::Speed => Some(0.3),
+                _ => None,
+            },
+            PieceFamily::SpeedTurn { .. } => None,
         });
-        // Fitting windows score at least zero and outrank every window that does not fit.
-        let score = if fits && rides_best_near_top {
-            1.0 / (1.0 + headroom)
+        // Fitting windows outrank every window that does not fit.
+        let score = if fits {
+            match target {
+                Some(target) => super::predicted_hill_forces(piece, entry_speed)
+                    .map_or(0.0, |forces| {
+                        1.0 / (1.0 + (forces.minimum_vertical_g - target).abs())
+                    }),
+                None => margin,
+            }
         } else {
             margin
         };
@@ -333,7 +360,9 @@ impl Construction {
             previous_cache.map_or_else(Vec::new, |cache| cache.available_choices);
         let mut seen_ids = HashSet::new();
         for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
-            if base.family.is_some() && base.id != self.selected_hill_variant {
+            if matches!(base.family, Some(PieceFamily::Hill(_)))
+                && base.id != self.selected_hill_variant
+            {
                 continue;
             }
             if choices.iter().any(|choice| choice.id == base.id) {
@@ -408,9 +437,9 @@ impl Construction {
             .copied()
             .filter(|choice| {
                 choice.id == self.selected_hill_variant
-                    || !templates()
-                        .iter()
-                        .any(|piece| piece.id == choice.id && piece.family.is_some())
+                    || !templates().iter().any(|piece| {
+                        piece.id == choice.id && matches!(piece.family, Some(PieceFamily::Hill(_)))
+                    })
             })
             .collect()
     }
@@ -427,7 +456,7 @@ impl Construction {
     ) -> Result<(), ConstructionError> {
         if !templates()
             .iter()
-            .any(|piece| piece.id == id && piece.family.is_some())
+            .any(|piece| piece.id == id && matches!(piece.family, Some(PieceFamily::Hill(_))))
         {
             return Err(ConstructionError::Unavailable);
         }
@@ -450,7 +479,8 @@ impl Construction {
             .available_choices
             .iter()
             .filter(|candidate| {
-                candidate.piece.family.is_none() || candidate.piece.id == self.selected_hill_variant
+                !matches!(candidate.piece.family, Some(PieceFamily::Hill(_)))
+                    || candidate.piece.id == self.selected_hill_variant
             })
             .map(|candidate| (candidate.piece.clone(), candidate.choice))
             .collect()

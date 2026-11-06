@@ -38,7 +38,8 @@ main {
   font: italic 0.78rem/1 var(--body-font);
   white-space: nowrap;
 }
-.game-world { position: relative; min-width: 0; min-height: 0; }
+/* Clipped, so markers anchored near the edge of the world (the track end height label) never cover the dock. */
+.game-world { position: relative; min-width: 0; min-height: 0; overflow: clip; }
 .game-world > canvas {
   position: absolute;
   inset: 0;

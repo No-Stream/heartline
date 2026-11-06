@@ -17,6 +17,8 @@ pub enum RatedWindowSource {
     ClearanceMaximum,
     /// Above this a rolled hill or half corkscrew rolls faster than the 200 degrees per second design rule.
     RollRate,
+    /// Above this a floater hill gives a model's default train more than Good airtime, so it would ride as an ejector.
+    AirtimeFeel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

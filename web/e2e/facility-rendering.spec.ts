@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build, preview, type PreviewServer } from "vite";
+import { browserLaunchOptions } from "./fixtures/browser-launch-options";
 import type { Rotation } from "../src/camera";
 import type { FacilityKind } from "../src/facilities";
 
@@ -13,7 +14,7 @@ let outDir: string;
 test.use({
   viewport: { width: 840, height: 640 },
   deviceScaleFactor: 1,
-  launchOptions: { channel: "chrome", args: ["--use-gl=angle", "--use-angle=swiftshader"] },
+  launchOptions: browserLaunchOptions(["--use-gl=angle", "--use-angle=swiftshader"]),
 });
 
 test.beforeAll(async () => {

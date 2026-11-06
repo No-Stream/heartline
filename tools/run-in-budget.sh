@@ -12,6 +12,7 @@ set -euo pipefail
 if [[ -n "${THEME_PARK_IN_BUDGET:-}" ]]; then
   exec "$@"
 fi
+"$(dirname "$0")/require-free-disk.sh"
 export THEME_PARK_IN_BUDGET=1
 pinned_command=("$(dirname "$0")/run-pinned.sh" "$@")
 

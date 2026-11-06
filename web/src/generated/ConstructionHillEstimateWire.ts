@@ -2,4 +2,4 @@
 import type { ConstructionForceLimitsWire } from "./ConstructionForceLimitsWire";
 import type { ConstructionRatedSpeedWire } from "./ConstructionRatedSpeedWire";
 
-export type ConstructionHillEstimateWire = { entrySpeed: number | null, source: string, ratedSpeed: ConstructionRatedSpeedWire | null, minimumVerticalG: number | null, maximumVerticalG: number | null, airtimeSeconds: number | null, limits: ConstructionForceLimitsWire, };
+export type ConstructionHillEstimateWire = { entrySpeed: number | null, source: string, ratedSpeed: ConstructionRatedSpeedWire | null, minimumVerticalG: number | null, maximumVerticalG: number | null, maximumAbsoluteLateralG: number | null, airtimeSeconds: number | null, limits: ConstructionForceLimitsWire, };
