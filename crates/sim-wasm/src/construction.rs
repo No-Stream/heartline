@@ -2,7 +2,7 @@ use super::*;
 use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
 use theme_park_sim::track::ComfortableForceLimits;
-use theme_park_sim::track::{Bank, Heartlining, HillFeel, HillTwist};
+use theme_park_sim::track::{Bank, Heartlining, HillFeel, HillTwist, PieceFamily};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -524,8 +524,11 @@ impl WasmSimulation {
         };
         let outer_bank = first.family.is_some_and(|family| {
             matches!(
-                family.twist,
-                Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                family,
+                PieceFamily::Hill(theme_park_sim::track::HillFamily {
+                    twist: Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight),
+                    ..
+                })
             )
         });
         let rated_speed =
@@ -609,7 +612,9 @@ impl WasmSimulation {
         let options: Vec<_> = theme_park_sim::track::catalog()
             .iter()
             .filter_map(|piece| {
-                let family = piece.family?;
+                let PieceFamily::Hill(family) = piece.family? else {
+                    return None;
+                };
                 model
                     .allowed_pieces
                     .contains(&piece.id)
@@ -670,6 +675,9 @@ impl WasmSimulation {
         let id = if let Some(parameters) = id.strip_prefix("hill:") {
             let matching = theme_park_sim::track::catalog().iter().find(|piece| {
                 piece.family.is_some_and(|family| {
+                    let PieceFamily::Hill(family) = family else {
+                        return false;
+                    };
                     format!(
                         "{}:{}x{}:{}",
                         hill_feel_wire(family.feel),
@@ -748,7 +756,8 @@ impl WasmSimulation {
                             .map(construction_error)
                             .unwrap_or_default(),
                         would_tunnel: choice.would_tunnel,
-                        hill_estimate: if self.selected == Some(piece.id) && piece.family.is_some()
+                        hill_estimate: if self.selected == Some(piece.id)
+                            && matches!(piece.family, Some(PieceFamily::Hill(_)))
                         {
                             let (speed, source) = match status {
                                 "reachedEnd" => (entry_speed, "simulated"),
@@ -771,11 +780,15 @@ impl WasmSimulation {
                                     .as_ref()
                                     .map(|force| force.maximum_vertical_g),
                                 maximum_absolute_lateral_g: forces.as_ref().and_then(|force| {
-                                    piece.family.and_then(|family| match family.twist {
-                                        Some(
-                                            HillTwist::OuterBankLeft | HillTwist::OuterBankRight,
-                                        ) => Some(force.maximum_absolute_lateral_g),
-                                        _ => None,
+                                    piece.family.and_then(|family| match family {
+                                        PieceFamily::Hill(family) => match family.twist {
+                                            Some(
+                                                HillTwist::OuterBankLeft
+                                                | HillTwist::OuterBankRight,
+                                            ) => Some(force.maximum_absolute_lateral_g),
+                                            _ => None,
+                                        },
+                                        PieceFamily::SpeedTurn { .. } => None,
                                     })
                                 }),
                                 airtime_seconds: forces.as_ref().map(|force| force.airtime_seconds),
@@ -1874,6 +1887,24 @@ define_piece_id_wire_names!(
     HybridOverbankRight,
     WaveTurnLeft,
     WaveTurnRight,
+    SpeedTurnLarge16Left,
+    SpeedTurnLarge16Right,
+    SpeedTurnLarge20Left,
+    SpeedTurnLarge20Right,
+    SpeedTurnLarge24Left,
+    SpeedTurnLarge24Right,
+    SpeedTurnLarge28Left,
+    SpeedTurnLarge28Right,
+    SpeedTurnLarge32Left,
+    SpeedTurnLarge32Right,
+    SpeedTurnSmall12Left,
+    SpeedTurnSmall12Right,
+    SpeedTurnSmall16Left,
+    SpeedTurnSmall16Right,
+    SpeedTurnSmall20Left,
+    SpeedTurnSmall20Right,
+    SpeedTurnSmall24Left,
+    SpeedTurnSmall24Right,
     HalfTileStraight,
     FullOffsetLeft,
     FullOffsetRight,

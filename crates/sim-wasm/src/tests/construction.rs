@@ -698,6 +698,8 @@ fn piece_groups_follow_track_geometry_instead_of_piece_names() {
     for piece in catalog.iter().filter(|piece| piece.family.is_some()) {
         let expected = if piece.inversion.is_some() {
             "inversion"
+        } else if piece.entry.heading != piece.exit.heading {
+            "turn"
         } else {
             "special"
         };

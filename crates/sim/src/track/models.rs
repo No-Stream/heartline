@@ -223,6 +223,20 @@ pub fn wooden_twister_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                SpeedTurnLarge24Left,
+                SpeedTurnLarge24Right,
+                SpeedTurnLarge28Left,
+                SpeedTurnLarge28Right,
+                SpeedTurnSmall12Left,
+                SpeedTurnSmall12Right,
+                SpeedTurnSmall16Left,
+                SpeedTurnSmall16Right,
+                SpeedTurnSmall20Left,
+                SpeedTurnSmall20Right,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,
@@ -364,6 +378,20 @@ pub fn hybrid_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                SpeedTurnLarge24Left,
+                SpeedTurnLarge24Right,
+                SpeedTurnLarge28Left,
+                SpeedTurnLarge28Right,
+                SpeedTurnSmall12Left,
+                SpeedTurnSmall12Right,
+                SpeedTurnSmall16Left,
+                SpeedTurnSmall16Right,
+                SpeedTurnSmall20Left,
+                SpeedTurnSmall20Right,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,
@@ -575,6 +603,20 @@ pub fn multi_launch_model() -> CoasterModel {
         allowed_pieces: {
             use PieceId::*;
             vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                SpeedTurnLarge24Left,
+                SpeedTurnLarge24Right,
+                SpeedTurnLarge28Left,
+                SpeedTurnLarge28Right,
+                SpeedTurnSmall12Left,
+                SpeedTurnSmall12Right,
+                SpeedTurnSmall16Left,
+                SpeedTurnSmall16Right,
+                SpeedTurnSmall20Left,
+                SpeedTurnSmall20Right,
                 LaunchedTopHat,
                 Straight,
                 BankedStraightLeft,

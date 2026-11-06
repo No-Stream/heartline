@@ -10,6 +10,206 @@ fn catalog_returns_the_same_static_template_slice() {
 }
 
 #[test]
+fn speed_matched_turn_catalog_banks_for_each_design_speed() {
+    let expected_turns = [
+        (PieceId::SpeedTurnLarge16Left, 32, Hand::Left, 16.0),
+        (PieceId::SpeedTurnLarge20Left, 32, Hand::Left, 20.0),
+        (PieceId::SpeedTurnLarge24Left, 32, Hand::Left, 24.0),
+        (PieceId::SpeedTurnLarge28Left, 32, Hand::Left, 28.0),
+        (PieceId::SpeedTurnLarge32Left, 32, Hand::Left, 32.0),
+        (PieceId::SpeedTurnLarge16Right, 32, Hand::Right, 16.0),
+        (PieceId::SpeedTurnLarge20Right, 32, Hand::Right, 20.0),
+        (PieceId::SpeedTurnLarge24Right, 32, Hand::Right, 24.0),
+        (PieceId::SpeedTurnLarge28Right, 32, Hand::Right, 28.0),
+        (PieceId::SpeedTurnLarge32Right, 32, Hand::Right, 32.0),
+        (PieceId::SpeedTurnSmall12Left, 16, Hand::Left, 12.0),
+        (PieceId::SpeedTurnSmall16Left, 16, Hand::Left, 16.0),
+        (PieceId::SpeedTurnSmall20Left, 16, Hand::Left, 20.0),
+        (PieceId::SpeedTurnSmall24Left, 16, Hand::Left, 24.0),
+        (PieceId::SpeedTurnSmall12Right, 16, Hand::Right, 12.0),
+        (PieceId::SpeedTurnSmall16Right, 16, Hand::Right, 16.0),
+        (PieceId::SpeedTurnSmall20Right, 16, Hand::Right, 20.0),
+        (PieceId::SpeedTurnSmall24Right, 16, Hand::Right, 24.0),
+    ];
+    let templates = catalog();
+    let speed_turns: Vec<_> = templates
+        .iter()
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
+        .collect();
+    assert_eq!(speed_turns.len(), expected_turns.len());
+    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    let mut bank_measurements = Vec::with_capacity(expected_turns.len());
+
+    for (id, expected_radius, expected_hand, design_speed) in expected_turns {
+        let piece = templates
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap_or_else(|| panic!("catalog is missing {id:?}"));
+        let Some(PieceFamily::SpeedTurn {
+            radius_metres,
+            hand,
+            design_speed_metres_per_second,
+        }) = piece.family
+        else {
+            panic!("{id:?} should have speed-turn family metadata");
+        };
+        assert_eq!(radius_metres, expected_radius, "{id:?}");
+        assert_eq!(hand, expected_hand, "{id:?}");
+        near(design_speed_metres_per_second, design_speed);
+        let hand_name = match hand {
+            Hand::Left => "left",
+            Hand::Right => "right",
+        };
+        let radius_name = if radius_metres == 32 {
+            "Large"
+        } else {
+            "Small"
+        };
+        assert_eq!(
+            piece.name,
+            format!("{radius_name} {hand_name} turn banked for {design_speed:.0} m/s"),
+            "{id:?} name"
+        );
+        assert!(
+            matches!(
+                piece.shape,
+                Shape::SpeedBank {
+                    design_speed: shape_speed
+                } if shape_speed == design_speed
+            ),
+            "{id:?} shape"
+        );
+        assert_eq!(piece.entry.slope, Slope::Level, "{id:?} entry slope");
+        assert_eq!(piece.entry.bank, Bank::Level, "{id:?} entry bank");
+        assert_eq!(piece.exit.slope, Slope::Level, "{id:?} exit slope");
+        assert_eq!(piece.exit.bank, Bank::Level, "{id:?} exit bank");
+        let rated = piece.rated_speeds.expect("speed turns are rated");
+        near(rated.minimum_entry, design_speed - 3.0);
+        near(rated.maximum_entry, design_speed + 3.0);
+
+        let hand_sign = if hand == Hand::Left { 1.0 } else { -1.0 };
+        let mut peak_bank_radians: f64 = 0.0;
+        for index in 0..=100 {
+            let distance = if index == 100 {
+                piece.length()
+            } else {
+                piece.length() * f64::from(index) / 100.0
+            };
+            let sample = piece.sample(distance);
+            let expected_bank = hand_sign * (design_speed.powi(2) * sample.curvature / 9.81).atan();
+            near(sample.roll, expected_bank);
+            peak_bank_radians = peak_bank_radians.max(sample.roll.abs());
+        }
+        let peak_bank_degrees = peak_bank_radians.to_degrees();
+        let allowed_by_any_model = models.iter().any(|model| model.allows_piece(piece));
+        eprintln!(
+            "{id:?}: peak design bank {peak_bank_degrees:.2} degrees, allowed by any model: {allowed_by_any_model}"
+        );
+        bank_measurements.push((id, peak_bank_degrees, allowed_by_any_model));
+    }
+    let overbanked_allowed_turns: Vec<_> = bank_measurements
+        .into_iter()
+        .filter(|(_, peak_bank_degrees, allowed)| *allowed && *peak_bank_degrees > 75.0)
+        .collect();
+    assert!(
+        overbanked_allowed_turns.is_empty(),
+        "allowed speed turns exceed the 75-degree bank cap: {overbanked_allowed_turns:?}"
+    );
+}
+
+#[test]
+fn speed_matched_turns_mirror_and_join_every_compatible_piece() {
+    let templates = catalog();
+    for (left_id, right_id) in [
+        (
+            PieceId::SpeedTurnLarge16Left,
+            PieceId::SpeedTurnLarge16Right,
+        ),
+        (
+            PieceId::SpeedTurnLarge20Left,
+            PieceId::SpeedTurnLarge20Right,
+        ),
+        (
+            PieceId::SpeedTurnLarge24Left,
+            PieceId::SpeedTurnLarge24Right,
+        ),
+        (
+            PieceId::SpeedTurnLarge28Left,
+            PieceId::SpeedTurnLarge28Right,
+        ),
+        (
+            PieceId::SpeedTurnLarge32Left,
+            PieceId::SpeedTurnLarge32Right,
+        ),
+        (
+            PieceId::SpeedTurnSmall12Left,
+            PieceId::SpeedTurnSmall12Right,
+        ),
+        (
+            PieceId::SpeedTurnSmall16Left,
+            PieceId::SpeedTurnSmall16Right,
+        ),
+        (
+            PieceId::SpeedTurnSmall20Left,
+            PieceId::SpeedTurnSmall20Right,
+        ),
+        (
+            PieceId::SpeedTurnSmall24Left,
+            PieceId::SpeedTurnSmall24Right,
+        ),
+    ] {
+        let left = templates.iter().find(|piece| piece.id == left_id).unwrap();
+        let right = templates.iter().find(|piece| piece.id == right_id).unwrap();
+        for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let left_sample = left.sample(left.length() * fraction);
+            let right_sample = right.sample(right.length() * fraction);
+            near_vec(
+                right_sample.position,
+                Vec3::new(
+                    left_sample.position.x,
+                    -left_sample.position.y,
+                    left_sample.position.z,
+                ),
+            );
+            near_vec(
+                right_sample.tangent,
+                Vec3::new(
+                    left_sample.tangent.x,
+                    -left_sample.tangent.y,
+                    left_sample.tangent.z,
+                ),
+            );
+            near_vec(
+                right_sample.up,
+                Vec3::new(left_sample.up.x, -left_sample.up.y, left_sample.up.z),
+            );
+            near(right_sample.roll, -left_sample.roll);
+        }
+
+        for turn in [left, right] {
+            let following_pieces: Vec<_> = templates
+                .iter()
+                .filter_map(|template| template.at(turn.exit))
+                .collect();
+            assert!(
+                !following_pieces.is_empty(),
+                "{:?} has no continuation",
+                turn.id
+            );
+            for following_piece in following_pieces {
+                let incoming = turn.sample(turn.length());
+                let outgoing = following_piece.sample(0.0);
+                near_vec(incoming.position, outgoing.position);
+                near_vec(incoming.tangent, outgoing.tangent);
+                near_vec(incoming.up, outgoing.up);
+                near(incoming.roll, outgoing.roll);
+                near(incoming.curvature, outgoing.curvature);
+            }
+        }
+    }
+}
+
+#[test]
 fn airtime_rating_matches_the_force_overlay_bands() {
     use super::models::AirtimeRating;
 
@@ -47,8 +247,10 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
         .iter()
         .filter(|piece| {
             piece.family.is_some_and(|family| {
-                matches!(family.feel, HillFeel::Ejector | HillFeel::Floater)
-                    && family.twist.is_none()
+                matches!(family, PieceFamily::Hill(family) if
+                    matches!(family.feel, HillFeel::Ejector | HillFeel::Floater)
+                        && family.twist.is_none()
+                )
             }) && steel_models.iter().all(|model| model.allows_piece(piece))
         })
         .collect();
@@ -58,9 +260,11 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
         .iter()
         .filter(|piece| {
             piece.family.is_some_and(|family| {
-                matches!(
-                    family.twist,
-                    Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                matches!(family, PieceFamily::Hill(family) if
+                    matches!(
+                        family.twist,
+                        Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                    )
                 )
             })
         })
@@ -68,12 +272,16 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
     assert_eq!(outer_banks.len(), upright_hills.len() * 2);
 
     for upright in upright_hills {
-        let family = upright.family.unwrap();
+        let Some(PieceFamily::Hill(family)) = upright.family else {
+            panic!("{} should be a hill family", upright.name);
+        };
         for twist in [HillTwist::OuterBankLeft, HillTwist::OuterBankRight] {
             let matching: Vec<_> = outer_banks
                 .iter()
                 .filter(|piece| {
-                    let candidate = piece.family.unwrap();
+                    let Some(PieceFamily::Hill(candidate)) = piece.family else {
+                        return false;
+                    };
                     candidate.feel == family.feel
                         && candidate.height_metres == family.height_metres
                         && candidate.span_metres == family.span_metres
@@ -100,13 +308,15 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
     for (feel, size_count) in [(HillFeel::ZeroGRoll, 2), (HillFeel::Stall, 1)] {
         let pieces: Vec<_> = catalog()
             .iter()
-            .filter(|piece| piece.family.is_some_and(|family| family.feel == feel))
+            .filter(|piece| matches!(piece.family, Some(PieceFamily::Hill(family)) if family.feel == feel))
             .collect();
         assert_eq!(pieces.len(), 2 * size_count, "{feel:?}");
         let mut dimensions: Vec<_> = pieces
             .iter()
             .map(|piece| {
-                let family = piece.family.unwrap();
+                let Some(PieceFamily::Hill(family)) = piece.family else {
+                    panic!("{} should be a hill family", piece.name);
+                };
                 (family.height_metres, family.span_metres)
             })
             .collect();
@@ -118,7 +328,9 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
                 let matching: Vec<_> = pieces
                     .iter()
                     .filter(|piece| {
-                        let family = piece.family.unwrap();
+                        let Some(PieceFamily::Hill(family)) = piece.family else {
+                            return false;
+                        };
                         family.height_metres == height
                             && family.span_metres == span
                             && family.twist == Some(twist)
@@ -220,7 +432,9 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         assert!(matches!(piece.shape, Shape::Profile(_)), "{name}");
         let rated = piece.rated_speeds.expect("hill has a rated speed window");
         assert!(rated.maximum_entry - rated.minimum_entry >= 2.0, "{name}");
-        let family = piece.family.expect("hill has family metadata");
+        let Some(PieceFamily::Hill(family)) = piece.family else {
+            panic!("{name} should have hill family metadata");
+        };
         let dimensions: Vec<u16> = name
             .split_whitespace()
             .filter_map(|word| word.parse().ok())
@@ -376,10 +590,12 @@ fn inversion_pieces_identify_their_heartlining() {
             );
         } else if piece.heartlining.is_some() {
             assert!(
-                piece.family.is_some_and(|family| matches!(
-                    family.twist,
-                    Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
-                )) && piece.heartlining == Some(Heartlining::Heartlined),
+                piece.family.is_some_and(
+                    |family| matches!(family, PieceFamily::Hill(family) if matches!(
+                        family.twist,
+                        Some(HillTwist::OuterBankLeft | HillTwist::OuterBankRight)
+                    ))
+                ) && piece.heartlining == Some(Heartlining::Heartlined),
                 "{:?}: unexpected heartlining on a non-inversion",
                 piece.id
             );

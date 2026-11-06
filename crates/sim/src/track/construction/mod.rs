@@ -11,7 +11,7 @@ use crate::track::supports::{
 use crate::track::{
     CoasterColors, CoasterModel, Heartlining, HillFeel,
     LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
-    LaunchSpeedBounds, Piece, PieceId, PieceKind, Shape, SupportStyle, TrackState,
+    LaunchSpeedBounds, Piece, PieceFamily, PieceId, PieceKind, Shape, SupportStyle, TrackState,
     TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
@@ -104,12 +104,15 @@ fn select_speed_matched_variant_with_windows(
         let headroom = window.maximum_entry - entry_speed;
         let margin = (entry_speed - window.minimum_entry).min(headroom);
         let fits = margin >= 0.0;
-        let target = piece.family.and_then(|family| match family.feel {
-            // Target −1.2 g on steel and −0.7 g on wood, leaving 0.3 g above the model limit.
-            HillFeel::Ejector => Some((minimum_vertical_g + 0.3).max(-1.2)),
-            HillFeel::Floater => Some(-0.3),
-            HillFeel::Speed => Some(0.3),
-            _ => None,
+        let target = piece.family.and_then(|family| match family {
+            PieceFamily::Hill(family) => match family.feel {
+                // Target −1.2 g on steel and −0.7 g on wood, leaving 0.3 g above the model limit.
+                HillFeel::Ejector => Some((minimum_vertical_g + 0.3).max(-1.2)),
+                HillFeel::Floater => Some(-0.3),
+                HillFeel::Speed => Some(0.3),
+                _ => None,
+            },
+            PieceFamily::SpeedTurn { .. } => None,
         });
         // Fitting windows outrank every window that does not fit.
         let score = if fits {
