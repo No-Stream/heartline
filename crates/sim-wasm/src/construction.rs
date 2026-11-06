@@ -176,6 +176,7 @@ fn hill_feel_wire(feel: HillFeel) -> &'static str {
     match feel {
         HillFeel::Ejector => "ejector",
         HillFeel::Floater => "floater",
+        HillFeel::StrongFloater => "strongFloater",
         HillFeel::Speed => "speed",
         HillFeel::ZeroGRoll => "zeroGRoll",
         HillFeel::Stall => "stall",
@@ -1852,6 +1853,7 @@ define_piece_id_wire_names!(
     SteepToGentleUp,
     LevelToGentleDown,
     GentleDownToLevel,
+    LongGentleDownToLevel,
     GentleToSteepDown,
     SteepToGentleDown,
     TurnSmallEntry,

@@ -857,6 +857,20 @@ fn build_catalog() -> Vec<Piece> {
             },
         )
         .collect();
+    let mut long_gentle_down_to_level = pieces
+        .iter()
+        .find(|piece| piece.id == GentleDownToLevel)
+        .unwrap()
+        .clone();
+    long_gentle_down_to_level.id = LongGentleDownToLevel;
+    long_gentle_down_to_level.name = "Long gentle descent level-out";
+    long_gentle_down_to_level.exit.x = 16;
+    long_gentle_down_to_level.exit.z = -4;
+    long_gentle_down_to_level.tangent_scale = (long_gentle_down_to_level.exit.position()
+        - long_gentle_down_to_level.entry.position())
+    .length();
+    long_gentle_down_to_level.clear_arc_table();
+    pieces.push(long_gentle_down_to_level);
     for (id, name, profile, maximum_entry, model_radius, material) in [
         (
             LargeLoop,
@@ -1576,6 +1590,16 @@ fn build_catalog() -> Vec<Piece> {
             6,
             48,
             19.66550391454844,
+            8.0,
+        ),
+        (
+            WoodenEjectorHill8x64,
+            "WoodenEjectorHill8x64",
+            "Strong floater hill 8 × 64 m",
+            HillFeel::StrongFloater,
+            8,
+            64,
+            22.894120166796476,
             8.0,
         ),
     ] {

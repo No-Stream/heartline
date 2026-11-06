@@ -382,6 +382,7 @@ pub enum PieceId {
     SpeedTurnSmall20Right,
     SpeedTurnSmall24Left,
     SpeedTurnSmall24Right,
+    LongGentleDownToLevel,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {
@@ -457,6 +458,7 @@ pub enum HillFeel {
     Speed,
     ZeroGRoll,
     Stall,
+    StrongFloater,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -507,6 +509,7 @@ enum FamilyWireFeel {
     ZeroGRoll,
     Stall,
     SpeedTurn,
+    StrongFloater,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -528,6 +531,7 @@ impl serde::Serialize for PieceFamily {
                     HillFeel::Speed => FamilyWireFeel::Speed,
                     HillFeel::ZeroGRoll => FamilyWireFeel::ZeroGRoll,
                     HillFeel::Stall => FamilyWireFeel::Stall,
+                    HillFeel::StrongFloater => FamilyWireFeel::StrongFloater,
                 },
                 height_metres: hill.height_metres,
                 span_metres: hill.span_metres,
@@ -562,6 +566,7 @@ impl<'de> serde::Deserialize<'de> for PieceFamily {
             FamilyWireFeel::Speed => HillFeel::Speed,
             FamilyWireFeel::ZeroGRoll => HillFeel::ZeroGRoll,
             FamilyWireFeel::Stall => HillFeel::Stall,
+            FamilyWireFeel::StrongFloater => HillFeel::StrongFloater,
             FamilyWireFeel::SpeedTurn => {
                 let hand = match wire.twist {
                     Some(HillTwist::LeftRoll) => Hand::Left,
@@ -1496,6 +1501,15 @@ mod shape_tests {
             let bytes = postcard::to_allocvec(&family).unwrap();
             assert_eq!(postcard::from_bytes::<PieceFamily>(&bytes).unwrap(), family);
         }
+        let strong_floater = PieceFamily::Hill(HillFamily {
+            feel: HillFeel::StrongFloater,
+            ..hill
+        });
+        let bytes = postcard::to_allocvec(&strong_floater).unwrap();
+        assert_eq!(
+            postcard::from_bytes::<PieceFamily>(&bytes).unwrap(),
+            strong_floater
+        );
     }
 
     #[test]

@@ -1980,6 +1980,21 @@ fn hill_options_follow_model_and_select_variants_by_parameters() {
     let wooden: Vec<serde_json::Value> =
         serde_json::from_str(&simulation.construction_hill_options()).unwrap();
     assert!(!wooden.iter().any(|option| option["feel"] == "zeroGRoll"));
+    assert!(
+        wooden
+            .iter()
+            .any(|option| option["id"] == "WoodenEjectorHill8x64"
+                && option["feel"] == "strongFloater")
+    );
+    assert!(
+        wooden
+            .iter()
+            .any(|option| option["id"] == "FloaterHill8x64" && option["feel"] == "floater")
+    );
+    simulation.construction_select("hill:strongFloater:8x64:none");
+    assert_eq!(simulation.construction_selected(), "WoodenEjectorHill8x64");
+    simulation.construction_select("hill:floater:8x64:none");
+    assert_eq!(simulation.construction_selected(), "FloaterHill8x64");
 }
 
 #[test]

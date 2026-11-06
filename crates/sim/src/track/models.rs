@@ -246,6 +246,7 @@ pub fn wooden_twister_model() -> CoasterModel {
                 SteepToGentleUp,
                 LevelToGentleDown,
                 GentleDownToLevel,
+                LongGentleDownToLevel,
                 GentleToSteepDown,
                 SteepToGentleDown,
                 TurnSmallEntry,
@@ -321,6 +322,7 @@ pub fn wooden_twister_model() -> CoasterModel {
                 SpeedHill4x64,
                 SpeedHill6x80,
                 WoodenEjectorHill6x48,
+                WoodenEjectorHill8x64,
                 TightTwisterLeft,
                 TightTwisterRight,
             ]
