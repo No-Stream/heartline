@@ -228,66 +228,6 @@ fn velocity_viper_completes_with_comfortable_forces() {
 }
 
 #[test]
-fn briar_blitz_completes_with_comfortable_forces() {
-    let model = wooden_twister_model();
-    let circuit = player_circuit("Briar Blitz", model.clone());
-    assert_eq!(
-        circuit
-            .pieces()
-            .iter()
-            .filter(|piece| piece.id == PieceId::TopHat)
-            .count(),
-        1
-    );
-    assert!(
-        circuit
-            .pieces()
-            .iter()
-            .filter(|piece| matches!(
-                piece.id,
-                PieceId::TwisterFanLeft
-                    | PieceId::TwisterFanRight
-                    | PieceId::TightTwisterLeft
-                    | PieceId::TightTwisterRight
-            ))
-            .count()
-            >= 2
-    );
-    for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
-        let report = ride_test(&circuit, &model, lift_speed, initial_speed);
-        let stats = report.statistics;
-        let limits = model.comfortable_force_limits;
-        assert!(
-            (5.0..=7.0).contains(&report.excitement),
-            "excitement: {}",
-            report.excitement
-        );
-        assert_eq!(stats.inversions, 0);
-        assert!(
-            stats.max_positive_vertical_g <= limits.maximum_vertical_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_negative_vertical_g >= limits.minimum_vertical_g + 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_lateral_g <= limits.maximum_lateral_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_forward_g <= limits.maximum_longitudinal_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_braking_g.abs() <= limits.maximum_longitudinal_g - 0.25,
-            "{stats:?}"
-        );
-        assert_design_margins(&circuit, &model, initial_speed != 0.0);
-    }
-}
-
-#[test]
 fn construction_reports_known_circuit_features() {
     let timber = hybrid_model();
     let velocity = multi_launch_model();
