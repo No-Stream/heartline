@@ -1,8 +1,9 @@
 use crate::physics::Circuit;
 use crate::state_hash::StateHasher;
 use crate::track::clearance::{
-    ClearanceBox, ClearanceCollision, ClearanceIndex, TerrainCell, TunnelPlan,
-    check_clearance_indexed, check_reverse_track_clearance, tunnel_plan,
+    ClearanceBox, ClearanceCollision, ClearanceEnvelopes, ClearanceIndex, TerrainCell, TunnelPlan,
+    check_clearance_indexed, check_clearance_with_envelopes, check_reverse_track_clearance,
+    tunnel_plan, tunnel_plan_with_envelopes,
 };
 use crate::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle,
@@ -820,8 +821,9 @@ impl Construction {
             });
         }
         let cache = cache.as_mut().expect("validation cache initialized");
+        let envelopes = ClearanceEnvelopes::new(piece, &self.model.train);
         let piece_tunnel_plan =
-            tunnel_plan(world, piece, &self.model.train).map_err(ConstructionError::Clearance)?;
+            tunnel_plan_with_envelopes(world, &envelopes).map_err(ConstructionError::Clearance)?;
         let tunnelled = !cache.existing_carve_cells.is_empty() || piece_tunnel_plan.would_tunnel();
         let new_carve_cells: BTreeSet<_> = piece_tunnel_plan
             .carve_cells
@@ -850,9 +852,10 @@ impl Construction {
             candidate_carved_world = carved_world(world, &carve_cells)?;
             &candidate_carved_world
         };
-        check_clearance_indexed(
+        check_clearance_with_envelopes(
             candidate_world,
             piece,
+            &envelopes,
             &self.model.train,
             &cache.clearance_index,
             None,
