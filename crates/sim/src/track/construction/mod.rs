@@ -576,12 +576,14 @@ impl Construction {
         None
     }
 
+    /// Appends a piece, reusing its validation from the choices cache when the cache is
+    /// current, and returns whether the placed piece tunnels.
     pub(super) fn append_cached_choice(
         &mut self,
         id: PieceId,
         world: &World,
         obstacles: &[SupportObstacle],
-    ) -> Result<(), ConstructionError> {
+    ) -> Result<bool, ConstructionError> {
         let cached = {
             let cache = self.choices_cache.borrow();
             cache.as_ref().and_then(|cache| {
@@ -604,12 +606,13 @@ impl Construction {
         if let Some((result, candidate)) = cached {
             result?;
             if let Some((piece, Some(validation))) = candidate {
+                let would_tunnel = validation.tunnel_plan.would_tunnel();
                 self.append_validated_piece(piece, validation);
-                return Ok(());
+                return Ok(would_tunnel);
             }
             return Err(ConstructionError::Unavailable);
         }
-        self.append(id, world, obstacles)
+        self.append_reporting_tunnel(id, world, obstacles)
     }
 
     pub fn validate(
@@ -1024,11 +1027,22 @@ impl Construction {
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Result<(), ConstructionError> {
+        self.append_reporting_tunnel(id, world, obstacles)
+            .map(|_| ())
+    }
+
+    fn append_reporting_tunnel(
+        &mut self,
+        id: PieceId,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<bool, ConstructionError> {
         let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
         let validation = self.validate_piece(&piece, world, obstacles)?;
+        let would_tunnel = validation.tunnel_plan.would_tunnel();
         self.append_validated_piece(piece, validation);
-        Ok(())
+        Ok(would_tunnel)
     }
 
     fn append_validated_piece(&mut self, piece: Piece, validation: PieceValidation) {

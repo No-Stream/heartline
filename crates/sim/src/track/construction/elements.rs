@@ -313,10 +313,11 @@ impl Construction {
         ];
         let mut queue = VecDeque::from([(Vec::new(), Vec::new())]);
         while let Some((path, mut visited)) = queue.pop_front() {
-            let construction = sequences
+            let state = sequences
                 .state(&path, world, obstacles)
-                .expect("queued paths were placed")
-                .copy_for_element_choice();
+                .expect("queued paths were placed");
+            let construction = state.construction.copy_for_element_choice();
+            let path_would_tunnel = state.would_tunnel;
             let end = construction.end();
             let connector = (
                 end.slope,
@@ -341,7 +342,7 @@ impl Construction {
                         name,
                         path.clone(),
                         &construction,
-                        world,
+                        path_would_tunnel,
                     ));
                     remaining -= 1;
                     if remaining == 0 {
@@ -378,8 +379,8 @@ impl Construction {
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Option<ElementChoice> {
-        let updated = sequences.state(&pieces, world, obstacles)?;
-        Some(self.choice_from_updated(id, name, pieces, updated, world))
+        let state = sequences.state(&pieces, world, obstacles)?;
+        Some(self.choice_from_updated(id, name, pieces, &state.construction, state.would_tunnel))
     }
 
     fn choice_from_updated(
@@ -388,7 +389,7 @@ impl Construction {
         name: &'static str,
         pieces: Vec<PieceId>,
         updated: &Construction,
-        world: &World,
+        would_tunnel: bool,
     ) -> ElementChoice {
         let geometry: Vec<Piece> = (self.next_id..self.next_id + pieces.len())
             .map(|id| {
@@ -400,11 +401,6 @@ impl Construction {
                 updated.pieces[index].clone()
             })
             .collect();
-        let would_tunnel = self
-            .tunnel_plans_for_geometry(&geometry, world)
-            .expect("validated element geometry has tunnel plans")
-            .iter()
-            .any(|plan| plan.would_tunnel());
         let heartlining = heartlining_for_geometry(&geometry);
         ElementChoice {
             id,
@@ -448,13 +444,22 @@ impl Construction {
 /// that share a prefix validate it once. The first piece of each sequence reuses the
 /// validation already computed for the piece choices.
 pub(super) struct SequenceStates {
-    states: HashMap<Vec<PieceId>, Option<Construction>>,
+    states: HashMap<Vec<PieceId>, Option<SequenceState>>,
+}
+
+struct SequenceState {
+    construction: Construction,
+    would_tunnel: bool,
 }
 
 impl SequenceStates {
     fn new(construction: &Construction) -> Self {
+        let root = SequenceState {
+            construction: construction.copy_for_element_choice(),
+            would_tunnel: false,
+        };
         Self {
-            states: HashMap::from([(Vec::new(), Some(construction.copy_for_element_choice()))]),
+            states: HashMap::from([(Vec::new(), Some(root))]),
         }
     }
 
@@ -463,7 +468,7 @@ impl SequenceStates {
         pieces: &[PieceId],
         world: &World,
         obstacles: &[SupportObstacle],
-    ) -> Option<&Construction> {
+    ) -> Option<&SequenceState> {
         for length in 1..=pieces.len() {
             if self.states.contains_key(&pieces[..length]) {
                 continue;
@@ -471,11 +476,14 @@ impl SequenceStates {
             let state = self.states[&pieces[..length - 1]]
                 .as_ref()
                 .and_then(|parent| {
-                    let mut child = parent.copy_for_element_choice();
-                    child
+                    let mut construction = parent.construction.copy_for_element_choice();
+                    let piece_tunnels = construction
                         .append_cached_choice(pieces[length - 1], world, obstacles)
-                        .ok()
-                        .map(|()| child)
+                        .ok()?;
+                    Some(SequenceState {
+                        construction,
+                        would_tunnel: parent.would_tunnel || piece_tunnels,
+                    })
                 });
             self.states.insert(pieces[..length].to_vec(), state);
         }
