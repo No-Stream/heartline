@@ -88,7 +88,7 @@ fn actual_loop_sizes_are_selected_at_their_rated_midpoints() {
 }
 
 #[test]
-fn airtime_hills_select_the_containing_window_ridden_closest_to_its_top() {
+fn airtime_hills_keep_nearest_window_fallback_and_roll_matching() {
     let family = |ids: &[PieceId]| -> Vec<Piece> {
         ids.iter()
             .map(|id| {
@@ -107,9 +107,7 @@ fn airtime_hills_select_the_containing_window_ridden_closest_to_its_top() {
         PieceId::EjectorHill12x80,
         PieceId::EjectorHill16x96,
     ]);
-    let selected = select_speed_matched_variant(&ejectors, 25.0).unwrap();
-    assert_eq!(selected.id, PieceId::EjectorHill8x64);
-    assert!(selected.fits);
+    assert!(select_speed_matched_variant(&ejectors, 25.0).unwrap().fits);
     let selected = select_speed_matched_variant(&ejectors, 30.0).unwrap();
     assert_eq!(selected.id, PieceId::EjectorHill16x96);
     assert!(!selected.fits);
@@ -131,15 +129,145 @@ fn configured_train_changes_rolled_inversion_speed_match() {
     train.cars = 4;
     train.length_metres = 12.0;
     assert!(
-        !select_speed_matched_variant_for_train(&candidates, 16.1, &train)
-            .unwrap()
-            .fits
+        !select_speed_matched_variant_for_train(
+            &candidates,
+            16.1,
+            &train,
+            hybrid_model().comfortable_force_limits
+        )
+        .unwrap()
+        .fits
     );
     train.cars = 8;
     train.length_metres = 24.0;
     assert!(
-        select_speed_matched_variant_for_train(&candidates, 16.1, &train)
+        select_speed_matched_variant_for_train(
+            &candidates,
+            16.1,
+            &train,
+            hybrid_model().comfortable_force_limits
+        )
+        .unwrap()
+        .fits
+    );
+}
+
+#[test]
+fn hills_choose_the_fitting_prediction_closest_to_the_feel_target() {
+    use theme_park_sim::track::predicted_hill_forces;
+    let candidates: Vec<_> = catalog()
+        .iter()
+        .filter(|piece| {
+            matches!(
+                piece.id,
+                PieceId::EjectorHill8x48
+                    | PieceId::EjectorHill12x64
+                    | PieceId::EjectorHill8x64
+                    | PieceId::EjectorHill12x80
+                    | PieceId::EjectorHill16x96
+            )
+        })
+        .cloned()
+        .collect();
+    for speed in [20.0, 22.0, 24.0, 25.0, 26.0] {
+        let fitting: Vec<_> = candidates
+            .iter()
+            .filter(|piece| {
+                let window = piece.rated_speeds.unwrap();
+                window.minimum_entry <= speed && speed <= window.maximum_entry
+            })
+            .filter_map(|piece| {
+                predicted_hill_forces(piece, speed)
+                    .map(|forces| (piece.id, (forces.minimum_vertical_g + 1.2).abs()))
+            })
+            .collect();
+        if let Some(expected) = fitting
+            .iter()
+            .min_by(|first, second| first.1.total_cmp(&second.1))
+        {
+            assert_eq!(
+                select_speed_matched_variant(&candidates, speed).unwrap().id,
+                expected.0,
+                "speed {speed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn force_target_breaks_equal_window_ties() {
+    let candidates = [
+        candidate(PieceId::EjectorHill16x96, 0.0, 100.0),
+        candidate(PieceId::EjectorHill8x64, 0.0, 100.0),
+    ];
+    let forces = |piece: &Piece| {
+        theme_park_sim::track::predicted_hill_forces(piece, 25.0)
             .unwrap()
-            .fits
+            .minimum_vertical_g
+    };
+    assert!((forces(&candidates[1]) + 1.2).abs() < (forces(&candidates[0]) + 1.2).abs());
+    assert_eq!(
+        select_speed_matched_variant(&candidates, 25.0).unwrap().id,
+        candidates[1].id
+    );
+}
+
+#[test]
+fn outer_bank_selection_uses_rider_vertical_force() {
+    use theme_park_sim::track::predicted_hill_forces;
+    let candidates = [
+        candidate(PieceId::EjectorHill16x96OuterLeft, 0.0, 100.0),
+        candidate(PieceId::EjectorHill8x64OuterLeft, 0.0, 100.0),
+    ];
+    let expected = candidates
+        .iter()
+        .min_by(|first, second| {
+            let distance = |piece: &Piece| {
+                (predicted_hill_forces(piece, 25.0)
+                    .unwrap()
+                    .minimum_vertical_g
+                    + 1.2)
+                    .abs()
+            };
+            distance(first).total_cmp(&distance(second))
+        })
+        .unwrap();
+    assert_eq!(
+        select_speed_matched_variant(&candidates, 25.0).unwrap().id,
+        expected.id
+    );
+}
+
+#[test]
+fn ejector_selection_uses_the_models_comfort_limit() {
+    use theme_park_sim::track::{predicted_hill_forces, wooden_twister_model};
+    let model = wooden_twister_model();
+    let candidates = [
+        candidate(PieceId::EjectorHill16x96, 0.0, 100.0),
+        candidate(PieceId::EjectorHill8x64, 0.0, 100.0),
+    ];
+    let expected = candidates
+        .iter()
+        .min_by(|first, second| {
+            let distance = |piece: &Piece| {
+                (predicted_hill_forces(piece, 25.0)
+                    .unwrap()
+                    .minimum_vertical_g
+                    + 0.7)
+                    .abs()
+            };
+            distance(first).total_cmp(&distance(second))
+        })
+        .unwrap();
+    assert_eq!(
+        select_speed_matched_variant_for_train(
+            &candidates,
+            25.0,
+            &model.train,
+            model.comfortable_force_limits
+        )
+        .unwrap()
+        .id,
+        expected.id
     );
 }

@@ -3,6 +3,7 @@ use crate::track::curves::{HEART_HEIGHT_METRES, Piece, Shape};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PredictedHillForces {
+    pub maximum_absolute_lateral_g: f64,
     pub minimum_vertical_g: f64,
     pub maximum_vertical_g: f64,
     pub airtime_seconds: f64,
@@ -19,6 +20,7 @@ pub fn predicted_hill_forces(piece: &Piece, entry_speed: f64) -> Option<Predicte
         _ => return None,
     };
     let mut result = PredictedHillForces {
+        maximum_absolute_lateral_g: 0.0,
         minimum_vertical_g: f64::INFINITY,
         maximum_vertical_g: f64::NEG_INFINITY,
         airtime_seconds: 0.0,
@@ -32,7 +34,11 @@ pub fn predicted_hill_forces(piece: &Piece, entry_speed: f64) -> Option<Predicte
         }
         let speed = speed_squared.sqrt();
         let roll = twist.map_or(0.0, |twist| twist.sample(distance, piece.mirrored).0);
-        let vertical_g = (angle.cos() + heart_curvature * speed_squared / GRAVITY) * roll.cos();
+        let planar_g = angle.cos() + heart_curvature * speed_squared / GRAVITY;
+        let vertical_g = planar_g * roll.cos();
+        result.maximum_absolute_lateral_g = result
+            .maximum_absolute_lateral_g
+            .max((planar_g * roll.sin()).abs());
         result.minimum_vertical_g = result.minimum_vertical_g.min(vertical_g);
         result.maximum_vertical_g = result.maximum_vertical_g.max(vertical_g);
         let heart_distance_factor = 1.0 - HEART_HEIGHT_METRES * rail_curvature;
