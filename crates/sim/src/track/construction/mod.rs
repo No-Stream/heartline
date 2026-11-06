@@ -143,6 +143,7 @@ fn select_speed_matched_variant_with_windows(
 struct PieceValidation {
     supports: Vec<Vec<Support>>,
     tunnel_plan: TunnelPlan,
+    track_obstacles: Vec<SupportObstacle>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1018,6 +1019,7 @@ impl Construction {
         Ok(PieceValidation {
             supports: validated_supports,
             tunnel_plan: piece_tunnel_plan,
+            track_obstacles: candidate_bounds,
         })
     }
 
@@ -1052,8 +1054,7 @@ impl Construction {
                 .get_mut()
                 .as_mut()
                 .expect("validation cache initialized");
-            let piece_bounds =
-                track_support_obstacles(std::slice::from_ref(&piece), &self.model.train);
+            let piece_bounds = validation.track_obstacles;
             let tunnelled =
                 !cache.existing_carve_cells.is_empty() || validation.tunnel_plan.would_tunnel();
             if tunnelled {
