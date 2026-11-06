@@ -597,18 +597,15 @@ impl PieceFamily {
     pub fn same_recommendation_family(self, other: Self) -> bool {
         match (self, other) {
             (Self::Hill(first), Self::Hill(second)) => first.same_recommendation_family(second),
+            // Faster speed turns are wider, so the radius follows the design speed and only the hand groups them.
             (
                 Self::SpeedTurn {
-                    radius_metres: first_radius,
-                    hand: first_hand,
-                    ..
+                    hand: first_hand, ..
                 },
                 Self::SpeedTurn {
-                    radius_metres: second_radius,
-                    hand: second_hand,
-                    ..
+                    hand: second_hand, ..
                 },
-            ) => first_radius == second_radius && first_hand == second_hand,
+            ) => first_hand == second_hand,
             _ => false,
         }
     }
@@ -848,14 +845,20 @@ fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
 fn speed_turn_geometry(radius: f64, design_speed: f64) -> &'static SpeedTurnGeometry {
     static GEOMETRIES: std::sync::LazyLock<Vec<SpeedTurnGeometry>> =
         std::sync::LazyLock::new(|| {
-            [(32.0, 16.0), (32.0, 20.0), (32.0, 24.0)]
-                .into_iter()
-                .flat_map(|(radius, speed)| {
-                    [radius, radius * std::f64::consts::SQRT_2]
-                        .into_iter()
-                        .map(move |actual_radius| build_speed_turn(actual_radius, speed))
-                })
-                .collect()
+            [
+                (32.0, 16.0),
+                (32.0, 20.0),
+                (32.0, 24.0),
+                (48.0, 28.0),
+                (64.0, 32.0),
+            ]
+            .into_iter()
+            .flat_map(|(radius, speed)| {
+                [radius, radius * std::f64::consts::SQRT_2]
+                    .into_iter()
+                    .map(move |actual_radius| build_speed_turn(actual_radius, speed))
+            })
+            .collect()
         });
     GEOMETRIES
         .iter()

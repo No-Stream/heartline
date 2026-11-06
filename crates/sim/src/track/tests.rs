@@ -18,6 +18,10 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
         (PieceId::SpeedTurnLarge16Right, 32, Hand::Right, 16.0),
         (PieceId::SpeedTurnLarge20Right, 32, Hand::Right, 20.0),
         (PieceId::SpeedTurnLarge24Right, 32, Hand::Right, 24.0),
+        (PieceId::SpeedTurnLarge28Left, 48, Hand::Left, 28.0),
+        (PieceId::SpeedTurnLarge28Right, 48, Hand::Right, 28.0),
+        (PieceId::SpeedTurnLarge32Left, 64, Hand::Left, 32.0),
+        (PieceId::SpeedTurnLarge32Right, 64, Hand::Right, 32.0),
     ];
     let templates = catalog();
     let speed_turns: Vec<_> = templates
@@ -48,15 +52,27 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
             Hand::Left => "left",
             Hand::Right => "right",
         };
-        let radius_name = if radius_metres == 32 {
-            "Large"
-        } else {
-            "Small"
-        };
         assert_eq!(
             piece.name,
-            format!("{radius_name} {hand_name} turn banked for {design_speed:.0} m/s"),
+            format!("Large {hand_name} turn banked for {design_speed:.0} m/s"),
             "{id:?} name"
+        );
+        let grid_offset = i32::from(radius_metres) / 2;
+        let exit_side = match hand {
+            Hand::Left => grid_offset,
+            Hand::Right => -grid_offset,
+        };
+        assert_eq!(
+            (piece.exit.x, piece.exit.y, piece.exit.heading),
+            (
+                grid_offset,
+                exit_side,
+                Heading::from_index(match hand {
+                    Hand::Left => 2,
+                    Hand::Right => 6,
+                })
+            ),
+            "{id:?} quarter-turn footprint"
         );
         assert!(
             matches!(
@@ -139,6 +155,14 @@ fn speed_matched_turns_mirror_and_join_every_compatible_piece() {
             PieceId::SpeedTurnLarge24Left,
             PieceId::SpeedTurnLarge24Right,
         ),
+        (
+            PieceId::SpeedTurnLarge28Left,
+            PieceId::SpeedTurnLarge28Right,
+        ),
+        (
+            PieceId::SpeedTurnLarge32Left,
+            PieceId::SpeedTurnLarge32Right,
+        ),
     ] {
         let left = templates.iter().find(|piece| piece.id == left_id).unwrap();
         let right = templates.iter().find(|piece| piece.id == right_id).unwrap();
@@ -213,7 +237,7 @@ fn speed_matched_turn_roll_acceleration_is_continuous_at_connectors_and_center()
         .iter()
         .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
         .collect();
-    assert_eq!(turns.len(), 6);
+    assert_eq!(turns.len(), 10);
 
     let connector_step_metres = 0.05;
     let center_step_metres = 0.05;

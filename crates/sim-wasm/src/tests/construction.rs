@@ -2036,6 +2036,10 @@ fn speed_turns_list_the_model_sizes_with_hand_and_design_speed() {
         ("SpeedTurnLarge20Right", "right", 20.0),
         ("SpeedTurnLarge24Left", "left", 24.0),
         ("SpeedTurnLarge24Right", "right", 24.0),
+        ("SpeedTurnLarge28Left", "left", 28.0),
+        ("SpeedTurnLarge28Right", "right", 28.0),
+        ("SpeedTurnLarge32Left", "left", 32.0),
+        ("SpeedTurnLarge32Right", "right", 32.0),
     ]
     .map(|(id, hand, speed)| (id.to_owned(), hand.to_owned(), speed));
     assert_eq!(summary, expected);
@@ -2043,11 +2047,11 @@ fn speed_turns_list_the_model_sizes_with_hand_and_design_speed() {
     simulation.construction_start(200, 200, 20, 0);
     let wooden: Vec<serde_json::Value> =
         serde_json::from_str(&simulation.construction_speed_turns()).unwrap();
-    assert_eq!(wooden.len(), 4);
+    assert_eq!(wooden.len(), 8);
     assert!(
         wooden
             .iter()
-            .all(|turn| turn["designSpeed"].as_f64().unwrap() < 24.0)
+            .all(|turn| turn["designSpeed"].as_f64().unwrap() != 24.0)
     );
 }
 

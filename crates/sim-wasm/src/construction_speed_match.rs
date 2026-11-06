@@ -196,6 +196,41 @@ mod tests {
     }
 
     #[test]
+    fn speed_match_offers_every_turn_banked_for_speed_on_the_same_hand_whatever_its_radius() {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+        simulation.construction_start(200, 200, 20, 0);
+        for (entry_speed, recommended) in [
+            (21.0, "SpeedTurnLarge20Left"),
+            (26.5, "SpeedTurnLarge28Left"),
+            (33.0, "SpeedTurnLarge32Left"),
+        ] {
+            let result: serde_json::Value = serde_json::from_str(
+                &simulation
+                    .construction_speed_match_json("SpeedTurnLarge16Left", Some(entry_speed)),
+            )
+            .unwrap();
+            let ids: Vec<_> = result["variants"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|variant| variant["id"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                ids,
+                vec![
+                    "SpeedTurnLarge16Left",
+                    "SpeedTurnLarge20Left",
+                    "SpeedTurnLarge24Left",
+                    "SpeedTurnLarge28Left",
+                    "SpeedTurnLarge32Left",
+                ]
+            );
+            assert_eq!(result["recommendedId"], recommended, "{entry_speed} m/s");
+            assert_eq!(result["fits"], true);
+        }
+    }
+
+    #[test]
     fn speed_match_groups_straight_hills_by_feel() {
         let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
         simulation.construction_start(200, 200, 20, 0);

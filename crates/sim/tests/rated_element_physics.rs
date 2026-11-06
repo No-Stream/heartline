@@ -1104,7 +1104,7 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
             )
         })
         .collect();
-    assert_eq!(speed_turns.len(), 6);
+    assert_eq!(speed_turns.len(), 10);
     let mut failures = Vec::new();
     let all_models = models();
     let mut scanned_candidates = 0;
@@ -1274,7 +1274,7 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
         }
     }
     assert_eq!(
-        scanned_candidates, 6,
+        scanned_candidates, 10,
         "full-train scan covers every speed-turn candidate"
     );
     assert!(
