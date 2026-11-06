@@ -11,7 +11,7 @@ const ROUTE = [
 
 test("the cutaway window shows coaster track and tunnels being built underground @slow", async ({ page }) => {
   test.setTimeout(240_000);
-  await startPark(page, { park: "new", seed: 2027, speed: 1 });
+  await startPark(page, { park: "new", seed: 2027, speed: 1, livePauseRender: true });
   await raisePlateau(page);
   await expect(page.getByLabel("Underground view style")).toHaveValue("cutaway");
   await expect(page.getByRole("region", { name: "Landscaping" }).locator("[data-underground-hint]")).toContainText("Buried track shows through the ground");
@@ -30,12 +30,19 @@ test("the cutaway window shows coaster track and tunnels being built underground
   const outsidePick = await page.evaluate(({ x, y, radius }) => window.gameTest.pickSurface(x + radius + 40, y), cutaway);
   expect(outsidePick).toMatchObject({ kind: "terrain" });
   expect(outsidePick!.height).toBeGreaterThan(cutaway.level);
+  await page.locator("canvas").focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "true");
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await expect(page.locator("canvas")).toHaveScreenshot("underground-cutaway-coaster.png", { animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001 });
   await page.getByRole("button", { name: "Dark interface", exact: true }).click();
   await page.evaluate(() => window.gameTest.setTimeOfDay(0.95));
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await expect(page.locator("canvas"), "the window's edge and the buried track stay readable at night in the dark theme")
     .toHaveScreenshot("underground-cutaway-coaster-dark-night.png", { animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001 });
+  await page.locator("canvas").focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "false");
 
   await undergroundCutaway.selectOption("off");
   await expect.poll(() => page.evaluate(() => window.gameTest.cutaway())).toBeNull();

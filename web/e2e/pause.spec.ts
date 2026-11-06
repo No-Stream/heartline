@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { canvasToPage, moveOverCanvas, openTool } from "./game-page";
 
+const livePauseRenderUrl = "/?livePauseRender=1";
+
 test("pausing freezes guests and ticks while tools remain usable", async ({ page }) => {
-  await page.goto("/");
+  await page.goto(livePauseRenderUrl);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const pause = page.getByRole("button", { name: "Pause" });
   await pause.click();
@@ -39,7 +41,7 @@ test("pausing freezes guests and ticks while tools remain usable", async ({ page
 });
 
 test("Resume works with a guest panel open at different game bar widths", async ({ page }) => {
-  await page.goto("/");
+  await page.goto(livePauseRenderUrl);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
 
   await page.getByRole("button", { name: "Pause" }).click();

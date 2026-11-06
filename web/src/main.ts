@@ -3,7 +3,7 @@ import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilit
 import { createStationTool } from "./station-tool";
 import { createFacilityTool } from "./facility-tool";
 import { stationToolAdapter, facilityToolAdapter, pathToolAdapter, landscapingToolAdapter, sceneryToolAdapter, coasterToolAdapter } from "./tool-adapters";
-import { createRenderRevision } from "./render-revision";
+import { createRenderRevision, shouldSkipRenderFrame } from "./render-revision";
 import { composeScene } from "./compose-scene";
 import { sendWorkerAction as postWorkerAction, assertNever, type WorkerAction, type WorkerMessage, type CoasterSnapshot } from "./protocol";
 import { createAutosaveScheduler, getAutosaveSettings, type AutosaveScheduler } from "./autosave";
@@ -145,6 +145,7 @@ let previous: CoasterSnapshot | undefined;
 let current: CoasterSnapshot | undefined;
 const renderClock = new RenderClock<CoasterSnapshot>(30);
 const testMode = new URLSearchParams(location.search).has("test");
+const livePauseRender = new URLSearchParams(location.search).get("livePauseRender") === "1";
 let frozen = testMode;
 const frameLogEnabled = new URLSearchParams(location.search).get("frameLog") === "1";
 const frameLogEntries: FrameLogEntry[] = [];
@@ -1025,7 +1026,14 @@ function frame(now: number): void {
     void autosaveScheduler.update(now, running, current?.tickCount ?? 0);
   }
   if (!world || replayInProgress) return;
-  if (gameTest.ready && (frozen || (testMode && gamePause.isPaused() && !followPoints))) return;
+  if ((frozen || ((testMode || livePauseRender) && gamePause.isPaused())) && shouldSkipRenderFrame({
+    revisionReady: gameTest.ready,
+    frozen,
+    testMode,
+    livePauseRender,
+    paused: gamePause.isPaused(),
+    following: followPoints !== undefined,
+  })) return;
   const renderFrame = frozen ? undefined : renderClock.frame(now);
   const renderPrevious = frozen ? previous : renderFrame?.previous;
   const renderCurrent = frozen ? current : renderFrame?.current;
