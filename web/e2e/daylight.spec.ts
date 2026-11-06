@@ -104,8 +104,9 @@ test.describe("day and night", () => {
   test("the demo coaster throws confetti once per lap at the top of its lift hill @fast", async ({ page }) => {
     test.setTimeout(30_000);
     await startPaused(page);
-    // Any crest with a large enough climb throws confetti (lift hills and launched hills alike), so only the lift crests are counted here.
-    const liftCrestBursts = () => page.evaluate(() => window.gameTest.crestBursts().filter((burst) => burst.z > 12));
+    // Any crest with a large enough climb throws confetti (lift hills and airtime hills alike), so only the lift crests are counted here:
+    // the demo's lift crest is 46 m up (11.5 tiles) and its tallest airtime hill tops out near 34 m.
+    const liftCrestBursts = () => page.evaluate(() => window.gameTest.crestBursts().filter((burst) => burst.z > 10));
     for (let advancedTicks = 0; advancedTicks < 30_000; advancedTicks += 100) {
       if ((await liftCrestBursts()).length >= 2) break;
       await page.evaluate(() => window.gameTest.advanceTicks(100));

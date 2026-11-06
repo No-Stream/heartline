@@ -327,49 +327,77 @@ fn assert_timber_tumbler_report(run_name: &str, report: &TestRun, limits: Comfor
     );
 }
 
+/// Rides the circuit under the game's default physics and the construction-test physics, asserting the
+/// excitement band, the design force margins and the rated-window entry margins; returns both reports.
+fn assert_rides_in_band_with_design_margins(
+    circuit: &Circuit,
+    model: &CoasterModel,
+    excitement_band: std::ops::RangeInclusive<f64>,
+) -> Vec<TestRun> {
+    let limits = model.comfortable_force_limits;
+    [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)]
+        .into_iter()
+        .map(|(lift_speed, initial_speed)| {
+            let report = ride_test(circuit, model, lift_speed, initial_speed);
+            let stats = report.statistics;
+            assert!(
+                excitement_band.contains(&report.excitement),
+                "lift {lift_speed} m/s excitement: {}",
+                report.excitement
+            );
+            assert!(
+                stats.max_positive_vertical_g <= limits.maximum_vertical_g - 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                stats.max_negative_vertical_g >= limits.minimum_vertical_g + 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                stats.max_lateral_g <= limits.maximum_lateral_g - 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                stats.max_forward_g <= limits.maximum_longitudinal_g - 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                stats.max_braking_g.abs() <= limits.maximum_longitudinal_g - 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                !report
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("rated speed band")),
+                "{:?}",
+                report.notes
+            );
+            assert_design_margins(circuit, model, initial_speed != 0.0);
+            report
+        })
+        .collect()
+}
+
 #[test]
 fn velocity_viper_completes_with_comfortable_forces() {
     let model = multi_launch_model();
     let circuit = player_circuit("Velocity Viper", model.clone());
-    for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
-        let report = ride_test(&circuit, &model, lift_speed, initial_speed);
-        let stats = report.statistics;
-        let limits = model.comfortable_force_limits;
+    for report in assert_rides_in_band_with_design_margins(&circuit, &model, 6.0..=9.0) {
+        assert_eq!(report.statistics.launches, 2);
+    }
+}
+
+#[test]
+fn demo_completes_as_a_friendly_ride_with_comfortable_forces() {
+    let model = hybrid_model();
+    for report in assert_rides_in_band_with_design_margins(&demo_circuit(), &model, 4.0..=6.0) {
+        assert_eq!(report.statistics.inversions, 0);
         assert!(
-            (6.0..=9.0).contains(&report.excitement),
-            "excitement: {}",
-            report.excitement
+            report.statistics.airtime_moments >= 3,
+            "demo airtime moments: {}",
+            report.statistics.airtime_moments
         );
-        assert!(
-            stats.max_positive_vertical_g <= limits.maximum_vertical_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_negative_vertical_g >= limits.minimum_vertical_g + 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_lateral_g <= limits.maximum_lateral_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_forward_g <= limits.maximum_longitudinal_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_braking_g.abs() <= limits.maximum_longitudinal_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            !report
-                .notes
-                .iter()
-                .any(|note| note.contains("rated speed band")),
-            "{:?}",
-            report.notes
-        );
-        assert_eq!(stats.launches, 2);
-        assert_design_margins(&circuit, &model, initial_speed != 0.0);
     }
 }
 
@@ -507,28 +535,5 @@ fn timber_tumbler_meets_player_ride_targets_under_both_physics_configs() {
         construction_report.statistics.airtime_moments >= 4,
         "construction-test physics airtime moments: {}",
         construction_report.statistics.airtime_moments
-    );
-}
-
-#[test]
-fn demo_and_velocity_match_provisional_excitement_references() {
-    let demo_model = hybrid_model();
-    let velocity_model = multi_launch_model();
-    let demo = construction_test(&demo_circuit(), &demo_model);
-    let velocity = construction_test(
-        &player_circuit("Velocity Viper", velocity_model.clone()),
-        &velocity_model,
-    );
-    // The current scale includes penalties for the demo's measured excessive forces.
-    assert!(
-        (0.4..=0.7).contains(&demo.excitement),
-        "demo excitement: {}",
-        demo.excitement
-    );
-    // The force-designed player circuit targets a positive score in its calibration band.
-    assert!(
-        (6.0..=9.0).contains(&velocity.excitement),
-        "Velocity Viper excitement: {}",
-        velocity.excitement
     );
 }

@@ -561,3 +561,115 @@ Nausea: 4.07
   excessive forces (+0.0, 0.0 s)
   forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
 ```
+
+## 2026-11-06: Demo coaster
+
+The demo coaster in the default park is now the fixed piece list in `crates/sim/src/physics/demo_circuit.txt`, measured with `make circuit-report CIRCUIT=Demo FILE=crates/sim/src/physics/demo_circuit.txt` (the report builds it piece by piece in the default park's world from its station at (450, 500, 10)). The chain lift climbs 26 m from the station and turns 180° at the top on the chain, crossing over the park path; the 24 m gentle drop reaches about 21.5 m/s, followed by three ejector hills and three left turns banked for 20 m/s, with no inversions. A four-piece brake run on the return trims the train to brake speed before it passes under the lift, and a 2 m descent on the return keeps it moving into the station. Both physics configurations complete a lap without recovery. The game runs the demo with construction-test physics (lift 5 m/s, initial 2 m/s), where excitement is 5.05; under default physics it is 4.78. The smallest rated-window entry margin is 1.69 m/s (construction test, ejector hill 12 × 64 m) and 2.00 m/s (default physics, a speed-matched turn). Peak forces are 3.34 g vertical in the hill valleys and the drop pullout, −0.82 g on the 12 × 64 m ejector hill, 0.32 g lateral in the slow return turns and 1.09 g longitudinal, all at least 0.25 g inside the hybrid model's 4.5 / −1.5 / 1.5 / 1.5 g limits.
+
+| Circuit | Physics | Excitement | Intensity | Nausea | Vertical max | Vertical min | Lateral peak | Longitudinal peak |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Demo | construction test | 5.05 | 5.04 | 0.60 | 3.34 g | −0.82 g | 0.32 g | 1.09 g |
+| Demo | default | 4.78 | 4.95 | 0.59 | 3.25 g | −0.73 g | 0.32 g | 1.08 g |
+
+Construction-test report:
+
+```text
+Demo (construction-test physics)
+Station exit offset: x -16.0 m, y +0.0 m, z +0.0 m; heading East (station exit East)
+# piece kind entry_m/s window_m/s margin_m/s v+_g v-_g lat_g long_g band roll_deg/s notes
+0 Station Station 2.00 — — 1.00 1.00 0.00 0.31 Weak 0.0
+1 LevelToGentleUp Lift 2.01[5.00] — — 1.10 0.89 0.00 0.46 Weak 0.0
+2 GentleUp Lift 5.00 — — 0.89 0.89 0.00 0.45 Weak 0.0
+3 GentleUp Lift 5.00 — — 0.89 0.89 0.00 0.45 Weak 0.0
+4 GentleUpToLevel Lift 5.00 — — 1.00 0.83 0.00 0.46 Weak 0.0
+5 TerrainRise Lift 5.00 — — 1.13 0.83 0.00 0.34 Weak 0.0
+6 TurnLargeStandalone Lift 5.00 — — 1.00 1.00 0.11 0.00 Weak 0.0
+7 TurnLargeStandalone Lift 5.00 — — 1.00 1.00 0.11 0.21 Weak 0.0
+8 LevelToGentleDown Track 5.00[6.67] — — 1.00 0.45 0.00 0.34 Weak 0.0
+9 GentleDown Track 7.24[12.89] — — 0.89 0.89 0.00 0.19 Weak 0.0
+10 GentleDown Track 13.81[17.90] — — 0.89 0.89 0.00 0.20 Weak 0.0
+11 GentleDownToLevel Track 18.57[21.38] — — 3.29 0.89 0.00 0.86 Good 0.0
+12 EjectorHill8x64 Track 21.56 13.49..25.22 +3.31 3.15 -0.73 0.00 1.08 Good 0.0
+13 EjectorHill12x80 Track 21.35 16.14..26.59 +4.97 2.91 -0.39 0.00 0.77 Good 0.0
+14 SpeedTurnLarge20Left Track 21.07 17.00..23.00 +1.75 2.51 1.00 0.05 0.42 Good 72.1
+15 EjectorHill8x64 Track 20.96 13.49..25.22 +4.24 2.97 -0.55 0.00 0.92 Good 0.2
+16 Straight Track 20.32 — — 1.00 1.00 0.00 0.17 Weak 0.0
+17 Straight Track 20.62 — — 1.00 1.00 0.00 0.04 Weak 0.0
+18 SpeedTurnLarge20Left Track 20.54 17.00..23.00 +2.46 2.35 1.00 0.12 0.39 Good 69.6
+19 EjectorHill12x64 Track 20.18 15.94..21.88 +1.69 3.34 -0.82 0.00 1.09 Good 0.1
+20 Straight Track 19.45 — — 1.00 1.00 0.00 0.22 Weak 0.0
+21 Straight Track 19.84 — — 1.00 1.00 0.00 0.01 Weak 0.0
+22 Straight Track 19.76 — — 1.00 1.00 0.00 0.01 Weak 0.0
+23 Straight Track 19.67 — — 1.00 1.00 0.00 0.01 Weak 0.0
+24 Straight Track 19.59 — — 1.00 1.00 0.00 0.04 Weak 0.0
+25 SpeedTurnLarge20Left Track 19.51 17.00..23.00 +2.36 2.16 1.00 0.20 0.35 Good 66.1
+26 Brakes Brakes 19.13[16.62] — — 1.00 1.00 0.00 0.31 Weak 0.1
+27 Brakes Brakes 16.42[13.32] — — 1.00 1.00 0.00 0.31 Weak 0.0
+28 Brakes Brakes 13.09[8.92] — — 1.00 1.00 0.00 0.31 Weak 0.0
+29 Brakes Brakes 8.57[3.93] — — 1.00 1.00 0.00 0.31 Weak 0.0
+30 Straight Track 3.91 — — 1.00 1.00 0.00 0.01 Weak 0.0
+31 OneTileStraight Track 3.70 — — 1.00 1.00 0.00 0.01 Weak 0.0
+32 OneTileStraight Track 3.64 — — 1.00 1.00 0.00 0.01 Weak 0.0
+33 OneTileStraight Track 3.59 — — 1.00 1.00 0.00 0.01 Weak 0.0
+34 TurnSmallStandalone Track 3.53 — — 1.00 1.00 0.11 0.11 Weak 0.0
+35 TerrainFall Track 3.13[5.16] — — 1.24 0.76 0.00 0.32 Weak 0.0
+36 Straight Track 5.39[6.77] — — 1.00 1.00 0.00 0.11 Weak 0.0
+37 Straight Track 6.75 — — 1.00 1.00 0.00 0.01 Weak 0.0
+38 Straight Track 6.62 — — 1.00 1.00 0.00 0.01 Weak 0.0
+39 Straight Track 6.49 — — 1.00 1.00 0.00 0.01 Weak 0.0
+40 OneTileStraight Track 6.35 — — 1.00 1.00 0.00 0.01 Weak 0.0
+41 OneTileStraight Track 6.32 — — 1.00 1.00 0.00 0.01 Weak 0.0
+42 TurnSmallStandalone Track 6.28 — — 1.00 1.00 0.32 0.01 Weak 0.0
+43 OneTileStraight Track 6.05 — — 1.00 1.00 0.00 0.01 Weak 0.0
+44 OneTileStraight Track 6.01 — — 1.00 1.00 0.00 0.01 Weak 0.0
+45 OneTileStraight Track 5.98 — — 1.00 1.00 0.00 0.01 Weak 0.0
+46 TurnSmallStandalone Track 5.94 — — 1.00 1.00 0.29 0.31 Weak 0.0
+47 Brakes Brakes 5.68[3.84] — — 1.00 1.00 0.00 0.31 Weak 0.0
+48 Brakes Brakes 3.83 — — 1.00 1.00 0.00 0.31 Weak 0.0
+49 OneTileStraight Track 3.61 — — 1.00 1.00 0.00 0.31 Weak 0.0
+50 OneTileStraight Track 3.55 — — 1.00 1.00 0.00 0.31 Weak 0.0
+Completed lap: true; recovered: false
+Note: Ratings average all cars. The track ribbon and proximity events describe the front car; statistics and force advice report the most extreme values across cars.
+Score breakdown:
+Excitement: 5.05
+  airtime (+1.3, 1.8 s)
+  airtime moments (+0.4, 4.0)
+  positive forces (+0.8, 3.6 s)
+  lateral forces (+0.0, 0.0 s)
+  longitudinal forces (+0.1, 0.6 s)
+  excessive forces (-0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  top speed (+0.5, 9.9 m/s)
+  biggest drop (+0.4, 26.0 m)
+  pace (+0.1, 1.8 m/s)
+  launch (+0.0, 0.0 g)
+  variety (+0.4, 2.0)
+  whip (+0.5, 8.8)
+  roll rate (+0.1, 11.4 degrees/s)
+  ride time (+0.7, 97.4 s)
+  short ride (-0.0, 97.4 s)
+  proximity (+0.0, 0.0)
+  theming (+0.0, 0.0)
+  dead time (-0.2, 3.6 s at Large left turn banked for 20 m/s)
+  forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+  nausea (-0.0, 0.6)
+  minimum excitement (+0.0, 0.0)
+Intensity: 5.04
+  peak force (+2.2, 0.5 at Ejector hill 12 × 64 m)
+  sustained force (+1.9, 6.0 s)
+  excessive forces (+0.0, 0.0 s)
+  top speed (+0.6, 11.9 m/s)
+  biggest drop (+0.4, 26.0 m)
+  launch (+0.0, 0.0 g)
+  inversions (+0.0, 0.0)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Nausea: 0.60
+  lateral forces (+0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  fast rolls (+0.0, 0.0 s)
+  reversals (+0.0, 0.0)
+  strong positive forces (+0.6, 3.6 s)
+  time inverted (+0.0, -0.0 s)
+  excessive forces (+0.0, 0.0 s)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+```

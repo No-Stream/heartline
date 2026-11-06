@@ -86,13 +86,14 @@ mod tests {
             lift_speed: 5.0,
             ..PhysicsConfig::default()
         };
-        // The first drop ends immediately before the loop.
-        let loop_index = circuit
+        // The first drop ends where it levels out into the first hill.
+        let valley_index = circuit
             .pieces()
             .iter()
-            .position(|piece| piece.id == PieceId::Loop)
-            .unwrap();
-        let pieces = &circuit.pieces()[..loop_index];
+            .position(|piece| piece.id == PieceId::GentleDownToLevel)
+            .unwrap()
+            + 1;
+        let pieces = &circuit.pieces()[..valley_index];
         let mut construction = Construction::new(pieces[0].entry, model.clone());
         construction.pieces = pieces.to_vec();
         let preview = preview_open_track(pieces, &model.train, config).unwrap();

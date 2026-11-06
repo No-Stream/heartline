@@ -785,21 +785,22 @@ fn block_report_marks_throughput_pending_until_incremental_estimate_completes() 
 }
 
 #[test]
-fn block_suggestion_does_not_point_across_a_loop_without_a_candidate() {
+fn block_suggestion_does_not_point_across_a_hill_without_a_candidate() {
     let circuit = demo_circuit();
     let mut train = hybrid_model().train;
     train.length_metres = 5.0;
     let runs = theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres);
-    let loop_index = circuit
+    // Airtime hills, like loops, are never brake sites.
+    let hill_index = circuit
         .pieces()
         .iter()
-        .position(|piece| piece.id == PieceId::Loop)
-        .expect("demo circuit contains a loop");
-    let loop_start: f64 = circuit.pieces()[..loop_index]
+        .position(|piece| piece.id == PieceId::EjectorHill8x64)
+        .expect("demo circuit contains an ejector hill");
+    let hill_start: f64 = circuit.pieces()[..hill_index]
         .iter()
         .map(|piece| piece.length())
         .sum();
-    let loop_end = loop_start + circuit.pieces()[loop_index].length();
+    let hill_end = hill_start + circuit.pieces()[hill_index].length();
     let candidate_boundaries: Vec<_> =
         runs.iter()
             .map(|run| run.boundary_metres)
@@ -809,23 +810,23 @@ fn block_suggestion_does_not_point_across_a_loop_without_a_candidate() {
                 }
                 boundaries
             });
-    let before_loop = candidate_boundaries
+    let before_hill = candidate_boundaries
         .iter()
         .copied()
-        .filter(|boundary| *boundary <= loop_start)
+        .filter(|boundary| *boundary <= hill_start)
         .max_by(f64::total_cmp)
-        .expect("brake candidate before loop");
-    let after_loop = candidate_boundaries
+        .expect("brake candidate before the hill");
+    let after_hill = candidate_boundaries
         .iter()
         .copied()
-        .filter(|boundary| *boundary >= loop_end)
+        .filter(|boundary| *boundary >= hill_end)
         .min_by(f64::total_cmp)
-        .expect("brake candidate after loop");
+        .expect("brake candidate after the hill");
     assert!(
         runs.iter()
-            .all(|run| { run.boundary_metres <= before_loop || run.boundary_metres >= after_loop })
+            .all(|run| { run.boundary_metres <= before_hill || run.boundary_metres >= after_hill })
     );
-    assert!(loop_start >= before_loop && loop_end <= after_loop);
+    assert!(hill_start >= before_hill && hill_end <= after_hill);
 
     let validated_circuit = block_test_circuit();
     let validated_train = hybrid_model().train;

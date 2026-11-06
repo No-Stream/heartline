@@ -1,0 +1,60 @@
+# Demo coaster in the default park. The station at (450, 500, 10) heading east comes first and is not listed.
+[Demo]
+# Chain lift east, then a slow turnaround on the chain over the park path
++chain
+LevelToGentleUp
+GentleUp
+GentleUp
+GentleUpToLevel
+TerrainRise
+TurnLargeStandalone
+TurnLargeStandalone
+-chain
+# Drop west and the first airtime run
+LevelToGentleDown
+GentleDown
+GentleDown
+GentleDownToLevel
+EjectorHill8x64
+EjectorHill12x80
+SpeedTurnLarge20Left
+# Southbound
+EjectorHill8x64
+Straight
+Straight
+SpeedTurnLarge20Left
+# Eastbound
+EjectorHill12x64
+Straight
+Straight
+Straight
+Straight
+Straight
+SpeedTurnLarge20Left
+# Return north under the lift and home
+Brakes
+Brakes
+Brakes
+Brakes
+Straight
+OneTileStraight
+OneTileStraight
+OneTileStraight
+TurnSmallStandalone
+TerrainFall
+Straight
+Straight
+Straight
+Straight
+OneTileStraight
+OneTileStraight
+TurnSmallStandalone
+OneTileStraight
+OneTileStraight
+OneTileStraight
+TurnSmallStandalone
+Brakes
+Brakes
+OneTileStraight
+OneTileStraight
+
