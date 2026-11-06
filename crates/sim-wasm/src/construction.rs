@@ -1760,11 +1760,11 @@ impl WasmSimulation {
         let preview_world = if carve_cells.is_empty() {
             &self.park.world
         } else {
-            let mut candidate = self.park.world.clone();
-            candidate
-                .carve_cells(&carve_cells)
+            (carved_world, _) = self
+                .park
+                .world
+                .with_cells_carved(&carve_cells)
                 .map_err(|_| SupportError::NoRoute)?;
-            carved_world = candidate;
             &carved_world
         };
         let mut obstacles: Vec<_> = self
