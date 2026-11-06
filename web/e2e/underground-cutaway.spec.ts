@@ -32,6 +32,7 @@ test("the cutaway window shows coaster track and tunnels being built underground
   expect(outsidePick!.height).toBeGreaterThan(cutaway.level);
   await page.locator("canvas").focus();
   await page.keyboard.press("Space");
+  await page.locator("canvas").blur();
   await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "true");
   await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
   await expect(page.locator("canvas")).toHaveScreenshot("underground-cutaway-coaster.png", { animations: "disabled", threshold: 0.1, maxDiffPixelRatio: 0.001 });
