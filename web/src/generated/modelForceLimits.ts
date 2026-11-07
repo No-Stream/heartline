@@ -297,17 +297,17 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
       "longitudinal": [
         {
           "rating": "fine",
-          "upTo": 0.6,
+          "upTo": 0.75,
           "inclusive": true
         },
         {
           "rating": "strong",
-          "upTo": 1.2,
+          "upTo": 1.5,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 1.56,
+          "upTo": 1.9500000000000002,
           "inclusive": true
         },
         {
@@ -318,7 +318,7 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
       ]
     },
     "maximumLateralG": 1.2,
-    "maximumLongitudinalG": 1.2
+    "maximumLongitudinalG": 1.5
   },
   "Timber Tumbler": {
     "minimumVerticalG": -1.5,

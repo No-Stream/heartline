@@ -1809,6 +1809,20 @@ mod tests {
                     &ProfileSpec::pull(PI / 4.0, PI / 3.0, 34.0, 4.2).named("SteepToSixtyUp"),
                 ),
             ),
+            (
+                "WideSixtyCrest",
+                snap_pull(
+                    &ProfileSpec::crest(PI / 3.0, 0.0, 22.0, -0.7)
+                        .with_taper_angle(0.2)
+                        .named("WideLevelToSixtyDown"),
+                ),
+            ),
+            (
+                "WideSixtyPull",
+                snap_pull(
+                    &ProfileSpec::pull(0.0, PI / 3.0, 38.0, 3.8).named("WideSixtyDownToLevel"),
+                ),
+            ),
         ]
     }
 

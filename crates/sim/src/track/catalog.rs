@@ -134,6 +134,10 @@ fn build_catalog() -> Vec<Piece> {
         LazyLock::new(|| Arc::new(RollGeometry::spline()));
     static FIFTEEN_PULL: LazyLock<Arc<SolvedProfile>> =
         LazyLock::new(|| Arc::new(embedded_profile("FifteenPull")));
+    static WIDE_SIXTY_CREST: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("WideSixtyCrest")));
+    static WIDE_SIXTY_PULL: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("WideSixtyPull")));
     let standard_loop_exit_x = (LOOP_PROFILE.endpoint()[0] / 2.0).round() as i32;
     let definitions = [
         (
@@ -252,6 +256,32 @@ fn build_catalog() -> Vec<Piece> {
             FlatBank,
             FlatBank,
             Shape::Profile(Arc::clone(&SIXTY_PULL)),
+        ),
+        (
+            WideLevelToSixtyDown,
+            "Begin wide 60-degree descent",
+            (WIDE_SIXTY_CREST.endpoint()[0] / 2.0).round() as i32,
+            0,
+            -(WIDE_SIXTY_CREST.endpoint()[1] / 2.0).round() as i32,
+            East,
+            Level,
+            DownSixty,
+            FlatBank,
+            FlatBank,
+            Shape::Profile(Arc::clone(&WIDE_SIXTY_CREST)),
+        ),
+        (
+            WideSixtyDownToLevel,
+            "Wide level-out from 60-degree descent",
+            (WIDE_SIXTY_PULL.endpoint()[0] / 2.0).round() as i32,
+            0,
+            -(WIDE_SIXTY_PULL.endpoint()[1] / 2.0).round() as i32,
+            East,
+            DownSixty,
+            Level,
+            FlatBank,
+            FlatBank,
+            Shape::Profile(Arc::clone(&WIDE_SIXTY_PULL)),
         ),
         (
             SteepToSixtyUp,
@@ -822,6 +852,16 @@ fn build_catalog() -> Vec<Piece> {
                         SteepToSixtyUp => {
                             Some(FIFTEEN_PULL.rated_speeds("SteepToSixtyUp", 34.0, 2.0, 5.0))
                         }
+                        WideLevelToSixtyDown => Some(RatedSpeeds {
+                            minimum_entry: 1.0,
+                            maximum_entry: 6.5,
+                        }),
+                        WideSixtyDownToLevel => Some(RatedSpeeds {
+                            minimum_entry: 2.0,
+                            maximum_entry: (38.0_f64.powi(2)
+                                - 2.0 * 9.81 * WIDE_SIXTY_PULL.endpoint()[1])
+                                .sqrt(),
+                        }),
                         SixtyDownToLevel => Some(RatedSpeeds {
                             minimum_entry: 2.0,
                             maximum_entry: (34.0_f64.powi(2)

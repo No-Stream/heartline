@@ -560,11 +560,21 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         ),
         (
             "Floater hill 4 × 48 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Floater hill 8 × 64 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Floater hill 12 × 80 m",
@@ -577,7 +587,12 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         ),
         (
             "Floater hill 6 × 64 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Floater hill 12 × 96 m",
@@ -599,11 +614,21 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         ),
         (
             "Speed hill 4 × 64 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Speed hill 6 × 80 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
         ("Strong floater hill 8 × 64 m", &["Briar Blitz"]),
@@ -614,6 +639,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
                 "Velocity Viper",
                 "Briar Blitz",
                 "Daisy Dash",
+                "Horizon Hawk",
             ],
         ),
         (
@@ -623,6 +649,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
                 "Velocity Viper",
                 "Briar Blitz",
                 "Daisy Dash",
+                "Horizon Hawk",
             ],
         ),
         ("Floater hill 20 × 128 m", &["Horizon Hawk"]),
@@ -1906,7 +1933,7 @@ fn coaster_models_use_peak_rider_force_limits() {
         ("Timber Tumbler", -1.5, 4.5, 1.5, 1.5),
         ("Velocity Viper", -1.5, 5.0, 1.5, 1.5),
         ("Daisy Dash", -0.6, 3.0, 1.0, 1.5),
-        ("Horizon Hawk", -1.3, 4.0, 1.2, 1.2),
+        ("Horizon Hawk", -1.3, 4.0, 1.2, 1.5),
     ];
     let models = coaster_models();
     assert_eq!(models.len(), expected_limits.len());
@@ -1918,7 +1945,10 @@ fn coaster_models_use_peak_rider_force_limits() {
         assert_eq!(limits.minimum_vertical_g, minimum_vertical, "{name}");
         assert_eq!(limits.maximum_vertical_g, maximum_vertical, "{name}");
         assert_eq!(limits.maximum_lateral_g, maximum_lateral, "{name}");
-        assert_eq!(limits.maximum_longitudinal_g, maximum_longitudinal, "{name}");
+        assert_eq!(
+            limits.maximum_longitudinal_g, maximum_longitudinal,
+            "{name}"
+        );
     }
 }
 
@@ -2384,8 +2414,11 @@ fn hyper_is_a_straight_lift_floater_ride_without_inversions() {
             piece.name
         );
         if let Some(PieceFamily::Hill(hill)) = piece.family {
-            assert_eq!(hill.feel, HillFeel::Floater, "{}", piece.name);
-            assert!(hill.height_metres >= 12, "{}", piece.name);
+            assert!(
+                matches!(hill.feel, HillFeel::Floater | HillFeel::Speed),
+                "{}",
+                piece.name
+            );
         }
     }
     for id in [
@@ -2393,8 +2426,10 @@ fn hyper_is_a_straight_lift_floater_ride_without_inversions() {
         PieceId::FloaterHill24x160,
         PieceId::SpeedTurnLarge28Left,
         PieceId::SpeedTurnLarge32Right,
-        PieceId::SteepToSixtyDown,
-        PieceId::SixtyDown,
+        PieceId::WideLevelToSixtyDown,
+        PieceId::WideSixtyDownToLevel,
+        PieceId::FloaterHill8x64,
+        PieceId::FamilyHill4x40,
     ] {
         assert!(hyper.allowed_pieces.contains(&id), "{id:?}");
     }
@@ -2416,12 +2451,6 @@ fn hyper_is_a_straight_lift_floater_ride_without_inversions() {
         // Above 4 g at the top of its window.
         PieceId::SpeedTurnLarge24Left,
         PieceId::SpeedTurnLarge24Right,
-        // The smaller floater, speed and family hills surge above 1.2 g longitudinal at the top of their windows.
-        PieceId::FloaterHill4x48,
-        PieceId::FloaterHill6x64,
-        PieceId::FloaterHill8x64OuterLeft,
-        PieceId::SpeedHill6x80,
-        PieceId::FamilyHill4x40,
     ] {
         assert!(!hyper.allowed_pieces.contains(&id), "{id:?}");
     }
