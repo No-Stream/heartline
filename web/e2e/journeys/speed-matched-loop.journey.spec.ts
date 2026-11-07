@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { clickCanvas, moveOverCanvas, openTool, selectUnits } from "../game-page";
+import { gotoGame } from "../player/driver";
 
 test("selects a loop sized for the estimated launch speed and previews its forces @journey", async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto("/?park=new&seed=2026&test=1");
+  await gotoGame(page, "/?park=new&seed=2026&test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
   await selectUnits(page, "metric");

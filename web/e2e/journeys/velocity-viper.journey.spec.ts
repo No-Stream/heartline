@@ -11,7 +11,7 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   const topHatIndex = circuit.indexOf("LaunchedTopHat");
   expect(topHatIndex).toBeGreaterThan(0);
   expect(circuit[topHatIndex - 1]).toMatch(/^Launch/);
-  await startPark(page, { park: "new", seed: 2026, speed: 1 });
+  await startPark(page, { park: "new", seed: 2026, speed: 1, livePauseRender: true });
   await placeStation(page, { model: "velocity_viper", height: 4, tile: { x: 241, y: 249, z: 2 }, direction: { x: 241, y: 251, z: 2 } });
   await placeCircuit(page, circuit, true);
   await page.locator("canvas").focus();
@@ -28,6 +28,9 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   expect(rating.excitement).toBeLessThanOrEqual(9);
   expect((await page.evaluate(() => window.gameTest.testingReport()!)).statistics.launches).toBe(2);
   console.log(`Velocity Viper ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
+  await page.locator("canvas").focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "true");
   await page.setViewportSize({ width: 1280, height: 1200 });
   const testingPanel = page.locator("[data-testing]");
   await expect(testingPanel).toContainText("Scores (about 0–10)");

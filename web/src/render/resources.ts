@@ -1,6 +1,8 @@
 import { GRADE_GLSL, POOL_FALLOFF_DECAY, POOL_FALLOFF_RIM_START, POOL_GLSL } from "./daylight";
 
-export const FLOATS_PER_QUAD = 29;
+export const FLOATS_PER_VERTEX = 14;
+export const VERTICES_PER_QUAD = 4;
+export const INDICES_PER_QUAD = 6;
 
 export function createRenderResources(gl: WebGL2RenderingContext, images: Record<string, HTMLImageElement[]>) {
   function shader(type: number, source: string): WebGLShader {
@@ -21,19 +23,15 @@ export function createRenderResources(gl: WebGL2RenderingContext, images: Record
   }
   const program = link(`#version 300 es
     precision highp float;
-    layout(location=0) in vec4 a; layout(location=1) in vec4 b;
-    layout(location=2) in vec4 c; layout(location=3) in vec4 d;
-    layout(location=4) in vec4 vs; layout(location=5) in vec3 objectId; layout(location=6) in vec4 tint; layout(location=7) in float light; layout(location=8) in float cut;
+    layout(location=0) in vec4 corner; layout(location=1) in float cornerV;
+    layout(location=2) in vec3 objectId; layout(location=3) in vec4 tint; layout(location=4) in float light; layout(location=5) in float cut;
     uniform vec2 resolution; uniform vec2 depthRange; uniform bool overlay; uniform float overlayDepth;
     out vec2 uv; flat out vec3 id; flat out vec4 fill; flat out float lit; flat out float cutSide;
     void main() {
-      int indices[6] = int[6](0,1,2,0,2,3); int i = indices[gl_VertexID];
-      vec4 p = i == 0 ? a : i == 1 ? b : i == 2 ? c : d;
-      float v = i == 0 ? vs.x : i == 1 ? vs.y : i == 2 ? vs.z : vs.w;
-      vec2 screen = p.xy / resolution;
-      float z = overlay ? overlayDepth : 1.0 - (p.z - depthRange.x) / depthRange.y * 2.0;
+      vec2 screen = corner.xy / resolution;
+      float z = overlay ? overlayDepth : 1.0 - (corner.z - depthRange.x) / depthRange.y * 2.0;
       gl_Position = vec4(screen.x*2.0-1.0, 1.0-screen.y*2.0, z, 1.0);
-      uv = vec2(p.w,v); id = objectId; fill = tint; lit = light; cutSide = cut;
+      uv = vec2(corner.w,cornerV); id = objectId; fill = tint; lit = light; cutSide = cut;
     }`, `#version 300 es
     precision highp float; uniform sampler2D atlas; uniform bool picking; uniform bool textured; uniform int shape; uniform bool graded;
     uniform sampler2D poolLight; uniform bool pooled; uniform vec2 resolution;
@@ -83,19 +81,20 @@ export function createRenderResources(gl: WebGL2RenderingContext, images: Record
       float halftone = 1.0 - smoothstep(0.6, 1.6, length(mod(gl_FragCoord.xy, 3.0) - 1.5));
       color = vec4(light * (0.8 + 0.35 * halftone), 1.0);
     }`);
-  const vao = gl.createVertexArray(); const emptyVao = gl.createVertexArray(); const buffer = gl.createBuffer(); const framebuffer = gl.createFramebuffer();
+  const vao = gl.createVertexArray(); const emptyVao = gl.createVertexArray(); const buffer = gl.createBuffer(); const indexBuffer = gl.createBuffer(); const framebuffer = gl.createFramebuffer();
   const pickTexture = gl.createTexture(); const depthBuffer = gl.createRenderbuffer();
   const glowFramebuffer = gl.createFramebuffer(); const glowTexture = gl.createTexture();
   const poolFramebuffer = gl.createFramebuffer(); const poolTexture = gl.createTexture();
-  if (!vao || !emptyVao || !buffer || !framebuffer || !pickTexture || !depthBuffer || !glowFramebuffer || !glowTexture || !poolFramebuffer || !poolTexture) throw new Error("Could not create WebGL resources");
-  gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  const stride = FLOATS_PER_QUAD * 4;
-  for (let i = 0; i < 4; i++) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, 4, gl.FLOAT, false, stride, i * 16); gl.vertexAttribDivisor(i, 1); }
-  gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 4, gl.FLOAT, false, stride, 64); gl.vertexAttribDivisor(4, 1);
-  gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 3, gl.FLOAT, false, stride, 80); gl.vertexAttribDivisor(5, 1);
-  gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 4, gl.FLOAT, false, stride, 92); gl.vertexAttribDivisor(6, 1);
-  gl.enableVertexAttribArray(7); gl.vertexAttribPointer(7, 1, gl.FLOAT, false, stride, 108); gl.vertexAttribDivisor(7, 1);
-  gl.enableVertexAttribArray(8); gl.vertexAttribPointer(8, 1, gl.FLOAT, false, stride, 112); gl.vertexAttribDivisor(8, 1);
+  if (!vao || !emptyVao || !buffer || !indexBuffer || !framebuffer || !pickTexture || !depthBuffer || !glowFramebuffer || !glowTexture || !poolFramebuffer || !poolTexture) throw new Error("Could not create WebGL resources");
+  // Quads are indexed triangles, not instances: software WebGL (SwiftShader) runs every instance as a separate draw.
+  gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buffer); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+  const stride = FLOATS_PER_VERTEX * 4;
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 4, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, stride, 16);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, stride, 20);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 4, gl.FLOAT, false, stride, 32);
+  gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 1, gl.FLOAT, false, stride, 48);
+  gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 1, gl.FLOAT, false, stride, 52);
   const textures = Object.fromEntries(Object.entries(images).map(([scale, pageImages]) => [scale, pageImages.map((image) => {
     const texture = gl.createTexture(); if (!texture) throw new Error("Could not create atlas texture");
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -103,5 +102,5 @@ export function createRenderResources(gl: WebGL2RenderingContext, images: Record
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image); return texture;
   })]));
-  return { program, skyProgram, glowProgram, vao, emptyVao, buffer, framebuffer, pickTexture, depthBuffer, glowFramebuffer, glowTexture, poolFramebuffer, poolTexture, textures };
+  return { program, skyProgram, glowProgram, vao, emptyVao, buffer, indexBuffer, framebuffer, pickTexture, depthBuffer, glowFramebuffer, glowTexture, poolFramebuffer, poolTexture, textures };
 }
