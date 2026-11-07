@@ -784,3 +784,71 @@ Nausea: 0.40
   excessive forces (+0.0, 0.0 s)
   forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
 ```
+
+## Horizon Hawk (hyper)
+
+Horizon Hawk by Boulder & Marlin was added on 2026-11-06 with its reference circuit in
+`web/e2e/player/circuits.txt`. The band test (`horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs`)
+expects excitement from 6 to 8, every force at least 0.25 g inside the model limits (4.0 / −1.3 g vertical, 1.2 g
+lateral, 1.5 g longitudinal), every rated piece entered at least 1.5 m/s inside its window, at least six airtime
+moments, a drop of at least 50 m and a top speed of at least 30 m/s. The circuit report measured:
+
+| Physics | Excitement | Intensity | Nausea | Peak vertical g | Minimum vertical g | Peak lateral g | Peak longitudinal g |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Default | 6.45 | 6.50 | 0.91 | 3.16 | −0.64 | 0.17 | 1.21 |
+| Construction test | 6.70 | 6.55 | 0.91 | 3.19 | −0.81 | 0.16 | 1.24 |
+
+The ride sits near the hyper archetype (6.62), clearly above the classic looper archetype (4.05) and Daisy Dash, and
+far below the wooden hybrid and wooden twister archetypes. It scores on long floater airtime (about 8 s over nine
+or ten moments) and sustained positive force rather than ejector peaks: entered 1.5 m/s inside their windows, the
+new 24 × 160 m and 20 × 128 m camelbacks crest at about −0.6 to −0.9 g instead of their −1.0 g design, and the
+smaller floater hills near zero g. The circuit needs nine trim and brake pieces because every hill returns to the
+same level, so friction alone cannot slow the train between hills with different windows. A crest fed straight
+from the chain lift is held to the design margin by the front car's entry speed, the way its rated window is
+measured, because the rear cars cross it as the front of the train falls away.
+Construction-test breakdown (`make circuit-report CIRCUIT="Horizon Hawk" ARGS=--construction-test`):
+
+```text
+Score breakdown:
+Excitement: 6.70
+  airtime (+1.6, 2.4 s)
+  airtime moments (+0.7, 8.2)
+  positive forces (+1.0, 9.7 s)
+  lateral forces (+0.0, 0.0 s)
+  longitudinal forces (+0.2, 1.1 s)
+  excessive forces (-0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  top speed (+0.8, 22.6 m/s)
+  biggest drop (+0.6, 64.0 m)
+  pace (+0.4, 13.1 m/s)
+  launch (+0.0, 0.0 g)
+  variety (+0.4, 2.0)
+  whip (+0.4, 5.4)
+  roll rate (+0.1, 10.8 degrees/s)
+  ride time (+0.7, 84.8 s)
+  short ride (-0.0, 84.8 s)
+  proximity (+0.0, 0.0)
+  theming (+0.0, 0.0)
+  dead time (-0.1, 1.9 s at Large left turn banked for 16 m/s)
+  forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+  nausea (-0.0, 0.9)
+  minimum excitement (+0.0, 0.0)
+Intensity: 6.55
+  peak force (+2.2, 0.6 at Floater hill 8 × 64 m)
+  sustained force (+2.7, 13.2 s)
+  excessive forces (+0.0, 0.0 s)
+  top speed (+0.9, 24.6 m/s)
+  biggest drop (+0.7, 64.0 m)
+  launch (+0.0, 0.0 g)
+  inversions (+0.0, 0.0)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Nausea: 0.91
+  lateral forces (+0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  fast rolls (+0.0, 0.0 s)
+  reversals (+0.0, 0.0)
+  strong positive forces (+0.9, 9.7 s)
+  time inverted (+0.0, -0.0 s)
+  excessive forces (+0.0, 0.0 s)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+```
