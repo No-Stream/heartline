@@ -1,8 +1,9 @@
 use crate::physics::Circuit;
 use crate::state_hash::StateHasher;
 use crate::track::clearance::{
-    ClearanceBox, ClearanceCollision, ClearanceIndex, TunnelPlan, check_clearance_indexed,
-    check_reverse_track_clearance, tunnel_plan,
+    ClearanceBox, ClearanceCollision, ClearanceEnvelopes, ClearanceIndex, TerrainCell, TunnelPlan,
+    check_clearance_indexed, check_clearance_with_envelopes, check_reverse_track_clearance,
+    tunnel_plan, tunnel_plan_with_envelopes,
 };
 use crate::track::supports::{
     SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle,
@@ -15,11 +16,12 @@ use crate::track::{
     TrainConfiguration, Vec3, catalog,
 };
 use crate::world::World;
-#[cfg(test)]
-use std::cell::Cell;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashSet};
+use std::sync::{Arc, OnceLock};
 
+#[cfg(test)]
+mod cache_tests;
 #[cfg(test)]
 mod tests;
 
@@ -142,6 +144,7 @@ fn select_speed_matched_variant_with_windows(
 struct PieceValidation {
     supports: Vec<Vec<Support>>,
     tunnel_plan: TunnelPlan,
+    track_obstacles: Vec<SupportObstacle>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -177,6 +180,15 @@ struct ValidationCache {
     clearance_index: ClearanceIndex,
     track_obstacles: Vec<Vec<SupportObstacle>>,
     supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
+    support_regions: Vec<SupportSearchRegion>,
+    /// Union of the existing pieces' tunnel carve cells.
+    existing_carve_cells: BTreeSet<TerrainCell>,
+    /// The world with `existing_carve_cells` carved, built once and shared by copies of the cache.
+    existing_carved_world: Arc<OnceLock<Result<World, ConstructionError>>>,
+    /// Supports routed for each existing piece on the existing carved world, among the other
+    /// existing pieces. Unlike `supports`, an entry is dropped whenever a change could reach it,
+    /// so it always equals a fresh routing and tunnelling validations can reuse it.
+    exact_supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -198,6 +210,9 @@ pub struct Construction {
     choices_cache: RefCell<Option<ChoicesCache>>,
     #[serde(skip)]
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
+    /// `state_hash` of the current editable state; every mutation of a hashed field clears it.
+    #[serde(skip)]
+    state_hash_memo: Cell<Option<u64>>,
     #[cfg(test)]
     support_cache_misses: Cell<usize>,
     #[cfg(test)]
@@ -225,6 +240,7 @@ impl Construction {
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
+            state_hash_memo: Cell::new(None),
             #[cfg(test)]
             support_cache_misses: Cell::new(0),
             #[cfg(test)]
@@ -257,10 +273,12 @@ impl Construction {
         self.colors
     }
     pub fn set_colors(&mut self, colors: CoasterColors) {
+        self.invalidate_state_hash();
         self.colors = colors;
     }
     pub fn set_chain(&mut self, enabled: bool) {
         if self.chain != enabled {
+            self.invalidate_state_hash();
             self.chain = enabled;
             *self.choices_cache.get_mut() = None;
         }
@@ -277,6 +295,7 @@ impl Construction {
         }
         train.length_metres = train.length_metres / f64::from(train.cars) * f64::from(cars);
         train.cars = cars;
+        self.invalidate_state_hash();
         *self.validation_cache.get_mut() = None;
         *self.choices_cache.get_mut() = None;
         *self.element_choices_cache.get_mut() = None;
@@ -288,6 +307,25 @@ impl Construction {
 
     /// Stable fingerprint of the editable track state, excluding derived validation caches.
     pub fn state_hash(&self) -> u64 {
+        if let Some(memo) = self.state_hash_memo.get() {
+            #[cfg(test)]
+            assert_eq!(
+                memo,
+                self.compute_state_hash(),
+                "a mutation did not clear the state hash memo"
+            );
+            return memo;
+        }
+        let hash = self.compute_state_hash();
+        self.state_hash_memo.set(Some(hash));
+        hash
+    }
+
+    fn invalidate_state_hash(&mut self) {
+        *self.state_hash_memo.get_mut() = None;
+    }
+
+    fn compute_state_hash(&self) -> u64 {
         let mut hash = StateHasher::new();
         hash.write_tag(b"Construction-v1");
         self.start.hash_into(&mut hash);
@@ -343,19 +381,29 @@ impl Construction {
                     && same_obstacles(&cache.obstacles, obstacles)
             })
             .cloned();
-        let mut choices = previous_cache
-            .as_ref()
-            .map_or_else(Vec::new, |cache| cache.choices.clone());
-        let mut available_choices =
-            previous_cache.map_or_else(Vec::new, |cache| cache.available_choices);
+        // Choices already validated for this state are reused in catalog order, so the
+        // list is the same as a fresh computation whichever hill variants were selected.
+        let (previous_choices, previous_available_choices) = previous_cache
+            .map_or_else(Default::default, |cache| {
+                (cache.choices, cache.available_choices)
+            });
+        let mut choices = Vec::new();
+        let mut available_choices: Vec<AvailableChoice> = Vec::new();
         let mut seen_ids = HashSet::new();
         for base in templates().iter().filter(|piece| seen_ids.insert(piece.id)) {
+            if let Some(previous) = previous_choices.iter().find(|choice| choice.id == base.id) {
+                choices.push(*previous);
+                available_choices.extend(
+                    previous_available_choices
+                        .iter()
+                        .find(|candidate| candidate.piece.id == base.id)
+                        .cloned(),
+                );
+                continue;
+            }
             if matches!(base.family, Some(PieceFamily::Hill(_)))
                 && base.id != self.selected_hill_variant
             {
-                continue;
-            }
-            if choices.iter().any(|choice| choice.id == base.id) {
                 continue;
             }
             let template = template_for(base.id, self.end());
@@ -377,6 +425,7 @@ impl Construction {
                     Ok(piece) => {
                         if let Some(previous) = available_choices
                             .iter()
+                            .chain(&previous_available_choices)
                             .find(|previous| same_geometry(&previous.piece, piece))
                         {
                             would_tunnel = previous.choice.would_tunnel;
@@ -529,12 +578,14 @@ impl Construction {
         None
     }
 
+    /// Appends a piece, reusing its validation from the choices cache when the cache is
+    /// current, and returns whether the placed piece tunnels.
     pub(super) fn append_cached_choice(
         &mut self,
         id: PieceId,
         world: &World,
         obstacles: &[SupportObstacle],
-    ) -> Result<(), ConstructionError> {
+    ) -> Result<bool, ConstructionError> {
         let cached = {
             let cache = self.choices_cache.borrow();
             cache.as_ref().and_then(|cache| {
@@ -557,12 +608,13 @@ impl Construction {
         if let Some((result, candidate)) = cached {
             result?;
             if let Some((piece, Some(validation))) = candidate {
+                let would_tunnel = validation.tunnel_plan.would_tunnel();
                 self.append_validated_piece(piece, validation);
-                return Ok(());
+                return Ok(would_tunnel);
             }
             return Err(ConstructionError::Unavailable);
         }
-        self.append(id, world, obstacles)
+        self.append_reporting_tunnel(id, world, obstacles)
     }
 
     pub fn validate(
@@ -652,6 +704,7 @@ impl Construction {
         {
             return Err(ConstructionError::InvalidLaunchIntensity);
         }
+        self.invalidate_state_hash();
         self.pieces[index].launch_target_speed = Some(target_speed);
         *self.validation_cache.get_mut() = None;
         *self.choices_cache.get_mut() = None;
@@ -754,6 +807,13 @@ impl Construction {
                 world_revision: world.revision(),
                 obstacles: obstacles.to_vec(),
                 clearance_index: ClearanceIndex::new(&existing),
+                support_regions: existing.iter().map(support_search_region).collect(),
+                existing_carve_cells: existing_tunnel_plans
+                    .iter()
+                    .flat_map(|plan| plan.carve_cells.iter().copied())
+                    .collect(),
+                existing_carved_world: Arc::new(OnceLock::new()),
+                exact_supports: supports.clone(),
                 existing,
                 existing_tunnel_plans,
                 track_obstacles,
@@ -761,35 +821,41 @@ impl Construction {
             });
         }
         let cache = cache.as_mut().expect("validation cache initialized");
-        let mut all_pieces = cache.existing.clone();
-        all_pieces.push(piece.clone());
+        let envelopes = ClearanceEnvelopes::new(piece, &self.model.train);
         let piece_tunnel_plan =
-            tunnel_plan(world, piece, &self.model.train).map_err(ConstructionError::Clearance)?;
-        let mut carve_cells: BTreeSet<_> = cache
-            .existing_tunnel_plans
+            tunnel_plan_with_envelopes(world, &envelopes).map_err(ConstructionError::Clearance)?;
+        let tunnelled = !cache.existing_carve_cells.is_empty() || piece_tunnel_plan.would_tunnel();
+        let new_carve_cells: BTreeSet<_> = piece_tunnel_plan
+            .carve_cells
             .iter()
-            .flat_map(|plan| plan.carve_cells.iter().copied())
+            .filter(|cell| !cache.existing_carve_cells.contains(cell))
+            .copied()
             .collect();
-        carve_cells.extend(piece_tunnel_plan.carve_cells.iter().copied());
-        let mut carved_world = None;
-        if !carve_cells.is_empty() {
-            let mut candidate_world = world.clone();
-            let cells = carve_cells
-                .iter()
-                .map(|cell| (cell.x, cell.y, cell.height))
-                .collect::<Vec<_>>();
-            let invalidated = candidate_world
-                .carve_cells(&cells)
-                .map_err(|_| ConstructionError::Clearance(ClearanceCollision::Scenery))?;
-            if !invalidated.is_empty() {
-                return Err(ConstructionError::Clearance(ClearanceCollision::Path));
+        let existing_carved_world = Arc::clone(&cache.existing_carved_world);
+        let existing_world = |cache: &ValidationCache| -> Result<&World, ConstructionError> {
+            if cache.existing_carve_cells.is_empty() {
+                return Ok(world);
             }
-            carved_world = Some(candidate_world);
-        }
-        let candidate_world = carved_world.as_ref().unwrap_or(world);
-        check_clearance_indexed(
+            existing_carved_world
+                .get_or_init(|| carved_world(world, &cache.existing_carve_cells))
+                .as_ref()
+                .map_err(|error| *error)
+        };
+        let candidate_carved_world;
+        let candidate_world = if !tunnelled {
+            world
+        } else if new_carve_cells.is_empty() {
+            existing_world(cache)?
+        } else {
+            let mut carve_cells = cache.existing_carve_cells.clone();
+            carve_cells.extend(new_carve_cells.iter().copied());
+            candidate_carved_world = carved_world(world, &carve_cells)?;
+            &candidate_carved_world
+        };
+        check_clearance_with_envelopes(
             candidate_world,
             piece,
+            &envelopes,
             &self.model.train,
             &cache.clearance_index,
             None,
@@ -820,6 +886,8 @@ impl Construction {
             check_reverse_track_clearance(&cache.clearance_index, piece, &self.model.train)
                 .map_err(ConstructionError::Clearance)?;
         } else {
+            let mut all_pieces = cache.existing.clone();
+            all_pieces.push(piece.clone());
             let index_for_recheck = ClearanceIndex::new(&all_pieces);
             for (index, retained_piece) in all_pieces.iter().enumerate() {
                 check_clearance_indexed(
@@ -835,8 +903,15 @@ impl Construction {
         }
         let candidate_bounds =
             track_support_obstacles(std::slice::from_ref(piece), &self.model.train);
-        let mut validated_supports = Vec::with_capacity(all_pieces.len());
-        for (index, supported_piece) in all_pieces.iter().enumerate() {
+        let candidate_region = support_search_region(piece);
+        let existing_count = cache.existing.len();
+        let mut validated_supports = Vec::with_capacity(existing_count + 1);
+        for index in 0..=existing_count {
+            let (supported_piece, region) = if index < existing_count {
+                (&cache.existing[index], cache.support_regions[index])
+            } else {
+                (piece, candidate_region)
+            };
             let route_supports = if self.model.support_style_for_piece(supported_piece)
                 == SupportStyle::DenseWoodenLattice
             {
@@ -844,9 +919,9 @@ impl Construction {
             } else {
                 generate_supports
             };
-            if !carve_cells.is_empty() {
+            // Obstacles from the other existing pieces near this piece's support search region.
+            let existing_support_obstacles = || {
                 let mut support_obstacles = obstacles.to_vec();
-                let region = support_search_region(supported_piece);
                 for (other_index, other_bounds) in cache.track_obstacles.iter().enumerate() {
                     if index != other_index {
                         support_obstacles.extend(
@@ -857,7 +932,35 @@ impl Construction {
                         );
                     }
                 }
-                if index < cache.existing.len() {
+                support_obstacles
+            };
+            if tunnelled {
+                // Supports read the world and obstacles only inside their search region, so
+                // a piece the candidate's bounds and new excavation cannot reach keeps the
+                // supports routed without the candidate.
+                let candidate_reaches_piece = candidate_bounds
+                    .iter()
+                    .any(|bounds| region.overlaps(bounds))
+                    || new_carve_cells
+                        .iter()
+                        .any(|cell| region.overlaps_tile(cell));
+                if index < existing_count && !candidate_reaches_piece {
+                    if cache.exact_supports[index].is_none() {
+                        let routed = route_supports(
+                            supported_piece,
+                            existing_world(cache)?,
+                            &existing_support_obstacles(),
+                        );
+                        cache.exact_supports[index] = Some(routed);
+                    }
+                    let exact = cache.exact_supports[index]
+                        .clone()
+                        .expect("exact supports routed above");
+                    validated_supports.push(exact.map_err(construction_support_error)?);
+                    continue;
+                }
+                let mut support_obstacles = existing_support_obstacles();
+                if index < existing_count {
                     support_obstacles.extend(
                         candidate_bounds
                             .iter()
@@ -871,23 +974,18 @@ impl Construction {
                 );
                 continue;
             }
-            if index < cache.existing.len() && cache.supports[index].is_none() {
+            if index < existing_count && cache.supports[index].is_none() {
                 #[cfg(test)]
                 self.support_cache_misses
                     .set(self.support_cache_misses.get() + 1);
-                let mut bounds = obstacles.to_vec();
-                let region = support_search_region(supported_piece);
-                for (other_index, other_bounds) in cache.track_obstacles.iter().enumerate() {
-                    if index != other_index {
-                        bounds.extend(
-                            other_bounds
-                                .iter()
-                                .copied()
-                                .filter(|bounds| region.overlaps(bounds)),
-                        );
-                    }
+                if cache.exact_supports[index].is_none() {
+                    cache.exact_supports[index] = Some(route_supports(
+                        supported_piece,
+                        world,
+                        &existing_support_obstacles(),
+                    ));
                 }
-                cache.supports[index] = Some(route_supports(supported_piece, world, &bounds));
+                cache.supports[index] = cache.exact_supports[index].clone();
             }
             if let Some(Some(Ok(supports))) = cache.supports.get(index) {
                 if !supports.iter().any(|support| {
@@ -903,24 +1001,13 @@ impl Construction {
             if let Some(Some(Err(error))) = cache.supports.get(index) {
                 if !candidate_bounds
                     .iter()
-                    .any(|bounds| support_search_may_intersect(supported_piece, bounds))
+                    .any(|bounds| region.overlaps(bounds))
                 {
                     return Err(construction_support_error(*error));
                 }
             }
-            let mut support_obstacles = obstacles.to_vec();
-            let region = support_search_region(supported_piece);
-            for (other_index, bounds) in cache.track_obstacles.iter().enumerate() {
-                if index != other_index {
-                    support_obstacles.extend(
-                        bounds
-                            .iter()
-                            .copied()
-                            .filter(|bounds| region.overlaps(bounds)),
-                    );
-                }
-            }
-            if index < cache.existing.len() {
+            let mut support_obstacles = existing_support_obstacles();
+            if index < existing_count {
                 support_obstacles.extend(
                     candidate_bounds
                         .iter()
@@ -935,6 +1022,7 @@ impl Construction {
         Ok(PieceValidation {
             supports: validated_supports,
             tunnel_plan: piece_tunnel_plan,
+            track_obstacles: candidate_bounds,
         })
     }
 
@@ -944,11 +1032,22 @@ impl Construction {
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Result<(), ConstructionError> {
+        self.append_reporting_tunnel(id, world, obstacles)
+            .map(|_| ())
+    }
+
+    fn append_reporting_tunnel(
+        &mut self,
+        id: PieceId,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<bool, ConstructionError> {
         let template = template_for(id, self.end());
         let piece = self.placeable(template)?;
         let validation = self.validate_piece(&piece, world, obstacles)?;
+        let would_tunnel = validation.tunnel_plan.would_tunnel();
         self.append_validated_piece(piece, validation);
-        Ok(())
+        Ok(would_tunnel)
     }
 
     fn append_validated_piece(&mut self, piece: Piece, validation: PieceValidation) {
@@ -958,11 +1057,40 @@ impl Construction {
                 .get_mut()
                 .as_mut()
                 .expect("validation cache initialized");
+            let piece_bounds = validation.track_obstacles;
+            let tunnelled =
+                !cache.existing_carve_cells.is_empty() || validation.tunnel_plan.would_tunnel();
+            if tunnelled {
+                // A tunnelling validation routed every piece exactly on the world carved for
+                // the new track, or reused routes the new piece cannot reach.
+                cache.exact_supports = validation
+                    .supports
+                    .iter()
+                    .map(|supports| Some(Ok(supports.clone())))
+                    .collect();
+            } else {
+                for (exact, region) in cache.exact_supports.iter_mut().zip(&cache.support_regions) {
+                    if piece_bounds.iter().any(|bounds| region.overlaps(bounds)) {
+                        *exact = None;
+                    }
+                }
+                let piece_supports = validation
+                    .supports
+                    .last()
+                    .expect("validation routes the new piece")
+                    .clone();
+                cache.exact_supports.push(Some(Ok(piece_supports)));
+            }
+            let carve_cells_before = cache.existing_carve_cells.len();
+            cache
+                .existing_carve_cells
+                .extend(validation.tunnel_plan.carve_cells.iter().copied());
+            if cache.existing_carve_cells.len() != carve_cells_before {
+                cache.existing_carved_world = Arc::new(OnceLock::new());
+            }
+            cache.support_regions.push(support_search_region(&piece));
             cache.existing_tunnel_plans.push(validation.tunnel_plan);
-            cache.track_obstacles.push(track_support_obstacles(
-                std::slice::from_ref(&piece),
-                &self.model.train,
-            ));
+            cache.track_obstacles.push(piece_bounds);
             cache.existing.push(piece.clone());
             cache.clearance_index.push(&piece);
             cache.supports = validation
@@ -974,6 +1102,7 @@ impl Construction {
             *self.validation_cache.get_mut() = None;
         }
         *self.choices_cache.get_mut() = None;
+        self.invalidate_state_hash();
         self.pieces.push(piece);
         self.ids.push(self.next_id);
         self.next_id += 1;
@@ -989,6 +1118,7 @@ impl Construction {
     }
 
     pub fn delete_from(&mut self, id: usize) -> Result<Vec<Piece>, ConstructionError> {
+        self.invalidate_state_hash();
         let old_ids: Vec<_> = self
             .ids
             .iter()
@@ -1055,6 +1185,23 @@ impl Construction {
             })
             .expect("deleted piece has previous id");
         let removed_bounds = &cache.track_obstacles[removed_index];
+        let remaining_carve_cells: BTreeSet<_> = cache
+            .existing_tunnel_plans
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != removed_index)
+            .flat_map(|(_, plan)| plan.carve_cells.iter().copied())
+            .collect();
+        if remaining_carve_cells != cache.existing_carve_cells {
+            cache.existing_carve_cells = remaining_carve_cells;
+            cache.existing_carved_world = Arc::new(OnceLock::new());
+            cache.exact_supports.fill(None);
+        }
+        for (exact, region) in cache.exact_supports.iter_mut().zip(&cache.support_regions) {
+            if removed_bounds.iter().any(|bounds| region.overlaps(bounds)) {
+                *exact = None;
+            }
+        }
         for (index, result) in cache.supports.iter_mut().enumerate() {
             let affected = removed_bounds
                 .iter()
@@ -1100,11 +1247,20 @@ impl Construction {
             .iter()
             .map(|&index| cache.supports[index].clone())
             .collect();
+        cache.exact_supports = indices
+            .iter()
+            .map(|&index| cache.exact_supports[index].clone())
+            .collect();
+        cache.support_regions = indices
+            .iter()
+            .map(|&index| cache.support_regions[index])
+            .collect();
     }
 
     pub fn close(&mut self) -> Result<(), ConstructionError> {
         Circuit::new(self.pieces.clone()).map_err(|_| ConstructionError::InvalidCircuit)?;
         *self.choices_cache.get_mut() = None;
+        self.invalidate_state_hash();
         self.closed = true;
         Ok(())
     }
@@ -1131,6 +1287,7 @@ fn construction_support_error(error: SupportError) -> ConstructionError {
     }
 }
 
+#[derive(Clone, Copy)]
 struct SupportSearchRegion {
     min_x: f64,
     max_x: f64,
@@ -1145,6 +1302,30 @@ impl SupportSearchRegion {
             && obstacle.max.y >= self.min_y
             && obstacle.min.y <= self.max_y
     }
+
+    fn overlaps_tile(&self, cell: &TerrainCell) -> bool {
+        let west = f64::from(cell.x) * 4.0;
+        let north = f64::from(cell.y) * 4.0;
+        west + 4.0 >= self.min_x
+            && west <= self.max_x
+            && north + 4.0 >= self.min_y
+            && north <= self.max_y
+    }
+}
+
+/// Returns `world` with `cells` carved, failing as a placement would if carving them is refused.
+fn carved_world(world: &World, cells: &BTreeSet<TerrainCell>) -> Result<World, ConstructionError> {
+    let cells: Vec<_> = cells
+        .iter()
+        .map(|cell| (cell.x, cell.y, cell.height))
+        .collect();
+    let (carved, invalidated) = world
+        .with_cells_carved(&cells)
+        .map_err(|_| ConstructionError::Clearance(ClearanceCollision::Scenery))?;
+    if !invalidated.is_empty() {
+        return Err(ConstructionError::Clearance(ClearanceCollision::Path));
+    }
+    Ok(carved)
 }
 
 fn support_search_region(piece: &Piece) -> SupportSearchRegion {

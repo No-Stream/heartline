@@ -492,6 +492,46 @@ pub fn check_clearance_indexed(
     excluded_piece: Option<usize>,
     scenery: &[ClearanceBox],
 ) -> Result<(), ClearanceCollision> {
+    check_clearance_with_envelopes(
+        world,
+        piece,
+        &ClearanceEnvelopes::new(piece, train),
+        train,
+        index,
+        excluded_piece,
+        scenery,
+    )
+}
+
+/// The sampled clearance envelopes of one piece, shared by its clearance check and tunnel plan.
+pub(crate) struct ClearanceEnvelopes {
+    envelopes: Vec<(f64, OrientedEnvelope)>,
+}
+
+impl ClearanceEnvelopes {
+    pub(crate) fn new(piece: &Piece, train: &TrainConfiguration) -> Self {
+        // Adjacent samples are at most half a car length apart, including for
+        // non-default trains. The longitudinal padding covers translation between
+        // samples; orientation between samples remains an approximation.
+        let spacing = train_sample_spacing(train);
+        Self {
+            envelopes: samples(piece, spacing)
+                .map(|distance| (distance, envelope(piece, distance, train, spacing)))
+                .collect(),
+        }
+    }
+}
+
+pub(crate) fn check_clearance_with_envelopes(
+    world: &World,
+    piece: &Piece,
+    envelopes: &ClearanceEnvelopes,
+    train: &TrainConfiguration,
+    index: &ClearanceIndex,
+    excluded_piece: Option<usize>,
+    scenery: &[ClearanceBox],
+) -> Result<(), ClearanceCollision> {
+    let envelopes = &envelopes.envelopes;
     assert!(
         train.cars > 0
             && train.length_metres.is_finite()
@@ -512,13 +552,6 @@ pub fn check_clearance_indexed(
     }
     let (width, height) = world.dimensions();
     let connector_allowance = connector_allowance(train);
-    // Adjacent samples are at most half a car length apart, including for
-    // non-default trains. The longitudinal padding covers translation between
-    // samples; orientation between samples remains an approximation.
-    let spacing = train_sample_spacing(train);
-    let envelopes: Vec<_> = samples(piece, spacing)
-        .map(|distance| (distance, envelope(piece, distance, train, spacing)))
-        .collect();
     let mut overall = envelopes[0].1.bounds;
     for (_, envelope) in &envelopes[1..] {
         overall.min = Vec3::new(
@@ -577,7 +610,7 @@ pub fn check_clearance_indexed(
         });
     }
     let mut terrain_collision = false;
-    for (distance, oriented) in envelopes {
+    for &(distance, oriented) in envelopes {
         let bounds = oriented.bounds;
         if bounds.min.z < f64::from(i16::MIN) {
             return Err(ClearanceCollision::TerrainDepth);
@@ -681,12 +714,17 @@ pub fn tunnel_plan(
     piece: &Piece,
     train: &TrainConfiguration,
 ) -> Result<TunnelPlan, ClearanceCollision> {
+    tunnel_plan_with_envelopes(world, &ClearanceEnvelopes::new(piece, train))
+}
+
+pub(crate) fn tunnel_plan_with_envelopes(
+    world: &World,
+    envelopes: &ClearanceEnvelopes,
+) -> Result<TunnelPlan, ClearanceCollision> {
     let (width, height) = world.dimensions();
-    let spacing = train_sample_spacing(train);
     let mut swept_cells = BTreeSet::new();
     let mut carve_cells = BTreeSet::new();
-    for distance in samples(piece, spacing) {
-        let oriented = envelope(piece, distance, train, spacing);
+    for (_, oriented) in &envelopes.envelopes {
         let bounds = oriented.bounds;
         if bounds.min.z < f64::from(i16::MIN) {
             return Err(ClearanceCollision::TerrainDepth);
@@ -707,6 +745,11 @@ pub fn tunnel_plan(
                 let minimum = bounds.min.z.floor().max(f64::from(i16::MIN)) as i16;
                 let maximum = bounds.max.z.ceil().min(f64::from(i16::MAX)) as i16;
                 for z in minimum..maximum {
+                    // The terrain lookup is much cheaper than the envelope test, so it goes first.
+                    let ground = world.ground(x, y, z);
+                    if ground == Ground::Air {
+                        continue;
+                    }
                     let cell = ClearanceBox {
                         min: Vec3::new(f64::from(x) * 4.0, f64::from(y) * 4.0, f64::from(z)),
                         max: Vec3::new(
@@ -719,15 +762,9 @@ pub fn tunnel_plan(
                         continue;
                     }
                     let terrain_cell = TerrainCell { x, y, height: z };
-                    match world.ground(x, y, z) {
-                        Ground::Solid | Ground::SurfaceSlope => {
-                            swept_cells.insert(terrain_cell);
-                            carve_cells.insert(terrain_cell);
-                        }
-                        Ground::Carved => {
-                            swept_cells.insert(terrain_cell);
-                        }
-                        Ground::Air => {}
+                    swept_cells.insert(terrain_cell);
+                    if ground != Ground::Carved {
+                        carve_cells.insert(terrain_cell);
                     }
                 }
             }

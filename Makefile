@@ -7,7 +7,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-player-circuits generate-report-types check-report-types generate-profiles
+.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits generate-report-types check-report-types generate-profiles
 
 install:
 	npm ci
@@ -106,6 +106,15 @@ bench-construction:
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- elements wooden
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- hill
 	$(CARGO) run --release -p theme-park-sim --example construction_bench -- per-piece
+
+# Times every worker call made while placing the journey circuits; ARGS=--digest hashes the outputs instead.
+bench-builder-updates:
+	$(CARGO) run --release -p theme-park-sim-wasm --example construction_update_bench -- $(ARGS)
+
+bench-builder-updates-browser: wasm-bindgen
+	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
+	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target web --out-dir web/src/wasm
+	flock /tmp/theme-park-sim-browser-tests.lock node web/construction-bench/placements.mjs
 
 bench-player-circuits:
 	$(CARGO) run --release -p theme-park-sim --example player_circuit_preview_bench

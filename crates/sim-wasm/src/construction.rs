@@ -386,17 +386,17 @@ impl WasmSimulation {
             },
             coaster_model(&self.construction_model),
         );
-        let world = self.park.world.clone();
         let obstacles = self.facility_obstacles();
         let station_id = construction.next_piece_id();
         let tunnel_generation = self.park.next_construction_tunnel_generation();
-        let station_plan = match construction.tunnel_plan(PieceId::Station, &world, &obstacles) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.construction_message = construction_error(error);
-                return;
-            }
-        };
+        let station_plan =
+            match construction.tunnel_plan(PieceId::Station, &self.park.world, &obstacles) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    self.construction_message = construction_error(error);
+                    return;
+                }
+            };
         if let Err(error) = self
             .park
             .carve_for_construction_at(tunnel_generation, &[(station_id, station_plan)])
@@ -404,8 +404,7 @@ impl WasmSimulation {
             self.construction_message = error.to_string();
             return;
         }
-        let carved_world = self.park.world.clone();
-        if let Err(error) = construction.append(PieceId::Station, &carved_world, &obstacles) {
+        if let Err(error) = construction.append(PieceId::Station, &self.park.world, &obstacles) {
             self.park
                 .restore_tunnel_piece_at(tunnel_generation, station_id);
             self.construction_message = construction_error(error);
@@ -770,13 +769,13 @@ impl WasmSimulation {
         self.selected = pieceid_from_wire(id);
         if let Some(selected) = self.selected {
             let obstacles = self.facility_obstacles();
-            let world = self.world.clone();
-            if let Some(construction) = self.construction.as_mut() {
+            let park = &mut self.park;
+            if let Some(construction) = park.construction.as_mut() {
                 if theme_park_sim::track::catalog()
                     .iter()
                     .any(|piece| piece.id == selected && piece.family.is_some())
                 {
-                    let _ = construction.select_hill_variant(selected, &world, &obstacles);
+                    let _ = construction.select_hill_variant(selected, &park.world, &obstacles);
                 }
             }
         }
@@ -1139,13 +1138,12 @@ impl WasmSimulation {
         let obstacles = self.facility_obstacles();
         let selected = self.selected;
         let selected_element = self.selected_element.clone();
-        let world = self.park.world.clone();
         let undo_group_size = selected_element
             .as_deref()
             .and_then(|element_id| {
                 self.park.construction.as_ref().and_then(|construction| {
                     construction
-                        .element_choices(&world, &obstacles)
+                        .element_choices(&self.park.world, &obstacles)
                         .into_iter()
                         .find(|element| element.id == element_id)
                         .map(|element| element.pieces.len())
@@ -1160,13 +1158,13 @@ impl WasmSimulation {
                 .ok_or_else(|| "Construction is inactive".to_string())?;
             if let Some(element_id) = selected_element.as_deref() {
                 let element = construction
-                    .element_choices(&world, &obstacles)
+                    .element_choices(&self.park.world, &obstacles)
                     .into_iter()
                     .find(|element| element.id == element_id)
                     .ok_or_else(|| "Selected element is no longer available here.".to_string())?;
                 let first_id = construction.next_piece_id();
                 let tunnel_plans = construction
-                    .element_tunnel_plans(&element, &world, &obstacles)
+                    .element_tunnel_plans(&element, &self.park.world, &obstacles)
                     .map_err(construction_error)?;
                 let piece_ids: Vec<_> = (0..tunnel_plans.len())
                     .map(|offset| first_id + offset)
@@ -1175,13 +1173,12 @@ impl WasmSimulation {
                 if let Err(error) = self.park.carve_for_construction(&ownership) {
                     return Err(error.to_string());
                 }
-                let carved_world = self.park.world.clone();
-                if let Err(error) = self
-                    .park
+                let park = &mut self.park;
+                if let Err(error) = park
                     .construction
                     .as_mut()
                     .expect("construction remains active")
-                    .apply_element(&element, &carved_world, &obstacles)
+                    .apply_element(&element, &park.world, &obstacles)
                 {
                     for piece_id in piece_ids {
                         self.park.restore_tunnel_piece(piece_id);
@@ -1194,18 +1191,17 @@ impl WasmSimulation {
             let selected = selected.ok_or_else(|| "Select a piece first".to_string())?;
             let piece_id = construction.next_piece_id();
             let tunnel_plan = construction
-                .tunnel_plan(selected, &world, &obstacles)
+                .tunnel_plan(selected, &self.park.world, &obstacles)
                 .map_err(construction_error)?;
             if let Err(error) = self.park.carve_for_construction(&[(piece_id, tunnel_plan)]) {
                 return Err(error.to_string());
             }
-            let carved_world = self.park.world.clone();
-            if let Err(error) = self
-                .park
+            let park = &mut self.park;
+            if let Err(error) = park
                 .construction
                 .as_mut()
                 .expect("construction remains active")
-                .append(selected, &carved_world, &obstacles)
+                .append(selected, &park.world, &obstacles)
             {
                 self.park.restore_tunnel_piece(piece_id);
                 return Err(construction_error(error));
@@ -1431,14 +1427,13 @@ impl WasmSimulation {
             return;
         };
         let obstacles = self.facility_obstacles();
-        let world = self.park.world.clone();
         let Some(construction) = self.park.construction.as_ref() else {
             self.construction_message = "Construction is inactive".into();
             return;
         };
         let first_id = construction.next_piece_id();
         let tunnel_plans =
-            match construction.tunnel_plans_for_geometry(&completion.geometry, &world) {
+            match construction.tunnel_plans_for_geometry(&completion.geometry, &self.park.world) {
                 Ok(plans) => plans,
                 Err(error) => {
                     self.construction_message = construction_error(error);
@@ -1796,10 +1791,17 @@ impl WasmSimulation {
                     .map(|cell| (cell.x, cell.y, cell.height))
             })
             .collect();
-        let mut preview_world = self.world.clone();
-        preview_world
-            .carve_cells(&carve_cells)
-            .map_err(|_| SupportError::NoRoute)?;
+        let carved_world;
+        let preview_world = if carve_cells.is_empty() {
+            &self.park.world
+        } else {
+            (carved_world, _) = self
+                .park
+                .world
+                .with_cells_carved(&carve_cells)
+                .map_err(|_| SupportError::NoRoute)?;
+            &carved_world
+        };
         let mut obstacles: Vec<_> = self
             .construction_support_entries()
             .expect("valid preview requires construction")
@@ -1817,7 +1819,7 @@ impl WasmSimulation {
             supports.extend(render_preview_supports(
                 piece,
                 &obstacles,
-                &preview_world,
+                preview_world,
                 construction.model().support_style,
             )?);
             obstacles.extend(track_support_obstacles(
