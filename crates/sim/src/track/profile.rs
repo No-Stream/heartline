@@ -1492,7 +1492,11 @@ mod tests {
     use std::f64::consts::FRAC_PI_2;
     use std::fmt::Write as _;
 
-    const GENERATED_PROFILE_POINTS: usize = 512;
+    /// The wide 60-degree crest ramps its curvature in and out over a short distance, so it needs finer samples
+    /// than the other profiles to stay inside the curvature tolerance.
+    fn generated_profile_point_count(name: &str) -> usize {
+        if name == "WideSixtyCrest" { 1024 } else { 512 }
+    }
     const MAXIMUM_PROFILE_POSITION_ERROR_METRES: f64 = 0.001;
     const MAXIMUM_PROFILE_CURVATURE_ERROR: f64 = 2e-4;
 
@@ -1516,7 +1520,7 @@ mod tests {
         model_radius: f64,
     }
 
-    const HILL_CASES: [HillCase; 19] = [
+    const HILL_CASES: [HillCase; 21] = [
         HillCase {
             name: "BriarTopHat",
             height: 30.0,
@@ -1707,6 +1711,26 @@ mod tests {
             crest_force: -0.5,
             model_radius: 8.0,
         },
+        HillCase {
+            name: "FloaterHill20x128",
+            height: 20.0,
+            span: 128.0,
+            design_speed: 33.0,
+            flank_angle: 35.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -1.0,
+            model_radius: 8.0,
+        },
+        HillCase {
+            name: "FloaterHill24x160",
+            height: 24.0,
+            span: 160.0,
+            design_speed: 36.0,
+            flank_angle: 35.0_f64.to_radians(),
+            pull_force: 3.7,
+            crest_force: -1.0,
+            model_radius: 8.0,
+        },
     ];
 
     #[derive(Clone, Copy)]
@@ -1787,6 +1811,20 @@ mod tests {
                 "FifteenPull",
                 snap_pull(
                     &ProfileSpec::pull(PI / 4.0, PI / 3.0, 34.0, 4.2).named("SteepToSixtyUp"),
+                ),
+            ),
+            (
+                "WideSixtyCrest",
+                snap_pull(
+                    &ProfileSpec::crest(PI / 3.0, 0.0, 22.0, -0.7)
+                        .with_taper_angle(0.2)
+                        .named("WideLevelToSixtyDown"),
+                ),
+            ),
+            (
+                "WideSixtyPull",
+                snap_pull(
+                    &ProfileSpec::pull(0.0, PI / 3.0, 38.5, 3.8).named("WideSixtyDownToLevel"),
                 ),
             ),
         ]
@@ -1968,9 +2006,9 @@ mod tests {
                 profile.length()
             )
             .unwrap();
-            for index in 0..GENERATED_PROFILE_POINTS {
-                let distance =
-                    profile.length() * index as f64 / (GENERATED_PROFILE_POINTS - 1) as f64;
+            let point_count = generated_profile_point_count(name);
+            for index in 0..point_count {
+                let distance = profile.length() * index as f64 / (point_count - 1) as f64;
                 let (position, tangent, _) = profile.sample(distance);
                 let curvature = reference_curvature(profile, distance);
                 writeln!(
@@ -2006,7 +2044,11 @@ mod tests {
                     .iter()
                     .find(|(profile_name, _, _, _, _)| *profile_name == name)
                     .unwrap();
-            assert_eq!(values.len(), GENERATED_PROFILE_POINTS, "{name} point count");
+            assert_eq!(
+                values.len(),
+                generated_profile_point_count(name),
+                "{name} point count"
+            );
             let actual = embedded_profile(name);
             assert!(
                 (generated_minimum_entry - expected.minimum_entry()).abs() < 1e-12,

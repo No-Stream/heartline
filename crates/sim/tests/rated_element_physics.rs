@@ -579,6 +579,8 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
         SixtyToSteepUp,
         SteepToSixtyDown,
         SixtyToSteepDown,
+        WideLevelToSixtyDown,
+        WideSixtyDownToLevel,
     ];
     let drops = [
         BankedDropLeft,

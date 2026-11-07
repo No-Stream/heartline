@@ -1743,3 +1743,89 @@ fn full_trains_cross_composed_immelmann_and_dive_loops() {
         }
     }
 }
+
+#[test]
+fn wide_sixty_degree_drop_passes_full_trains_at_both_rated_endpoints() {
+    use PieceId::*;
+    let catalog = catalog();
+    let mut state = TrackState::origin();
+    let pieces: Vec<Piece> = [
+        Station,
+        WideLevelToSixtyDown,
+        WideSixtyDownToLevel,
+        Straight,
+        Straight,
+        Straight,
+    ]
+    .into_iter()
+    .map(|id| {
+        let piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        state = piece.exit;
+        piece
+    })
+    .collect();
+    let circuit = Circuit::open(pieces).unwrap();
+    let models = coaster_models();
+    for id in [WideLevelToSixtyDown, WideSixtyDownToLevel] {
+        let index = circuit
+            .pieces()
+            .iter()
+            .position(|piece| piece.id == id)
+            .unwrap();
+        let piece = &circuit.pieces()[index];
+        let rated = piece.rated_speeds.expect("drop needs a rated speed window");
+        let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+        let end = start + piece.length();
+        let allowing: Vec<_> = models
+            .iter()
+            .filter(|model| model.allows_piece(piece))
+            .collect();
+        assert!(!allowing.is_empty(), "{id:?}");
+        for model in allowing {
+            for cars in [*model.cars_per_train.start(), *model.cars_per_train.end()] {
+                let mut configuration = model.train.clone();
+                configuration.length_metres *= f64::from(cars) / f64::from(configuration.cars);
+                configuration.cars = cars;
+                for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let mut train =
+                        Train::new(&circuit, &configuration, unpowered(), start, entry_speed);
+                    let mut minimum_vertical = f64::INFINITY;
+                    let mut maximum_vertical = f64::NEG_INFINITY;
+                    let mut maximum_longitudinal: f64 = 0.0;
+                    while train.distance() < end + configuration.length_metres {
+                        train.step(&circuit);
+                        for frame in train.take_readings() {
+                            for car in frame
+                                .into_iter()
+                                .filter(|car| (start..end).contains(&car.distance))
+                            {
+                                minimum_vertical = minimum_vertical.min(car.g.vertical);
+                                maximum_vertical = maximum_vertical.max(car.g.vertical);
+                                maximum_longitudinal =
+                                    maximum_longitudinal.max(car.g.longitudinal.abs());
+                            }
+                        }
+                        assert!(train.notes().is_empty() && train.speed() > 0.0, "{id:?}");
+                    }
+                    let limits = model.comfortable_force_limits;
+                    eprintln!(
+                        "{id:?} {} {cars} cars at {entry_speed:.3}: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, longitudinal {maximum_longitudinal:.3}",
+                        model.name
+                    );
+                    assert!(
+                        minimum_vertical >= limits.minimum_vertical_g
+                            && maximum_vertical <= limits.maximum_vertical_g
+                            && maximum_longitudinal <= limits.maximum_longitudinal_g,
+                        "{id:?} {} {cars} cars at {entry_speed:.3} m/s: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, longitudinal {maximum_longitudinal:.3}; limits {limits:?}",
+                        model.name
+                    );
+                }
+            }
+        }
+    }
+}

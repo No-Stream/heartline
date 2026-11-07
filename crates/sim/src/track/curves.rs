@@ -385,6 +385,10 @@ pub enum PieceId {
     LongGentleDownToLevel,
     FamilyHill3x32,
     FamilyHill4x40,
+    FloaterHill20x128,
+    FloaterHill24x160,
+    WideLevelToSixtyDown,
+    WideSixtyDownToLevel,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {

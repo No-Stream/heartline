@@ -41,7 +41,8 @@ const seatPair = (along: readonly [number, number], up: readonly [number, number
  * Intamin's sleek launch-coaster cars with high-backed seats and a long pointed lead car; and Great Coaster
  * International's Millennium Flyer, a chain of short single-row cars with tall sides behind a tall, sloping front.
  * The family coaster follows the small junior-coaster cars: one pair of seats per car, low padded sides with a light rim,
- * and a lead car with a short rounded nose.
+ * and a lead car with a short rounded nose. The hyper follows the open four-across hyper cars: one wide, low car
+ * per row of four seats with short seat backs, a light rim and a lead car with a short rounded nose.
  */
 export const TRAIN_LOOKS: Readonly<Record<CoasterModelKey, TrainLook>> = {
   hybrid: {
@@ -93,6 +94,21 @@ export const TRAIN_LOOKS: Readonly<Record<CoasterModelKey, TrainLook>> = {
       { paint: "ink", along: [0.14, 0.22], halfWidth: 0.5, up: [0.78, 0.84] },
     ],
     lead: [{ paint: "body", along: [0.6, 1.15], halfWidth: 0.66, up: [0.28, 0.82], front: { halfWidth: 0.36, up: [0.28, 0.56] } }],
+  },
+  hyper: {
+    rowPitchMetres: 0,
+    seatSpacingMetres: 0.6,
+    car: [
+      bogie(0.8),
+      { paint: "body", along: [-1.05, 1.05], halfWidth: 1.2, up: [0.26, 0.52] },
+      { paint: "trim", along: [-1.05, 1.05], halfWidth: 1.22, up: [0.52, 0.58] },
+      interior([-0.85, 0.85], 1.06, 0.58),
+    ],
+    row: [
+      ...[-0.9, -0.3, 0.3, 0.9].map((across): CarPart => ({ paint: "seat", along: [-0.5, -0.32], across, halfWidth: 0.24, up: [0.5, 1.1] })),
+      { paint: "ink", along: [0.12, 0.2], halfWidth: 1.0, up: [0.72, 0.8] },
+    ],
+    lead: [{ paint: "body", along: [1.05, 1.7], halfWidth: 1.2, up: [0.26, 0.66], front: { halfWidth: 0.7, up: [0.26, 0.44] } }],
   },
 };
 

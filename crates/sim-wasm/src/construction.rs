@@ -2065,6 +2065,10 @@ define_piece_id_wire_names!(
     StallRight,
     FamilyHill3x32,
     FamilyHill4x40,
+    FloaterHill20x128,
+    FloaterHill24x160,
+    WideLevelToSixtyDown,
+    WideSixtyDownToLevel,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

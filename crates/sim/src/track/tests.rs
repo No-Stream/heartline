@@ -537,7 +537,7 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
 
 #[test]
 fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() {
-    let expected_hills: [(&str, &[&str]); 17] = [
+    let expected_hills: [(&str, &[&str]); 19] = [
         (
             "Ejector hill 8 × 48 m",
             &["Timber Tumbler", "Velocity Viper"],
@@ -560,35 +560,75 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
         ),
         (
             "Floater hill 4 × 48 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Floater hill 8 × 64 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Floater hill 12 × 80 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Floater hill 6 × 64 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Floater hill 12 × 96 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Floater hill 16 × 112 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Speed hill 4 × 64 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         (
             "Speed hill 6 × 80 m",
-            &["Timber Tumbler", "Velocity Viper", "Briar Blitz"],
+            &[
+                "Timber Tumbler",
+                "Velocity Viper",
+                "Briar Blitz",
+                "Horizon Hawk",
+            ],
         ),
         ("Ejector hill 6 × 48 m", &["Briar Blitz"]),
         ("Strong floater hill 8 × 64 m", &["Briar Blitz"]),
@@ -599,6 +639,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
                 "Velocity Viper",
                 "Briar Blitz",
                 "Daisy Dash",
+                "Horizon Hawk",
             ],
         ),
         (
@@ -608,8 +649,11 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
                 "Velocity Viper",
                 "Briar Blitz",
                 "Daisy Dash",
+                "Horizon Hawk",
             ],
         ),
+        ("Floater hill 20 × 128 m", &["Horizon Hawk"]),
+        ("Floater hill 24 × 160 m", &["Horizon Hawk"]),
     ];
     let models = coaster_models();
     let hill_pieces: Vec<_> = catalog()
@@ -1885,20 +1929,26 @@ fn sixty_degree_pull_profiles_match_connectors_and_reverse() {
 #[test]
 fn coaster_models_use_peak_rider_force_limits() {
     let expected_limits = [
-        ("Briar Blitz", -1.0, 4.0, 1.5),
-        ("Timber Tumbler", -1.5, 4.5, 1.5),
-        ("Velocity Viper", -1.5, 5.0, 1.5),
-        ("Daisy Dash", -0.6, 3.0, 1.0),
+        ("Briar Blitz", -1.0, 4.0, 1.5, 1.5),
+        ("Timber Tumbler", -1.5, 4.5, 1.5, 1.5),
+        ("Velocity Viper", -1.5, 5.0, 1.5, 1.5),
+        ("Daisy Dash", -0.6, 3.0, 1.0, 1.5),
+        ("Horizon Hawk", -1.3, 4.0, 1.2, 1.5),
     ];
     let models = coaster_models();
     assert_eq!(models.len(), expected_limits.len());
-    for (name, minimum_vertical, maximum_vertical, maximum_lateral) in expected_limits {
+    for (name, minimum_vertical, maximum_vertical, maximum_lateral, maximum_longitudinal) in
+        expected_limits
+    {
         let model = models.iter().find(|model| model.name == name).unwrap();
         let limits = model.comfortable_force_limits;
         assert_eq!(limits.minimum_vertical_g, minimum_vertical, "{name}");
         assert_eq!(limits.maximum_vertical_g, maximum_vertical, "{name}");
         assert_eq!(limits.maximum_lateral_g, maximum_lateral, "{name}");
-        assert_eq!(limits.maximum_longitudinal_g, 1.5, "{name}");
+        assert_eq!(
+            limits.maximum_longitudinal_g, maximum_longitudinal,
+            "{name}"
+        );
     }
 }
 
@@ -2328,6 +2378,100 @@ fn family_coaster_is_gentle_and_built_from_low_speed_pieces() {
         .find(|piece| piece.id == PieceId::GentleToSteepUp)
         .unwrap();
     assert!(!family.allows_chain(steep_climb));
+}
+
+#[test]
+fn hyper_is_a_straight_lift_floater_ride_without_inversions() {
+    let hyper = hyper_model();
+    assert_eq!(hyper.key, "hyper");
+    assert_eq!(hyper.name, "Horizon Hawk");
+    assert_eq!(hyper.manufacturer, "Boulder & Marlin");
+    assert_eq!(hyper.train.cars, 8);
+    assert_eq!(hyper.train.rows_per_car, 1);
+    assert_eq!(hyper.train.seats_per_row, 4);
+    assert!(hyper.train.launch.is_none());
+    assert_eq!(hyper.minimum_height_cm, 132);
+    assert!(hyper.allowed_inversions.is_empty());
+    assert!(hyper.launch_types.is_empty());
+    assert_eq!(hyper.support_style, SupportStyle::SteelColumns);
+    assert_eq!(
+        hyper.lift_rules,
+        Some(LiftRules {
+            max_slope: Slope::UpSteep,
+            curved: false,
+        })
+    );
+
+    let pieces = catalog();
+    for piece in pieces.iter().filter(|piece| hyper.allows_piece(piece)) {
+        assert!(piece.inversion.is_none(), "{}", piece.name);
+        assert_ne!(piece.kind, PieceKind::Launch, "{}", piece.name);
+        assert!(
+            [piece.entry.slope, piece.exit.slope]
+                .iter()
+                .all(|slope| slope.gradient() <= 1.0),
+            "{} climbs steeper than 45 degrees",
+            piece.name
+        );
+        if let Some(PieceFamily::Hill(hill)) = piece.family {
+            assert!(
+                matches!(hill.feel, HillFeel::Floater | HillFeel::Speed),
+                "{}",
+                piece.name
+            );
+        }
+    }
+    for id in [
+        PieceId::FloaterHill20x128,
+        PieceId::FloaterHill24x160,
+        PieceId::SpeedTurnLarge28Left,
+        PieceId::SpeedTurnLarge32Right,
+        PieceId::WideLevelToSixtyDown,
+        PieceId::WideSixtyDownToLevel,
+        PieceId::FloaterHill8x64,
+        PieceId::FamilyHill4x40,
+    ] {
+        assert!(hyper.allowed_pieces.contains(&id), "{id:?}");
+    }
+    for id in [
+        // Ejector hills pull 4.2 g, above the 4 g limit.
+        PieceId::EjectorHill16x96,
+        PieceId::EjectorHill12x80OuterLeft,
+        PieceId::TopHat,
+        PieceId::LaunchedTopHat,
+        PieceId::WaveTurnLeft,
+        PieceId::HybridOverbankLeft,
+        PieceId::StallLeft,
+        PieceId::ZeroGRollFastLeft,
+        PieceId::AirtimeHill,
+        PieceId::VerticalDownEntry,
+        PieceId::SixtyUp,
+        // Above 1.3 g airtime and 1.2 g longitudinal at the top of its window.
+        PieceId::LevelToSixtyDown,
+        // Above 4 g at the top of its window.
+        PieceId::SpeedTurnLarge24Left,
+        PieceId::SpeedTurnLarge24Right,
+    ] {
+        assert!(!hyper.allowed_pieces.contains(&id), "{id:?}");
+    }
+
+    let piece = |id| pieces.iter().find(|piece| piece.id == id).unwrap();
+    assert!(hyper.allows_chain(piece(PieceId::SteepUp)));
+    assert!(hyper.allows_chain(piece(PieceId::GentleToSteepUp)));
+    assert!(!hyper.allows_chain(piece(PieceId::SteepToSixtyUp)));
+    assert!(!hyper.allows_chain(piece(PieceId::SixtyUp)));
+    let climbing_turns: Vec<_> = hyper
+        .available_pieces(TrackState {
+            slope: Slope::UpGentle,
+            ..TrackState::origin()
+        })
+        .into_iter()
+        .filter(|piece| piece.entry.heading != piece.exit.heading)
+        .collect();
+    assert!(!climbing_turns.is_empty());
+    for turn in climbing_turns {
+        assert!(!hyper.allows_chain(&turn), "{}", turn.name);
+    }
 }
 
 #[test]
