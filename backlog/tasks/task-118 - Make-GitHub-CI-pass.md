@@ -4,7 +4,7 @@ title: Make GitHub CI pass
 status: To Do
 assignee: []
 created_date: '2026-11-05 00:27'
-updated_date: '2026-11-05 23:58'
+updated_date: '2026-11-07 01:33'
 labels: []
 dependencies: []
 priority: high
@@ -31,4 +31,6 @@ The repo went public as No-Stream/heartline on 2026-11-04. The first CI run (Act
 2026-11-05: run 42121748977 passed every job except e2e (feature), which hit the 20-minute job limit and was cancelled; the feature project is now sharded into three CI jobs.
 
 2026-11-05: sharded run 42128358630: all jobs green except the feature shards (16 failures: small screenshot differences and runner timeouts). Branch ci-feature investigating (Docker parity likely).
+
+2026-11-06: merged into master (ci-journeys): browser tests run in the pinned Playwright image with npm ci, journeys sharded in the container, world quads drawn as indexed triangles (Docker frames 333 -> 167 ms). Branch gates: Docker journeys 9/9, local journeys 9/9, feature 187/188 before a stale draw-count test fix. Not yet confirmed on GitHub: check the first run after this push.
 <!-- SECTION:NOTES:END -->

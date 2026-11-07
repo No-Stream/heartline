@@ -4,7 +4,7 @@ title: Evaluate rider forces with ASTM-style filtering and duration limits
 status: To Do
 assignee: []
 created_date: '2026-11-05 16:09'
-updated_date: '2026-11-05 23:39'
+updated_date: '2026-11-07 01:33'
 labels:
   - physics
   - research
@@ -29,4 +29,6 @@ Research for TASK-125 (2026-11-05) suggests ASTM F2291 evaluates vertical accele
 2026-11-05 evening: third attempt stopped (HalfCorkscrewLeftDown had no passing window anywhere in 0.25-100 m/s, unexplained; 7 inversion and 6 rated tests still failing; scoring still uses a separate ASTM envelope; live preview p95 142 ms on Timber Tumbler). Branch force-smoothing is checkpointed at b240068 with master merged (not mergeable). Paused for a proper plan: Fable is writing docs/superpowers/plans/2026-11-05-force-smoothing.md.
 
 2026-11-05: plan committed (bc3a68e). Implementing on branch force-rule; task 1 dispatched.
+
+2026-11-06: branch force-rule has the generated window table for 101 pieces with master 7f4502d merged; Rust and unit gates pass; a full browser run was still going when the machine was turned off (tmux fr-full). Still to do: merge current master (fast turns, Daisy Dash, Horizon Hawk add pieces; regenerate with make generate-rated-windows), full gates, merge, close-out (plan task 6).
 <!-- SECTION:NOTES:END -->
