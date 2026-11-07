@@ -9,8 +9,8 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::construction::{Construction, select_speed_matched_variant_for_train};
 use theme_park_sim::track::{
-    CoasterModel, Hand, Heading, HillFeel, HillTwist, Piece, PieceFamily, PieceId, TrackState,
-    catalog, coaster_models, effective_rated_speeds, hybrid_model,
+    CoasterModel, Hand, Heading, HillFeel, HillTwist, Piece, PieceFamily, PieceId, PieceKind,
+    TrackState, catalog, coaster_models, effective_rated_speeds, hybrid_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -261,18 +261,26 @@ pub fn report_for_circuit(
         }
         let front = row.entries[0];
         let rated = effective_rated_speeds(piece, &model.train);
-        let worst = row.entries.iter().flatten().copied().min_by(|a, b| {
-            let margin = |speed: f64| {
-                rated.map_or(0.0, |window| {
-                    (speed - window.minimum_entry).min(window.maximum_entry - speed)
+        // A crest fed straight from the chain lift is rated by the front car's entry speed (see the design margins
+        // in tests/known_circuit_statistics.rs), so only the front car counts there.
+        let fed_by_lift = pieces[(index + pieces.len() - 1) % pieces.len()].kind == PieceKind::Lift;
+        let checked_cars = if fed_by_lift { 1 } else { row.entries.len() };
+        let worst = row.entries[..checked_cars]
+            .iter()
+            .flatten()
+            .copied()
+            .min_by(|a, b| {
+                let margin = |speed: f64| {
+                    rated.map_or(0.0, |window| {
+                        (speed - window.minimum_entry).min(window.maximum_entry - speed)
+                    })
+                };
+                margin(*a).total_cmp(&margin(*b)).then_with(|| {
+                    (front.unwrap_or(*a) - *b)
+                        .abs()
+                        .total_cmp(&(front.unwrap_or(*a) - *a).abs())
                 })
-            };
-            margin(*a).total_cmp(&margin(*b)).then_with(|| {
-                (front.unwrap_or(*a) - *b)
-                    .abs()
-                    .total_cmp(&(front.unwrap_or(*a) - *a).abs())
-            })
-        });
+            });
         let entry = match (front, worst) {
             (Some(front), Some(worst)) if (front - worst).abs() > 0.5 => {
                 format!("{front:.2}[{worst:.2}]")

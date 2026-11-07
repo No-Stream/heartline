@@ -216,7 +216,7 @@ Brakes
 Brakes
 
 [Horizon Hawk]
-# Straight chain lift to about 64 m and the wide 60-degree first drop
+# Straight chain lift to 64 m and the wide 60-degree first drop
 +chain
 LevelToGentleUp
 GentleToSteepUp
@@ -227,36 +227,34 @@ GentleUpToLevel
 -chain
 WideLevelToSixtyDown
 WideSixtyDownToLevel
-# First camelback, the turn banked for 32 m/s and two trims before the 20 x 128 m pair
+# A trim at the bottom keeps the first camelback inside its window
+Brakes
+# The 24 x 160 m camelback, the turn banked for 32 m/s and two trims before the 20 x 128 m pair
 FloaterHill24x160
 SpeedTurnLarge32Left
 Brakes
 Brakes
 FloaterHill20x128
 FloaterHill20x128
-# Turn banked for 28 m/s, then smaller floater hills with trims
+# Turn banked for 28 m/s, a trim and a run of floater hills
 SpeedTurnLarge28Left
 Brakes
 FloaterHill16x112
-Brakes
 FloaterHill12x96
+FloaterHill12x96
+FloaterHill12x96
+Straight
 Brakes
-FloaterHill12x80
-FloaterHill6x64
-FloaterHill6x64
-# Turn banked for 20 m/s and the low floater run home
+# Turn banked for 20 m/s and the low floater run back east
 SpeedTurnLarge20Left
+FloaterHill6x64
+FloaterHill6x64
+FloaterHill6x64
 FloaterHill8x64
-FloaterHill6x64
-FloaterHill6x64
-FloaterHill6x64
 FloaterHill8x64
 Brakes
 # Last turn, banked for 16 m/s, and the brake run into the station
 SpeedTurnLarge16Left
 Brakes
-Brakes
-Brakes
 TerrainFall
 OneTileStraight
-HalfTileStraight

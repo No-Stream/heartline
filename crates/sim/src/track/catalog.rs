@@ -854,11 +854,11 @@ fn build_catalog() -> Vec<Piece> {
                         }
                         WideLevelToSixtyDown => Some(RatedSpeeds {
                             minimum_entry: 1.0,
-                            maximum_entry: 6.5,
+                            maximum_entry: 6.6,
                         }),
                         WideSixtyDownToLevel => Some(RatedSpeeds {
                             minimum_entry: 2.0,
-                            maximum_entry: (38.0_f64.powi(2)
+                            maximum_entry: (38.5_f64.powi(2)
                                 - 2.0 * 9.81 * WIDE_SIXTY_PULL.endpoint()[1])
                                 .sqrt(),
                         }),

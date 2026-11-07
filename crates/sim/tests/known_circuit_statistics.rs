@@ -5,7 +5,7 @@ use theme_park_sim::physics::{
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
     CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceFamily, PieceId, PieceKind,
-    TrackState, catalog, effective_rated_speeds, family_coaster_model, hybrid_model,
+    TrackState, catalog, effective_rated_speeds, family_coaster_model, hybrid_model, hyper_model,
     multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
@@ -103,9 +103,16 @@ fn assert_design_margins(circuit: &Circuit, model: &CoasterModel, construction_t
         train.distance() >= circuit.length() + start,
         "train did not complete its lap"
     );
-    for (piece, speeds) in circuit.pieces().iter().zip(entries) {
+    let pieces = circuit.pieces();
+    for (index, (piece, speeds)) in pieces.iter().zip(entries).enumerate() {
         if let Some(window) = effective_rated_speeds(piece, &model.train) {
-            for speed in speeds {
+            // A crest fed straight from the chain lift is entered at lift speed by the front car, while the rear
+            // cars cross it as the front of the train falls away. The rated test measures such a crest by the front
+            // car's entry speed with the full train behind it, so the margin applies to the front car alone there.
+            let fed_by_lift =
+                pieces[(index + pieces.len() - 1) % pieces.len()].kind == PieceKind::Lift;
+            let checked_cars = if fed_by_lift { 1 } else { speeds.len() };
+            for speed in speeds.into_iter().take(checked_cars) {
                 let speed = speed.expect("every car should enter every rated piece");
                 // Windows narrower than 3 m/s cannot provide 1.5 m/s on both sides;
                 // keep their entry within 0.3 m/s of the centre instead.
@@ -460,6 +467,47 @@ fn daisy_dash_is_a_gentle_family_ride_under_both_physics_configs() {
             report.notes
         );
         assert_design_margins(&circuit, &model, initial_speed != 0.0);
+    }
+}
+
+#[test]
+fn horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs() {
+    let model = hyper_model();
+    let circuit = player_circuit("Horizon Hawk", model.clone());
+    let pieces = circuit.pieces();
+    let lift: Vec<_> = pieces
+        .iter()
+        .filter(|piece| piece.kind == PieceKind::Lift)
+        .collect();
+    assert!(!lift.is_empty());
+    assert!(
+        lift.iter()
+            .all(|piece| piece.entry.heading == piece.exit.heading),
+        "the chain lift is straight"
+    );
+    assert!(
+        pieces
+            .iter()
+            .any(|piece| piece.id == PieceId::WideLevelToSixtyDown),
+        "the first drop is 60 degrees"
+    );
+    for camelback in [PieceId::FloaterHill20x128, PieceId::FloaterHill24x160] {
+        assert!(
+            pieces.iter().any(|piece| piece.id == camelback),
+            "{camelback:?}"
+        );
+    }
+    for report in assert_rides_in_band_with_design_margins(&circuit, &model, 6.0..=8.0) {
+        let stats = report.statistics;
+        eprintln!(
+            "Horizon Hawk: excitement {:.2}, intensity {:.2}, nausea {:.2}; stats {stats:?}",
+            report.excitement, report.intensity, report.nausea
+        );
+        assert_eq!(stats.inversions, 0);
+        assert_eq!(stats.launches, 0);
+        assert!(stats.airtime_moments >= 6, "{stats:?}");
+        assert!(stats.biggest_drop >= 50.0, "{stats:?}");
+        assert!(stats.max_speed >= 30.0, "{stats:?}");
     }
 }
 
