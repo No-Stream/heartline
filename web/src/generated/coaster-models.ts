@@ -48,6 +48,18 @@ export const COASTER_MODELS = [
     "manufacturer": "Windmill Ride Works",
     "name": "Daisy Dash",
     "track_material": "steel"
+  },
+  {
+    "default_colors": {
+      "supports": "cream",
+      "track": "sky",
+      "trains": "mustard"
+    },
+    "description": "A tall steel hyper coaster with a straight chain lift, a steep first drop, long floater camelbacks and wide turns banked for speed. Four riders across, no inversions.",
+    "key": "hyper",
+    "manufacturer": "Boulder & Marlin",
+    "name": "Horizon Hawk",
+    "track_material": "steel"
   }
 ] as const;
 

@@ -118,7 +118,7 @@ impl ForceRatingBand {
 pub fn great_positive_vertical_g(model_key: &str) -> f64 {
     match model_key {
         "Briar Blitz" | "Daisy Dash" => 2.5,
-        "Timber Tumbler" | "Velocity Viper" => 3.0,
+        "Timber Tumbler" | "Velocity Viper" | "Horizon Hawk" => 3.0,
         _ => panic!("unknown coaster model: {model_key}"),
     }
 }
@@ -373,6 +373,7 @@ pub fn coaster_models() -> Vec<CoasterModel> {
         multi_launch_model(),
         wooden_twister_model(),
         family_coaster_model(),
+        hyper_model(),
     ]
 }
 
@@ -1107,6 +1108,153 @@ pub fn family_coaster_model() -> CoasterModel {
     }
 }
 
+/// A steel hyper coaster: a tall straight chain lift, a 60-degree first drop, long floater camelbacks and wide
+/// turns banked for speed, with four-across trains and no inversions or launches.
+pub fn hyper_model() -> CoasterModel {
+    CoasterModel {
+        key: "hyper",
+        cars_per_train: 4..=8,
+        ui_description: "A tall steel hyper coaster with a straight chain lift, a steep first drop, long floater camelbacks and wide turns banked for speed. Four riders across, no inversions.",
+        manufacturer: "Boulder & Marlin",
+        name: "Horizon Hawk",
+        description: "A steel hyper coaster with a straight chain lift, a 60-degree first drop, long floater camelbacks, wide turns banked for speed and four-across open trains. No inversions or launches.",
+        allowed_pieces: {
+            use PieceId::*;
+            vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                SpeedTurnLarge28Left,
+                SpeedTurnLarge28Right,
+                SpeedTurnLarge32Left,
+                SpeedTurnLarge32Right,
+                SpeedTurnSmall12Left,
+                SpeedTurnSmall12Right,
+                SpeedTurnSmall16Left,
+                SpeedTurnSmall16Right,
+                SpeedTurnSmall20Left,
+                SpeedTurnSmall20Right,
+                Straight,
+                BankedStraightLeft,
+                BankedStraightRight,
+                HalfTileStraight,
+                OneTileStraight,
+                OneTileGentleUp,
+                OneTileGentleDown,
+                GentleUp,
+                GentleDown,
+                SteepUp,
+                SteepDown,
+                SixtyDownToLevel,
+                SteepToSixtyDown,
+                SixtyDown,
+                SixtyToSteepDown,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                GentleToSteepUp,
+                SteepToGentleUp,
+                LevelToGentleDown,
+                GentleDownToLevel,
+                LongGentleDownToLevel,
+                GentleToSteepDown,
+                SteepToGentleDown,
+                TurnSmallEntry,
+                TurnSmall,
+                TurnSmallExit,
+                TurnSmallStandalone,
+                TurnSmallRightEntry,
+                TurnSmallRight,
+                TurnSmallRightExit,
+                TurnSmallRightStandalone,
+                TurnLargeEntry,
+                TurnLarge,
+                TurnLargeExit,
+                TurnLargeStandalone,
+                TurnLargeRightEntry,
+                TurnLargeRight,
+                TurnLargeRightExit,
+                TurnLargeRightStandalone,
+                BankLeft,
+                UnbankLeft,
+                BankRight,
+                UnbankRight,
+                BankedTurnEntry,
+                BankedTurn,
+                BankedTurnExit,
+                BankedTurnStandalone,
+                SmallRightBankedTurnEntry,
+                SmallRightBankedTurn,
+                SmallRightBankedTurnExit,
+                SmallRightBankedTurnStandalone,
+                LargeLeftBankedTurnEntry,
+                LargeLeftBankedTurn,
+                LargeLeftBankedTurnExit,
+                LargeLeftBankedTurnStandalone,
+                LargeRightBankedTurnEntry,
+                LargeRightBankedTurn,
+                LargeRightBankedTurnExit,
+                LargeRightBankedTurnStandalone,
+                OffsetLeft,
+                OffsetRight,
+                ShortOffsetLeft,
+                ShortOffsetRight,
+                FullOffsetLeft,
+                FullOffsetRight,
+                ShortRise,
+                ShortFall,
+                Brakes,
+                Station,
+                TerrainRise,
+                TerrainFall,
+                FloaterHill12x80OuterLeft,
+                FloaterHill12x80OuterRight,
+                FloaterHill12x96OuterLeft,
+                FloaterHill12x96OuterRight,
+                FloaterHill16x112OuterLeft,
+                FloaterHill16x112OuterRight,
+                FloaterHill12x80,
+                FloaterHill12x96,
+                FloaterHill16x112,
+                FloaterHill20x128,
+                FloaterHill24x160,
+            ]
+        },
+        sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
+        minimum_radius_metres: 8.0,
+        comfortable_force_limits: ComfortableForceLimits {
+            minimum_vertical_g: -1.3,
+            maximum_vertical_g: 4.0,
+            maximum_lateral_g: 1.2,
+            maximum_longitudinal_g: 1.2,
+        },
+        minimum_height_cm: 132,
+        allowed_inversions: vec![],
+        lift_rules: Some(LiftRules {
+            max_slope: Slope::UpSteep,
+            curved: false,
+        }),
+        launch_types: vec![],
+        support_style: SupportStyle::SteelColumns,
+        train: TrainConfiguration {
+            cars: 8,
+            rows_per_car: 1,
+            seats_per_row: 4,
+            length_metres: 20.0,
+            width_metres: 2.8,
+            height_metres: 2.2,
+            launch: None,
+        },
+        track_material: Material::Steel,
+        structure_material: Material::Steel,
+        default_colors: CoasterColors {
+            track: CoasterColor::Sky,
+            supports: CoasterColor::Cream,
+            trains: CoasterColor::Mustard,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1172,6 +1320,7 @@ mod tests {
                 ("velocity_viper", "Velocity Viper"),
                 ("wooden_twister", "Briar Blitz"),
                 ("family_coaster", "Daisy Dash"),
+                ("hyper", "Horizon Hawk"),
             ]
         );
         assert_eq!(

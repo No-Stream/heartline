@@ -1622,6 +1622,26 @@ fn build_catalog() -> Vec<Piece> {
             16.75644507723801,
             8.0,
         ),
+        (
+            FloaterHill20x128,
+            "FloaterHill20x128",
+            "Floater hill 20 × 128 m",
+            HillFeel::Floater,
+            20,
+            128,
+            31.531500358154,
+            8.0,
+        ),
+        (
+            FloaterHill24x160,
+            "FloaterHill24x160",
+            "Floater hill 24 × 160 m",
+            HillFeel::Floater,
+            24,
+            160,
+            35.78356229386795,
+            8.0,
+        ),
     ] {
         let profile = Arc::new(embedded_profile(profile_name));
         let maximum_entry = design_speed
