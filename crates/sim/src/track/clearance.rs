@@ -758,7 +758,7 @@ pub(crate) fn tunnel_plan_with_envelopes(
                             f64::from(z) + 1.0,
                         ),
                     };
-                    if !intersects_envelope(&oriented, cell) {
+                    if !intersects_envelope(oriented, cell) {
                         continue;
                     }
                     let terrain_cell = TerrainCell { x, y, height: z };
