@@ -1,10 +1,10 @@
 ---
 id: TASK-28
 title: Add sound
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-18 16:46'
+updated_date: '2026-11-18 17:00'
 labels:
   - audio
 milestone: m-3
@@ -24,8 +24,8 @@ Owner decision 2026-11-04: generate sounds from scratch in the browser (Web Audi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Owner has agreed the audio direction
-- [ ] #2 Rides, crowds and effects have sound, and the player can adjust or mute it
+- [x] #1 Owner has agreed the audio direction
+- [x] #2 Rides, crowds and effects have sound, and the player can adjust or mute it
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -49,4 +49,6 @@ When sound families land: the player pause (Space) must silence train and event 
 2026-11-18 later the same day: birds and crickets removed at the owner's request (harsh, constant high ringing); ambience is wind only. The steel whine (sawtooth harmonics ringing above 2 kHz) became a bandpassed-noise rail hiss, and the brake squeal oscillator now exists only during brake events. An offline test checks that a park with a stopped or cruising train has no narrow-band tone above 2 kHz, day or night.
 
 2026-11-18 (branch audio-tuning, 4 commits, not merged): rail hiss replaces the tonal steel whine, with an offline test that fails on any narrow-band tone above 2 kHz; ambience is wind only (birds and crickets removed); brake squeal plays only during a brake event; screams and station dispatch made more natural. Waiting on the owner's listening pass, then merge.
+
+2026-11-18: owner listening pass: 'the sound is much better, very nice'. audio-tuning merged (0d97a50); typecheck, Vitest 456 + 9 art, and the three audio browser specs (9) pass.
 <!-- SECTION:NOTES:END -->
