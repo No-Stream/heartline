@@ -664,6 +664,10 @@ impl WasmSimulation {
         let Some(construction) = self.construction.as_ref() else {
             return "null".into();
         };
+        // Undoing the station leaves an empty construction: there is no train to estimate from.
+        if construction.pieces().is_empty() {
+            return "null".into();
+        }
         let candidate = self.construction_preview();
         let Some(first) = candidate.first() else {
             return "null".into();
