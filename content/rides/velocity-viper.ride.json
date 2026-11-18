@@ -1,0 +1,148 @@
+{
+  "format": "heartline-ride",
+  "version": 1,
+  "name": "Velocity Viper",
+  "model": "velocity_viper",
+  "station": {
+    "x": 241,
+    "y": 249,
+    "z": 12,
+    "heading": "north"
+  },
+  "carsPerTrain": 6,
+  "trains": 1,
+  "steps": [
+    {
+      "place": "LaunchLong"
+    },
+    {
+      "place": "LaunchLong"
+    },
+    {
+      "place": "Launch"
+    },
+    {
+      "place": "LaunchedTopHat"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "SpeedTurnLarge24Left"
+    },
+    {
+      "place": "EjectorHill16x96"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "ZeroGRollFastRight"
+    },
+    {
+      "place": "SpeedTurnLarge20Left"
+    },
+    {
+      "place": "FloaterHill12x96"
+    },
+    {
+      "place": "WaveTurnLeft"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "LaunchShort"
+    },
+    {
+      "place": "EjectorHill12x64"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "SpeedTurnLarge16Left"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "TurnSmallRightStandalone"
+    },
+    {
+      "place": "TurnSmallRightStandalone"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "TurnLargeStandalone"
+    },
+    {
+      "place": "TurnLargeStandalone"
+    },
+    {
+      "place": "OffsetLeft"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "close": true
+    }
+  ]
+}

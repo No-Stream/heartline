@@ -24,7 +24,7 @@ pub use scoring::{
     Contribution, ForceAxis, ForceBand, ForceDetail, ScoreBreakdown, Term, force_band,
 };
 mod testing;
-pub use testing::{TestRun, TestRunRecorder, TestSample};
+pub use testing::{ForcePeakValues, PieceForcePeaks, TestRun, TestRunRecorder, TestSample};
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};
 mod preview;

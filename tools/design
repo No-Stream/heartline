@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(dirname "$script_dir")"
+make -C "$repo_root" design-tools >/dev/null
+exec "$repo_root/target/release/heartline-design" "$@"
