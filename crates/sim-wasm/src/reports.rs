@@ -139,6 +139,18 @@ pub(crate) struct TestingReport {
     pub statistics: RideStatisticsReport,
 }
 
+/// What the ride info window shows for one coaster: its model, its force limits and its latest test report.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RideInfoReport {
+    #[ts(type = "\"demo\" | \"player\"")]
+    pub ride: &'static str,
+    pub model_name: String,
+    pub manufacturer: String,
+    pub limits: crate::construction::ConstructionForceLimitsWire,
+    pub report: Option<TestingReport>,
+}
+
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScoreBreakdownReport {
@@ -406,6 +418,7 @@ mod wire_tests {
         crate::TrainLayoutReport::export_all_to(&output).unwrap();
         BlockReport::export_all_to(&output).unwrap();
         TestingReport::export_all_to(&output).unwrap();
+        RideInfoReport::export_all_to(&output).unwrap();
         PieceShapeReport::export_all_to(&output).unwrap();
         crate::construction::ConstructionPieceWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionHillOptionWire::export_all_to(&output).unwrap();

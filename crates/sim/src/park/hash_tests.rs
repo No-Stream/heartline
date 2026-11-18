@@ -1,4 +1,5 @@
 use super::Park;
+use super::ride_test::RideKey;
 use crate::facilities::ParkFacilities;
 use crate::guests::park::ParkGuests;
 use crate::physics::{PhysicsConfig, Train, demo_circuit};
@@ -118,6 +119,11 @@ fn state_hash_is_reproducible_and_covers_live_park_state() {
         hybrid_model(),
     ));
     assert_ne!(baseline_hash, construction_changed.state_hash());
+
+    let mut demo_report_changed = empty_park();
+    demo_report_changed.run_ride_test(RideKey::Demo).unwrap();
+    assert!(demo_report_changed.demo_report.is_some());
+    assert_ne!(baseline_hash, demo_report_changed.state_hash());
 
     let mut nausea_rating_changed = empty_park();
     nausea_rating_changed.coaster_ratings = Some((50, 31));

@@ -2,6 +2,7 @@
 
 pub mod block_analysis;
 pub mod commands;
+pub mod ride_test;
 pub mod tick;
 
 #[cfg(test)]
@@ -49,6 +50,8 @@ pub struct Park {
     pub construction_outcome: Option<String>,
     pub construction_recorder: Option<ConstructionTestRunRecorder>,
     pub construction_report: Option<TestRun>,
+    /// Latest test of the demo coaster; its track never changes, so it is never invalidated.
+    pub demo_report: Option<TestRun>,
     pub coaster_open: bool,
     pub coaster_price: u16,
     pub coaster_operation: Option<BlockOperation>,
@@ -121,6 +124,7 @@ impl Park {
             construction_outcome: None,
             construction_recorder: None,
             construction_report: None,
+            demo_report: None,
             coaster_open: false,
             coaster_price: 6,
             coaster_operation: None,
@@ -206,6 +210,11 @@ impl Park {
         hash.write_option(self.construction_report.as_ref(), |hash, report| {
             report.hash_into(hash);
         });
+        // Only written when present so parks without a demo report keep their earlier hashes.
+        if let Some(report) = &self.demo_report {
+            hash.write_tag(b"DemoReport");
+            report.hash_into(&mut hash);
+        }
         hash.write_bool(self.coaster_open);
         hash.write_u16(self.coaster_price);
         hash.write_option(self.coaster_operation.as_ref(), |hash, operation| {

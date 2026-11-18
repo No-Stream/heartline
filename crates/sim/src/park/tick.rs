@@ -5,7 +5,7 @@ use crate::executor::{Executor, SequentialExecutor};
 use crate::facilities::{FacilityKind, coaster_facility};
 use crate::guests::knowledge::guest_rating;
 use crate::guests::walking::WalkingGuest;
-use crate::physics::{CoasterOutcome, TestRun};
+use crate::physics::{Circuit, CoasterOutcome, TestRun, Train};
 use crate::track::blocks::{BlockLayout, BlockManualSearch};
 use crate::track::clearance::ClearanceBox;
 use crate::track::construction::track_support_obstacles;
@@ -49,6 +49,49 @@ pub(super) fn track_theming(world: &World, pieces: &[Piece]) -> f64 {
 
     let weighted_scenery_per_100_metres = weighted_scenery_samples * 100.0 / track_length;
     1.0 - (-weighted_scenery_per_100_metres / THEMING_SCALE_PER_100_METRES).exp()
+}
+
+/// Adds proximity events and theming to freshly finished reports of one track.
+pub(super) fn add_proximity_and_theming(
+    world: &World,
+    pieces: &[Piece],
+    train: &TrainConfiguration,
+    other_tracks: &[Piece],
+    obstacles: &[ClearanceBox],
+    supports: &[OwnedSupportSegment],
+    reports: &mut [TestRun],
+) {
+    let geometry =
+        scan_proximity_with_supports(world, pieces, train, other_tracks, obstacles, supports);
+    let theming = track_theming(world, pieces);
+    for report in reports {
+        let events = geometry.events_for_run(&report.samples);
+        report.add_proximity_events(&events);
+        report.set_theming(theming);
+    }
+}
+
+/// Advances a demo train one physics step and describes where each car is.
+pub(super) fn step_demo_train(circuit: &Circuit, train: &mut Train) -> Vec<TrainPosition> {
+    train.step(circuit);
+    let positions = train
+        .readings()
+        .last()
+        .expect("step produces readings")
+        .iter()
+        .map(|reading| {
+            let sample = circuit.sample(reading.distance);
+            TrainPosition {
+                position: sample.position,
+                tangent: sample.tangent,
+                piece_index: circuit.piece_index(reading.distance),
+                distance: reading.distance.rem_euclid(circuit.length()),
+                speed: reading.speed,
+            }
+        })
+        .collect();
+    train.take_readings();
+    positions
 }
 
 pub struct SupportRenderCache {
@@ -105,26 +148,7 @@ impl Park {
         while self.physics_remainder >= 30 {
             let mut report_finished = false;
             let demo_trains: Vec<_> = if let Some(coaster) = &mut self.demo_coaster {
-                coaster.train.step(&coaster.circuit);
-                let positions = coaster
-                    .train
-                    .readings()
-                    .last()
-                    .expect("step produces readings")
-                    .iter()
-                    .map(|reading| {
-                        let sample = coaster.circuit.sample(reading.distance);
-                        TrainPosition {
-                            position: sample.position,
-                            tangent: sample.tangent,
-                            piece_index: coaster.circuit.piece_index(reading.distance),
-                            distance: reading.distance.rem_euclid(coaster.circuit.length()),
-                            speed: reading.speed,
-                        }
-                    })
-                    .collect();
-                coaster.train.take_readings();
-                positions
+                step_demo_train(&coaster.circuit, &mut coaster.train)
             } else {
                 Vec::new()
             };
@@ -239,7 +263,7 @@ impl Park {
                         .construction
                         .as_ref()
                         .expect("report requires construction");
-                    let geometry = scan_proximity_with_supports(
+                    add_proximity_and_theming(
                         &self.world,
                         construction.pieces(),
                         &construction.model().train,
@@ -248,10 +272,8 @@ impl Park {
                             .map_or(&[], |coaster| coaster.circuit.pieces()),
                         &obstacles,
                         &supports,
+                        std::slice::from_mut(report),
                     );
-                    let events = geometry.events_for_run(&report.samples);
-                    report.add_proximity_events(&events);
-                    report.set_theming(track_theming(&self.world, construction.pieces()));
                 }
             }
             self.physics_remainder -= 30;
@@ -358,7 +380,7 @@ impl Park {
         let obstacles = self.proximity_obstacles();
         let supports = self.proximity_supports();
         let construction = self.construction.as_ref().expect("open coaster has track");
-        let geometry = scan_proximity_with_supports(
+        add_proximity_and_theming(
             &self.world,
             construction.pieces(),
             &construction.model().train,
@@ -367,13 +389,8 @@ impl Park {
                 .map_or(&[], |coaster| coaster.circuit.pieces()),
             &obstacles,
             &supports,
+            &mut outcome.reports,
         );
-        let theming = track_theming(&self.world, construction.pieces());
-        for report in &mut outcome.reports {
-            let events = geometry.events_for_run(&report.samples);
-            report.add_proximity_events(&events);
-            report.set_theming(theming);
-        }
         let seats_per_car = usize::from(construction.model().train.rows_per_car)
             * usize::from(construction.model().train.seats_per_row);
         self.remember_front_car_ratings(&outcome.reports[0]);

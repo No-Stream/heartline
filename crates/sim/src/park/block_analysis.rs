@@ -159,7 +159,6 @@ impl Park {
         self.coaster_facility = Some(facility);
         self.construction_train = None;
         self.construction_recorder = None;
-        self.construction_report = None;
         self.coaster_open = true;
         self.construction_message.clear();
         Ok(())
