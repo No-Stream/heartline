@@ -50,8 +50,8 @@ test("picks known terrain and path points at every rotation @fast", async ({ pag
     const picks = await page.evaluate(() => {
       // Points the demo coaster's timber bents leave uncovered at every rotation.
       const locations = [
-        { x: 241.5, y: 254.5, z: 2 },
-        { x: 240.25, y: 256.25, z: 2 },
+        { x: 242.25, y: 255.25, z: 2 },
+        { x: 241.75, y: 256.75, z: 2 },
         { x: 250.5, y: 256.7, z: 3.375 },
       ];
       return locations.map((location) => {
@@ -61,8 +61,8 @@ test("picks known terrain and path points at every rotation @fast", async ({ pag
     });
 
     expect(picks).toEqual([
-      { kind: "terrain", x: 241, y: 254, height: expect.closeTo(8, 8) },
-      { kind: "path", x: 240, y: 256, height: expect.closeTo(8, 8) },
+      { kind: "terrain", x: 242, y: 255, height: expect.closeTo(8, 8) },
+      { kind: "path", x: 241, y: 256, height: expect.closeTo(8, 8) },
       { kind: "path", x: 250, y: 256, height: expect.closeTo(13.5, 1) },
     ]);
 

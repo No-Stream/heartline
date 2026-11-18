@@ -4,7 +4,7 @@ title: Large longitudinal force on a straight pullout at the bottom of a steep d
 status: To Do
 assignee: []
 created_date: '2026-11-18 12:57'
-updated_date: '2026-11-18 16:45'
+updated_date: '2026-11-18 17:37'
 labels:
   - physics
 dependencies: []
@@ -24,4 +24,6 @@ Owner playtest 2026-11-18: the live builder estimate shows -1.6 g longitudinal (
 2026-11-18 diagnosis (branch longitudinal-diag, ignored test diagnose_steep_drop_pullout_longitudinal_forces in crates/sim/src/physics/tests.rs): a catalog 60-degree drop into a level straight pullout at 34 m/s measures 6.17 g vertical, 0.000 g lateral and at most 0.63 g longitudinal at 200 Hz, so the measured path does not produce -1.6 g. Heart-line offset and train coupling contribute real but small longitudinal force. The builder estimate steps at 50 ms and interpolates acceleration when correcting sample forces (physics/preview.rs:111, sim-wasm construction.rs:483), which is the leading suspect for the larger estimated values. Needs the owner's exact track; continue under TASK-146.
 
 Diagnostic branch longitudinal-diag is not merged; merge the ignored test with the TASK-146 fix or drop it then.
+
+2026-11-18 (TASK-140 demo build): on a 45-degree drop pullout at 25 m/s the 200 Hz run also measures 1.12 g longitudinal (front car) and -0.93 g on the back car, matching the estimate, and large banked speed turns on level track read 0.7-0.8 g longitudinal in both the estimate and the test. So part of the longitudinal force is in the measured path, not only in the estimate. Not diagnosed further.
 <!-- SECTION:NOTES:END -->

@@ -2720,10 +2720,10 @@ mod tests {
         assert!(gentle.completed, "gentle notes={:?}", gentle.notes);
         assert!(demo.completed, "demo notes={:?}", demo.notes);
         assert!(demo.samples.iter().any(|sample| sample.airtime));
-        assert!(!demo.samples.iter().any(|sample| sample.inverted));
-        // The demo is a friendly force-designed ride; the gentle oval has no elements at all.
+        assert!(demo.samples.iter().any(|sample| sample.inverted));
+        // The demo is an airtime ride with a stall and a zero-g roll; the gentle oval has no elements at all.
         assert!(
-            (4.0..=6.0).contains(&demo.excitement),
+            (6.5..=8.5).contains(&demo.excitement),
             "demo excitement was {}",
             demo.excitement
         );

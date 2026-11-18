@@ -4,7 +4,7 @@ title: 'Builder update latency: measure against master and cut it'
 status: In Progress
 assignee: []
 created_date: '2026-11-06 02:56'
-updated_date: '2026-11-18 10:00'
+updated_date: '2026-11-18 19:22'
 labels: []
 dependencies: []
 priority: medium
@@ -34,4 +34,6 @@ Removed the redundant full state at finish-search start, avoided copying constru
 2026-11-18 (branch builder-speed-2, support sharing): construction choice validations now retain one path-and-scenery obstacle snapshot per cached world identity and revision, and cached support vectors are shared between candidate validations. The native digest baseline is unchanged: Timber Tumbler b8236ddc331f3f2b, Velocity Viper b0a3412bab1f1a5c, Briar Blitz 4325ef4ea41ca5aa. In one native timing run, placement median/p95 was Timber Tumbler 109.9/135.8 ms, Velocity Viper 93.6/118.5 ms, and Briar Blitz 88.6/119.8 ms, compared with the recorded 120.6/140.7, 102.4/129.9, and 101.6/132.7 ms baseline. In one Chrome run, full placement-state median/p95 was 157.9/191.3, 138.4/173.6, and 125.1/163.7 ms, compared with the latest recorded 169.7/217.2, 151.2/214.2, and 154.2/217.6 ms. First-state median/p95 was 56.5/67.4, 50.3/70.2, and 39.3/53.7 ms; selection median/p95 was 52.1/84.1, 38.5/72.8, and 49.7/76.7 ms. These single runs were collected on a shared machine, so contention may affect the timings.
 
 The focused construction cache tests passed 6/6. `make check` passed, including 228 simulation tests, 1 generated-types test, 445 web tests, 9 art tests, typecheck, and 38 fast browser tests. `make test-rust` passed 673 simulation unit tests, 148 WASM unit tests, and 71 integration tests, with 3 tests filtered by the Make target. `make test-web` passed 445 web tests and 9 art tests. `make lint` passed formatting, both Clippy configurations, and typecheck. `make e2e-feature` passed 189/190 tests; its one failure was the dark workshop screenshot, where the received image differs only in the responsive game-bar fit state after the fixed-width tick-counter CSS change. After reviewing the images, that one baseline was refreshed, and the focused screenshot test passed. `make journeys` passed 11/11 tests.
+
+2026-11-18: builder-speed-2 merged (fdc0870). Chrome placement p95 now 164-191 ms on the three circuits, still above the 100 ms target; native digests unchanged. Master gates green.
 <!-- SECTION:NOTES:END -->

@@ -397,10 +397,11 @@ fn velocity_viper_completes_with_comfortable_forces() {
 }
 
 #[test]
-fn demo_completes_as_a_friendly_ride_with_comfortable_forces() {
+fn demo_completes_as_an_airtime_ride_with_comfortable_forces() {
     let model = hybrid_model();
-    for report in assert_rides_in_band_with_design_margins(&demo_circuit(), &model, 4.0..=6.0) {
-        assert_eq!(report.statistics.inversions, 0);
+    for report in assert_rides_in_band_with_design_margins(&demo_circuit(), &model, 6.5..=8.5) {
+        // The stall and the zero-g roll.
+        assert_eq!(report.statistics.inversions, 2);
         assert!(
             report.statistics.airtime_moments >= 3,
             "demo airtime moments: {}",
