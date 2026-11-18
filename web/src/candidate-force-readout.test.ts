@@ -5,6 +5,7 @@ import { MODEL_FORCE_LIMITS } from "./generated/modelForceLimits";
 const preview = {
   status: "reachedEnd" as const,
   outerBank: false,
+  samples: [],
   entrySpeed: 20,
   ratedSpeed: { minimumEntry: 19, maximumEntry: 21 },
   peaks: { maximumSpeed: 22, minimumVerticalG: -0.5, maximumVerticalG: 3.4, maximumAbsoluteLateralG: 0.3, maximumAbsoluteLongitudinalG: 0.2 },

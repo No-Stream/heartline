@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::track::{Heading, hybrid_model};
-use crate::world::Surface;
+use crate::world::{Path, Position, Scenery, SceneryKind, Surface};
 use std::collections::{BTreeSet, HashSet};
 
 fn flat_world() -> World {
@@ -66,6 +66,149 @@ fn choices_after_hill_variant_changes_match_a_fresh_computation() {
     }
 }
 
+#[test]
+fn existing_supports_are_shared_across_candidate_validations() {
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [8; 4],
+            water: None,
+        },
+    );
+    let mut construction = station_construction();
+    for _ in 0..12 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    construction.choices(&world, &[]);
+
+    let validation_cache = construction.validation_cache.borrow();
+    let baseline_supports = validation_cache.as_ref().unwrap().supports[0]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    let choices_cache = construction.choices_cache.borrow();
+    let first_piece_region = support_search_region(&construction.pieces[0]);
+    let unaffected_candidates: Vec<_> = choices_cache
+        .as_ref()
+        .unwrap()
+        .available_choices
+        .iter()
+        .filter(|candidate| candidate.choice.result.is_ok())
+        .filter_map(|candidate| {
+            let validation = candidate.validation.as_ref()?;
+            (!validation
+                .track_obstacles
+                .iter()
+                .any(|bounds| first_piece_region.overlaps(bounds)))
+            .then_some(candidate)
+        })
+        .collect();
+    let pair = unaffected_candidates
+        .iter()
+        .enumerate()
+        .find_map(|(first_index, first)| {
+            unaffected_candidates
+                .iter()
+                .skip(first_index + 1)
+                .find(|second| !same_geometry(&first.piece, &second.piece))
+                .map(|second| (*first, *second))
+        })
+        .expect("two valid candidate geometries outside the first piece's support region");
+    let (first, second) = pair;
+    let first_supports = &first.validation.as_ref().unwrap().supports[0];
+    let second_supports = &second.validation.as_ref().unwrap().supports[0];
+    assert!(Arc::ptr_eq(first_supports, baseline_supports));
+    assert!(Arc::ptr_eq(first_supports, second_supports));
+
+    for candidate in [first, second] {
+        let cached_validation = candidate.validation.as_ref().unwrap();
+        let fresh_construction = construction.copy_for_completion();
+        let fresh_validation = fresh_construction
+            .validate_piece(&candidate.piece, &world, &[])
+            .unwrap();
+        let support_values = |validation: &PieceValidation| {
+            validation
+                .supports
+                .iter()
+                .map(|supports| supports.as_ref().clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            support_values(cached_validation),
+            support_values(&fresh_validation)
+        );
+    }
+}
+
+#[test]
+fn support_world_obstacles_are_reused_and_rebuilt_after_world_changes() {
+    let mut world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    world.place_path(Path {
+        position: Position {
+            x: 100,
+            y: 100,
+            height: 0,
+        },
+        slope: None,
+    });
+    world
+        .place_scenery(Scenery {
+            kind: SceneryKind::BushFlowering,
+            position: Position {
+                x: 102,
+                y: 100,
+                height: 0,
+            },
+            quarter: 0,
+            rotation: 0,
+        })
+        .unwrap();
+    crate::track::supports::reset_support_world_obstacle_snapshot_builds();
+
+    let mut construction = Construction::new(
+        TrackState {
+            x: 120,
+            y: 200,
+            z: 10,
+            heading: Heading::North,
+            ..TrackState::origin()
+        },
+        hybrid_model(),
+    );
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    construction.append(PieceId::Straight, &world, &[]).unwrap();
+    construction.choices(&world, &[]);
+    assert_eq!(
+        crate::track::supports::support_world_obstacle_snapshot_builds(),
+        1,
+        "one world snapshot should serve all choice validations"
+    );
+
+    world.place_path(Path {
+        position: Position {
+            x: 200,
+            y: 200,
+            height: 0,
+        },
+        slope: None,
+    });
+    construction.choices(&world, &[]);
+    assert_eq!(
+        crate::track::supports::support_world_obstacle_snapshot_builds(),
+        2,
+        "a world revision should rebuild the support obstacle snapshot once"
+    );
+}
+
 fn hill_world() -> World {
     World::new(
         128,
@@ -103,6 +246,7 @@ fn supports_routed_from_scratch(
         .iter()
         .map(|piece| track_support_obstacles(std::slice::from_ref(*piece), train))
         .collect();
+    let world_obstacles = SupportWorldObstacles::new(world);
     all_pieces
         .iter()
         .enumerate()
@@ -118,11 +262,12 @@ fn supports_routed_from_scratch(
             let route_supports = if construction.model.support_style_for_piece(piece)
                 == SupportStyle::DenseWoodenLattice
             {
-                generate_dense_supports
+                generate_dense_supports_with_world_obstacles
             } else {
-                generate_supports
+                generate_supports_with_world_obstacles
             };
-            route_supports(piece, &carved, &obstacles).map_err(construction_support_error)
+            route_supports(piece, &carved, &obstacles, &world_obstacles)
+                .map_err(construction_support_error)
         })
         .collect()
 }
@@ -170,7 +315,11 @@ fn assert_tunnelling_supports_match_routing_from_scratch(carve_placed_track: boo
             match validation {
                 Ok(validation) => {
                     assert_eq!(
-                        Ok(validation.supports),
+                        Ok(validation
+                            .supports
+                            .iter()
+                            .map(|supports| supports.as_ref().clone())
+                            .collect::<Vec<_>>()),
                         supports_routed_from_scratch(&construction, &candidate, &world),
                         "{:?} after {} pieces",
                         template.id,

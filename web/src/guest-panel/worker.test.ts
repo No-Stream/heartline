@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { validateBlockAnalysisBudget } from "../game-test";
 import type { ConstructionState } from "../construction-protocol";
 import type { WorkerAction, WorkerMessage } from "../protocol";
+import { replaySessionIntoWorker } from "../session-replay-worker";
+import type { ReplaySession } from "../session-replay";
 
 const wasmMock = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -19,7 +21,9 @@ const wasmMock = vi.hoisted(() => ({
   constructionUndo: vi.fn(),
   constructionDelete: vi.fn(),
   constructionTrackLength: 0,
+  finishConfirmCloses: false,
   finishAvailable: false,
+  finishSearchPending: false,
   finishInvalidate: vi.fn(),
   finishSearchStart: vi.fn(),
   finishSearchAdvance: vi.fn(() => true),
@@ -47,6 +51,8 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     carsPerTrain = 6;
     colors = JSON.stringify({ track: "coral", supports: "timber", trains: "sage" });
     constructor(seed: bigint, guestCount: number, park: string) { wasmMock.construct(seed, guestCount, park); }
+    static load_state(_bytes: Uint8Array) { return new this(0n, 0, "demo"); }
+    free() {}
     scenery_json() { return "[]"; }
     facilities_json() { return "[]"; }
     facility_revenue() { return 0n; }
@@ -131,9 +137,10 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_finish_reason() { return wasmMock.finishAvailable ? "" : "Checking for a connection to the station."; }
     construction_finish_search_start() { wasmMock.finishSearchStart(); wasmMock.finishAvailable = false; }
     construction_finish_search_advance() { return wasmMock.finishSearchAdvance(); }
+    construction_finish_search_pending() { return wasmMock.finishSearchPending; }
     construction_finish_invalidate() { wasmMock.finishInvalidate(); wasmMock.finishAvailable = false; }
     construction_finish_preview() {}
-    construction_finish_confirm() {}
+    construction_finish_confirm() { if (wasmMock.finishConfirmCloses) wasmMock.constructionActive.mockReturnValue(false); }
     construction_finish_cancel() {}
     construction_is_open() { return false; }
     construction_station_positions() { return new Int32Array(); }
@@ -165,7 +172,9 @@ afterEach(() => {
   wasmMock.constructionUndo.mockReset();
   wasmMock.constructionDelete.mockReset();
   wasmMock.constructionTrackLength = 0;
+  wasmMock.finishConfirmCloses = false;
   wasmMock.finishAvailable = false;
+  wasmMock.finishSearchPending = false;
   wasmMock.finishInvalidate.mockReset();
   wasmMock.finishSearchStart.mockReset();
   wasmMock.finishSearchAdvance.mockReset().mockReturnValue(true);
@@ -185,6 +194,194 @@ it("sends an incomplete station state before the complete state", async () => {
   expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true]);
   const sent = postMessage.mock.calls.map(([message]) => message);
   expect(sent.findIndex((message) => message.type === "world")).toBeLessThan(sent.findIndex((message) => message.type === "construction-state" && message.complete));
+});
+
+it("sends one complete placement state before the finish search result", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+
+  postMessage.mockClear();
+  onMessage({ data: { type: "construction-append" } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true]);
+  onMessage({ data: { type: "construction-finish-await" } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.some(([message]) => message.type === "construction-finish-ready")).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(0);
+  const messages = postMessage.mock.calls.map(([message]) => message);
+  expect(messages.filter((message) => message.type === "construction-state").map((message) => message.complete)).toEqual([false, true]);
+  expect(messages.filter((message) => message.type === "construction-finish-status")).toEqual([{
+    type: "construction-finish-status",
+    canFinish: false,
+    finishReason: "Checking for a connection to the station.",
+  }]);
+  expect(messages.findIndex((message) => message.type === "construction-finish-status")).toBeLessThan(messages.findIndex((message) => message.type === "construction-finish-ready"));
+});
+
+it("publishes finish status for inactive construction and keeps a no-search await immediate", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+
+  onMessage({ data: { type: "construction-finish-await" } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.map(([message]) => message.type)).toContain("construction-finish-ready");
+  expect(postMessage.mock.calls.some(([message]) => message.type === "construction-finish-status")).toBe(false);
+
+  postMessage.mockClear();
+  onMessage({ data: { type: "facility-place", kind: "carousel", x: 0, y: 0, rotation: 0 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(0);
+  expect(postMessage.mock.calls.find(([message]) => message.type === "construction-finish-status")?.[0]).toEqual({
+    type: "construction-finish-status",
+    canFinish: false,
+    finishReason: "Checking for a connection to the station.",
+  });
+});
+
+it("publishes construction state for facility edits before resuming the finish search", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+
+  postMessage.mockClear();
+  onMessage({ data: { type: "facility-place", kind: "carousel", x: 0, y: 0, rotation: 0 } } as MessageEvent);
+  await Promise.resolve();
+  const immediateStates = postMessage.mock.calls.filter(([message]) => message.type === "construction-state");
+  expect(immediateStates).toHaveLength(1);
+  expect(immediateStates[0][0].finishReason).toBe("Checking for a connection to the station.");
+
+  await vi.advanceTimersByTimeAsync(0);
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-finish-status")).toHaveLength(1);
+
+  postMessage.mockClear();
+  onMessage({ data: { type: "facility-remove", id: 1 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
+});
+
+it("continues a saved finish search without restarting it or sending a redundant state", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  wasmMock.finishSearchPending = true;
+  onMessage({ data: { type: "load-park", requestId: 1, bytes: new Uint8Array() } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.finishSearchStart).not.toHaveBeenCalled();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
+
+  await vi.advanceTimersByTimeAsync(0);
+  expect(wasmMock.finishSearchStart).not.toHaveBeenCalled();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-finish-status")).toHaveLength(1);
+});
+
+it("keeps finish preview as a full state and publishes completion status after closure", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+
+  postMessage.mockClear();
+  onMessage({ data: { type: "construction-finish-preview" } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
+  expect(postMessage.mock.calls.some(([message]) => message.type === "construction-finish-status")).toBe(false);
+
+  wasmMock.finishConfirmCloses = true;
+  postMessage.mockClear();
+  onMessage({ data: { type: "construction-finish-confirm" } } as MessageEvent);
+  await Promise.resolve();
+  const completedState = postMessage.mock.calls.find(([message]) => message.type === "construction-state")?.[0];
+  expect(completedState).toEqual(expect.objectContaining({ type: "construction-state", active: false }));
+  onMessage({ data: { type: "construction-finish-await" } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+
+  const messages = postMessage.mock.calls.map(([message]) => message);
+  expect(messages.some((message) => message.type === "construction-finish-status")).toBe(true);
+  expect(messages.findIndex((message) => message.type === "construction-finish-status")).toBeLessThan(messages.findIndex((message) => message.type === "construction-finish-ready"));
+});
+
+it("keeps replay awaiting its full command state and finish-ready barrier", async () => {
+  class FakeWorker extends EventTarget {
+    readonly sent: string[] = [];
+    postMessage(action: { type: string }): void {
+      this.sent.push(action.type);
+      if (action.type === "construction-append") {
+        this.dispatchEvent(new MessageEvent("message", { data: { type: "construction-finish-status", canFinish: true, finishReason: "" } }));
+      } else if (action.type === "construction-finish-await") {
+        this.dispatchEvent(new MessageEvent("message", { data: { type: "construction-finish-status", canFinish: false, finishReason: "Checking" } }));
+        this.dispatchEvent(new MessageEvent("message", { data: { type: "construction-finish-ready" } }));
+      } else if (action.type === "construction-finish-preview") {
+        this.dispatchEvent(new MessageEvent("message", { data: { type: "construction-state", complete: true } }));
+      } else if (action.type === "finish") {
+        this.dispatchEvent(new MessageEvent("message", { data: { type: "finished" } }));
+      }
+    }
+  }
+  const worker = new FakeWorker();
+  const session: ReplaySession = {
+    format: "theme-park-session",
+    version: 1,
+    seed: "1",
+    park: "new",
+    guestCount: 0,
+    commands: [
+      { tick: 0, command: { type: "construction-append" } },
+      { tick: 0, command: { type: "construction-finish-preview" } },
+    ],
+    checkpoints: [],
+    finalTick: 0,
+  };
+  const replay = replaySessionIntoWorker(worker as unknown as Worker, session, { action: { type: "finish" }, replyType: "finished" });
+  await Promise.resolve();
+  expect(worker.sent).toEqual(["construction-append"]);
+  worker.dispatchEvent(new MessageEvent("message", { data: { type: "construction-state", complete: true } }));
+  await replay;
+  expect(worker.sent).toEqual([
+    "construction-append",
+    "construction-finish-await",
+    "construction-finish-preview",
+    "finish",
+  ]);
 });
 
 it("sends block analysis progress without rebuilding construction geometry", async () => {
@@ -482,13 +679,19 @@ it("publishes finish availability after track edits without invalidating it on s
     .map(([message]) => message as WorkerMessage)
     .filter((message): message is ConstructionState => message.type === "construction-state")
     .at(-1);
+  const latestFinishStatus = (): Extract<WorkerMessage, { type: "construction-finish-status" }> | undefined => postMessage.mock.calls
+    .map(([message]) => message as WorkerMessage)
+    .filter((message): message is Extract<WorkerMessage, { type: "construction-finish-status" }> => message.type === "construction-finish-status")
+    .at(-1);
 
   await dispatchAndFlush({ type: "construction-start", x: 0, y: 0, z: 0, heading: 0 });
-  expect(latestConstructionState()?.canFinish).toBe(true);
+  expect(latestConstructionState()?.canFinish).toBe(false);
+  expect(latestFinishStatus()?.canFinish).toBe(true);
   expect(wasmMock.finishSearchStart).toHaveBeenCalledTimes(1);
 
   await dispatchAndFlush({ type: "construction-select", piece: "Straight" });
   expect(latestConstructionState()?.canFinish).toBe(true);
+  expect(latestFinishStatus()?.canFinish).toBe(true);
   expect(wasmMock.finishInvalidate).toHaveBeenCalledTimes(1);
   expect(wasmMock.finishSearchStart).toHaveBeenCalledTimes(1);
 
@@ -499,10 +702,12 @@ it("publishes finish availability after track edits without invalidating it on s
   ];
   for (const action of trackEdits) {
     await dispatchAndFlush(action);
-    expect(latestConstructionState()?.canFinish).toBe(true);
+    expect(latestConstructionState()?.canFinish).toBe(false);
+    expect(latestFinishStatus()?.canFinish).toBe(true);
   }
   expect(wasmMock.finishInvalidate).toHaveBeenCalledTimes(4);
   expect(wasmMock.finishSearchStart).toHaveBeenCalledTimes(4);
+  expect(postMessage.mock.calls.some(([message]) => message.type === "construction-finish-ready")).toBe(false);
 });
 
 it("sends coaster colours to the simulation and publishes them parsed, with the demo coaster's in the first world", async () => {

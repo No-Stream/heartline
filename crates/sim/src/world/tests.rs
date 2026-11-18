@@ -638,6 +638,65 @@ fn path_positions_must_stay_inside_the_world() {
 }
 
 #[test]
+fn path_bounds_query_matches_ordered_paths_across_edges_and_tunnel_columns() {
+    let mut world = World::new(64, 64, flat_surface(32));
+    for y in 30..50 {
+        for x in 30..50 {
+            world.carve(x, y, 12, 13);
+        }
+    }
+    for (x, y, height) in [
+        (8, 8, 24),
+        (8, 8, 28),
+        (9, 8, 32),
+        (10, 9, 32),
+        (7, 9, 32),
+        (20, 20, 32),
+        (0, 0, 32),
+        (63, 63, 32),
+    ] {
+        if height < 32 {
+            world.carve(x, y, height, height + 1);
+        }
+        world.place_path(Path {
+            position: position(x, y, height),
+            slope: None,
+        });
+    }
+
+    for (min_x, max_x, min_y, max_y) in [
+        (36.0, 40.0, 36.0, 40.0),
+        (32.0, 36.0, 32.0, 36.0),
+        (36.001, 39.999, 36.001, 39.999),
+        (0.0, 4.0, 0.0, 4.0),
+        (252.0, 256.0, 252.0, 256.0),
+        (300.0, 320.0, 300.0, 320.0),
+        (-8.0, -4.0, -8.0, -4.0),
+    ] {
+        let expected: Vec<_> = world
+            .paths()
+            .filter(|path| {
+                let path_min_x = f64::from(path.position.x) * 4.0;
+                let path_min_y = f64::from(path.position.y) * 4.0;
+                let path_max_x = path_min_x + 4.0;
+                let path_max_y = path_min_y + 4.0;
+                path_min_x <= max_x
+                    && path_max_x >= min_x
+                    && path_min_y <= max_y
+                    && path_max_y >= min_y
+            })
+            .collect();
+        assert_eq!(
+            world
+                .paths_overlapping_horizontal_bounds(min_x, max_x, min_y, max_y)
+                .collect::<Vec<_>>(),
+            expected,
+            "bounds ({min_x}, {max_x}, {min_y}, {max_y})"
+        );
+    }
+}
+
+#[test]
 #[should_panic(expected = "paths overlap")]
 fn paths_cannot_overlap_the_same_occupied_space() {
     let mut world = World::new(2, 2, flat_surface(8));
