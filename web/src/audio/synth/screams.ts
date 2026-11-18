@@ -1,53 +1,44 @@
-import type { ScreamEvent } from "../mapping";
-import { noiseBuffers } from "./noise";
+import { SOUND_TUNING, type ScreamEvent } from "../mapping";
+import type { ScreamRecording } from "../recordings";
 
 export interface ScreamHandle { start: number; end: number; stop(time: number): void }
 
-export function playScream(context: BaseAudioContext, destination: AudioNode, event: ScreamEvent, time: number, variation: () => number): ScreamHandle {
+export function playScream(context: BaseAudioContext, destination: AudioNode, event: ScreamEvent, time: number, variation: () => number, recordings: readonly ScreamRecording[]): ScreamHandle {
+  const tuning = SOUND_TUNING.scream;
   const output = context.createGain();
-  const pan = context.createStereoPanner();
-  pan.pan.value = event.pan;
-  output.connect(pan).connect(destination);
-  const count = 3 + Math.round(3 * event.intensity);
-  const hold = 0.6 + 0.6 * event.intensity;
-  const voiceLevel = 0.18 * event.audibility / count;
+  output.connect(destination);
+  const hold = tuning.hold[0] + tuning.hold[1] * event.intensity;
+  const level = tuning.level * event.audibility * (0.6 + 0.4 * event.intensity);
+  const firstRecording = Math.floor(variation() * recordings.length);
+  const layers = [{ recording: firstRecording, start: time, level, pan: event.pan }];
+  if (event.intensity >= tuning.layerIntensity) {
+    layers.push({
+      recording: (firstRecording + 1 + Math.floor(variation() * (recordings.length - 1))) % recordings.length,
+      start: time + tuning.layerDelay[0] + (tuning.layerDelay[1] - tuning.layerDelay[0]) * variation(),
+      level: level * tuning.layerLevel,
+      pan: Math.max(-1, Math.min(1, event.pan + (variation() * 2 - 1) * tuning.layerPanSpread)),
+    });
+  }
   let end = time;
-  const pink = noiseBuffers(context).pink;
-  for (let index = 0; index < count; index++) {
-    const start = time + variation() * 0.08;
-    const release = start + 0.06 + hold;
-    const voiceEnd = release + 0.3;
-    end = Math.max(end, voiceEnd);
-    const voice = context.createOscillator();
-    voice.type = "sawtooth";
-    voice.detune.value = (variation() * 2 - 1) * 40;
-    voice.frequency.setValueAtTime(500, start);
-    voice.frequency.linearRampToValueAtTime(650, start + 0.3);
-    const vibrato = context.createOscillator();
-    vibrato.frequency.value = 5.5;
-    const vibratoDepth = context.createGain();
-    vibratoDepth.gain.value = 20;
-    vibrato.connect(vibratoDepth).connect(voice.frequency);
+  for (const layer of layers) {
+    const recording = recordings[layer.recording]!;
+    const source = context.createBufferSource();
+    source.buffer = recording.buffer;
+    source.playbackRate.value = 1 + (variation() * 2 - 1) * tuning.pitchSpread;
     const envelope = context.createGain();
-    envelope.gain.setValueAtTime(0, start);
-    envelope.gain.linearRampToValueAtTime(voiceLevel, start + 0.06);
-    envelope.gain.setValueAtTime(voiceLevel, release);
-    envelope.gain.linearRampToValueAtTime(0, voiceEnd);
-    envelope.connect(output);
-    for (const frequency of [700, 1200]) {
-      const formant = context.createBiquadFilter();
-      formant.type = "bandpass"; formant.frequency.value = frequency; formant.Q.value = 5;
-      voice.connect(formant).connect(envelope);
-    }
-    const breath = context.createBufferSource();
-    breath.buffer = pink; breath.loop = true;
-    const breathFilter = context.createBiquadFilter();
-    breathFilter.type = "bandpass"; breathFilter.frequency.value = 2000;
-    const breathGain = context.createGain(); breathGain.gain.value = 0.1;
-    breath.connect(breathFilter).connect(breathGain).connect(envelope);
-    voice.start(start); voice.stop(voiceEnd);
-    vibrato.start(start); vibrato.stop(voiceEnd);
-    breath.start(start); breath.stop(voiceEnd);
+    const peak = layer.level * recording.normalization;
+    const releaseStart = layer.start + tuning.attack + hold;
+    const layerEnd = releaseStart + tuning.release;
+    envelope.gain.setValueAtTime(0, layer.start);
+    envelope.gain.linearRampToValueAtTime(peak, layer.start + tuning.attack);
+    envelope.gain.setValueAtTime(peak, releaseStart);
+    envelope.gain.linearRampToValueAtTime(0, layerEnd);
+    const pan = context.createStereoPanner();
+    pan.pan.value = layer.pan;
+    source.connect(envelope).connect(pan).connect(output);
+    source.start(layer.start);
+    source.stop(layerEnd);
+    end = Math.max(end, layerEnd);
   }
   return {
     start: time, end,

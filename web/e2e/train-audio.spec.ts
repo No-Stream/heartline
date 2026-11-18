@@ -24,7 +24,7 @@ test("train sounds respond to speed, material and operating events @fast", async
   for (const result of [slow, fast, wood, launch, brake, station, lift]) expect(result.peak).toBeLessThan(1);
 });
 
-test("lift clacks and station chime have the expected timing and pitch @fast", async ({ page }) => {
+test("lift clacks keep time and the station dispatch is a clunk then an air hiss with no tone @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   const measure = async (sound: TrainSound) => page.evaluate(async (f) => {
@@ -37,19 +37,31 @@ test("lift clacks and station chime have the expected timing and pitch @fast", a
       envelopes.push(Math.sqrt(energy / 480));
     }
     const peaks = envelopes.filter((value, i) => i > 0 && i < envelopes.length - 1 && value > 0.004 && value > envelopes[i - 1]! && value > envelopes[i + 1]!).length;
-    const amplitude = (frequency: number, start: number): number => {
-      let real = 0; let imaginary = 0;
-      for (let i = Math.round(start * 48000); i < Math.round((start + 0.08) * 48000); i++) { real += samples[i]! * Math.cos(2 * Math.PI * frequency * i / 48000); imaginary += samples[i]! * Math.sin(2 * Math.PI * frequency * i / 48000); }
-      return Math.hypot(real, imaginary);
+    const spectrum = (start: number, length: number, from: number, to: number, step: number): number[] => {
+      const magnitudes: number[] = [];
+      for (let frequency = from; frequency <= to; frequency += step) {
+        let real = 0; let imaginary = 0;
+        for (let i = Math.round(start * 48000); i < Math.round((start + length) * 48000); i++) { real += samples[i]! * Math.cos(2 * Math.PI * frequency * i / 48000); imaginary += samples[i]! * Math.sin(2 * Math.PI * frequency * i / 48000); }
+        magnitudes.push(Math.hypot(real, imaginary));
+      }
+      return magnitudes;
     };
-    return { peaks, first: amplitude(880, 0.02), second: amplitude(1175, 0.22), wrongFirst: amplitude(1175, 0.02), wrongSecond: amplitude(880, 0.22) };
+    const sum = (values: number[]): number => values.reduce((total, value) => total + value, 0);
+    const wide = spectrum(0, 0.6, 300, 4000, 20).sort((a, b) => a - b);
+    return {
+      peaks,
+      clunkLow: sum(spectrum(0, 0.1, 60, 300, 20)), clunkHigh: sum(spectrum(0, 0.1, 2500, 5000, 200)),
+      hissLow: sum(spectrum(0.25, 0.3, 60, 300, 20)), hissHigh: sum(spectrum(0.25, 0.3, 2500, 5000, 200)),
+      tonality: wide.at(-1)! / wide[Math.floor(wide.length / 2)]!,
+    };
   }, frame(sound));
   const lift = await measure(train({ speed: 2, onLift: true, clackRate: 5 }));
   expect(lift.peaks).toBeGreaterThanOrEqual(9);
   expect(lift.peaks).toBeLessThanOrEqual(11);
-  const chime = await measure(train({ depart: true }));
-  expect(chime.first).toBeGreaterThan(4 * chime.wrongFirst);
-  expect(chime.second).toBeGreaterThan(2 * chime.wrongSecond);
+  const dispatch = await measure(train({ depart: true }));
+  expect(dispatch.clunkLow).toBeGreaterThan(dispatch.hissLow);
+  expect(dispatch.hissHigh).toBeGreaterThan(dispatch.clunkHigh);
+  expect(dispatch.tonality).toBeLessThan(10);
 });
 
 test("muting events and releasing a voice stop its scheduled sounds @fast", async ({ page }) => {
