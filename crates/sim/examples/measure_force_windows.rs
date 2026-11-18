@@ -9,7 +9,10 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use theme_park_sim::physics::rated_piece::{rate_connected_piece, unpowered};
+use theme_park_sim::physics::rated_piece::{
+    connected_measurement_track, rate_connected_piece, rate_piece, unpowered,
+};
+use theme_park_sim::physics::{ForceEvaluator, TIME_STEP, Train};
 use theme_park_sim::track::catalog::unmeasured_catalog;
 use theme_park_sim::track::rated_windows::RatedWindowSource;
 use theme_park_sim::track::{
@@ -34,11 +37,7 @@ const AXIS_NAMES: [&str; 3] = ["vertical", "lateral", "longitudinal"];
 const MAXIMUM_ROLL_RATE: f64 = Piece::MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND;
 
 /// Whether each allowed model's default train stays below the hill's airtime ceiling.
-fn rated_hill_airtime_within_feel_ceiling(
-    piece: &Piece,
-    model: &CoasterModel,
-    speed: f64,
-) -> bool {
+fn rated_hill_airtime_within_feel_ceiling(piece: &Piece, model: &CoasterModel, speed: f64) -> bool {
     let Some(family) = hill_family(piece).filter(|family| {
         matches!(
             family.feel,
@@ -153,14 +152,20 @@ fn refine_boundary(
 
 /// The first allowed configuration that fails at this speed, described for the review table.
 fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<String> {
-    assert!(model.allows_piece(piece), "{} does not allow {:?}", model.key, piece.id);
+    assert!(
+        model.allows_piece(piece),
+        "{} does not allow {:?}",
+        model.key,
+        piece.id
+    );
     let cars = model.train.cars;
-    let rating = rate_connected_piece(model, cars, piece, speed, unpowered()).unwrap_or_else(|error| {
-        panic!(
-            "{:?}, {} {cars} cars, {speed} m/s: {error}",
-            piece.id, model.name
-        )
-    });
+    let rating =
+        rate_connected_piece(model, cars, piece, speed, unpowered()).unwrap_or_else(|error| {
+            panic!(
+                "{:?}, {} {cars} cars, {speed} m/s: {error}",
+                piece.id, model.name
+            )
+        });
     if let Some(reason) = rating.failure {
         return Some(format!(
             "{} {cars} cars: {reason} (lowest train speed {:.3} m/s)",
@@ -179,6 +184,255 @@ fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<String> {
         model.name
     );
     None
+}
+
+fn diagnose_rating(
+    context: &str,
+    piece: &Piece,
+    model: &CoasterModel,
+    speed: f64,
+    rating: &theme_park_sim::physics::rated_piece::PieceRating,
+) {
+    println!(
+        "{context}: {} {:?} {:?}->{:?}, {}-car default train, {speed:.2} m/s, passed={}, minimum speed={:.3} m/s",
+        model.key,
+        piece.id,
+        piece.entry.slope,
+        piece.exit.slope,
+        model.train.cars,
+        rating.passed,
+        rating.minimum_speed
+    );
+    if let Some(reason) = rating.failure {
+        println!("  failure: {reason}");
+    }
+    if let Some(violation) = &rating.violation {
+        println!(
+            "  violation: car {}, {} {:+.6} g for {:.3} s at {:.3} m from piece entry (in_tail={})",
+            violation.car,
+            AXIS_NAMES[violation.axis],
+            violation.force,
+            violation.excursion_seconds,
+            violation.distance,
+            violation.in_tail
+        );
+    } else {
+        println!(
+            "  filtered range: vertical {:.6}..{:.6} g, lateral {:.6}..{:.6} g, longitudinal {:.6}..{:.6} g",
+            rating.minimum_filtered_force[0],
+            rating.maximum_filtered_force[0],
+            rating.minimum_filtered_force[1],
+            rating.maximum_filtered_force[1],
+            rating.minimum_filtered_force[2],
+            rating.maximum_filtered_force[2]
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ForceSample {
+    force: f64,
+    distance: f64,
+    in_tail: bool,
+    measured: bool,
+}
+
+#[derive(Clone, Copy)]
+struct PeakForce {
+    car: usize,
+    force: f64,
+    distance: f64,
+    in_tail: bool,
+    excursion_seconds: f64,
+}
+
+fn force_side(force: f64, limits: (f64, f64)) -> i8 {
+    if force < limits.0 {
+        -1
+    } else if force > limits.1 {
+        1
+    } else {
+        0
+    }
+}
+
+fn connected_peak_forces(piece: &Piece, model: &CoasterModel, speed: f64) -> [PeakForce; 3] {
+    let (circuit, element_range) =
+        connected_measurement_track(model, model.train.cars, piece, speed);
+    let limits = model.comfortable_force_limits;
+    let axis_limits = [
+        (limits.minimum_vertical_g, limits.maximum_vertical_g),
+        (-limits.maximum_lateral_g, limits.maximum_lateral_g),
+        (
+            -limits.maximum_longitudinal_g,
+            limits.maximum_longitudinal_g,
+        ),
+    ];
+    let mut evaluators =
+        vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(model.train.cars)];
+    let mut samples: Vec<[Vec<ForceSample>; 3]> = (0..usize::from(model.train.cars))
+        .map(|_| std::array::from_fn(|_| Vec::new()))
+        .collect();
+    let mut elapsed_tail = vec![0.0; usize::from(model.train.cars)];
+    let mut done = vec![false; usize::from(model.train.cars)];
+    let mut train = Train::new(
+        &circuit,
+        &model.train,
+        unpowered(),
+        element_range.start,
+        speed,
+    );
+
+    for _ in 0..100_000 {
+        train.step(&circuit);
+        for frame in train.take_readings() {
+            for (car, reading) in frame.into_iter().enumerate() {
+                let result = evaluators[car].update(reading.g);
+                if done[car] {
+                    continue;
+                }
+                let in_rating_segment = reading.distance >= element_range.start;
+                let in_tail = reading.distance >= element_range.end;
+                for (axis, force) in [
+                    result.filtered.vertical,
+                    result.filtered.lateral,
+                    result.filtered.longitudinal,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    samples[car][axis].push(ForceSample {
+                        force,
+                        distance: reading.distance - element_range.start,
+                        in_tail,
+                        measured: in_rating_segment,
+                    });
+                }
+                if in_tail {
+                    elapsed_tail[car] += TIME_STEP;
+                }
+                if in_tail
+                    && elapsed_tail[car] >= 0.5
+                    && !result
+                        .axis_exceeding_sustained
+                        .iter()
+                        .any(|exceeding| *exceeding)
+                {
+                    done[car] = true;
+                }
+            }
+        }
+        if done.iter().all(|finished| *finished) {
+            break;
+        }
+    }
+    assert!(
+        done.iter().all(|finished| *finished),
+        "train did not clear {piece:?}"
+    );
+
+    std::array::from_fn(|axis| {
+        let (car, sample_index, peak_sample) = samples
+            .iter()
+            .enumerate()
+            .flat_map(|(car, car_samples)| {
+                car_samples[axis]
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, sample)| sample.measured)
+                    .map(move |(index, sample)| (car, index, sample))
+            })
+            .max_by(|left, right| left.2.force.abs().total_cmp(&right.2.force.abs()))
+            .expect("rating interval has no force samples");
+        let side = force_side(peak_sample.force, axis_limits[axis]);
+        let mut first = sample_index;
+        let mut last = sample_index;
+        if side != 0 {
+            while first > 0
+                && force_side(samples[car][axis][first - 1].force, axis_limits[axis]) == side
+            {
+                first -= 1;
+            }
+            while last + 1 < samples[car][axis].len()
+                && force_side(samples[car][axis][last + 1].force, axis_limits[axis]) == side
+            {
+                last += 1;
+            }
+        }
+        PeakForce {
+            car,
+            force: peak_sample.force,
+            distance: peak_sample.distance,
+            in_tail: peak_sample.in_tail,
+            excursion_seconds: if side == 0 {
+                0.0
+            } else {
+                (last - first + 1) as f64 * TIME_STEP
+            },
+        }
+    })
+}
+
+fn diagnose(
+    piece_name: &str,
+    model_key: &str,
+    entry_slope: &str,
+    exit_slope: &str,
+    requested_speeds: &[f64],
+) {
+    let piece = unmeasured_catalog()
+        .into_iter()
+        .find(|piece| {
+            format!("{:?}", piece.id) == piece_name
+                && format!("{:?}", piece.entry.slope) == entry_slope
+                && format!("{:?}", piece.exit.slope) == exit_slope
+                && piece.design_speeds.is_some()
+        })
+        .unwrap_or_else(|| {
+            panic!("unknown rated piece variant {piece_name} ({entry_slope} to {exit_slope})")
+        });
+    let model = models()
+        .into_iter()
+        .find(|model| model.key == model_key)
+        .unwrap_or_else(|| panic!("unknown coaster model {model_key}"));
+    assert!(
+        model.allows_piece(&piece),
+        "{model_key} does not allow {piece_name}"
+    );
+    let old = piece.design_speeds.unwrap();
+    println!(
+        "limits: {:?}; catalog window {:.2}–{:.2} m/s",
+        model.comfortable_force_limits, old.minimum_entry, old.maximum_entry
+    );
+    let mut speeds = vec![
+        ("catalog minimum", old.minimum_entry),
+        ("old maximum", old.maximum_entry),
+        ("first cent above old maximum", old.maximum_entry + 0.01),
+    ];
+    speeds.extend(
+        requested_speeds
+            .iter()
+            .map(|speed| ("requested speed", *speed)),
+    );
+    for (label, speed) in speeds {
+        let isolated = rate_piece(&model, model.train.cars, &piece, speed, unpowered())
+            .unwrap_or_else(|error| panic!("isolated {label} at {speed:.2} m/s: {error}"));
+        diagnose_rating("isolated", &piece, &model, speed, &isolated);
+        let connected = rate_connected_piece(&model, model.train.cars, &piece, speed, unpowered())
+            .unwrap_or_else(|error| panic!("connected {label} at {speed:.2} m/s: {error}"));
+        diagnose_rating("connected", &piece, &model, speed, &connected);
+        if label == "requested speed" && speed == requested_speeds[0] && connected.passed {
+            for (axis, peak) in ["vertical", "lateral", "longitudinal"]
+                .into_iter()
+                .zip(connected_peak_forces(&piece, &model, speed))
+            {
+                println!(
+                    "  connected peak at this speed: car {}, {axis} {:+.6} g, {:.3} s sustained-limit excursion, {:.3} m from piece entry (in_tail={})",
+                    peak.car, peak.force, peak.excursion_seconds, peak.distance, peak.in_tail
+                );
+            }
+        }
+    }
 }
 
 struct ScannedWindow {
@@ -357,7 +611,8 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
         ) && family.twist.is_none()
     }) {
         let cars = model.train.cars;
-        let rating = rate_connected_piece(model, cars, template, maximum_entry, unpowered()).unwrap();
+        let rating =
+            rate_connected_piece(model, cars, template, maximum_entry, unpowered()).unwrap();
         let class = model.comfortable_force_limits.classify_force(
             ForceRatingAxis::Airtime,
             rating.minimum_filtered_vertical,
@@ -392,10 +647,24 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
 
 fn main() {
     let mut arguments = std::env::args().skip(1);
-    let selected_piece = arguments.next();
+    let first_argument = arguments.next();
+    if first_argument.as_deref() == Some("--diagnose") {
+        let piece = arguments.next().expect("--diagnose requires a piece ID");
+        let model = arguments.next().expect("--diagnose requires a model key");
+        let entry_slope = arguments
+            .next()
+            .expect("--diagnose requires an entry slope");
+        let exit_slope = arguments.next().expect("--diagnose requires an exit slope");
+        let requested_speeds: Vec<f64> = arguments
+            .map(|speed| speed.parse().expect("diagnostic speeds must be numbers"))
+            .collect();
+        diagnose(&piece, &model, &entry_slope, &exit_slope, &requested_speeds);
+        return;
+    }
+    let selected_piece = first_argument;
     assert!(
         arguments.next().is_none(),
-        "usage: measure_force_windows [piece-id]"
+        "usage: measure_force_windows [piece-id] | --diagnose <piece-id> <model-key> <entry-slope> <exit-slope> [speed ...]"
     );
     let update = std::env::var_os("UPDATE_RATED_WINDOWS").is_some();
     assert!(
@@ -626,14 +895,9 @@ mod tests {
             };
             for model in &allowed_models {
                 let airtime = |speed| {
-                    let rating = rate_connected_piece(
-                        model,
-                        model.train.cars,
-                        piece,
-                        speed,
-                        unpowered(),
-                    )
-                    .unwrap();
+                    let rating =
+                        rate_connected_piece(model, model.train.cars, piece, speed, unpowered())
+                            .unwrap();
                     model.comfortable_force_limits.classify_force(
                         ForceRatingAxis::Airtime,
                         rating.minimum_filtered_vertical,
@@ -679,14 +943,8 @@ mod tests {
                 .expect("the computed maximum exceeds the intended airtime feel");
 
         let classify_at = |speed| {
-            let rating = rate_connected_piece(
-                &model,
-                model.train.cars,
-                piece,
-                speed,
-                unpowered(),
-            )
-            .unwrap();
+            let rating =
+                rate_connected_piece(&model, model.train.cars, piece, speed, unpowered()).unwrap();
             model.comfortable_force_limits.classify_force(
                 ForceRatingAxis::Airtime,
                 rating.minimum_filtered_vertical,
@@ -710,7 +968,9 @@ mod tests {
         let baseline = scan_models(piece, std::slice::from_ref(&model));
         let mut restrictive_model = model.clone();
         restrictive_model.key = "restrictive_test_model";
-        restrictive_model.comfortable_force_limits.maximum_vertical_g = 3.2;
+        restrictive_model
+            .comfortable_force_limits
+            .maximum_vertical_g = 3.2;
         let expanded = scan_models(piece, &[model, restrictive_model]);
 
         let baseline = &baseline[0];

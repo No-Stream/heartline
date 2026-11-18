@@ -578,7 +578,10 @@ fn models() -> Vec<CoasterModel> {
 
 fn rated_window(model: &CoasterModel, piece: &Piece) -> RatedSpeeds {
     rated_speeds(model, piece).unwrap_or_else(|| {
-        panic!("{} has no rated speed window for {:?}", model.name, piece.id)
+        panic!(
+            "{} has no rated speed window for {:?}",
+            model.name, piece.id
+        )
     })
 }
 
@@ -620,7 +623,10 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
                 } else {
                     2.0
                 };
-            for model in allowed_models.iter().filter(|model| model.allows_piece(piece)) {
+            for model in allowed_models
+                .iter()
+                .filter(|model| model.allows_piece(piece))
+            {
                 let rated = rated_window(model, piece);
                 assert!(
                     rated.minimum_entry >= 0.0
@@ -895,8 +901,7 @@ fn every_model_rated_window_endpoint_passes_with_its_default_train_on_connected_
                 assert!(
                     rating.passed,
                     "{:?} {} {cars} cars at {speed}: {rating:?}",
-                    piece.id,
-                    model.name
+                    piece.id, model.name
                 );
                 let (circuit, element_range) =
                     connected_measurement_track(&model, cars, piece, speed);
@@ -1112,10 +1117,7 @@ fn banked_straight_compositions_pass_with_continuous_force_history() {
             .iter()
             .map(|(_, start, end)| *start..*end)
             .collect();
-        let piece = catalog()
-            .iter()
-            .find(|piece| piece.id == straight)
-            .unwrap();
+        let piece = catalog().iter().find(|piece| piece.id == straight).unwrap();
         for model in models() {
             if !model.allows_piece(piece) {
                 continue;
@@ -1327,12 +1329,10 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
                         piece.id, model.name
                     ));
                 }
-                window_forces.minimum_vertical = window_forces
-                    .minimum_vertical
-                    .min(forces.minimum_vertical);
-                window_forces.maximum_vertical = window_forces
-                    .maximum_vertical
-                    .max(forces.maximum_vertical);
+                window_forces.minimum_vertical =
+                    window_forces.minimum_vertical.min(forces.minimum_vertical);
+                window_forces.maximum_vertical =
+                    window_forces.maximum_vertical.max(forces.maximum_vertical);
                 if forces.maximum_lateral > window_forces.maximum_lateral {
                     window_forces.maximum_lateral = forces.maximum_lateral;
                     window_forces.peak_lateral_distance = forces.peak_lateral_distance;
@@ -1439,4 +1439,34 @@ fn floater_point_mass_forecast_compared_with_default_train() {
         forecast.minimum_vertical_g,
         minimum - forecast.minimum_vertical_g
     );
+}
+
+#[test]
+fn connected_measurement_approaches_use_pieces_allowed_for_the_model() {
+    let mut failures = Vec::new();
+    for piece in catalog()
+        .iter()
+        .filter(|piece| piece.design_speeds.is_some())
+    {
+        for model in coaster_models()
+            .iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            let (circuit, element_range) =
+                connected_measurement_track(model, model.train.cars, piece, 20.0);
+            let element_index = circuit.piece_index(element_range.start);
+            let unsupported = circuit.pieces()[..element_index]
+                .iter()
+                .filter(|approach_piece| !model.allows_piece(approach_piece))
+                .map(|approach_piece| approach_piece.id)
+                .collect::<Vec<_>>();
+            if !unsupported.is_empty() {
+                failures.push(format!(
+                    "{} approach to {:?} uses unsupported pieces {unsupported:?}",
+                    model.name, piece.id
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -44,10 +44,7 @@ pub fn connected_measurement_track(
     speed: f64,
 ) -> (Circuit, Range<f64>) {
     let track = connected_track(model, cars, piece, speed);
-    (
-        track.circuit,
-        track.element_start..track.element_end,
-    )
+    (track.circuit, track.element_start..track.element_end)
 }
 
 /// Rates a template with fresh force filters on its connected track approach.
@@ -203,12 +200,7 @@ fn measurement_track(
     }
 }
 
-fn connected_track(
-    model: &CoasterModel,
-    cars: u8,
-    piece: &Piece,
-    speed: f64,
-) -> MeasurementTrack {
+fn connected_track(model: &CoasterModel, cars: u8, piece: &Piece, speed: f64) -> MeasurementTrack {
     assert!(speed.is_finite() && speed > 0.0);
     assert!(model.cars_per_train.contains(&cars));
 
@@ -231,39 +223,28 @@ fn connected_track(
         pieces.push(straight);
     }
 
-    if let Some(prefix) = connected_prefix(piece.id) {
-        for id in prefix {
-            let template = templates
-                .iter()
-                .find(|template| template.id == *id && same_connector(template.entry, state))
-                .unwrap_or_else(|| panic!("no {id:?} connector from {state:?}"));
-            let next = template.at(state).unwrap();
-            state = next.exit;
-            pieces.push(next);
+    let mut queue = VecDeque::from([(state, Vec::<usize>::new())]);
+    let mut seen = HashSet::from([connector_key(state)]);
+    let path = loop {
+        let (current, path) = queue.pop_front().expect("no connected approach to piece");
+        if same_connector(current, piece.entry) {
+            break path;
         }
-    } else {
-        let mut queue = VecDeque::from([(state, Vec::<usize>::new())]);
-        let mut seen = HashSet::from([connector_key(state)]);
-        let path = loop {
-            let (current, path) = queue.pop_front().expect("no connected approach to piece");
-            if same_connector(current, piece.entry) {
-                break path;
+        for (index, template) in templates.iter().enumerate() {
+            if model.allows_piece(template)
+                && let Some(next) = template.exit_at(current)
+                && seen.insert(connector_key(next))
+            {
+                let mut next_path = path.clone();
+                next_path.push(index);
+                queue.push_back((next, next_path));
             }
-            for (index, template) in templates.iter().enumerate() {
-                if let Some(next) = template.exit_at(current)
-                    && seen.insert(connector_key(next))
-                {
-                    let mut next_path = path.clone();
-                    next_path.push(index);
-                    queue.push_back((next, next_path));
-                }
-            }
-        };
-        for index in path {
-            let next = templates[index].at(state).unwrap();
-            state = next.exit;
-            pieces.push(next);
         }
+    };
+    for index in path {
+        let next = templates[index].at(state).unwrap();
+        state = next.exit;
+        pieces.push(next);
     }
 
     assert!(
@@ -294,96 +275,6 @@ fn connected_track(
         element_start,
         element_end,
     }
-}
-
-fn connected_prefix(piece: PieceId) -> Option<&'static [PieceId]> {
-    use PieceId::*;
-    Some(match piece {
-        LevelToGentleUp | LevelToSixtyUp => &[],
-        GentleToSteepUp => &[LevelToGentleUp],
-        SixtyUpToLevel => &[LevelToSixtyUp],
-        LevelToSixtyDown => &[LevelToSixtyUp, SixtyUpToLevel],
-        SixtyDownToLevel => &[LevelToSixtyUp, SixtyUpToLevel, LevelToSixtyDown],
-        SteepToSixtyUp => &[LevelToGentleUp, GentleToSteepUp],
-        SixtyToSteepUp => &[LevelToGentleUp, GentleToSteepUp, SteepToSixtyUp],
-        SteepToGentleUp => &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-        ],
-        GentleUpToLevel => &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-            SteepToGentleUp,
-        ],
-        LevelToGentleDown => &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-            SteepToGentleUp,
-            GentleUpToLevel,
-        ],
-        GentleToSteepDown => &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-            SteepToGentleUp,
-            GentleUpToLevel,
-            LevelToGentleDown,
-        ],
-        SteepToSixtyDown => &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-            SteepToGentleUp,
-            GentleUpToLevel,
-            LevelToGentleDown,
-            GentleToSteepDown,
-        ],
-        SixtyToSteepDown => &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-            SteepToGentleUp,
-            GentleUpToLevel,
-            LevelToGentleDown,
-            GentleToSteepDown,
-            SteepToSixtyDown,
-        ],
-        SteepToGentleDown => &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-            SteepToGentleUp,
-            GentleUpToLevel,
-            LevelToGentleDown,
-            GentleToSteepDown,
-            SteepToSixtyDown,
-            SixtyToSteepDown,
-        ],
-        GentleDownToLevel => &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-            SteepToGentleUp,
-            GentleUpToLevel,
-            LevelToGentleDown,
-            GentleToSteepDown,
-            SteepToSixtyDown,
-            SixtyToSteepDown,
-            SteepToGentleDown,
-        ],
-        _ => return None,
-    })
 }
 
 pub fn rate_piece(
