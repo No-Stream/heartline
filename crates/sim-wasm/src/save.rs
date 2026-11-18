@@ -60,18 +60,33 @@ pub(super) fn checked_payload(bytes: &[u8]) -> Result<&[u8], &'static str> {
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn save_state(&self) -> Result<Vec<u8>, JsValue> {
+        self.save_state_native()
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    pub fn load_state(bytes: &[u8]) -> Result<WasmSimulation, JsValue> {
+        Self::load_state_native(bytes).map_err(|error| JsValue::from_str(&error))
+    }
+}
+
+impl WasmSimulation {
+    pub fn save_state_native(&self) -> Result<Vec<u8>, String> {
+        self.save_state_native_with_limit(MAX_SAVE_BYTES as usize)
+    }
+
+    fn save_state_native_with_limit(&self, limit: usize) -> Result<Vec<u8>, String> {
         let mut bytes = SAVE_HEADER.to_vec();
         let payload = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-            postcard::serialize_with_flavor(self, LimitedBytes::new(MAX_SAVE_BYTES as usize))
+            postcard::serialize_with_flavor(self, LimitedBytes::new(limit))
         })
-        .map_err(|error| JsValue::from_str(&format!("Could not save park: {error}")))?;
+        .map_err(|error| format!("Could not save park: {error}"))?;
         bytes.extend(checksum(&payload).to_le_bytes());
         bytes.extend(payload);
         Ok(bytes)
     }
 
-    pub fn load_state(bytes: &[u8]) -> Result<WasmSimulation, JsValue> {
-        let payload = checked_payload(bytes).map_err(JsValue::from_str)?;
+    pub fn load_state_native(bytes: &[u8]) -> Result<WasmSimulation, String> {
+        let payload = checked_payload(bytes).map_err(str::to_owned)?;
         let mut simulation: Self = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
             postcard::take_from_bytes(payload).and_then(|(simulation, remaining)| {
                 if remaining.is_empty() {
@@ -81,7 +96,7 @@ impl WasmSimulation {
                 }
             })
         })
-        .map_err(|error| JsValue::from_str(&format!("Could not load park: {error}")))?;
+        .map_err(|error| format!("Could not load park: {error}"))?;
         simulation.park.rebind_world_after_loading();
         let construction_message = simulation.park.construction_message.clone();
         simulation.refresh_construction_support_rendering();
@@ -93,6 +108,7 @@ impl WasmSimulation {
 #[cfg(test)]
 mod tests {
     use super::{SAVE_HEADER, checked_payload, checksum};
+    use crate::WasmSimulation;
 
     #[test]
     fn serialization_stops_at_the_size_limit() {
@@ -111,5 +127,14 @@ mod tests {
         assert!(checked_payload(&bytes).is_err());
         bytes[6] = 0;
         assert!(checked_payload(&bytes).is_err());
+    }
+
+    #[test]
+    fn save_serialization_errors_are_native_strings() {
+        let simulation = WasmSimulation::new(42, 0, String::from("new"));
+        assert_eq!(
+            simulation.save_state_native_with_limit(0),
+            Err("Could not save park: The serialize buffer is full".to_owned())
+        );
     }
 }
