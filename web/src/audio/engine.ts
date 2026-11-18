@@ -6,7 +6,7 @@ import { createAmbienceVoice } from "./synth/ambience";
 import { playScream, type ScreamHandle } from "./synth/screams";
 import { screamSlot } from "./scream-pool";
 import { playUiSound, type UiSoundHandle } from "./synth/ui";
-import { loadScreamRecordings, type ScreamRecording } from "./recordings";
+import { loadSoundRecordings, type SoundRecordings } from "./recordings";
 
 export const AUDIO_LOOKAHEAD = 0.15;
 export interface ScheduleClock { now: number; until: number }
@@ -25,7 +25,7 @@ export interface ChannelMetrics { peak: number; peakTime: number; rms: number; b
 export interface OfflineResult { channels: ChannelMetrics[]; voiceTimeline?: ActiveVoices[] }
 export interface ActiveVoices { trains: number; screams: number; ui: number; ambience: "day" | "night" | "silent" }
 
-export function createAudioEngine(context: BaseAudioContext, screamRecordings: readonly ScreamRecording[], volume = 0.7, muted = false) {
+export function createAudioEngine(context: BaseAudioContext, recordings: SoundRecordings, volume = 0.7, muted = false) {
   const master = context.createGain();
   const compressor = context.createDynamicsCompressor();
   compressor.threshold.value = -12;
@@ -78,7 +78,7 @@ export function createAudioEngine(context: BaseAudioContext, screamRecordings: r
       } else for (const event of frame.screams) {
         const slot = screamSlot(screams, atTime);
         screams[slot]?.stop(atTime);
-        screams[slot] = playScream(context, screamPool[slot]!, event, atTime, variation, screamRecordings);
+        screams[slot] = playScream(context, screamPool[slot]!, event, atTime, variation, recordings.screams);
       }
       if (frame.paused) {
         for (let index = 0; index < uiSounds.length; index++) {
@@ -132,7 +132,7 @@ export function createLiveAudio(options: { testMode: boolean; onLockChange(locke
       context = created;
       options.onLockChange(false);
       if (!muted && !document.hidden) transition = created.resume();
-      transition = transition.then(async () => { engine = createAudioEngine(created, await loadScreamRecordings(created), volume, muted); });
+      transition = transition.then(async () => { engine = createAudioEngine(created, await loadSoundRecordings(created), volume, muted); });
     }
     return syncState();
   }
@@ -172,7 +172,7 @@ export async function renderOffline(script: OfflineScript): Promise<OfflineResul
   if (!Number.isFinite(script.duration) || script.duration <= 0 || script.duration > 4) throw new RangeError("Offline audio duration must be between 0 and 4 seconds");
   const sampleRate = 48000;
   const context = new OfflineAudioContext(2, Math.ceil(script.duration * sampleRate), sampleRate);
-  const engine = createAudioEngine(context, await loadScreamRecordings(context), script.volume ?? 0.7, script.muted ?? false);
+  const engine = createAudioEngine(context, await loadSoundRecordings(context), script.volume ?? 0.7, script.muted ?? false);
   const voiceTimeline: ActiveVoices[] = [];
   for (const entry of script.frames) {
     if (!Number.isFinite(entry.time) || entry.time < 0 || entry.time > script.duration) throw new RangeError("Invalid offline frame time");

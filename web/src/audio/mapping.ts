@@ -45,12 +45,10 @@ export const SOUND_TUNING = {
   stopSpeed: 0.1, departSpeed: 0.5, brakeSpeed: 3, brakeDelta: 8,
   airtimeG: 0.2, highG: 3, lateralG: 1.2, screamCooldown: 2.5,
   crestDistance: 2, crowdSaturation: 200,
-  /** Day birds: `level` is the nearest singer's peak gain; farther singers drop to `farLevel` of it and lose treble down to `farCutoff` Hz. */
   /** Recorded rider screams: `level` is the RMS gain at full audibility and intensity; `hold` is [base, extra at intensity 1] seconds; at `layerIntensity` a second, different recording joins after `layerDelay` seconds. */
   scream: { level: 0.06, attack: 0.04, hold: [0.8, 1.0], release: 0.5, pitchSpread: 0.06, layerIntensity: 0.5, layerDelay: [0.08, 0.2], layerLevel: 0.7, layerPanSpread: 0.2 },
   /** Station dispatch: restraint-lock clunk, brake-fin clack, then an air release; levels are peak gains at full audibility. */
   station: { clunkLevel: 0.5, clackLevel: 0.25, hissLevel: 0.06, hissDecay: 0.6 },
-  birds: { level: 0.03, farLevel: 0.35, nearCutoff: 9000, farCutoff: 4000, singers: 3, gapSeconds: [4, 12], entrySpreadSeconds: 3 },
 } as const;
 /** `stopped` has hysteresis: it sets at or below `stopSpeed` and clears only at `departSpeed`, so a held train creeping in the station cannot repeat the departure sound. */
 interface TrainMemory { state: TrainState; screamTime: number; brake: number; stopped: boolean }
