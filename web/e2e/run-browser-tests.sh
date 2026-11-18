@@ -13,7 +13,7 @@ if ! flock --nonblock 9; then
 fi
 
 if [[ "${THEME_PARK_PLAYWRIGHT_IN_CONTAINER:-0}" == "1" ]]; then
-  exec "$(dirname "$0")/../../tools/run-in-budget.sh" npx playwright test "$@"
+  THEME_PARK_BROWSER_TESTS_IN_BUDGET=1 exec "$(dirname "$0")/../../tools/run-in-budget.sh" npx playwright test "$@"
 fi
 
 if [[ "${THEME_PARK_PLAYWRIGHT_DOCKER:-0}" == "1" ]]; then
