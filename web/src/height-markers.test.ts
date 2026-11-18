@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constructionHeights } from "./height-markers";
+import { constructionHeights, findHeightExtrema } from "./height-markers";
 import type { WorldView } from "./render/scene";
 
 function rail(start: number[], end: number[]): number[] {
@@ -26,5 +26,33 @@ describe("construction height markers", () => {
 
   it("has no markers without track", () => {
     expect(constructionHeights({} as WorldView, new Float32Array())).toBeNull();
+  });
+});
+
+describe("height extrema", () => {
+  function marker(index: number, elevationMetres: number): { position: { x: number; y: number; z: number }; metres: number } {
+    return { position: { x: index, y: 0, z: elevationMetres / 4 }, metres: elevationMetres };
+  }
+
+  it("finds crests and valleys with at least three metres of change on both sides", () => {
+    const samples = [0, 4, 8, 4, 0, 4, 9, 4, 0].map((elevation, index) => marker(index, elevation));
+
+    expect(findHeightExtrema(samples)).toEqual([
+      { marker: samples[2], kind: "crest" },
+      { marker: samples[4], kind: "valley" },
+      { marker: samples[6], kind: "crest" },
+    ]);
+  });
+
+  it("filters small reversals without losing the larger crest", () => {
+    const samples = [0, 4, 8, 7, 8.2, 7.5, 4, 0].map((elevation, index) => marker(index, elevation));
+
+    expect(findHeightExtrema(samples)).toEqual([{ marker: samples[4], kind: "crest" }]);
+  });
+
+  it("does not label endpoints or height changes under three metres", () => {
+    const samples = [0, 1, 2, 1, 0].map((elevation, index) => marker(index, elevation));
+
+    expect(findHeightExtrema(samples)).toEqual([]);
   });
 });

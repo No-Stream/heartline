@@ -162,6 +162,17 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
       ...(input.construction && input.activeTool === "coaster" ? buildBlockBoundaryQuads(input.construction.placedRails, input.construction.railDistances, input.construction.blockReport.sections, camera, viewport, trackStyle(atlas)) : []),
       ...buildGhostQuads(input.stationGhost(), noGeometry, noGeometry, true, camera, viewport, trackStyle(atlas)).map((quad) => ({ ...quad, color: [0.25, 0.55, 0.85, 0.55] as const })),
       ...(input.construction ? buildGhostQuads(input.construction.previewRails, input.construction.previewTies, input.construction.previewSupports, input.construction.canAppend, camera, viewport, trackStyle(atlas), previewWouldTunnel) : []),
+      ...(input.construction?.candidateForcePreview && input.activeTool === "coaster"
+        ? buildTestingRibbon(
+          input.construction.candidateForcePreview.samples,
+          "limitCloseness",
+          camera,
+          viewport,
+          trackStyle(atlas),
+          undefined,
+          input.construction.candidateForcePreview.limits,
+        ).map((quad) => ({ ...quad, id: `candidate-force-${quad.id.slice("testing-".length)}` }))
+        : []),
       ...(input.world.coasterColors && input.world.coasterTrain ? buildTrainQuads(trainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.world.coasterColors), input.world.coasterTrain) : []),
       ...(input.construction?.colors && input.construction.trainLayout ? buildTrainQuads(constructionTrainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors), input.construction.trainLayout) : []),
       ...(input.world.coasterTrain ? buildRiderQuads(trainPoses, camera, viewport, atlas, scale, input.world.coasterTrain) : []),

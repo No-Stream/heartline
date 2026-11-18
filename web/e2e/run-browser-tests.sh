@@ -100,4 +100,25 @@ if [[ "${THEME_PARK_PLAYWRIGHT_DOCKER:-0}" == "1" ]]; then
   exit 0
 fi
 
-THEME_PARK_BROWSER_TESTS_IN_BUDGET=1 exec "$(dirname "$0")/../../tools/run-in-budget.sh" npx playwright test "$@"
+selected_project=""
+previous_argument=""
+for argument in "$@"; do
+  if [[ "$previous_argument" == "--project" ]]; then
+    selected_project="$argument"
+  fi
+  case "$argument" in
+    --project=*) selected_project="${argument#--project=}" ;;
+  esac
+  previous_argument="$argument"
+done
+
+if [[ "$selected_project" == "feature" && -z "${THEME_PARK_PIECE_CATALOG_FIXTURE:-}" ]]; then
+  repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
+  fixture_path="$(mktemp /tmp/theme-park-piece-catalog.XXXXXX.json)"
+  trap 'rm -f "$fixture_path"' EXIT
+  "$repo_root/tools/run-in-budget.sh" "$HOME/.cargo/bin/cargo" run --quiet --release \
+    --manifest-path "$repo_root/Cargo.toml" -p theme-park-sim --example piece_visual_fixture > "$fixture_path"
+  export THEME_PARK_PIECE_CATALOG_FIXTURE="$fixture_path"
+fi
+
+THEME_PARK_BROWSER_TESTS_IN_BUDGET=1 "$(dirname "$0")/../../tools/run-in-budget.sh" npx playwright test "$@"

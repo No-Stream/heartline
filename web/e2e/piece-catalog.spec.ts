@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -16,9 +15,8 @@ test.use({ viewport: { width: 1460, height: 1200 }, launchOptions: browserLaunch
 
 test.beforeAll(async () => {
   const fixturePath = process.env.THEME_PARK_PIECE_CATALOG_FIXTURE;
-  const catalogJson = fixturePath
-    ? await readFile(fixturePath, "utf8")
-    : execFileSync(join(process.env.HOME!, ".cargo/bin/cargo"), ["run", "--quiet", "--release", "-p", "theme-park-sim", "--example", "piece_visual_fixture"], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  if (!fixturePath) throw new Error("The browser test runner must provide the piece-catalog fixture");
+  const catalogJson = await readFile(fixturePath, "utf8");
   pieces = JSON.parse(catalogJson) as CatalogPiece[];
   if (!pieces.length) throw new Error("The coaster model has no pieces");
   for (const name of [

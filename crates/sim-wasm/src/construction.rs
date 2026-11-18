@@ -278,6 +278,7 @@ pub struct ConstructionCandidateForcePreviewWire {
     outer_bank: bool,
     entry_speed: Option<f64>,
     peaks: Option<ConstructionLastPlacedForceWire>,
+    samples: Vec<crate::reports::TestingSample>,
     limits: ConstructionForceLimitsWire,
     rated_speed: Option<ConstructionRatedSpeedWire>,
 }
@@ -727,6 +728,12 @@ impl WasmSimulation {
             outer_bank,
             entry_speed,
             peaks: last_placed_force_wire(&samples, start_distance, end_distance),
+            samples: samples
+                .into_iter()
+                .filter(|sample| {
+                    sample.distance >= start_distance && sample.distance <= end_distance
+                })
+                .collect(),
             limits: force_limits_wire(
                 construction.model().comfortable_force_limits,
                 construction.model().name,

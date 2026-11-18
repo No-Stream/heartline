@@ -637,8 +637,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       return button;
     }));
     const selected = current.pieces.find(({ id }) => id === current.selected);
-    // A hill shows its own prediction in the hill section; every turn shows one so a bank can be compared with level.
-    const forcePreview = (current.speedMatch || selected?.group === "turn") && !selectedHill ? current.candidateForcePreview : null;
+    const forcePreview = selectedHill ? null : current.candidateForcePreview;
     const candidateForce = element("[data-candidate-force-preview]");
     candidateForce.hidden = !forcePreview;
     candidateForce.replaceChildren(...(forcePreview ? candidateForceReadout(forcePreview, units) : []).map((line) => {
