@@ -44,4 +44,6 @@ When sound families land: the player pause (Space) must silence train and event 
 2026-11-04: plan items 4 (game-state mapping) and 5 (train sounds: steel roar with whine, wooden rhythmic rumble, hybrid mix, chain clack and motor, launch whoosh, brake hiss, station release and dispatch chime) merged. Owner listening pass still needed. Next: items 6-7 (screams, crowd and ambience).
 
 2026-11-05: plan items 6-7 merged (rider screams with per-train grouping and cooldown; crowd murmur by nearby guest count; day birds over wind; night crickets). All synthesis items are on master. Remaining: item 9, the owner's listening pass and SOUND_TUNING adjustments.
+
+2026-11-18 owner listening pass fixes (branch audio-tuning): day birds rewritten as varied singers (they sounded like electronic bleeps); rider screams now play five CC0 Freesound group-scream recordings (sources in web/src/audio/recordings/screams/CREDITS.md) instead of the sawtooth choir; the station dispatch chime (sounded like a phone ringing) replaced by a clunk, clack and air hiss; departure and arrival edges gained hysteresis so a creeping held train cannot repeat them.
 <!-- SECTION:NOTES:END -->

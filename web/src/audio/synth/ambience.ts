@@ -1,6 +1,7 @@
-import type { SoundFrame } from "../mapping";
+import { SOUND_TUNING, type SoundFrame } from "../mapping";
 import type { ScheduleClock } from "../engine";
 import { noiseBuffers } from "./noise";
+import { birdGap, birdPhrase, createBirdSingers, playBirdPhrase } from "./birds";
 
 export function createAmbienceVoice(context: BaseAudioContext, destination: AudioNode) {
   const wind = context.createBufferSource(); wind.buffer = noiseBuffers(context).pink; wind.loop = true;
@@ -31,27 +32,23 @@ export function createAmbienceVoice(context: BaseAudioContext, destination: Audi
   interval.gain.value = duty; intervalLfo.connect(interval.gain);
   cricket.start(); chirringLfo.start(); intervalLfo.start();
 
-  let seed = 1; let nextBird = 0;
+  let seed = 1;
   const random = (): number => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-  function bird(time: number): void {
-    const pan = context.createStereoPanner(); pan.pan.value = random() * 1.6 - 0.8; pan.connect(dayLevel);
-    const count = 2 + Math.floor(random() * 3);
-    for (let index = 0; index < count; index++) {
-      const start = time + index * 0.12;
-      const oscillator = context.createOscillator(); oscillator.frequency.setValueAtTime(2500, start); oscillator.frequency.linearRampToValueAtTime(3500, start + 0.08);
-      const envelope = context.createGain(); envelope.gain.setValueAtTime(0, start); envelope.gain.linearRampToValueAtTime(0.06, start + 0.005); envelope.gain.setValueAtTime(0.06, start + 0.02); envelope.gain.linearRampToValueAtTime(0, start + 0.08);
-      oscillator.connect(envelope).connect(pan); oscillator.start(start); oscillator.stop(start + 0.08);
-    }
-  }
+  const singers = createBirdSingers(random);
+  const nextSong = singers.map(() => 0);
+  let birdsSinging = false;
   return {
     apply(ambience: SoundFrame["ambience"], clock: ScheduleClock): void {
       windLevel.gain.setTargetAtTime(0.08 * ambience.distance, clock.now, 0.05);
       dayLevel.gain.setTargetAtTime(ambience.day, clock.now, 0.05);
       nightLevel.gain.setTargetAtTime(0.04 * ambience.night, clock.now, 0.05);
       if (ambience.day > 0) {
-        nextBird = Math.max(clock.now, nextBird);
-        while (nextBird < clock.until) { bird(nextBird); nextBird += 1 + 3 * random(); }
-      } else nextBird = clock.now;
+        if (!birdsSinging) for (let index = 0; index < singers.length; index++) nextSong[index] = clock.now + random() * SOUND_TUNING.birds.entrySpreadSeconds;
+        birdsSinging = true;
+        singers.forEach((singer, index) => {
+          while (nextSong[index]! < clock.until) nextSong[index] = playBirdPhrase(context, dayLevel, singer, birdPhrase(singer, random), Math.max(clock.now, nextSong[index]!)) + birdGap(random);
+        });
+      } else birdsSinging = false;
     },
   };
 }

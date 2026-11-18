@@ -30,6 +30,19 @@ it("maps train speed, lift, launch, brakes and station edges", () => {
   result = next(input([0, 1, 4, 1, 0, 1], 50), result.memory);
   expect(result.frame.trains[0].depart).toBe(true);
 });
+it("plays one departure and one arrival while a held train creeps around the stop speed", () => {
+  let result = next(input([0, 0, 4, 1, 0, 1]));
+  const departures: boolean[] = []; const arrivals: boolean[] = [];
+  const speeds = [0.12, 0.05, 0.3, 0, 0.2, 0.08, 1, 2, 1.9, 2.1, 0.4, 0.09, 0.3, 0];
+  speeds.forEach((speed, index) => {
+    result = next(input([0, speed, 4, 1, 0, 1], 10 * (index + 1)), result.memory);
+    departures.push(result.frame.trains[0].depart); arrivals.push(result.frame.trains[0].arrive);
+  });
+  expect(departures.filter(Boolean)).toHaveLength(1);
+  expect(departures.indexOf(true)).toBe(speeds.indexOf(1));
+  expect(arrivals.filter(Boolean)).toHaveLength(1);
+  expect(arrivals.indexOf(true)).toBe(speeds.indexOf(0.09));
+});
 it("triggers screams on force edges and respects cooldown and occupancy", () => {
   let result = next(input([0, 5, 0, 1, 0, 1]));
   result = next(input([0, 5, 0, 0, 0, 1], 10), result.memory);

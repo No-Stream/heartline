@@ -1,4 +1,4 @@
-import type { TrainSound } from "../mapping";
+import { SOUND_TUNING, type TrainSound } from "../mapping";
 import type { ScheduleClock } from "../engine";
 import { noiseBuffers } from "./noise";
 
@@ -59,11 +59,21 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
     const source = noise(pink); const air = filter("lowpass", 1500); const envelope = gain(); source.connect(air).connect(envelope).connect(output);
     envelope.gain.setValueAtTime(Math.max(0.001, 0.2 * level), time); envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.4); source.stop(time + 0.4); trackShot(envelope, time + 0.4);
   }
+  function noiseBurst(buffer: AudioBuffer, shape: BiquadFilterNode, time: number, peak: number, decay: number): void {
+    const source = context.createBufferSource(); source.buffer = buffer; const envelope = gain();
+    source.connect(shape).connect(envelope).connect(output);
+    envelope.gain.setValueAtTime(0.001, time); envelope.gain.linearRampToValueAtTime(peak + 0.001, time + 0.004); envelope.gain.exponentialRampToValueAtTime(0.001, time + decay);
+    source.start(time, (clackIndex++ * 0.137) % (buffer.duration - decay), decay); trackShot(envelope, time + decay);
+  }
   function departure(time: number, level: number): void {
-    for (const [index, frequency] of [880, 1175].entries()) {
-      const start = time + index * 0.12; const tone = context.createOscillator(); tone.frequency.value = frequency; const envelope = gain(); tone.connect(envelope).connect(output);
-      envelope.gain.setValueAtTime(0, start); envelope.gain.linearRampToValueAtTime(0.12 * level, start + 0.01); envelope.gain.setValueAtTime(0.12 * level, start + 0.12); envelope.gain.linearRampToValueAtTime(0, start + 0.27); tone.start(start); tone.stop(start + 0.27); trackShot(envelope, start + 0.27);
-    }
+    const station = SOUND_TUNING.station;
+    noiseBurst(pink, filter("bandpass", 140, 1.2), time, station.clunkLevel * level, 0.12);
+    noiseBurst(white, filter("bandpass", 1200, 1.5), time + 0.16, station.clackLevel * level, 0.05);
+    const air = noise(white); const airShape = filter("bandpass", 3200, 0.8); const airEnvelope = gain();
+    air.connect(airShape).connect(airEnvelope).connect(output);
+    const hissStart = time + 0.2; const hissEnd = hissStart + station.hissDecay;
+    airEnvelope.gain.setValueAtTime(0, hissStart); airEnvelope.gain.linearRampToValueAtTime(station.hissLevel * level, hissStart + 0.02);
+    airEnvelope.gain.setTargetAtTime(0, hissStart + 0.08, station.hissDecay / 4); air.stop(hissEnd); trackShot(airEnvelope, hissEnd);
   }
   return {
     apply(train: TrainSound, clock: ScheduleClock, eventsMuted: boolean): void {
