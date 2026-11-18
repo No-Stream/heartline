@@ -51,7 +51,7 @@ import type { WorkerRecording } from "./session-recording";
 import { parseReplaySession, type ReplaySession } from "./session-replay";
 import { createGamePauseState } from "./game-pause";
 import { replaySessionIntoWorker } from "./session-replay-worker";
-import { constructionHeights } from "./height-markers";
+import { constructionHeights, type HeightExtremum, type HeightMarker } from "./height-markers";
 import { createForceOverlay, nearestSampleIndex, type ScreenBox } from "./force-overlay";
 import { formatLength, type Units } from "./units";
 import { createUnitsSetting } from "./units-setting";
@@ -422,8 +422,10 @@ const gameTest: GameTest = {
 };
 window.gameTest = gameTest;
 const heightMarkers = document.querySelector<HTMLElement>("[data-height-markers]")!;
-const trackHeightMarker = heightMarkers.querySelector<HTMLElement>("[data-track-height]")!;
-const stationHeightMarker = heightMarkers.querySelector<HTMLElement>("[data-station-height]")!;
+const heightMarkerNodes = new Map<string, HTMLElement>();
+let cachedHeightWorld: CoasterWorld | undefined;
+let cachedHeightRails: Float32Array | undefined;
+let cachedConstructionHeights: ReturnType<typeof constructionHeights> = null;
 const unitsContainer = document.querySelector<HTMLElement>("[data-units-setting]")!;
 function applyUnits(units: Units): void {
   panel.setUnits(units);
@@ -984,7 +986,7 @@ function cutawayFor(level: number, trackEnd: WorldPoint | undefined): Cutaway {
 function automaticCutawayTarget(heights?: ReturnType<typeof constructionHeights>): UndergroundCutawayTarget | null {
   if (!world) return null;
   if (activeTool === "coaster" && construction?.active) {
-    const constructionHeightsForTrack = heights ?? constructionHeights(world, construction.placedRails);
+    const constructionHeightsForTrack = heights ?? currentConstructionHeights();
     return constructionCutawayTarget(constructionHeightsForTrack?.end ?? null);
   }
   if (activeTool === "paths" && pathTool.state().mode === "build") {
@@ -996,6 +998,16 @@ function automaticCutawayTarget(heights?: ReturnType<typeof constructionHeights>
     return landscapingCutawayTarget(world, state.preview, state.selection);
   }
   return null;
+}
+
+function currentConstructionHeights(): ReturnType<typeof constructionHeights> {
+  if (!world || !construction?.active) return null;
+  if (cachedHeightWorld !== world || cachedHeightRails !== construction.placedRails) {
+    cachedHeightWorld = world;
+    cachedHeightRails = construction.placedRails;
+    cachedConstructionHeights = constructionHeights(world, construction.placedRails);
+  }
+  return cachedConstructionHeights;
 }
 
 function automaticCutawayVisible(target: UndergroundCutawayTarget | null): boolean {
@@ -1018,6 +1030,95 @@ function pickLevelAt(position: ScreenPoint | null): number | undefined {
 /** Force labels and the hover readout belong to the estimate of an unfinished coaster, not to test-run reports. */
 function forceOverlayVisible(): boolean {
   return activeTool === "coaster" && !!construction?.active && !construction.testingReport && !!construction.constructionForcePreview && testingMetric !== null;
+}
+
+function updateHeightMarkers(heights: NonNullable<ReturnType<typeof constructionHeights>>): ScreenBox[] {
+  const units = unitsSetting.units();
+  const trackText = `Track end: ${formatLength(heights.end.metres, units)} above ground`;
+  const stationText = `Station: ${formatLength(heights.station.metres, units)} above ground`;
+  panel.setHeightMarkers(trackText, stationText);
+  const descriptors: { key: string; marker: HeightMarker; text: string; attribute: string; stationText?: string }[] = [
+    { key: "end", marker: heights.end, text: trackText, attribute: "data-track-height", stationText },
+    ...heights.extrema.map(({ marker, kind }: HeightExtremum, index) => ({
+      key: `extremum-${index}`,
+      marker,
+      text: `${kind === "crest" ? "Crest" : "Valley"}: ${formatLength(marker.metres, units)} above ground`,
+      attribute: kind === "crest" ? "data-crest-height" : "data-valley-height",
+    })),
+  ];
+  const activeKeys = new Set(descriptors.map(({ key }) => key));
+  for (const [key, node] of heightMarkerNodes) {
+    if (!activeKeys.has(key)) {
+      node.remove();
+      heightMarkerNodes.delete(key);
+    }
+  }
+
+  const viewport = cssViewport();
+  const measured = descriptors.map((descriptor) => {
+    let node = heightMarkerNodes.get(descriptor.key);
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "height-markers";
+      if (descriptor.stationText !== undefined) {
+        node.setAttribute("data-track-height", "");
+        const trackLabel = document.createElement("strong");
+        const stationLabel = document.createElement("span");
+        stationLabel.setAttribute("data-station-height", "");
+        node.append(trackLabel, stationLabel);
+      }
+      heightMarkerNodes.set(descriptor.key, node);
+      heightMarkers.append(node);
+    }
+    if (descriptor.stationText !== undefined) {
+      const trackLabel = node.querySelector<HTMLElement>("strong")!;
+      const stationLabel = node.querySelector<HTMLElement>("[data-station-height]")!;
+      if (trackLabel.textContent !== descriptor.text) trackLabel.textContent = descriptor.text;
+      if (stationLabel.textContent !== descriptor.stationText) stationLabel.textContent = descriptor.stationText;
+    } else if (node.textContent !== descriptor.text) {
+      node.textContent = descriptor.text;
+    }
+    node.hidden = false;
+    const anchor = projectWorld(camera, viewport, descriptor.marker.position);
+    return { descriptor, node, anchor, width: node.offsetWidth, height: node.offsetHeight };
+  });
+  const occupied: ScreenBox[] = [];
+  for (const { descriptor, node, anchor, width, height } of measured) {
+    if (descriptor.stationText !== undefined) {
+      node.dataset.heightKind = "end";
+    } else {
+      for (const attribute of ["data-track-height", "data-station-height", "data-crest-height", "data-valley-height"]) {
+        if (attribute !== descriptor.attribute) node.removeAttribute(attribute);
+      }
+      if (!node.hasAttribute(descriptor.attribute)) node.setAttribute(descriptor.attribute, "");
+      const heightKind = descriptor.attribute === "data-crest-height" ? "crest" : "valley";
+      if (node.dataset.heightKind !== heightKind) node.dataset.heightKind = heightKind;
+    }
+
+    const markerPadding = 14;
+    const placements = [
+      { side: "top-right", left: anchor.x + 12, top: anchor.y - height - 12 },
+      { side: "top-left", left: anchor.x - width - 12, top: anchor.y - height - 12 },
+      { side: "bottom-right", left: anchor.x + 12, top: anchor.y + 12 },
+      { side: "bottom-left", left: anchor.x - width - 12, top: anchor.y + 12 },
+    ];
+    const placement = placements.find(({ left, top }) => {
+      const candidate = { left: left - markerPadding, top: top - markerPadding, width: width + markerPadding * 2, height: height + markerPadding * 2 };
+      const inViewport = candidate.left >= 0 && candidate.top >= 0 && candidate.left + candidate.width <= viewport.width && candidate.top + candidate.height <= viewport.height;
+      const clear = occupied.every((box) => candidate.left >= box.left + box.width + 4
+        || candidate.left + candidate.width + 4 <= box.left
+        || candidate.top >= box.top + box.height + 4
+        || candidate.top + candidate.height + 4 <= box.top);
+      return inViewport && clear;
+    });
+    node.hidden = placement === undefined;
+    if (!placement) continue;
+    node.dataset.placement = placement.side;
+    node.style.left = `${placement.left}px`;
+    node.style.top = `${placement.top}px`;
+    occupied.push({ left: placement.left - markerPadding, top: placement.top - markerPadding, width: width + markerPadding * 2, height: height + markerPadding * 2 });
+  }
+  return occupied;
 }
 
 function frame(now: number): void {
@@ -1044,25 +1145,12 @@ function frame(now: number): void {
     if (followed.settled) followPoints = undefined;
   }
   lastFrameAt = now;
-  const heights = activeTool === "coaster" && construction?.active ? constructionHeights(world, construction.placedRails) : null;
+  const heights = activeTool === "coaster" && construction?.active ? currentConstructionHeights() : null;
   const autoTarget = automaticCutawayTarget(heights);
   const autoCutawayVisible = automaticCutawayVisible(autoTarget);
   syncLandscapingUndergroundView(autoTarget);
   heightMarkers.hidden = heights === null;
-  if (heights) {
-    const trackText = `Track end: ${formatLength(heights.end.metres, unitsSetting.units())} above ground`;
-    const stationText = `Station: ${formatLength(heights.station.metres, unitsSetting.units())} above ground`;
-    trackHeightMarker.textContent = trackText;
-    stationHeightMarker.textContent = stationText;
-    panel.setHeightMarkers(trackText, stationText);
-    const anchor = projectWorld(camera, cssViewport(), heights.end.position);
-    heightMarkers.style.left = `${anchor.x}px`;
-    heightMarkers.style.top = `${anchor.y}px`;
-  }
-  const heightMarkerBox: ScreenBox[] = heights ? [{
-    left: parseFloat(heightMarkers.style.left) + 12 - 14, top: parseFloat(heightMarkers.style.top) - 12 - heightMarkers.offsetHeight,
-    width: heightMarkers.offsetWidth + 14, height: heightMarkers.offsetHeight + 14,
-  }] : [];
+  const heightMarkerBox = heights ? updateHeightMarkers(heights) : [];
   forceOverlay.render(forceOverlayVisible(), (sample) => projectWorld(camera, cssViewport(), sample), cssViewport(), heightMarkerBox);
   constructionEffects.active(now);
   dayClock.update(dayPhase);

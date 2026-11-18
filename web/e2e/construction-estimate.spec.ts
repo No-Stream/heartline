@@ -84,6 +84,39 @@ test("shows a changing speed and force estimate on an unfinished coaster @fast",
   await expect(estimate).toContainText("Approximate construction estimate");
 });
 
+test("previews forces for a selected drop before placing it @fast", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/?park=new&seed=2026&test=1");
+  await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
+  await openTool(page, "Coaster");
+  await selectUnits(page, "metric");
+  await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
+  await expect.poll(() => page.evaluate(() => window.gameTest.ready)).toBe(true);
+  await page.getByLabel("Station height above ground (metres)").fill("60");
+  await page.getByLabel("Station height above ground (metres)").press("Tab");
+  await page.getByRole("button", { name: "Place station" }).click();
+  for (const point of [{ x: 50.5, y: 50.5, z: 2 }, { x: 52.5, y: 50.5, z: 2 }]) {
+    const position = await page.evaluate((worldPoint) => window.gameTest.project(worldPoint), point);
+    await moveOverCanvas(page, position);
+    await clickCanvas(page, position);
+  }
+
+  const track = page.locator("[data-track] li");
+  await expect(track).toHaveCount(1);
+  const selected = page.locator("[data-construction]");
+  await page.getByRole("radiogroup", { name: "Next piece" }).locator('[data-piece="LevelToGentleDown"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "LevelToGentleDown");
+
+  const forcePreview = page.locator("[data-candidate-force-preview]");
+  await expect(forcePreview).toBeVisible();
+  await expect(forcePreview).toContainText("Estimated entry speed");
+  await expect(forcePreview).toContainText("Estimated minimum vertical force");
+  await expect(forcePreview).toContainText("Estimated maximum vertical force");
+  await expect(forcePreview).toContainText("Estimated lateral force");
+  await expect(forcePreview).toContainText("longitudinal force");
+  await expect(track).toHaveCount(1);
+});
+
 test("marks forces past the model's comfortable limits on a harsh drop @fast", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto("/?park=new&seed=2026&test=1");

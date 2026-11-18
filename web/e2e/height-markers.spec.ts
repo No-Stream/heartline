@@ -46,11 +46,15 @@ test("shows coaster height markers in the selected units and saves the preferenc
   const track = page.locator("[data-track] li");
   await expect(track).toHaveCount(1);
   const palette = page.getByRole("radiogroup", { name: "Next piece" });
-  for (const [index, piece] of ["LevelToGentleUp", "GentleUp", "GentleUp"].entries()) {
+  const hillPieces = ["LevelToGentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "LevelToGentleDown", "GentleDown", "GentleDownToLevel"];
+  for (const [index, piece] of hillPieces.entries()) {
     await palette.locator(`[data-piece="${piece}"]`).click();
     await page.getByRole("button", { name: "Place piece" }).click();
     await expect(track).toHaveCount(index + 2);
   }
+
+  await expect(page.locator("[data-height-markers] [data-crest-height]").first()).toBeVisible();
+  await expect(page.locator("[data-height-markers] [data-crest-height]").first()).toContainText(/Crest: .* above ground/);
 
   const worldTrackHeight = page.locator("[data-height-markers] [data-track-height]");
   const worldStationHeight = page.locator("[data-height-markers] [data-station-height]");

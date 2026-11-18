@@ -87,6 +87,36 @@ describe("composeScene", () => {
     const scene = composeScene(sceneInput({ construction, testingMetric: "speed" }));
     expect(scene.geometryPasses[5](camera, viewport, atlas, "1").some((quad) => quad.id === "testing-0")).toBe(true);
   });
+  it("colours the selected candidate track by its force limit closeness before placement", () => {
+    const samples = [
+      { distance: 20, x: 1, y: 1, z: 1, speed: 16, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+      { distance: 21, x: 2, y: 1, z: 1, speed: 16, verticalG: 4.1, lateralG: 0, longitudinalG: 0, airtime: false },
+    ];
+    const limits = {
+      minimumVerticalG: -1.5,
+      maximumVerticalG: 4.5,
+      maximumLateralG: 1.8,
+      maximumLongitudinalG: 1.5,
+      ratingBands: {},
+    };
+    const construction = {
+      candidateForcePreview: { samples, limits },
+      canAppend: true,
+      previewRails: new Float32Array(),
+      previewTies: new Float32Array(),
+      previewSupports: new Float32Array(),
+      blockReport: { sections: [] },
+      placedRails: new Float32Array(),
+      railDistances: new Float32Array(),
+      pieces: [],
+      elements: [],
+    } as unknown as ConstructionState;
+    const scene = composeScene(sceneInput({ construction, activeTool: "coaster" }));
+    const candidateRibbon = scene.geometryPasses[5](camera, viewport, atlas, "1")
+      .find((quad) => quad.id === "candidate-force-0");
+
+    expect(candidateRibbon?.color).toEqual([242 / 255, 181 / 255, 58 / 255, 1]);
+  });
   it("uses the world's train layout to render the model and its riders", () => {
     const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };
     const riderAtlas: Atlas = { ...atlas, pages: { "1": [{ file: "test.png", width: 40, height: 60 }] }, frames: Object.fromEntries(["maya", "otis", "priya", "gus"].map((name) => [`people/${name}/se/idle/0`, frame])), sprites: Object.fromEntries(["maya", "otis", "priya", "gus"].map((name) => [`people/${name}`, { appearance: { skinToneGroup: "deep", hairGroup: "curly", clothingPaletteGroup: "red", bodyShape: "slender", ageGroup: "child" } }])) } as Atlas;
