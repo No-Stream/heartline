@@ -385,6 +385,15 @@ impl Construction {
     }
 
     pub fn choices(&self, world: &World, obstacles: &[SupportObstacle]) -> Vec<PieceChoice> {
+        self.choices_with_rated_speeds(world, obstacles, rated_speeds)
+    }
+
+    fn choices_with_rated_speeds(
+        &self,
+        world: &World,
+        obstacles: &[SupportObstacle],
+        rated_speeds_for_piece: impl Fn(&CoasterModel, &Piece) -> Option<super::RatedSpeeds>,
+    ) -> Vec<PieceChoice> {
         if let Some(cache) = self.choices_cache.borrow().as_ref() {
             if cache.state_hash == self.state_hash()
                 && cache.world_id == world.instance_id()
@@ -435,7 +444,10 @@ impl Construction {
                 continue;
             }
             let template = template_for(base.id, self.end());
-            let placed = self.model_placeable_geometry(template);
+            let placed = self
+                .model_placeable_geometry_with_rated_speeds(template, |model, piece| {
+                    rated_speeds_for_piece(model, piece)
+                });
             let mut would_tunnel = false;
             let (result, validation) = if self.closed {
                 (Err(ConstructionError::Closed), None)

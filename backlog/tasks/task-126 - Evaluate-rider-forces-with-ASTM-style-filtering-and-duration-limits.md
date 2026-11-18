@@ -73,4 +73,6 @@ Feature screenshot inspection: re-recorded airtime-hill-inspector-linux.png (rat
 
 The Velocity Viper failure is consistent with the close command being queued behind an incomplete construction update and then cancelled when the test switches tools. The captured state had a closeable track and a rejected test command. The journey helper now waits for the final authoritative construction state, and the journey waits for closure before switching tools. Typecheck passed; the journey was not rerun, so this diagnosis and fix remain unverified in the browser.
 
+Follow-up availability coverage: a real scan using a deliberately restrictive test model yields no passing speed and serializes an unavailable entry. A builder test first confirms a banked straight is placeable after a matching bank transition, then verifies an unavailable rating gives ModelForbidden and removes it from available choices. Both focused tests passed 1/1; focused library and generator Clippy passed. No production force limit or generated window changed.
+
 <!-- SECTION:NOTES:END -->
