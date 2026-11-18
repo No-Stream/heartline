@@ -912,6 +912,11 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     renderRevision.invalidate();
   } else if (message.type === "piece-shapes") {
     panel.setShapes(message.shapes);
+  } else if (message.type === "construction-finish-status") {
+    if (construction) {
+      construction = { ...construction, canFinish: message.canFinish, finishReason: message.finishReason };
+      panel.updateFinishStatus(message.canFinish, message.finishReason);
+    }
   } else if (message.type === "construction-state" || message.type === "block-analysis-progress") {
     if (message.type === "block-analysis-progress" && !construction) throw new Error("Block analysis progress arrived before construction state");
     const next: ConstructionState = message.type === "construction-state" ? message : { ...construction!, ...message, type: "construction-state" };
