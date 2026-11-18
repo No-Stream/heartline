@@ -4,7 +4,7 @@ title: Add sound
 status: In Progress
 assignee: []
 created_date: '2026-11-03 01:52'
-updated_date: '2026-11-05 08:11'
+updated_date: '2026-11-18 16:46'
 labels:
   - audio
 milestone: m-3
@@ -47,4 +47,6 @@ When sound families land: the player pause (Space) must silence train and event 
 
 2026-11-18 owner listening pass fixes (branch audio-tuning): day birds rewritten as varied singers (they sounded like electronic bleeps); rider screams now play five CC0 Freesound group-scream recordings (sources in web/src/audio/recordings/screams/CREDITS.md) instead of the sawtooth choir; the station dispatch chime (sounded like a phone ringing) replaced by a clunk, clack and air hiss; departure and arrival edges gained hysteresis so a creeping held train cannot repeat them.
 2026-11-18 later the same day: birds and crickets removed at the owner's request (harsh, constant high ringing); ambience is wind only. The steel whine (sawtooth harmonics ringing above 2 kHz) became a bandpassed-noise rail hiss, and the brake squeal oscillator now exists only during brake events. An offline test checks that a park with a stopped or cruising train has no narrow-band tone above 2 kHz, day or night.
+
+2026-11-18 (branch audio-tuning, 4 commits, not merged): rail hiss replaces the tonal steel whine, with an offline test that fails on any narrow-band tone above 2 kHz; ambience is wind only (birds and crickets removed); brake squeal plays only during a brake event; screams and station dispatch made more natural. Waiting on the owner's listening pass, then merge.
 <!-- SECTION:NOTES:END -->
