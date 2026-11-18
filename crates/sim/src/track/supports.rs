@@ -1,7 +1,57 @@
 use crate::track::{Piece, Vec3};
 use crate::world::World;
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+
+#[cfg(test)]
+thread_local! {
+    static SUPPORT_WORLD_OBSTACLE_SNAPSHOT_BUILDS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_support_world_obstacle_snapshot_builds() {
+    SUPPORT_WORLD_OBSTACLE_SNAPSHOT_BUILDS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn support_world_obstacle_snapshot_builds() -> usize {
+    SUPPORT_WORLD_OBSTACLE_SNAPSHOT_BUILDS.with(Cell::get)
+}
+
+#[derive(Clone)]
+pub(crate) struct SupportWorldObstacles {
+    path_and_scenery: Vec<SupportObstacle>,
+}
+
+impl SupportWorldObstacles {
+    pub(crate) fn new(world: &World) -> Self {
+        #[cfg(test)]
+        SUPPORT_WORLD_OBSTACLE_SNAPSHOT_BUILDS.with(|count| count.set(count.get() + 1));
+
+        let mut path_and_scenery: Vec<_> = world
+            .paths()
+            .map(|path| SupportObstacle {
+                min: Vec3::new(
+                    f64::from(path.position.x) * 4.0,
+                    f64::from(path.position.y) * 4.0,
+                    f64::from(path.position.height),
+                ),
+                max: Vec3::new(
+                    (f64::from(path.position.x) + 1.0) * 4.0,
+                    (f64::from(path.position.y) + 1.0) * 4.0,
+                    f64::from(path.position.height) + if path.slope.is_some() { 3.0 } else { 2.0 },
+                ),
+            })
+            .collect();
+        path_and_scenery.extend(world.scenery_boxes().map(|bounds| SupportObstacle {
+            min: bounds.min,
+            max: bounds.max,
+        }));
+        Self { path_and_scenery }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Support {
@@ -176,7 +226,15 @@ pub fn generate_supports(
     world: &World,
     obstacles: &[SupportObstacle],
 ) -> Result<Vec<Support>, SupportError> {
-    generate_supports_on_structures(piece, world, obstacles, &[])
+    let world_obstacles = SupportWorldObstacles::new(world);
+    generate_supports_at_spacing_with_world_obstacles(
+        piece,
+        world,
+        obstacles,
+        &[],
+        8.0,
+        &world_obstacles,
+    )
 }
 
 /// Routes closely spaced supports for a wooden twister coaster.
@@ -185,7 +243,47 @@ pub fn generate_dense_supports(
     world: &World,
     obstacles: &[SupportObstacle],
 ) -> Result<Vec<Support>, SupportError> {
-    generate_supports_at_spacing(piece, world, obstacles, &[], 4.0)
+    let world_obstacles = SupportWorldObstacles::new(world);
+    generate_supports_at_spacing_with_world_obstacles(
+        piece,
+        world,
+        obstacles,
+        &[],
+        4.0,
+        &world_obstacles,
+    )
+}
+
+pub(crate) fn generate_supports_with_world_obstacles(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+    world_obstacles: &SupportWorldObstacles,
+) -> Result<Vec<Support>, SupportError> {
+    generate_supports_at_spacing_with_world_obstacles(
+        piece,
+        world,
+        obstacles,
+        &[],
+        8.0,
+        world_obstacles,
+    )
+}
+
+pub(crate) fn generate_dense_supports_with_world_obstacles(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+    world_obstacles: &SupportWorldObstacles,
+) -> Result<Vec<Support>, SupportError> {
+    generate_supports_at_spacing_with_world_obstacles(
+        piece,
+        world,
+        obstacles,
+        &[],
+        4.0,
+        world_obstacles,
+    )
 }
 
 /// Generate routed steel columns and their horizontal connections to the track.
@@ -234,12 +332,36 @@ fn generate_supports_at_spacing(
     structures: &[SupportObstacle],
     spacing: f64,
 ) -> Result<Vec<Support>, SupportError> {
-    Ok(
-        route_supports(piece, world, obstacles, structures, spacing)?
-            .into_iter()
-            .map(|(support, _)| support)
-            .collect(),
+    let world_obstacles = SupportWorldObstacles::new(world);
+    generate_supports_at_spacing_with_world_obstacles(
+        piece,
+        world,
+        obstacles,
+        structures,
+        spacing,
+        &world_obstacles,
     )
+}
+
+fn generate_supports_at_spacing_with_world_obstacles(
+    piece: &Piece,
+    world: &World,
+    obstacles: &[SupportObstacle],
+    structures: &[SupportObstacle],
+    spacing: f64,
+    world_obstacles: &SupportWorldObstacles,
+) -> Result<Vec<Support>, SupportError> {
+    Ok(route_supports(
+        piece,
+        world,
+        obstacles,
+        structures,
+        spacing,
+        world_obstacles,
+    )?
+    .into_iter()
+    .map(|(support, _)| support)
+    .collect())
 }
 
 /// Routes supports as `generate_supports_at_spacing` does, with the track tangent at each anchor.
@@ -249,6 +371,7 @@ fn route_supports(
     obstacles: &[SupportObstacle],
     structures: &[SupportObstacle],
     spacing: f64,
+    world_obstacles: &SupportWorldObstacles,
 ) -> Result<Vec<(Support, Vec3)>, SupportError> {
     for obstacle in obstacles.iter().chain(structures) {
         assert!(
@@ -258,25 +381,6 @@ fn route_supports(
             "invalid obstacle bounds"
         );
     }
-    let mut path_obstacles: Vec<_> = world
-        .paths()
-        .map(|path| SupportObstacle {
-            min: Vec3::new(
-                f64::from(path.position.x) * 4.0,
-                f64::from(path.position.y) * 4.0,
-                f64::from(path.position.height),
-            ),
-            max: Vec3::new(
-                (f64::from(path.position.x) + 1.0) * 4.0,
-                (f64::from(path.position.y) + 1.0) * 4.0,
-                f64::from(path.position.height) + if path.slope.is_some() { 3.0 } else { 2.0 },
-            ),
-        })
-        .collect();
-    path_obstacles.extend(world.scenery_boxes().map(|bounds| SupportObstacle {
-        min: bounds.min,
-        max: bounds.max,
-    }));
     let tunnels: Vec<_> = world.carved_spans().collect();
     let inversion_track_segments = piece.inversion.map(|_| TrackGrid::new(piece));
     let count = (piece.length() / spacing).ceil() as usize;
@@ -291,7 +395,7 @@ fn route_supports(
         let anchor = sample.position;
         if obstacles
             .iter()
-            .chain(&path_obstacles)
+            .chain(&world_obstacles.path_and_scenery)
             .chain(structures)
             .any(|obstacle| {
                 intersects(
@@ -312,7 +416,10 @@ fn route_supports(
         let mut selected = None;
         let candidates = footing_candidates(
             anchor,
-            obstacles.iter().chain(&path_obstacles).chain(structures),
+            obstacles
+                .iter()
+                .chain(&world_obstacles.path_and_scenery)
+                .chain(structures),
         );
         for (x, y) in candidates {
             let (width, height) = world.dimensions();
@@ -374,7 +481,7 @@ fn route_supports(
             let top = Vec3::new(x, y, anchor.z);
             if obstacles
                 .iter()
-                .chain(&path_obstacles)
+                .chain(&world_obstacles.path_and_scenery)
                 .any(|obstacle| support_intersects_obstacle(&Support { anchor, footing }, obstacle))
                 || structures.iter().enumerate().any(|(index, structure)| {
                     let beam_bounds = expanded(structure, BEAM_CLEARANCE, BEAM_CLEARANCE);
@@ -640,7 +747,15 @@ fn generate_framed_supports(
     obstacles: &[SupportObstacle],
     shape: &FrameShape,
 ) -> Result<Vec<SupportSegment>, SupportError> {
-    let supports = route_supports(piece, world, obstacles, &[], shape.spacing)?;
+    let world_obstacles = SupportWorldObstacles::new(world);
+    let supports = route_supports(
+        piece,
+        world,
+        obstacles,
+        &[],
+        shape.spacing,
+        &world_obstacles,
+    )?;
     Ok(framed_support_segments(
         piece, world, obstacles, supports, shape,
     ))

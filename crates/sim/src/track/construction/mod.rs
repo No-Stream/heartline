@@ -5,9 +5,12 @@ use crate::track::clearance::{
     check_clearance_indexed, check_clearance_with_envelopes, check_reverse_track_clearance,
     tunnel_plan, tunnel_plan_with_envelopes,
 };
+#[cfg(test)]
+use crate::track::supports::generate_supports;
 use crate::track::supports::{
-    SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle,
-    generate_dense_supports, generate_supports, support_intersects_obstacle,
+    SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle, SupportWorldObstacles,
+    generate_dense_supports_with_world_obstacles, generate_supports_with_world_obstacles,
+    support_intersects_obstacle,
 };
 use crate::track::{
     CoasterColors, CoasterModel, Heartlining, HillFeel,
@@ -201,6 +204,7 @@ struct ValidationCache {
     existing_tunnel_plans: Vec<TunnelPlan>,
     clearance_index: ClearanceIndex,
     track_obstacles: Vec<Vec<SupportObstacle>>,
+    support_world_obstacles: Arc<SupportWorldObstacles>,
     supports: Vec<Option<Result<Arc<Vec<Support>>, SupportError>>>,
     support_regions: Vec<SupportSearchRegion>,
     /// Union of the existing pieces' tunnel carve cells.
@@ -830,6 +834,7 @@ impl Construction {
                 obstacles: obstacles.to_vec(),
                 clearance_index: ClearanceIndex::new(&existing),
                 support_regions: existing.iter().map(support_search_region).collect(),
+                support_world_obstacles: Arc::new(SupportWorldObstacles::new(world)),
                 existing_carve_cells: existing_tunnel_plans
                     .iter()
                     .flat_map(|plan| plan.carve_cells.iter().copied())
@@ -937,9 +942,9 @@ impl Construction {
             let route_supports = if self.model.support_style_for_piece(supported_piece)
                 == SupportStyle::DenseWoodenLattice
             {
-                generate_dense_supports
+                generate_dense_supports_with_world_obstacles
             } else {
-                generate_supports
+                generate_supports_with_world_obstacles
             };
             // Obstacles from the other existing pieces near this piece's support search region.
             let existing_support_obstacles = || {
@@ -972,6 +977,7 @@ impl Construction {
                             supported_piece,
                             existing_world(cache)?,
                             &existing_support_obstacles(),
+                            cache.support_world_obstacles.as_ref(),
                         )
                         .map(Arc::new);
                         cache.exact_supports[index] = Some(routed);
@@ -992,9 +998,14 @@ impl Construction {
                     );
                 }
                 validated_supports.push(
-                    route_supports(supported_piece, candidate_world, &support_obstacles)
-                        .map(Arc::new)
-                        .map_err(construction_support_error)?,
+                    route_supports(
+                        supported_piece,
+                        candidate_world,
+                        &support_obstacles,
+                        cache.support_world_obstacles.as_ref(),
+                    )
+                    .map(Arc::new)
+                    .map_err(construction_support_error)?,
                 );
                 continue;
             }
@@ -1004,8 +1015,13 @@ impl Construction {
                     .set(self.support_cache_misses.get() + 1);
                 if cache.exact_supports[index].is_none() {
                     cache.exact_supports[index] = Some(
-                        route_supports(supported_piece, world, &existing_support_obstacles())
-                            .map(Arc::new),
+                        route_supports(
+                            supported_piece,
+                            world,
+                            &existing_support_obstacles(),
+                            cache.support_world_obstacles.as_ref(),
+                        )
+                        .map(Arc::new),
                     );
                 }
                 cache.supports[index] = cache.exact_supports[index].clone();
@@ -1038,9 +1054,14 @@ impl Construction {
                         .filter(|bounds| region.overlaps(bounds)),
                 );
             }
-            let supports = route_supports(supported_piece, world, &support_obstacles)
-                .map(Arc::new)
-                .map_err(construction_support_error)?;
+            let supports = route_supports(
+                supported_piece,
+                world,
+                &support_obstacles,
+                cache.support_world_obstacles.as_ref(),
+            )
+            .map(Arc::new)
+            .map_err(construction_support_error)?;
             validated_supports.push(supports);
         }
         Ok(PieceValidation {

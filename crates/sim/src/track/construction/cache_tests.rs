@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::track::{Heading, hybrid_model};
-use crate::world::Surface;
+use crate::world::{Path, Position, Scenery, SceneryKind, Surface};
 use std::collections::{BTreeSet, HashSet};
 
 fn flat_world() -> World {
@@ -142,6 +142,73 @@ fn existing_supports_are_shared_across_candidate_validations() {
     }
 }
 
+#[test]
+fn support_world_obstacles_are_reused_and_rebuilt_after_world_changes() {
+    let mut world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    world.place_path(Path {
+        position: Position {
+            x: 100,
+            y: 100,
+            height: 0,
+        },
+        slope: None,
+    });
+    world
+        .place_scenery(Scenery {
+            kind: SceneryKind::BushFlowering,
+            position: Position {
+                x: 102,
+                y: 100,
+                height: 0,
+            },
+            quarter: 0,
+            rotation: 0,
+        })
+        .unwrap();
+    crate::track::supports::reset_support_world_obstacle_snapshot_builds();
+
+    let mut construction = Construction::new(
+        TrackState {
+            x: 120,
+            y: 200,
+            z: 10,
+            heading: Heading::North,
+            ..TrackState::origin()
+        },
+        hybrid_model(),
+    );
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    construction.append(PieceId::Straight, &world, &[]).unwrap();
+    construction.choices(&world, &[]);
+    assert_eq!(
+        crate::track::supports::support_world_obstacle_snapshot_builds(),
+        1,
+        "one world snapshot should serve all choice validations"
+    );
+
+    world.place_path(Path {
+        position: Position {
+            x: 200,
+            y: 200,
+            height: 0,
+        },
+        slope: None,
+    });
+    construction.choices(&world, &[]);
+    assert_eq!(
+        crate::track::supports::support_world_obstacle_snapshot_builds(),
+        2,
+        "a world revision should rebuild the support obstacle snapshot once"
+    );
+}
+
 fn hill_world() -> World {
     World::new(
         128,
@@ -179,6 +246,7 @@ fn supports_routed_from_scratch(
         .iter()
         .map(|piece| track_support_obstacles(std::slice::from_ref(*piece), train))
         .collect();
+    let world_obstacles = SupportWorldObstacles::new(world);
     all_pieces
         .iter()
         .enumerate()
@@ -194,11 +262,12 @@ fn supports_routed_from_scratch(
             let route_supports = if construction.model.support_style_for_piece(piece)
                 == SupportStyle::DenseWoodenLattice
             {
-                generate_dense_supports
+                generate_dense_supports_with_world_obstacles
             } else {
-                generate_supports
+                generate_supports_with_world_obstacles
             };
-            route_supports(piece, &carved, &obstacles).map_err(construction_support_error)
+            route_supports(piece, &carved, &obstacles, &world_obstacles)
+                .map_err(construction_support_error)
         })
         .collect()
 }
