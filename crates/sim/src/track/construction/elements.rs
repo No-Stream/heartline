@@ -313,55 +313,60 @@ impl Construction {
         ];
         let mut queue = VecDeque::from([(Vec::new(), Vec::new())]);
         while let Some((path, mut visited)) = queue.pop_front() {
-            let state = sequences
-                .state(&path, world, obstacles)
-                .expect("queued paths were placed");
-            let construction = state.construction.copy_for_element_choice();
-            let path_would_tunnel = state.would_tunnel;
-            let end = construction.end();
-            let connector = (
-                end.slope,
-                end.bank,
-                end.horizontal_curvature,
-                end.vertical_curvature,
-            );
-            if visited.contains(&connector) {
-                continue;
-            }
-            visited.push(connector);
-            if !path.is_empty() && end.vertical_curvature == VerticalCurvature::Straight {
-                if let Some((index, (id, name, _))) =
-                    targets.iter().enumerate().find(|(index, (_, _, slope))| {
-                        *slope == end.slope
-                            && *slope != self.end().slope
-                            && choices[*index].is_none()
-                    })
-                {
-                    choices[index] = Some(self.choice_from_updated(
-                        id,
-                        name,
-                        path.clone(),
-                        &construction,
-                        path_would_tunnel,
-                    ));
-                    remaining -= 1;
-                    if remaining == 0 {
-                        break;
+            let next_paths = {
+                let state = sequences
+                    .state(&path, world, obstacles)
+                    .expect("queued paths were placed");
+                let construction = &state.construction;
+                let end = construction.end();
+                let connector = (
+                    end.slope,
+                    end.bank,
+                    end.horizontal_curvature,
+                    end.vertical_curvature,
+                );
+                if visited.contains(&connector) {
+                    continue;
+                }
+                visited.push(connector);
+                if !path.is_empty() && end.vertical_curvature == VerticalCurvature::Straight {
+                    if let Some((index, (id, name, _))) =
+                        targets.iter().enumerate().find(|(index, (_, _, slope))| {
+                            *slope == end.slope
+                                && *slope != self.end().slope
+                                && choices[*index].is_none()
+                        })
+                    {
+                        choices[index] = Some(self.choice_from_updated(
+                            id,
+                            name,
+                            path.clone(),
+                            construction,
+                            state.would_tunnel,
+                        ));
+                        remaining -= 1;
+                        if remaining == 0 {
+                            break;
+                        }
                     }
                 }
-            }
-            for id in transitions {
-                let template = template_for(id, end);
-                if template.entry.horizontal_curvature != HorizontalCurvature::Straight
-                    || template.entry.bank != Bank::Level
-                {
-                    continue;
+                let mut next_paths = Vec::with_capacity(transitions.len());
+                for id in transitions {
+                    let template = template_for(id, end);
+                    if template.entry.horizontal_curvature != HorizontalCurvature::Straight
+                        || template.entry.bank != Bank::Level
+                    {
+                        continue;
+                    }
+                    if construction.placeable(template).is_ok() {
+                        let mut next_path = path.clone();
+                        next_path.push(id);
+                        next_paths.push(next_path);
+                    }
                 }
-                if construction.placeable(template).is_err() {
-                    continue;
-                }
-                let mut next_path = path.clone();
-                next_path.push(id);
+                next_paths
+            };
+            for next_path in next_paths {
                 if sequences.state(&next_path, world, obstacles).is_some() {
                     queue.push_back((next_path, visited.clone()));
                 }
@@ -454,6 +459,8 @@ struct SequenceState {
 
 impl SequenceStates {
     fn new(construction: &Construction) -> Self {
+        #[cfg(test)]
+        super::ELEMENT_SEQUENCE_CONSTRUCTION_COPY_COUNT.with(|count| count.set(count.get() + 1));
         let root = SequenceState {
             construction: construction.copy_for_element_choice(),
             would_tunnel: false,
@@ -476,6 +483,9 @@ impl SequenceStates {
             let state = self.states[&pieces[..length - 1]]
                 .as_ref()
                 .and_then(|parent| {
+                    #[cfg(test)]
+                    super::ELEMENT_SEQUENCE_CONSTRUCTION_COPY_COUNT
+                        .with(|count| count.set(count.get() + 1));
                     let mut construction = parent.construction.copy_for_element_choice();
                     let piece_tunnels = construction
                         .append_cached_choice(pieces[length - 1], world, obstacles)
@@ -511,6 +521,50 @@ fn heartlining_for_geometry(geometry: &[Piece]) -> Option<Heartlining> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slope_search_reuses_sequence_constructions_without_read_clones() {
+        let world = World::new(
+            512,
+            512,
+            crate::world::Surface {
+                corners: [0; 4],
+                water: None,
+            },
+        );
+        let construction = Construction::new(
+            TrackState {
+                x: 200,
+                y: 200,
+                z: 30,
+                ..TrackState::origin()
+            },
+            crate::track::hybrid_model(),
+        );
+        construction.choices(&world, &[]);
+
+        reset_element_choice_construction_copy_count();
+        let mut sequences = SequenceStates::new(&construction);
+        let choices = construction.slope_elements(&mut sequences, &world, &[]);
+
+        let ids: Vec<_> = choices.iter().map(|choice| choice.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "climb-gentle",
+                "climb-45",
+                "climb-60",
+                "descend-gentle",
+                "descend-45",
+                "descend-60",
+            ]
+        );
+        assert_eq!(
+            element_choice_construction_copy_count(),
+            element_sequence_construction_copy_count(),
+            "slope search should only copy constructions when creating sequence states"
+        );
+    }
 
     #[test]
     fn element_heartlining_ignores_non_inversion_pieces() {

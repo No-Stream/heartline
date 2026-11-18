@@ -21,6 +21,28 @@ use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, OnceLock};
 
 #[cfg(test)]
+thread_local! {
+    static ELEMENT_CHOICE_CONSTRUCTION_COPY_COUNT: Cell<usize> = const { Cell::new(0) };
+    static ELEMENT_SEQUENCE_CONSTRUCTION_COPY_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_element_choice_construction_copy_count() {
+    ELEMENT_CHOICE_CONSTRUCTION_COPY_COUNT.with(|count| count.set(0));
+    ELEMENT_SEQUENCE_CONSTRUCTION_COPY_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn element_choice_construction_copy_count() -> usize {
+    ELEMENT_CHOICE_CONSTRUCTION_COPY_COUNT.with(Cell::get)
+}
+
+#[cfg(test)]
+fn element_sequence_construction_copy_count() -> usize {
+    ELEMENT_SEQUENCE_CONSTRUCTION_COPY_COUNT.with(Cell::get)
+}
+
+#[cfg(test)]
 mod cache_tests;
 #[cfg(test)]
 mod tests;
