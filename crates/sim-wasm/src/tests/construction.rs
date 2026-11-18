@@ -25,6 +25,22 @@ fn candidate_force_preview_reports_selected_track_without_placing_it() {
 }
 
 #[test]
+fn candidate_force_preview_is_empty_after_undoing_the_station() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(100, 100, 20, 0);
+    simulation.construction_select("Straight");
+    simulation.construction_append();
+    simulation.construction_undo();
+    simulation.construction_undo();
+    assert_eq!(simulation.construction_track(), "[]");
+
+    assert_eq!(
+        simulation.construction_candidate_force_preview_json(),
+        "null"
+    );
+}
+
+#[test]
 fn candidate_force_preview_identifies_outer_banks_for_lateral_readout() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
     simulation.construction_start(100, 100, 20, 0);

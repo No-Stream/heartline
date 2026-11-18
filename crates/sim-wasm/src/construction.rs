@@ -690,6 +690,10 @@ impl WasmSimulation {
         &self,
     ) -> Option<ConstructionCandidateForcePreviewWire> {
         let construction = self.construction.as_ref()?;
+        // Undoing the station leaves an empty construction: there is no train to estimate from.
+        if construction.pieces().is_empty() {
+            return None;
+        }
         let candidate = self.construction_preview();
         let first = candidate.first()?;
         let outer_bank = first.family.is_some_and(|family| {

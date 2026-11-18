@@ -10,6 +10,7 @@ function hasOnlyFiniteNumbers(value: unknown): boolean {
 }
 
 export async function expectRideReportExplained(page: Page): Promise<TestingReport> {
+  // The ride info window repeats the same report markup, so read the builder's testing panel only.
   const testingPanel = page.locator("[data-construction] [data-testing]");
   await expect(testingPanel.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
   const report = await page.evaluate(() => window.gameTest.testingReport());

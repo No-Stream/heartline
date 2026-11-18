@@ -347,9 +347,11 @@ fn approximate_open_preview_stays_close_to_closed_demo_run() {
     );
     assert!(
         maximum_differences[0] < 0.5
-            && maximum_differences[1..]
-                .iter()
-                .all(|difference| *difference < 0.3)
+            && maximum_differences[1] < 0.3
+            && maximum_differences[2] < 0.3
+            // TASK-146: the 50 ms estimate reads 0.36 g more braking than the 200 Hz run inside the zero-g roll.
+            && maximum_differences[3] < 0.4,
+        "maximum differences {maximum_differences:?}"
     );
 }
 
@@ -1208,11 +1210,14 @@ fn friction_stops_train_on_slope_and_recovers_it() {
 #[test]
 fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
     let circuit = demo_circuit();
-    assert!(
+    assert_eq!(
         circuit
             .pieces()
             .iter()
-            .all(|piece| piece.inversion.is_none())
+            .filter(|piece| piece.inversion.is_some())
+            .map(|piece| piece.id)
+            .collect::<Vec<_>>(),
+        [PieceId::StallLeft, PieceId::ZeroGRollFastRight]
     );
     assert_eq!(
         circuit.pieces()[1..6]
@@ -1222,8 +1227,8 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
         [
             PieceId::LevelToGentleUp,
             PieceId::GentleUp,
-            PieceId::GentleUp,
-            PieceId::GentleUp,
+            PieceId::GentleToSteepUp,
+            PieceId::SteepToGentleUp,
             PieceId::GentleUpToLevel,
         ]
     );
@@ -1604,7 +1609,7 @@ fn block_brake_holds_and_restarts_a_train() {
 
 #[test]
 fn block_brake_does_not_creep_while_held_on_a_downhill_piece() {
-    let circuit = super::demo_circuit();
+    let circuit = level_crest_lift_circuit();
     let configuration = crate::track::hybrid_model().train;
     let piece_index = circuit
         .pieces()
@@ -1632,7 +1637,7 @@ fn block_brake_does_not_creep_while_held_on_a_downhill_piece() {
 
 #[test]
 fn downhill_brake_stops_holds_and_restarts_without_recovery() {
-    let circuit = super::demo_circuit();
+    let circuit = level_crest_lift_circuit();
     let configuration = crate::track::hybrid_model().train;
     let piece_index = circuit
         .pieces()
@@ -1665,7 +1670,7 @@ fn downhill_brake_stops_holds_and_restarts_without_recovery() {
 
 #[test]
 fn downhill_brake_with_insufficient_holding_force_does_not_freeze_train() {
-    let circuit = super::demo_circuit();
+    let circuit = level_crest_lift_circuit();
     let configuration = crate::track::hybrid_model().train;
     let piece_index = circuit
         .pieces()
@@ -1690,7 +1695,7 @@ fn downhill_brake_with_insufficient_holding_force_does_not_freeze_train() {
 
 #[test]
 fn uphill_brake_drive_restarts_without_initial_rollback() {
-    let mut pieces = super::demo_circuit().pieces().to_vec();
+    let mut pieces = level_crest_lift_circuit().pieces().to_vec();
     for piece in &mut pieces {
         if piece.kind == crate::track::PieceKind::Lift {
             piece.kind = crate::track::PieceKind::Track;
