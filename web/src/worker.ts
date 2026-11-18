@@ -176,7 +176,6 @@ function scheduleFinishSearch(resume = false): void {
   setTimeout(() => {
     if (generation !== finishSearchGeneration) return;
     if (!resume) simulation.construction_finish_search_start();
-    sendConstruction();
     const advance = (): void => {
       if (generation !== finishSearchGeneration) return;
       const deadline = performance.now() + finishSearchSliceMs;
@@ -442,6 +441,7 @@ workerScope.addEventListener("message", (event) => {
       const removed = simulation.remove_facility(action.id);
       if (removed) sendWorld();
       sendFacilities(removed ? "Facility removed." : simulation.facility_message(), false, false, removed ? "removed" : "refused");
+      if (simulation.construction_active()) sendConstruction();
       return;
     }
     if (action.type === "facility-access-preview") {
@@ -459,6 +459,7 @@ workerScope.addEventListener("message", (event) => {
       }
       if (placed) sendWorld();
       sendFacilities(placed ? "Facility placed." : simulation.facility_message(), placed, false, placed ? "placed" : "refused");
+      if (simulation.construction_active()) sendConstruction();
       return;
     }
     if (action.type === "terrain-edit") {
@@ -469,8 +470,8 @@ workerScope.addEventListener("message", (event) => {
       const success = simulation.terrain_apply(action.command, Int32Array.from(values));
       if (success) {
         sendWorld();
-        if (simulation.construction_active()) sendConstruction();
       }
+      if (simulation.construction_active()) sendConstruction();
       const invalidatedPaths = simulation.terrain_invalidated_paths();
       sendWorkerMessage(outputScope, { type: "terrain-result", success, message: simulation.terrain_message(), invalidatedPaths }, [invalidatedPaths.buffer]);
       return;
@@ -576,8 +577,8 @@ workerScope.addEventListener("message", (event) => {
     const changed = simulation.set_world_surface(x, y, corners, water);
     if (changed) {
       sendWorld();
-      if (simulation.construction_active()) sendConstruction();
     }
+    if (simulation.construction_active()) sendConstruction();
     sendWorkerMessage(outputScope, { type: "surface-edited", changed });
   });
 });

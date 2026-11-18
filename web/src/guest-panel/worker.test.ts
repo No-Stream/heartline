@@ -20,6 +20,7 @@ const wasmMock = vi.hoisted(() => ({
   constructionDelete: vi.fn(),
   constructionTrackLength: 0,
   finishAvailable: false,
+  finishSearchPending: false,
   finishInvalidate: vi.fn(),
   finishSearchStart: vi.fn(),
   finishSearchAdvance: vi.fn(() => true),
@@ -47,6 +48,8 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     carsPerTrain = 6;
     colors = JSON.stringify({ track: "coral", supports: "timber", trains: "sage" });
     constructor(seed: bigint, guestCount: number, park: string) { wasmMock.construct(seed, guestCount, park); }
+    static load_state(_bytes: Uint8Array) { return new this(0n, 0, "demo"); }
+    free() {}
     scenery_json() { return "[]"; }
     facilities_json() { return "[]"; }
     facility_revenue() { return 0n; }
@@ -131,6 +134,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_finish_reason() { return wasmMock.finishAvailable ? "" : "Checking for a connection to the station."; }
     construction_finish_search_start() { wasmMock.finishSearchStart(); wasmMock.finishAvailable = false; }
     construction_finish_search_advance() { return wasmMock.finishSearchAdvance(); }
+    construction_finish_search_pending() { return wasmMock.finishSearchPending; }
     construction_finish_invalidate() { wasmMock.finishInvalidate(); wasmMock.finishAvailable = false; }
     construction_finish_preview() {}
     construction_finish_confirm() {}
@@ -166,6 +170,7 @@ afterEach(() => {
   wasmMock.constructionDelete.mockReset();
   wasmMock.constructionTrackLength = 0;
   wasmMock.finishAvailable = false;
+  wasmMock.finishSearchPending = false;
   wasmMock.finishInvalidate.mockReset();
   wasmMock.finishSearchStart.mockReset();
   wasmMock.finishSearchAdvance.mockReset().mockReturnValue(true);
@@ -185,6 +190,77 @@ it("sends an incomplete station state before the complete state", async () => {
   expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true]);
   const sent = postMessage.mock.calls.map(([message]) => message);
   expect(sent.findIndex((message) => message.type === "world")).toBeLessThan(sent.findIndex((message) => message.type === "construction-state" && message.complete));
+});
+
+it("sends one complete placement state before the finish search result", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+
+  postMessage.mockClear();
+  onMessage({ data: { type: "construction-append" } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true]);
+
+  await vi.advanceTimersByTimeAsync(0);
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true, true]);
+});
+
+it("publishes construction state for facility edits before resuming the finish search", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+
+  postMessage.mockClear();
+  onMessage({ data: { type: "facility-place", kind: "carousel", x: 0, y: 0, rotation: 0 } } as MessageEvent);
+  await Promise.resolve();
+  const immediateStates = postMessage.mock.calls.filter(([message]) => message.type === "construction-state");
+  expect(immediateStates).toHaveLength(1);
+  expect(immediateStates[0][0].finishReason).toBe("Checking for a connection to the station.");
+
+  await vi.advanceTimersByTimeAsync(0);
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(2);
+
+  postMessage.mockClear();
+  onMessage({ data: { type: "facility-remove", id: 1 } } as MessageEvent);
+  await Promise.resolve();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
+});
+
+it("continues a saved finish search without restarting it or sending a redundant state", async () => {
+  vi.useFakeTimers();
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  wasmMock.finishSearchPending = true;
+  onMessage({ data: { type: "load-park", requestId: 1, bytes: new Uint8Array() } } as MessageEvent);
+  await Promise.resolve();
+  expect(wasmMock.finishSearchStart).not.toHaveBeenCalled();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
+
+  await vi.advanceTimersByTimeAsync(0);
+  expect(wasmMock.finishSearchStart).not.toHaveBeenCalled();
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(2);
 });
 
 it("sends block analysis progress without rebuilding construction geometry", async () => {
