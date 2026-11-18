@@ -158,6 +158,8 @@ main {
 .game-bar[data-fit-level="6"] .game-bar__tick-label,
 .game-bar[data-fit-level="7"] .game-bar__tick-label,
 .game-bar[data-fit-level="8"] .game-bar__tick-label { display: none; }
+/* A fixed-width counter keeps the game bar from shifting as the tick count gains or changes digits. */
+.game-bar [data-testid="tick-count"] { display: inline-block; min-width: 8ch; font-variant-numeric: tabular-nums; text-align: right; }
 .game-bar[data-fit-level="3"] h1,
 .game-bar[data-fit-level="4"] h1,
 .game-bar[data-fit-level="5"] h1,
