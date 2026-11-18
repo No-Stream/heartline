@@ -47,6 +47,8 @@ export const SOUND_TUNING = {
   crestDistance: 2, crowdSaturation: 200,
   /** Recorded rider screams: `level` is the RMS gain at full audibility and intensity; `hold` is [base, extra at intensity 1] seconds; at `layerIntensity` a second, different recording joins after `layerDelay` seconds. */
   scream: { level: 0.06, attack: 0.04, hold: [0.8, 1.0], release: 0.5, pitchSpread: 0.06, layerIntensity: 0.5, layerDelay: [0.08, 0.2], layerLevel: 0.7, layerPanSpread: 0.2 },
+  /** Steel rail hiss: white noise through a bandpass whose centre rises with speed; it replaced a sawtooth whine whose harmonics rang above 2 kHz. */
+  railHiss: { level: 0.06, baseFrequency: 1500, frequencyPerSpeed: 60, q: 3 },
   /** Station dispatch: restraint-lock clunk, brake-fin clack, then an air release; levels are peak gains at full audibility. */
   station: { clunkLevel: 0.5, clackLevel: 0.25, hissLevel: 0.06, hissDecay: 0.6 },
 } as const;

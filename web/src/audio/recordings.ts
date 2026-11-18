@@ -5,7 +5,7 @@ import coasterGirlsSecondBurst from "./recordings/screams/coaster-girls-second-b
 import amusementParkGirlsFirstBurst from "./recordings/screams/amusement-park-girls-first-burst.mp3";
 import amusementParkGirlsSecondBurst from "./recordings/screams/amusement-park-girls-second-burst.mp3";
 
-/** CC0 recordings; sources and licences are in recordings/CREDITS.md. */
+/** CC0 recordings; sources and licences are in recordings/screams/CREDITS.md. */
 export const SCREAM_RECORDING_URLS: readonly string[] = [amusementParkChildrenSwell, coasterGirlsFirstBurst, coasterGirlsSecondBurst, amusementParkGirlsFirstBurst, amusementParkGirlsSecondBurst];
 
 /** `normalization` scales the clip to unit RMS so SOUND_TUNING.scream.level sets the loudness of every variant. */

@@ -24,8 +24,8 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
   const rumbleFilter = filter("lowpass", 120, 4); const rumble = gain();
   pinkSource.connect(rumbleFilter).connect(rumble).connect(output);
   const tremolo = oscillator("triangle", 1); const tremoloDepth = gain(); tremolo.connect(tremoloDepth).connect(rumble.gain);
-  const whine = oscillator("sawtooth", 180); const whineFilter = filter("highpass", 1500); const whineGain = gain();
-  whine.connect(whineFilter).connect(whineGain).connect(output);
+  const railHissFilter = filter("bandpass", SOUND_TUNING.railHiss.baseFrequency, SOUND_TUNING.railHiss.q); const railHissGain = gain();
+  noise(white).connect(railHissFilter).connect(railHissGain).connect(output);
   const motorFilter = filter("lowpass", 300); const motor = gain();
   oscillator("triangle", 50).connect(motorFilter); oscillator("triangle", 100).connect(motorFilter); motorFilter.connect(motor).connect(output);
   const brakeFilter = filter("highpass", 2500); const brakeGain = gain(); noise(white).connect(brakeFilter).connect(brakeGain).connect(output);
@@ -96,8 +96,8 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
       wasMuted = eventsMuted; const level = train.audibility;
       const roarLevel = train.speed < 0.5 ? 0 : 0.5 * Math.min(1, (train.speed / 30) ** 1.5);
       target(pan.pan, train.pan, now); target(distanceFilter.frequency, 1200 + 6800 / (1 + ((train.distance ?? 0) / 440) ** 2), now); target(band.frequency, 200 + 40 * train.speed, now); target(low.frequency, 600 + 150 * train.speed, now);
-      target(roar.gain, level * roarLevel, now); target(whine.frequency, 180 + 25 * train.speed, now);
-      target(whineGain.gain, train.material === "wood" ? 0 : 0.02 * level * roarLevel, now);
+      target(roar.gain, level * roarLevel, now); target(railHissFilter.frequency, SOUND_TUNING.railHiss.baseFrequency + SOUND_TUNING.railHiss.frequencyPerSpeed * train.speed, now);
+      target(railHissGain.gain, train.material === "wood" ? 0 : SOUND_TUNING.railHiss.level * level * roarLevel, now);
       const woodLevel = train.material === "steel" ? 0 : train.material === "wood" ? 1 : 0.5;
       target(rumble.gain, 0.6 * level * roarLevel * woodLevel, now); target(tremolo.frequency, Math.max(0.01, train.speed / 1.2), now);
       target(tremoloDepth.gain, 0.35 * 0.6 * level * roarLevel * woodLevel, now);
@@ -116,7 +116,7 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
       if (braking > 0) { squeal ??= startSqueal(now); target(squeal.level.gain, 0.03 * braking, now); } else endSqueal(now);
     },
     release(clock: ScheduleClock): void {
-      for (const parameter of [roar.gain, rumble.gain, tremoloDepth.gain, whineGain.gain, motor.gain, brakeGain.gain]) target(parameter, 0, clock.now);
+      for (const parameter of [roar.gain, rumble.gain, tremoloDepth.gain, railHissGain.gain, motor.gain, brakeGain.gain]) target(parameter, 0, clock.now);
       endSqueal(clock.now);
       silenceShots(clock.now); nextClack = clock.now; brakeStart = null; wasMuted = false;
     },
