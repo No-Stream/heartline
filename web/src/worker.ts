@@ -167,6 +167,14 @@ function sendConstruction(complete = true): void {
   }, [previewRails.buffer, previewTies.buffer, previewSupports.buffer, placedRails.buffer, placedTies.buffer, placedSupports.buffer, railDistances.buffer, blockCandidates.buffer]);
 }
 
+function sendConstructionFinishStatus(): void {
+  sendWorkerMessage(outputScope, {
+    type: "construction-finish-status",
+    canFinish: simulation.construction_can_finish(),
+    finishReason: simulation.construction_finish_reason(),
+  });
+}
+
 let finishSearchGeneration = 0;
 let finishSearchPending = false;
 let finishSearchAwaited = false;
@@ -185,7 +193,7 @@ function scheduleFinishSearch(resume = false): void {
       } while (!complete && performance.now() < deadline);
       if (complete) {
         finishSearchPending = false;
-        sendConstruction();
+        sendConstructionFinishStatus();
         if (finishSearchAwaited) {
           finishSearchAwaited = false;
           sendWorkerMessage(outputScope, { type: "construction-finish-ready" });

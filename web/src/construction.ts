@@ -19,6 +19,7 @@ import "./construction.css";
 type PieceAction = Extract<InputAction, { type: "piece-step" | "piece-group" }>;
 export interface ConstructionPanel {
   update(state: ConstructionState): void;
+  updateFinishStatus(canFinish: boolean, finishReason: string): void;
   setShapes(shapes: readonly PieceShape[]): void;
   /** Resolve a keyboard piece step against the current choices and select the result. */
   choose(action: PieceAction): void;
@@ -361,6 +362,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (action) dispatch(action);
   };
   const speedTurnOf = (id: string) => state?.speedTurns.find((turn) => turn.id === id);
+  const renderFinishStatus = (current: ConstructionState): void => {
+    finish.classList.toggle("tool-panel__action--primary", current.canFinish && !current.canClose);
+    append.classList.toggle("tool-panel__action--primary", !current.canClose && !current.canFinish);
+    finish.disabled = current.complete && !current.canFinish;
+    finishReason.textContent = current.finishReason;
+    finishReason.hidden = closed || current.canFinish || current.finishPreview;
+  };
   /** Speed-matched turns are named by their design speed in the player's units. */
   const displayName = (id: string, piece: Parameters<typeof pieceDisplayName>[0]): string => {
     const speedTurn = speedTurnOf(id);
@@ -997,12 +1005,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       choices.hidden = closed;
       chainSection.hidden = closed;
       close.classList.toggle("tool-panel__action--primary", next.canClose);
-      finish.classList.toggle("tool-panel__action--primary", next.canFinish && !next.canClose);
-      append.classList.toggle("tool-panel__action--primary", !next.canClose && !next.canFinish);
       finish.hidden = closed || next.finishPreview;
-      finish.disabled = next.complete && !next.canFinish;
-      finishReason.textContent = next.finishReason;
-      finishReason.hidden = closed || next.canFinish || next.finishPreview;
+      renderFinishStatus(next);
       finishConfirmation.hidden = closed || !next.finishPreview;
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");
       const focusInPalette = palette.contains(document.activeElement);
@@ -1029,6 +1033,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element("[data-test-hint]").textContent = !next.canTest && !next.testingReport ? "Complete the circuit and make it longer than the train to test your coaster." : "";
       message.textContent = next.message;
       renderBlockPanel(next);
+    },
+    updateFinishStatus(canFinish, finishReason) {
+      if (!state) throw new Error("Finish status arrived before construction state");
+      state = { ...state, canFinish, finishReason };
+      renderFinishStatus(state);
     },
   };
 }

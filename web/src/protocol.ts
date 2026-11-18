@@ -1,5 +1,5 @@
 import type { Facility, FacilityAction } from "./facilities";
-import type { ConstructionAction, ConstructionState, BlockAnalysisProgress, PieceShapesMessage } from "./construction-protocol";
+import type { ConstructionAction, ConstructionState, ConstructionFinishStatus, BlockAnalysisProgress, PieceShapesMessage } from "./construction-protocol";
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand, TerrainEditResult } from "./landscaping-tool";
 import type { PathToolCommand, PathToolMessage, PathPosition } from "./path-tool";
@@ -38,7 +38,7 @@ export type WorkerMessage =
   | { type: "park-saved"; requestId: number; bytes?: Uint8Array; tickCount?: number; error?: string }
   | { type: "park-loaded"; requestId: number; error?: string }
   | { type: "park-restoring" }
-  | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
+  | CoasterWorldMessage | ConstructionState | ConstructionFinishStatus | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
   | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "test-resumed" } | { type: "construction-finish-ready" }
   | { type: "surface-edited"; changed: boolean }
   | { type: "facility-access-preview"; requestId: number; rotation: number | undefined }
