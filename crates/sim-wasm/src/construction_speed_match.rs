@@ -162,16 +162,14 @@ mod tests {
     }
 
     #[test]
-    fn speed_match_reports_when_the_model_has_no_available_variant() {
+    fn speed_match_returns_null_when_the_model_disallows_the_selected_piece() {
         let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
         simulation.construction_select("model:wooden_twister");
         simulation.construction_start(200, 200, 20, 0);
-        let result: serde_json::Value =
-            serde_json::from_str(&simulation.construction_speed_match_json("Loop", Some(5.0)))
-                .unwrap();
-        assert!(result["variants"].as_array().unwrap().is_empty());
-        assert!(result["recommendedId"].is_null());
-        assert_eq!(result["fits"], false);
+        assert_eq!(
+            simulation.construction_speed_match_json("Loop", Some(5.0)),
+            "null"
+        );
     }
 
     #[test]

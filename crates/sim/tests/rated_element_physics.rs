@@ -1,8 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::rated_piece::{
-    connected_measurement_track, rate_connected_piece, rate_piece, rate_sequence,
-    unpowered as rating_physics,
+    connected_measurement_track, rate_piece, rate_sequence, unpowered as rating_physics,
 };
 use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
 use theme_park_sim::track::{
@@ -896,7 +895,7 @@ fn every_model_rated_window_endpoint_passes_with_its_default_train_on_connected_
             let rated = rated_window(&model, piece);
             let cars = model.train.cars;
             for speed in [rated.minimum_entry, rated.maximum_entry] {
-                let rating = rate_connected_piece(&model, cars, piece, speed, rating_physics())
+                let rating = rate_piece(&model, cars, piece, speed, rating_physics())
                     .expect("rating must complete");
                 assert!(
                     rating.passed,

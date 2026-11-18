@@ -1,7 +1,7 @@
-//! Measures every rated template's entry-speed window with the isolated-piece harness and, with
+//! Measures every rated template's entry-speed window with the connected model-allowed approach and, with
 //! `UPDATE_RATED_WINDOWS=1`, writes `crates/sim/src/track/rated_windows.generated.rs`.
 //!
-//! A speed passes when every allowed model and train length passes the duration-aware force evaluator and clearance
+//! A speed passes when every allowed model's default train passes the duration-aware force evaluator and clearance
 //! checks. The evaluator permits short, bounded force excursions while rejecting sustained or larger violations. The
 //! window starts at the catalog minimum (raised to the first passing speed when the catalog minimum fails) and ends at
 //! the top of the contiguous passing run above it.
@@ -9,9 +9,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use theme_park_sim::physics::rated_piece::{
-    connected_measurement_track, rate_connected_piece, rate_piece, unpowered,
-};
+use theme_park_sim::physics::rated_piece::{connected_measurement_track, rate_piece, unpowered};
 use theme_park_sim::physics::{ForceEvaluator, TIME_STEP, Train};
 use theme_park_sim::track::catalog::unmeasured_catalog;
 use theme_park_sim::track::rated_windows::RatedWindowSource;
@@ -48,7 +46,7 @@ fn rated_hill_airtime_within_feel_ceiling(piece: &Piece, model: &CoasterModel, s
     };
 
     assert!(model.allows_piece(piece));
-    let rating = rate_connected_piece(model, model.train.cars, piece, speed, unpowered()).unwrap();
+    let rating = rate_piece(model, model.train.cars, piece, speed, unpowered()).unwrap();
     let airtime = model.comfortable_force_limits.classify_force(
         ForceRatingAxis::Airtime,
         rating.minimum_filtered_vertical,
@@ -175,13 +173,12 @@ fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<String> {
         piece.id
     );
     let cars = model.train.cars;
-    let rating =
-        rate_connected_piece(model, cars, piece, speed, unpowered()).unwrap_or_else(|error| {
-            panic!(
-                "{:?}, {} {cars} cars, {speed} m/s: {error}",
-                piece.id, model.name
-            )
-        });
+    let rating = rate_piece(model, cars, piece, speed, unpowered()).unwrap_or_else(|error| {
+        panic!(
+            "{:?}, {} {cars} cars, {speed} m/s: {error}",
+            piece.id, model.name
+        )
+    });
     if let Some(reason) = rating.failure {
         return Some(format!(
             "{} {cars} cars: {reason} (lowest train speed {:.3} m/s)",
@@ -431,13 +428,10 @@ fn diagnose(
             .map(|speed| ("requested speed", *speed)),
     );
     for (label, speed) in speeds {
-        let isolated = rate_piece(&model, model.train.cars, piece, speed, unpowered())
-            .unwrap_or_else(|error| panic!("isolated {label} at {speed:.2} m/s: {error}"));
-        diagnose_rating("isolated", piece, &model, speed, &isolated);
-        let connected = rate_connected_piece(&model, model.train.cars, piece, speed, unpowered())
-            .unwrap_or_else(|error| panic!("connected {label} at {speed:.2} m/s: {error}"));
-        diagnose_rating("connected", piece, &model, speed, &connected);
-        if label == "requested speed" && speed == requested_speeds[0] && connected.passed {
+        let rating = rate_piece(&model, model.train.cars, piece, speed, unpowered())
+            .unwrap_or_else(|error| panic!("{label} at {speed:.2} m/s: {error}"));
+        diagnose_rating("shared measurement", piece, &model, speed, &rating);
+        if label == "requested speed" && speed == requested_speeds[0] && rating.passed {
             for (axis, peak) in ["vertical", "lateral", "longitudinal"]
                 .into_iter()
                 .zip(connected_peak_forces(piece, &model, speed))
@@ -638,8 +632,7 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
         ) && family.twist.is_none()
     }) {
         let cars = model.train.cars;
-        let rating =
-            rate_connected_piece(model, cars, template, maximum_entry, unpowered()).unwrap();
+        let rating = rate_piece(model, cars, template, maximum_entry, unpowered()).unwrap();
         let class = model.comfortable_force_limits.classify_force(
             ForceRatingAxis::Airtime,
             rating.minimum_filtered_vertical,
@@ -893,7 +886,7 @@ mod tests {
         generated_rated_windows_contents, refine_boundary, roll_rate_rule, scan,
         unmeasured_catalog,
     };
-    use theme_park_sim::physics::rated_piece::{rate_connected_piece, rate_piece, unpowered};
+    use theme_park_sim::physics::rated_piece::{rate_piece, unpowered};
     use theme_park_sim::track::{
         CoasterModel, ForceRating, ForceRatingAxis, PieceId, Slope, coaster_models, hybrid_model,
         hyper_model,
@@ -995,8 +988,7 @@ mod tests {
             for model in &allowed_models {
                 let airtime = |speed| {
                     let rating =
-                        rate_connected_piece(model, model.train.cars, piece, speed, unpowered())
-                            .unwrap();
+                        rate_piece(model, model.train.cars, piece, speed, unpowered()).unwrap();
                     model.comfortable_force_limits.classify_force(
                         ForceRatingAxis::Airtime,
                         rating.minimum_filtered_vertical,
@@ -1042,8 +1034,7 @@ mod tests {
                 .expect("the computed maximum exceeds the intended airtime feel");
 
         let classify_at = |speed| {
-            let rating =
-                rate_connected_piece(&model, model.train.cars, piece, speed, unpowered()).unwrap();
+            let rating = rate_piece(&model, model.train.cars, piece, speed, unpowered()).unwrap();
             model.comfortable_force_limits.classify_force(
                 ForceRatingAxis::Airtime,
                 rating.minimum_filtered_vertical,

@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::ops::Range;
 
-use super::{Circuit, ForceEvaluator, GForces, PhysicsConfig, TIME_STEP, Train, rider_g};
+use super::{Circuit, ForceEvaluator, GForces, PhysicsConfig, TIME_STEP, Train};
 use crate::track::catalog::unmeasured_catalog;
 use crate::track::{
     CoasterModel, ComfortableForceLimits, Piece, PieceId, TrackState, TrainConfiguration,
@@ -31,7 +31,6 @@ pub struct PieceRating {
 
 struct MeasurementTrack {
     circuit: Circuit,
-    start: f64,
     element_start: f64,
     element_end: f64,
 }
@@ -45,18 +44,6 @@ pub fn connected_measurement_track(
 ) -> (Circuit, Range<f64>) {
     let track = connected_track(model, cars, piece, speed);
     (track.circuit, track.element_start..track.element_end)
-}
-
-/// Rates a template with fresh force filters on its connected track approach.
-pub fn rate_connected_piece(
-    model: &CoasterModel,
-    cars: u8,
-    piece: &Piece,
-    target: f64,
-    physics: PhysicsConfig,
-) -> Result<PieceRating, String> {
-    let track = connected_track(model, cars, piece, target);
-    rate_piece_on_track(model, cars, piece, target, physics, track, false)
 }
 
 pub fn unpowered() -> PhysicsConfig {
@@ -131,84 +118,6 @@ fn established_bank_straight_id(piece_id: PieceId) -> Option<PieceId> {
             Some(PieceId::BankedStraightRight)
         }
         _ => None,
-    }
-}
-
-fn measurement_track(
-    model: &CoasterModel,
-    cars: u8,
-    piece: &Piece,
-    speed: f64,
-) -> MeasurementTrack {
-    let station = unmeasured_catalog()
-        .iter()
-        .find(|p| p.id == PieceId::Station)
-        .unwrap()
-        .clone();
-    let mut pieces = vec![station.clone()];
-    let mut state = station.exit;
-    let mut queue = VecDeque::from([(state, Vec::<usize>::new())]);
-    let mut seen = HashSet::from([connector_key(state)]);
-    let path = loop {
-        let (current, path) = queue.pop_front().expect("no connected approach to piece");
-        if same_connector(current, piece.entry) {
-            break path;
-        }
-        for (index, template) in unmeasured_catalog().iter().enumerate() {
-            if let Some(next) = template.exit_at(current) {
-                if seen.insert(connector_key(next)) {
-                    let mut next_path = path.clone();
-                    next_path.push(index);
-                    queue.push_back((next, next_path));
-                }
-            }
-        }
-    };
-    for index in path {
-        let next = unmeasured_catalog()[index].at(state).unwrap();
-        state = next.exit;
-        pieces.push(next);
-    }
-    let approach = straight_for(state);
-    let train_length = scaled_train(model, cars).length_metres;
-    let needed = train_length + 10.0_f64.max(0.5 * speed);
-    let mut approach_length = 0.0;
-    while approach_length < needed {
-        let next = approach.at(state).unwrap();
-        approach_length += next.length();
-        state = next.exit;
-        pieces.push(next);
-    }
-    let element_start: f64 = pieces.iter().map(Piece::length).sum();
-    let start = element_start - 10.0_f64.max(0.5 * speed);
-    let element = piece.at(state).unwrap();
-    state = element.exit;
-    let element_end = element_start + element.length();
-    pieces.push(element);
-    let exit_straight = straight_for(state);
-    let mut exit_length = 0.0;
-    while exit_length < train_length + 1.5 * speed + 40.0 {
-        let next = exit_straight.at(state).unwrap();
-        exit_length += next.length();
-        state = next.exit;
-        pieces.push(next);
-    }
-    let mut starts = Vec::with_capacity(pieces.len());
-    let mut length = 0.0;
-    for piece in &pieces {
-        starts.push(length);
-        length += piece.length();
-    }
-    MeasurementTrack {
-        circuit: Circuit {
-            pieces,
-            starts,
-            length,
-            open: true,
-        },
-        start,
-        element_start,
-        element_end,
     }
 }
 
@@ -349,7 +258,6 @@ fn connected_track(model: &CoasterModel, cars: u8, piece: &Piece, speed: f64) ->
 
     MeasurementTrack {
         circuit: Circuit::open(pieces).expect("connected approach forms an open circuit"),
-        start: element_start,
         element_start,
         element_end,
     }
@@ -370,8 +278,8 @@ pub fn rate_piece(
         "rating requires unpowered frictionless physics"
     );
     assert!(model.cars_per_train.contains(&cars));
-    let track = measurement_track(model, cars, piece, target);
-    rate_piece_on_track(model, cars, piece, target, physics, track, true)
+    let track = connected_track(model, cars, piece, target);
+    rate_piece_on_track(model, cars, piece, target, physics, track)
 }
 
 fn rate_piece_on_track(
@@ -381,7 +289,6 @@ fn rate_piece_on_track(
     target: f64,
     physics: PhysicsConfig,
     track: MeasurementTrack,
-    prime_approach: bool,
 ) -> Result<PieceRating, String> {
     assert!(target.is_finite() && target > 0.0);
     assert!(
@@ -392,22 +299,8 @@ fn rate_piece_on_track(
     );
     assert!(model.cars_per_train.contains(&cars));
     let config = scaled_train(model, cars);
-    let spacing = config.length_metres / f64::from(cars);
     let mut evaluators =
         vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
-    if prime_approach {
-        let approach_steps =
-            ((track.element_start - track.start) / (target * TIME_STEP)).ceil() as usize;
-        let start = track.element_start - approach_steps as f64 * target * TIME_STEP;
-        for step in 1..=approach_steps {
-            let distance = start + step as f64 * target * TIME_STEP;
-            for (car, evaluator) in evaluators.iter_mut().enumerate() {
-                let car_distance = distance - car as f64 * spacing;
-                let (index, local) = track.circuit.locate(car_distance);
-                evaluator.update(rider_g(&track.circuit.pieces[index], local, target, 0.0));
-            }
-        }
-    }
     let mut train = Train::new(
         &track.circuit,
         &config,
@@ -795,7 +688,36 @@ pub fn solve_approach_speed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::track::{Bank, PieceId, Slope, catalog, coaster_models, hybrid_model};
+    use crate::track::{Bank, PieceId, Slope, catalog, coaster_models, hybrid_model, rated_speeds};
+
+    fn sequence_start(track: &MeasurementTrack) -> f64 {
+        let element_index = track
+            .circuit
+            .starts
+            .iter()
+            .position(|start| *start == track.element_start)
+            .unwrap();
+        track.circuit.starts[element_index - 1]
+    }
+
+    #[test]
+    fn rate_piece_passes_the_generated_raven_roll_maximum() {
+        let model = hybrid_model();
+        let piece = unmeasured_catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::RavenRollLeftDown)
+            .unwrap();
+        let maximum_entry = rated_speeds(&model, piece)
+            .expect("RavenRollLeftDown has a generated rated window")
+            .maximum_entry;
+        assert!((maximum_entry - 20.21).abs() < f64::EPSILON);
+        let rating =
+            rate_piece(&model, model.train.cars, piece, maximum_entry, unpowered()).unwrap();
+
+        assert_eq!(model.train.cars, 6);
+        assert!(rating.passed, "{rating:?}");
+        assert!(rating.violation.is_none(), "{rating:?}");
+    }
 
     #[test]
     fn held_approach_hits_target_on_level_sixty_down_and_inverted_straights() {
@@ -864,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn held_approach_matches_real_train_at_force_boundaries() {
+    fn connected_measurement_matches_real_train_at_force_boundaries() {
         let model = hybrid_model();
         let cars = 8;
         for id in [
@@ -876,12 +798,15 @@ mod tests {
             let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
             let target = piece.design_speeds.unwrap().maximum_entry;
             let rating = rate_piece(&model, cars, piece, target, unpowered()).unwrap();
-            let track = measurement_track(&model, cars, piece, target);
+            let track = connected_track(&model, cars, piece, target);
             let config = scaled_train(&model, cars);
-            let steps =
-                ((track.element_start - track.start) / (target * TIME_STEP)).ceil() as usize;
-            let start = track.element_start - steps as f64 * target * TIME_STEP;
-            let mut train = Train::new(&track.circuit, &config, unpowered(), start, target);
+            let mut train = Train::new(
+                &track.circuit,
+                &config,
+                unpowered(),
+                track.element_start,
+                target,
+            );
             let mut evaluators = vec![
                 ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP);
                 usize::from(cars)
@@ -925,7 +850,7 @@ mod tests {
             // The independent full-trace comparison differed by at most 1.782e-6 g.
             assert!(
                 (minimum_vertical - rating.minimum_filtered_vertical).abs() < 3e-6,
-                "{id:?}: real={minimum_vertical}, held={}",
+                "{id:?}: real={minimum_vertical}, rated={}",
                 rating.minimum_filtered_vertical
             );
         }
@@ -938,7 +863,7 @@ mod tests {
             .iter()
             .filter(|piece| piece.design_speeds.is_some())
         {
-            let track = measurement_track(&model, model.train.cars, piece, 25.0);
+            let track = connected_track(&model, model.train.cars, piece, 25.0);
             assert!(track.element_end > track.element_start, "{:?}", piece.id);
         }
     }
@@ -949,7 +874,7 @@ mod tests {
             .iter()
             .find(|piece| piece.id == PieceId::Loop)
             .unwrap();
-        let track = measurement_track(&model, model.train.cars, piece, 40.0);
+        let track = connected_track(&model, model.train.cars, piece, 40.0);
         let mut train = model.train.clone();
         train.cars = 12;
         for (speed, passes) in [(25.0, true), (40.0, false)] {
@@ -959,7 +884,7 @@ mod tests {
                 &train,
                 unpowered(),
                 model.comfortable_force_limits,
-                track.start,
+                sequence_start(&track),
                 speed,
             );
             assert!(rating.failure.is_none(), "{rating:?}");
@@ -979,7 +904,7 @@ mod tests {
             .iter()
             .find(|piece| piece.id == PieceId::Loop)
             .unwrap();
-        let track = measurement_track(&model, model.train.cars, piece, 40.0);
+        let track = connected_track(&model, model.train.cars, piece, 40.0);
         let index = track
             .circuit
             .starts
@@ -1023,14 +948,14 @@ mod tests {
             .iter()
             .find(|piece| piece.id == PieceId::Loop)
             .unwrap();
-        let track = measurement_track(&model, model.train.cars, piece, 25.0);
+        let track = connected_track(&model, model.train.cars, piece, 25.0);
         let rating = rate_sequence(
             &track.circuit,
             &[track.element_start..track.element_end],
             &model.train,
             unpowered(),
             model.comfortable_force_limits,
-            track.start,
+            sequence_start(&track),
             10.0,
         );
         assert_eq!(rating.failure, Some("stalled or rolled back"));
@@ -1045,12 +970,12 @@ mod tests {
             PieceId::SixtyToSteepDown,
         ] {
             let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-            let track = measurement_track(&model, model.train.cars, piece, 25.0);
+            let track = connected_track(&model, model.train.cars, piece, 25.0);
             let solved = solve_approach_speed(
                 &track.circuit,
                 &model.train,
                 unpowered(),
-                track.start,
+                sequence_start(&track),
                 track.element_start,
                 25.0,
             )
@@ -1059,7 +984,7 @@ mod tests {
                 &track.circuit,
                 &model.train,
                 unpowered(),
-                track.start,
+                sequence_start(&track),
                 solved,
             );
             let actual = loop {
@@ -1083,12 +1008,12 @@ mod tests {
             .iter()
             .find(|piece| piece.id == PieceId::SixtyToSteepDown)
             .unwrap();
-        let track = measurement_track(&model, model.train.cars, piece, 25.0);
+        let track = connected_track(&model, model.train.cars, piece, 25.0);
         let result = solve_approach_speed(
             &track.circuit,
             &model.train,
             unpowered(),
-            track.start,
+            sequence_start(&track),
             track.element_start,
             1.0,
         );

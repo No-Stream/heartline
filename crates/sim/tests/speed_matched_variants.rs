@@ -29,7 +29,8 @@ fn selects_the_fitting_loop_with_the_largest_window_margin() {
         .maximum_entry
         .min(large_loop_window.maximum_entry);
     assert!(overlap_minimum < overlap_maximum);
-    let entry_speed = (overlap_minimum + overlap_maximum) / 2.0;
+    let entry_speed = 29.0;
+    assert!((overlap_minimum..=overlap_maximum).contains(&entry_speed));
     let expected = candidates
         .iter()
         .max_by(|first, second| {
