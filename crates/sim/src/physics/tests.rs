@@ -246,14 +246,8 @@ fn open_track_preview_matches_closed_run_until_the_open_end() {
         lift_speed: 5.0,
         ..PhysicsConfig::default()
     };
-    let preview = preview::preview_at_step(
-        circuit.pieces(),
-        &model,
-        config,
-        200_000,
-        TIME_STEP,
-    )
-    .unwrap();
+    let preview =
+        preview::preview_at_step(circuit.pieces(), &model, config, 200_000, TIME_STEP).unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let preview = preview.report;
     let mut run = CoasterRun::new(&circuit, &configuration, &model, config);
@@ -281,14 +275,7 @@ fn open_track_prefix_matches_closed_run_until_its_end() {
         ..PhysicsConfig::default()
     };
     let pieces = &circuit.pieces()[..circuit.pieces().len() - 1];
-    let preview = preview::preview_at_step(
-        pieces,
-        &model,
-        config,
-        200_000,
-        TIME_STEP,
-    )
-    .unwrap();
+    let preview = preview::preview_at_step(pieces, &model, config, 200_000, TIME_STEP).unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let preview = preview.report;
     let mut run = CoasterRun::new(&circuit, &configuration, &model, config);
@@ -376,14 +363,7 @@ fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
             .all(|sample| sample.distance < circuit.pieces()[0].length())
     );
     assert!(preview.furthest_distance < circuit.pieces()[0].length());
-    assert!(
-        preview_open_track(
-            &[],
-            &model,
-            PhysicsConfig::default(),
-        )
-        .is_none()
-    );
+    assert!(preview_open_track(&[], &model, PhysicsConfig::default(),).is_none());
 }
 
 #[test]
@@ -393,12 +373,7 @@ fn open_track_preview_does_not_extrapolate_past_an_uphill_stall() {
     for piece in &mut pieces[1..] {
         piece.kind = PieceKind::Track;
     }
-    let preview = preview_open_track(
-        &pieces,
-        &hybrid_model(),
-        PhysicsConfig::default(),
-    )
-    .unwrap();
+    let preview = preview_open_track(&pieces, &hybrid_model(), PhysicsConfig::default()).unwrap();
     let length: f64 = pieces.iter().map(Piece::length).sum();
     assert_eq!(preview.status, PreviewStatus::Stalled);
     let preview = preview.report;
@@ -2019,19 +1994,9 @@ fn incremental_preview_matches_fresh_runs_after_track_edits() {
     let mut cache = PreviewCache::default();
     for length in [3, 4, 5, 8, 6, 9, pieces.len()] {
         let track = &pieces[..length.min(pieces.len())];
-        let cached = cache
-            .preview(
-                track,
-                &model,
-                config,
-            )
-            .unwrap();
+        let cached = cache.preview(track, &model, config).unwrap();
         let fresh = PreviewCache::default()
-            .preview(
-                track,
-                &model,
-                config,
-            )
+            .preview(track, &model, config)
             .unwrap();
         assert_eq!(cached.status, fresh.status);
         assert_eq!(
@@ -2072,26 +2037,10 @@ fn incremental_preview_matches_fresh_when_a_step_crosses_multiple_metres() {
 
     let mut cache = PreviewCache::default();
     let pieces = circuit.pieces();
-    cache
-        .preview(
-            &pieces[..2],
-            &model,
-            config,
-        )
-        .unwrap();
-    let cached = cache
-        .preview(
-            &pieces[..3],
-            &model,
-            config,
-        )
-        .unwrap();
+    cache.preview(&pieces[..2], &model, config).unwrap();
+    let cached = cache.preview(&pieces[..3], &model, config).unwrap();
     let fresh = PreviewCache::default()
-        .preview(
-            &pieces[..3],
-            &model,
-            config,
-        )
+        .preview(&pieces[..3], &model, config)
         .unwrap();
     assert_eq!(cached.status, fresh.status);
     assert_eq!(cached.report.samples, fresh.report.samples);

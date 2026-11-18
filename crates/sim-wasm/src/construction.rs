@@ -1,7 +1,7 @@
 use super::*;
 use serde::Serialize;
 use theme_park_sim::park::ride_test::RideKey;
-use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
+use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun};
 use theme_park_sim::track::{
     Bank, CoasterModel, Hand, Heartlining, HillFeel, HillTwist, PieceFamily,
 };
@@ -311,10 +311,7 @@ fn hill_twist_wire(twist: Option<HillTwist>) -> &'static str {
     }
 }
 
-fn rated_speed_wire(
-    model: &CoasterModel,
-    piece: &Piece,
-) -> Option<ConstructionRatedSpeedWire> {
+fn rated_speed_wire(model: &CoasterModel, piece: &Piece) -> Option<ConstructionRatedSpeedWire> {
     theme_park_sim::track::rated_speeds(model, piece).map(|speeds| ConstructionRatedSpeedWire {
         minimum_entry: speeds.minimum_entry,
         maximum_entry: speeds.maximum_entry,

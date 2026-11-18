@@ -268,12 +268,7 @@ fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
 fn timber_preview_agrees_with_closed_test_run() {
     let model = hybrid_model();
     let circuit = build_player_circuit("Timber Tumbler", model.clone());
-    let preview = preview_open_track(
-        circuit.pieces(),
-        &model,
-        PhysicsConfig::default(),
-    )
-    .unwrap();
+    let preview = preview_open_track(circuit.pieces(), &model, PhysicsConfig::default()).unwrap();
     let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, model.name))

@@ -750,10 +750,7 @@ fn lifted_composition_enters_its_rated_loop_window() {
             expected_inversion_passages: 1,
         });
         let element_range = &element_ranges[0].1;
-        let piece = catalog()
-            .iter()
-            .find(|piece| piece.id == element)
-            .unwrap();
+        let piece = catalog().iter().find(|piece| piece.id == element).unwrap();
         let rated = rated_speeds(&model, piece).unwrap();
         let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
         let outcome = (0..200_000)

@@ -22,8 +22,12 @@ fn selects_the_fitting_loop_with_the_largest_window_margin() {
     let candidates = pieces(&[PieceId::Loop, PieceId::LargeLoop]);
     let loop_window = rated_speeds(&model, &candidates[0]).unwrap();
     let large_loop_window = rated_speeds(&model, &candidates[1]).unwrap();
-    let overlap_minimum = loop_window.minimum_entry.max(large_loop_window.minimum_entry);
-    let overlap_maximum = loop_window.maximum_entry.min(large_loop_window.maximum_entry);
+    let overlap_minimum = loop_window
+        .minimum_entry
+        .max(large_loop_window.minimum_entry);
+    let overlap_maximum = loop_window
+        .maximum_entry
+        .min(large_loop_window.maximum_entry);
     assert!(overlap_minimum < overlap_maximum);
     let entry_speed = (overlap_minimum + overlap_maximum) / 2.0;
     let expected = candidates
@@ -47,10 +51,7 @@ fn selects_the_fitting_loop_with_the_largest_window_margin() {
 fn selects_the_nearest_window_when_the_speed_fits_none() {
     let model = hybrid_model();
     let candidates = pieces(&[PieceId::Loop, PieceId::LargeLoop]);
-    for (entry_speed, expected_id) in [
-        (0.0, PieceId::Loop),
-        (60.0, PieceId::LargeLoop),
-    ] {
+    for (entry_speed, expected_id) in [(0.0, PieceId::Loop), (60.0, PieceId::LargeLoop)] {
         let selected = select_speed_matched_variant(&candidates, entry_speed, &model).unwrap();
         assert_eq!(selected.id, expected_id);
         assert!(!selected.fits);
@@ -91,7 +92,9 @@ fn actual_loop_windows_are_used_for_speed_matching() {
             .unwrap();
         let selected_window = rated_speeds(&model, selected_piece).unwrap();
         assert!(selected.fits);
-        assert!((selected_window.minimum_entry..=selected_window.maximum_entry).contains(&entry_speed));
+        assert!(
+            (selected_window.minimum_entry..=selected_window.maximum_entry).contains(&entry_speed)
+        );
     }
 }
 

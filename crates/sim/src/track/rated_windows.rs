@@ -33,45 +33,138 @@ pub struct MeasuredRatedWindow {
     pub maximum_entry: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnavailableRatedWindow {
+    pub model_key: &'static str,
+    pub id: PieceId,
+    pub entry_slope: Slope,
+    pub exit_slope: Slope,
+}
+
 include!("rated_windows.generated.rs");
 
 /// The measured window for a rated catalog template and coaster model.
 pub fn measured_rated_window(
     model: &CoasterModel,
     piece: &Piece,
-) -> &'static MeasuredRatedWindow {
+) -> Option<&'static MeasuredRatedWindow> {
     assert!(
         model.allows_piece(piece),
         "{} does not allow {:?}",
         model.key,
         piece.id
     );
-    let mut matches = MEASURED_RATED_WINDOWS.iter().filter(|window| {
-        window.model_key == model.key
-            && window.id == piece.id
-            && window.entry_slope == piece.entry.slope
-            && window.exit_slope == piece.exit.slope
-    });
-    let window = matches.next().unwrap_or_else(|| {
-        panic!(
-            "{} {:?} ({:?} to {:?}) has no measured rated window; run make generate-rated-windows",
-            model.key, piece.id, piece.entry.slope, piece.exit.slope
-        )
-    });
-    assert!(
-        matches.next().is_none(),
-        "{} {:?} has duplicate measured rated windows",
-        model.key, piece.id
-    );
-    window
+    lookup_rated_window(
+        model.key,
+        piece.id,
+        piece.entry.slope,
+        piece.exit.slope,
+        MEASURED_RATED_WINDOWS,
+        UNAVAILABLE_RATED_WINDOWS,
+    )
 }
 
 /// Returns the model-specific measured window, or `None` for an unrated piece.
 pub fn rated_speeds(model: &CoasterModel, piece: &Piece) -> Option<RatedSpeeds> {
     let _design_speeds = piece.design_speeds?;
-    let window = measured_rated_window(model, piece);
+    let window = measured_rated_window(model, piece)?;
     Some(RatedSpeeds {
         minimum_entry: window.minimum_entry,
         maximum_entry: window.maximum_entry,
     })
+}
+
+fn lookup_rated_window<'a>(
+    model_key: &str,
+    id: PieceId,
+    entry_slope: Slope,
+    exit_slope: Slope,
+    windows: &'a [MeasuredRatedWindow],
+    unavailable_windows: &[UnavailableRatedWindow],
+) -> Option<&'a MeasuredRatedWindow> {
+    let mut rated_matches = windows.iter().filter(|window| {
+        window.model_key == model_key
+            && window.id == id
+            && window.entry_slope == entry_slope
+            && window.exit_slope == exit_slope
+    });
+    let rated = rated_matches.next();
+    let mut unavailable_matches = unavailable_windows.iter().filter(|window| {
+        window.model_key == model_key
+            && window.id == id
+            && window.entry_slope == entry_slope
+            && window.exit_slope == exit_slope
+    });
+    let unavailable = unavailable_matches.next();
+
+    assert!(
+        rated.is_none() || rated_matches.next().is_none(),
+        "{model_key} {id:?} has duplicate measured rated windows"
+    );
+    assert!(
+        unavailable.is_none() || unavailable_matches.next().is_none(),
+        "{model_key} {id:?} has duplicate unavailable rated windows"
+    );
+    match (rated, unavailable) {
+        (Some(_), Some(_)) => panic!("{model_key} {id:?} has duplicate measured rated windows"),
+        (Some(window), None) => Some(window),
+        (None, Some(_)) => None,
+        (None, None) => panic!(
+            "{model_key} {id:?} ({entry_slope:?} to {exit_slope:?}) has no measured rated window; run make generate-rated-windows"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MeasuredRatedWindow, RatedWindowSource, UnavailableRatedWindow, lookup_rated_window,
+    };
+    use crate::track::{PieceId, Slope};
+
+    const KEY: &str = "test_model";
+    const ID: PieceId = PieceId::BankedStraightLeft;
+    const ENTRY: Slope = Slope::UpGentle;
+    const EXIT: Slope = Slope::UpGentle;
+
+    #[test]
+    fn explicit_no_window_entry_returns_unavailable() {
+        let unavailable = [UnavailableRatedWindow {
+            model_key: KEY,
+            id: ID,
+            entry_slope: ENTRY,
+            exit_slope: EXIT,
+        }];
+
+        assert!(lookup_rated_window(KEY, ID, ENTRY, EXIT, &[], &unavailable).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "has no measured rated window")]
+    fn allowed_combination_without_a_rated_or_unavailable_entry_fails_loudly() {
+        lookup_rated_window(KEY, ID, ENTRY, EXIT, &[], &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate measured rated windows")]
+    fn combination_cannot_have_both_rated_and_unavailable_entries() {
+        let rated = [MeasuredRatedWindow {
+            model_key: KEY,
+            id: ID,
+            entry_slope: ENTRY,
+            exit_slope: EXIT,
+            minimum_source: RatedWindowSource::EnergyMinimum,
+            maximum_source: RatedWindowSource::ForceBound,
+            minimum_entry: 20.0,
+            maximum_entry: 25.0,
+        }];
+        let unavailable = [UnavailableRatedWindow {
+            model_key: KEY,
+            id: ID,
+            entry_slope: ENTRY,
+            exit_slope: EXIT,
+        }];
+
+        lookup_rated_window(KEY, ID, ENTRY, EXIT, &rated, &unavailable);
+    }
 }

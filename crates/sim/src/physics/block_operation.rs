@@ -1,8 +1,8 @@
 use super::{Circuit, CoasterOutcome, CoasterRun, PhysicsConfig, Train};
 use crate::state_hash::StateHasher;
-use crate::track::{CoasterModel, TrainConfiguration, coaster_models};
 use crate::track::blocks::BlockLayout;
 use crate::track::proximity::TrainPosition;
+use crate::track::{CoasterModel, TrainConfiguration, coaster_models};
 use crate::track::{ComfortableForceLimits, PieceKind};
 
 #[cfg(test)]
@@ -63,7 +63,9 @@ impl BlockOperation {
             hash.write_f64(limits.maximum_lateral_g);
             hash.write_f64(limits.maximum_longitudinal_g);
         });
-        hash.write_option(self.model_key.as_deref(), |hash, key| hash.write_bytes(key.as_bytes()));
+        hash.write_option(self.model_key.as_deref(), |hash, key| {
+            hash.write_bytes(key.as_bytes())
+        });
         hash.write_bool(self.interlock_triggered);
     }
 
@@ -118,7 +120,6 @@ impl BlockOperation {
             panic_on_interlock: false,
         }
     }
-
 
     fn section(&self, distance: f64) -> usize {
         let distance = distance.rem_euclid(self.circuit.length());

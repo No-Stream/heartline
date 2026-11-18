@@ -2016,6 +2016,14 @@ fn build_catalog() -> Vec<Piece> {
         piece.clear_arc_table();
         pieces.push(piece);
     }
+    for piece in &mut pieces {
+        if matches!(piece.id, BankLeft | UnbankLeft | BankRight | UnbankRight) {
+            piece.design_speeds = Some(RatedSpeeds {
+                minimum_entry: 5.0,
+                maximum_entry: 30.0,
+            });
+        }
+    }
     let bank_transition_ids = [
         BankLeft,
         UnbankLeft,

@@ -292,12 +292,7 @@ fn manual_layout_installation_waits_until_active_train_is_gone() {
 fn installing_a_live_layout_preserves_the_coaster_model_force_limits() {
     let mut park = block_test_park();
     let layout = unverified_layout(&park);
-    let model = park
-        .construction
-        .as_ref()
-        .unwrap()
-        .model()
-        .clone();
+    let model = park.construction.as_ref().unwrap().model().clone();
     let limits = model.comfortable_force_limits;
     park.coaster_open = true;
     park.install_block_layout(layout.clone(), false);

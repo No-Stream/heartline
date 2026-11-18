@@ -138,13 +138,8 @@ impl Park {
             .as_ref()
             .ok_or("This park has no demo coaster")?;
         let model = hybrid_model();
-        let mut report = run_test_to_outcome(
-            &coaster.circuit,
-            &model.train,
-            &model,
-            model.name,
-            None,
-        )?;
+        let mut report =
+            run_test_to_outcome(&coaster.circuit, &model.train, &model, model.name, None)?;
         let obstacles = self.proximity_obstacles();
         add_proximity_and_theming(
             &self.world,

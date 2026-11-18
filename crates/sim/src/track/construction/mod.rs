@@ -700,7 +700,20 @@ impl Construction {
     }
 
     fn model_placeable_geometry(&self, template: &Piece) -> Result<Piece, ConstructionError> {
+        self.model_placeable_geometry_with_rated_speeds(template, rated_speeds)
+    }
+
+    fn model_placeable_geometry_with_rated_speeds(
+        &self,
+        template: &Piece,
+        rated_speeds_for_piece: impl FnOnce(&CoasterModel, &Piece) -> Option<super::RatedSpeeds>,
+    ) -> Result<Piece, ConstructionError> {
         if !self.model.allows_piece(template) {
+            return Err(ConstructionError::ModelForbidden);
+        }
+        if template.design_speeds.is_some()
+            && rated_speeds_for_piece(&self.model, template).is_none()
+        {
             return Err(ConstructionError::ModelForbidden);
         }
         let piece = template

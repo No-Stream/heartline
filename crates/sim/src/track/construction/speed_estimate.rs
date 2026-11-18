@@ -125,8 +125,7 @@ mod tests {
         let pieces = &circuit.pieces()[..7];
         let mut construction = Construction::new(pieces[0].entry, model.clone());
         construction.pieces = pieces.to_vec();
-        let mut preview =
-            preview_open_track(pieces, &model, PhysicsConfig::default()).unwrap();
+        let mut preview = preview_open_track(pieces, &model, PhysicsConfig::default()).unwrap();
         assert_eq!(preview.status, PreviewStatus::ReachedEnd);
         let speed = preview.report.samples.last().unwrap().speed;
         assert_eq!(

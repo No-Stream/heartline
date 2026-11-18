@@ -492,7 +492,12 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
             assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
             assert_eq!(piece.inversion, None);
             for model in &steel_models {
-                assert!(rated_speeds(model, piece).is_some(), "{} {}", model.name, piece.name);
+                assert!(
+                    rated_speeds(model, piece).is_some(),
+                    "{} {}",
+                    model.name,
+                    piece.name
+                );
             }
             assert!(!wood.allows_piece(piece), "{}", piece.name);
             for model in &steel_models {
@@ -542,7 +547,12 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
                 assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
                 assert_eq!(piece.inversion, Some(Inversion::HeartlineRoll));
                 for model in &steel_models {
-                    assert!(rated_speeds(model, piece).is_some(), "{} {}", model.name, piece.name);
+                    assert!(
+                        rated_speeds(model, piece).is_some(),
+                        "{} {}",
+                        model.name,
+                        piece.name
+                    );
                 }
                 assert!(!wood.allows_piece(piece), "{}", piece.name);
                 for model in &steel_models {

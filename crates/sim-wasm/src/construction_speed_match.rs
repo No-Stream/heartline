@@ -83,9 +83,8 @@ impl WasmSimulation {
                 .map(|(piece, _)| piece)
                 .collect()
         };
-        let recommendation = entry_speed.and_then(|speed| {
-            select_speed_matched_variant(&candidates, speed, model)
-        });
+        let recommendation =
+            entry_speed.and_then(|speed| select_speed_matched_variant(&candidates, speed, model));
         let result = ConstructionSpeedMatchWire {
             entry_speed,
             recommended_id: recommendation.map(|choice| wire_pieceid(choice.id)),

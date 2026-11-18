@@ -105,4 +105,5 @@ export async function placeCircuit(page: Page, pieces: readonly string[], keyboa
     }
     await expect(page.locator("[data-track] li")).toHaveCount(++count);
   }
+  await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
 }

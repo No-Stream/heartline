@@ -51,7 +51,14 @@ impl CoasterRun {
         config: PhysicsConfig,
         limits: ComfortableForceLimits,
     ) -> Self {
-        Self::with_reports(circuit, configuration, Some(model), config, true, Some(limits))
+        Self::with_reports(
+            circuit,
+            configuration,
+            Some(model),
+            config,
+            true,
+            Some(limits),
+        )
     }
 
     pub(super) fn new_without_reports(

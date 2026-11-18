@@ -224,12 +224,8 @@ fn viper_can_build_a_launch_to_fifty_metres_per_second() {
             .unwrap();
         construction.set_launch_intensity(index, target).unwrap();
     }
-    let preview = preview_open_track(
-        construction.pieces(),
-        &model,
-        PhysicsConfig::default(),
-    )
-    .unwrap();
+    let preview =
+        preview_open_track(construction.pieces(), &model, PhysicsConfig::default()).unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let last_sample = preview.report.samples.last().unwrap();
     let peak_force = preview
@@ -300,6 +296,36 @@ fn choices_report_model_and_connector_rejections() {
             .unwrap()
             .result,
         Err(ConstructionError::Unavailable)
+    );
+}
+
+#[test]
+fn unavailable_rated_piece_uses_the_model_forbidden_construction_path() {
+    let template = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::BankedStraightLeft)
+        .expect("catalog contains a banked straight");
+    let allowed_construction = Construction::new(start(), hybrid_model());
+    assert!(allowed_construction.model.allows_piece(template));
+    assert_eq!(
+        allowed_construction
+            .model_placeable_geometry_with_rated_speeds(template, |_, _| None)
+            .unwrap_err(),
+        ConstructionError::ModelForbidden
+    );
+
+    let mut restricted_model = hybrid_model();
+    restricted_model
+        .allowed_pieces
+        .retain(|piece_id| *piece_id != PieceId::BankedStraightLeft);
+    let restricted_construction = Construction::new(start(), restricted_model);
+    assert_eq!(
+        restricted_construction
+            .model_placeable_geometry_with_rated_speeds(template, |_, _| {
+                panic!("unrated lookup must not run for a model-forbidden piece")
+            })
+            .unwrap_err(),
+        ConstructionError::ModelForbidden
     );
 }
 

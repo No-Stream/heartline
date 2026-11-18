@@ -202,6 +202,8 @@ fn constructed_reference_laps_report_ratings() {
         report
             .notes
             .iter()
-            .any(|note| note.contains("above its rated speed band"))
+            .any(|note| note.contains("Lateral force exceeded the duration-aware limit")),
+        "report notes: {:?}",
+        report.notes
     );
 }

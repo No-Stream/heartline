@@ -90,14 +90,9 @@ impl PreviewCache {
                 hash.finish()
             })
             .collect();
-        let parameters = postcard::to_allocvec(&(
-            configuration,
-            config,
-            limits,
-            model.key,
-            model_key,
-        ))
-            .expect("preview parameters serialize");
+        let parameters =
+            postcard::to_allocvec(&(configuration, config, limits, model.key, model_key))
+                .expect("preview parameters serialize");
         let common = if self.parameters == parameters && self.closed == closed {
             self.piece_hashes
                 .iter()
@@ -255,11 +250,7 @@ pub fn preview_open_track(
     model: &CoasterModel,
     config: PhysicsConfig,
 ) -> Option<TrackPreview> {
-    PreviewCache::default().preview(
-        pieces,
-        model,
-        config,
-    )
+    PreviewCache::default().preview(pieces, model, config)
 }
 
 #[cfg(test)]

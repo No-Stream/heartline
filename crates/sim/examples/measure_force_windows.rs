@@ -109,7 +109,13 @@ fn roll_rate_rule(piece: &'static Piece) -> Option<Box<dyn Fn(f64) -> f64>> {
     }
     matches!(
         piece.id,
-        PieceId::HalfCorkscrewLeftUp
+        PieceId::BankLeft
+            | PieceId::UnbankLeft
+            | PieceId::BankRight
+            | PieceId::UnbankRight
+            | PieceId::RolloutLeft
+            | PieceId::RolloutRight
+            | PieceId::HalfCorkscrewLeftUp
             | PieceId::HalfCorkscrewRightUp
             | PieceId::HalfCorkscrewLeftDown
             | PieceId::HalfCorkscrewRightDown
@@ -138,9 +144,19 @@ fn refine_boundary(
         }
     }
     if lower_edge {
-        return (upper * 100.0).ceil() / 100.0;
+        let mut first_passing_cent = (upper * 100.0).ceil() as i64;
+        while !passes(first_passing_cent as f64 / 100.0) {
+            first_passing_cent += 1;
+        }
+        while passes((first_passing_cent - 1) as f64 / 100.0) {
+            first_passing_cent -= 1;
+        }
+        return first_passing_cent as f64 / 100.0;
     }
     let mut passing_cent = (lower * 100.0).floor() as i64;
+    while !passes(passing_cent as f64 / 100.0) {
+        passing_cent -= 1;
+    }
     loop {
         let next_speed = (passing_cent + 1) as f64 / 100.0;
         if next_speed >= upper || !passes(next_speed) {
@@ -381,7 +397,7 @@ fn diagnose(
     requested_speeds: &[f64],
 ) {
     let piece = unmeasured_catalog()
-        .into_iter()
+        .iter()
         .find(|piece| {
             format!("{:?}", piece.id) == piece_name
                 && format!("{:?}", piece.entry.slope) == entry_slope
@@ -396,7 +412,7 @@ fn diagnose(
         .find(|model| model.key == model_key)
         .unwrap_or_else(|| panic!("unknown coaster model {model_key}"));
     assert!(
-        model.allows_piece(&piece),
+        model.allows_piece(piece),
         "{model_key} does not allow {piece_name}"
     );
     let old = piece.design_speeds.unwrap();
@@ -415,16 +431,16 @@ fn diagnose(
             .map(|speed| ("requested speed", *speed)),
     );
     for (label, speed) in speeds {
-        let isolated = rate_piece(&model, model.train.cars, &piece, speed, unpowered())
+        let isolated = rate_piece(&model, model.train.cars, piece, speed, unpowered())
             .unwrap_or_else(|error| panic!("isolated {label} at {speed:.2} m/s: {error}"));
-        diagnose_rating("isolated", &piece, &model, speed, &isolated);
-        let connected = rate_connected_piece(&model, model.train.cars, &piece, speed, unpowered())
+        diagnose_rating("isolated", piece, &model, speed, &isolated);
+        let connected = rate_connected_piece(&model, model.train.cars, piece, speed, unpowered())
             .unwrap_or_else(|error| panic!("connected {label} at {speed:.2} m/s: {error}"));
-        diagnose_rating("connected", &piece, &model, speed, &connected);
+        diagnose_rating("connected", piece, &model, speed, &connected);
         if label == "requested speed" && speed == requested_speeds[0] && connected.passed {
             for (axis, peak) in ["vertical", "lateral", "longitudinal"]
                 .into_iter()
-                .zip(connected_peak_forces(&piece, &model, speed))
+                .zip(connected_peak_forces(piece, &model, speed))
             {
                 println!(
                     "  connected peak at this speed: car {}, {axis} {:+.6} g, {:.3} s sustained-limit excursion, {:.3} m from piece entry (in_tail={})",
@@ -438,10 +454,11 @@ fn diagnose(
 struct ScannedWindow {
     template: &'static Piece,
     model_key: &'static str,
-    minimum_entry: f64,
-    maximum_entry: f64,
-    minimum_source: RatedWindowSource,
-    maximum_source: RatedWindowSource,
+    minimum_entry: Option<f64>,
+    maximum_entry: Option<f64>,
+    minimum_source: Option<RatedWindowSource>,
+    maximum_source: Option<RatedWindowSource>,
+    unavailable_reason: Option<String>,
     /// The failure just above a force- or clearance-bound maximum.
     upper_failure: Option<String>,
     /// The failure at the catalog minimum, when the minimum had to rise.
@@ -469,15 +486,25 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
     let (minimum_entry, minimum_source) = match &minimum_failure {
         None => (old.minimum_entry, RatedWindowSource::EnergyMinimum),
         Some(diagnostic) => {
-            let first_pass = grid
-                .iter()
-                .position(|(_, failure)| failure.is_none())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{:?}: no passing speed above the catalog minimum",
-                        template.id
-                    )
-                });
+            let Some(first_pass) = grid.iter().position(|(_, failure)| failure.is_none()) else {
+                return ScannedWindow {
+                    template,
+                    model_key: model.key,
+                    minimum_entry: None,
+                    maximum_entry: None,
+                    minimum_source: None,
+                    maximum_source: None,
+                    unavailable_reason: Some(format!(
+                        "no passing speed above catalog minimum {:.2} m/s: {diagnostic}",
+                        old.minimum_entry
+                    )),
+                    upper_failure: None,
+                    minimum_failure: minimum_failure.clone(),
+                    passes_again_above: None,
+                    airtime: Vec::new(),
+                    acceptance_failures: Vec::new(),
+                };
+            };
             let below = if first_pass == 0 {
                 old.minimum_entry
             } else {
@@ -633,10 +660,11 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
     ScannedWindow {
         template,
         model_key: model.key,
-        minimum_entry,
-        maximum_entry,
-        minimum_source,
-        maximum_source,
+        minimum_entry: Some(minimum_entry),
+        maximum_entry: Some(maximum_entry),
+        minimum_source: Some(minimum_source),
+        maximum_source: Some(maximum_source),
+        unavailable_reason: None,
         upper_failure,
         minimum_failure,
         passes_again_above,
@@ -706,15 +734,29 @@ fn main() {
                         break;
                     };
                     let window = scan(template, model);
-                    eprintln!(
-                        "scanned {} {:?} ({:?} to {:?}): {:.6}–{:.6}",
-                        model.key,
-                        template.id,
-                        template.entry.slope,
-                        template.exit.slope,
-                        window.minimum_entry,
-                        window.maximum_entry
-                    );
+                    match (window.minimum_entry, window.maximum_entry) {
+                        (Some(minimum), Some(maximum)) => eprintln!(
+                            "scanned {} {:?} ({:?} to {:?}): {:.6}–{:.6}",
+                            model.key,
+                            template.id,
+                            template.entry.slope,
+                            template.exit.slope,
+                            minimum,
+                            maximum
+                        ),
+                        (None, None) => eprintln!(
+                            "scanned {} {:?} ({:?} to {:?}): unavailable ({})",
+                            model.key,
+                            template.id,
+                            template.entry.slope,
+                            template.exit.slope,
+                            window
+                                .unavailable_reason
+                                .as_deref()
+                                .expect("unavailable scan has a reason")
+                        ),
+                        _ => panic!("scan returned an incomplete rated window"),
+                    }
                     results.lock().unwrap()[index] = Some(window);
                 }
             });
@@ -733,19 +775,27 @@ fn main() {
     println!("| --- | --- | ---: | ---: | --- | --- | --- | --- | ---: |");
     for window in &windows {
         let old = window.template.design_speeds.unwrap();
+        let new_window = match (window.minimum_entry, window.maximum_entry) {
+            (Some(minimum), Some(maximum)) => format!("{minimum:.2}–{maximum:.2}"),
+            (None, None) => "unavailable".into(),
+            _ => panic!("scan returned an incomplete rated window"),
+        };
         println!(
-            "| `{}` | `{:?}` ({:?} → {:?}) | {:.2}–{:.2} | {:.2}–{:.2} | {:?} | {:?} | {} | {} | {} |",
+            "| `{}` | `{:?}` ({:?} → {:?}) | {:.2}–{:.2} | {} | {:?} | {:?} | {} | {} | {} |",
             window.model_key,
             window.template.id,
             window.template.entry.slope,
             window.template.exit.slope,
             old.minimum_entry,
             old.maximum_entry,
-            window.minimum_entry,
-            window.maximum_entry,
+            new_window,
             window.minimum_source,
             window.maximum_source,
-            window.upper_failure.as_deref().unwrap_or("—"),
+            window
+                .unavailable_reason
+                .as_deref()
+                .or(window.upper_failure.as_deref())
+                .unwrap_or("—"),
             window.minimum_failure.as_deref().unwrap_or("—"),
             window
                 .passes_again_above
@@ -753,12 +803,15 @@ fn main() {
         );
     }
     println!();
-    for window in windows.iter().filter(|window| !window.airtime.is_empty()) {
+    for window in windows
+        .iter()
+        .filter(|window| window.maximum_entry.is_some() && !window.airtime.is_empty())
+    {
         println!(
             "AIRTIME {} {:?} at {:.2} m/s: {}",
             window.model_key,
             window.template.id,
-            window.maximum_entry,
+            window.maximum_entry.unwrap(),
             window.airtime.join("; ")
         );
     }
@@ -785,6 +838,7 @@ fn main() {
             .trim();
         let rows: Vec<String> = windows
             .iter()
+            .filter(|window| window.minimum_entry.is_some())
             .map(|window| {
                 format!(
                     "    MeasuredRatedWindow {{ model_key: {:?}, id: PieceId::{:?}, entry_slope: Slope::{:?}, exit_slope: Slope::{:?}, minimum_source: RatedWindowSource::{:?}, maximum_source: RatedWindowSource::{:?}, minimum_entry: {:?}, maximum_entry: {:?} }},",
@@ -792,10 +846,23 @@ fn main() {
                     window.template.id,
                     window.template.entry.slope,
                     window.template.exit.slope,
-                    window.minimum_source,
-                    window.maximum_source,
-                    window.minimum_entry,
-                    window.maximum_entry
+                    window.minimum_source.unwrap(),
+                    window.maximum_source.unwrap(),
+                    window.minimum_entry.unwrap(),
+                    window.maximum_entry.unwrap()
+                )
+            })
+            .collect();
+        let unavailable_rows: Vec<String> = windows
+            .iter()
+            .filter(|window| window.minimum_entry.is_none())
+            .map(|window| {
+                format!(
+                    "    UnavailableRatedWindow {{ model_key: {:?}, id: PieceId::{:?}, entry_slope: Slope::{:?}, exit_slope: Slope::{:?} }},",
+                    window.model_key,
+                    window.template.id,
+                    window.template.entry.slope,
+                    window.template.exit.slope
                 )
             })
             .collect();
@@ -805,6 +872,10 @@ fn main() {
              const MEASURED_RATED_WINDOWS: &[MeasuredRatedWindow] = &[\n{}\n];\n",
             rows.join("\n")
         );
+        let contents = format!(
+            "{contents}#[rustfmt::skip]\nconst UNAVAILABLE_RATED_WINDOWS: &[UnavailableRatedWindow] = &[\n{}\n];\n",
+            unavailable_rows.join("\n")
+        );
         std::fs::write("crates/sim/src/track/rated_windows.generated.rs", contents)
             .expect("write generated rated windows");
     }
@@ -813,12 +884,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        ScannedWindow, cap_maximum_for_hill_feel, failure, refine_boundary, scan,
-        unmeasured_catalog,
+        MAXIMUM_ROLL_RATE, ScannedWindow, cap_maximum_for_hill_feel, failure, refine_boundary,
+        roll_rate_rule, scan, unmeasured_catalog,
     };
     use theme_park_sim::physics::rated_piece::{rate_connected_piece, rate_piece, unpowered};
     use theme_park_sim::track::{
-        CoasterModel, ForceRating, ForceRatingAxis, PieceId, coaster_models, hybrid_model,
+        CoasterModel, ForceRating, ForceRatingAxis, PieceId, Slope, coaster_models, hybrid_model,
+        hyper_model,
     };
 
     fn scan_models(
@@ -986,10 +1058,93 @@ mod tests {
         assert_eq!(existing.minimum_entry, baseline.minimum_entry);
         assert_eq!(existing.maximum_entry, baseline.maximum_entry);
         assert!(
-            restrictive.maximum_entry < existing.maximum_entry,
+            restrictive.maximum_entry.unwrap() < existing.maximum_entry.unwrap(),
             "restrictive model window {} should be narrower than {}",
-            restrictive.maximum_entry,
-            existing.maximum_entry
+            restrictive.maximum_entry.unwrap(),
+            existing.maximum_entry.unwrap()
         );
+    }
+
+    #[test]
+    fn scans_each_bank_transition_with_its_own_roll_rate_rule() {
+        let templates = unmeasured_catalog();
+        let model = hybrid_model();
+        let transition_ids = [
+            PieceId::BankLeft,
+            PieceId::BankRight,
+            PieceId::UnbankLeft,
+            PieceId::UnbankRight,
+            PieceId::RolloutLeft,
+            PieceId::RolloutRight,
+        ];
+        let mut available_windows = 0;
+
+        for id in transition_ids {
+            let template = templates
+                .iter()
+                .find(|piece| piece.id == id && piece.entry.slope == Slope::Level)
+                .unwrap_or_else(|| panic!("catalog has no level {id:?}"));
+            assert!(
+                template.design_speeds.is_some(),
+                "{id:?} has no rated window"
+            );
+            assert!(
+                model.allows_piece(template),
+                "{} does not allow {id:?}",
+                model.key
+            );
+            let roll_rate = roll_rate_rule(template)
+                .unwrap_or_else(|| panic!("{id:?} is missing the roll-rate rule"));
+            let result = scan(template, &model);
+
+            match (result.minimum_entry, result.maximum_entry) {
+                (Some(minimum), Some(maximum)) => {
+                    available_windows += 1;
+                    assert!(minimum <= maximum, "{id:?} has an inverted window");
+                    assert!(
+                        result.acceptance_failures.is_empty(),
+                        "{id:?} has acceptance failures: {:?}",
+                        result.acceptance_failures
+                    );
+                    assert!(
+                        roll_rate(maximum) <= MAXIMUM_ROLL_RATE,
+                        "{id:?} reaches {:.3} degrees/s at {maximum:.2} m/s",
+                        roll_rate(maximum)
+                    );
+                }
+                (None, None) => assert!(
+                    result.unavailable_reason.is_some(),
+                    "{id:?} has no passing window but no unavailable reason"
+                ),
+                _ => panic!("{id:?} has an incomplete measured window"),
+            }
+        }
+
+        assert!(
+            available_windows > 0,
+            "no bank transition has a rated window"
+        );
+    }
+
+    #[test]
+    fn bank_transition_maximum_endpoint_passes_for_the_hyper_model() {
+        let template = unmeasured_catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::BankLeft && piece.entry.slope == Slope::Level)
+            .expect("catalog has level BankLeft");
+        let model = hyper_model();
+
+        let result = scan(template, &model);
+
+        assert!(
+            result.acceptance_failures.is_empty(),
+            "BankLeft measured maximum {:?} fails: {:?}",
+            result.maximum_entry,
+            result.acceptance_failures
+        );
+        let maximum = result
+            .maximum_entry
+            .expect("hyper BankLeft has a passing window");
+        assert_eq!(failure(template, &model, maximum), None);
     }
 }

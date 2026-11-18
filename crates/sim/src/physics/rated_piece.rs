@@ -122,6 +122,18 @@ fn straight_for(state: TrackState) -> Piece {
     straight
 }
 
+fn established_bank_straight_id(piece_id: PieceId) -> Option<PieceId> {
+    match piece_id {
+        PieceId::BankedStraightLeft | PieceId::UnbankLeft | PieceId::RolloutLeft => {
+            Some(PieceId::BankedStraightLeft)
+        }
+        PieceId::BankedStraightRight | PieceId::UnbankRight | PieceId::RolloutRight => {
+            Some(PieceId::BankedStraightRight)
+        }
+        _ => None,
+    }
+}
+
 fn measurement_track(
     model: &CoasterModel,
     cars: u8,
@@ -210,6 +222,11 @@ fn connected_track(model: &CoasterModel, cars: u8, piece: &Piece, speed: f64) ->
         .find(|template| template.id == PieceId::Station)
         .unwrap()
         .clone();
+    assert!(
+        model.allows_piece(&station),
+        "{} does not allow Station",
+        model.key
+    );
     let mut pieces = vec![station.clone()];
     let mut state = station.exit;
     for _ in 0..2 {
@@ -219,6 +236,12 @@ fn connected_track(model: &CoasterModel, cars: u8, piece: &Piece, speed: f64) ->
             .unwrap()
             .at(state)
             .unwrap();
+        assert!(
+            model.allows_piece(&straight),
+            "{} does not allow {:?} in its measurement approach",
+            model.key,
+            straight.id
+        );
         state = straight.exit;
         pieces.push(straight);
     }
@@ -243,6 +266,12 @@ fn connected_track(model: &CoasterModel, cars: u8, piece: &Piece, speed: f64) ->
     };
     for index in path {
         let next = templates[index].at(state).unwrap();
+        assert!(
+            model.allows_piece(&next),
+            "{} does not allow {:?} in its measurement approach",
+            model.key,
+            next.id
+        );
         state = next.exit;
         pieces.push(next);
     }
@@ -253,6 +282,49 @@ fn connected_track(model: &CoasterModel, cars: u8, piece: &Piece, speed: f64) ->
         piece.id,
         piece.entry
     );
+
+    if let Some(approach_id) = established_bank_straight_id(piece.id) {
+        let approach_template = templates
+            .iter()
+            .find(|template| {
+                template.id == approach_id
+                    && template.entry.slope == piece.entry.slope
+                    && template.exit.slope == piece.entry.slope
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "no {approach_id:?} approach for {:?} at {:?}",
+                    piece.id, piece.entry.slope
+                )
+            });
+        let train_length = scaled_train(model, cars).length_metres;
+        let required_approach_length = train_length + 10.0_f64.max(0.5 * speed);
+        let mut approach_length = 0.0;
+        while approach_length < required_approach_length {
+            let approach_piece = approach_template.at(state).unwrap_or_else(|| {
+                panic!(
+                    "{approach_id:?} does not connect to the approach for {:?} at {state:?}",
+                    piece.id
+                )
+            });
+            assert!(
+                model.allows_piece(&approach_piece),
+                "{} does not allow {:?} in its established-bank measurement approach",
+                model.key,
+                approach_piece.id
+            );
+            approach_length += approach_piece.length();
+            state = approach_piece.exit;
+            pieces.push(approach_piece);
+        }
+        assert!(
+            same_connector(state, piece.entry),
+            "established-bank approach for {:?} ends at {state:?}, expected {:?}",
+            piece.id,
+            piece.entry
+        );
+    }
+
     let element_start = pieces.iter().map(Piece::length).sum();
     let element = piece.at(state).unwrap();
     state = element.exit;
@@ -264,6 +336,12 @@ fn connected_track(model: &CoasterModel, cars: u8, piece: &Piece, speed: f64) ->
     let required_exit_length = scaled_train(model, cars).length_metres + 1.5 * speed + 40.0;
     while exit_length < required_exit_length {
         let next = exit_straight.at(state).unwrap();
+        assert!(
+            model.allows_piece(&next),
+            "{} does not allow {:?} in its measurement exit",
+            model.key,
+            next.id
+        );
         exit_length += next.length();
         state = next.exit;
         pieces.push(next);
@@ -717,7 +795,7 @@ pub fn solve_approach_speed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::track::{PieceId, catalog, hybrid_model};
+    use crate::track::{Bank, PieceId, Slope, catalog, coaster_models, hybrid_model};
 
     #[test]
     fn held_approach_hits_target_on_level_sixty_down_and_inverted_straights() {
@@ -1015,5 +1093,128 @@ mod tests {
             1.0,
         );
         assert!(result.unwrap_err().contains("unreachable"));
+    }
+
+    #[test]
+    fn banked_pieces_are_measured_after_a_model_allowed_established_bank_approach() {
+        let templates = unmeasured_catalog();
+        let model_list = coaster_models();
+        let target_ids = [
+            (
+                PieceId::BankedStraightLeft,
+                PieceId::BankedStraightLeft,
+                Bank::Left,
+            ),
+            (
+                PieceId::BankedStraightRight,
+                PieceId::BankedStraightRight,
+                Bank::Right,
+            ),
+            (PieceId::UnbankLeft, PieceId::BankedStraightLeft, Bank::Left),
+            (
+                PieceId::UnbankRight,
+                PieceId::BankedStraightRight,
+                Bank::Right,
+            ),
+            (
+                PieceId::RolloutLeft,
+                PieceId::BankedStraightLeft,
+                Bank::Left,
+            ),
+            (
+                PieceId::RolloutRight,
+                PieceId::BankedStraightRight,
+                Bank::Right,
+            ),
+        ];
+
+        for (target_id, approach_id, bank) in target_ids {
+            for target in templates.iter().filter(|piece| piece.id == target_id) {
+                for model in model_list.iter().filter(|model| model.allows_piece(target)) {
+                    let speed = target
+                        .design_speeds
+                        .map_or(20.0, |speeds| speeds.minimum_entry.max(20.0));
+                    let track = connected_track(model, model.train.cars, target, speed);
+                    assert!(
+                        track
+                            .circuit
+                            .pieces
+                            .iter()
+                            .all(|piece| model.allows_piece(piece)),
+                        "{} approach to {target_id:?} contains a disallowed piece",
+                        model.key
+                    );
+
+                    let target_index = track
+                        .circuit
+                        .pieces
+                        .iter()
+                        .rposition(|piece| {
+                            piece.id == target_id
+                                && piece.entry.slope == target.entry.slope
+                                && piece.exit.slope == target.exit.slope
+                        })
+                        .expect("measurement track contains its target piece");
+                    let approach_pieces: Vec<_> = track.circuit.pieces[..target_index]
+                        .iter()
+                        .rev()
+                        .take_while(|piece| {
+                            piece.id == approach_id
+                                && piece.entry.bank == bank
+                                && piece.exit.bank == bank
+                                && piece.entry.slope == target.entry.slope
+                                && piece.exit.slope == target.entry.slope
+                        })
+                        .collect();
+                    let approach_length: f64 =
+                        approach_pieces.iter().map(|piece| piece.length()).sum();
+                    let train_length = scaled_train(model, model.train.cars).length_metres;
+                    let required_length = train_length + 10.0_f64.max(0.5 * speed);
+                    assert!(
+                        approach_length >= required_length,
+                        "{} {target_id:?} {:?} has only {approach_length:.2} m of established bank before its target; need {required_length:.2} m",
+                        model.key,
+                        target.entry.slope
+                    );
+                    assert_eq!(target.entry.slope, target.exit.slope);
+                    assert!(matches!(
+                        target.entry.slope,
+                        Slope::Level | Slope::UpGentle | Slope::DownGentle
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bank_transitions_have_rated_catalog_windows_for_each_slope() {
+        let templates = unmeasured_catalog();
+        for id in [
+            PieceId::BankLeft,
+            PieceId::UnbankLeft,
+            PieceId::BankRight,
+            PieceId::UnbankRight,
+            PieceId::RolloutLeft,
+            PieceId::RolloutRight,
+        ] {
+            let variants: Vec<_> = templates.iter().filter(|piece| piece.id == id).collect();
+            assert_eq!(
+                variants.len(),
+                3,
+                "expected level and two gentle slopes for {id:?}"
+            );
+            for piece in variants {
+                let speeds = piece
+                    .design_speeds
+                    .unwrap_or_else(|| panic!("{id:?} has no rated catalog window"));
+                assert!(speeds.minimum_entry < speeds.maximum_entry);
+                assert!(
+                    piece.constant_speed_peak_roll_rate(speeds.maximum_entry)
+                        <= Piece::MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND,
+                    "{id:?} at {:?} exceeds the roll-rate limit at its catalog maximum",
+                    piece.entry.slope
+                );
+            }
+        }
     }
 }

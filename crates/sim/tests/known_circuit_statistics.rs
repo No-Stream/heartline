@@ -160,11 +160,8 @@ fn ride_test(
         start_distance,
         initial_speed,
     );
-    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_model(
-        circuit,
-        &model.train,
-        model,
-    );
+    let mut recorder =
+        ConstructionTestRunRecorder::for_circuit_with_train_and_model(circuit, &model.train, model);
     let mut slow_steps = 0;
     for _ in 0..60_000 {
         train.step(circuit);

@@ -7,7 +7,7 @@ const box = { width: 400, height: 200, left: 40, right: 40, top: 10, bottom: 30 
 const limits = MODEL_FORCE_LIMITS["Velocity Viper"];
 
 function sampleAt(distance: number, speed: number, verticalG = 1, lateralG = 0, longitudinalG = 0): TestingSample {
-  return { distance, x: distance, y: 0, z: 0, speed, verticalG, lateralG, longitudinalG, airtime: false };
+  return { distance, x: distance, y: 0, z: 0, speed, verticalG, lateralG, longitudinalG, airtime: false, forceLimitExceeded: [false, false, false] };
 }
 
 describe("sampleTimes", () => {

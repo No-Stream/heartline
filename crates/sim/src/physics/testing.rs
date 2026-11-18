@@ -767,11 +767,7 @@ struct RatedPieceSpeedWindow {
 }
 
 impl TestRunRecorder {
-    pub(super) fn rebind_preview_circuit(
-        &mut self,
-        circuit: &Circuit,
-        model: &CoasterModel,
-    ) {
+    pub(super) fn rebind_preview_circuit(&mut self, circuit: &Circuit, model: &CoasterModel) {
         let fresh = Self::for_circuit_with_model(circuit, model);
         if self.next_sample_distance == self.circuit_length && circuit.length > self.circuit_length
         {

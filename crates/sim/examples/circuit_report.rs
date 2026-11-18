@@ -180,7 +180,9 @@ pub fn report_for_circuit(
         if construction_test { 2.0 } else { 0.0 },
     );
     let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_model(
-        &circuit, &model.train, &model,
+        &circuit,
+        &model.train,
+        &model,
     );
     let mut rows: Vec<PieceReadings> = (0..pieces.len())
         .map(|_| PieceReadings {
@@ -402,8 +404,8 @@ fn resolve_directive(line: &str, speed: f64, model: &CoasterModel) -> Result<Pie
         })
         .cloned()
         .collect();
-    let selected = select_speed_matched_variant(&candidates, speed, &model)
-    .ok_or_else(|| format!("No available size for {line} at {speed:.2} m/s"))?;
+    let selected = select_speed_matched_variant(&candidates, speed, model)
+        .ok_or_else(|| format!("No available size for {line} at {speed:.2} m/s"))?;
     if !selected.fits {
         return Err(format!("No fitting size for {line} at {speed:.2} m/s"));
     }

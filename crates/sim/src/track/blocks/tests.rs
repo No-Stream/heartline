@@ -1193,12 +1193,8 @@ fn powered_sections_get_a_candidate_at_their_end() {
         let runs = brake_runs(&circuit, train.length_metres);
         let layout =
             super::BlockLayout::new(&circuit, &train, Default::default(), Vec::new()).unwrap();
-        let mut test_train = crate::physics::CoasterRun::new(
-            &circuit,
-            &train,
-            &model,
-            Default::default(),
-        );
+        let mut test_train =
+            crate::physics::CoasterRun::new(&circuit, &train, &model, Default::default());
         let outcome = (0..120_000)
             .find_map(|_| test_train.step(&circuit, model.name))
             .expect("train finishes or is recovered");

@@ -731,12 +731,7 @@ fn ride_test_reports_whether_the_train_clears_the_top_hat() {
             .find(|piece| piece.id == TopHat)
             .unwrap();
         let top_hat_start = top_hat_end - top_hat.length();
-        let mut run = CoasterRun::new(
-            &circuit,
-            &model.train,
-            &model,
-            PhysicsConfig::default(),
-        );
+        let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
         let outcome = (0..200_000)
             .find_map(|_| run.step(&circuit, model.name))
             .expect("ride test did not finish");
@@ -960,7 +955,11 @@ fn corkscrews_have_contiguous_rated_windows() {
                 .filter(|speed| passes(*speed))
                 .collect();
             eprintln!("{target:?} {} passing speeds: {passing:?}", model.name);
-            assert!(!passing.is_empty(), "{target:?} {} has no passing speeds", model.name);
+            assert!(
+                !passing.is_empty(),
+                "{target:?} {} has no passing speeds",
+                model.name
+            );
             assert!(
                 passing
                     .windows(2)
@@ -981,7 +980,11 @@ fn corkscrews_have_contiguous_rated_windows() {
             let sample_count = (rated.maximum_entry - rated.minimum_entry).ceil() as usize;
             for index in 0..=sample_count {
                 let speed = (rated.minimum_entry + index as f64).min(rated.maximum_entry);
-                assert!(passes(speed), "{target:?} {} fails at {speed} m/s", model.name);
+                assert!(
+                    passes(speed),
+                    "{target:?} {} fails at {speed} m/s",
+                    model.name
+                );
             }
         }
     }
@@ -1260,10 +1263,7 @@ fn connected_half_loop_endpoints() {
         let piece = piece.at(state).unwrap();
         let start: f64 = pieces.iter().map(Piece::length).sum();
         if matches!(piece.id, PieceId::HalfLoopUp | PieceId::HalfLoopDown) {
-            ranges.push((
-                piece.id,
-                start..start + piece.length(),
-            ));
+            ranges.push((piece.id, start..start + piece.length()));
         }
         state = piece.exit;
         pieces.push(piece);
@@ -1300,7 +1300,11 @@ fn connected_half_loop_endpoints() {
     let circuit = Circuit::new(pieces).unwrap();
     for (id, range) in ranges {
         for model in [hybrid_model(), multi_launch_model()] {
-            let piece = circuit.pieces().iter().find(|piece| piece.id == id).unwrap();
+            let piece = circuit
+                .pieces()
+                .iter()
+                .find(|piece| piece.id == id)
+                .unwrap();
             if !model.allows_piece(piece) {
                 continue;
             }
@@ -1566,7 +1570,11 @@ fn connected_corkscrew_rated_samples() {
                     .is_ok()
                 })
                 .collect();
-            assert!(!passing.is_empty(), "{target:?} {} has no passing speeds", model.name);
+            assert!(
+                !passing.is_empty(),
+                "{target:?} {} has no passing speeds",
+                model.name
+            );
             assert!(
                 passing
                     .windows(2)
@@ -1636,8 +1644,13 @@ fn connected_wide_sixty_degree_drop_passes_full_trains_at_both_rated_endpoints()
             let train_configuration = &model.train;
             let cars = train_configuration.cars;
             for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
-                let mut train =
-                    Train::new(&circuit, train_configuration, unpowered(), start, entry_speed);
+                let mut train = Train::new(
+                    &circuit,
+                    train_configuration,
+                    unpowered(),
+                    start,
+                    entry_speed,
+                );
                 let mut minimum_vertical = f64::INFINITY;
                 let mut maximum_vertical = f64::NEG_INFINITY;
                 let mut maximum_longitudinal: f64 = 0.0;
