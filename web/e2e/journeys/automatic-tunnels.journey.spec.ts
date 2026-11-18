@@ -77,7 +77,7 @@ test("a coaster tunnels through a hill and completes a test ride @journey", asyn
   await openTool(page, "Coaster");
   await testRide(page);
   await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
-  await expect(page.locator("[data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
+  await expect(page.locator("[data-construction] [data-testing] [data-rating]")).toContainText(/Excitement: .*Intensity: .*Nausea:/);
   await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status"))
     .toHaveText("Train completed a lap.");
 
