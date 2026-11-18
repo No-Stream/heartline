@@ -35,6 +35,9 @@ import { followTrackEnd, railPoints } from "./construction-camera";
 import { createConstructionEffects } from "./construction-effects";
 import { nearestBlockBoundaryMetres } from "./render/track/blocks";
 import { createGuestPanel } from "./guest-panel/guest-panel";
+import { createRideWindow } from "./ride-window/ride-window";
+import { rideFromPick } from "./ride-window/picking";
+import type { RideInfo, RideKey } from "./ride-window/protocol";
 import type { GuestDetail } from "./guest-panel/protocol";
 import { createPathTool, type PathTile, type PathToolMessage } from "./path-tool";
 import { createPathPanel } from "./path-panel";
@@ -200,6 +203,10 @@ const FORCE_HOVER_PIXELS = 14;
 if (!atlas.themeStyle) throw new Error("Atlas theme style is missing");
 let selectedGuestId: string | undefined;
 const guestPanel = createGuestPanel(gameCanvas, { dispatch });
+let selectedRide: RideKey | undefined;
+let latestRideInfoJson = "";
+let latestRideInfo: RideInfo | null = null;
+const rideWindow = createRideWindow(gameCanvas, { dispatch, onHighlightChange: () => renderRevision.invalidate() });
 
 let facilities: Facility[] = [];
 let facilityPanelSnapshot = "";
@@ -385,6 +392,7 @@ const gameTest: GameTest = {
   },
   requestGuestDetail(id) { sendWorkerAction(worker, { type: "guest-detail-request", guestId: id }); },
   guestDetail() { return latestGuestDetail; },
+  rideInfo() { return latestRideInfo; },
   testingReport() { return construction?.testingReport ?? null; },
   constructionForcePreview() { return construction?.constructionForcePreview ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
@@ -429,6 +437,7 @@ function applyUnits(units: Units): void {
   panel.setUnits(units);
   landscapingPanel.setUnits(units);
   guestPanel.setUnits(units);
+  rideWindow.setUnits(units);
   testingPanel.setUnits(units);
   forceOverlay.setEstimate(construction?.constructionForcePreview ?? null, units);
   renderRevision.invalidate();
@@ -573,7 +582,22 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "sound-volume") {
     soundSetting.setVolume(action.volume);
     audio.setVolume(soundSetting.volume, soundSetting.muted);
+  } else if (action.type === "ride-select") {
+    if (selectedGuestId) dispatch({ type: "guest-close" });
+    selectedRide = action.ride;
+    latestRideInfoJson = "";
+    sendWorkerAction(worker, { type: "ride-info-request", ride: action.ride });
+  } else if (action.type === "ride-test") {
+    sendWorkerAction(worker, { type: "ride-test", ride: action.ride });
+  } else if (action.type === "ride-close") {
+    selectedRide = undefined;
+    latestRideInfo = null;
+    latestRideInfoJson = "";
+    rideWindow.close();
+    sendWorkerAction(worker, { type: "ride-info-close" });
+    renderRevision.invalidate();
   } else if (action.type === "guest-select") {
+    if (selectedRide) dispatch({ type: "ride-close" });
     selectedGuestId = action.guestId;
     sendWorkerAction(worker, { type: "guest-detail-request", guestId: action.guestId });
     renderRevision.invalidate();
@@ -724,12 +748,14 @@ function dispatch(action: InputAction): void {
       selectedGuestId = selection.id;
       sendWorkerAction(worker, { type: "guest-detail-request", guestId: selection.id });
       renderRevision.invalidate();
+    } else if (activeTool === "none" && rideFromPick(selection)) {
+      dispatch({ type: "ride-select", ride: rideFromPick(selection)! });
     }
   } else if (action.type === "builder-cancel") {
     // Escape first leaves the active input mode, then closes the open tool. An open guest panel takes Escape for itself.
     if (selectedBlock !== null && activeTool === "coaster") selectBlock(null);
     else if (inputModeActive()) endInputModes();
-    else if (!selectedGuestId) openTool("none");
+    else if (!selectedGuestId && !selectedRide) openTool("none");
   } else if (action.type === "pan" || action.type === "zoom" || action.type === "rotate") {
     moveCamera(action);
     if (action.type !== "rotate") followPoints = undefined;
@@ -823,6 +849,7 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     previous = undefined;
     current = undefined;
     if (selectedGuestId) dispatch({ type: "guest-close" });
+    if (selectedRide) dispatch({ type: "ride-close" });
   } else if (message.type === "session-export") {
     const inputs = pendingSessionExports.get(message.requestId);
     if (!inputs) throw new Error("Unknown session export request");
@@ -909,6 +936,14 @@ worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
     const estimateJson = JSON.stringify(next.constructionForcePreview ?? null);
     if (estimateJson !== constructionForcePreviewJson) { constructionForcePreviewJson = estimateJson; testingPanel.updateEstimate(next.constructionForcePreview ?? null); forceOverlay.setEstimate(next.constructionForcePreview ?? null, unitsSetting.units()); }
     if (redraw) renderRevision.invalidate();
+  } else if (message.type === "ride-info") {
+    if (message.info.ride !== selectedRide) return;
+    const rideInfoJson = JSON.stringify([message.info, message.testMessage]);
+    if (rideInfoJson === latestRideInfoJson) return;
+    latestRideInfoJson = rideInfoJson;
+    latestRideInfo = message.info;
+    rideWindow.update(message.info, message.testMessage);
+    renderRevision.invalidate();
   } else if (message.type === "guest-detail") {
     latestGuestDetail = message.detail;
     if (message.guestId === selectedGuestId && message.detail) guestPanel.update(message.detail);
@@ -1092,6 +1127,7 @@ function frame(now: number): void {
     stationGhost: () => stationTool.ghost(),
     testingMetric,
     testingHighlightDistance: testingPanel.selectedScoreLocation()?.distance,
+    rideHighlight: rideWindow.highlight(),
     constructionEffects,
     staticTrack,
     builtTrack,

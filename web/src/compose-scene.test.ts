@@ -87,6 +87,12 @@ describe("composeScene", () => {
     const scene = composeScene(sceneInput({ construction, testingMetric: "speed" }));
     expect(scene.geometryPasses[5](camera, viewport, atlas, "1").some((quad) => quad.id === "testing-0")).toBe(true);
   });
+  it("highlights the ride window's point on the track without any builder report", () => {
+    const samples = [0, 1, 2].map((distance) => ({ distance, x: 1 + distance, y: 2, z: 0, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false }));
+    const quads = composeScene(sceneInput({ rideHighlight: { samples, distance: 1.25 } })).geometryPasses[5](camera, viewport, atlas, "1");
+    expect(quads.find(({ id }) => id === "testing-1")?.color).toEqual([58 / 255, 46 / 255, 88 / 255, 1]);
+    expect(composeScene(sceneInput({})).geometryPasses[5](camera, viewport, atlas, "1").some(({ id }) => id.startsWith("testing-"))).toBe(false);
+  });
   it("uses the world's train layout to render the model and its riders", () => {
     const frame = { width: 40, height: 60, anchor: { x: 20, y: 50 }, placements: { "1": { page: 0, x: 0, y: 0, width: 40, height: 60 } } };
     const riderAtlas: Atlas = { ...atlas, pages: { "1": [{ file: "test.png", width: 40, height: 60 }] }, frames: Object.fromEntries(["maya", "otis", "priya", "gus"].map((name) => [`people/${name}/se/idle/0`, frame])), sprites: Object.fromEntries(["maya", "otis", "priya", "gus"].map((name) => [`people/${name}`, { appearance: { skinToneGroup: "deep", hairGroup: "curly", clothingPaletteGroup: "red", bodyShape: "slender", ageGroup: "child" } }])) } as Atlas;
