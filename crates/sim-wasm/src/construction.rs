@@ -1,5 +1,6 @@
 use super::*;
 use serde::Serialize;
+use theme_park_sim::park::ride_test::RideKey;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
 use theme_park_sim::track::{Bank, Hand, Heartlining, HillFeel, HillTwist, PieceFamily};
 use theme_park_sim::track::{ComfortableForceLimits, ForceRating, ForceRatingAxis};
@@ -74,6 +75,94 @@ pub struct ConstructionTrackWire {
     launch_target_speed: Option<f64>,
     launch_minimum_speed: Option<f64>,
     launch_maximum_speed: Option<f64>,
+}
+
+/// The wire form of a finished test report, shared by the builder and the ride info window.
+pub(crate) fn testing_report_json(report: &TestRun, circuit: &Circuit) -> String {
+    serde_json::to_string(&testing_report(report, circuit)).expect("serialize testing report")
+}
+
+pub(crate) fn testing_report(report: &TestRun, circuit: &Circuit) -> crate::reports::TestingReport {
+    let samples = report
+        .samples
+        .iter()
+        .map(|sample| {
+            let position = circuit.sample(sample.distance).position / 4.0;
+            crate::reports::TestingSample {
+                distance: sample.distance,
+                x: position.x,
+                y: position.y,
+                z: position.z,
+                speed: sample.speed,
+                vertical_g: sample.vertical_g,
+                lateral_g: sample.lateral_g,
+                longitudinal_g: sample.longitudinal_g,
+                airtime: sample.airtime,
+            }
+        })
+        .collect();
+    let proximity_events = report
+        .proximity_events
+        .iter()
+        .map(|event| {
+            let kind = match event.kind {
+                ProximityKind::NearMiss => "nearMiss",
+                ProximityKind::Headchopper => "headchopper",
+                ProximityKind::Dueling => "dueling",
+                ProximityKind::Tunnel => "tunnel",
+                ProximityKind::TerrainHugging => "terrainHugging",
+            };
+            crate::reports::ProximityEventReport {
+                kind: kind.to_owned(),
+                piece_index: event.piece_index,
+                distance: event.distance,
+                x: event.position.x / 4.0,
+                y: event.position.y / 4.0,
+                z: event.position.z / 4.0,
+                strength: event.strength,
+            }
+        })
+        .collect();
+    crate::reports::TestingReport {
+        samples,
+        launches: report_launches(circuit, report),
+        notes: report.notes.clone(),
+        proximity_events,
+        rating: crate::reports::TestingRating {
+            excitement: report.excitement,
+            intensity: report.intensity,
+            nausea: report.nausea,
+        },
+        breakdown: (&report.breakdown).into(),
+        statistics: {
+            let stats = report.statistics;
+            crate::reports::RideStatisticsReport {
+                ejector_airtime_seconds: stats.ejector_airtime_seconds,
+                floater_airtime_seconds: stats.floater_airtime_seconds,
+                airtime_moments: stats.airtime_moments,
+                strong_positive_g_seconds: stats.strong_positive_g_seconds,
+                longest_strong_positive_g_seconds: stats.longest_strong_positive_g_seconds,
+                strong_lateral_g_seconds: stats.strong_lateral_g_seconds,
+                max_positive_vertical_g: stats.max_positive_vertical_g,
+                max_negative_vertical_g: stats.max_negative_vertical_g,
+                max_lateral_g: stats.max_lateral_g,
+                max_forward_g: stats.max_forward_g,
+                max_braking_g: stats.max_braking_g,
+                max_speed: stats.max_speed,
+                average_speed: stats.average_speed,
+                duration_seconds: stats.duration_seconds,
+                track_length: stats.track_length,
+                max_height: stats.max_height,
+                biggest_drop: stats.biggest_drop,
+                steepest_drop_angle_degrees: stats.steepest_drop_angle_degrees,
+                inversions: stats.inversions,
+                inverted_seconds: stats.inverted_seconds,
+                drops: stats.drops,
+                launches: stats.launches,
+                launch_peak_speed: stats.launch_peak_speed,
+            }
+        },
+    }
 }
 
 fn report_launches(circuit: &Circuit, report: &TestRun) -> Vec<crate::reports::LaunchReport> {
@@ -1516,96 +1605,68 @@ impl WasmSimulation {
         self.construction_message = "Test train running.".into();
     }
 
+    /// Test report and model facts for the ride info window; `ride` is "demo" or "player".
+    pub fn ride_info_json(&self, ride: &str) -> String {
+        let (ride, model, report) = match ride {
+            "demo" => {
+                let coaster = self
+                    .park
+                    .demo_coaster
+                    .as_ref()
+                    .expect("park has a demo coaster");
+                let report = self
+                    .park
+                    .demo_report
+                    .as_ref()
+                    .map(|report| testing_report(report, &coaster.circuit));
+                ("demo", theme_park_sim::track::hybrid_model(), report)
+            }
+            "player" => {
+                let construction = self
+                    .park
+                    .construction
+                    .as_ref()
+                    .expect("park has a player coaster");
+                let report = self
+                    .park
+                    .construction_report
+                    .as_ref()
+                    .zip(construction.circuit().ok())
+                    .map(|(report, circuit)| testing_report(report, &circuit));
+                ("player", construction.model().clone(), report)
+            }
+            other => panic!("unknown ride: {other}"),
+        };
+        serde_json::to_string(&crate::reports::RideInfoReport {
+            ride,
+            model_name: model.name.to_owned(),
+            manufacturer: model.manufacturer.to_owned(),
+            limits: force_limits_wire(model.comfortable_force_limits, model.name),
+            report,
+        })
+        .expect("serialize ride info")
+    }
+
+    /// Rates the ride at once and stores its report; returns an empty string on success, otherwise why not.
+    pub fn ride_test(&mut self, ride: &str) -> String {
+        let ride = match ride {
+            "demo" => RideKey::Demo,
+            "player" => RideKey::Player,
+            other => panic!("unknown ride: {other}"),
+        };
+        match self.park.run_ride_test(ride) {
+            Ok(()) => String::new(),
+            Err(message) => message,
+        }
+    }
+
     pub fn construction_test_report_json(&self) -> String {
-        let Some(report) = &self.construction_report else {
+        let (Some(report), Some((circuit, _))) =
+            (&self.construction_report, &self.construction_train)
+        else {
             return "null".into();
         };
-        let circuit = &self
-            .construction_train
-            .as_ref()
-            .expect("report requires train")
-            .0;
-        let samples = report
-            .samples
-            .iter()
-            .map(|sample| {
-                let position = circuit.sample(sample.distance).position / 4.0;
-                crate::reports::TestingSample {
-                    distance: sample.distance,
-                    x: position.x,
-                    y: position.y,
-                    z: position.z,
-                    speed: sample.speed,
-                    vertical_g: sample.vertical_g,
-                    lateral_g: sample.lateral_g,
-                    longitudinal_g: sample.longitudinal_g,
-                    airtime: sample.airtime,
-                }
-            })
-            .collect();
-        let proximity_events = report
-            .proximity_events
-            .iter()
-            .map(|event| {
-                let kind = match event.kind {
-                    ProximityKind::NearMiss => "nearMiss",
-                    ProximityKind::Headchopper => "headchopper",
-                    ProximityKind::Dueling => "dueling",
-                    ProximityKind::Tunnel => "tunnel",
-                    ProximityKind::TerrainHugging => "terrainHugging",
-                };
-                crate::reports::ProximityEventReport {
-                    kind: kind.to_owned(),
-                    piece_index: event.piece_index,
-                    distance: event.distance,
-                    x: event.position.x / 4.0,
-                    y: event.position.y / 4.0,
-                    z: event.position.z / 4.0,
-                    strength: event.strength,
-                }
-            })
-            .collect();
-        serde_json::to_string(&crate::reports::TestingReport {
-            samples,
-            launches: report_launches(circuit, report),
-            notes: report.notes.clone(),
-            proximity_events,
-            rating: crate::reports::TestingRating {
-                excitement: report.excitement,
-                intensity: report.intensity,
-                nausea: report.nausea,
-            },
-            breakdown: (&report.breakdown).into(),
-            statistics: {
-                let stats = report.statistics;
-                crate::reports::RideStatisticsReport {
-                    ejector_airtime_seconds: stats.ejector_airtime_seconds,
-                    floater_airtime_seconds: stats.floater_airtime_seconds,
-                    airtime_moments: stats.airtime_moments,
-                    strong_positive_g_seconds: stats.strong_positive_g_seconds,
-                    longest_strong_positive_g_seconds: stats.longest_strong_positive_g_seconds,
-                    strong_lateral_g_seconds: stats.strong_lateral_g_seconds,
-                    max_positive_vertical_g: stats.max_positive_vertical_g,
-                    max_negative_vertical_g: stats.max_negative_vertical_g,
-                    max_lateral_g: stats.max_lateral_g,
-                    max_forward_g: stats.max_forward_g,
-                    max_braking_g: stats.max_braking_g,
-                    max_speed: stats.max_speed,
-                    average_speed: stats.average_speed,
-                    duration_seconds: stats.duration_seconds,
-                    track_length: stats.track_length,
-                    max_height: stats.max_height,
-                    biggest_drop: stats.biggest_drop,
-                    steepest_drop_angle_degrees: stats.steepest_drop_angle_degrees,
-                    inversions: stats.inversions,
-                    inverted_seconds: stats.inverted_seconds,
-                    drops: stats.drops,
-                    launches: stats.launches,
-                    launch_peak_speed: stats.launch_peak_speed,
-                }
-            },
-        })
-        .expect("serialize testing report")
+        testing_report_json(report, circuit)
     }
 
     pub fn construction_rails(&self) -> Vec<f32> {

@@ -3,6 +3,7 @@ import type { UiSound } from "./audio/mapping";
 import type { TestingReport } from "./coaster-testing";
 import type { ConstructionForcePreview } from "./construction-protocol";
 import type { GuestDetail } from "./guest-panel/protocol";
+import type { RideInfo } from "./ride-window/protocol";
 import type { Facility } from "./facilities";
 import type { Camera, WorldPoint } from "./camera";
 import type { Cutaway, Pick, WorldSprite } from "./render/index";
@@ -58,6 +59,8 @@ export interface GameTest {
   carvedSpans(): readonly [number, number, number, number][];
   requestGuestDetail(id: string): void;
   guestDetail(): GuestDetail | null;
+  /** The latest test report and model of the coaster whose ride window is open. */
+  rideInfo(): RideInfo | null;
   testingReport(): TestingReport | null;
   constructionForcePreview(): ConstructionForcePreview | null;
   constructionTrainPoses(): readonly number[];
