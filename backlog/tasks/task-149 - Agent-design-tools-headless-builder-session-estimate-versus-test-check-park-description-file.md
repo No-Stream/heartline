@@ -3,9 +3,10 @@ id: TASK-149
 title: >-
   Agent design tools: headless builder session, estimate-versus-test check, park
   description file
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-18 17:03'
+updated_date: '2026-11-18 23:21'
 labels:
   - tooling
 dependencies: []
@@ -63,3 +64,9 @@ The CLI spends at most 1,000 block-analysis work steps and saves the installed b
 The 70-half-tile release measurement was 4.29 s cold including snapshot write and 0.17 s warm, with identical output. The cold target is under 4 s and remains unmet. Repeated support-render updates during append are a candidate for a separately verified optimization. The command coverage tests, export tests, save/load test and goldens passed in the Rust gate; `check` on Timber Tumbler passed expectations and reported native agreement failure as informational. Park build and report remain scheduled for work items 8 and 9.
 
 The single requested `make test-rust` run passed 948 tests across 22 suites; `make test-web` passed 468 web and 9 art tests. `make check` passed build, generated types (1 test), its Rust subset (228 tests), 468 web tests and 9 art tests, then failed on a missing browser-test recording type. After fixing it, standalone typechecking and the real-worker test passed; the gate was not rerun. `make lint` failed on one collapsible conditional; after fixing it, targeted Clippy for the affected packages and formatting passed, as did standalone typechecking. Its full workspace and threaded Clippy commands were not rerun. No timeouts or retries were added.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-18: plan items 1-2 merged to master (a4aeac4, pushed): ride files, headless builder session, design command-line tool, explicit block layouts. Items 3 (native agreement table), 4 (browser agreement spec), 5 (one code path for worker and tool) and 8 (park description loader) started in parallel in worktrees dt-agreement, dt-browser-agreement, dt-one-path and dt-park.
+<!-- SECTION:NOTES:END -->
