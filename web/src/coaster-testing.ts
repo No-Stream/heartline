@@ -113,6 +113,7 @@ export function buildTestingRibbon(
 }
 
 const number = (value: number): string => value.toFixed(1).replace("-", "−");
+export { number as formatOneDecimal };
 const count = (value: number): string => Math.round(value).toLocaleString("en-US");
 export function formatRideRating(rating: TestingReport["rating"]): string {
   return `Excitement: ${number(rating.excitement)} · Intensity: ${number(rating.intensity)} · Nausea: ${number(rating.nausea)}`;
@@ -340,6 +341,94 @@ function statisticRow(statistic: RideStatistic): HTMLElement {
   return row;
 }
 
+export const REPORT_SECTION_HTML = `<section data-statistics hidden><h4>Scores (about 0–10)</h4>
+    <div class="testing-scores" data-rating></div>
+    <h5 class="testing-findings-heading">Biggest reasons</h5>
+    <ol class="testing-findings" data-score-findings aria-label="Biggest reasons for these scores"></ol>
+    <details class="testing-more" data-score-more><summary>More detail</summary>
+    <ol class="testing-findings" data-score-findings-more aria-label="Smaller reasons"></ol>
+    <p class="testing-note" data-score-unchanged></p>
+    <p class="testing-note" data-score-averaging>Effects are averaged over all cars. Force numbers come from the car that felt them most; car 1 is the front car.</p></details>
+    <div class="testing-statistics"><div><h4>Airtime</h4><dl data-statistics-airtime></dl></div><div><h4>Forces</h4><dl data-statistics-forces></dl></div>
+    <div><h4>Speed and layout</h4><dl data-statistics-speed-layout></dl></div></div>
+    <p class="testing-note" data-whole-train>Statistics cover the whole train using the worst car.</p></section>`;
+
+export interface ReportLocationSelection {
+  selected(): ScoreContributionReport["location"];
+  select(location: NonNullable<ScoreContributionReport["location"]>): void;
+}
+
+/** Fills the markup of REPORT_SECTION_HTML: score tiles, the biggest reasons for them, and the ride statistics. */
+export function renderReportSection(root: HTMLElement, report: TestingReport | null, units: Units, locations: ReportLocationSelection): void {
+  root.querySelector<HTMLElement>("[data-statistics]")!.hidden = !report;
+  root.querySelector<HTMLElement>("[data-rating]")!.replaceChildren(...(report ? scoreNames.map((score, index) => scoreTile(score, report!.rating[score], index === scoreNames.length - 1)) : []));
+  const statistics = report?.statistics;
+  const formattedStatistics = statistics ? formatRideStatistics(statistics, units) : null;
+  const renderStatistics = (selector: string, items: readonly RideStatistic[] | undefined): void => {
+    root.querySelector<HTMLElement>(selector)!.replaceChildren(...(items ?? []).map(statisticRow));
+  };
+  renderStatistics("[data-statistics-airtime]", formattedStatistics?.airtime);
+  renderStatistics("[data-statistics-forces]", formattedStatistics?.forces);
+  renderStatistics("[data-statistics-speed-layout]", formattedStatistics?.speedAndLayout);
+  const findings = splitScoreFindings(report ? groupScoreFindings(report.breakdown) : []);
+  const findingRow = (finding: ScoreFinding): HTMLElement => {
+    const headline = findingHeadline(finding, report!.statistics, units);
+    const row = document.createElement("li");
+    row.className = "testing-finding";
+    row.dataset.scoreFinding = finding.key;
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    const text = document.createElement("span");
+    text.className = "testing-finding__text";
+    const title = document.createElement("strong");
+    title.textContent = headline.title;
+    text.append(title);
+    if (headline.location) {
+      const location = headline.location;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "testing-location";
+      button.dataset.scoreLocation = finding.key;
+      button.title = "Show this spot on the track";
+      button.textContent = location.pieceName;
+      button.setAttribute("aria-pressed", String(locations.selected() === location));
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        locations.select(location);
+        for (const other of root.querySelectorAll<HTMLElement>("[data-score-location]")) other.setAttribute("aria-pressed", String(other === button));
+      });
+      text.append(" at ", button);
+    }
+    if (headline.measurement) text.append(`: ${headline.measurement}`);
+    const effects = document.createElement("span");
+    effects.className = "testing-finding__effects";
+    effects.append(...findingEffects(finding).map(({ score, value }) => effectChip(score, value)));
+    summary.append(text, effects);
+    const numbers = document.createElement("ul");
+    numbers.className = "testing-finding__details";
+    numbers.append(...findingDetails(finding, units).map((line) => {
+      const item = document.createElement("li");
+      item.textContent = line;
+      return item;
+    }));
+    details.append(summary, numbers);
+    row.append(details);
+    return row;
+  };
+  root.querySelector<HTMLElement>("[data-score-findings]")!.replaceChildren(...findings.main.map(findingRow));
+  const moreFindings = root.querySelector<HTMLElement>("[data-score-findings-more]")!;
+  moreFindings.replaceChildren(...findings.more.map(findingRow));
+  moreFindings.hidden = findings.more.length === 0;
+  const unchanged = root.querySelector<HTMLElement>("[data-score-unchanged]")!;
+  unchanged.textContent = findings.unchanged.length
+    ? `No effect on this ride: ${findings.unchanged.map((finding) => lowerFirst(findingHeadline(finding, report!.statistics, units).title)).join(", ")}.`
+    : "";
+  unchanged.hidden = findings.unchanged.length === 0;
+  root.querySelector<HTMLElement>("[data-score-more] > summary")!.textContent = findings.more.length
+    ? `More detail: ${findings.more.length} smaller ${findings.more.length === 1 ? "reason" : "reasons"}`
+    : "More detail";
+}
+
 export function createTestingPanel(container: HTMLElement, style: TrackStyle, dispatch: (action: InputAction) => void, onScoreLocationChange: () => void): {
   update(report: TestingReport | null): void;
   updateEstimate(estimate: ConstructionForcePreview | null): void;
@@ -350,17 +439,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   inspectProximity(index: number): void;
   selectedScoreLocation(): NonNullable<ScoreContributionReport["location"]> | undefined;
 } {
-  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><ul data-launch-results aria-label="Launch exit speeds"></ul><section data-statistics hidden><h4>Scores (about 0–10)</h4>
-    <div class="testing-scores" data-rating></div>
-    <h5 class="testing-findings-heading">Biggest reasons</h5>
-    <ol class="testing-findings" data-score-findings aria-label="Biggest reasons for these scores"></ol>
-    <details class="testing-more" data-score-more><summary>More detail</summary>
-    <ol class="testing-findings" data-score-findings-more aria-label="Smaller reasons"></ol>
-    <p class="testing-note" data-score-unchanged></p>
-    <p class="testing-note" data-score-averaging>Effects are averaged over all cars. Force numbers come from the car that felt them most; car 1 is the front car.</p></details>
-    <div class="testing-statistics"><div><h4>Airtime</h4><dl data-statistics-airtime></dl></div><div><h4>Forces</h4><dl data-statistics-forces></dl></div>
-    <div><h4>Speed and layout</h4><dl data-statistics-speed-layout></dl></div></div>
-    <p class="testing-note" data-whole-train>Statistics cover the whole train using the worst car.</p></section>
+  container.innerHTML = `<h3>Coaster testing</h3><p data-notes></p><ul data-launch-results aria-label="Launch exit speeds"></ul>${REPORT_SECTION_HTML}
     <p data-height-summary hidden>Maximum height above ground (sampled): <span data-report-maximum-height></span> · Biggest drop (sampled): <span data-report-drop-height></span></p>
     <p data-construction-estimate hidden></p><label>Track overlay <select data-metric><option value="off">Off</option><option value="limitCloseness">Limit closeness</option><option value="speed">Speed</option><option value="verticalG">Vertical force</option><option value="lateralG">Lateral force</option><option value="longitudinalG">Longitudinal force</option><option value="airtime">Airtime</option></select></label>
     <div class="testing-band-legend" data-band-legend hidden>${(["comfortable", "near", "past"] as const).map((band) => `<span data-band="${band}"><span class="testing-band-legend__swatch" aria-hidden="true" style="background:${LIMIT_BAND_COLORS[band]}"></span>${LIMIT_BAND_LABELS[band]}</span>`).join("")}</div>
@@ -416,82 +495,19 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   select.addEventListener("change", () => dispatch({ type: "testing-metric-set", metric: renderMetric() }));
   const renderReport = (): void => {
     const notes = container.querySelector<HTMLElement>("[data-notes]")!;
-    const rating = container.querySelector<HTMLElement>("[data-rating]")!;
-    const statisticsSection = container.querySelector<HTMLElement>("[data-statistics]")!;
     const heightSummary = container.querySelector<HTMLElement>("[data-height-summary]")!;
     notes.textContent = report ? report.notes.map((note) => formatTestingNote(note, activeUnits)).join(" ") || "No concerns were noted during this test." : "Run a test to see the results.";
-    statisticsSection.hidden = !report;
-    rating.replaceChildren(...(report ? scoreNames.map((score, index) => scoreTile(score, report!.rating[score], index === scoreNames.length - 1)) : []));
-    const statistics = report?.statistics;
-    const formattedStatistics = statistics ? formatRideStatistics(statistics, activeUnits) : null;
-    const renderStatistics = (selector: string, items: readonly RideStatistic[] | undefined): void => {
-      container.querySelector<HTMLElement>(selector)!.replaceChildren(...(items ?? []).map(statisticRow));
-    };
-    renderStatistics("[data-statistics-airtime]", formattedStatistics?.airtime);
-    renderStatistics("[data-statistics-forces]", formattedStatistics?.forces);
-    renderStatistics("[data-statistics-speed-layout]", formattedStatistics?.speedAndLayout);
-    const findings = splitScoreFindings(report ? groupScoreFindings(report.breakdown) : []);
-    const findingRow = (finding: ScoreFinding): HTMLElement => {
-      const headline = findingHeadline(finding, report!.statistics, activeUnits);
-      const row = document.createElement("li");
-      row.className = "testing-finding";
-      row.dataset.scoreFinding = finding.key;
-      const details = document.createElement("details");
-      const summary = document.createElement("summary");
-      const text = document.createElement("span");
-      text.className = "testing-finding__text";
-      const title = document.createElement("strong");
-      title.textContent = headline.title;
-      text.append(title);
-      if (headline.location) {
-        const location = headline.location;
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "testing-location";
-        button.dataset.scoreLocation = finding.key;
-        button.title = "Show this spot on the track";
-        button.textContent = location.pieceName;
-        button.setAttribute("aria-pressed", String(inspectedScoreLocation === location));
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          inspectedSampleIndex = undefined;
-          inspectedProximityIndex = undefined;
-          inspectedScoreLocation = location;
-          for (const other of container.querySelectorAll<HTMLElement>("[data-score-location]")) other.setAttribute("aria-pressed", String(other === button));
-          renderInspection();
-          onScoreLocationChange();
-          if (select.value === "off") dispatch({ type: "testing-metric-set", metric: "speed" });
-        });
-        text.append(" at ", button);
-      }
-      if (headline.measurement) text.append(`: ${headline.measurement}`);
-      const effects = document.createElement("span");
-      effects.className = "testing-finding__effects";
-      effects.append(...findingEffects(finding).map(({ score, value }) => effectChip(score, value)));
-      summary.append(text, effects);
-      const numbers = document.createElement("ul");
-      numbers.className = "testing-finding__details";
-      numbers.append(...findingDetails(finding, activeUnits).map((line) => {
-        const item = document.createElement("li");
-        item.textContent = line;
-        return item;
-      }));
-      details.append(summary, numbers);
-      row.append(details);
-      return row;
-    };
-    container.querySelector<HTMLElement>("[data-score-findings]")!.replaceChildren(...findings.main.map(findingRow));
-    const moreFindings = container.querySelector<HTMLElement>("[data-score-findings-more]")!;
-    moreFindings.replaceChildren(...findings.more.map(findingRow));
-    moreFindings.hidden = findings.more.length === 0;
-    const unchanged = container.querySelector<HTMLElement>("[data-score-unchanged]")!;
-    unchanged.textContent = findings.unchanged.length
-      ? `No effect on this ride: ${findings.unchanged.map((finding) => lowerFirst(findingHeadline(finding, report!.statistics, activeUnits).title)).join(", ")}.`
-      : "";
-    unchanged.hidden = findings.unchanged.length === 0;
-    container.querySelector<HTMLElement>("[data-score-more] > summary")!.textContent = findings.more.length
-      ? `More detail: ${findings.more.length} smaller ${findings.more.length === 1 ? "reason" : "reasons"}`
-      : "More detail";
+    renderReportSection(container, report, activeUnits, {
+      selected: () => inspectedScoreLocation,
+      select(location) {
+        inspectedSampleIndex = undefined;
+        inspectedProximityIndex = undefined;
+        inspectedScoreLocation = location;
+        renderInspection();
+        onScoreLocationChange();
+        if (select.value === "off") dispatch({ type: "testing-metric-set", metric: "speed" });
+      },
+    });
     const launchResults = container.querySelector<HTMLElement>("[data-launch-results]")!;
     launchResults.replaceChildren(...(report?.launches ?? []).map((launch) => {
       const item = document.createElement("li");

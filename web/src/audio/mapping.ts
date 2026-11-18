@@ -42,11 +42,18 @@ export function spatialise(camera: Camera, viewport: Viewport, point: WorldPoint
 }
 export const SOUND_TUNING = {
   chainLinkSpacing: 0.4, maxEventSpeed: 4, fastForwardSpeed: 5,
-  stopSpeed: 0.1, brakeSpeed: 3, brakeDelta: 8,
+  stopSpeed: 0.1, departSpeed: 0.5, brakeSpeed: 3, brakeDelta: 8,
   airtimeG: 0.2, highG: 3, lateralG: 1.2, screamCooldown: 2.5,
   crestDistance: 2, crowdSaturation: 200,
+  /** Recorded rider screams: `level` is the RMS gain at full audibility and intensity; `hold` is [base, extra at intensity 1] seconds; at `layerIntensity` a second, different recording joins after `layerDelay` seconds. */
+  scream: { level: 0.06, attack: 0.04, hold: [0.8, 1.0], release: 0.5, pitchSpread: 0.06, layerIntensity: 0.5, layerDelay: [0.08, 0.2], layerLevel: 0.7, layerPanSpread: 0.2 },
+  /** Steel rail hiss: white noise through a bandpass whose centre rises with speed; it replaced a sawtooth whine whose harmonics rang above 2 kHz. */
+  railHiss: { level: 0.06, baseFrequency: 1500, frequencyPerSpeed: 60, q: 3 },
+  /** Station dispatch: restraint-lock clunk, brake-fin clack, then an air release; levels are peak gains at full audibility. */
+  station: { clunkLevel: 0.5, clackLevel: 0.25, hissLevel: 0.06, hissDecay: 0.6 },
 } as const;
-interface TrainMemory { state: TrainState; screamTime: number; brake: number }
+/** `stopped` has hysteresis: it sets at or below `stopSpeed` and clears only at `departSpeed`, so a held train creeping in the station cannot repeat the departure sound. */
+interface TrainMemory { state: TrainState; screamTime: number; brake: number; stopped: boolean }
 export interface MappingMemory { trains: Map<number, TrainMemory>; tick: number; crowd: SoundFrame["crowd"]; crowdFrame: number }
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 function forceEdge(old: TrainState, state: TrainState): boolean {
@@ -103,9 +110,11 @@ export function soundFrame(input: MappingInput, previous: MappingMemory = { trai
       const delta = old ? state.speed - old.state.speed : 0;
       const braking = old && (state.pieceKind === 3 || state.pieceKind === 4 || old.state.pieceKind === 3 || old.state.pieceKind === 4) && old.state.speed > SOUND_TUNING.brakeSpeed;
       const brake = snapshot.tickCount === previous.tick ? old?.brake ?? 0 : braking ? clamp01(-delta / SOUND_TUNING.brakeDelta) : 0;
-      memory.trains.set(train, { state, screamTime, brake });
+      const stopped = state.speed <= SOUND_TUNING.stopSpeed || (state.speed < SOUND_TUNING.departSpeed && (old?.stopped ?? true));
+      const inStation = state.pieceKind === 4;
+      memory.trains.set(train, { state, screamTime, brake, stopped });
       if (input.paused) continue;
-      frame.trains.push({ train, pan: position.pan, audibility: position.audibility, distance: position.distance, speed: eventsMuted ? SOUND_TUNING.fastForwardSpeed : state.speed, material: trainMaterial(layout), onLift: state.pieceKind === 1, clackRate: !eventsMuted && state.pieceKind === 1 && state.speed > SOUND_TUNING.stopSpeed ? state.speed * input.gameSpeed / SOUND_TUNING.chainLinkSpacing : 0, launch: !eventsMuted && !!old && state.pieceKind === 2 && old.state.pieceKind !== 2 && delta > 0, brake: eventsMuted ? 0 : brake, arrive: !eventsMuted && !!old && state.pieceKind === 4 && old.state.speed > SOUND_TUNING.stopSpeed && state.speed <= SOUND_TUNING.stopSpeed, depart: !eventsMuted && !!old && state.pieceKind === 4 && old.state.speed <= SOUND_TUNING.stopSpeed && state.speed > SOUND_TUNING.stopSpeed });
+      frame.trains.push({ train, pan: position.pan, audibility: position.audibility, distance: position.distance, speed: eventsMuted ? SOUND_TUNING.fastForwardSpeed : state.speed, material: trainMaterial(layout), onLift: state.pieceKind === 1, clackRate: !eventsMuted && state.pieceKind === 1 && state.speed > SOUND_TUNING.stopSpeed ? state.speed * input.gameSpeed / SOUND_TUNING.chainLinkSpacing : 0, launch: !eventsMuted && !!old && state.pieceKind === 2 && old.state.pieceKind !== 2 && delta > 0, brake: eventsMuted ? 0 : brake, arrive: !eventsMuted && !!old && inStation && !old.stopped && stopped, depart: !eventsMuted && !!old && inStation && old.stopped && !stopped });
     }
   }
   frame.trains.sort((a, b) => b.audibility - a.audibility);

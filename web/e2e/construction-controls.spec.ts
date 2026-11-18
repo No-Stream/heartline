@@ -23,7 +23,13 @@ test.afterAll(async () => {
   if (outDir) await rm(outDir, { recursive: true });
 });
 
-type Window = { constructionActions: unknown[]; setConstructionState(state: object): void; completeConstructionInput(): void; setConstructionUnits(units: "metric" | "imperial"): void };
+type Window = {
+  constructionActions: unknown[];
+  setConstructionState(state: object): void;
+  completeConstructionInput(): void;
+  updateConstructionFinishStatus(status: { canFinish: boolean; finishReason: string }): void;
+  setConstructionUnits(units: "metric" | "imperial"): void;
+};
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
 
 test("busy construction controls remain interactive and accept button input", async ({ page }) => {
@@ -263,6 +269,35 @@ test("finish controls explain missing connections and confirm or cancel a previe
     { type: "construction-finish-preview" },
     { type: "construction-finish-confirm" },
   ]);
+});
+
+test("focused finish status updates finish and append controls", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const finish = page.getByRole("button", { name: "Finish coaster" });
+  const append = page.getByRole("button", { name: "Place piece" });
+  const reason = page.locator("[data-finish-reason]");
+  await expect(finish).toBeDisabled();
+  await expect(append).toHaveClass(/tool-panel__action--primary/);
+  await expect(reason).toBeVisible();
+
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: true }));
+  await page.evaluate(() => (window as unknown as Window).updateConstructionFinishStatus({ canFinish: false, finishReason: "Checking for a connection." }));
+  await expect(finish).toBeHidden();
+  await expect(reason).toBeHidden();
+  await expect(page.getByRole("button", { name: "Confirm coaster finish" })).toBeVisible();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: false }));
+
+  await page.evaluate(() => (window as unknown as Window).updateConstructionFinishStatus({ canFinish: true, finishReason: "" }));
+  await expect(finish).toBeEnabled();
+  await expect(finish).toHaveClass(/tool-panel__action--primary/);
+  await expect(append).not.toHaveClass(/tool-panel__action--primary/);
+  await expect(reason).toBeHidden();
+
+  await page.evaluate(() => (window as unknown as Window).updateConstructionFinishStatus({ canFinish: false, finishReason: "No nearby connection was found." }));
+  await expect(finish).toBeDisabled();
+  await expect(append).toHaveClass(/tool-panel__action--primary/);
+  await expect(reason).toHaveText("No nearby connection was found.");
+  await expect(reason).toBeVisible();
 });
 
 test("station height stepper stays within its range in two-metre steps", async ({ page }) => {

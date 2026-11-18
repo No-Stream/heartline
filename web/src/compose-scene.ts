@@ -14,7 +14,7 @@ import { buildSelectionRing } from "./guest-panel/selection-ring";
 import { buildPathGhostQuads, decodePathPreview } from "./render/path-ghost";
 import { buildLandscapingGhostQuads, type LandscapingPreview } from "./landscaping-tool";
 import { buildSceneryGhostQuads, scenerySprites, type Scenery, type SceneryPreview } from "./scenery-tool";
-import { buildProximityMarkers, buildTestingRibbon, overlaySamples, type TestingMetric } from "./coaster-testing";
+import { buildProximityMarkers, buildTestingRibbon, overlaySamples, type TestingMetric, type TestingSample } from "./coaster-testing";
 import type { Atlas, GeometryQuad, WorldSprite, WorldView } from "./render/scene";
 import type { AtmospherePass, GeometryPass } from "./render/index";
 import type { CoasterSnapshot } from "./protocol";
@@ -69,6 +69,8 @@ export interface ComposeSceneInput {
   readonly stationGhost: () => Float32Array;
   readonly testingMetric: TestingMetric | null;
   readonly testingHighlightDistance?: number;
+  /** The point of a coaster's test report the ride window is pointing at, drawn on the track. */
+  readonly rideHighlight?: { readonly samples: readonly TestingSample[]; readonly distance: number };
   readonly constructionEffects: { quads(now: number, camera: Camera, viewport: Viewport): GeometryQuad[] };
   readonly staticTrack: (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport) => readonly TrackQuad[];
   readonly builtTrack: (rails: Float32Array, ties: Float32Array, supports: Float32Array, colors: CoasterColorScheme, camera: Camera, viewport: Viewport) => readonly TrackQuad[];
@@ -160,6 +162,17 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
       ...(input.construction && input.activeTool === "coaster" ? buildBlockBoundaryQuads(input.construction.placedRails, input.construction.railDistances, input.construction.blockReport.sections, camera, viewport, trackStyle(atlas)) : []),
       ...buildGhostQuads(input.stationGhost(), noGeometry, noGeometry, true, camera, viewport, trackStyle(atlas)).map((quad) => ({ ...quad, color: [0.25, 0.55, 0.85, 0.55] as const })),
       ...(input.construction ? buildGhostQuads(input.construction.previewRails, input.construction.previewTies, input.construction.previewSupports, input.construction.canAppend, camera, viewport, trackStyle(atlas), previewWouldTunnel) : []),
+      ...(input.construction?.candidateForcePreview && input.activeTool === "coaster"
+        ? buildTestingRibbon(
+          input.construction.candidateForcePreview.samples,
+          "limitCloseness",
+          camera,
+          viewport,
+          trackStyle(atlas),
+          undefined,
+          input.construction.candidateForcePreview.limits,
+        ).map((quad) => ({ ...quad, id: `candidate-force-${quad.id.slice("testing-".length)}` }))
+        : []),
       ...(input.world.coasterColors && input.world.coasterTrain ? buildTrainQuads(trainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.world.coasterColors), input.world.coasterTrain) : []),
       ...(input.construction?.colors && input.construction.trainLayout ? buildTrainQuads(constructionTrainPoses, camera, viewport, trackPaint(trackStyle(atlas), input.construction.colors), input.construction.trainLayout) : []),
       ...(input.world.coasterTrain ? buildRiderQuads(trainPoses, camera, viewport, atlas, scale, input.world.coasterTrain) : []),
@@ -190,6 +203,7 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
           input.construction?.constructionForcePreview?.limits,
         )
         : []),
+      ...(input.rideHighlight ? buildTestingRibbon(input.rideHighlight.samples, "speed", camera, viewport, trackStyle(atlas), input.rideHighlight.distance) : []),
       ...(input.construction?.testingReport ? buildProximityMarkers(input.construction.testingReport.proximityEvents, camera, viewport, trackStyle(atlas)) : []),
       ...input.constructionEffects.quads(input.now, camera, viewport),
     ],

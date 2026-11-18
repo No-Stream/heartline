@@ -383,7 +383,7 @@ fn coaster_facility_uses_and_preserves_the_latest_front_car_ratings() {
     let expected_nausea = crate::guests::knowledge::guest_rating(front_car_report.nausea);
 
     expect_command_success(park.construction_set_open(true));
-    assert!(park.construction_report.is_none());
+    assert!(park.construction_report.is_some());
     let facility = park.coaster_facility.unwrap();
     assert_eq!(facility.place.intensity, expected_intensity);
     assert_eq!(facility.place.nausea, expected_nausea);

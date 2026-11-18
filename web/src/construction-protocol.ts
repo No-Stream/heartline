@@ -112,3 +112,10 @@ export interface BlockAnalysisProgress {
   readonly trainCount: number;
   readonly message: string;
 }
+
+/** Finish-search results update only the finish controls, without resending construction geometry and choices. */
+export interface ConstructionFinishStatus {
+  readonly type: "construction-finish-status";
+  readonly canFinish: boolean;
+  readonly finishReason: string;
+}

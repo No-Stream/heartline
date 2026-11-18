@@ -662,7 +662,12 @@ pub(crate) fn check_clearance_with_envelopes(
                 }
             }
         }
-        for path in world.paths() {
+        for path in world.paths_overlapping_horizontal_bounds(
+            bounds.min.x,
+            bounds.max.x,
+            bounds.min.y,
+            bounds.max.y,
+        ) {
             let x = f64::from(path.position.x) * 4.0;
             let y = f64::from(path.position.y) * 4.0;
             let z = f64::from(path.position.height);

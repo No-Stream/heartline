@@ -5,9 +5,12 @@ use crate::track::clearance::{
     check_clearance_indexed, check_clearance_with_envelopes, check_reverse_track_clearance,
     tunnel_plan, tunnel_plan_with_envelopes,
 };
+#[cfg(test)]
+use crate::track::supports::generate_supports;
 use crate::track::supports::{
-    SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle,
-    generate_dense_supports, generate_supports, support_intersects_obstacle,
+    SUPPORT_INFLUENCE_RADIUS_METRES, Support, SupportError, SupportObstacle, SupportWorldObstacles,
+    generate_dense_supports_with_world_obstacles, generate_supports_with_world_obstacles,
+    support_intersects_obstacle,
 };
 use crate::track::{
     CoasterColors, CoasterModel, Heartlining, HillFeel,
@@ -19,6 +22,28 @@ use crate::world::World;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::{Arc, OnceLock};
+
+#[cfg(test)]
+thread_local! {
+    static ELEMENT_CHOICE_CONSTRUCTION_COPY_COUNT: Cell<usize> = const { Cell::new(0) };
+    static ELEMENT_SEQUENCE_CONSTRUCTION_COPY_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_element_choice_construction_copy_count() {
+    ELEMENT_CHOICE_CONSTRUCTION_COPY_COUNT.with(|count| count.set(0));
+    ELEMENT_SEQUENCE_CONSTRUCTION_COPY_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn element_choice_construction_copy_count() -> usize {
+    ELEMENT_CHOICE_CONSTRUCTION_COPY_COUNT.with(Cell::get)
+}
+
+#[cfg(test)]
+fn element_sequence_construction_copy_count() -> usize {
+    ELEMENT_SEQUENCE_CONSTRUCTION_COPY_COUNT.with(Cell::get)
+}
 
 #[cfg(test)]
 mod cache_tests;
@@ -155,7 +180,7 @@ fn select_speed_matched_variant_with_windows(
 
 #[derive(Clone)]
 struct PieceValidation {
-    supports: Vec<Vec<Support>>,
+    supports: Vec<Arc<Vec<Support>>>,
     tunnel_plan: TunnelPlan,
     track_obstacles: Vec<SupportObstacle>,
 }
@@ -192,7 +217,8 @@ struct ValidationCache {
     existing_tunnel_plans: Vec<TunnelPlan>,
     clearance_index: ClearanceIndex,
     track_obstacles: Vec<Vec<SupportObstacle>>,
-    supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
+    support_world_obstacles: Arc<SupportWorldObstacles>,
+    supports: Vec<Option<Result<Arc<Vec<Support>>, SupportError>>>,
     support_regions: Vec<SupportSearchRegion>,
     /// Union of the existing pieces' tunnel carve cells.
     existing_carve_cells: BTreeSet<TerrainCell>,
@@ -201,7 +227,7 @@ struct ValidationCache {
     /// Supports routed for each existing piece on the existing carved world, among the other
     /// existing pieces. Unlike `supports`, an entry is dropped whenever a change could reach it,
     /// so it always equals a fresh routing and tunnelling validations can reuse it.
-    exact_supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
+    exact_supports: Vec<Option<Result<Arc<Vec<Support>>, SupportError>>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -838,6 +864,7 @@ impl Construction {
                 obstacles: obstacles.to_vec(),
                 clearance_index: ClearanceIndex::new(&existing),
                 support_regions: existing.iter().map(support_search_region).collect(),
+                support_world_obstacles: Arc::new(SupportWorldObstacles::new(world)),
                 existing_carve_cells: existing_tunnel_plans
                     .iter()
                     .flat_map(|plan| plan.carve_cells.iter().copied())
@@ -945,9 +972,9 @@ impl Construction {
             let route_supports = if self.model.support_style_for_piece(supported_piece)
                 == SupportStyle::DenseWoodenLattice
             {
-                generate_dense_supports
+                generate_dense_supports_with_world_obstacles
             } else {
-                generate_supports
+                generate_supports_with_world_obstacles
             };
             // Obstacles from the other existing pieces near this piece's support search region.
             let existing_support_obstacles = || {
@@ -980,7 +1007,9 @@ impl Construction {
                             supported_piece,
                             existing_world(cache)?,
                             &existing_support_obstacles(),
-                        );
+                            cache.support_world_obstacles.as_ref(),
+                        )
+                        .map(Arc::new);
                         cache.exact_supports[index] = Some(routed);
                     }
                     let exact = cache.exact_supports[index]
@@ -999,8 +1028,14 @@ impl Construction {
                     );
                 }
                 validated_supports.push(
-                    route_supports(supported_piece, candidate_world, &support_obstacles)
-                        .map_err(construction_support_error)?,
+                    route_supports(
+                        supported_piece,
+                        candidate_world,
+                        &support_obstacles,
+                        cache.support_world_obstacles.as_ref(),
+                    )
+                    .map(Arc::new)
+                    .map_err(construction_support_error)?,
                 );
                 continue;
             }
@@ -1009,11 +1044,15 @@ impl Construction {
                 self.support_cache_misses
                     .set(self.support_cache_misses.get() + 1);
                 if cache.exact_supports[index].is_none() {
-                    cache.exact_supports[index] = Some(route_supports(
-                        supported_piece,
-                        world,
-                        &existing_support_obstacles(),
-                    ));
+                    cache.exact_supports[index] = Some(
+                        route_supports(
+                            supported_piece,
+                            world,
+                            &existing_support_obstacles(),
+                            cache.support_world_obstacles.as_ref(),
+                        )
+                        .map(Arc::new),
+                    );
                 }
                 cache.supports[index] = cache.exact_supports[index].clone();
             }
@@ -1045,8 +1084,14 @@ impl Construction {
                         .filter(|bounds| region.overlaps(bounds)),
                 );
             }
-            let supports = route_supports(supported_piece, world, &support_obstacles)
-                .map_err(construction_support_error)?;
+            let supports = route_supports(
+                supported_piece,
+                world,
+                &support_obstacles,
+                cache.support_world_obstacles.as_ref(),
+            )
+            .map(Arc::new)
+            .map_err(construction_support_error)?;
             validated_supports.push(supports);
         }
         Ok(PieceValidation {

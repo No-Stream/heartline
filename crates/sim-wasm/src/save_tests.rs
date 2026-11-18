@@ -186,13 +186,35 @@ fn save_round_trips_built_timber_tumbler_with_ejector_hill() {
 }
 
 #[test]
+fn save_keeps_demo_and_player_test_reports() {
+    let mut original = WasmSimulation::new(42, 0, String::from("demo"));
+    append_timber_tumbler_fixture(&mut original);
+    assert_eq!(original.ride_test("demo"), "");
+    assert_eq!(original.ride_test("player"), "");
+
+    let restored = WasmSimulation::load_state(&original.save_state().unwrap()).unwrap();
+    assert_eq!(original.state_hash(), restored.state_hash());
+    for ride in ["demo", "player"] {
+        let report: serde_json::Value =
+            serde_json::from_str(&restored.ride_info_json(ride)).unwrap();
+        assert!(
+            report["report"]["rating"]["excitement"].is_number(),
+            "{ride}"
+        );
+        assert_eq!(restored.ride_info_json(ride), original.ride_info_json(ride));
+    }
+}
+
+#[test]
 fn save_uses_new_version_and_rejects_old_version() {
     let simulation = WasmSimulation::new(42, 20, String::from("demo"));
     let mut bytes = simulation.save_state().unwrap();
     assert_eq!(&bytes[..7], b"TPSAVE\x03");
-    bytes[6] = 2;
-    assert_eq!(
-        super::save::checked_payload(&bytes),
-        Err("Unsupported or invalid park save version")
-    );
+    for old_version in [1, 2] {
+        bytes[6] = old_version;
+        assert_eq!(
+            super::save::checked_payload(&bytes),
+            Err("Unsupported or invalid park save version")
+        );
+    }
 }

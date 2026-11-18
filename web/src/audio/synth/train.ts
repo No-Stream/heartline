@@ -1,4 +1,4 @@
-import type { TrainSound } from "../mapping";
+import { SOUND_TUNING, type TrainSound } from "../mapping";
 import type { ScheduleClock } from "../engine";
 import { noiseBuffers } from "./noise";
 
@@ -24,13 +24,27 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
   const rumbleFilter = filter("lowpass", 120, 4); const rumble = gain();
   pinkSource.connect(rumbleFilter).connect(rumble).connect(output);
   const tremolo = oscillator("triangle", 1); const tremoloDepth = gain(); tremolo.connect(tremoloDepth).connect(rumble.gain);
-  const whine = oscillator("sawtooth", 180); const whineFilter = filter("highpass", 1500); const whineGain = gain();
-  whine.connect(whineFilter).connect(whineGain).connect(output);
+  const railHissFilter = filter("bandpass", SOUND_TUNING.railHiss.baseFrequency, SOUND_TUNING.railHiss.q); const railHissGain = gain();
+  noise(white).connect(railHissFilter).connect(railHissGain).connect(output);
   const motorFilter = filter("lowpass", 300); const motor = gain();
   oscillator("triangle", 50).connect(motorFilter); oscillator("triangle", 100).connect(motorFilter); motorFilter.connect(motor).connect(output);
   const brakeFilter = filter("highpass", 2500); const brakeGain = gain(); noise(white).connect(brakeFilter).connect(brakeGain).connect(output);
-  const squeal = oscillator("sine", 2200); const vibrato = oscillator("sine", 6); const vibratoDepth = gain(30); vibrato.connect(vibratoDepth).connect(squeal.frequency);
-  const squealGain = gain(); squeal.connect(squealGain).connect(output);
+  // The squeal exists only while a brake event runs, so no tone can idle at a residual gain between events.
+  let squeal: { oscillators: OscillatorNode[]; level: GainNode } | null = null;
+  function startSqueal(time: number): NonNullable<typeof squeal> {
+    const tone = context.createOscillator(); tone.frequency.value = 2200;
+    const vibrato = context.createOscillator(); vibrato.frequency.value = 6;
+    const vibratoDepth = gain(30); vibrato.connect(vibratoDepth).connect(tone.frequency);
+    const level = gain(); tone.connect(level).connect(output);
+    tone.start(time); vibrato.start(time);
+    return { oscillators: [tone, vibrato], level };
+  }
+  function endSqueal(time: number): void {
+    if (!squeal) return;
+    squeal.level.gain.cancelScheduledValues(time); squeal.level.gain.setValueAtTime(squeal.level.gain.value, time); squeal.level.gain.linearRampToValueAtTime(0, time + 0.3);
+    for (const node of squeal.oscillators) node.stop(time + 0.3);
+    squeal = null;
+  }
   let oneShots: { envelope: GainNode; end: number }[] = [];
   const trackShot = (envelope: GainNode, end: number): void => { oneShots.push({ envelope, end }); };
   let wasMuted = false;
@@ -59,11 +73,21 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
     const source = noise(pink); const air = filter("lowpass", 1500); const envelope = gain(); source.connect(air).connect(envelope).connect(output);
     envelope.gain.setValueAtTime(Math.max(0.001, 0.2 * level), time); envelope.gain.exponentialRampToValueAtTime(0.001, time + 0.4); source.stop(time + 0.4); trackShot(envelope, time + 0.4);
   }
+  function noiseBurst(buffer: AudioBuffer, shape: BiquadFilterNode, time: number, peak: number, decay: number): void {
+    const source = context.createBufferSource(); source.buffer = buffer; const envelope = gain();
+    source.connect(shape).connect(envelope).connect(output);
+    envelope.gain.setValueAtTime(0.001, time); envelope.gain.linearRampToValueAtTime(peak + 0.001, time + 0.004); envelope.gain.exponentialRampToValueAtTime(0.001, time + decay);
+    source.start(time, (clackIndex++ * 0.137) % (buffer.duration - decay), decay); trackShot(envelope, time + decay);
+  }
   function departure(time: number, level: number): void {
-    for (const [index, frequency] of [880, 1175].entries()) {
-      const start = time + index * 0.12; const tone = context.createOscillator(); tone.frequency.value = frequency; const envelope = gain(); tone.connect(envelope).connect(output);
-      envelope.gain.setValueAtTime(0, start); envelope.gain.linearRampToValueAtTime(0.12 * level, start + 0.01); envelope.gain.setValueAtTime(0.12 * level, start + 0.12); envelope.gain.linearRampToValueAtTime(0, start + 0.27); tone.start(start); tone.stop(start + 0.27); trackShot(envelope, start + 0.27);
-    }
+    const station = SOUND_TUNING.station;
+    noiseBurst(pink, filter("bandpass", 140, 1.2), time, station.clunkLevel * level, 0.12);
+    noiseBurst(white, filter("bandpass", 1200, 1.5), time + 0.16, station.clackLevel * level, 0.05);
+    const air = noise(white); const airShape = filter("bandpass", 3200, 0.8); const airEnvelope = gain();
+    air.connect(airShape).connect(airEnvelope).connect(output);
+    const hissStart = time + 0.2; const hissEnd = hissStart + station.hissDecay;
+    airEnvelope.gain.setValueAtTime(0, hissStart); airEnvelope.gain.linearRampToValueAtTime(station.hissLevel * level, hissStart + 0.02);
+    airEnvelope.gain.setTargetAtTime(0, hissStart + 0.08, station.hissDecay / 4); air.stop(hissEnd); trackShot(airEnvelope, hissEnd);
   }
   return {
     apply(train: TrainSound, clock: ScheduleClock, eventsMuted: boolean): void {
@@ -72,8 +96,8 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
       wasMuted = eventsMuted; const level = train.audibility;
       const roarLevel = train.speed < 0.5 ? 0 : 0.5 * Math.min(1, (train.speed / 30) ** 1.5);
       target(pan.pan, train.pan, now); target(distanceFilter.frequency, 1200 + 6800 / (1 + ((train.distance ?? 0) / 440) ** 2), now); target(band.frequency, 200 + 40 * train.speed, now); target(low.frequency, 600 + 150 * train.speed, now);
-      target(roar.gain, level * roarLevel, now); target(whine.frequency, 180 + 25 * train.speed, now);
-      target(whineGain.gain, train.material === "wood" ? 0 : 0.02 * level * roarLevel, now);
+      target(roar.gain, level * roarLevel, now); target(railHissFilter.frequency, SOUND_TUNING.railHiss.baseFrequency + SOUND_TUNING.railHiss.frequencyPerSpeed * train.speed, now);
+      target(railHissGain.gain, train.material === "wood" ? 0 : SOUND_TUNING.railHiss.level * level * roarLevel, now);
       const woodLevel = train.material === "steel" ? 0 : train.material === "wood" ? 1 : 0.5;
       target(rumble.gain, 0.6 * level * roarLevel * woodLevel, now); target(tremolo.frequency, Math.max(0.01, train.speed / 1.2), now);
       target(tremoloDepth.gain, 0.35 * 0.6 * level * roarLevel * woodLevel, now);
@@ -88,10 +112,12 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
       if (!eventsMuted && train.depart) departure(now, level);
       if (!eventsMuted && train.brake > 0) brakeStart ??= now; else brakeStart = null;
       const braking = brakeStart !== null && now - brakeStart < 1.5 ? train.brake * level : 0;
-      target(brakeGain.gain, 0.3 * braking, now, braking ? 0.05 : 0.3); target(squealGain.gain, 0.03 * braking, now, braking ? 0.05 : 0.3);
+      target(brakeGain.gain, 0.3 * braking, now, braking ? 0.05 : 0.3);
+      if (braking > 0) { squeal ??= startSqueal(now); target(squeal.level.gain, 0.03 * braking, now); } else endSqueal(now);
     },
     release(clock: ScheduleClock): void {
-      for (const parameter of [roar.gain, rumble.gain, tremoloDepth.gain, whineGain.gain, motor.gain, brakeGain.gain, squealGain.gain]) target(parameter, 0, clock.now);
+      for (const parameter of [roar.gain, rumble.gain, tremoloDepth.gain, railHissGain.gain, motor.gain, brakeGain.gain]) target(parameter, 0, clock.now);
+      endSqueal(clock.now);
       silenceShots(clock.now); nextClack = clock.now; brakeStart = null; wasMuted = false;
     },
   };

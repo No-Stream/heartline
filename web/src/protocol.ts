@@ -1,10 +1,11 @@
 import type { Facility, FacilityAction } from "./facilities";
-import type { ConstructionAction, ConstructionState, BlockAnalysisProgress, PieceShapesMessage } from "./construction-protocol";
+import type { ConstructionAction, ConstructionState, ConstructionFinishStatus, BlockAnalysisProgress, PieceShapesMessage } from "./construction-protocol";
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand, TerrainEditResult } from "./landscaping-tool";
 import type { PathToolCommand, PathToolMessage, PathPosition } from "./path-tool";
 import type { SetSurfaceMessage, WorldSnapshot } from "./world-snapshot";
 import type { GuestDetail } from "./guest-panel/protocol";
+import type { RideInfo, RideKey } from "./ride-window/protocol";
 import type { GuestSnapshot } from "./render/people";
 import type { CoasterColorScheme } from "./coaster-colors";
 import type { TrainLayout } from "./train-layout";
@@ -23,6 +24,7 @@ export type WorkerAction =
   | { type: "set-paused"; paused: boolean }
   | SceneryCommand | SetSurfaceMessage | TerrainEditCommand | PathAction | ConstructionAction | FacilityAction
   | { type: "guest-detail-request"; guestId: string }
+  | { type: "ride-info-request"; ride: RideKey } | { type: "ride-info-close" } | { type: "ride-test"; ride: RideKey }
   | { type: "facility-access-preview"; requestId: number; kind: Facility["kind"]; x: number; y: number; height: number; rotation: number }
   | { type: "facility-remove"; id: number }
   | { type: "test-advance"; count: number }
@@ -38,12 +40,14 @@ export type WorkerMessage =
   | { type: "park-saved"; requestId: number; bytes?: Uint8Array; tickCount?: number; error?: string }
   | { type: "park-loaded"; requestId: number; error?: string }
   | { type: "park-restoring" }
-  | CoasterWorldMessage | ConstructionState | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
+  | CoasterWorldMessage | ConstructionState | ConstructionFinishStatus | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
   | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "test-resumed" } | { type: "construction-finish-ready" }
   | { type: "surface-edited"; changed: boolean }
   | { type: "facility-access-preview"; requestId: number; rotation: number | undefined }
   | { type: "facilities"; facilities: Facility[]; message: string; revenue: string; placed: boolean; forced: boolean; outcome: PlacementOutcome | null }
   | { type: "guest-detail"; guestId: string; detail: GuestDetail | null }
+  /** The selected ride's latest test report; `testMessage` is why a requested test was refused, empty otherwise. */
+  | { type: "ride-info"; info: RideInfo; testMessage: string }
   | PieceShapesMessage | PathToolMessage | TerrainEditResult | { type: "scenery"; scenery: Scenery[]; message: string; outcome: PlacementOutcome | null };
 
 export function sendWorkerAction(worker: Worker, action: WorkerAction): void {

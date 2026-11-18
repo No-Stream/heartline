@@ -48,8 +48,19 @@ const state: ConstructionState = {
 };
 let current = state;
 function setConstructionState(update: Partial<ConstructionState>): void { current = { ...current, ...update }; panel.update(current); }
+function updateConstructionFinishStatus(status: Pick<ConstructionState, "canFinish" | "finishReason">): void {
+  current = { ...current, ...status };
+  panel.updateFinishStatus(status.canFinish, status.finishReason);
+}
 panel.update(state);
-Object.assign(window, { constructionActions: actions, setConstructionState, completeConstructionInput: () => panel.setInputPending(false), setConstructionUnits: (units: "metric" | "imperial") => panel.setUnits(units), selectConstructionBlock: (index: number | null) => panel.setSelectedBlock(index) });
+Object.assign(window, {
+  constructionActions: actions,
+  setConstructionState,
+  completeConstructionInput: () => panel.setInputPending(false),
+  updateConstructionFinishStatus,
+  setConstructionUnits: (units: "metric" | "imperial") => panel.setUnits(units),
+  selectConstructionBlock: (index: number | null) => panel.setSelectedBlock(index),
+});
 
 const testingPanel = createTestingPanel(document.querySelector<HTMLElement>("[data-testing]")!,
   { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 }, () => {}, () => {});

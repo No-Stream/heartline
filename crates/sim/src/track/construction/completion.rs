@@ -59,6 +59,8 @@ impl Construction {
     }
 
     pub(super) fn copy_for_element_choice(&self) -> Self {
+        #[cfg(test)]
+        super::ELEMENT_CHOICE_CONSTRUCTION_COPY_COUNT.with(|count| count.set(count.get() + 1));
         let mut copy = self.copy_for_completion();
         copy.validation_cache = RefCell::new(self.validation_cache.borrow().clone());
         copy.choices_cache = RefCell::new(self.choices_cache.borrow().clone());
