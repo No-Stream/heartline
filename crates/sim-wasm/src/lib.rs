@@ -1,13 +1,14 @@
 mod blocks;
+pub mod builder_session;
 mod command_errors;
-mod construction;
-mod construction_speed_match;
+pub mod construction;
+pub mod construction_speed_match;
 mod facilities;
 mod guest_benchmark;
 mod guest_report;
 mod guests;
 pub mod layouts;
-mod reports;
+pub mod reports;
 mod save;
 #[cfg(test)]
 mod save_tests;

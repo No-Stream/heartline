@@ -596,6 +596,12 @@ workerScope.addEventListener("message", (event) => {
         case "construction-move-block": simulation.construction_move_block_section(action.index, action.boundaryMetres); break;
         case "construction-remove-block": simulation.construction_remove_block_section(action.index); break;
         case "construction-add-block": simulation.construction_add_block_section(action.boundaryMetres); break;
+        case "construction-set-block-sections": simulation.construction_install_block_layout(
+          JSON.stringify(action.blockSections),
+          action.trainCapacity,
+          action.capacitySearchComplete,
+          action.placementSearchComplete,
+        ); break;
         case "construction-delete-mode": return;
         default: assertNever(action);
       }

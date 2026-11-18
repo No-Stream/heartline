@@ -9,17 +9,17 @@ use wasm_bindgen::prelude::*;
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionSpeedMatchVariantWire {
-    id: &'static str,
-    label: &'static str,
+    pub id: &'static str,
+    pub label: &'static str,
 }
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionSpeedMatchWire {
-    entry_speed: Option<f64>,
-    recommended_id: Option<&'static str>,
-    fits: Option<bool>,
-    variants: Vec<ConstructionSpeedMatchVariantWire>,
+    pub entry_speed: Option<f64>,
+    pub recommended_id: Option<&'static str>,
+    pub fits: Option<bool>,
+    pub variants: Vec<ConstructionSpeedMatchVariantWire>,
 }
 
 fn same_family(first: &Piece, second: &Piece) -> bool {
@@ -43,18 +43,22 @@ fn same_family(first: &Piece, second: &Piece) -> bool {
 #[wasm_bindgen]
 impl WasmSimulation {
     pub fn construction_speed_match_json(&self, id: &str, entry_speed: Option<f64>) -> String {
-        let Some(construction) = self.construction.as_ref() else {
-            return "null".into();
-        };
-        let Some(id) = pieceid_from_wire(id) else {
-            return "null".into();
-        };
-        let Some(selected_piece) = catalog()
+        serde_json::to_string(&self.construction_speed_match(id, entry_speed))
+            .expect("speed match serializes")
+    }
+}
+
+impl WasmSimulation {
+    pub fn construction_speed_match(
+        &self,
+        id: &str,
+        entry_speed: Option<f64>,
+    ) -> Option<ConstructionSpeedMatchWire> {
+        let construction = self.construction.as_ref()?;
+        let id = pieceid_from_wire(id)?;
+        let selected_piece = catalog()
             .iter()
-            .find(|piece| piece.id == id && piece.rated_speeds.is_some())
-        else {
-            return "null".into();
-        };
+            .find(|piece| piece.id == id && piece.rated_speeds.is_some())?;
         let obstacles = self.facility_obstacles();
         let candidates: Vec<_> = if selected_piece.family.is_some() {
             catalog()
@@ -105,7 +109,7 @@ impl WasmSimulation {
                 })
                 .collect(),
         };
-        serde_json::to_string(&result).expect("speed match serializes")
+        Some(result)
     }
 }
 

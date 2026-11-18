@@ -107,6 +107,7 @@ function isParkMutationIntent(action: WorkerAction): boolean {
     case "construction-move-block":
     case "construction-remove-block":
     case "construction-add-block":
+    case "construction-set-block-sections":
       return true;
     default:
       return false;

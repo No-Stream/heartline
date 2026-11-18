@@ -1,0 +1,190 @@
+{
+  "format": "heartline-ride",
+  "version": 1,
+  "name": "Timber Tumbler",
+  "model": "hybrid",
+  "station": {
+    "x": 241,
+    "y": 249,
+    "z": 12,
+    "heading": "north"
+  },
+  "carsPerTrain": 6,
+  "trains": 1,
+  "steps": [
+    {
+      "chain": true
+    },
+    {
+      "place": "LevelToGentleUp"
+    },
+    {
+      "place": "GentleToSteepUp"
+    },
+    {
+      "place": "SteepToGentleUp"
+    },
+    {
+      "place": "GentleUpToLevel"
+    },
+    {
+      "chain": false
+    },
+    {
+      "place": "LevelToGentleDown"
+    },
+    {
+      "place": "GentleToSteepDown"
+    },
+    {
+      "place": "SteepToGentleDown"
+    },
+    {
+      "place": "GentleDownToLevel"
+    },
+    {
+      "place": "EjectorHill16x96"
+    },
+    {
+      "place": "EjectorHill16x96"
+    },
+    {
+      "place": "ZeroGRollFastLeft"
+    },
+    {
+      "place": "ZeroGRollFastRight"
+    },
+    {
+      "place": "SpeedTurnLarge24Left"
+    },
+    {
+      "place": "EjectorHill12x80OuterLeft"
+    },
+    {
+      "place": "StallLeft"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "SpeedTurnLarge20Left"
+    },
+    {
+      "place": "FloaterHill12x96"
+    },
+    {
+      "place": "WaveTurnLeft"
+    },
+    {
+      "place": "FloaterHill12x80"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "TurnLargeRightStandalone"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "HalfTileStraight"
+    },
+    {
+      "place": "HalfTileStraight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "TurnSmallStandalone"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "TurnSmallStandalone"
+    },
+    {
+      "close": true
+    }
+  ]
+}

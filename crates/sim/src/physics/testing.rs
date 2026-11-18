@@ -5,6 +5,7 @@ use super::{CarReading, Circuit};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
 use crate::track::{ComfortableForceLimits, Piece};
+use std::collections::BTreeMap;
 
 // Report the requested ejector and floater bands in rider-frame vertical g.
 const EJECTOR_AIRTIME_MAX_VERTICAL_G: f64 = -1.0;
@@ -29,6 +30,23 @@ pub struct TestSample {
     pub inverted: bool,
     pub roll: f64,
     pub piece_index: usize,
+}
+
+/// Force peaks for one piece, with lateral and longitudinal values reported as magnitudes.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ForcePeakValues {
+    pub minimum_vertical_g: f64,
+    pub maximum_vertical_g: f64,
+    pub maximum_lateral_g: f64,
+    pub maximum_longitudinal_g: f64,
+}
+
+/// Per-piece peaks for the front car and the per-axis envelope across all cars.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PieceForcePeaks {
+    pub piece_index: usize,
+    pub front_car: Option<ForcePeakValues>,
+    pub worst_car: Option<ForcePeakValues>,
 }
 
 /// A completed or interrupted test run, including advisory ride ratings.
@@ -321,6 +339,38 @@ pub struct RideStatistics {
 }
 
 impl TestRun {
+    /// Returns observed force peaks grouped by circuit piece index.
+    ///
+    /// `front_car` uses the report's front-car samples. `worst_car` takes the
+    /// most extreme value for each axis across the per-car samples retained for
+    /// ratings, so its axes can come from different cars.
+    pub fn piece_force_peaks(&self) -> Vec<PieceForcePeaks> {
+        let front_car = force_peaks_by_piece(&self.samples);
+        let worst_car = force_peaks_by_piece(
+            self.rating_inputs
+                .iter()
+                .flat_map(|input| input.samples.iter()),
+        );
+        let mut combined = BTreeMap::new();
+        for (piece_index, peaks) in front_car {
+            combined.insert(piece_index, (Some(peaks), None));
+        }
+        for (piece_index, peaks) in worst_car {
+            combined
+                .entry(piece_index)
+                .and_modify(|(_, worst)| *worst = Some(peaks))
+                .or_insert((None, Some(peaks)));
+        }
+        combined
+            .into_iter()
+            .map(|(piece_index, (front_car, worst_car))| PieceForcePeaks {
+                piece_index,
+                front_car,
+                worst_car,
+            })
+            .collect()
+    }
+
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_tag(b"TestRun-v5");
         hash.write_len(self.samples.len());
@@ -643,6 +693,37 @@ impl TestRun {
             self.rating_notes.push(format!("The peak sideways force was {:.1} g. Sideways force exceeded the {:.1} g reporting threshold for {:.1} s total during this car's ride. More banking or wider turns can improve comfort.", statistics.max_lateral_g, STRONG_LATERAL_G_THRESHOLD, statistics.strong_lateral_g_seconds));
         }
         self.notes.extend(self.rating_notes.iter().cloned());
+    }
+}
+
+fn force_peaks_by_piece<'a>(
+    samples: impl IntoIterator<Item = &'a TestSample>,
+) -> BTreeMap<usize, ForcePeakValues> {
+    let mut peaks_by_piece = BTreeMap::new();
+    for sample in samples {
+        peaks_by_piece
+            .entry(sample.piece_index)
+            .and_modify(|peaks: &mut ForcePeakValues| peaks.include_sample(sample))
+            .or_insert_with(|| ForcePeakValues::from_sample(sample));
+    }
+    peaks_by_piece
+}
+
+impl ForcePeakValues {
+    fn from_sample(sample: &TestSample) -> Self {
+        Self {
+            minimum_vertical_g: sample.vertical_g,
+            maximum_vertical_g: sample.vertical_g,
+            maximum_lateral_g: sample.lateral_g.abs(),
+            maximum_longitudinal_g: sample.longitudinal_g.abs(),
+        }
+    }
+
+    fn include_sample(&mut self, sample: &TestSample) {
+        self.minimum_vertical_g = self.minimum_vertical_g.min(sample.vertical_g);
+        self.maximum_vertical_g = self.maximum_vertical_g.max(sample.vertical_g);
+        self.maximum_lateral_g = self.maximum_lateral_g.max(sample.lateral_g.abs());
+        self.maximum_longitudinal_g = self.maximum_longitudinal_g.max(sample.longitudinal_g.abs());
     }
 }
 
@@ -1646,6 +1727,121 @@ mod tests {
     use super::*;
     use crate::physics::{CarReading, GForces, PhysicsConfig, Term, Train, demo_circuit};
     use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
+
+    #[test]
+    fn piece_force_peaks_reports_front_car_and_per_axis_envelope_across_cars() {
+        let first_car = report_for_samples(vec![
+            sample_for_piece(0, 3.0, 0.2, -0.3),
+            sample_for_piece(1, -0.8, -0.1, 0.4),
+        ]);
+        let second_car = report_for_samples(vec![
+            sample_for_piece(0, 4.2, -0.7, 0.6),
+            sample_for_piece(1, -1.3, 0.5, -1.1),
+        ]);
+        let mut train_report = first_car.clone();
+        train_report.rating_inputs = vec![
+            first_car.rating_inputs[0].clone(),
+            second_car.rating_inputs[0].clone(),
+        ];
+
+        let peaks = train_report.piece_force_peaks();
+
+        assert_eq!(peaks.len(), 2);
+        assert_eq!(peaks[0].piece_index, 0);
+        assert_eq!(
+            peaks[0].front_car,
+            Some(ForcePeakValues {
+                minimum_vertical_g: 3.0,
+                maximum_vertical_g: 3.0,
+                maximum_lateral_g: 0.2,
+                maximum_longitudinal_g: 0.3,
+            })
+        );
+        assert_eq!(
+            peaks[0].worst_car,
+            Some(ForcePeakValues {
+                minimum_vertical_g: 3.0,
+                maximum_vertical_g: 4.2,
+                maximum_lateral_g: 0.7,
+                maximum_longitudinal_g: 0.6,
+            })
+        );
+        assert_eq!(peaks[1].piece_index, 1);
+        assert_eq!(
+            peaks[1].front_car,
+            Some(ForcePeakValues {
+                minimum_vertical_g: -0.8,
+                maximum_vertical_g: -0.8,
+                maximum_lateral_g: 0.1,
+                maximum_longitudinal_g: 0.4,
+            })
+        );
+        assert_eq!(
+            peaks[1].worst_car,
+            Some(ForcePeakValues {
+                minimum_vertical_g: -1.3,
+                maximum_vertical_g: -0.8,
+                maximum_lateral_g: 0.5,
+                maximum_longitudinal_g: 1.1,
+            })
+        );
+    }
+
+    fn report_for_samples(samples: Vec<TestSample>) -> TestRun {
+        let rating_input = RatingInput {
+            samples: samples.clone(),
+            pieces: Vec::new(),
+            proximity_events: Vec::new(),
+            theming: 0.0,
+            visited_ranges: Vec::new(),
+            circuit_length: 10.0,
+            completed: true,
+            force_limits: crate::track::ComfortableForceLimits {
+                minimum_vertical_g: -1.0,
+                maximum_vertical_g: 5.0,
+                maximum_lateral_g: 1.0,
+                maximum_longitudinal_g: 2.0,
+            },
+            force_bands: ForceBandDurations::default(),
+            statistics: RideStatistics::default(),
+            envelope: EnvelopeExceedance::default(),
+        };
+        TestRun {
+            samples,
+            proximity_events: Vec::new(),
+            excitement: 0.0,
+            intensity: 0.0,
+            nausea: 0.0,
+            breakdown: ScoreBreakdown::default(),
+            statistics: RideStatistics::default(),
+            notes: Vec::new(),
+            completed: true,
+            furthest_distance: 10.0,
+            visited_ranges: Vec::new(),
+            rating_inputs: vec![rating_input],
+            rating_notes: Vec::new(),
+        }
+    }
+
+    fn sample_for_piece(
+        piece_index: usize,
+        vertical_g: f64,
+        lateral_g: f64,
+        longitudinal_g: f64,
+    ) -> TestSample {
+        TestSample {
+            distance: piece_index as f64,
+            speed: 10.0,
+            vertical_g,
+            lateral_g,
+            longitudinal_g,
+            airtime: vertical_g < 0.0,
+            height_m: 0.0,
+            inverted: false,
+            roll: 0.0,
+            piece_index,
+        }
+    }
 
     #[test]
     fn force_advice_deduplicates_by_piece_and_axis_and_uses_correct_units() {

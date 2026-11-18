@@ -1,0 +1,199 @@
+{
+  "format": "heartline-ride",
+  "version": 1,
+  "name": "Briar Blitz",
+  "model": "wooden_twister",
+  "station": {
+    "x": 241,
+    "y": 249,
+    "z": 12,
+    "heading": "north"
+  },
+  "carsPerTrain": 12,
+  "trains": 1,
+  "steps": [
+    {
+      "chain": true
+    },
+    {
+      "place": "LevelToGentleUp"
+    },
+    {
+      "place": "GentleUp"
+    },
+    {
+      "place": "GentleUp"
+    },
+    {
+      "place": "TurnSmallStandalone"
+    },
+    {
+      "place": "GentleUpToLevel"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "chain": false
+    },
+    {
+      "place": "LevelToGentleDown"
+    },
+    {
+      "place": "BankLeft"
+    },
+    {
+      "place": "BankedTurnStandalone"
+    },
+    {
+      "place": "UnbankLeft"
+    },
+    {
+      "place": "GentleDownToLevel"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "TopHat"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "TightTwisterLeft"
+    },
+    {
+      "place": "TightTwisterRight"
+    },
+    {
+      "place": "TightTwisterLeft"
+    },
+    {
+      "place": "TightTwisterLeft"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "TurnLargeRightStandalone"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "TurnSmallStandalone"
+    },
+    {
+      "close": true
+    }
+  ]
+}

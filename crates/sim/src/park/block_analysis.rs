@@ -16,7 +16,8 @@ use crate::facilities::coaster_facility;
 use crate::physics::{BlockOperation, Circuit, PhysicsConfig};
 use crate::track::TrainConfiguration;
 use crate::track::blocks::{
-    BlockLayout, BlockManualSearch, BlockPlacementSearch, ThroughputEstimator, brake_runs,
+    BlockLayout, BlockManualSearch, BlockPlacementSearch, BlockSectionPlacement,
+    ThroughputEstimator, brake_runs,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,11 +25,13 @@ pub enum BlockCommandError {
     InvalidTrainCount,
     InvalidCarsPerTrain,
     CoasterOpen,
+    RecordedTrainCountExceedsCapacity,
     NoConstruction,
     CompleteCircuitRequired,
     MissingStationAccess,
     ClosedCircuitRequiredForPlacement,
     ClosedCircuitRequiredForEditing,
+    RecordedLayoutWhileOpen,
     NoAutomaticSearch,
     NoBlockLayout,
     IndexOutOfRange,
@@ -503,5 +506,38 @@ impl Park {
             }
             Err(reason) => Err(BlockCommandError::Validation(reason)),
         }
+    }
+
+    pub fn construction_install_block_layout(
+        &mut self,
+        sections: Vec<BlockSectionPlacement>,
+        capacity: usize,
+        capacity_search_complete: bool,
+        placement_search_complete: bool,
+    ) -> Result<(), BlockCommandError> {
+        if self.coaster_open {
+            return Err(BlockCommandError::RecordedLayoutWhileOpen);
+        }
+        let Some((circuit, train)) = self.construction_circuit_and_train() else {
+            return Err(BlockCommandError::ClosedCircuitRequiredForEditing);
+        };
+        let layout = BlockLayout::from_explicit_result(
+            &circuit,
+            &train,
+            block_physics_config(),
+            &sections,
+            capacity,
+            capacity_search_complete,
+            placement_search_complete,
+        )
+        .map_err(BlockCommandError::Validation)?;
+        let desired_train_count = self.desired_train_count;
+        if desired_train_count.is_some_and(|count| count > layout.capacity()) {
+            return Err(BlockCommandError::RecordedTrainCountExceedsCapacity);
+        }
+        self.clear_block_layout();
+        self.desired_train_count = desired_train_count;
+        self.install_block_layout(layout, true);
+        Ok(())
     }
 }

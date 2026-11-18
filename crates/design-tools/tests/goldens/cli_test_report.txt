@@ -1,0 +1,61 @@
+Ride: CLI report ride (hybrid)
+Scores: excitement 0.00, intensity 0.85, nausea 0.00
+Test: stopped after 56.4 m
+Score breakdown:
+  excitement:
+    airtime (+0.0, 0.0 s)
+    airtime moments (+0.0, 0.0)
+    positive forces (+0.0, 0.0 s)
+    lateral forces (+0.0, 0.0 s)
+    longitudinal forces (+0.0, 0.0 s)
+    excessive forces (-0.0, 0.0 s)
+    inversions (+0.0, -0.0)
+    top speed (+0.0, 0.0 m/s)
+    biggest drop (+0.0, 0.0 m)
+    pace (+0.0, 0.0 m/s)
+    launch (+0.0, 0.0 g)
+    variety (+0.0, 0.0)
+    whip (+0.0, 0.0)
+    roll rate (+0.0, 0.0 degrees/s)
+    ride time (+0.3, 20.5 s)
+    short ride (-0.0, 20.5 s)
+    proximity (+0.0, 0.0)
+    theming (+0.0, 0.0)
+    dead time (-0.5, 15.8 s at Standalone small left turn)
+    forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+    nausea (-0.0, 0.0)
+    minimum excitement (+0.2, 0.0)
+  intensity:
+    peak force (+0.8, 0.2 at Standalone small left turn)
+    sustained force (+0.0, 0.0 s)
+    excessive forces (+0.0, 0.0 s)
+    top speed (+0.0, 0.0 m/s)
+    biggest drop (+0.0, 0.0 m)
+    launch (+0.0, 0.0 g)
+    inversions (+0.0, 0.0)
+    forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+  nausea:
+    lateral forces (+0.0, 0.0 s)
+    inversions (+0.0, -0.0)
+    fast rolls (+0.0, 0.0 s)
+    reversals (+0.0, 0.0)
+    strong positive forces (+0.0, 0.0 s)
+    time inverted (+0.0, -0.0 s)
+    excessive forces (+0.0, 0.0 s)
+    forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Statistics:
+  length 138.0 m; duration 118.2 s; average speed 1.2 m/s; maximum speed 2.0 m/s
+  vertical 1.0/0.0 g; lateral 0.0 g; forward 0.0 g; braking 0.0 g
+  airtime 0.0 s ejector, 0.0 s floater, 0 moments; strong forces 0.0 s, longest 0.0 s; lateral 0.0 s
+  maximum height 10.0 m; biggest drop 0.0 m at 0.0 degrees; inversions 0; launches 0 at 0.0 m/s; drops 0
+# piece entry_m/s window_m/s margin_m/s est_v+/-_g front_v+/-_g worst_v+/-_g worst_lat_g worst_long_g ratings status notes
+  0 Station                          —             —        —           —     1.0/1.0     1.0/1.0       0.0        0.0  — 
+  1 TurnSmallStandalone            2.0             —        —     1.0/1.0     1.0/1.0     1.0/1.0       0.0        0.0 airtime:weak vertical:weak lateral:fine longitudinal:fine reachedEnd 
+  2 TurnSmallStandalone            1.2             —        —     1.0/1.0     1.0/1.0     1.0/1.0       0.0        0.0 airtime:weak vertical:weak lateral:fine longitudinal:fine stalled 
+  3 Straight                         —             —        —           —           —           —         —          —  stalled 
+  4 TurnSmallStandalone              —             —        —           —           —           —         —          —  stalled 
+  5 TurnSmallStandalone              —             —        —           —           —     1.0/1.0       0.0        0.0  stalled 
+Notes:
+- The train could not finish the circuit after travelling 56.4 m. Add a lift or launch, or shorten the circuit.
+- Ratings average all cars. The track ribbon and proximity events describe the front car; statistics and force advice report the most extreme values across cars.
+- Long slow stretches reduce excitement. Consider shortening them or adding elements.

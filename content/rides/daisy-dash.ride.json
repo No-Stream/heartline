@@ -1,0 +1,136 @@
+{
+  "format": "heartline-ride",
+  "version": 1,
+  "name": "Daisy Dash",
+  "model": "family_coaster",
+  "station": {
+    "x": 241,
+    "y": 249,
+    "z": 12,
+    "heading": "north"
+  },
+  "carsPerTrain": 10,
+  "trains": 1,
+  "steps": [
+    {
+      "chain": true
+    },
+    {
+      "place": "LevelToGentleUp"
+    },
+    {
+      "place": "TurnSmallStandalone"
+    },
+    {
+      "place": "GentleUpToLevel"
+    },
+    {
+      "chain": false
+    },
+    {
+      "place": "LevelToGentleDown"
+    },
+    {
+      "place": "OneTileGentleDown"
+    },
+    {
+      "place": "GentleDownToLevel"
+    },
+    {
+      "place": "FamilyHill4x40"
+    },
+    {
+      "place": "LevelToGentleDown"
+    },
+    {
+      "place": "OneTileGentleDown"
+    },
+    {
+      "place": "GentleDownToLevel"
+    },
+    {
+      "place": "SpeedTurnLarge20Left"
+    },
+    {
+      "place": "LevelToGentleUp"
+    },
+    {
+      "place": "OneTileGentleUp"
+    },
+    {
+      "place": "GentleUpToLevel"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "FamilyHill4x40"
+    },
+    {
+      "place": "FamilyHill4x40"
+    },
+    {
+      "place": "TerrainRise"
+    },
+    {
+      "place": "LevelToGentleDown"
+    },
+    {
+      "place": "GentleDownToLevel"
+    },
+    {
+      "place": "SpeedTurnLarge16Left"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "FamilyHill4x40"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "TerrainFall"
+    },
+    {
+      "place": "TerrainFall"
+    },
+    {
+      "place": "SpeedTurnLarge16Left"
+    },
+    {
+      "place": "TerrainRise"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "FamilyHill4x40"
+    },
+    {
+      "place": "TerrainFall"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "close": true
+    }
+  ]
+}

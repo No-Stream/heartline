@@ -9,29 +9,29 @@ use ts_rs::TS;
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionPieceWire {
-    id: &'static str,
-    label: &'static str,
-    group: &'static str,
-    heartlined: Option<bool>,
-    heading: &'static str,
-    slope: &'static str,
-    bank: &'static str,
-    refusal: String,
-    would_tunnel: bool,
-    hill_estimate: Option<ConstructionHillEstimateWire>,
+    pub id: &'static str,
+    pub label: &'static str,
+    pub group: &'static str,
+    pub heartlined: Option<bool>,
+    pub heading: &'static str,
+    pub slope: &'static str,
+    pub bank: &'static str,
+    pub refusal: String,
+    pub would_tunnel: bool,
+    pub hill_estimate: Option<ConstructionHillEstimateWire>,
 }
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionHillEstimateWire {
-    entry_speed: Option<f64>,
-    source: &'static str,
-    rated_speed: Option<ConstructionRatedSpeedWire>,
-    minimum_vertical_g: Option<f64>,
-    maximum_vertical_g: Option<f64>,
-    maximum_absolute_lateral_g: Option<f64>,
-    airtime_seconds: Option<f64>,
-    limits: ConstructionForceLimitsWire,
+    pub entry_speed: Option<f64>,
+    pub source: &'static str,
+    pub rated_speed: Option<ConstructionRatedSpeedWire>,
+    pub minimum_vertical_g: Option<f64>,
+    pub maximum_vertical_g: Option<f64>,
+    pub maximum_absolute_lateral_g: Option<f64>,
+    pub airtime_seconds: Option<f64>,
+    pub limits: ConstructionForceLimitsWire,
 }
 
 #[derive(Serialize, TS)]
@@ -55,13 +55,13 @@ pub struct ConstructionSpeedTurnWire {
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionElementWire {
-    id: String,
-    name: &'static str,
-    piece_id: &'static str,
-    heartlined: Option<bool>,
-    slope: &'static str,
-    kind: &'static str,
-    would_tunnel: bool,
+    pub id: String,
+    pub name: &'static str,
+    pub piece_id: &'static str,
+    pub heartlined: Option<bool>,
+    pub slope: &'static str,
+    pub kind: &'static str,
+    pub would_tunnel: bool,
 }
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -208,11 +208,11 @@ pub struct ConstructionColorsWire {
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionForceLimitsWire {
-    minimum_vertical_g: f64,
-    maximum_vertical_g: f64,
-    rating_bands: ConstructionForceRatingBandsWire,
-    maximum_lateral_g: f64,
-    maximum_longitudinal_g: f64,
+    pub minimum_vertical_g: f64,
+    pub maximum_vertical_g: f64,
+    pub rating_bands: ConstructionForceRatingBandsWire,
+    pub maximum_lateral_g: f64,
+    pub maximum_longitudinal_g: f64,
 }
 
 #[derive(Serialize, TS)]
@@ -221,66 +221,66 @@ pub struct ConstructionForceRatingBandWire {
     #[ts(
         type = "\"weak\" | \"good\" | \"great\" | \"fine\" | \"strong\" | \"too much\" | \"dangerous\""
     )]
-    rating: String,
-    up_to: Option<f64>,
-    inclusive: bool,
+    pub rating: String,
+    pub up_to: Option<f64>,
+    pub inclusive: bool,
 }
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionForceRatingBandsWire {
-    airtime: Vec<ConstructionForceRatingBandWire>,
-    vertical: Vec<ConstructionForceRatingBandWire>,
-    lateral: Vec<ConstructionForceRatingBandWire>,
-    longitudinal: Vec<ConstructionForceRatingBandWire>,
+    pub airtime: Vec<ConstructionForceRatingBandWire>,
+    pub vertical: Vec<ConstructionForceRatingBandWire>,
+    pub lateral: Vec<ConstructionForceRatingBandWire>,
+    pub longitudinal: Vec<ConstructionForceRatingBandWire>,
 }
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionLastPlacedForceWire {
-    maximum_speed: f64,
-    minimum_vertical_g: f64,
-    maximum_vertical_g: f64,
-    maximum_absolute_lateral_g: f64,
-    maximum_absolute_longitudinal_g: f64,
+    pub maximum_speed: f64,
+    pub minimum_vertical_g: f64,
+    pub maximum_vertical_g: f64,
+    pub maximum_absolute_lateral_g: f64,
+    pub maximum_absolute_longitudinal_g: f64,
 }
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionLaunchEstimateWire {
-    piece_index: usize,
-    maximum_speed: f64,
-    peak_longitudinal_g: Option<f64>,
+    pub piece_index: usize,
+    pub maximum_speed: f64,
+    pub peak_longitudinal_g: Option<f64>,
 }
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionForcePreviewWire {
-    samples: Vec<crate::reports::TestingSample>,
-    completed: bool,
-    status: &'static str,
-    last_placed: Option<ConstructionLastPlacedForceWire>,
-    launches: Vec<ConstructionLaunchEstimateWire>,
-    limits: ConstructionForceLimitsWire,
+    pub samples: Vec<crate::reports::TestingSample>,
+    pub completed: bool,
+    pub status: &'static str,
+    pub last_placed: Option<ConstructionLastPlacedForceWire>,
+    pub launches: Vec<ConstructionLaunchEstimateWire>,
+    pub limits: ConstructionForceLimitsWire,
 }
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionRatedSpeedWire {
-    minimum_entry: f64,
-    maximum_entry: f64,
+    pub minimum_entry: f64,
+    pub maximum_entry: f64,
 }
 
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionCandidateForcePreviewWire {
-    status: &'static str,
-    outer_bank: bool,
-    entry_speed: Option<f64>,
-    peaks: Option<ConstructionLastPlacedForceWire>,
-    samples: Vec<crate::reports::TestingSample>,
-    limits: ConstructionForceLimitsWire,
-    rated_speed: Option<ConstructionRatedSpeedWire>,
+    pub status: &'static str,
+    pub outer_bank: bool,
+    pub entry_speed: Option<f64>,
+    pub peaks: Option<ConstructionLastPlacedForceWire>,
+    pub samples: Vec<crate::reports::TestingSample>,
+    pub limits: ConstructionForceLimitsWire,
+    pub rated_speed: Option<ConstructionRatedSpeedWire>,
 }
 
 fn hill_feel_wire(feel: HillFeel) -> &'static str {
@@ -537,20 +537,34 @@ impl WasmSimulation {
     }
 
     pub fn construction_set_launch_intensity(&mut self, id: usize, target_speed: f64) -> bool {
-        self.construction_finish_invalidate();
-        let changed = self.construction.as_mut().is_some_and(|construction| {
-            construction.set_launch_intensity(id, target_speed).is_ok()
-        });
-        if changed {
-            self.construction_recorder = None;
-            self.construction_report = None;
-            self.construction_train = None;
-            self.construction_outcome = None;
-            self.construction_message.clear();
-        }
-        changed
+        self.construction_set_launch_intensity_result(id, target_speed)
+            .is_ok()
     }
+}
 
+impl WasmSimulation {
+    pub fn construction_set_launch_intensity_result(
+        &mut self,
+        id: usize,
+        target_speed: f64,
+    ) -> Result<(), String> {
+        self.construction_finish_invalidate();
+        self.construction
+            .as_mut()
+            .ok_or("Construction is inactive".to_owned())?
+            .set_launch_intensity(id, target_speed)
+            .map_err(construction_error)?;
+        self.construction_recorder = None;
+        self.construction_report = None;
+        self.construction_train = None;
+        self.construction_outcome = None;
+        self.construction_message.clear();
+        Ok(())
+    }
+}
+
+#[wasm_bindgen]
+impl WasmSimulation {
     /// The coaster's track, supports and train colours, or null without a coaster.
     pub fn construction_colors(&self) -> String {
         colors_json(
@@ -571,11 +585,16 @@ impl WasmSimulation {
 
     /// Estimates speed and rider forces over the pieces already placed in construction.
     pub fn construction_force_preview_json(&self) -> String {
-        let Some(construction) = self.construction.as_ref() else {
-            return "null".into();
-        };
+        serde_json::to_string(&self.construction_force_preview())
+            .expect("construction force preview serializes")
+    }
+}
+
+impl WasmSimulation {
+    pub fn construction_force_preview(&self) -> Option<ConstructionForcePreviewWire> {
+        let construction = self.construction.as_ref()?;
         let pieces = construction.pieces();
-        let Some(preview) = preview_open_track(
+        let preview = preview_open_track(
             pieces,
             &construction.model().train,
             PhysicsConfig {
@@ -583,9 +602,7 @@ impl WasmSimulation {
                 ..PhysicsConfig::default()
             },
             construction.model().name,
-        ) else {
-            return "null".into();
-        };
+        )?;
         let samples: Vec<_> = preview
             .report
             .samples
@@ -645,7 +662,7 @@ impl WasmSimulation {
             PreviewStatus::Stalled => "stalled",
             PreviewStatus::TimedOut => "timedOut",
         };
-        serde_json::to_string(&ConstructionForcePreviewWire {
+        Some(ConstructionForcePreviewWire {
             samples,
             completed: preview.report.completed,
             status,
@@ -656,22 +673,29 @@ impl WasmSimulation {
                 construction.model().name,
             ),
         })
-        .expect("construction force preview serializes")
     }
+}
 
+#[wasm_bindgen]
+impl WasmSimulation {
     /// Estimates the selected candidate using the placed track and the same train physics.
     pub fn construction_candidate_force_preview_json(&self) -> String {
-        let Some(construction) = self.construction.as_ref() else {
-            return "null".into();
-        };
+        serde_json::to_string(&self.construction_candidate_force_preview())
+            .expect("candidate force preview serializes")
+    }
+}
+
+impl WasmSimulation {
+    pub fn construction_candidate_force_preview(
+        &self,
+    ) -> Option<ConstructionCandidateForcePreviewWire> {
+        let construction = self.construction.as_ref()?;
         // Undoing the station leaves an empty construction: there is no train to estimate from.
         if construction.pieces().is_empty() {
-            return "null".into();
+            return None;
         }
         let candidate = self.construction_preview();
-        let Some(first) = candidate.first() else {
-            return "null".into();
-        };
+        let first = candidate.first()?;
         let outer_bank = first.family.is_some_and(|family| {
             matches!(
                 family,
@@ -727,7 +751,7 @@ impl WasmSimulation {
             PreviewStatus::Stalled => "stalled",
             PreviewStatus::TimedOut => "timedOut",
         };
-        serde_json::to_string(&ConstructionCandidateForcePreviewWire {
+        Some(ConstructionCandidateForcePreviewWire {
             status,
             outer_bank,
             entry_speed,
@@ -744,9 +768,11 @@ impl WasmSimulation {
             ),
             rated_speed,
         })
-        .expect("candidate force preview serializes")
     }
+}
 
+#[wasm_bindgen]
+impl WasmSimulation {
     /// Repaints the coaster. Names outside the palette leave it unchanged and explain why in the construction message.
     pub fn construction_set_colors(&mut self, track: &str, supports: &str, trains: &str) {
         let Some(colors) = CoasterColors::from_names(track, supports, trains) else {
@@ -909,6 +935,17 @@ impl WasmSimulation {
         entry_speed: Option<f64>,
         status: &str,
     ) -> String {
+        serde_json::to_string(&self.construction_choices_preview(entry_speed, status))
+            .expect("construction choices serialize")
+    }
+}
+
+impl WasmSimulation {
+    pub fn construction_choices_preview(
+        &self,
+        entry_speed: Option<f64>,
+        status: &str,
+    ) -> Vec<ConstructionPieceWire> {
         let obstacles = self.facility_obstacles();
         let choices: Vec<_> = self
             .construction
@@ -979,10 +1016,20 @@ impl WasmSimulation {
                     .collect()
             })
             .unwrap_or_default();
-        serde_json::to_string(&choices).expect("construction choices serialize")
+        choices
     }
+}
 
+#[wasm_bindgen]
+impl WasmSimulation {
     pub fn construction_elements(&self) -> String {
+        serde_json::to_string(&self.construction_elements_typed())
+            .expect("construction elements serialize")
+    }
+}
+
+impl WasmSimulation {
+    pub fn construction_elements_typed(&self) -> Vec<ConstructionElementWire> {
         let obstacles = self.facility_obstacles();
         let elements: Vec<_> = self
             .construction
@@ -1006,9 +1053,12 @@ impl WasmSimulation {
                     .collect()
             })
             .unwrap_or_default();
-        serde_json::to_string(&elements).expect("construction elements serialize")
+        elements
     }
+}
 
+#[wasm_bindgen]
+impl WasmSimulation {
     pub fn construction_track(&self) -> String {
         let track: Vec<_> = self
             .construction
@@ -1160,9 +1210,26 @@ impl WasmSimulation {
     }
 
     pub fn construction_set_train_count(&mut self, count: usize) -> bool {
-        self.park.construction_set_train_count(count).is_ok()
+        self.construction_set_train_count_result(count).is_ok()
     }
+}
 
+impl WasmSimulation {
+    pub fn construction_set_train_count_result(&mut self, count: usize) -> Result<(), String> {
+        self.park
+            .construction_set_train_count(count)
+            .map_err(|error| match error {
+                theme_park_sim::park::block_analysis::BlockCommandError::InvalidTrainCount => {
+                    "Train count must be positive and within the available block capacity."
+                        .to_owned()
+                }
+                error => crate::command_errors::block_error_message(error).to_owned(),
+            })
+    }
+}
+
+#[wasm_bindgen]
+impl WasmSimulation {
     pub fn construction_min_cars_per_train(&self) -> u8 {
         self.construction.as_ref().map_or(0, |construction| {
             *construction.model().cars_per_train.start()

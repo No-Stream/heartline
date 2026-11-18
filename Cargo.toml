@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/sim", "crates/sim-wasm"]
+members = ["crates/sim", "crates/sim-wasm", "crates/design-tools"]
 resolver = "2"
 
 [workspace.package]
@@ -19,4 +19,3 @@ debug = false
 
 [profile.test.package.theme-park-sim]
 opt-level = 2
-
