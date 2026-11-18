@@ -1,6 +1,7 @@
 use std::fmt::{self, Debug, Display, Formatter};
 
 use serde::{Deserialize, Serialize};
+use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::coaster_models;
 use theme_park_sim::track::ride_file::{RideFile, RideFileFormat, RideHeading, RideStep};
 
@@ -15,17 +16,15 @@ pub struct BuilderSession {
     simulation: WasmSimulation,
     end_speed_cache: Option<f64>,
     placed_piece_bridge_ids: Vec<Vec<usize>>,
-    auto_block_advance_counts: Vec<usize>,
 }
 
-const BUILDER_SESSION_SNAPSHOT_HEADER: &[u8] = b"TPBUILDER\x01";
+const BUILDER_SESSION_SNAPSHOT_HEADER: &[u8] = b"TPBUILDER\x02";
 
 #[derive(Serialize, Deserialize)]
 struct BuilderSessionSnapshot {
     simulation: Vec<u8>,
     end_speed_cache: Option<f64>,
     placed_piece_bridge_ids: Vec<Vec<usize>>,
-    auto_block_advance_counts: Vec<usize>,
 }
 
 pub struct BuilderEstimates {
@@ -90,7 +89,6 @@ impl BuilderSession {
             simulation,
             end_speed_cache: None,
             placed_piece_bridge_ids: Vec::new(),
-            auto_block_advance_counts: Vec::new(),
         }
     }
 
@@ -102,16 +100,11 @@ impl BuilderSession {
         &self.placed_piece_bridge_ids
     }
 
-    pub fn auto_block_advance_counts(&self) -> &[usize] {
-        &self.auto_block_advance_counts
-    }
-
     pub fn save_native_snapshot(&self) -> Result<Vec<u8>, String> {
         let snapshot = BuilderSessionSnapshot {
             simulation: self.simulation.save_state_native()?,
             end_speed_cache: self.end_speed_cache,
             placed_piece_bridge_ids: self.placed_piece_bridge_ids.clone(),
-            auto_block_advance_counts: self.auto_block_advance_counts.clone(),
         };
         let payload = postcard::to_allocvec(&snapshot)
             .map_err(|error| format!("Could not save builder session: {error}"))?;
@@ -146,7 +139,6 @@ impl BuilderSession {
             simulation: WasmSimulation::load_state_native(&snapshot.simulation)?,
             end_speed_cache: snapshot.end_speed_cache,
             placed_piece_bridge_ids: snapshot.placed_piece_bridge_ids,
-            auto_block_advance_counts: snapshot.auto_block_advance_counts,
         })
     }
 
@@ -421,32 +413,90 @@ impl BuilderSession {
             .map_err(|error| self.bridge_error("read ride test report", error.to_string()))
     }
 
-    pub fn auto_blocks(&mut self) -> Result<serde_json::Value, BuilderSessionError> {
-        self.auto_blocks_with_advance_count()
-            .map(|(report, _)| report)
-    }
-
-    pub fn auto_blocks_with_advance_count(
+    pub fn auto_blocks_with_budget(
         &mut self,
+        work_budget: u32,
     ) -> Result<(serde_json::Value, usize), BuilderSessionError> {
+        if work_budget == 0 {
+            return Err(BuilderSessionError::InvalidRide(
+                "automatic block work budget must be positive".into(),
+            ));
+        }
         if !self.simulation.construction_auto_blocks() {
             return Err(self.bridge_refusal("place automatic block sections"));
         }
-        let mut advance_count = 0;
-        loop {
-            advance_count += 1;
-            if self.simulation.construction_advance_block_analysis(1000) {
-                break;
-            }
+        let initial_work = self.block_report_value()?["placementWorkCompleted"]
+            .as_u64()
+            .ok_or_else(|| {
+                self.bridge_error(
+                    "read block report",
+                    "placement work count is missing".into(),
+                )
+            })?;
+        let mut remaining_budget = work_budget;
+        while remaining_budget > 0 {
+            let current_budget = remaining_budget.min(1_000);
+            let complete = self
+                .simulation
+                .construction_advance_block_analysis(current_budget);
+            remaining_budget -= current_budget;
             let message = self.simulation.construction_message();
             if !message.is_empty() {
                 return Err(self.bridge_error("analyse block sections", message));
             }
+            if complete {
+                break;
+            }
         }
-        let report = serde_json::from_str(&self.simulation.construction_block_report_json())
-            .map_err(|error| self.bridge_error("read block report", error.to_string()))?;
-        self.auto_block_advance_counts.push(advance_count);
-        Ok((report, advance_count))
+        let searching_report = self.block_report_value()?;
+        let work_completed = searching_report["placementWorkCompleted"]
+            .as_u64()
+            .ok_or_else(|| {
+                self.bridge_error(
+                    "read block report",
+                    "placement work count is missing".into(),
+                )
+            })?
+            .saturating_sub(initial_work) as usize;
+        if work_completed > work_budget as usize {
+            return Err(self.bridge_error(
+                "analyse block sections",
+                format!("block search used {work_completed} work units for budget {work_budget}"),
+            ));
+        }
+        let search_status = self.block_report_value()?;
+        if search_status["placementStatus"] == "searching"
+            && !self.simulation.construction_apply_best_block_sections()
+        {
+            return Err(self.bridge_refusal("install current best block sections"));
+        }
+        Ok((self.block_report_value()?, work_completed))
+    }
+
+    pub fn install_block_sections(
+        &mut self,
+        block_sections: &[BlockSectionPlacement],
+        train_capacity: usize,
+        capacity_search_complete: bool,
+        placement_search_complete: bool,
+    ) -> Result<serde_json::Value, BuilderSessionError> {
+        let block_sections_json = serde_json::to_string(block_sections).map_err(|error| {
+            self.bridge_error("serialize recorded block layout", error.to_string())
+        })?;
+        if !self.simulation.construction_install_block_layout(
+            &block_sections_json,
+            train_capacity,
+            capacity_search_complete,
+            placement_search_complete,
+        ) {
+            return Err(self.bridge_refusal("install recorded block layout"));
+        }
+        self.block_report_value()
+    }
+
+    fn block_report_value(&self) -> Result<serde_json::Value, BuilderSessionError> {
+        serde_json::from_str(&self.simulation.construction_block_report_json())
+            .map_err(|error| self.bridge_error("read block report", error.to_string()))
     }
 
     pub fn replay_ride(
@@ -471,7 +521,6 @@ impl BuilderSession {
             )));
         }
         self.placed_piece_bridge_ids.clear();
-        self.auto_block_advance_counts.clear();
         let heading = match ride.station.heading {
             RideHeading::East => 0,
             RideHeading::North => 1,
@@ -528,15 +577,14 @@ impl BuilderSession {
                     self.close_track()
                         .map_err(|error| invalid_ride_step(step_index, error))?;
                 }
-                RideStep::AutoBlocks(blocks) => {
-                    if !blocks.auto_blocks {
-                        return Err(BuilderSessionError::RideStep {
-                            step_index,
-                            message: "autoBlocks must be true".into(),
-                        });
-                    }
-                    self.auto_blocks()
-                        .map_err(|error| invalid_ride_step(step_index, error))?;
+                RideStep::BlockSections(blocks) => {
+                    self.install_block_sections(
+                        &blocks.block_sections,
+                        blocks.train_capacity,
+                        blocks.capacity_search_complete,
+                        blocks.placement_search_complete,
+                    )
+                    .map_err(|error| invalid_ride_step(step_index, error))?;
                 }
             }
         }
@@ -637,8 +685,10 @@ mod tests {
 
     use super::BuilderSession;
     use crate::WasmSimulation;
+    use theme_park_sim::track::blocks::BlockSectionPlacement;
     use theme_park_sim::track::ride_file::{
-        RideCloseStep, RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideStation, RideStep,
+        RideBlockSectionsStep, RideCloseStep, RideFile, RideFileFormat, RideHeading, RidePlaceStep,
+        RideStation, RideStep,
     };
 
     const CIRCUITS: &str = include_str!("../../../web/e2e/player/circuits.txt");
@@ -864,9 +914,15 @@ mod tests {
                     assert!(close.close);
                     session.close().unwrap();
                 }
-                RideStep::AutoBlocks(blocks) => {
-                    assert!(blocks.auto_blocks);
-                    session.auto_blocks().unwrap();
+                RideStep::BlockSections(blocks) => {
+                    session
+                        .install_block_sections(
+                            &blocks.block_sections,
+                            blocks.train_capacity,
+                            blocks.capacity_search_complete,
+                            blocks.placement_search_complete,
+                        )
+                        .unwrap();
                 }
             }
         }
@@ -888,17 +944,131 @@ mod tests {
     }
 
     #[test]
-    fn replay_rejects_a_false_auto_blocks_step_with_its_index() {
-        let ride = ride_file(
-            "hybrid",
-            vec![RideStep::AutoBlocks(
-                theme_park_sim::track::ride_file::RideAutoBlocksStep { auto_blocks: false },
-            )],
+    fn explicit_block_sections_replay_the_same_layout_and_state_hash() {
+        const BLOCK_RIDE: &str = r#"{
+            "format": "heartline-ride",
+            "version": 1,
+            "name": "Explicit block replay test",
+            "model": "hybrid",
+            "station": { "x": 100, "y": 100, "z": 20, "heading": "east" },
+            "carsPerTrain": 4,
+            "trains": 1,
+            "steps": [
+                { "place": "Straight" },
+                { "place": "Straight" },
+                { "chain": true },
+                { "place": "Straight" },
+                { "chain": false },
+                { "place": "Straight" },
+                { "place": "Straight" },
+                { "place": "TurnLargeEntry" },
+                { "place": "TurnLargeExit" },
+                { "place": "Straight" },
+                { "place": "Straight" },
+                { "chain": true },
+                { "place": "Straight" },
+                { "chain": false },
+                { "place": "Straight" },
+                { "place": "Straight" },
+                { "place": "Straight" },
+                { "place": "TurnLargeEntry" },
+                { "place": "TurnLargeExit" },
+                { "close": true }
+            ]
+        }"#;
+        const SEARCH_WORK_BUDGET: u32 = 1_000;
+
+        let base_ride: RideFile = serde_json::from_str(BLOCK_RIDE).unwrap();
+        let mut block_search = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        block_search.replay_ride(&base_ride).unwrap();
+        let (search_report, work_completed) = block_search
+            .auto_blocks_with_budget(SEARCH_WORK_BUDGET)
+            .unwrap();
+        assert!(work_completed <= SEARCH_WORK_BUDGET as usize);
+
+        let sections = search_report["sections"]
+            .as_array()
+            .expect("block report sections are an array");
+        let block_sections: Vec<BlockSectionPlacement> = sections
+            .iter()
+            .filter(|section| section["editable"] == true)
+            .map(|section| {
+                let brake_piece_indices = section["brakePieceIndices"]
+                    .as_array()
+                    .expect("editable block section has brake piece indices")
+                    .iter()
+                    .map(|piece_index| {
+                        piece_index
+                            .as_u64()
+                            .expect("brake piece index is nonnegative")
+                            as usize
+                    })
+                    .collect();
+                BlockSectionPlacement {
+                    boundary_metres: section["boundaryMetres"]
+                        .as_f64()
+                        .expect("editable block section has a boundary"),
+                    brake_start_metres: section["brakeStartMetres"]
+                        .as_f64()
+                        .expect("editable block section has a brake start"),
+                    brake_piece_indices,
+                }
+            })
+            .collect();
+        let train_capacity = search_report["trainCapacity"]
+            .as_u64()
+            .expect("block report train capacity") as usize;
+        let capacity_search_complete = search_report["capacitySearchComplete"]
+            .as_bool()
+            .expect("block capacity completion status");
+        let placement_search_complete = search_report["placementSearchComplete"]
+            .as_bool()
+            .expect("block placement completion status");
+        block_search
+            .install_block_sections(
+                &block_sections,
+                train_capacity,
+                capacity_search_complete,
+                placement_search_complete,
+            )
+            .unwrap();
+        let mut explicit_ride = base_ride;
+        explicit_ride
+            .steps
+            .push(RideStep::BlockSections(RideBlockSectionsStep {
+                block_sections,
+                train_capacity,
+                capacity_search_complete,
+                placement_search_complete,
+            }));
+
+        let mut first_replay = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        let mut second_replay = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        first_replay.replay_ride(&explicit_ride).unwrap();
+        second_replay.replay_ride(&explicit_ride).unwrap();
+        let first_block_report: serde_json::Value =
+            serde_json::from_str(&first_replay.simulation().construction_block_report_json())
+                .unwrap();
+        let second_block_report: serde_json::Value =
+            serde_json::from_str(&second_replay.simulation().construction_block_report_json())
+                .unwrap();
+        let normalized_block_report: serde_json::Value =
+            serde_json::from_str(&block_search.simulation().construction_block_report_json())
+                .unwrap();
+
+        assert_eq!(first_replay.state_hash(), second_replay.state_hash());
+        assert_eq!(block_search.state_hash(), first_replay.state_hash());
+        assert_ne!(first_block_report["placementStatus"], "searching");
+        assert_ne!(first_block_report["placementStatus"], "validating");
+        assert_eq!(
+            first_block_report["sections"],
+            second_block_report["sections"]
         );
-        let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
-        let error = session.replay_ride(&ride).unwrap_err().to_string();
-        assert!(error.contains("ride step 1"), "{error}");
-        assert!(error.contains("autoBlocks must be true"), "{error}");
+        assert_eq!(
+            normalized_block_report["sections"],
+            first_block_report["sections"]
+        );
+        assert_eq!(first_block_report["sections"], search_report["sections"]);
     }
 
     #[test]
@@ -927,10 +1097,6 @@ mod tests {
             original.placed_piece_bridge_ids()
         );
         assert_eq!(
-            restored.auto_block_advance_counts(),
-            original.auto_block_advance_counts()
-        );
-        assert_eq!(
             restored.select("Loop", false).unwrap().selected_id,
             original.select("Loop", false).unwrap().selected_id
         );
@@ -949,7 +1115,7 @@ mod tests {
         assert_eq!(corruption_error, "Builder session snapshot is corrupt");
         let mut unsupported = snapshot;
         let version_index = super::BUILDER_SESSION_SNAPSHOT_HEADER.len() - 1;
-        unsupported[version_index] = 2;
+        unsupported[version_index] = 1;
         let version_error = match BuilderSession::load_native_snapshot(&unsupported) {
             Ok(_) => panic!("unsupported builder session snapshot loaded"),
             Err(error) => error,

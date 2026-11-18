@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use theme_park_sim::physics::{ForcePeakValues, TestRun};
+use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::ride_file::{
-    RideAutoBlocksStep, RideChainStep, RideCloseStep, RideFile, RideFileFormat, RideHeading,
+    RideBlockSectionsStep, RideChainStep, RideCloseStep, RideFile, RideFileFormat, RideHeading,
     RidePlaceStep, RideStation, RideStep,
 };
 use theme_park_sim::track::{CoasterModel, coaster_models};
@@ -89,6 +90,7 @@ const COMMAND_NAMES: &[&str] = &[
 
 const REPLAY_SNAPSHOT_MAGIC: &[u8] = b"TPRS";
 const REPLAY_SNAPSHOT_VERSION: u8 = 1;
+const AUTO_BLOCKS_WORK_BUDGET: u32 = 1_000;
 
 /// Runs the command line interface and returns exactly what the binary prints to standard output.
 pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
@@ -775,16 +777,83 @@ fn execute_command(
             Ok(reply_state(format!("Train count: {trains}\n"), state, true))
         }
         RideCommand::AutoBlocks => {
-            let block_report = session.auto_blocks().map_err(|error| error.to_string())?;
-            ride.steps.push(RideStep::AutoBlocks(RideAutoBlocksStep {
-                auto_blocks: true,
-            }));
+            let (search_report, search_work_completed) = session
+                .auto_blocks_with_budget(AUTO_BLOCKS_WORK_BUDGET)
+                .map_err(|error| error.to_string())?;
+            let block_sections: Vec<_> = search_report["sections"]
+                .as_array()
+                .ok_or_else(|| "block report has no section list".to_owned())?
+                .iter()
+                .filter(|section| section["editable"].as_bool() == Some(true))
+                .map(|section| -> Result<BlockSectionPlacement, String> {
+                    let boundary_metres = section["boundaryMetres"]
+                        .as_f64()
+                        .ok_or_else(|| "block report section has no boundary".to_owned())?;
+                    let brake_start_metres = section["brakeStartMetres"]
+                        .as_f64()
+                        .ok_or_else(|| "editable block section has no brake start".to_owned())?;
+                    let brake_piece_indices = section["brakePieceIndices"]
+                        .as_array()
+                        .ok_or_else(|| {
+                            "editable block section has no brake piece indices".to_owned()
+                        })?
+                        .iter()
+                        .map(|index| {
+                            usize::try_from(index.as_u64().ok_or_else(|| {
+                                "editable block section has an invalid brake piece index".to_owned()
+                            })?)
+                            .map_err(|error| format!("brake piece index is out of range: {error}"))
+                        })
+                        .collect::<Result<_, _>>()?;
+                    Ok(BlockSectionPlacement {
+                        boundary_metres,
+                        brake_start_metres,
+                        brake_piece_indices,
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            let train_capacity = usize::try_from(
+                search_report["trainCapacity"]
+                    .as_u64()
+                    .ok_or_else(|| "block report has no train capacity".to_owned())?,
+            )
+            .map_err(|error| format!("block report train capacity is out of range: {error}"))?;
+            let capacity_search_complete = search_report["capacitySearchComplete"]
+                .as_bool()
+                .ok_or_else(|| "block report has no capacity search status".to_owned())?;
+            let placement_search_complete = search_report["placementSearchComplete"]
+                .as_bool()
+                .ok_or_else(|| "block report has no placement search status".to_owned())?;
+            let block_report = session
+                .install_block_sections(
+                    &block_sections,
+                    train_capacity,
+                    capacity_search_complete,
+                    placement_search_complete,
+                )
+                .map_err(|error| error.to_string())?;
+            ride.steps
+                .push(RideStep::BlockSections(RideBlockSectionsStep {
+                    block_sections: block_sections.clone(),
+                    train_capacity,
+                    capacity_search_complete,
+                    placement_search_complete,
+                }));
+            let result = json!({
+                "blockSections": block_sections,
+                "trainCapacity": train_capacity,
+                "capacitySearchComplete": capacity_search_complete,
+                "placementSearchComplete": placement_search_complete,
+                "searchWorkBudget": AUTO_BLOCKS_WORK_BUDGET,
+                "searchWorkCompleted": search_work_completed,
+                "blockReport": block_report,
+            });
             Ok(CommandReply {
                 text: format!(
-                    "Automatic block report:\n{}\n",
-                    serde_json::to_string_pretty(&block_report).unwrap()
+                    "Automatic block report (budget: {AUTO_BLOCKS_WORK_BUDGET} work steps; used: {search_work_completed}):\n{}\n",
+                    serde_json::to_string_pretty(&result).unwrap()
                 ),
-                json: block_report,
+                json: result,
                 changed_ride: true,
             })
         }
@@ -1521,15 +1590,14 @@ fn replay_with_estimates(
                     .close()
                     .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
             }
-            RideStep::AutoBlocks(blocks) => {
-                if !blocks.auto_blocks {
-                    return Err(format!(
-                        "ride step {}: autoBlocks must be true",
-                        step_index + 1
-                    ));
-                }
+            RideStep::BlockSections(blocks) => {
                 session
-                    .auto_blocks()
+                    .install_block_sections(
+                        &blocks.block_sections,
+                        blocks.train_capacity,
+                        blocks.capacity_search_complete,
+                        blocks.placement_search_complete,
+                    )
                     .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
             }
         }
@@ -1901,21 +1969,10 @@ fn export_session(ride: &RideFile, session: &BuilderSession) -> Result<Value, St
         .iter()
         .filter(|step| matches!(step, RideStep::Place(_)))
         .count();
-    let expected_auto_blocks_count = ride
-        .steps
-        .iter()
-        .filter(|step| matches!(step, RideStep::AutoBlocks(_)))
-        .count();
     if session.placed_piece_bridge_ids().len() != expected_placement_count {
         return Err(format!(
             "ride replay recorded {} placement groups for {expected_placement_count} place steps",
             session.placed_piece_bridge_ids().len()
-        ));
-    }
-    if session.auto_block_advance_counts().len() != expected_auto_blocks_count {
-        return Err(format!(
-            "ride replay recorded {} automatic block analyses for {expected_auto_blocks_count} autoBlocks steps",
-            session.auto_block_advance_counts().len()
         ));
     }
     let mut commands = vec![
@@ -1924,7 +1981,6 @@ fn export_session(ride: &RideFile, session: &BuilderSession) -> Result<Value, St
         json!({"tick": 0, "command": {"type": "construction-set-cars-per-train", "cars": ride.cars_per_train}}),
     ];
     let mut placement_index = 0;
-    let mut auto_blocks_index = 0;
     for (step_offset, step) in ride.steps.iter().enumerate() {
         let step_index = step_offset + 1;
         match step {
@@ -1948,16 +2004,14 @@ fn export_session(ride: &RideFile, session: &BuilderSession) -> Result<Value, St
                 commands.push(json!({"tick": 0, "command": {"type": "construction-close"}}));
             }
             RideStep::Close(_) => return Err("ride file close step must be true".into()),
-            RideStep::AutoBlocks(blocks) => {
-                if !blocks.auto_blocks {
-                    return Err(format!("ride step {step_index}: autoBlocks must be true"));
-                }
-                let advance_count = session.auto_block_advance_counts()[auto_blocks_index];
-                auto_blocks_index += 1;
-                commands.push(json!({"tick": 0, "command": {"type": "construction-auto-blocks"}}));
-                commands.extend((0..advance_count).map(|_| {
-                    json!({"tick": 0, "command": {"type": "test-advance-block-analysis", "budget": 1000}})
-                }));
+            RideStep::BlockSections(blocks) => {
+                commands.push(json!({"tick": 0, "command": {
+                    "type": "construction-set-block-sections",
+                    "blockSections": blocks.block_sections,
+                    "trainCapacity": blocks.train_capacity,
+                    "capacitySearchComplete": blocks.capacity_search_complete,
+                    "placementSearchComplete": blocks.placement_search_complete,
+                }}));
             }
         }
     }

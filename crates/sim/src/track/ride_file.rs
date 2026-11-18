@@ -1,3 +1,4 @@
+use crate::track::blocks::BlockSectionPlacement;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,7 +46,7 @@ pub enum RideStep {
     Place(RidePlaceStep),
     Chain(RideChainStep),
     Close(RideCloseStep),
-    AutoBlocks(RideAutoBlocksStep),
+    BlockSections(RideBlockSectionsStep),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -70,10 +71,13 @@ pub struct RideCloseStep {
     pub close: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RideAutoBlocksStep {
-    pub auto_blocks: bool,
+pub struct RideBlockSectionsStep {
+    pub block_sections: Vec<BlockSectionPlacement>,
+    pub train_capacity: usize,
+    pub capacity_search_complete: bool,
+    pub placement_search_complete: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -96,6 +100,7 @@ pub struct RideExpect {
 #[cfg(test)]
 mod tests {
     use super::{RideFile, RideFileFormat, RideHeading, RideStep};
+    use serde_json::{Value, json};
 
     const VALID_RIDE: &str = r#"
     {
@@ -112,7 +117,16 @@ mod tests {
         { "place": "LaunchLong", "launchSpeed": 31.3 },
         { "place": "element:immelmann-left" },
         { "close": true },
-        { "autoBlocks": true }
+        {
+          "blockSections": [{
+            "boundaryMetres": 38.0,
+            "brakeStartMetres": 12.5,
+            "brakePieceIndices": [4, 5]
+          }],
+          "trainCapacity": 2,
+          "capacitySearchComplete": true,
+          "placementSearchComplete": false
+        }
       ],
       "expect": {
         "excitement": [6.0, 8.0],
@@ -133,12 +147,13 @@ mod tests {
         assert_eq!(ride.station.heading, RideHeading::North);
         assert!(matches!(ride.steps[0], RideStep::Chain(_)));
         assert!(matches!(ride.steps[1], RideStep::Place(_)));
-        assert!(matches!(ride.steps[5], RideStep::AutoBlocks(_)));
+        assert!(matches!(ride.steps[5], RideStep::BlockSections(_)));
         let serialized_ride = serde_json::to_string(&ride).unwrap();
         assert_eq!(
             serde_json::from_str::<RideFile>(&serialized_ride).unwrap(),
             ride
         );
+        assert!(serialized_ride.contains(r#""boundaryMetres":38.0"#));
     }
 
     #[test]
@@ -152,6 +167,10 @@ mod tests {
             VALID_RIDE.replace(
                 "\"place\": \"LevelToSteepUp\"",
                 "\"place\": \"LevelToSteepUp\", \"extra\": true",
+            ),
+            VALID_RIDE.replace(
+                "\"trainCapacity\": 2",
+                "\"trainCapacity\": 2, \"extra\": true",
             ),
             VALID_RIDE.replace("\"inversions\": 0", "\"inversions\": 0, \"extra\": true"),
         ] {
@@ -169,5 +188,12 @@ mod tests {
             serde_json::from_str::<RideFile>(&VALID_RIDE.replace("\"north\"", "\"northwest-ish\""))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn ride_file_rejects_search_based_auto_blocks_steps() {
+        let mut ride: Value = serde_json::from_str(VALID_RIDE).unwrap();
+        ride["steps"][5] = json!({"autoBlocks": true});
+        assert!(serde_json::from_value::<RideFile>(ride).is_err());
     }
 }

@@ -28,6 +28,14 @@ pub struct BrakeRun {
     pub piece_indices: BrakePieces,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BlockSectionPlacement {
+    pub boundary_metres: f64,
+    pub brake_start_metres: f64,
+    pub brake_piece_indices: Vec<usize>,
+}
+
 fn write_brake_run(hash: &mut StateHasher, run: &BrakeRun) {
     hash.write_f64(run.start_metres);
     hash.write_f64(run.boundary_metres);
@@ -1093,6 +1101,56 @@ impl BlockLayout {
         validate_train(circuit, train)?;
         let mut layout = Self::assemble_runs(circuit, train, config, Vec::new())?;
         layout.placement_search_complete = false;
+        Ok(layout)
+    }
+
+    pub fn from_explicit_result(
+        circuit: &Circuit,
+        train: &TrainConfiguration,
+        config: PhysicsConfig,
+        sections: &[BlockSectionPlacement],
+        capacity: usize,
+        capacity_search_complete: bool,
+        placement_search_complete: bool,
+    ) -> Result<Self, &'static str> {
+        if capacity == 0 {
+            return Err("recorded train capacity must be positive");
+        }
+        if sections.iter().any(|section| {
+            !section.boundary_metres.is_finite()
+                || !section.brake_start_metres.is_finite()
+                || section.brake_piece_indices.is_empty()
+        }) || sections
+            .windows(2)
+            .any(|pair| pair[0].boundary_metres >= pair[1].boundary_metres)
+        {
+            return Err("recorded block sections must have finite, unique, ordered runs");
+        }
+
+        let candidates = brake_runs(circuit, train.length_metres);
+        let mut runs = Vec::with_capacity(sections.len());
+        for section in sections {
+            let mut matching = candidates.iter().filter(|run| {
+                (run.boundary_metres - section.boundary_metres).abs() < 1e-7
+                    && (run.start_metres - section.brake_start_metres).abs() < 1e-7
+                    && run.piece_indices.as_ref() == section.brake_piece_indices
+            });
+            let run = matching
+                .next()
+                .ok_or("recorded block section does not match an eligible brake run")?;
+            if matching.next().is_some() {
+                return Err("recorded block section matches multiple eligible brake runs");
+            }
+            runs.push(run.clone());
+        }
+
+        let mut layout = Self::assemble_runs(circuit, train, config, runs)?;
+        if capacity > layout.capacity {
+            return Err("recorded train capacity exceeds the installed block capacity");
+        }
+        layout.capacity = capacity;
+        layout.capacity_search_complete = capacity_search_complete;
+        layout.placement_search_complete = placement_search_complete;
         Ok(layout)
     }
 

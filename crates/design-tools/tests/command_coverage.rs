@@ -371,7 +371,7 @@ fn undo_removes_a_multi_piece_element_as_one_ride_step() {
 }
 
 #[test]
-fn close_and_auto_blocks_accept_a_completed_open_ride() {
+fn auto_blocks_persists_the_best_layout_within_the_work_budget() {
     let ride = TempRide::new();
     fs::write(&ride.0, BLOCK_RIDE).unwrap();
 
@@ -379,20 +379,38 @@ fn close_and_auto_blocks_accept_a_completed_open_ride() {
         &[
             "ride".into(),
             ride.path().into(),
+            "--json".into(),
             "close".into(),
             "auto-blocks".into(),
-            "trains 2".into(),
         ],
         "",
     )
     .unwrap();
 
-    assert!(reply.contains("Circuit closed."), "{reply}");
-    assert!(reply.contains("Automatic block report:"), "{reply}");
+    let replies: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    assert_eq!(replies[1]["searchWorkBudget"], 1_000);
+    assert!(replies[1]["searchWorkCompleted"].as_u64().unwrap() <= 1_000);
     let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
     assert_eq!(saved["steps"].as_array().unwrap()[19]["close"], true);
-    assert_eq!(saved["steps"].as_array().unwrap()[20]["autoBlocks"], true);
-    assert_eq!(saved["trains"], 2);
+    assert!(saved["steps"].as_array().unwrap()[20]["blockSections"].is_array());
+    assert_eq!(
+        saved["steps"][20]["blockSections"],
+        replies[1]["blockSections"]
+    );
+    assert_eq!(
+        saved["steps"][20]["trainCapacity"],
+        replies[1]["trainCapacity"]
+    );
+    assert_eq!(
+        saved["steps"][20]["capacitySearchComplete"],
+        replies[1]["capacitySearchComplete"]
+    );
+    assert_eq!(
+        saved["steps"][20]["placementSearchComplete"],
+        replies[1]["placementSearchComplete"]
+    );
+    assert!(saved["steps"][20].get("autoBlocks").is_none());
+    assert_eq!(saved["trains"], 1);
     let fresh_ride = TempRide::new();
     fs::copy(&ride.0, &fresh_ride.0).unwrap();
     let replayed = run_cli(

@@ -38,7 +38,7 @@ wasm-bindgen:
 	@if ! "$(WASM_BINDGEN)" --version 2>/dev/null | grep -qxF "wasm-bindgen $(WASM_BINDGEN_VERSION)"; then $(CARGO) install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked --force; fi
 
 # The sprite atlas is generated from web/art/drawings/ and not committed.
-check: build
+check: build design-tools
 	$(CARGO) test -p theme-park-sim --lib -- world::tests guests::behavior::tests guests::path_food_rebuild_tests physics::tests track::construction::tests track::construction::flexibility_tests track::construction::walk_tests facilities::tests --skip block_operation_keeps_trains_separate_and_completes_runs
 	npm test
 	npm run test:art
@@ -56,7 +56,7 @@ test-threads:
 test-flexibility:
 	FLEXIBILITY_WALKS=256 $(CARGO) test --release -p theme-park-sim --lib track::construction::walk_tests::seeded_
 
-test-web: art
+test-web: art design-tools
 	npm test
 	npm run test:art
 
@@ -71,6 +71,9 @@ serve:
 
 e2e: build
 	npm run e2e
+
+e2e-design-session: build design-tools
+	npm run e2e -- --grep 'replays a design tool explicit block layout through the real worker'
 
 e2e-feature: build
 	npm run e2e -- --project=feature

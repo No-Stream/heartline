@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { build, preview, type PreviewServer } from "vite";
+import type { WorkerRecording } from "../src/session-recording";
 import {
   firstCheckpointMismatch,
   parseReplaySession,
@@ -12,10 +13,7 @@ import {
 } from "../src/session-replay";
 
 interface ReplayWorkerOutcome {
-  readonly recording: {
-    readonly finalTick: number;
-    readonly checkpoints: { readonly tick: number; readonly hash: string }[];
-  };
+  readonly recording: WorkerRecording;
   readonly observation: Parameters<typeof replayExpectationFailures>[1];
 }
 
@@ -116,7 +114,7 @@ test("records and replays a non-default car count through the real worker @fast"
   expect(replayed.recording.commands).toEqual(original.recording.commands);
 });
 
-test("replays a design tool multi-train export through the real worker @fast", async ({ page }) => {
+test("replays a design tool explicit block layout through the real worker @fast", async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto(fixtureUrl);
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "design-tool-session-e2e-"));
@@ -124,30 +122,26 @@ test("replays a design tool multi-train export through the real worker @fast", a
   try {
     const ridePath = join(temporaryDirectory, "timber-tumbler.ride.json");
     const sessionPath = join(temporaryDirectory, "timber-tumbler.session.json");
-    const ride = JSON.parse(
-      await readFile(resolve("content/rides/timber-tumbler.ride.json"), "utf8"),
-    ) as { trains: number; steps: unknown[] };
-    ride.trains = 2;
-    ride.steps.push({ autoBlocks: true });
-    await writeFile(ridePath, JSON.stringify(ride));
-    execFileSync(resolve("tools/design"), ["ride", ridePath, "export", "--session", sessionPath], {
+    await writeFile(ridePath, await readFile(resolve("content/rides/timber-tumbler.ride.json"), "utf8"));
+    execFileSync(resolve("tools/design"), ["ride", ridePath, "auto-blocks", "export", "--session", sessionPath], {
       cwd: resolve("."),
       encoding: "utf8",
     });
 
     const session = parseReplaySession(JSON.parse(await readFile(sessionPath, "utf8")) as unknown);
-    const autoBlocksIndex = session.commands.findIndex(({ command }) => command.type === "construction-auto-blocks");
-    const trainCountIndex = session.commands.findIndex(({ command }) => command.type === "construction-set-train-count");
-    expect(autoBlocksIndex).toBeGreaterThan(-1);
-    expect(trainCountIndex).toBe(session.commands.length - 1);
-    expect(
-      session.commands
-        .slice(autoBlocksIndex + 1, trainCountIndex)
-        .some(({ command }) => command.type === "test-advance-block-analysis"),
-    ).toBe(true);
+    const blockSectionsCommand = session.commands.find(({ command }) => command.type === "construction-set-block-sections");
+    expect(blockSectionsCommand?.command).toMatchObject({
+      blockSections: expect.any(Array),
+      trainCapacity: expect.any(Number),
+      capacitySearchComplete: expect.any(Boolean),
+      placementSearchComplete: expect.any(Boolean),
+    });
+    expect(session.commands.some(({ command }) => command.type === "construction-auto-blocks")).toBe(false);
+    expect(session.commands.some(({ command }) => command.type === "test-advance-block-analysis")).toBe(false);
 
     const outcome = await replayWithWorker(page, session);
     expect(outcome.observation.constructionPieces).toBeGreaterThan(10);
+    expect(outcome.recording.commands).toContainEqual(blockSectionsCommand);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

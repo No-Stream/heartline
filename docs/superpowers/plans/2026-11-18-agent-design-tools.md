@@ -80,9 +80,7 @@ Decisions, with reasons:
 }
 ```
 
-A step is one of: `place` (an exact piece id or `element:<id>`, optional `launchSpeed`, optional `note`), `chain`, `close`. Speed-matched choices and finish-search results are stored as the exact pieces they resolved to, so a replay never depends on preselection or search behaviour (the same rule `circuits.txt` follows today). `expect` holds the acceptance targets of section 5c; unknown keys fail the parse. The piece ids in the example are illustrative; real files use catalog ids, and an unknown id fails with the list of ids the builder offers at that point.
-
-`{ "autoBlocks": true }` applies automatic blocks at that exact point in replay; this additive step preserves multi-train rides across CLI calls.
+A step is one of: `place` (an exact piece id or `element:<id>`, optional `launchSpeed`, optional `note`), `chain`, `close`, or `blockSections`. Each installed editable block records its boundary and brake start in metres and its brake piece indices; the step also records capacity and search completion metadata. For example: `{ "blockSections": [{ "boundaryMetres": 42.5, "brakeStartMetres": 30.0, "brakePieceIndices": [4, 5] }], "trainCapacity": 1, "capacitySearchComplete": true, "placementSearchComplete": true }`. Speed-matched choices, finish-search results, and block layouts are stored as the results they resolved to, so replay never runs a search. `expect` holds the acceptance targets of section 5c; unknown keys fail the parse. The piece ids and block values in the example are illustrative; real files use catalog ids, and an unknown id fails with the list of ids the builder offers at that point.
 
 ### 3b. Builder session (`crates/sim-wasm/src/builder_session.rs`)
 
@@ -292,7 +290,7 @@ Suggested models follow the routing rule: well-specified and checkable goes to C
 
 **2. Command-line tool and ride report (Terra, medium; cap 4 h).** `crates/design-tools`, `tools/design`, `make design-tools`; every command of section 3c; the per-piece peaks accessor in `crates/sim`; the report table; `export --save` and `export --session`; the five current circuits written as ride files (new files; a temporary test asserts each equals its `circuits.txt` section until work item 7 deletes the text file). Acceptance: golden-text tests pass; a 70-piece ride replays and answers `state` in under 4 s in release (write the measured time here); an exported save loads in a native `load_state` test and an exported session passes `parseReplaySession` in a Vitest. Gate: `cargo test -p theme-park-design-tools`, `npm test -- session-replay`.
 
-Measured under the shared budget on 70 half-tile straights: cold replay and snapshot write 4.13 s; a subsequent matching snapshot and `state` 0.17 s, with identical text. Cold replay remains above the 4 s target. The snapshot is keyed by the exact ride bytes and executable fingerprint and preserves builder replay metadata.
+Measured under the shared budget on 70 half-tile straights: cold replay and snapshot write 4.29 s; a subsequent matching snapshot and `state` 0.17 s, with identical text. Cold replay remains above the 4 s target. The snapshot is keyed by the exact ride bytes and executable fingerprint and preserves builder replay metadata.
 
 **3. Native agreement table (Terra, medium; cap 3 h).** `agreement.rs`, the `agreement` command, the synthetic tests. Run it on the five rides and write the full table into TASK-146 and section 9. Acceptance: the unit tests pass; the table exists for all five rides with every disagreement attributed to check 2 or check 3; `tools/design check` on all five takes a measured time written here. The check is not a gate yet: `check` reports agreement failures but exits zero on them until work item 6, and says so in its output. No test is ignored or disabled.
 

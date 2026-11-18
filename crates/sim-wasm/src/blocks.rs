@@ -53,6 +53,36 @@ impl WasmSimulation {
         self.record_block_result(result)
     }
 
+    pub fn construction_install_block_layout(
+        &mut self,
+        sections_json: &str,
+        capacity: usize,
+        capacity_search_complete: bool,
+        placement_search_complete: bool,
+    ) -> bool {
+        let sections = match serde_json::from_str::<
+            Vec<theme_park_sim::track::blocks::BlockSectionPlacement>,
+        >(sections_json)
+        {
+            Ok(sections) => sections,
+            Err(_) => {
+                self.record_block_error(
+                    theme_park_sim::park::block_analysis::BlockCommandError::Validation(
+                        "Recorded block section metadata is invalid.",
+                    ),
+                );
+                return false;
+            }
+        };
+        let result = self.park.construction_install_block_layout(
+            sections,
+            capacity,
+            capacity_search_complete,
+            placement_search_complete,
+        );
+        self.record_block_result(result)
+    }
+
     pub fn construction_block_report_json(&self) -> String {
         let Some(layout) = &self.block_layout else {
             return serde_json::to_string(&crate::reports::BlockReport {
@@ -193,6 +223,11 @@ impl WasmSimulation {
                 self.block_manual_search
                     .as_ref()
                     .map(BlockManualSearch::work_completed)
+            })
+            .or_else(|| {
+                self.block_placement_cache
+                    .as_ref()
+                    .map(BlockPlacementSearch::work_completed)
             })
             .unwrap_or(0);
         let best_capacity = self

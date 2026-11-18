@@ -67,26 +67,29 @@ fn ride_fixtures_preserve_the_circuit_text_sequences() {
         ));
 
         let source_commands = circuit_commands(fixture.name);
+        let track_steps: Vec<_> = ride
+            .steps
+            .iter()
+            .filter(|step| !matches!(step, RideStep::BlockSections(_)))
+            .collect();
         assert_eq!(
-            ride.steps.len(),
+            track_steps.len(),
             source_commands.len() + 1,
             "{}",
             fixture.name
         );
-        for (step, source_command) in ride.steps.iter().zip(source_commands) {
+        for (step, source_command) in track_steps.iter().zip(source_commands) {
             let ride_command = match step {
                 RideStep::Place(place) => place.place.as_str().to_owned(),
                 RideStep::Chain(chain) => if chain.chain { "+chain" } else { "-chain" }.to_owned(),
                 RideStep::Close(_) => panic!("{} closes before its final step", fixture.name),
-                RideStep::AutoBlocks(_) => {
-                    panic!("{} has unexpected automatic blocks", fixture.name)
-                }
+                RideStep::BlockSections(_) => panic!("{} filtered block sections", fixture.name),
             };
             assert_eq!(ride_command, source_command, "{}", fixture.name);
         }
         assert!(
             matches!(
-                ride.steps.last(),
+                track_steps.last(),
                 Some(RideStep::Close(close)) if close.close
             ),
             "{} must close after the source circuit sequence",

@@ -37,7 +37,7 @@ fn session_export_replays_element_expansion_before_assigning_launch_speed() {
         "version": 1,
         "name": "Expanded element launch",
         "model": "velocity_viper",
-        "station": { "x": 241, "y": 249, "z": 12, "heading": "north" },
+        "station": { "x": 100, "y": 100, "z": 12, "heading": "north" },
         "carsPerTrain": 6,
         "trains": 1,
         "steps": [
@@ -128,7 +128,7 @@ fn session_export_tracks_a_placement_after_undoing_an_element_group() {
 }
 
 #[test]
-fn session_export_advances_automatic_blocks_before_setting_multiple_trains() {
+fn session_export_replays_explicit_block_sections_without_running_search() {
     let ride = json!({
         "format": "heartline-ride",
         "version": 1,
@@ -136,7 +136,7 @@ fn session_export_advances_automatic_blocks_before_setting_multiple_trains() {
         "model": "hybrid",
         "station": { "x": 50, "y": 50, "z": 80, "heading": "east" },
         "carsPerTrain": 4,
-        "trains": 2,
+        "trains": 1,
         "steps": [
             { "place": "Straight" },
             { "place": "Straight" },
@@ -158,7 +158,12 @@ fn session_export_advances_automatic_blocks_before_setting_multiple_trains() {
             { "place": "TurnLargeEntry" },
             { "place": "TurnLargeExit" },
             { "close": true },
-            { "autoBlocks": true }
+            {
+                "blockSections": [],
+                "trainCapacity": 1,
+                "capacitySearchComplete": false,
+                "placementSearchComplete": true
+            }
         ]
     });
 
@@ -178,24 +183,33 @@ fn session_export_advances_automatic_blocks_before_setting_multiple_trains() {
     .unwrap();
     let session: Value = serde_json::from_slice(&fs::read(&session_file.0).unwrap()).unwrap();
     let commands = session["commands"].as_array().unwrap();
-    let auto_blocks_index = commands
+    let block_sections_index = commands
         .iter()
-        .position(|entry| entry["command"]["type"] == "construction-auto-blocks")
+        .position(|entry| entry["command"]["type"] == "construction-set-block-sections")
         .unwrap();
-    let train_count_index = commands
+    let close_index = commands
         .iter()
-        .position(|entry| entry["command"]["type"] == "construction-set-train-count")
+        .position(|entry| entry["command"]["type"] == "construction-close")
         .unwrap();
-    let advances = commands[auto_blocks_index + 1..train_count_index]
-        .iter()
-        .filter(|entry| entry["command"]["type"] == "test-advance-block-analysis")
-        .count();
-
-    assert!(
-        advances > 0,
-        "block analysis must advance before train count"
+    assert!(close_index < block_sections_index);
+    assert_eq!(
+        commands[block_sections_index]["command"],
+        json!({
+            "type": "construction-set-block-sections",
+            "blockSections": [],
+            "trainCapacity": 1,
+            "capacitySearchComplete": false,
+            "placementSearchComplete": true,
+        })
     );
-    assert!(auto_blocks_index < train_count_index);
-    assert_eq!(commands[train_count_index]["command"]["count"], 2);
-    assert_eq!(train_count_index, commands.len() - 1);
+    assert!(
+        !commands
+            .iter()
+            .any(|entry| entry["command"]["type"] == "construction-auto-blocks")
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|entry| entry["command"]["type"] == "test-advance-block-analysis")
+    );
 }
