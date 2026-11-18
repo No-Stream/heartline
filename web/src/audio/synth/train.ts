@@ -29,8 +29,22 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
   const motorFilter = filter("lowpass", 300); const motor = gain();
   oscillator("triangle", 50).connect(motorFilter); oscillator("triangle", 100).connect(motorFilter); motorFilter.connect(motor).connect(output);
   const brakeFilter = filter("highpass", 2500); const brakeGain = gain(); noise(white).connect(brakeFilter).connect(brakeGain).connect(output);
-  const squeal = oscillator("sine", 2200); const vibrato = oscillator("sine", 6); const vibratoDepth = gain(30); vibrato.connect(vibratoDepth).connect(squeal.frequency);
-  const squealGain = gain(); squeal.connect(squealGain).connect(output);
+  // The squeal exists only while a brake event runs, so no tone can idle at a residual gain between events.
+  let squeal: { oscillators: OscillatorNode[]; level: GainNode } | null = null;
+  function startSqueal(time: number): NonNullable<typeof squeal> {
+    const tone = context.createOscillator(); tone.frequency.value = 2200;
+    const vibrato = context.createOscillator(); vibrato.frequency.value = 6;
+    const vibratoDepth = gain(30); vibrato.connect(vibratoDepth).connect(tone.frequency);
+    const level = gain(); tone.connect(level).connect(output);
+    tone.start(time); vibrato.start(time);
+    return { oscillators: [tone, vibrato], level };
+  }
+  function endSqueal(time: number): void {
+    if (!squeal) return;
+    squeal.level.gain.cancelScheduledValues(time); squeal.level.gain.setValueAtTime(squeal.level.gain.value, time); squeal.level.gain.linearRampToValueAtTime(0, time + 0.3);
+    for (const node of squeal.oscillators) node.stop(time + 0.3);
+    squeal = null;
+  }
   let oneShots: { envelope: GainNode; end: number }[] = [];
   const trackShot = (envelope: GainNode, end: number): void => { oneShots.push({ envelope, end }); };
   let wasMuted = false;
@@ -98,10 +112,12 @@ export function createTrainVoice(context: BaseAudioContext, destination: AudioNo
       if (!eventsMuted && train.depart) departure(now, level);
       if (!eventsMuted && train.brake > 0) brakeStart ??= now; else brakeStart = null;
       const braking = brakeStart !== null && now - brakeStart < 1.5 ? train.brake * level : 0;
-      target(brakeGain.gain, 0.3 * braking, now, braking ? 0.05 : 0.3); target(squealGain.gain, 0.03 * braking, now, braking ? 0.05 : 0.3);
+      target(brakeGain.gain, 0.3 * braking, now, braking ? 0.05 : 0.3);
+      if (braking > 0) { squeal ??= startSqueal(now); target(squeal.level.gain, 0.03 * braking, now); } else endSqueal(now);
     },
     release(clock: ScheduleClock): void {
-      for (const parameter of [roar.gain, rumble.gain, tremoloDepth.gain, whineGain.gain, motor.gain, brakeGain.gain, squealGain.gain]) target(parameter, 0, clock.now);
+      for (const parameter of [roar.gain, rumble.gain, tremoloDepth.gain, whineGain.gain, motor.gain, brakeGain.gain]) target(parameter, 0, clock.now);
+      endSqueal(clock.now);
       silenceShots(clock.now); nextClack = clock.now; brakeStart = null; wasMuted = false;
     },
   };
