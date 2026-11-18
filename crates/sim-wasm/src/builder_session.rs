@@ -1,5 +1,6 @@
 use std::fmt::{self, Debug, Display, Formatter};
 
+use serde::{Deserialize, Serialize};
 use theme_park_sim::track::coaster_models;
 use theme_park_sim::track::ride_file::{RideFile, RideFileFormat, RideHeading, RideStep};
 
@@ -13,6 +14,18 @@ use crate::construction_speed_match::ConstructionSpeedMatchWire;
 pub struct BuilderSession {
     simulation: WasmSimulation,
     end_speed_cache: Option<f64>,
+    placed_piece_bridge_ids: Vec<Vec<usize>>,
+    auto_block_advance_counts: Vec<usize>,
+}
+
+const BUILDER_SESSION_SNAPSHOT_HEADER: &[u8] = b"TPBUILDER\x01";
+
+#[derive(Serialize, Deserialize)]
+struct BuilderSessionSnapshot {
+    simulation: Vec<u8>,
+    end_speed_cache: Option<f64>,
+    placed_piece_bridge_ids: Vec<Vec<usize>>,
+    auto_block_advance_counts: Vec<usize>,
 }
 
 pub struct BuilderEstimates {
@@ -76,11 +89,65 @@ impl BuilderSession {
         Self {
             simulation,
             end_speed_cache: None,
+            placed_piece_bridge_ids: Vec::new(),
+            auto_block_advance_counts: Vec::new(),
         }
     }
 
     pub fn simulation(&self) -> &WasmSimulation {
         &self.simulation
+    }
+
+    pub fn placed_piece_bridge_ids(&self) -> &[Vec<usize>] {
+        &self.placed_piece_bridge_ids
+    }
+
+    pub fn auto_block_advance_counts(&self) -> &[usize] {
+        &self.auto_block_advance_counts
+    }
+
+    pub fn save_native_snapshot(&self) -> Result<Vec<u8>, String> {
+        let snapshot = BuilderSessionSnapshot {
+            simulation: self.simulation.save_state_native()?,
+            end_speed_cache: self.end_speed_cache,
+            placed_piece_bridge_ids: self.placed_piece_bridge_ids.clone(),
+            auto_block_advance_counts: self.auto_block_advance_counts.clone(),
+        };
+        let payload = postcard::to_allocvec(&snapshot)
+            .map_err(|error| format!("Could not save builder session: {error}"))?;
+        let mut bytes = BUILDER_SESSION_SNAPSHOT_HEADER.to_vec();
+        bytes.extend(snapshot_checksum(&payload).to_le_bytes());
+        bytes.extend(payload);
+        Ok(bytes)
+    }
+
+    pub fn load_native_snapshot(bytes: &[u8]) -> Result<Self, String> {
+        let data = bytes
+            .strip_prefix(BUILDER_SESSION_SNAPSHOT_HEADER)
+            .ok_or("Unsupported or invalid builder session snapshot version")?;
+        let (stored_checksum, payload) = data
+            .split_at_checked(8)
+            .ok_or("Builder session snapshot is incomplete")?;
+        let stored_checksum = u64::from_le_bytes(
+            stored_checksum
+                .try_into()
+                .expect("builder session snapshot checksum length"),
+        );
+        if snapshot_checksum(payload) != stored_checksum {
+            return Err("Builder session snapshot is corrupt".into());
+        }
+        let (snapshot, remaining): (BuilderSessionSnapshot, &[u8]) =
+            postcard::take_from_bytes(payload)
+                .map_err(|error| format!("Could not load builder session snapshot: {error}"))?;
+        if !remaining.is_empty() {
+            return Err("Builder session snapshot has trailing data".into());
+        }
+        Ok(Self {
+            simulation: WasmSimulation::load_state_native(&snapshot.simulation)?,
+            end_speed_cache: snapshot.end_speed_cache,
+            placed_piece_bridge_ids: snapshot.placed_piece_bridge_ids,
+            auto_block_advance_counts: snapshot.auto_block_advance_counts,
+        })
     }
 
     pub fn into_simulation(self) -> WasmSimulation {
@@ -215,11 +282,30 @@ impl BuilderSession {
     }
 
     pub fn place(&mut self) -> Result<BuilderEstimates, BuilderSessionError> {
+        self.append_selected()?;
+        Ok(self.estimates())
+    }
+
+    fn append_selected(&mut self) -> Result<(), BuilderSessionError> {
         self.end_speed_cache = None;
+        let previous_piece_count = self
+            .simulation
+            .construction
+            .as_ref()
+            .map(|construction| construction.piece_ids().len());
         self.simulation.construction_finish_invalidate();
         self.simulation.construction_append();
         self.check_bridge_message("place selected piece")?;
-        Ok(self.estimates())
+        if let (Some(previous_piece_count), Some(construction)) =
+            (previous_piece_count, self.simulation.construction.as_ref())
+        {
+            if let Some(piece_ids) = construction.piece_ids().get(previous_piece_count..) {
+                if !piece_ids.is_empty() {
+                    self.placed_piece_bridge_ids.push(piece_ids.to_vec());
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn set_chain(&mut self, enabled: bool) -> Result<(), BuilderSessionError> {
@@ -242,7 +328,9 @@ impl BuilderSession {
     pub fn undo(&mut self) -> Result<(), BuilderSessionError> {
         self.end_speed_cache = None;
         self.simulation.construction_undo();
-        self.check_bridge_message("undo placement")
+        self.check_bridge_message("undo placement")?;
+        self.placed_piece_bridge_ids.pop();
+        Ok(())
     }
 
     pub fn delete(&mut self, piece_index: usize) -> Result<(), BuilderSessionError> {
@@ -286,6 +374,11 @@ impl BuilderSession {
 
     pub fn finish(&mut self) -> Result<BuilderEstimates, BuilderSessionError> {
         self.end_speed_cache = None;
+        let previous_piece_count = self
+            .simulation
+            .construction
+            .as_ref()
+            .map(|construction| construction.piece_ids().len());
         self.simulation.construction_finish_search_start();
         while !self.simulation.construction_finish_search_advance() {}
         self.simulation.construction_finish_preview();
@@ -297,14 +390,26 @@ impl BuilderSession {
         }
         self.simulation.construction_finish_confirm();
         self.check_bridge_message("confirm finished coaster")?;
+        if let (Some(previous_piece_count), Some(construction)) =
+            (previous_piece_count, self.simulation.construction.as_ref())
+        {
+            if let Some(new_piece_ids) = construction.piece_ids().get(previous_piece_count..) {
+                self.placed_piece_bridge_ids
+                    .extend(new_piece_ids.iter().map(|piece_id| vec![*piece_id]));
+            }
+        }
         Ok(self.estimates())
     }
 
     pub fn close(&mut self) -> Result<BuilderEstimates, BuilderSessionError> {
+        self.close_track()?;
+        Ok(self.estimates())
+    }
+
+    fn close_track(&mut self) -> Result<(), BuilderSessionError> {
         self.end_speed_cache = None;
         self.simulation.construction_close();
-        self.check_bridge_message("close circuit")?;
-        Ok(self.estimates())
+        self.check_bridge_message("close circuit")
     }
 
     pub fn test(&mut self) -> Result<serde_json::Value, BuilderSessionError> {
@@ -317,17 +422,31 @@ impl BuilderSession {
     }
 
     pub fn auto_blocks(&mut self) -> Result<serde_json::Value, BuilderSessionError> {
+        self.auto_blocks_with_advance_count()
+            .map(|(report, _)| report)
+    }
+
+    pub fn auto_blocks_with_advance_count(
+        &mut self,
+    ) -> Result<(serde_json::Value, usize), BuilderSessionError> {
         if !self.simulation.construction_auto_blocks() {
             return Err(self.bridge_refusal("place automatic block sections"));
         }
-        while !self.simulation.construction_advance_block_analysis(1000) {
+        let mut advance_count = 0;
+        loop {
+            advance_count += 1;
+            if self.simulation.construction_advance_block_analysis(1000) {
+                break;
+            }
             let message = self.simulation.construction_message();
             if !message.is_empty() {
                 return Err(self.bridge_error("analyse block sections", message));
             }
         }
-        serde_json::from_str(&self.simulation.construction_block_report_json())
-            .map_err(|error| self.bridge_error("read block report", error.to_string()))
+        let report = serde_json::from_str(&self.simulation.construction_block_report_json())
+            .map_err(|error| self.bridge_error("read block report", error.to_string()))?;
+        self.auto_block_advance_counts.push(advance_count);
+        Ok((report, advance_count))
     }
 
     pub fn replay_ride(
@@ -351,6 +470,8 @@ impl BuilderSession {
                 ride.model
             )));
         }
+        self.placed_piece_bridge_ids.clear();
+        self.auto_block_advance_counts.clear();
         let heading = match ride.station.heading {
             RideHeading::East => 0,
             RideHeading::North => 1,
@@ -365,10 +486,8 @@ impl BuilderSession {
             heading,
         )
         .map_err(|error| invalid_ride_step(1, error))?;
-        self.estimates();
         self.set_cars_per_train(ride.cars_per_train)
             .map_err(|error| invalid_ride_step(1, error))?;
-        let mut estimates = self.estimates();
 
         for (step_offset, step) in ride.steps.iter().enumerate() {
             let step_index = step_offset + 1;
@@ -376,9 +495,7 @@ impl BuilderSession {
                 RideStep::Place(place) => {
                     self.select(&place.place, true)
                         .map_err(|error| invalid_ride_step(step_index, error))?;
-                    self.estimates();
-                    estimates = self
-                        .place()
+                    self.append_selected()
                         .map_err(|error| invalid_ride_step(step_index, error))?;
                     if let Some(target_speed) = place.launch_speed {
                         let track: serde_json::Value =
@@ -395,13 +512,11 @@ impl BuilderSession {
                             })?;
                         self.set_launch_speed(piece_index, target_speed)
                             .map_err(|error| invalid_ride_step(step_index, error))?;
-                        estimates = self.estimates();
                     }
                 }
                 RideStep::Chain(chain) => {
                     self.set_chain(chain.chain)
                         .map_err(|error| invalid_ride_step(step_index, error))?;
-                    estimates = self.estimates();
                 }
                 RideStep::Close(close) => {
                     if !close.close {
@@ -410,14 +525,18 @@ impl BuilderSession {
                             message: "close must be true".into(),
                         });
                     }
-                    estimates = self
-                        .close()
+                    self.close_track()
                         .map_err(|error| invalid_ride_step(step_index, error))?;
-                    if self.simulation.construction_train_count() != usize::from(ride.trains) {
-                        self.set_train_count(usize::from(ride.trains))
-                            .map_err(|error| invalid_ride_step(step_index, error))?;
-                        estimates = self.estimates();
+                }
+                RideStep::AutoBlocks(blocks) => {
+                    if !blocks.auto_blocks {
+                        return Err(BuilderSessionError::RideStep {
+                            step_index,
+                            message: "autoBlocks must be true".into(),
+                        });
                     }
+                    self.auto_blocks()
+                        .map_err(|error| invalid_ride_step(step_index, error))?;
                 }
             }
         }
@@ -432,7 +551,17 @@ impl BuilderSession {
                 ride.steps.len() + 1
             )));
         }
-        Ok(estimates)
+        if ride.trains != 1
+            && ride
+                .steps
+                .iter()
+                .any(|step| matches!(step, RideStep::Close(_)))
+            && self.simulation.construction_train_count() != usize::from(ride.trains)
+        {
+            self.set_train_count(usize::from(ride.trains))
+                .map_err(|error| invalid_ride_step(ride.steps.len() + 1, error))?;
+        }
+        Ok(self.estimates())
     }
 
     fn offered_ids(&self) -> String {
@@ -486,6 +615,12 @@ impl BuilderSession {
             message,
         }
     }
+}
+
+fn snapshot_checksum(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
 }
 
 fn invalid_ride_step(step_index: usize, error: BuilderSessionError) -> BuilderSessionError {
@@ -647,6 +782,98 @@ mod tests {
     }
 
     #[test]
+    fn ride_replay_matches_the_worker_sequence_and_leaves_speed_matching_ready() {
+        let ride = ride_file(
+            "hybrid",
+            vec![
+                RideStep::Chain(theme_park_sim::track::ride_file::RideChainStep { chain: true }),
+                RideStep::Place(RidePlaceStep {
+                    place: "Straight".into(),
+                    launch_speed: None,
+                    note: None,
+                }),
+                RideStep::Chain(theme_park_sim::track::ride_file::RideChainStep { chain: false }),
+                RideStep::Place(RidePlaceStep {
+                    place: "Straight".into(),
+                    launch_speed: None,
+                    note: None,
+                }),
+            ],
+        );
+        let mut replayed = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        let mut worker_sequence = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+
+        replayed.replay_ride(&ride).unwrap();
+        replay_ride_with_worker_estimates(&mut worker_sequence, &ride);
+
+        assert_eq!(replayed.state_hash(), worker_sequence.state_hash());
+        assert_eq!(
+            replayed.simulation().construction_track(),
+            worker_sequence.simulation().construction_track()
+        );
+        let replayed_selection = replayed.select("Straight", false).unwrap();
+        let worker_selection = worker_sequence.select("Straight", false).unwrap();
+        assert_eq!(replayed_selection.selected_id, worker_selection.selected_id);
+        assert_eq!(
+            serde_json::to_value(replayed_selection.speed_match).unwrap(),
+            serde_json::to_value(worker_selection.speed_match).unwrap()
+        );
+    }
+
+    fn replay_ride_with_worker_estimates(session: &mut BuilderSession, ride: &RideFile) {
+        let heading = match ride.station.heading {
+            RideHeading::East => 0,
+            RideHeading::North => 1,
+            RideHeading::West => 2,
+            RideHeading::South => 3,
+        };
+        session
+            .start(
+                &ride.model,
+                ride.station.x,
+                ride.station.y,
+                ride.station.z,
+                heading,
+            )
+            .unwrap();
+        session.estimates();
+        session.set_cars_per_train(ride.cars_per_train).unwrap();
+        session.estimates();
+        for step in &ride.steps {
+            match step {
+                RideStep::Place(place) => {
+                    session.select(&place.place, true).unwrap();
+                    session.estimates();
+                    session.place().unwrap();
+                    if let Some(target_speed) = place.launch_speed {
+                        let track: serde_json::Value =
+                            serde_json::from_str(&session.simulation().construction_track())
+                                .unwrap();
+                        let piece_id = track.as_array().unwrap().last().unwrap()["id"]
+                            .as_u64()
+                            .unwrap() as usize;
+                        session.set_launch_speed(piece_id, target_speed).unwrap();
+                        session.estimates();
+                    }
+                }
+                RideStep::Chain(chain) => {
+                    session.set_chain(chain.chain).unwrap();
+                    session.estimates();
+                }
+                RideStep::Close(close) => {
+                    assert!(close.close);
+                    session.close().unwrap();
+                }
+                RideStep::AutoBlocks(blocks) => {
+                    assert!(blocks.auto_blocks);
+                    session.auto_blocks().unwrap();
+                }
+            }
+        }
+        session.estimates();
+    }
+
+    #[test]
     fn replay_rejects_a_false_close_step_with_its_index() {
         let ride = ride_file(
             "hybrid",
@@ -658,6 +885,79 @@ mod tests {
 
         assert!(error.contains("step 1"), "{error}");
         assert!(error.contains("close must be true"), "{error}");
+    }
+
+    #[test]
+    fn replay_rejects_a_false_auto_blocks_step_with_its_index() {
+        let ride = ride_file(
+            "hybrid",
+            vec![RideStep::AutoBlocks(
+                theme_park_sim::track::ride_file::RideAutoBlocksStep { auto_blocks: false },
+            )],
+        );
+        let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        let error = session.replay_ride(&ride).unwrap_err().to_string();
+        assert!(error.contains("ride step 1"), "{error}");
+        assert!(error.contains("autoBlocks must be true"), "{error}");
+    }
+
+    #[test]
+    fn native_snapshot_preserves_simulation_speed_cache_and_replay_metadata() {
+        let ride = ride_file(
+            "hybrid",
+            vec![RideStep::Place(RidePlaceStep {
+                place: "HalfTileStraight".into(),
+                launch_speed: None,
+                note: None,
+            })],
+        );
+        let mut original = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        original.replay_ride(&ride).unwrap();
+
+        let snapshot = original.save_native_snapshot().unwrap();
+        let mut restored = BuilderSession::load_native_snapshot(&snapshot).unwrap();
+
+        assert_eq!(restored.state_hash(), original.state_hash());
+        assert_eq!(
+            restored.simulation().construction_track(),
+            original.simulation().construction_track()
+        );
+        assert_eq!(
+            restored.placed_piece_bridge_ids(),
+            original.placed_piece_bridge_ids()
+        );
+        assert_eq!(
+            restored.auto_block_advance_counts(),
+            original.auto_block_advance_counts()
+        );
+        assert_eq!(
+            restored.select("Loop", false).unwrap().selected_id,
+            original.select("Loop", false).unwrap().selected_id
+        );
+    }
+
+    #[test]
+    fn native_snapshot_rejects_corruption_and_unknown_versions() {
+        let session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        let snapshot = session.save_native_snapshot().unwrap();
+        let mut corrupt = snapshot.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        let corruption_error = match BuilderSession::load_native_snapshot(&corrupt) {
+            Ok(_) => panic!("corrupt builder session snapshot loaded"),
+            Err(error) => error,
+        };
+        assert_eq!(corruption_error, "Builder session snapshot is corrupt");
+        let mut unsupported = snapshot;
+        let version_index = super::BUILDER_SESSION_SNAPSHOT_HEADER.len() - 1;
+        unsupported[version_index] = 2;
+        let version_error = match BuilderSession::load_native_snapshot(&unsupported) {
+            Ok(_) => panic!("unsupported builder session snapshot loaded"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            version_error,
+            "Unsupported or invalid builder session snapshot version"
+        );
     }
 
     fn ride_file(model: &str, steps: Vec<RideStep>) -> RideFile {
@@ -847,11 +1147,8 @@ mod tests {
                     .skip(context_start)
                     .take(200)
                     .collect();
-                let actual_output: String = actual_chars
-                    .iter()
-                    .skip(context_start)
-                    .take(200)
-                    .collect();
+                let actual_output: String =
+                    actual_chars.iter().skip(context_start).take(200).collect();
                 return format!(
                     "first difference at call {index}: expected {} ({} chars) near {context_start} {:?}, got {} ({} chars) near {context_start} {:?}",
                     expected_call.0,

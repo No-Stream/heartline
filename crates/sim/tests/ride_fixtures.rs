@@ -78,6 +78,9 @@ fn ride_fixtures_preserve_the_circuit_text_sequences() {
                 RideStep::Place(place) => place.place.as_str().to_owned(),
                 RideStep::Chain(chain) => if chain.chain { "+chain" } else { "-chain" }.to_owned(),
                 RideStep::Close(_) => panic!("{} closes before its final step", fixture.name),
+                RideStep::AutoBlocks(_) => {
+                    panic!("{} has unexpected automatic blocks", fixture.name)
+                }
             };
             assert_eq!(ride_command, source_command, "{}", fixture.name);
         }

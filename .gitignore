@@ -1,6 +1,7 @@
 .superpowers/
 .playwright-mcp/
 target/
+*.ride.json.snapshot
 node_modules/
 web/dist/
 web/src/wasm/

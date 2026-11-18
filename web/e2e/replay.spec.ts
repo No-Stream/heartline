@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -113,6 +114,43 @@ test("records and replays a non-default car count through the real worker @fast"
   expect(replayed.trainLayout).toEqual(original.trainLayout);
   expect(replayed.recording.checkpoints).toEqual(original.recording.checkpoints);
   expect(replayed.recording.commands).toEqual(original.recording.commands);
+});
+
+test("replays a design tool multi-train export through the real worker @fast", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto(fixtureUrl);
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "design-tool-session-e2e-"));
+
+  try {
+    const ridePath = join(temporaryDirectory, "timber-tumbler.ride.json");
+    const sessionPath = join(temporaryDirectory, "timber-tumbler.session.json");
+    const ride = JSON.parse(
+      await readFile(resolve("content/rides/timber-tumbler.ride.json"), "utf8"),
+    ) as { trains: number; steps: unknown[] };
+    ride.trains = 2;
+    ride.steps.push({ autoBlocks: true });
+    await writeFile(ridePath, JSON.stringify(ride));
+    execFileSync(resolve("tools/design"), ["ride", ridePath, "export", "--session", sessionPath], {
+      cwd: resolve("."),
+      encoding: "utf8",
+    });
+
+    const session = parseReplaySession(JSON.parse(await readFile(sessionPath, "utf8")) as unknown);
+    const autoBlocksIndex = session.commands.findIndex(({ command }) => command.type === "construction-auto-blocks");
+    const trainCountIndex = session.commands.findIndex(({ command }) => command.type === "construction-set-train-count");
+    expect(autoBlocksIndex).toBeGreaterThan(-1);
+    expect(trainCountIndex).toBe(session.commands.length - 1);
+    expect(
+      session.commands
+        .slice(autoBlocksIndex + 1, trainCountIndex)
+        .some(({ command }) => command.type === "test-advance-block-analysis"),
+    ).toBe(true);
+
+    const outcome = await replayWithWorker(page, session);
+    expect(outcome.observation.constructionPieces).toBeGreaterThan(10);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 async function replaySessionsDirectory(): Promise<{ readonly path: string; readonly session: ReplaySession }[]> {

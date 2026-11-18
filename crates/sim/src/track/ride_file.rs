@@ -45,6 +45,7 @@ pub enum RideStep {
     Place(RidePlaceStep),
     Chain(RideChainStep),
     Close(RideCloseStep),
+    AutoBlocks(RideAutoBlocksStep),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -67,6 +68,12 @@ pub struct RideChainStep {
 #[serde(deny_unknown_fields)]
 pub struct RideCloseStep {
     pub close: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RideAutoBlocksStep {
+    pub auto_blocks: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -104,7 +111,8 @@ mod tests {
         { "place": "LevelToSteepUp", "note": "lift" },
         { "place": "LaunchLong", "launchSpeed": 31.3 },
         { "place": "element:immelmann-left" },
-        { "close": true }
+        { "close": true },
+        { "autoBlocks": true }
       ],
       "expect": {
         "excitement": [6.0, 8.0],
@@ -125,6 +133,7 @@ mod tests {
         assert_eq!(ride.station.heading, RideHeading::North);
         assert!(matches!(ride.steps[0], RideStep::Chain(_)));
         assert!(matches!(ride.steps[1], RideStep::Place(_)));
+        assert!(matches!(ride.steps[5], RideStep::AutoBlocks(_)));
         let serialized_ride = serde_json::to_string(&ride).unwrap();
         assert_eq!(
             serde_json::from_str::<RideFile>(&serialized_ride).unwrap(),

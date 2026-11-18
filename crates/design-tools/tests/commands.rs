@@ -79,11 +79,30 @@ fn choices_estimates_and_placement_have_stable_text_replies() {
     )
     .unwrap();
 
-    assert_eq!(
-        reply,
-        "CHOICES GOLDEN\nESTIMATE GOLDEN\nPLACE GOLDEN\n"
-    );
-    let saved: serde_json::Value = serde_json::from_str(&fs::read_to_string(&ride.0).unwrap()).unwrap();
+    let expected = r#"id                         name                         group       refusal                 tunnel window     margin matched
+Straight                   Straight                     straight                            no     —                 — no
+OffsetLeft                 Left half-tile offset        straight                            no     —                 — no
+HalfTileStraight           Half-tile straight           straight                            no     —                 — no
+OneTileStraight            One-tile straight            straight                            no     —                 — no
+FullOffsetLeft             Left full-tile offset        straight                            no     —                 — no
+ShortOffsetLeft            Left short half-tile offset  straight                            no     —                 — no
+AirtimeHill                Small airtime hill           straight                            no     —                 — no
+OffsetRight                Right half-tile offset       straight                            no     —                 — no
+FullOffsetRight            Right full-tile offset       straight                            no     —                 — no
+ShortOffsetRight           Right short half-tile offset straight                            no     —                 — no
+piece                      entry m/s window      margin  vertical g (rating)                       lateral g (rating)   long g (rating) status
+Straight                        2.0 —                — 1.0 (weak) / 1.0 (weak)                    0.0 (fine)         0.0 (fine)         reachedEnd
+Placed Straight
+Estimate: 2.0 m/s entry, v+ 1.00 g, v- 1.00 g, lateral 0.00 g, longitudinal 0.01 g
+Pieces: 1
+Open end: (108.0, 100.0, 2.5) m, heading East, slope Level, bank Level
+Height above ground: -3 steps; offset to station entry: 8.0 m
+Chain: false; predicted end speed: 1.6 m/s (reachedEnd)
+Can close: false; can finish: false (Checking for a connection to the station.); can test: false
+"#;
+    assert_eq!(reply, expected);
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&ride.0).unwrap()).unwrap();
     assert_eq!(saved["steps"][0]["place"], "Straight");
     assert_eq!(saved["steps"][0]["note"], "test-piece");
 }
@@ -95,7 +114,11 @@ fn refused_placement_keeps_the_ride_file_unchanged() {
     let before = fs::read(&ride.0).unwrap();
 
     let error = run_cli(
-        &["ride".into(), ride.path().into(), "place UnknownPiece".into()],
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "place UnknownPiece".into(),
+        ],
         "",
     )
     .unwrap_err();
@@ -110,17 +133,9 @@ fn test_command_prints_the_ride_report_and_piece_table() {
     let ride = TempFile::new("closed.ride.json");
     ride.write(CLOSED_RIDE);
 
-    let reply = run_cli(
-        &["ride".into(), ride.path().into(), "test".into()],
-        "",
-    )
-    .unwrap();
+    let reply = run_cli(&["ride".into(), ride.path().into(), "test".into()], "").unwrap();
 
-    assert_eq!(reply, "TEST REPORT GOLDEN\n");
-    assert!(reply.contains("CLI report ride"));
-    assert!(reply.contains("#   piece"));
-    assert!(reply.contains("excitement"));
-    assert!(reply.contains("statistics"));
+    assert_eq!(reply, include_str!("goldens/cli_test_report.txt"));
 }
 
 #[test]
@@ -143,7 +158,10 @@ fn exported_park_save_loads_with_the_same_construction() {
 
     let restored = WasmSimulation::load_state_native(&fs::read(&save.0).unwrap()).unwrap();
     let track: serde_json::Value = serde_json::from_str(&restored.construction_track()).unwrap();
-    assert_eq!(track.as_array().unwrap().last().unwrap()["label"], "Straight");
+    assert_eq!(
+        track.as_array().unwrap().last().unwrap()["label"],
+        "Straight"
+    );
 }
 
 #[test]
@@ -161,8 +179,12 @@ fn new_creates_a_ride_and_state_reports_the_open_end() {
     )
     .unwrap();
 
-    assert_eq!(reply, "STATE GOLDEN\n");
-    let saved: serde_json::Value = serde_json::from_str(&fs::read_to_string(&ride.0).unwrap()).unwrap();
+    assert_eq!(
+        reply,
+        "Pieces: 0\nOpen end: (104.0, 100.0, 2.5) m, heading East, slope Level, bank Level\nHeight above ground: -3 steps; offset to station entry: 4.0 m\nChain: false; predicted end speed: 2.0 m/s (reachedEnd)\nCan close: false; can finish: false (Checking for a connection to the station.); can test: false\n"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&ride.0).unwrap()).unwrap();
     assert_eq!(saved["model"], "hybrid");
     assert_eq!(saved["station"]["heading"], "east");
     assert_eq!(saved["carsPerTrain"], 4);
