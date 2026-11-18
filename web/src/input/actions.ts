@@ -8,6 +8,7 @@ import type { SceneryKind } from "../scenery-tool";
 import type { TestingMetric } from "../coaster-testing";
 import type { Theme } from "../theme";
 import type { Tool } from "../toolbar";
+import type { RideKey } from "../ride-window/protocol";
 import type { Units } from "../units";
 import type { CoasterPart } from "../coaster-colors";
 import type { UndergroundCutawayMode } from "../underground-cutaway";
@@ -52,6 +53,8 @@ export type InputAction =
   | { readonly type: "sound-volume"; readonly volume: number }
   | { readonly type: "guest-select"; readonly guestId: string }
   | { readonly type: "guest-close" }
+  | { readonly type: "ride-select" | "ride-test"; readonly ride: RideKey }
+  | { readonly type: "ride-close" }
   | { readonly type: "landscaping-activate"; readonly selection: LandscapingSelection }
   | { readonly type: "landscaping-cancel" }
   | { readonly type: "underground-view-toggle" }

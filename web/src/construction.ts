@@ -179,6 +179,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
               </div>
             </div>
             <button type="button" class="tool-panel__action" data-test>Test coaster ${hint("test")}</button>
+            <button type="button" class="tool-panel__action" data-ride-info>Ride info</button>
             <button type="button" class="tool-panel__action" data-open>Open coaster</button>
           </div>
           <p class="builder__stamp" data-stamp hidden>Circuit complete</p>
@@ -435,6 +436,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   confirmFinish.addEventListener("click", () => dispatch({ type: "construction-finish-confirm" }));
   cancelFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cancel" }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
+  element("[data-ride-info]").addEventListener("click", () => dispatch({ type: "ride-select", ride: "player" }));
   open.addEventListener("click", () => dispatch({ type: "construction-open-toggle" }));
   const setCoasterPrice = (price: number): void => {
     if (!Number.isInteger(price) || price < 0 || price > 65535) throw new RangeError("Invalid coaster ticket price");

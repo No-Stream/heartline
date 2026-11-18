@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::WasmSimulation;
 
-const SAVE_HEADER: &[u8] = b"TPSAVE\x02";
+const SAVE_HEADER: &[u8] = b"TPSAVE\x03";
 const MAX_SAVE_BYTES: u64 = 256 * 1024 * 1024;
 
 struct LimitedBytes {

@@ -30,6 +30,10 @@ Inversions, drops and 60-degree pieces are force-limited (TASK-95): forces are m
 
 The game's own coasters are force-designed rides now: Timber Tumbler (about 8.2 excitement), Velocity Viper (6.7) and a rebuilt demo (5.1) stay inside every force limit, using turns banked for their speed (16 to 32 m/s, bank chosen by the builder by default) so sideways force becomes positive force. Chain lifts pull the whole train until its last car is off. Two new models: Daisy Dash, a family coaster for riders from 100 cm (about 3.7), and Horizon Hawk, a B&M-style hyper with 20 x 128 m and 24 x 160 m camelbacks (about 6.7). Positive force is rated by absolute g ("great" from 3 g on steel, 2.5 g on wood and family). Models live in one registry. The builder updates about four times faster natively. CI runs browser tests in the pinned Playwright image, and world sprites are drawn as indexed triangles, which halves frame time in software WebGL. Builds refuse to start under 25 GB free disk.
 
+## Added on 2026-11-18
+
+Clicking a coaster's track, supports or train in Watch mode opens a ride window, and the builder has a Ride info button next to Test coaster. The window shows the model, the three scores, the reasons for them, the grouped statistics and a graph of vertical, lateral and forward g and speed over ride time with the model's force limits as bands; pointing at the graph highlights that moment on the track. The latest test report per coaster is kept in the simulation (the demo coaster's in `demo_report`, the player's coaster's in `construction_report`, which now survives opening the coaster), so it is saved with the park and cleared when the track changes. A coaster without a current report shows a Test button that runs the test at once without animating it.
+
 ## Known gaps and open items
 
 - The explainable scoring model (TASK-104/113) is calibrated to the owner's enthusiast ordering (RMC and Intamin Blitz far above an Arrow looper, clearly above a B&M hyper) and is finishing on branch `ride-stats`. The game's own demo and player circuits score honestly low because they are harsh (up to 6-16 g sideways); rebuilding them as good rides is a follow-up.

@@ -1,5 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
+use serde_json::Value;
+
 use super::WasmSimulation;
 
 #[test]
@@ -274,6 +276,89 @@ fn append_return_path(simulation: &mut WasmSimulation) {
     simulation.construction_close();
     assert!(simulation.construction_message().is_empty());
     assert!(simulation.construction.as_ref().unwrap().is_closed());
+}
+
+fn ride_info(simulation: &WasmSimulation, ride: &str) -> Value {
+    serde_json::from_str(&simulation.ride_info_json(ride)).unwrap()
+}
+
+fn finite_ratings(report: &Value) -> bool {
+    ["excitement", "intensity", "nausea"].iter().all(|rating| {
+        report["rating"][rating]
+            .as_f64()
+            .is_some_and(f64::is_finite)
+    })
+}
+
+#[test]
+fn demo_ride_test_fills_in_the_demo_report() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    let before = ride_info(&simulation, "demo");
+    assert_eq!(before["ride"], "demo");
+    assert_eq!(before["modelName"], "Timber Tumbler");
+    assert_eq!(before["manufacturer"], "Rocky Road Construction");
+    assert!(before["limits"]["maximumLateralG"].is_number());
+    assert_eq!(before["report"], Value::Null);
+
+    assert_eq!(simulation.ride_test("demo"), "");
+    let report = &ride_info(&simulation, "demo")["report"];
+    assert!(finite_ratings(report));
+    assert!(!report["samples"].as_array().unwrap().is_empty());
+    assert!(report["statistics"]["maxSpeed"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn ride_test_refuses_unfinished_player_track_and_missing_demo() {
+    let mut player_only = WasmSimulation::new(42, 0, String::from("new"));
+    assert_eq!(
+        player_only.ride_test("demo"),
+        "This park has no demo coaster"
+    );
+    player_only.construction_start(100, 100, 20, 0);
+    assert_eq!(
+        player_only.ride_test("player"),
+        "A closed circuit longer than the train is required"
+    );
+    assert_eq!(ride_info(&player_only, "player")["report"], Value::Null);
+}
+
+#[test]
+fn headless_player_ride_test_matches_the_animated_builder_test() {
+    let mut animated = WasmSimulation::new(42, 0, String::from("demo"));
+    append_lift_drop_fixture(&mut animated);
+    animated.construction_test();
+    for _ in 0..9000 {
+        animated.tick();
+        if animated.construction_outcome.is_some() {
+            break;
+        }
+    }
+    assert_eq!(animated.construction_message(), "Train completed a lap.");
+
+    let mut headless = WasmSimulation::new(42, 0, String::from("demo"));
+    append_lift_drop_fixture(&mut headless);
+    let hash_before = headless.state_hash();
+    assert_eq!(headless.ride_test("player"), "");
+    assert!(headless.construction_train.is_none());
+    assert!(headless.construction_message().is_empty());
+    assert_eq!(headless.coaster_ratings, None);
+    assert_ne!(headless.state_hash(), hash_before);
+
+    let animated_report: Value =
+        serde_json::from_str(&animated.construction_test_report_json()).unwrap();
+    assert!(finite_ratings(&animated_report));
+    assert_eq!(ride_info(&headless, "player")["report"], animated_report);
+}
+
+#[test]
+fn a_track_change_clears_the_player_report_but_not_the_demo_report() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    append_lift_drop_fixture(&mut simulation);
+    assert_eq!(simulation.ride_test("player"), "");
+    assert_eq!(simulation.ride_test("demo"), "");
+    simulation.construction_undo();
+    assert_eq!(ride_info(&simulation, "player")["report"], Value::Null);
+    assert!(finite_ratings(&ride_info(&simulation, "demo")["report"]));
 }
 
 fn append_lift_drop_fixture(simulation: &mut WasmSimulation) {
@@ -1726,7 +1811,7 @@ fn lift_drop_circuit_completes_lap() {
 }
 
 #[test]
-fn opening_after_a_completed_test_clears_the_report() {
+fn opening_after_a_completed_test_keeps_the_report_for_the_ride_info_window() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     append_lift_drop_fixture(&mut simulation);
     simulation.construction_test();
@@ -1757,8 +1842,17 @@ fn opening_after_a_completed_test_clears_the_report() {
                     .construction_test_report_json()
                     .contains("\"rating\"")
             );
+            let report_before_opening = ride_info(&simulation, "player")["report"].clone();
+            assert!(report_before_opening["rating"]["excitement"].is_number());
             assert!(simulation.construction_set_open(true));
             assert_eq!(simulation.construction_test_report_json(), "null");
+            assert_eq!(
+                ride_info(&simulation, "player")["report"],
+                report_before_opening
+            );
+            simulation.construction_set_open(false);
+            simulation.construction_undo();
+            assert_eq!(ride_info(&simulation, "player")["report"], Value::Null);
             return;
         }
         if simulation.construction_outcome.is_some() {
