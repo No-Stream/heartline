@@ -524,6 +524,37 @@ impl World {
             .flat_map(|column| column.paths.iter().copied())
     }
 
+    /// Iterates over paths whose 4-metre tiles overlap inclusive horizontal bounds.
+    /// Results keep row-major tile and ascending path-height order.
+    pub(crate) fn paths_overlapping_horizontal_bounds(
+        &self,
+        min_x: f64,
+        max_x: f64,
+        min_y: f64,
+        max_y: f64,
+    ) -> impl Iterator<Item = Path> + '_ {
+        assert!(
+            min_x.is_finite()
+                && max_x.is_finite()
+                && min_y.is_finite()
+                && max_y.is_finite()
+                && min_x <= max_x
+                && min_y <= max_y,
+            "invalid path query bounds"
+        );
+        let minimum_tile_x = ((min_x / 4.0).ceil() as i64).saturating_sub(1).max(0);
+        let maximum_tile_x = ((max_x / 4.0).floor() as i64).min(i64::from(self.width) - 1);
+        let minimum_tile_y = ((min_y / 4.0).ceil() as i64).saturating_sub(1).max(0);
+        let maximum_tile_y = ((max_y / 4.0).floor() as i64).min(i64::from(self.height) - 1);
+        (minimum_tile_y..=maximum_tile_y).flat_map(move |y| {
+            (minimum_tile_x..=maximum_tile_x).flat_map(move |x| {
+                self.columns[self.index(x as u16, y as u16)]
+                    .iter()
+                    .flat_map(|column| column.paths.iter().copied())
+            })
+        })
+    }
+
     /// Iterates over excavations in row-major column and ascending height order.
     /// Each interval is half-open: [bottom, top).
     pub fn carved_spans(&self) -> impl Iterator<Item = (u16, u16, i16, i16)> + '_ {
