@@ -16,7 +16,7 @@ use crate::track::{
     CoasterColors, CoasterModel, Heartlining, HillFeel,
     LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
     LaunchSpeedBounds, Piece, PieceFamily, PieceId, PieceKind, Shape, SupportStyle, TrackState,
-    TrainConfiguration, Vec3, catalog,
+    TrainConfiguration, Vec3, catalog, rated_speeds,
 };
 use crate::world::World;
 use std::cell::{Cell, RefCell};
@@ -94,36 +94,13 @@ pub struct SpeedMatchedVariant {
 pub fn select_speed_matched_variant(
     candidates: &[Piece],
     entry_speed: f64,
-) -> Option<SpeedMatchedVariant> {
-    select_speed_matched_variant_with_windows(candidates, entry_speed, -1.5, |piece| {
-        piece.rated_speeds
-    })
-}
-
-pub fn select_speed_matched_variant_for_limits(
-    candidates: &[Piece],
-    entry_speed: f64,
-    limits: super::ComfortableForceLimits,
+    model: &CoasterModel,
 ) -> Option<SpeedMatchedVariant> {
     select_speed_matched_variant_with_windows(
         candidates,
         entry_speed,
-        limits.minimum_vertical_g,
-        |piece| piece.rated_speeds,
-    )
-}
-
-pub fn select_speed_matched_variant_for_train(
-    candidates: &[Piece],
-    entry_speed: f64,
-    train: &super::TrainConfiguration,
-    limits: super::ComfortableForceLimits,
-) -> Option<SpeedMatchedVariant> {
-    select_speed_matched_variant_with_windows(
-        candidates,
-        entry_speed,
-        limits.minimum_vertical_g,
-        |piece| super::effective_rated_speeds(piece, train),
+        model.comfortable_force_limits.minimum_vertical_g,
+        |piece| rated_speeds(model, piece),
     )
 }
 
@@ -297,15 +274,10 @@ impl Construction {
         &self,
         pieces: &[Piece],
         config: crate::physics::PhysicsConfig,
-        model_key: &str,
     ) -> Option<crate::physics::TrackPreview> {
-        self.force_preview_cache.borrow_mut().preview(
-            pieces,
-            &self.model.train,
-            config,
-            self.model.comfortable_force_limits,
-            model_key,
-        )
+        self.force_preview_cache
+            .borrow_mut()
+            .preview(pieces, &self.model, config)
     }
     pub fn end(&self) -> TrackState {
         self.pieces.last().map_or(self.start, |piece| piece.exit)

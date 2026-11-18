@@ -829,9 +829,11 @@ mod tests {
         assert!(park.walking.traits().is_active(GuestId(0)));
         assert!(park.behaviors.is_coaster_riding(GuestId(0)));
         let circuit = crate::physics::demo_circuit();
+        let model = crate::track::hybrid_model();
         let mut run = crate::physics::CoasterRun::new(
             &circuit,
-            &crate::track::hybrid_model().train,
+            &model.train,
+            &model,
             crate::physics::PhysicsConfig {
                 lift_speed: 5.0,
                 ..Default::default()

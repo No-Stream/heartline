@@ -559,7 +559,8 @@ fn hills_inversions_and_overbanks_are_not_brake_sites() {
 #[test]
 fn stalled_circuit_reports_zero_capacity_after_asynchronous_fallback_trial() {
     let circuit = demo_circuit();
-    let train = crate::track::hybrid_model().train;
+    let model = crate::track::hybrid_model();
+    let train = model.train.clone();
     let config = crate::physics::PhysicsConfig {
         powered_sections: false,
         ..Default::default()
@@ -573,9 +574,9 @@ fn stalled_circuit_reports_zero_capacity_after_asynchronous_fallback_trial() {
     assert_eq!(search.best().capacity(), 0);
     assert!(search.best().capacity_search_complete());
 
-    let mut test_train = crate::physics::CoasterRun::new(&circuit, &train, config);
+    let mut test_train = crate::physics::CoasterRun::new(&circuit, &train, &model, config);
     let outcome = (0..1_000)
-        .find_map(|_| test_train.step(&circuit, "Timber Tumbler"))
+        .find_map(|_| test_train.step(&circuit, model.name))
         .expect("stalled train is recovered");
     assert!(outcome.recovered);
 }
@@ -1183,17 +1184,23 @@ fn powered_sections_get_a_candidate_at_their_end() {
             pieces.push(piece);
         }
         let circuit = crate::physics::Circuit::new(pieces).unwrap();
-        let train = if powered == PieceId::Launch {
-            crate::track::multi_launch_model().train
+        let model = if powered == PieceId::Launch {
+            crate::track::multi_launch_model()
         } else {
-            crate::track::hybrid_model().train
+            crate::track::hybrid_model()
         };
+        let train = model.train.clone();
         let runs = brake_runs(&circuit, train.length_metres);
         let layout =
             super::BlockLayout::new(&circuit, &train, Default::default(), Vec::new()).unwrap();
-        let mut test_train = crate::physics::CoasterRun::new(&circuit, &train, Default::default());
+        let mut test_train = crate::physics::CoasterRun::new(
+            &circuit,
+            &train,
+            &model,
+            Default::default(),
+        );
         let outcome = (0..120_000)
-            .find_map(|_| test_train.step(&circuit, "Timber Tumbler"))
+            .find_map(|_| test_train.step(&circuit, model.name))
             .expect("train finishes or is recovered");
         assert_eq!(layout.capacity(), usize::from(!outcome.recovered));
         assert!(layout.capacity_search_complete());

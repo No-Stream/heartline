@@ -1,12 +1,14 @@
 use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::rated_piece::{
-    rate_piece, rate_sequence, unpowered as rating_physics,
+    connected_measurement_track, rate_connected_piece, rate_piece, rate_sequence,
+    unpowered as rating_physics,
 };
 use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
 use theme_park_sim::track::{
-    CoasterModel, ForceRating, ForceRatingAxis, HillFeel, Piece, PieceFamily, PieceId, TrackState,
-    catalog, coaster_models, hybrid_model, multi_launch_model, wooden_twister_model,
+    CoasterModel, ForceRating, ForceRatingAxis, HillFeel, Piece, PieceFamily, PieceId, RatedSpeeds,
+    TrackState, catalog, coaster_models, hybrid_model, multi_launch_model, rated_speeds,
+    wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -171,10 +173,10 @@ fn rolled_inversion_minimum_speeds_clear_with_energy_margin() {
         StallRight,
     ] {
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-        let rated = piece.rated_speeds.expect("rolled inversion must be rated");
         let (circuit, start, end) = circuit_for_level_piece(id);
         for model in [hybrid_model(), multi_launch_model()] {
             let cars = model.train.cars;
+            let rated = rated_window(&model, piece);
             assert_train_crosses_element(
                 &model,
                 &circuit,
@@ -192,7 +194,7 @@ fn rolled_inversion_minimum_speeds_clear_with_energy_margin() {
 fn level_elements_clear_from_their_minimum_after_a_steep_crest() {
     use PieceId::*;
     for piece in catalog().iter().filter(|piece| {
-        piece.rated_speeds.is_some()
+        piece.design_speeds.is_some()
             && piece.entry == TrackState::origin()
             && piece.exit.slope == theme_park_sim::track::Slope::Level
             && piece.exit.bank == theme_park_sim::track::Bank::Level
@@ -204,13 +206,14 @@ fn level_elements_clear_from_their_minimum_after_a_steep_crest() {
             .filter(|model| model.allows_piece(piece))
         {
             let cars = model.train.cars;
+            let rated = rated_window(&model, piece);
             assert_train_crosses_element(
                 &model,
                 &circuit,
                 piece.id,
                 start..end,
                 cars,
-                piece.rated_speeds.unwrap().minimum_entry,
+                rated.minimum_entry,
                 false,
             );
         }
@@ -233,9 +236,9 @@ fn half_inversion_windows_hold_after_preceding_inversion() {
         let (circuit, ranges) = circuit_for_sequence(&sequence);
         let (id, start, end) = ranges[1];
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-        let rated = piece.rated_speeds.unwrap();
         for model in [hybrid_model(), multi_launch_model()] {
             let cars = model.train.cars;
+            let rated = rated_window(&model, piece);
             for speed in [rated.minimum_entry, rated.maximum_entry] {
                 assert_train_crosses_element(&model, &circuit, id, start..end, cars, speed, false);
             }
@@ -272,13 +275,11 @@ fn sixty_degree_windows_hold_with_connected_approaches() {
         let (circuit, ranges) = circuit_for_sequence(sequence);
         for (id, start, end) in ranges {
             let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-            let Some(rated) = piece.rated_speeds else {
-                continue;
-            };
             for model in models()
                 .into_iter()
                 .filter(|model| model.allows_piece(piece))
             {
+                let rated = rated_window(&model, piece);
                 let cars = model.train.cars;
                 for speed in [rated.minimum_entry, rated.maximum_entry] {
                     assert_train_crosses_element(
@@ -575,6 +576,12 @@ fn models() -> Vec<CoasterModel> {
     coaster_models()
 }
 
+fn rated_window(model: &CoasterModel, piece: &Piece) -> RatedSpeeds {
+    rated_speeds(model, piece).unwrap_or_else(|| {
+        panic!("{} has no rated speed window for {:?}", model.name, piece.id)
+    })
+}
+
 #[test]
 fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
     use PieceId::*;
@@ -607,21 +614,22 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
             || drops.contains(&piece.id)
     }) {
         if allowed_models.iter().any(|model| model.allows_piece(piece)) {
-            let rated = piece
-                .rated_speeds
-                .unwrap_or_else(|| panic!("buildable {:?} has no rated speed window", piece.id));
             let minimum_width =
                 if piece.inversion == Some(theme_park_sim::track::Inversion::VerticalLoop) {
                     1.5
                 } else {
                     2.0
                 };
-            assert!(
-                rated.minimum_entry >= 0.0
-                    && rated.maximum_entry - rated.minimum_entry >= minimum_width,
-                "{:?}: invalid rated window {rated:?}",
-                piece.id
-            );
+            for model in allowed_models.iter().filter(|model| model.allows_piece(piece)) {
+                let rated = rated_window(model, piece);
+                assert!(
+                    rated.minimum_entry >= 0.0
+                        && rated.maximum_entry - rated.minimum_entry >= minimum_width,
+                    "{:?} {}: invalid rated window {rated:?}",
+                    piece.id,
+                    model.name
+                );
+            }
         }
     }
 }
@@ -629,16 +637,16 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
 #[test]
 fn every_level_to_level_rated_maximum_passes_for_default_trains_in_isolation() {
     for piece in catalog().iter().filter(|piece| {
-        piece.rated_speeds.is_some()
+        piece.design_speeds.is_some()
             && piece.entry == TrackState::origin()
             && piece.exit.slope == theme_park_sim::track::Slope::Level
             && piece.exit.bank == theme_park_sim::track::Bank::Level
     }) {
-        let maximum_entry = piece.rated_speeds.unwrap().maximum_entry;
         for model in models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
+            let maximum_entry = rated_window(&model, piece).maximum_entry;
             let cars = model.train.cars;
             let rating = rate_piece(&model, cars, piece, maximum_entry, rating_physics())
                 .unwrap_or_else(|error| panic!("{:?} {}: {error}", piece.id, model.name));
@@ -656,16 +664,16 @@ fn level_to_level_inversion_rated_maxima_pass_for_allowed_default_trains_in_isol
     let mut checked_configurations = 0;
     for piece in catalog().iter().filter(|piece| {
         piece.inversion.is_some()
-            && piece.rated_speeds.is_some()
+            && piece.design_speeds.is_some()
             && piece.entry == TrackState::origin()
             && piece.exit.slope == theme_park_sim::track::Slope::Level
             && piece.exit.bank == theme_park_sim::track::Bank::Level
     }) {
-        let maximum_entry = piece.rated_speeds.unwrap().maximum_entry;
         for model in models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
+            let maximum_entry = rated_window(&model, piece).maximum_entry;
             let cars = model.train.cars;
             let rating = rate_piece(&model, cars, piece, maximum_entry, rating_physics())
                 .unwrap_or_else(|error| panic!("{:?} {}: {error}", piece.id, model.name));
@@ -687,13 +695,12 @@ fn level_to_level_inversion_rated_maxima_pass_for_allowed_default_trains_in_isol
 fn every_level_to_level_rated_element_passes_default_trains_at_both_window_ends() {
     let mut failures = Vec::new();
     for template in catalog().iter().filter(|piece| {
-        piece.rated_speeds.is_some()
+        piece.design_speeds.is_some()
             && piece.entry == TrackState::origin()
             && piece.exit.slope == theme_park_sim::track::Slope::Level
             && piece.exit.bank == theme_park_sim::track::Bank::Level
     }) {
         let (circuit, element_start, element_end) = circuit_for_level_piece(template.id);
-        let rated = template.rated_speeds.unwrap();
         eprintln!(
             "{:?}: catalog length {:.3} m, midpoint {:?}",
             template.id,
@@ -704,6 +711,7 @@ fn every_level_to_level_rated_element_passes_default_trains_at_both_window_ends(
             .into_iter()
             .filter(|model| model.allows_piece(template))
         {
+            let rated = rated_window(&model, template);
             let cars = model.train.cars;
             for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
                 let is_ascending = template.exit.position().z > template.entry.position().z
@@ -754,12 +762,12 @@ fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
         .find(|piece| piece.id == PieceId::WoodenEjectorHill8x64)
         .expect("wooden strong floater is in the catalog");
     assert!(piece.name.contains("floater"));
-    assert!(piece.rated_speeds.is_some());
+    assert!(piece.design_speeds.is_some());
     assert!(wooden_twister_model().allows_piece(piece));
     assert!(!hybrid_model().allows_piece(piece));
     assert!(!multi_launch_model().allows_piece(piece));
-    let rated = piece.rated_speeds.unwrap();
     let model = wooden_twister_model();
+    let rated = rated_window(&model, piece);
     let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
     let cars = model.train.cars;
     let mut speeds = vec![rated.minimum_entry];
@@ -810,13 +818,11 @@ fn every_ejector_hill_reaches_great_airtime_for_each_allowed_default_train() {
 
     let mut failures = Vec::new();
     for piece in ejector_hills {
-        let rated = piece
-            .rated_speeds
-            .expect("ejector hill has a rated speed window");
         for model in allowed_models
             .iter()
             .filter(|model| model.allows_piece(piece))
         {
+            let rated = rated_window(model, piece);
             let sample_count = ((rated.maximum_entry - rated.minimum_entry) / 0.25).ceil() as usize;
             let found_great = (0..=sample_count).any(|index| {
                 let speed = (rated.minimum_entry + index as f64 * 0.25).min(rated.maximum_entry);
@@ -848,11 +854,11 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
             if matches!(family.feel, HillFeel::Floater | HillFeel::StrongFloater)
                 && family.twist.is_none())
     }) {
-        let maximum = piece.rated_speeds.unwrap().maximum_entry;
         for model in models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
+            let maximum = rated_window(&model, piece).maximum_entry;
             let rating = rate_piece(&model, model.train.cars, piece, maximum, rating_physics())
                 .expect("rating must complete");
             let airtime = model.comfortable_force_limits.classify_force(
@@ -872,31 +878,48 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
 }
 
 #[test]
-fn every_rated_endpoint_passes_for_each_allowed_default_train_with_the_force_evaluator() {
-    let mut failures = Vec::new();
+fn every_model_rated_window_endpoint_passes_with_its_default_train_on_connected_track() {
     for piece in catalog()
         .iter()
-        .filter(|piece| piece.rated_speeds.is_some())
+        .filter(|piece| piece.design_speeds.is_some())
     {
-        let rated = piece.rated_speeds.unwrap();
         for model in models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
+            let rated = rated_window(&model, piece);
             let cars = model.train.cars;
             for speed in [rated.minimum_entry, rated.maximum_entry] {
-                let rating = rate_piece(&model, cars, piece, speed, rating_physics())
+                let rating = rate_connected_piece(&model, cars, piece, speed, rating_physics())
                     .expect("rating must complete");
-                if !rating.passed {
-                    failures.push(format!(
-                        "{:?} {} {cars} cars at {speed}: {rating:?}",
-                        piece.id, model.name
-                    ));
+                assert!(
+                    rating.passed,
+                    "{:?} {} {cars} cars at {speed}: {rating:?}",
+                    piece.id,
+                    model.name
+                );
+                let (circuit, element_range) =
+                    connected_measurement_track(&model, cars, piece, speed);
+                if piece.id == PieceId::SteepToSixtyUp {
+                    let element_index = circuit.piece_index(element_range.start);
+                    assert_eq!(
+                        circuit.pieces()[element_index - 1].id,
+                        PieceId::GentleToSteepUp,
+                        "SteepToSixtyUp uses the connected steep-approach test prefix"
+                    );
                 }
+                assert_train_crosses_element(
+                    &model,
+                    &circuit,
+                    piece.id,
+                    element_range,
+                    cars,
+                    speed,
+                    false,
+                );
             }
         }
     }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
@@ -985,13 +1008,11 @@ fn every_tilted_roll_and_drop_variant_passes_full_train_at_both_window_ends() {
                 continue;
             }
             let piece = catalog().iter().find(|piece| piece.id == piece_id).unwrap();
-            let rated = piece
-                .rated_speeds
-                .unwrap_or_else(|| panic!("{piece_id:?} has no rated speeds"));
             for model in models()
                 .into_iter()
                 .filter(|model| model.allows_piece(piece))
             {
+                let rated = rated_window(&model, piece);
                 let cars = model.train.cars;
                 for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
                     let minimum_speed_required = entry_speed == rated.minimum_entry
@@ -1040,13 +1061,11 @@ fn banked_straights_pass_isolated_ratings_at_both_window_ends() {
             PieceId::BankedStraightLeft | PieceId::BankedStraightRight
         )
     }) {
-        let rated = piece
-            .rated_speeds
-            .expect("banked straight needs a rated window");
         for model in models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
+            let rated = rated_window(&model, piece);
             let cars = model.train.cars;
             for speed in [rated.minimum_entry, rated.maximum_entry] {
                 let rating = rate_piece(&model, cars, piece, speed, rating_physics())
@@ -1093,13 +1112,15 @@ fn banked_straight_compositions_pass_with_continuous_force_history() {
             .iter()
             .map(|(_, start, end)| *start..*end)
             .collect();
-        let rated = catalog()
+        let piece = catalog()
             .iter()
             .find(|piece| piece.id == straight)
-            .unwrap()
-            .rated_speeds
             .unwrap();
         for model in models() {
+            if !model.allows_piece(piece) {
+                continue;
+            }
+            let rated = rated_window(&model, piece);
             let rating = rate_sequence(
                 &circuit,
                 &tested_ranges,
@@ -1150,13 +1171,11 @@ fn banked_straights_and_rollouts_pass_full_train_at_rated_window_ends() {
                     .iter()
                     .find(|piece| piece.id == id && piece.entry.slope == slope)
                     .unwrap();
-                let rated = piece
-                    .rated_speeds
-                    .expect("banked continuation needs a rated window");
                 for model in models()
                     .into_iter()
                     .filter(|model| model.allows_piece(piece))
                 {
+                    let rated = rated_window(&model, piece);
                     let cars = model.train.cars;
                     for speed in [rated.minimum_entry, rated.maximum_entry] {
                         assert_train_crosses_element(
@@ -1184,14 +1203,14 @@ fn wave_and_overbank_turns_have_rated_windows_for_both_steel_models() {
         PieceId::HybridOverbankRight,
     ] {
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-        let rated = piece.rated_speeds.expect("turn must have a rated window");
-        assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
         for model in [hybrid_model(), multi_launch_model()] {
             assert!(
                 model.allows_piece(piece),
                 "{} does not allow {id:?}",
                 model.name
             );
+            let rated = rated_window(&model, piece);
+            assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
         }
     }
 }
@@ -1205,15 +1224,15 @@ fn wave_and_overbank_turns_have_contiguous_rated_windows() {
         PieceId::HybridOverbankRight,
     ] {
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-        let rated = piece.rated_speeds.unwrap();
         let (circuit, start, end) = circuit_for_level_piece(id);
-        let mut speed = rated.minimum_entry;
-        while speed <= rated.maximum_entry {
-            for model in [hybrid_model(), multi_launch_model()] {
+        for model in [hybrid_model(), multi_launch_model()] {
+            let rated = rated_window(&model, piece);
+            let mut speed = rated.minimum_entry;
+            while speed <= rated.maximum_entry {
                 let cars = model.train.cars;
                 assert_train_crosses_element(&model, &circuit, id, start..end, cars, speed, false);
+                speed += 1.0;
             }
-            speed += 1.0;
         }
     }
 }
@@ -1245,25 +1264,36 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
         else {
             unreachable!("filtered speed-turn piece lost its family metadata");
         };
-        let rated = piece.rated_speeds.expect("speed turn has a rated window");
         let (circuit, start, end) = circuit_for_level_piece(piece.id);
-        let allowed_by_any_model = all_models.iter().any(|model| model.allows_piece(piece));
-        let mut maximum_design_speed_lateral: f64 = 0.0;
-        let mut design_lateral_context = String::from("no model scanned");
-        let mut window_forces = ElementForces {
-            minimum_vertical: f64::INFINITY,
-            maximum_vertical: f64::NEG_INFINITY,
-            maximum_lateral: 0.0,
-            maximum_longitudinal: 0.0,
-            peak_lateral_distance: start,
-            peak_lateral_speed: rated.minimum_entry,
-        };
-        let mut model_window_forces = vec![window_forces; all_models.len()];
-        let mut window_lateral_context = String::from("no model scanned");
-        let mut speed = rated.minimum_entry;
-        while speed <= rated.maximum_entry {
-            for (model_index, model) in all_models.iter().enumerate() {
-                let model_allows_piece = model.allows_piece(piece);
+        let mut allowed_model_count = 0;
+        for model in all_models.iter().filter(|model| model.allows_piece(piece)) {
+            allowed_model_count += 1;
+            let rated = rated_window(model, piece);
+            let mut speeds = Vec::new();
+            let mut speed = rated.minimum_entry;
+            while speed < rated.maximum_entry {
+                speeds.push(speed);
+                speed += 1.0;
+            }
+            speeds.push(rated.maximum_entry);
+            if (rated.minimum_entry..=rated.maximum_entry).contains(&design_speed) {
+                speeds.push(design_speed);
+            }
+            speeds.sort_by(f64::total_cmp);
+            speeds.dedup_by(|left, right| (*left - *right).abs() < 1e-8);
+
+            let mut maximum_design_speed_lateral: f64 = 0.0;
+            let mut design_lateral_context = String::from("design speed outside rated window");
+            let mut window_forces = ElementForces {
+                minimum_vertical: f64::INFINITY,
+                maximum_vertical: f64::NEG_INFINITY,
+                maximum_lateral: 0.0,
+                maximum_longitudinal: 0.0,
+                peak_lateral_distance: start,
+                peak_lateral_speed: rated.minimum_entry,
+            };
+            let mut window_lateral_context = String::from("no model scan");
+            for speed in speeds {
                 let cars = model.train.cars;
                 let scan = scan_train_element(model, &circuit, start..end, cars, speed);
                 let forces = scan.forces;
@@ -1291,98 +1321,72 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
                         piece.id, model.name
                     ));
                 }
-                if model_allows_piece && let Some(violation) = &scan.violation {
+                if let Some(violation) = &scan.violation {
                     failures.push(format!(
                         "{:?} {} {cars} cars at {speed:.1} m/s: {violation}",
                         piece.id, model.name
                     ));
                 }
-                window_forces.minimum_vertical =
-                    window_forces.minimum_vertical.min(forces.minimum_vertical);
-                window_forces.maximum_vertical =
-                    window_forces.maximum_vertical.max(forces.maximum_vertical);
+                window_forces.minimum_vertical = window_forces
+                    .minimum_vertical
+                    .min(forces.minimum_vertical);
+                window_forces.maximum_vertical = window_forces
+                    .maximum_vertical
+                    .max(forces.maximum_vertical);
                 if forces.maximum_lateral > window_forces.maximum_lateral {
                     window_forces.maximum_lateral = forces.maximum_lateral;
                     window_forces.peak_lateral_distance = forces.peak_lateral_distance;
                     window_forces.peak_lateral_speed = forces.peak_lateral_speed;
-                    window_lateral_context =
-                        format!("{} {cars} cars at {speed:.1} m/s", model.name);
+                    window_lateral_context = format!("{} cars at {speed:.1} m/s", cars);
                 }
                 window_forces.maximum_longitudinal = window_forces
                     .maximum_longitudinal
                     .max(forces.maximum_longitudinal);
-                let model_window = &mut model_window_forces[model_index];
-                model_window.minimum_vertical =
-                    model_window.minimum_vertical.min(forces.minimum_vertical);
-                model_window.maximum_vertical =
-                    model_window.maximum_vertical.max(forces.maximum_vertical);
-                if forces.maximum_lateral > model_window.maximum_lateral {
-                    model_window.maximum_lateral = forces.maximum_lateral;
-                    model_window.peak_lateral_distance = forces.peak_lateral_distance;
-                    model_window.peak_lateral_speed = forces.peak_lateral_speed;
-                }
-                model_window.maximum_longitudinal = model_window
-                    .maximum_longitudinal
-                    .max(forces.maximum_longitudinal);
-                if (speed - design_speed).abs() < 1e-8
-                    && forces.maximum_lateral > maximum_design_speed_lateral
-                {
+                if (speed - design_speed).abs() < 1e-8 {
                     maximum_design_speed_lateral = forces.maximum_lateral;
                     design_lateral_context = format!(
-                        "{} {cars} cars at {:.2} m, car speed {:.2} m/s",
-                        model.name, forces.peak_lateral_distance, forces.peak_lateral_speed
+                        "{cars} cars at {:.2} m, car speed {:.2} m/s",
+                        forces.peak_lateral_distance, forces.peak_lateral_speed
                     );
                 }
             }
-            speed += 1.0;
+
+            let window_peak_roll_rate_degrees_per_second =
+                peak_roll_rate_degrees_per_second(piece, rated.maximum_entry);
+            eprintln!(
+                "{:?} {}: full-train vertical {:.3}..{:.3} g, lateral {:.3} g across window at {window_lateral_context}, {:.3} g at design speed at {design_lateral_context}, longitudinal {:.3} g, peak rated-window roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s",
+                piece.id,
+                model.name,
+                window_forces.minimum_vertical,
+                window_forces.maximum_vertical,
+                window_forces.maximum_lateral,
+                maximum_design_speed_lateral,
+                window_forces.maximum_longitudinal
+            );
+            if maximum_design_speed_lateral > 0.35 {
+                failures.push(format!(
+                    "{} {} design-speed worst-car lateral {maximum_design_speed_lateral:.3} g at {design_lateral_context} exceeds 0.35 g",
+                    piece.name, model.name
+                ));
+            }
+            if window_peak_roll_rate_degrees_per_second
+                > MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND
+            {
+                failures.push(format!(
+                    "{} {} peak rated-window roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds {MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND:.1} degrees/s",
+                    piece.name, model.name
+                ));
+            }
         }
+        assert!(allowed_model_count > 0, "no model allows {:?}", piece.id);
         scanned_candidates += 1;
         let design_speed_peak_roll_rate_degrees_per_second =
             peak_roll_rate_degrees_per_second(piece, design_speed);
-        let window_peak_roll_rate_degrees_per_second =
-            peak_roll_rate_degrees_per_second(piece, rated.maximum_entry);
-        eprintln!(
-            "{:?}: scanned across all models; allowed by any model: {allowed_by_any_model}; full-train vertical {:.3}..{:.3} g, lateral {:.3} g across window at {window_lateral_context}, {:.3} g at design speed at {design_lateral_context}, longitudinal {:.3} g, design-speed roll rate {design_speed_peak_roll_rate_degrees_per_second:.1} degrees/s, peak rated-window roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s",
-            piece.id,
-            window_forces.minimum_vertical,
-            window_forces.maximum_vertical,
-            window_forces.maximum_lateral,
-            maximum_design_speed_lateral,
-            window_forces.maximum_longitudinal
-        );
-        for (model, forces) in all_models.iter().zip(model_window_forces) {
-            eprintln!(
-                "{:?} {} allowed={}: full-train vertical {:.4}..{:.4} g, lateral {:.4} g at {:.2} m (car speed {:.2} m/s), longitudinal {:.4} g",
-                piece.id,
-                model.name,
-                model.allows_piece(piece),
-                forces.minimum_vertical,
-                forces.maximum_vertical,
-                forces.maximum_lateral,
-                forces.peak_lateral_distance,
-                forces.peak_lateral_speed,
-                forces.maximum_longitudinal
-            );
-        }
-        if maximum_design_speed_lateral > 0.35 {
-            failures.push(format!(
-                "{} design-speed worst-car lateral {maximum_design_speed_lateral:.3} g at {design_lateral_context} exceeds 0.35 g",
-                piece.name
-            ));
-        }
         if design_speed_peak_roll_rate_degrees_per_second
             > MAXIMUM_DESIGN_SPEED_ROLL_RATE_DEGREES_PER_SECOND
         {
             failures.push(format!(
                 "{} design-speed roll rate {design_speed_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds {MAXIMUM_DESIGN_SPEED_ROLL_RATE_DEGREES_PER_SECOND:.1} degrees/s",
-                piece.name
-            ));
-        }
-        if window_peak_roll_rate_degrees_per_second
-            > MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND
-        {
-            failures.push(format!(
-                "{} peak rated-window roll rate {window_peak_roll_rate_degrees_per_second:.1} degrees/s exceeds {MAXIMUM_RATED_WINDOW_ROLL_RATE_DEGREES_PER_SECOND:.1} degrees/s",
                 piece.name
             ));
         }
@@ -1406,10 +1410,11 @@ fn floater_point_mass_forecast_compared_with_default_train() {
         .iter()
         .find(|piece| piece.id == PieceId::FloaterHill8x64)
         .unwrap();
-    let entry_speed = piece.rated_speeds.unwrap().maximum_entry;
+    let model = hybrid_model();
+    let entry_speed = rated_window(&model, piece).maximum_entry;
     let forecast = predicted_hill_forces(piece, entry_speed).unwrap();
     let (circuit, start, end) = circuit_for_level_piece(piece.id);
-    let config = hybrid_model().train;
+    let config = model.train;
     let cars = config.cars;
     let mut train = Train::new(&circuit, &config, unpowered(), start, entry_speed);
     let mut minimum = f64::INFINITY;

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use theme_park_sim::physics::{Circuit, CoasterRun, PhysicsConfig};
 use theme_park_sim::track::{
     CoasterModel, Heading, LaunchType, Piece, PieceId, PieceKind, TrackState, catalog,
-    hybrid_model, multi_launch_model, wooden_twister_model,
+    hybrid_model, multi_launch_model, rated_speeds, wooden_twister_model,
 };
 
 struct Composition {
@@ -445,7 +445,12 @@ fn build_composition(composition: &Composition) -> (Circuit, Vec<(PieceId, std::
 
 fn run_and_check(composition: Composition) -> Vec<String> {
     let (circuit, element_ranges) = build_composition(&composition);
-    let mut run = CoasterRun::new(&circuit, &composition.model.train, PhysicsConfig::default());
+    let mut run = CoasterRun::new(
+        &circuit,
+        &composition.model.train,
+        &composition.model,
+        PhysicsConfig::default(),
+    );
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, composition.model.name))
         .unwrap_or_else(|| panic!("{} test run did not finish", composition.name));
@@ -527,7 +532,7 @@ fn run_and_check(composition: Composition) -> Vec<String> {
     let catalog = catalog();
     for (id, range) in &element_ranges {
         let piece = catalog.iter().find(|piece| piece.id == *id).unwrap();
-        let Some(rated) = piece.rated_speeds else {
+        let Some(rated) = rated_speeds(&composition.model, piece) else {
             failures.push(format!(
                 "{} {id:?} has no rated entry band",
                 composition.name
@@ -745,13 +750,12 @@ fn lifted_composition_enters_its_rated_loop_window() {
             expected_inversion_passages: 1,
         });
         let element_range = &element_ranges[0].1;
-        let rated = catalog()
+        let piece = catalog()
             .iter()
             .find(|piece| piece.id == element)
-            .unwrap()
-            .rated_speeds
             .unwrap();
-        let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+        let rated = rated_speeds(&model, piece).unwrap();
+        let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
         let outcome = (0..200_000)
             .find_map(|_| run.step(&circuit, model.name))
             .unwrap_or_else(|| panic!("{name} test run did not finish"));

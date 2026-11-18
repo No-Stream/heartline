@@ -607,11 +607,7 @@ fn calibration_recorder(
     circuit: &super::Circuit,
     model: &CoasterModel,
 ) -> ConstructionTestRunRecorder {
-    ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
-        circuit,
-        &model.train,
-        model.comfortable_force_limits,
-    )
+    ConstructionTestRunRecorder::for_circuit_with_train_and_model(circuit, &model.train, model)
 }
 
 fn run_lap(circuit: &super::Circuit, model: &CoasterModel, initial_speed: f64) -> super::TestRun {
@@ -705,22 +701,10 @@ fn incremental_force_preview_matches_fresh_player_circuit_prefixes() {
         for length in (1..=pieces.len()).chain((1..pieces.len()).rev()) {
             let track = &pieces[..length];
             let cached = cache
-                .preview(
-                    track,
-                    &model.train,
-                    config,
-                    model.comfortable_force_limits,
-                    model.name,
-                )
+                .preview(track, &model, config)
                 .unwrap();
             let fresh = super::PreviewCache::default()
-                .preview(
-                    track,
-                    &model.train,
-                    config,
-                    model.comfortable_force_limits,
-                    model.name,
-                )
+                .preview(track, &model, config)
                 .unwrap();
             assert_eq!(cached.status, fresh.status, "{name} length {length}");
             assert_eq!(
@@ -740,31 +724,13 @@ fn incremental_force_preview_matches_fresh_player_circuit_prefixes() {
             crate::track::PieceKind::Brakes
         };
         cache
-            .preview(
-                pieces,
-                &model.train,
-                config,
-                model.comfortable_force_limits,
-                model.name,
-            )
+            .preview(pieces, &model, config)
             .unwrap();
         let cached = cache
-            .preview(
-                &edited,
-                &model.train,
-                config,
-                model.comfortable_force_limits,
-                model.name,
-            )
+            .preview(&edited, &model, config)
             .unwrap();
         let fresh = super::PreviewCache::default()
-            .preview(
-                &edited,
-                &model.train,
-                config,
-                model.comfortable_force_limits,
-                model.name,
-            )
+            .preview(&edited, &model, config)
             .unwrap();
         assert_eq!(cached.status, fresh.status, "{name} middle edit");
         assert_eq!(

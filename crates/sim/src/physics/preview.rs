@@ -1,6 +1,6 @@
 use super::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, TestRun, TestRunRecorder, Train};
 use crate::state_hash::StateHasher;
-use crate::track::{ComfortableForceLimits, Piece, PieceKind, TrainConfiguration};
+use crate::track::{CoasterModel, Piece, PieceKind};
 
 const PREVIEW_MAX_SECONDS: f64 = 1000.0;
 
@@ -59,11 +59,12 @@ impl PreviewCache {
     pub fn preview(
         &mut self,
         pieces: &[Piece],
-        configuration: &TrainConfiguration,
+        model: &CoasterModel,
         config: PhysicsConfig,
-        limits: ComfortableForceLimits,
-        model_key: &str,
     ) -> Option<TrackPreview> {
+        let configuration = &model.train;
+        let limits = model.comfortable_force_limits;
+        let model_key = model.name;
         let station = pieces
             .iter()
             .position(|piece| piece.kind == PieceKind::Station)?;
@@ -89,7 +90,13 @@ impl PreviewCache {
                 hash.finish()
             })
             .collect();
-        let parameters = postcard::to_allocvec(&(configuration, config, limits, model_key))
+        let parameters = postcard::to_allocvec(&(
+            configuration,
+            config,
+            limits,
+            model.key,
+            model_key,
+        ))
             .expect("preview parameters serialize");
         let common = if self.parameters == parameters && self.closed == closed {
             self.piece_hashes
@@ -116,7 +123,7 @@ impl PreviewCache {
             let mut train = snapshot.train;
             train.controls.resize(pieces.len(), None);
             let mut recorder = snapshot.recorder;
-            recorder.rebind_preview_circuit(&circuit, configuration, limits);
+            recorder.rebind_preview_circuit(&circuit, model);
             let mut flags = snapshot.flags;
             flags.resize(length.ceil() as usize, false);
             (
@@ -133,7 +140,7 @@ impl PreviewCache {
             let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
             (
                 Train::new(&circuit, configuration, config, station_distance, 0.0),
-                TestRunRecorder::for_circuit_with_train_and_limits(&circuit, configuration, limits),
+                TestRunRecorder::for_circuit_with_model(&circuit, model),
                 vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)],
                 vec![false; length.ceil() as usize],
                 vec![None; usize::from(configuration.cars)],
@@ -245,29 +252,27 @@ impl PreviewCache {
 /// reached the end, rather than that the ride completed a circuit.
 pub fn preview_open_track(
     pieces: &[Piece],
-    configuration: &TrainConfiguration,
+    model: &CoasterModel,
     config: PhysicsConfig,
-    model_key: &str,
 ) -> Option<TrackPreview> {
     PreviewCache::default().preview(
         pieces,
-        configuration,
+        model,
         config,
-        crate::track::hybrid_model().comfortable_force_limits,
-        model_key,
     )
 }
 
 #[cfg(test)]
 pub(super) fn preview_at_step(
     pieces: &[Piece],
-    configuration: &TrainConfiguration,
+    model: &CoasterModel,
     config: PhysicsConfig,
     step_limit: usize,
     time_step: f64,
-    model_key: &str,
 ) -> Option<TrackPreview> {
     assert_eq!(time_step, TIME_STEP);
+    let configuration = &model.train;
+    let model_key = model.name;
     let station = pieces
         .iter()
         .position(|piece| piece.kind == PieceKind::Station)?;
@@ -287,7 +292,7 @@ pub(super) fn preview_at_step(
     };
     let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
     let mut train = Train::new(&circuit, configuration, config, station_distance, 0.0);
-    let mut recorder = TestRunRecorder::for_circuit_with_train(&circuit, configuration);
+    let mut recorder = TestRunRecorder::for_circuit_with_model(&circuit, model);
     recorder.set_time_step(time_step);
     let mut stationary_steps = 0;
     for _ in 0..step_limit {

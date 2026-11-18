@@ -7,10 +7,10 @@ use theme_park_sim::physics::{
     Circuit, ConstructionTestRunRecorder, DEMO_STATION_ENTRY, ForceAxis, ForceBand, PhysicsConfig,
     TIME_STEP, Train, force_band, preview_open_track,
 };
-use theme_park_sim::track::construction::{Construction, select_speed_matched_variant_for_train};
+use theme_park_sim::track::construction::{Construction, select_speed_matched_variant};
 use theme_park_sim::track::{
     CoasterModel, Hand, Heading, HillFeel, HillTwist, Piece, PieceFamily, PieceId, PieceKind,
-    TrackState, catalog, coaster_models, effective_rated_speeds, hybrid_model,
+    TrackState, catalog, coaster_models, hybrid_model, rated_speeds,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -103,8 +103,7 @@ pub fn report_for_circuit(
         }
         let id = if line.starts_with('@') {
             let preview =
-                preview_open_track(construction.pieces(), &model.train, config, model.name)
-                    .ok_or("No station")?;
+                preview_open_track(construction.pieces(), &model, config).ok_or("No station")?;
             let speed = construction
                 .estimated_end_speed(Some(&preview))
                 .speed
@@ -180,10 +179,8 @@ pub fn report_for_circuit(
         start_distance,
         if construction_test { 2.0 } else { 0.0 },
     );
-    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
-        &circuit,
-        &model.train,
-        model.comfortable_force_limits,
+    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_model(
+        &circuit, &model.train, &model,
     );
     let mut rows: Vec<PieceReadings> = (0..pieces.len())
         .map(|_| PieceReadings {
@@ -260,7 +257,7 @@ pub fn report_for_circuit(
             continue;
         }
         let front = row.entries[0];
-        let rated = effective_rated_speeds(piece, &model.train);
+        let rated = rated_speeds(&model, piece);
         // A crest fed straight from the chain lift is rated by the front car's entry speed (see the design margins
         // in tests/known_circuit_statistics.rs), so only the front car counts there.
         let fed_by_lift = pieces[(index + pieces.len() - 1) % pieces.len()].kind == PieceKind::Lift;
@@ -405,12 +402,7 @@ fn resolve_directive(line: &str, speed: f64, model: &CoasterModel) -> Result<Pie
         })
         .cloned()
         .collect();
-    let selected = select_speed_matched_variant_for_train(
-        &candidates,
-        speed,
-        &model.train,
-        model.comfortable_force_limits,
-    )
+    let selected = select_speed_matched_variant(&candidates, speed, &model)
     .ok_or_else(|| format!("No available size for {line} at {speed:.2} m/s"))?;
     if !selected.fits {
         return Err(format!("No fitting size for {line} at {speed:.2} m/s"));

@@ -635,7 +635,8 @@ pub struct Piece {
     pub inversion: Option<Inversion>,
     pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
-    pub rated_speeds: Option<RatedSpeeds>,
+    #[serde(rename = "rated_speeds")]
+    pub design_speeds: Option<RatedSpeeds>,
     pub family: Option<PieceFamily>,
     pub entry: TrackState,
     pub exit: TrackState,
@@ -1049,7 +1050,7 @@ impl Piece {
         hash.write_option(self.structure_material, |hash, material| {
             hash.write_u8(material as u8);
         });
-        hash.write_option(self.rated_speeds, |hash, speeds| {
+        hash.write_option(self.design_speeds, |hash, speeds| {
             hash.write_f64(speeds.minimum_entry);
             hash.write_f64(speeds.maximum_entry);
         });
@@ -1754,7 +1755,7 @@ mod shape_tests {
             inversion: None,
             heartlining: None::<Heartlining>,
             structure_material: None,
-            rated_speeds: None,
+            design_speeds: None,
             family: None,
             entry,
             exit: TrackState {
@@ -1924,7 +1925,7 @@ mod shape_tests {
             })
         }) {
             count += 1;
-            let entry_speed = piece.rated_speeds.unwrap().maximum_entry;
+            let entry_speed = piece.design_speeds.unwrap().maximum_entry;
             let peak = piece.rolled_hill_peak_roll_rate(entry_speed);
             eprintln!(
                 "{:?} at {entry_speed:.2} m/s: {peak:.3} degrees/s",

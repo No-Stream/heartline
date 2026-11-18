@@ -110,7 +110,8 @@ fn occupied_section_brakes_and_releases_train_at_launch_start() {
 #[test]
 fn lift_sections_allow_two_trains_without_added_brakes() {
     let circuit = powered_oval();
-    let train = hybrid_model().train;
+    let model = hybrid_model();
+    let train = model.train.clone();
     let config = PhysicsConfig {
         lift_speed: 5.0,
         ..Default::default()
@@ -120,7 +121,7 @@ fn lift_sections_allow_two_trains_without_added_brakes() {
         layout.capacity() >= 2,
         "station and lift sections should support two trains"
     );
-    let mut operation = BlockOperation::new(layout);
+    let mut operation = BlockOperation::new(layout, &model);
     operation.panic_on_interlock = true;
     let mut maximum_active = 0;
     let mut completed = 0;
@@ -167,7 +168,8 @@ fn lift_sections_allow_two_trains_without_added_brakes() {
 #[test]
 fn launch_sections_allow_two_trains_without_added_brakes() {
     let circuit = powered_oval_with(PieceId::LaunchShort);
-    let train = multi_launch_model().train;
+    let model = multi_launch_model();
+    let train = model.train.clone();
     let config = PhysicsConfig {
         braking_acceleration: 20.0,
         ..Default::default()
@@ -177,7 +179,7 @@ fn launch_sections_allow_two_trains_without_added_brakes() {
         layout.capacity() >= 2,
         "station and launch sections should support two trains"
     );
-    let mut operation = BlockOperation::new(layout);
+    let mut operation = BlockOperation::new(layout, &model);
     operation.panic_on_interlock = true;
     let mut maximum_active = 0;
     let mut completed = 0;
@@ -209,7 +211,7 @@ fn launch_approach_that_cannot_stop_safely_uses_one_train() {
     )
     .unwrap();
     assert_eq!(layout.capacity(), 1);
-    let mut operation = BlockOperation::new(layout);
+    let mut operation = BlockOperation::new(layout, &multi_launch_model());
     operation.panic_on_interlock = true;
     operation.dispatch();
     let outcome = (0..120_000)
@@ -245,7 +247,7 @@ fn two_brakes_on_unpowered_oval_have_one_train_capacity() {
     };
     let layout = BlockLayout::new(&circuit, &hybrid_model().train, config, boundaries).unwrap();
     assert_eq!(layout.capacity(), 1);
-    let mut operation = BlockOperation::new(layout);
+    let mut operation = BlockOperation::new(layout, &hybrid_model());
     operation.dispatch();
     let outcome = (0..120_000)
         .find_map(|_| operation.step(&[], "Timber Tumbler").into_iter().next())

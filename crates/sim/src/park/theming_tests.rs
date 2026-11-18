@@ -15,7 +15,8 @@ fn world_with_surface(height: i16) -> World {
 }
 
 fn report_for(circuit: &crate::physics::Circuit) -> TestRun {
-    let mut recorder = TestRunRecorder::for_circuit(circuit);
+    let model = crate::track::hybrid_model();
+    let mut recorder = TestRunRecorder::for_circuit_with_model(circuit, &model);
     let mut frames = Vec::new();
     let mut distance = 0.0;
     while distance < circuit.length() {

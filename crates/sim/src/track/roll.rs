@@ -819,6 +819,7 @@ mod tests {
 
     use crate::track::catalog;
     use crate::track::curves::{Bank, Heading, Piece, PieceId, Slope, TrackState, Vec3};
+    use crate::track::{coaster_models, rated_speeds};
 
     use super::{RollGeometry, RollPath};
 
@@ -889,7 +890,11 @@ mod tests {
             .iter()
             .find(|piece| piece.id == PieceId::HeartlineRoll)
             .unwrap();
-        let speed = piece.rated_speeds.unwrap().maximum_entry;
+        let model = coaster_models()
+            .into_iter()
+            .find(|model| model.allows_piece(piece))
+            .unwrap();
+        let speed = rated_speeds(&model, piece).unwrap().maximum_entry;
         let step = piece.length() / 4000.0;
         let mut peak_acceleration: f64 = 0.0;
         let mut peak_along_axis: f64 = 0.0;
@@ -1016,7 +1021,11 @@ mod tests {
             PieceId::BarrelDropLeft,
         ] {
             let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-            let speed = piece.rated_speeds.unwrap().maximum_entry;
+            let model = coaster_models()
+                .into_iter()
+                .find(|model| model.allows_piece(piece))
+                .unwrap();
+            let speed = rated_speeds(&model, piece).unwrap().maximum_entry;
             let peak = piece.constant_speed_peak_roll_rate(speed);
             eprintln!("{id:?} peak roll rate {peak:.2} degrees/s");
             if id != PieceId::BarrelDropLeft {

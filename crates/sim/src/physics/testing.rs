@@ -4,7 +4,7 @@ use super::scoring::{ForceAxis, ForceBand, ForceBandDurations, ScoreBreakdown, f
 use super::{CarReading, Circuit, ForceEvaluator};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
-use crate::track::{ComfortableForceLimits, Piece};
+use crate::track::{CoasterModel, ComfortableForceLimits, Piece, rated_speeds};
 
 // Report the requested ejector and floater bands in rider-frame vertical g.
 const EJECTOR_AIRTIME_MAX_VERTICAL_G: f64 = -1.0;
@@ -770,10 +770,9 @@ impl TestRunRecorder {
     pub(super) fn rebind_preview_circuit(
         &mut self,
         circuit: &Circuit,
-        train: &crate::track::TrainConfiguration,
-        limits: ComfortableForceLimits,
+        model: &CoasterModel,
     ) {
-        let fresh = Self::for_circuit_with_train_and_limits(circuit, train, limits);
+        let fresh = Self::for_circuit_with_model(circuit, model);
         if self.next_sample_distance == self.circuit_length && circuit.length > self.circuit_length
         {
             self.next_sample_distance = self.last_unwrapped_distance.ceil();
@@ -927,45 +926,9 @@ impl TestRunRecorder {
         self.force_limits = limits;
     }
 
-    pub fn for_circuit(circuit: &Circuit) -> Self {
-        Self::for_circuit_with_limits(
-            circuit,
-            crate::track::hybrid_model().comfortable_force_limits,
-        )
-    }
-
-    pub fn for_circuit_with_limits(circuit: &Circuit, limits: ComfortableForceLimits) -> Self {
-        Self::for_circuit_with_windows(circuit, limits, |piece| piece.rated_speeds)
-    }
-
-    pub fn for_circuit_with_train(
-        circuit: &Circuit,
-        train: &crate::track::TrainConfiguration,
-    ) -> Self {
-        Self::for_circuit_with_train_and_limits(
-            circuit,
-            train,
-            crate::track::hybrid_model().comfortable_force_limits,
-        )
-    }
-
-    pub fn for_circuit_with_train_and_limits(
-        circuit: &Circuit,
-        train: &crate::track::TrainConfiguration,
-        limits: ComfortableForceLimits,
-    ) -> Self {
-        Self::for_circuit_with_windows(circuit, limits, |piece| {
-            crate::track::effective_rated_speeds(piece, train)
-        })
-    }
-
-    fn for_circuit_with_windows(
-        circuit: &Circuit,
-        limits: ComfortableForceLimits,
-        rated_speeds: impl Fn(&Piece) -> Option<crate::track::RatedSpeeds>,
-    ) -> Self {
+    pub fn for_circuit_with_model(circuit: &Circuit, model: &CoasterModel) -> Self {
         let mut recorder = Self::new(circuit.length());
-        recorder.set_force_limits(limits);
+        recorder.set_force_limits(model.comfortable_force_limits);
         recorder.piece_starts.clone_from(&circuit.starts);
         recorder.piece_summaries = circuit
             .pieces
@@ -985,7 +948,7 @@ impl TestRunRecorder {
             .pieces
             .iter()
             .map(|piece| {
-                rated_speeds(piece).map(|speeds| RatedPieceSpeedWindow {
+                rated_speeds(model, piece).map(|speeds| RatedPieceSpeedWindow {
                     name: piece.name,
                     minimum_entry: speeds.minimum_entry,
                     maximum_entry: speeds.maximum_entry,
@@ -2296,6 +2259,15 @@ mod tests {
         }
     }
 
+    fn loop_window() -> crate::track::RatedSpeeds {
+        let model = crate::track::hybrid_model();
+        let piece = crate::track::catalog()
+            .iter()
+            .find(|piece| piece.id == crate::track::PieceId::Loop)
+            .unwrap();
+        rated_speeds(&model, piece).expect("loop has a rated window for the hybrid model")
+    }
+
     fn reading_with_track(
         distance: f64,
         speed: f64,
@@ -2366,7 +2338,9 @@ mod tests {
 
     #[test]
     fn recorder_preserves_violations_and_filter_through_save() {
-        let mut original = TestRunRecorder::for_circuit(&super::super::demo_circuit());
+        let model = crate::track::hybrid_model();
+        let circuit = super::super::demo_circuit();
+        let mut original = TestRunRecorder::for_circuit_with_model(&circuit, &model);
         original.set_force_limits(crate::track::wooden_twister_model().comfortable_force_limits);
         for step in 0..80 {
             record(
@@ -2435,11 +2409,12 @@ mod tests {
             start_distance,
             initial_speed,
         );
+        let model = crate::track::hybrid_model();
         let mut recorder =
-            super::super::ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+            super::super::ConstructionTestRunRecorder::for_circuit_with_train_and_model(
                 &circuit,
                 train_configuration,
-                crate::track::hybrid_model().comfortable_force_limits,
+                &model,
             );
         let mut completed = false;
         for _ in 0..60_000 {
@@ -2949,7 +2924,8 @@ mod tests {
             start_distance,
             0.1,
         );
-        let mut recorder = TestRunRecorder::for_circuit(&circuit);
+        let model = crate::track::hybrid_model();
+        let mut recorder = TestRunRecorder::for_circuit_with_model(&circuit, &model);
         for _ in 0..100 {
             train.step(&circuit);
             recorder.record(&train.take_readings(), "Timber Tumbler");
@@ -2986,12 +2962,7 @@ mod tests {
 
     #[test]
     fn rated_piece_entry_outside_speed_window_is_reported_once() {
-        let rated = crate::track::catalog()
-            .iter()
-            .find(|piece| piece.id == crate::track::PieceId::Loop)
-            .unwrap()
-            .rated_speeds
-            .unwrap();
+        let rated = loop_window();
         let mut recorder = TestRunRecorder::new(20.0);
         recorder.piece_starts = vec![0.0, 10.0];
         recorder.rated_pieces = vec![
@@ -3022,12 +2993,7 @@ mod tests {
 
     #[test]
     fn rated_piece_entry_below_speed_window_is_reported() {
-        let rated = crate::track::catalog()
-            .iter()
-            .find(|piece| piece.id == crate::track::PieceId::Loop)
-            .unwrap()
-            .rated_speeds
-            .unwrap();
+        let rated = loop_window();
         let mut recorder = TestRunRecorder::new(20.0);
         recorder.piece_starts = vec![0.0, 10.0];
         recorder.rated_pieces = vec![
@@ -3054,12 +3020,7 @@ mod tests {
 
     #[test]
     fn rated_piece_note_uses_interpolated_speed_at_the_entry_boundary() {
-        let rated = crate::track::catalog()
-            .iter()
-            .find(|piece| piece.id == crate::track::PieceId::Loop)
-            .unwrap()
-            .rated_speeds
-            .unwrap();
+        let rated = loop_window();
         let mut recorder = TestRunRecorder::new(20.0);
         recorder.piece_starts = vec![0.0, 10.0];
         recorder.rated_pieces = vec![

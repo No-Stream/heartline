@@ -14,7 +14,8 @@ const GAME_TICK_SECONDS: f64 = 1.0 / 30.0;
 fn main() {
     let world = demo_world();
     let circuit = demo_circuit();
-    let configuration = hybrid_model().train;
+    let model = hybrid_model();
+    let configuration = model.train.clone();
     let config = PhysicsConfig {
         lift_speed: 5.0,
         ..PhysicsConfig::default()
@@ -23,7 +24,7 @@ fn main() {
     let mut times = Vec::new();
     let mut runs_with_other_train = 0;
     for include_other in [false, true] {
-        let mut run = CoasterRun::new(&circuit, &configuration, config);
+        let mut run = CoasterRun::new(&circuit, &configuration, &model, config);
         let mut other = Train::new(&circuit, &configuration, config, 0.0, 2.0);
         let mut completed_runs = 0;
         let mut dueling_events = 0;
@@ -66,7 +67,7 @@ fn main() {
                 if !outcome.reports[0].samples.is_empty() {
                     samples = outcome.reports[0].samples.clone();
                 }
-                run = CoasterRun::new(&circuit, &configuration, config);
+                run = CoasterRun::new(&circuit, &configuration, &model, config);
             }
         }
         if include_other {

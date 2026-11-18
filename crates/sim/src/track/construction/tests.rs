@@ -226,9 +226,8 @@ fn viper_can_build_a_launch_to_fifty_metres_per_second() {
     }
     let preview = preview_open_track(
         construction.pieces(),
-        &model.train,
+        &model,
         PhysicsConfig::default(),
-        model.name,
     )
     .unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);

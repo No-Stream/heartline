@@ -36,6 +36,32 @@ struct MeasurementTrack {
     element_end: f64,
 }
 
+/// Returns a connected track context using the same approach as the rated-window physics tests.
+pub fn connected_measurement_track(
+    model: &CoasterModel,
+    cars: u8,
+    piece: &Piece,
+    speed: f64,
+) -> (Circuit, Range<f64>) {
+    let track = connected_track(model, cars, piece, speed);
+    (
+        track.circuit,
+        track.element_start..track.element_end,
+    )
+}
+
+/// Rates a template with fresh force filters on its connected track approach.
+pub fn rate_connected_piece(
+    model: &CoasterModel,
+    cars: u8,
+    piece: &Piece,
+    target: f64,
+    physics: PhysicsConfig,
+) -> Result<PieceRating, String> {
+    let track = connected_track(model, cars, piece, target);
+    rate_piece_on_track(model, cars, piece, target, physics, track, false)
+}
+
 pub fn unpowered() -> PhysicsConfig {
     PhysicsConfig {
         rolling_resistance: 0.0,
@@ -177,6 +203,189 @@ fn measurement_track(
     }
 }
 
+fn connected_track(
+    model: &CoasterModel,
+    cars: u8,
+    piece: &Piece,
+    speed: f64,
+) -> MeasurementTrack {
+    assert!(speed.is_finite() && speed > 0.0);
+    assert!(model.cars_per_train.contains(&cars));
+
+    let templates = unmeasured_catalog();
+    let station = templates
+        .iter()
+        .find(|template| template.id == PieceId::Station)
+        .unwrap()
+        .clone();
+    let mut pieces = vec![station.clone()];
+    let mut state = station.exit;
+    for _ in 0..2 {
+        let straight = templates
+            .iter()
+            .find(|template| template.id == PieceId::Straight)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        state = straight.exit;
+        pieces.push(straight);
+    }
+
+    if let Some(prefix) = connected_prefix(piece.id) {
+        for id in prefix {
+            let template = templates
+                .iter()
+                .find(|template| template.id == *id && same_connector(template.entry, state))
+                .unwrap_or_else(|| panic!("no {id:?} connector from {state:?}"));
+            let next = template.at(state).unwrap();
+            state = next.exit;
+            pieces.push(next);
+        }
+    } else {
+        let mut queue = VecDeque::from([(state, Vec::<usize>::new())]);
+        let mut seen = HashSet::from([connector_key(state)]);
+        let path = loop {
+            let (current, path) = queue.pop_front().expect("no connected approach to piece");
+            if same_connector(current, piece.entry) {
+                break path;
+            }
+            for (index, template) in templates.iter().enumerate() {
+                if let Some(next) = template.exit_at(current)
+                    && seen.insert(connector_key(next))
+                {
+                    let mut next_path = path.clone();
+                    next_path.push(index);
+                    queue.push_back((next, next_path));
+                }
+            }
+        };
+        for index in path {
+            let next = templates[index].at(state).unwrap();
+            state = next.exit;
+            pieces.push(next);
+        }
+    }
+
+    assert!(
+        same_connector(state, piece.entry),
+        "connected approach for {:?} ends at {state:?}, expected {:?}",
+        piece.id,
+        piece.entry
+    );
+    let element_start = pieces.iter().map(Piece::length).sum();
+    let element = piece.at(state).unwrap();
+    state = element.exit;
+    let element_end = element_start + element.length();
+    pieces.push(element);
+
+    let exit_straight = straight_for(state);
+    let mut exit_length = 0.0;
+    let required_exit_length = scaled_train(model, cars).length_metres + 1.5 * speed + 40.0;
+    while exit_length < required_exit_length {
+        let next = exit_straight.at(state).unwrap();
+        exit_length += next.length();
+        state = next.exit;
+        pieces.push(next);
+    }
+
+    MeasurementTrack {
+        circuit: Circuit::open(pieces).expect("connected approach forms an open circuit"),
+        start: element_start,
+        element_start,
+        element_end,
+    }
+}
+
+fn connected_prefix(piece: PieceId) -> Option<&'static [PieceId]> {
+    use PieceId::*;
+    Some(match piece {
+        LevelToGentleUp | LevelToSixtyUp => &[],
+        GentleToSteepUp => &[LevelToGentleUp],
+        SixtyUpToLevel => &[LevelToSixtyUp],
+        LevelToSixtyDown => &[LevelToSixtyUp, SixtyUpToLevel],
+        SixtyDownToLevel => &[LevelToSixtyUp, SixtyUpToLevel, LevelToSixtyDown],
+        SteepToSixtyUp => &[LevelToGentleUp, GentleToSteepUp],
+        SixtyToSteepUp => &[LevelToGentleUp, GentleToSteepUp, SteepToSixtyUp],
+        SteepToGentleUp => &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+        ],
+        GentleUpToLevel => &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+        ],
+        LevelToGentleDown => &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+        ],
+        GentleToSteepDown => &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+        ],
+        SteepToSixtyDown => &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+            GentleToSteepDown,
+        ],
+        SixtyToSteepDown => &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+            GentleToSteepDown,
+            SteepToSixtyDown,
+        ],
+        SteepToGentleDown => &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+            GentleToSteepDown,
+            SteepToSixtyDown,
+            SixtyToSteepDown,
+        ],
+        GentleDownToLevel => &[
+            LevelToGentleUp,
+            GentleToSteepUp,
+            SteepToSixtyUp,
+            SixtyToSteepUp,
+            SteepToGentleUp,
+            GentleUpToLevel,
+            LevelToGentleDown,
+            GentleToSteepDown,
+            SteepToSixtyDown,
+            SixtyToSteepDown,
+            SteepToGentleDown,
+        ],
+        _ => return None,
+    })
+}
+
 pub fn rate_piece(
     model: &CoasterModel,
     cars: u8,
@@ -193,19 +402,41 @@ pub fn rate_piece(
     );
     assert!(model.cars_per_train.contains(&cars));
     let track = measurement_track(model, cars, piece, target);
+    rate_piece_on_track(model, cars, piece, target, physics, track, true)
+}
+
+fn rate_piece_on_track(
+    model: &CoasterModel,
+    cars: u8,
+    piece: &Piece,
+    target: f64,
+    physics: PhysicsConfig,
+    track: MeasurementTrack,
+    prime_approach: bool,
+) -> Result<PieceRating, String> {
+    assert!(target.is_finite() && target > 0.0);
+    assert!(
+        physics.rolling_resistance == 0.0
+            && physics.drag_coefficient == 0.0
+            && !physics.powered_sections,
+        "rating requires unpowered frictionless physics"
+    );
+    assert!(model.cars_per_train.contains(&cars));
     let config = scaled_train(model, cars);
     let spacing = config.length_metres / f64::from(cars);
     let mut evaluators =
         vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
-    let approach_steps =
-        ((track.element_start - track.start) / (target * TIME_STEP)).ceil() as usize;
-    let start = track.element_start - approach_steps as f64 * target * TIME_STEP;
-    for step in 1..=approach_steps {
-        let distance = start + step as f64 * target * TIME_STEP;
-        for (car, evaluator) in evaluators.iter_mut().enumerate() {
-            let car_distance = distance - car as f64 * spacing;
-            let (index, local) = track.circuit.locate(car_distance);
-            evaluator.update(rider_g(&track.circuit.pieces[index], local, target, 0.0));
+    if prime_approach {
+        let approach_steps =
+            ((track.element_start - track.start) / (target * TIME_STEP)).ceil() as usize;
+        let start = track.element_start - approach_steps as f64 * target * TIME_STEP;
+        for step in 1..=approach_steps {
+            let distance = start + step as f64 * target * TIME_STEP;
+            for (car, evaluator) in evaluators.iter_mut().enumerate() {
+                let car_distance = distance - car as f64 * spacing;
+                let (index, local) = track.circuit.locate(car_distance);
+                evaluator.update(rider_g(&track.circuit.pieces[index], local, target, 0.0));
+            }
         }
     }
     let mut train = Train::new(
@@ -646,7 +877,7 @@ mod tests {
             .iter()
             .find(|piece| piece.id == PieceId::EjectorHill12x64)
             .unwrap();
-        let speed = piece.rated_speeds.unwrap().maximum_entry + 1.0;
+        let speed = piece.design_speeds.unwrap().maximum_entry + 1.0;
         let result = rate_piece(&model, 8, piece, speed, unpowered()).unwrap();
         let violation = result
             .violation
@@ -674,7 +905,7 @@ mod tests {
             PieceId::LevelToSixtyDown,
         ] {
             let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-            let target = piece.rated_speeds.unwrap().maximum_entry;
+            let target = piece.design_speeds.unwrap().maximum_entry;
             let rating = rate_piece(&model, cars, piece, target, unpowered()).unwrap();
             let track = measurement_track(&model, cars, piece, target);
             let config = scaled_train(&model, cars);
@@ -736,7 +967,7 @@ mod tests {
         let model = hybrid_model();
         for piece in catalog()
             .iter()
-            .filter(|piece| piece.rated_speeds.is_some())
+            .filter(|piece| piece.design_speeds.is_some())
         {
             let track = measurement_track(&model, model.train.cars, piece, 25.0);
             assert!(track.element_end > track.element_start, "{:?}", piece.id);

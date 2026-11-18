@@ -978,7 +978,7 @@ fn throughput_simulation_matches_recording_train_motion() {
     )
     .unwrap();
     assert!(layout.capacity() >= 3);
-    let mut recorded = super::BlockOperation::new(layout.clone());
+    let mut recorded = super::BlockOperation::new(layout.clone(), &hybrid_model());
     let mut unrecorded = super::BlockOperation::new_without_reports(layout);
     let mut completed = 0;
     for _ in 0..30_000 {
@@ -1018,7 +1018,7 @@ fn automatic_search_publishes_baseline_verification_without_recovering_train() {
     let baseline = search.best().clone();
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.install_block_layout(baseline.clone(), true);
-    simulation.coaster_operation = Some(super::BlockOperation::new(baseline));
+    simulation.coaster_operation = Some(super::BlockOperation::new(baseline, &hybrid_model()));
     simulation.coaster_open = true;
     let train_id = simulation.coaster_operation.as_mut().unwrap().dispatch();
     simulation.block_placement_search = Some(search);
@@ -1063,7 +1063,7 @@ fn stalled_baseline_waits_for_active_train_before_reducing_capacity() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     build_block_test_construction(&mut simulation);
     simulation.install_block_layout(baseline.clone(), false);
-    simulation.coaster_operation = Some(super::BlockOperation::new(baseline));
+    simulation.coaster_operation = Some(super::BlockOperation::new(baseline, &hybrid_model()));
     simulation.coaster_open = true;
     let train_id = simulation.coaster_operation.as_mut().unwrap().dispatch();
     simulation.block_manual_search =
@@ -1132,7 +1132,7 @@ fn baseline_validation_waits_to_adopt_powered_holds_until_the_train_completes() 
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     build_block_test_construction(&mut simulation);
     simulation.install_block_layout(baseline.clone(), false);
-    simulation.coaster_operation = Some(super::BlockOperation::new(baseline));
+    simulation.coaster_operation = Some(super::BlockOperation::new(baseline, &hybrid_model()));
     simulation.coaster_open = true;
     let train_id = simulation.coaster_operation.as_mut().unwrap().dispatch();
     simulation.block_manual_search =
@@ -1227,7 +1227,7 @@ fn throughput_uses_sustained_dispatches_after_the_initial_fill() {
         BlockLayout::new(&circuit, &train, physics, block_test_boundaries(&circuit)).unwrap();
     assert_eq!(layout.capacity(), 3);
 
-    let mut operation = super::BlockOperation::new(layout.clone());
+    let mut operation = super::BlockOperation::new(layout.clone(), &hybrid_model());
     while operation.can_dispatch() {
         operation.dispatch();
     }
@@ -1928,7 +1928,7 @@ fn construction_train_states_follow_block_operation_trains() {
         block_test_boundaries(&circuit),
     )
     .unwrap();
-    let mut operation = super::BlockOperation::new(layout.clone());
+    let mut operation = super::BlockOperation::new(layout.clone(), &hybrid_model());
     operation.dispatch();
     for _ in 0..200_000 {
         operation.step(&[], hybrid_model().name);

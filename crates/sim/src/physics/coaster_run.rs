@@ -1,7 +1,7 @@
 use super::{Circuit, PhysicsConfig, TestRun, TestRunRecorder, Train};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::TrainPosition;
-use crate::track::{ComfortableForceLimits, PieceKind, TrainConfiguration};
+use crate::track::{CoasterModel, ComfortableForceLimits, PieceKind, TrainConfiguration};
 
 /// A single dispatched train, from the station through one circuit or recovery.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -38,18 +38,20 @@ impl CoasterRun {
     pub fn new(
         circuit: &Circuit,
         configuration: &TrainConfiguration,
+        model: &CoasterModel,
         config: PhysicsConfig,
     ) -> Self {
-        Self::with_reports(circuit, configuration, config, true, None)
+        Self::with_reports(circuit, configuration, Some(model), config, true, None)
     }
 
     pub fn new_with_limits(
         circuit: &Circuit,
         configuration: &TrainConfiguration,
+        model: &CoasterModel,
         config: PhysicsConfig,
         limits: ComfortableForceLimits,
     ) -> Self {
-        Self::with_reports(circuit, configuration, config, true, Some(limits))
+        Self::with_reports(circuit, configuration, Some(model), config, true, Some(limits))
     }
 
     pub(super) fn new_without_reports(
@@ -57,12 +59,13 @@ impl CoasterRun {
         configuration: &TrainConfiguration,
         config: PhysicsConfig,
     ) -> Self {
-        Self::with_reports(circuit, configuration, config, false, None)
+        Self::with_reports(circuit, configuration, None, config, false, None)
     }
 
     fn with_reports(
         circuit: &Circuit,
         configuration: &TrainConfiguration,
+        model: Option<&CoasterModel>,
         config: PhysicsConfig,
         record_reports: bool,
         limits: Option<ComfortableForceLimits>,
@@ -85,9 +88,13 @@ impl CoasterRun {
                 } else {
                     0
                 })
-                    .map(|_| match limits {
-                        Some(limits) => TestRunRecorder::for_circuit_with_limits(circuit, limits),
-                        None => TestRunRecorder::for_circuit(circuit),
+                    .map(|_| {
+                        let model = model.expect("recording a coaster run requires its model");
+                        let mut recorder = TestRunRecorder::for_circuit_with_model(circuit, model);
+                        if let Some(limits) = limits {
+                            recorder.set_force_limits(limits);
+                        }
+                        recorder
                     })
                     .collect(),
             ),

@@ -1,6 +1,6 @@
 //! Rated entry-speed windows measured by `examples/measure_force_windows.rs` with the filtered force evaluator.
 
-use super::{Piece, PieceId, RatedSpeeds, Slope};
+use super::{CoasterModel, Piece, PieceId, RatedSpeeds, Slope};
 
 /// Why a rated window ends where it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,6 +23,7 @@ pub enum RatedWindowSource {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeasuredRatedWindow {
+    pub model_key: &'static str,
     pub id: PieceId,
     pub entry_slope: Slope,
     pub exit_slope: Slope,
@@ -34,44 +35,43 @@ pub struct MeasuredRatedWindow {
 
 include!("rated_windows.generated.rs");
 
-/// The measured window for a rated catalog template, keyed by its id and connector slopes.
-pub fn measured_rated_window(piece: &Piece) -> &'static MeasuredRatedWindow {
+/// The measured window for a rated catalog template and coaster model.
+pub fn measured_rated_window(
+    model: &CoasterModel,
+    piece: &Piece,
+) -> &'static MeasuredRatedWindow {
+    assert!(
+        model.allows_piece(piece),
+        "{} does not allow {:?}",
+        model.key,
+        piece.id
+    );
     let mut matches = MEASURED_RATED_WINDOWS.iter().filter(|window| {
-        window.id == piece.id
+        window.model_key == model.key
+            && window.id == piece.id
             && window.entry_slope == piece.entry.slope
             && window.exit_slope == piece.exit.slope
     });
     let window = matches.next().unwrap_or_else(|| {
         panic!(
-            "{:?} ({:?} to {:?}) has no measured rated window; run make generate-rated-windows",
-            piece.id, piece.entry.slope, piece.exit.slope
+            "{} {:?} ({:?} to {:?}) has no measured rated window; run make generate-rated-windows",
+            model.key, piece.id, piece.entry.slope, piece.exit.slope
         )
     });
     assert!(
         matches.next().is_none(),
-        "{:?} has duplicate measured rated windows",
-        piece.id
+        "{} {:?} has duplicate measured rated windows",
+        model.key, piece.id
     );
     window
 }
 
-/// Replaces every template's catalog window with its measured window.
-pub(super) fn apply_measured_rated_windows(pieces: &mut [Piece]) {
-    let mut rated_templates = 0;
-    for piece in pieces
-        .iter_mut()
-        .filter(|piece| piece.rated_speeds.is_some())
-    {
-        let window = measured_rated_window(piece);
-        piece.rated_speeds = Some(RatedSpeeds {
-            minimum_entry: window.minimum_entry,
-            maximum_entry: window.maximum_entry,
-        });
-        rated_templates += 1;
-    }
-    assert_eq!(
-        rated_templates,
-        MEASURED_RATED_WINDOWS.len(),
-        "the measured rated window table has rows for templates that are no longer rated; run make generate-rated-windows"
-    );
+/// Returns the model-specific measured window, or `None` for an unrated piece.
+pub fn rated_speeds(model: &CoasterModel, piece: &Piece) -> Option<RatedSpeeds> {
+    let _design_speeds = piece.design_speeds?;
+    let window = measured_rated_window(model, piece);
+    Some(RatedSpeeds {
+        minimum_entry: window.minimum_entry,
+        maximum_entry: window.maximum_entry,
+    })
 }

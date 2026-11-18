@@ -2,7 +2,9 @@ use super::*;
 use serde::Serialize;
 use theme_park_sim::park::ride_test::RideKey;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
-use theme_park_sim::track::{Bank, Hand, Heartlining, HillFeel, HillTwist, PieceFamily};
+use theme_park_sim::track::{
+    Bank, CoasterModel, Hand, Heartlining, HillFeel, HillTwist, PieceFamily,
+};
 use theme_park_sim::track::{ComfortableForceLimits, ForceRating, ForceRatingAxis};
 use ts_rs::TS;
 
@@ -309,8 +311,11 @@ fn hill_twist_wire(twist: Option<HillTwist>) -> &'static str {
     }
 }
 
-fn rated_speed_wire(piece: &Piece) -> Option<ConstructionRatedSpeedWire> {
-    piece.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
+fn rated_speed_wire(
+    model: &CoasterModel,
+    piece: &Piece,
+) -> Option<ConstructionRatedSpeedWire> {
+    theme_park_sim::track::rated_speeds(model, piece).map(|speeds| ConstructionRatedSpeedWire {
         minimum_entry: speeds.minimum_entry,
         maximum_entry: speeds.maximum_entry,
     })
@@ -597,7 +602,6 @@ impl WasmSimulation {
                 lift_speed: 5.0,
                 ..PhysicsConfig::default()
             },
-            construction.model().name,
         ) else {
             return "null".into();
         };
@@ -693,10 +697,13 @@ impl WasmSimulation {
                 })
             )
         });
-        let rated_speed = first.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
-            minimum_entry: speeds.minimum_entry,
-            maximum_entry: speeds.maximum_entry,
-        });
+        let rated_speed =
+            theme_park_sim::track::rated_speeds(construction.model(), first).map(|speeds| {
+                ConstructionRatedSpeedWire {
+                    minimum_entry: speeds.minimum_entry,
+                    maximum_entry: speeds.maximum_entry,
+                }
+            });
         let start_distance: f64 = construction.pieces().iter().map(Piece::length).sum();
         let mut pieces = construction.pieces().to_vec();
         pieces.extend(candidate);
@@ -708,7 +715,6 @@ impl WasmSimulation {
                     lift_speed: 5.0,
                     ..PhysicsConfig::default()
                 },
-                construction.model().name,
             )
             .expect("construction contains a station");
         let samples: Vec<_> = preview
@@ -790,7 +796,7 @@ impl WasmSimulation {
                         height: family.height_metres,
                         span: family.span_metres,
                         twist: hill_twist_wire(family.twist),
-                        rated_speed: rated_speed_wire(piece),
+                        rated_speed: rated_speed_wire(&model, piece),
                     })
             })
             .collect();
@@ -957,7 +963,7 @@ impl WasmSimulation {
                             Some(ConstructionHillEstimateWire {
                                 entry_speed: speed,
                                 source,
-                                rated_speed: rated_speed_wire(&piece),
+                                rated_speed: rated_speed_wire(construction.model(), &piece),
                                 minimum_vertical_g: forces
                                     .as_ref()
                                     .map(|force| force.minimum_vertical_g),
@@ -1612,10 +1618,10 @@ impl WasmSimulation {
             2.0,
         );
         self.construction_recorder = Some(
-            ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+            ConstructionTestRunRecorder::for_circuit_with_train_and_model(
                 &circuit,
                 &construction.model().train,
-                construction.model().comfortable_force_limits,
+                construction.model(),
             ),
         );
         self.construction_report = None;

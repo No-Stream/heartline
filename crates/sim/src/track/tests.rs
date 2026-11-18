@@ -87,7 +87,11 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
         assert_eq!(piece.entry.bank, Bank::Level, "{id:?} entry bank");
         assert_eq!(piece.exit.slope, Slope::Level, "{id:?} exit slope");
         assert_eq!(piece.exit.bank, Bank::Level, "{id:?} exit bank");
-        let rated = piece.rated_speeds.expect("speed turns are rated");
+        let model = models
+            .iter()
+            .find(|model| model.allows_piece(piece))
+            .expect("speed turns must be allowed by a model");
+        let rated = rated_speeds(model, piece).expect("speed turns are rated");
         near(rated.minimum_entry, design_speed - 3.0);
         near(rated.maximum_entry, design_speed + 3.0);
 
@@ -487,7 +491,9 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
             let piece = matching[0];
             assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
             assert_eq!(piece.inversion, None);
-            assert!(piece.rated_speeds.is_some(), "{}", piece.name);
+            for model in &steel_models {
+                assert!(rated_speeds(model, piece).is_some(), "{} {}", model.name, piece.name);
+            }
             assert!(!wood.allows_piece(piece), "{}", piece.name);
             for model in &steel_models {
                 assert!(model.allows_piece(piece), "{} {}", model.name, piece.name);
@@ -535,7 +541,9 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
                 let piece = matching[0];
                 assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
                 assert_eq!(piece.inversion, Some(Inversion::HeartlineRoll));
-                assert!(piece.rated_speeds.is_some(), "{}", piece.name);
+                for model in &steel_models {
+                    assert!(rated_speeds(model, piece).is_some(), "{} {}", model.name, piece.name);
+                }
                 assert!(!wood.allows_piece(piece), "{}", piece.name);
                 for model in &steel_models {
                     assert!(model.allows_piece(piece), "{} {}", model.name, piece.name);
@@ -688,8 +696,16 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             })
             .unwrap_or_else(|| panic!("catalog is missing {name}"));
         assert!(matches!(piece.shape, Shape::Profile(_)), "{name}");
-        let rated = piece.rated_speeds.expect("hill has a rated speed window");
-        assert!(rated.maximum_entry - rated.minimum_entry >= 2.0, "{name}");
+        for model in &models {
+            if model.allows_piece(piece) {
+                let rated = rated_speeds(model, piece).expect("allowed hill has a rated window");
+                assert!(
+                    rated.maximum_entry - rated.minimum_entry >= 2.0,
+                    "{} {name}",
+                    model.name
+                );
+            }
+        }
         let Some(PieceFamily::Hill(family)) = piece.family else {
             panic!("{name} should have hill family metadata");
         };
@@ -723,7 +739,7 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             .unwrap();
         assert_eq!(
             family.design_speed_metres_per_second - reduction,
-            unmeasured.rated_speeds.unwrap().maximum_entry,
+            unmeasured.design_speeds.unwrap().maximum_entry,
             "{name} maximum before the measured window"
         );
 
@@ -776,16 +792,21 @@ fn full_loop_profiles_match_their_rated_geometry() {
         (PieceId::SteelLoop, 27.0, 25.2, 31.8, 137.0, 8.5),
     ];
     let pieces = catalog();
+    let models = coaster_models();
     for (id, maximum_entry, expected_minimum, expected_rise, expected_length, radius_floor) in
         expected
     {
         let piece = pieces.iter().find(|piece| piece.id == id).unwrap();
-        let rated_speeds = piece.rated_speeds.unwrap();
+        let model = models
+            .iter()
+            .find(|model| model.allows_piece(piece))
+            .expect("loop must be allowed by a model");
+        let rated_window = rated_speeds(model, piece).unwrap();
         let design_maximum_entry = super::catalog::unmeasured_catalog()
             .iter()
             .find(|template| template.id == id)
             .unwrap()
-            .rated_speeds
+            .design_speeds
             .unwrap()
             .maximum_entry;
         let rise = (0..=2048)
@@ -800,8 +821,8 @@ fn full_loop_profiles_match_their_rated_geometry() {
         eprintln!(
             "{id:?}: rise={rise:.3} m, length={:.3} m, rated entry={:.3}..{:.3} m/s, minimum rail radius={minimum_radius:.3} m, exit=({}, {}, {})",
             piece.length(),
-            rated_speeds.minimum_entry,
-            rated_speeds.maximum_entry,
+            rated_window.minimum_entry,
+            rated_window.maximum_entry,
             piece.exit.x,
             piece.exit.y,
             piece.exit.z
@@ -809,9 +830,9 @@ fn full_loop_profiles_match_their_rated_geometry() {
 
         assert_eq!(design_maximum_entry, maximum_entry, "{id:?}");
         assert!(
-            (rated_speeds.minimum_entry - expected_minimum).abs() < 0.3,
+            (rated_window.minimum_entry - expected_minimum).abs() < 0.3,
             "{id:?}: minimum entry {}",
-            rated_speeds.minimum_entry
+            rated_window.minimum_entry
         );
         assert!((rise / expected_rise - 1.0).abs() < 0.03, "{id:?}: {rise}");
         assert!(
@@ -1925,7 +1946,11 @@ fn sixty_degree_pull_profiles_match_connectors_and_reverse() {
         for item in [up, down] {
             assert!((item.sample(0.0).position - item.entry.position()).length() < 1e-8);
             assert!((item.sample(item.length()).position - item.exit.position()).length() < 1e-8);
-            assert!(item.rated_speeds.is_some());
+            let model = coaster_models()
+                .into_iter()
+                .find(|model| model.allows_piece(item))
+                .unwrap();
+            assert!(rated_speeds(&model, item).is_some());
         }
         for index in 0..=20 {
             let fraction = index as f64 / 20.0;
@@ -1943,7 +1968,12 @@ fn sixty_degree_pull_profiles_match_connectors_and_reverse() {
         SixtyToSteepUp,
         SteepToSixtyDown,
     ] {
-        assert!(piece(id).rated_speeds.is_some(), "{id:?}");
+        let item = piece(id);
+        let model = coaster_models()
+            .into_iter()
+            .find(|model| model.allows_piece(item))
+            .unwrap();
+        assert!(rated_speeds(&model, item).is_some(), "{id:?}");
     }
 }
 
@@ -2641,7 +2671,11 @@ fn top_hat_has_a_tall_summit_and_level_connectors() {
             .collect();
         assert!(slopes.iter().copied().fold(0.0, f64::max) > 0.65);
         assert!(slopes.iter().copied().fold(0.0, f64::min) < -0.65);
-        assert!(piece.rated_speeds.is_some());
+        let model = coaster_models()
+            .into_iter()
+            .find(|model| model.allows_piece(piece))
+            .unwrap();
+        assert!(rated_speeds(&model, piece).is_some());
         near_vec(piece.sample(0.0).tangent, piece.entry.tangent());
         near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
     }

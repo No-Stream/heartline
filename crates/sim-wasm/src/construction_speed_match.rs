@@ -1,8 +1,8 @@
 use crate::WasmSimulation;
 use crate::construction::{pieceid_from_wire, wire_pieceid};
 use serde::Serialize;
-use theme_park_sim::track::construction::select_speed_matched_variant_for_limits;
-use theme_park_sim::track::{Piece, PieceId, catalog};
+use theme_park_sim::track::construction::select_speed_matched_variant;
+use theme_park_sim::track::{Piece, PieceId, catalog, rated_speeds};
 use ts_rs::TS;
 use wasm_bindgen::prelude::*;
 
@@ -49,20 +49,21 @@ impl WasmSimulation {
         let Some(id) = pieceid_from_wire(id) else {
             return "null".into();
         };
-        let Some(selected_piece) = catalog()
-            .iter()
-            .find(|piece| piece.id == id && piece.rated_speeds.is_some())
-        else {
+        let model = construction.model();
+        let Some(selected_piece) = catalog().iter().find(|piece| piece.id == id) else {
             return "null".into();
         };
+        if !model.allows_piece(selected_piece) || rated_speeds(model, selected_piece).is_none() {
+            return "null".into();
+        }
         let obstacles = self.facility_obstacles();
         let candidates: Vec<_> = if selected_piece.family.is_some() {
             catalog()
                 .iter()
                 .filter(|piece| {
                     same_family(selected_piece, piece)
-                        && piece.rated_speeds.is_some()
-                        && construction.model().allowed_pieces.contains(&piece.id)
+                        && model.allows_piece(piece)
+                        && rated_speeds(model, piece).is_some()
                         && construction
                             .validate(piece.id, &self.world, &obstacles)
                             .is_ok()
@@ -76,17 +77,14 @@ impl WasmSimulation {
                 .filter(|(piece, choice)| {
                     choice.result.is_ok()
                         && same_family(selected_piece, piece)
-                        && piece.rated_speeds.is_some()
+                        && model.allows_piece(piece)
+                        && rated_speeds(model, piece).is_some()
                 })
                 .map(|(piece, _)| piece)
                 .collect()
         };
         let recommendation = entry_speed.and_then(|speed| {
-            select_speed_matched_variant_for_limits(
-                &candidates,
-                speed,
-                construction.model().comfortable_force_limits,
-            )
+            select_speed_matched_variant(&candidates, speed, model)
         });
         let result = ConstructionSpeedMatchWire {
             entry_speed,

@@ -65,7 +65,7 @@ fn station_and_two_separate_brakes_support_two_trains() {
         2,
         "station and two brakes should support two trains"
     );
-    let mut operation = BlockOperation::new(layout);
+    let mut operation = BlockOperation::new(layout, &hybrid_model());
     operation.panic_on_interlock = true;
     let mut maximum_active = 0;
     let mut completed = 0;
@@ -106,7 +106,7 @@ fn station_and_two_separate_brakes_support_two_trains() {
 #[test]
 fn station_two_brakes_recover_both_active_trains() {
     let (_, _, _, layout) = two_brake_layout();
-    let mut operation = BlockOperation::new(layout);
+    let mut operation = BlockOperation::new(layout, &hybrid_model());
     operation.panic_on_interlock = true;
     let mut dispatched = Vec::new();
     for _ in 0..120_000 {

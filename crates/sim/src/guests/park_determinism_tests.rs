@@ -48,7 +48,8 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
     );
     let construction = construction_for(&world, hybrid_model());
     let circuit = construction.circuit().unwrap();
-    let train_configuration = construction.model().train.clone();
+    let coaster_model = construction.model().clone();
+    let train_configuration = coaster_model.train.clone();
     let physics_config = PhysicsConfig {
         lift_speed: 5.0,
         ..Default::default()
@@ -91,7 +92,7 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
     );
     park.construction = Some(construction);
     park.coaster_open = true;
-    park.coaster_operation = Some(BlockOperation::new(layout.clone()));
+    park.coaster_operation = Some(BlockOperation::new(layout.clone(), &coaster_model));
     park.coaster_facility = Some(facility);
     park.block_layout = Some(layout);
     park.desired_train_count = Some(2);
