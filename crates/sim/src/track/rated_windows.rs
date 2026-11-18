@@ -9,7 +9,7 @@ pub enum RatedWindowSource {
     EnergyMinimum,
     /// Raised until every allowed train keeps the clearance speed and clears the piece and its tail.
     ClearanceMinimum,
-    /// The edge where some allowed train's filtered force first goes past a comfortable limit.
+    /// The edge where some allowed train first fails the duration-aware force evaluator.
     ForceBound,
     /// Forces stay within the limits past this maximum; the catalog keeps it as a design choice.
     DesignCap,

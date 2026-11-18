@@ -327,7 +327,7 @@ fn assert_rated_piece_endpoints(ids: &[PieceId]) {
             .iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in model.cars_per_train_range() {
+            for cars in model.cars_per_train.clone() {
                 for speed in [rated.minimum_entry, rated.maximum_entry] {
                     let rating = rate_piece(model, cars, piece, speed, unpowered())
                         .expect("rating must complete");
@@ -386,7 +386,7 @@ fn sixty_degree_ascending_crest_has_a_contiguous_rated_window() {
     let sample_count = (rated.maximum_entry - rated.minimum_entry).ceil() as usize;
     for sample_index in 0..=sample_count {
         let speed = (rated.minimum_entry + sample_index as f64).min(rated.maximum_entry);
-        for cars in model.cars_per_train_range() {
+        for cars in model.cars_per_train.clone() {
             let rating =
                 rate_piece(&model, cars, piece, speed, unpowered()).expect("rating must complete");
             assert!(
@@ -422,11 +422,11 @@ fn descending_fifteen_degree_pull_window_passes_with_a_held_speed_approach() {
         .unwrap();
     let maximum = piece.rated_speeds.unwrap().maximum_entry;
     let mut vertical_violation_above_window = false;
-    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
-        if !model.allowed_pieces.contains(&piece.id) {
+    for model in coaster_models() {
+        if !model.allows_piece(piece) {
             continue;
         }
-        for cars in model.cars_per_train_range() {
+        for cars in model.cars_per_train.clone() {
             for speed in [maximum, 28.0, 29.0] {
                 let rating = rate_piece(&model, cars, piece, speed, unpowered()).unwrap();
                 assert!(
@@ -557,7 +557,7 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                         .sqrt()
                 })
                 .fold(f64::INFINITY, f64::min);
-            for cars in model.cars_per_train_range() {
+            for cars in model.cars_per_train.clone() {
                 let mut configuration = model.train.clone();
                 configuration.length_metres *= f64::from(cars) / f64::from(configuration.cars);
                 configuration.cars = cars;
@@ -586,7 +586,7 @@ fn all_constructible_half_inversion_combinations_pass_at_rated_element_bands() {
                 }
             }
             for (_, range, ascending, rated) in &element_ranges {
-                for cars in model.cars_per_train_range() {
+                for cars in model.cars_per_train.clone() {
                     for speed in [rated.minimum_entry, rated.maximum_entry] {
                         assert_connected_element_at_speed(
                             &circuit,
@@ -944,7 +944,7 @@ fn corkscrews_have_contiguous_rated_windows() {
         let rated = piece.rated_speeds.unwrap();
         let passes = |speed: f64| {
             [hybrid_model(), multi_launch_model()].iter().all(|model| {
-                model.cars_per_train_range().all(|cars| {
+                model.cars_per_train.clone().all(|cars| {
                     let rating = rate_piece(model, cars, piece, speed, unpowered())
                         .expect("rating must complete");
                     rating.passed && (target != HalfCorkscrewLeftUp || rating.minimum_speed >= 5.0)
@@ -1010,7 +1010,7 @@ fn full_trains_cross_composed_immelmann_and_dive_loops() {
             })
             .collect();
         for model in [hybrid_model(), multi_launch_model()] {
-            for cars in model.cars_per_train_range() {
+            for cars in model.cars_per_train.clone() {
                 let mut config = model.train.clone();
                 config.length_metres *= f64::from(cars) / f64::from(config.cars);
                 config.cars = cars;

@@ -1,10 +1,10 @@
 //! Measures every rated template's entry-speed window with the isolated-piece harness and, with
 //! `UPDATE_RATED_WINDOWS=1`, writes `crates/sim/src/track/rated_windows.generated.rs`.
 //!
-//! A speed passes when every allowed model and train length passes the duration-aware evaluator and the clearance
-//! checks, and its filtered force stays within the comfortable limits on every axis, so the overlay rates nothing
-//! above Great at that speed. The window starts at the catalog minimum (raised to the first passing speed when the
-//! catalog minimum fails) and ends at the top of the contiguous passing run above it.
+//! A speed passes when every allowed model and train length passes the duration-aware force evaluator and clearance
+//! checks. The evaluator permits short, bounded force excursions while rejecting sustained or larger violations. The
+//! window starts at the catalog minimum (raised to the first passing speed when the catalog minimum fails) and ends at
+//! the top of the contiguous passing run above it.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -13,8 +13,8 @@ use theme_park_sim::physics::rated_piece::{rate_piece, unpowered};
 use theme_park_sim::track::catalog::unmeasured_catalog;
 use theme_park_sim::track::rated_windows::RatedWindowSource;
 use theme_park_sim::track::{
-    AirtimeRating, CoasterModel, HillFamily, HillFeel, Piece, PieceFamily, PieceId, hybrid_model,
-    multi_launch_model, wooden_twister_model,
+    CoasterModel, ForceRating, ForceRatingAxis, HillFamily, HillFeel, Piece, PieceFamily, PieceId,
+    coaster_models,
 };
 
 const GRID_STEP: f64 = 0.25;
@@ -48,8 +48,12 @@ fn floater_airtime_too_strong(piece: &Piece, speed: f64) -> bool {
             !matches!(
                 model
                     .comfortable_force_limits
-                    .classify_airtime(rating.minimum_filtered_vertical),
-                AirtimeRating::Weak | AirtimeRating::Good
+                    .classify_force(
+                        ForceRatingAxis::Airtime,
+                        rating.minimum_filtered_vertical,
+                        model.name,
+                    ),
+                ForceRating::Weak | ForceRating::Good
             )
         })
 }
@@ -80,8 +84,8 @@ fn roll_rate_rule(piece: &'static Piece) -> Option<Box<dyn Fn(f64) -> f64>> {
     })
 }
 
-fn models() -> [CoasterModel; 3] {
-    [hybrid_model(), multi_launch_model(), wooden_twister_model()]
+fn models() -> Vec<CoasterModel> {
+    coaster_models()
 }
 
 fn refine_boundary(
@@ -113,8 +117,7 @@ fn failure(piece: &Piece, speed: f64) -> Option<String> {
             continue;
         }
         evaluated = true;
-        let limits = model.comfortable_force_limits;
-        for cars in model.cars_per_train_range() {
+        for cars in model.cars_per_train.clone() {
             let rating =
                 rate_piece(&model, cars, piece, speed, unpowered()).unwrap_or_else(|error| {
                     panic!(
@@ -134,28 +137,11 @@ fn failure(piece: &Piece, speed: f64) -> Option<String> {
                     model.name, AXIS_NAMES[violation.axis], violation.force
                 ));
             }
-            let lower = [
-                limits.minimum_vertical_g,
-                -limits.maximum_lateral_g,
-                -limits.maximum_longitudinal_g,
-            ];
-            let upper = [
-                limits.maximum_vertical_g,
-                limits.maximum_lateral_g,
-                limits.maximum_longitudinal_g,
-            ];
-            for axis in 0..3 {
-                let low = rating.minimum_filtered_force[axis];
-                let high = rating.maximum_filtered_force[axis];
-                if low < lower[axis] || high > upper[axis] {
-                    let force = if low < lower[axis] { low } else { high };
-                    return Some(format!(
-                        "{} {cars} cars: {} {force:+.3} g too much",
-                        model.name, AXIS_NAMES[axis]
-                    ));
-                }
-            }
-            assert!(rating.passed && !rating.exceeds_sustained_limits(&limits));
+            assert!(
+                rating.passed,
+                "{} {cars} cars at {speed} m/s has no recorded failure but did not pass",
+                model.name
+            );
         }
     }
     assert!(evaluated, "no allowed model for {:?}", piece.id);
@@ -345,12 +331,16 @@ fn scan(template: &'static Piece) -> ScannedWindow {
             .into_iter()
             .filter(|model| model.allows_piece(template))
         {
-            for cars in model.cars_per_train_range() {
+            for cars in model.cars_per_train.clone() {
                 let rating =
                     rate_piece(&model, cars, template, maximum_entry, unpowered()).unwrap();
                 let class = model
                     .comfortable_force_limits
-                    .classify_airtime(rating.minimum_filtered_vertical);
+                    .classify_force(
+                        ForceRatingAxis::Airtime,
+                        rating.minimum_filtered_vertical,
+                        model.name,
+                    );
                 let default_train = cars == model.train.cars;
                 airtime.push(format!(
                     "{} {cars} cars{}: {:.3} g {class:?}",
@@ -360,7 +350,7 @@ fn scan(template: &'static Piece) -> ScannedWindow {
                 ));
                 if family.feel == HillFeel::Ejector
                     && default_train
-                    && class != AirtimeRating::Great
+                    && class != ForceRating::Great
                 {
                     acceptance_failures.push(format!(
                         "{:?}: {} default {cars}-car train has {class:?} airtime ({:.3} g) at the {maximum_entry} m/s maximum; relabel it a floater",
@@ -510,7 +500,7 @@ fn main() {
             })
             .collect();
         let contents = format!(
-            "// Generated by make generate-rated-windows on {date}: 5 Hz filtered forces within the comfortable limits, 0.5 g allowance for 0.2 s.\n\
+            "// Generated by make generate-rated-windows on {date}: 5 Hz filtered forces use sustained limits, 0.5 g allowance for 0.2 s.\n\
              #[rustfmt::skip]\n\
              const MEASURED_RATED_WINDOWS: &[MeasuredRatedWindow] = &[\n{}\n];\n",
             rows.join("\n")
@@ -522,39 +512,28 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::refine_boundary;
-    use theme_park_sim::physics::rated_piece::PieceRating;
+    use super::{failure, refine_boundary, unmeasured_catalog};
+    use theme_park_sim::physics::rated_piece::{rate_piece, unpowered};
+    use theme_park_sim::track::{PieceId, hybrid_model};
 
     #[test]
-    fn rejects_any_filtered_peak_past_a_sustained_limit() {
-        let limits = theme_park_sim::track::hybrid_model().comfortable_force_limits;
-        let mut rating = PieceRating {
-            passed: true,
-            entry_speed: 1.0,
-            minimum_speed: 1.0,
-            minimum_filtered_vertical: limits.minimum_vertical_g,
-            minimum_filtered_force: [
-                limits.minimum_vertical_g,
-                -limits.maximum_lateral_g,
-                -limits.maximum_longitudinal_g,
-            ],
-            maximum_filtered_force: [
-                limits.maximum_vertical_g,
-                limits.maximum_lateral_g,
-                limits.maximum_longitudinal_g,
-            ],
-            violation: None,
-            failure: None,
-        };
-        assert!(!rating.exceeds_sustained_limits(&limits));
-        for axis in 0..3 {
-            rating.minimum_filtered_force[axis] -= 0.001;
-            assert!(rating.exceeds_sustained_limits(&limits));
-            rating.minimum_filtered_force[axis] += 0.001;
-            rating.maximum_filtered_force[axis] += 0.001;
-            assert!(rating.exceeds_sustained_limits(&limits));
-            rating.maximum_filtered_force[axis] -= 0.001;
-        }
+    fn accepts_evaluator_approved_brief_excursion_at_corkscrew_speed() {
+        let piece = unmeasured_catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::Corkscrew)
+            .expect("catalog contains the corkscrew");
+        let model = hybrid_model();
+        let limits = model.comfortable_force_limits;
+        let rating = rate_piece(&model, 8, piece, 19.83, unpowered()).unwrap();
+
+        assert!(rating.passed, "{rating:?}");
+        assert!(
+            rating.maximum_filtered_force[0] > limits.maximum_vertical_g,
+            "expected a brief filtered overshoot above {:.3} g, saw {:.3} g",
+            limits.maximum_vertical_g,
+            rating.maximum_filtered_force[0]
+        );
+        assert_eq!(failure(piece, 19.83), None);
     }
 
     #[test]

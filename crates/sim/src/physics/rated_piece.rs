@@ -29,25 +29,6 @@ pub struct PieceRating {
     pub failure: Option<&'static str>,
 }
 
-impl PieceRating {
-    pub fn exceeds_sustained_limits(&self, limits: &ComfortableForceLimits) -> bool {
-        let lower = [
-            limits.minimum_vertical_g,
-            -limits.maximum_lateral_g,
-            -limits.maximum_longitudinal_g,
-        ];
-        let upper = [
-            limits.maximum_vertical_g,
-            limits.maximum_lateral_g,
-            limits.maximum_longitudinal_g,
-        ];
-        (0..3).any(|axis| {
-            self.minimum_filtered_force[axis] < lower[axis]
-                || self.maximum_filtered_force[axis] > upper[axis]
-        })
-    }
-}
-
 struct MeasurementTrack {
     circuit: Circuit,
     start: f64,

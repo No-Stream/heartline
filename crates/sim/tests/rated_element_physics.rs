@@ -674,7 +674,7 @@ fn level_to_level_inversion_rated_maxima_pass_for_all_allowed_trains_in_isolatio
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in model.cars_per_train_range() {
+            for cars in model.cars_per_train.clone() {
                 let rating = rate_piece(&model, cars, piece, maximum_entry, rating_physics())
                     .unwrap_or_else(|error| panic!("{:?} {}: {error}", piece.id, model.name));
                 assert!(
@@ -790,7 +790,7 @@ fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
             );
         }
     }
-    for cars in model.cars_per_train_range() {
+    for cars in model.cars_per_train.clone() {
         let rating = rate_piece(&model, cars, piece, rated.maximum_entry, rating_physics())
             .expect("rating must complete");
         assert_eq!(
@@ -892,7 +892,7 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
 }
 
 #[test]
-fn every_rated_endpoint_passes_for_every_train_within_the_comfortable_limits() {
+fn every_rated_endpoint_passes_for_every_train_with_the_force_evaluator() {
     let mut failures = Vec::new();
     for piece in catalog()
         .iter()
@@ -903,12 +903,11 @@ fn every_rated_endpoint_passes_for_every_train_within_the_comfortable_limits() {
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            let limits = model.comfortable_force_limits;
-            for cars in model.cars_per_train_range() {
+            for cars in model.cars_per_train.clone() {
                 for speed in [rated.minimum_entry, rated.maximum_entry] {
                     let rating = rate_piece(&model, cars, piece, speed, rating_physics())
                         .expect("rating must complete");
-                    if !rating.passed || rating.exceeds_sustained_limits(&limits) {
+                    if !rating.passed {
                         failures.push(format!(
                             "{:?} {} {cars} cars at {speed}: {rating:?}",
                             piece.id, model.name
@@ -1070,7 +1069,7 @@ fn banked_straights_pass_isolated_ratings_at_both_window_ends() {
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in model.cars_per_train_range() {
+            for cars in model.cars_per_train.clone() {
                 for speed in [rated.minimum_entry, rated.maximum_entry] {
                     let rating = rate_piece(&model, cars, piece, speed, rating_physics())
                         .unwrap_or_else(|error| {
