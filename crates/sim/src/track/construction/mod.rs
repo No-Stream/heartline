@@ -164,7 +164,7 @@ fn select_speed_matched_variant_with_windows(
 
 #[derive(Clone)]
 struct PieceValidation {
-    supports: Vec<Vec<Support>>,
+    supports: Vec<Arc<Vec<Support>>>,
     tunnel_plan: TunnelPlan,
     track_obstacles: Vec<SupportObstacle>,
 }
@@ -201,7 +201,7 @@ struct ValidationCache {
     existing_tunnel_plans: Vec<TunnelPlan>,
     clearance_index: ClearanceIndex,
     track_obstacles: Vec<Vec<SupportObstacle>>,
-    supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
+    supports: Vec<Option<Result<Arc<Vec<Support>>, SupportError>>>,
     support_regions: Vec<SupportSearchRegion>,
     /// Union of the existing pieces' tunnel carve cells.
     existing_carve_cells: BTreeSet<TerrainCell>,
@@ -210,7 +210,7 @@ struct ValidationCache {
     /// Supports routed for each existing piece on the existing carved world, among the other
     /// existing pieces. Unlike `supports`, an entry is dropped whenever a change could reach it,
     /// so it always equals a fresh routing and tunnelling validations can reuse it.
-    exact_supports: Vec<Option<Result<Vec<Support>, SupportError>>>,
+    exact_supports: Vec<Option<Result<Arc<Vec<Support>>, SupportError>>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -972,7 +972,8 @@ impl Construction {
                             supported_piece,
                             existing_world(cache)?,
                             &existing_support_obstacles(),
-                        );
+                        )
+                        .map(Arc::new);
                         cache.exact_supports[index] = Some(routed);
                     }
                     let exact = cache.exact_supports[index]
@@ -992,6 +993,7 @@ impl Construction {
                 }
                 validated_supports.push(
                     route_supports(supported_piece, candidate_world, &support_obstacles)
+                        .map(Arc::new)
                         .map_err(construction_support_error)?,
                 );
                 continue;
@@ -1001,11 +1003,10 @@ impl Construction {
                 self.support_cache_misses
                     .set(self.support_cache_misses.get() + 1);
                 if cache.exact_supports[index].is_none() {
-                    cache.exact_supports[index] = Some(route_supports(
-                        supported_piece,
-                        world,
-                        &existing_support_obstacles(),
-                    ));
+                    cache.exact_supports[index] = Some(
+                        route_supports(supported_piece, world, &existing_support_obstacles())
+                            .map(Arc::new),
+                    );
                 }
                 cache.supports[index] = cache.exact_supports[index].clone();
             }
@@ -1038,6 +1039,7 @@ impl Construction {
                 );
             }
             let supports = route_supports(supported_piece, world, &support_obstacles)
+                .map(Arc::new)
                 .map_err(construction_support_error)?;
             validated_supports.push(supports);
         }

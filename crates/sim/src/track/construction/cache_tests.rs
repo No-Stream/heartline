@@ -66,6 +66,82 @@ fn choices_after_hill_variant_changes_match_a_fresh_computation() {
     }
 }
 
+#[test]
+fn existing_supports_are_shared_across_candidate_validations() {
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [8; 4],
+            water: None,
+        },
+    );
+    let mut construction = station_construction();
+    for _ in 0..12 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    construction.choices(&world, &[]);
+
+    let validation_cache = construction.validation_cache.borrow();
+    let baseline_supports = validation_cache.as_ref().unwrap().supports[0]
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    let choices_cache = construction.choices_cache.borrow();
+    let first_piece_region = support_search_region(&construction.pieces[0]);
+    let unaffected_candidates: Vec<_> = choices_cache
+        .as_ref()
+        .unwrap()
+        .available_choices
+        .iter()
+        .filter(|candidate| candidate.choice.result.is_ok())
+        .filter_map(|candidate| {
+            let validation = candidate.validation.as_ref()?;
+            (!validation
+                .track_obstacles
+                .iter()
+                .any(|bounds| first_piece_region.overlaps(bounds)))
+            .then_some(candidate)
+        })
+        .collect();
+    let pair = unaffected_candidates
+        .iter()
+        .enumerate()
+        .find_map(|(first_index, first)| {
+            unaffected_candidates
+                .iter()
+                .skip(first_index + 1)
+                .find(|second| !same_geometry(&first.piece, &second.piece))
+                .map(|second| (*first, *second))
+        })
+        .expect("two valid candidate geometries outside the first piece's support region");
+    let (first, second) = pair;
+    let first_supports = &first.validation.as_ref().unwrap().supports[0];
+    let second_supports = &second.validation.as_ref().unwrap().supports[0];
+    assert!(Arc::ptr_eq(first_supports, baseline_supports));
+    assert!(Arc::ptr_eq(first_supports, second_supports));
+
+    for candidate in [first, second] {
+        let cached_validation = candidate.validation.as_ref().unwrap();
+        let fresh_construction = construction.copy_for_completion();
+        let fresh_validation = fresh_construction
+            .validate_piece(&candidate.piece, &world, &[])
+            .unwrap();
+        let support_values = |validation: &PieceValidation| {
+            validation
+                .supports
+                .iter()
+                .map(|supports| supports.as_ref().clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            support_values(cached_validation),
+            support_values(&fresh_validation)
+        );
+    }
+}
+
 fn hill_world() -> World {
     World::new(
         128,
@@ -170,7 +246,11 @@ fn assert_tunnelling_supports_match_routing_from_scratch(carve_placed_track: boo
             match validation {
                 Ok(validation) => {
                     assert_eq!(
-                        Ok(validation.supports),
+                        Ok(validation
+                            .supports
+                            .iter()
+                            .map(|supports| supports.as_ref().clone())
+                            .collect::<Vec<_>>()),
                         supports_routed_from_scratch(&construction, &candidate, &world),
                         "{:?} after {} pieces",
                         template.id,
