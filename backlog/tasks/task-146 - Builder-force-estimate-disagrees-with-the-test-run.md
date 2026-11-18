@@ -24,7 +24,7 @@ Owner playtest 2026-11-18: a layout looked fine in the builder's live force esti
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-18: blocked on the owner's exported session or exact track. TASK-144's diagnostic (branch longitudinal-diag, ignored test diagnose_steep_drop_pullout_longitudinal_forces) found the measured path gives at most 0.63 g longitudinal on a 60-degree drop pullout, so the large longitudinal values come from the estimate. Leading suspect: the estimate steps at 50 ms and interpolates acceleration when correcting sample forces (physics/preview.rs:111, sim-wasm construction.rs:483).
 
-2026-11-18 diagnosis on the new demo layout (TASK-140, branch demo-ride). Scratch comparison: for every piece, the builder estimate (preview_open_track, front car, 50 ms steps) against a 200 Hz run of the same train read for the front car and for every car.
+2026-11-18 diagnosis on the first version of the new demo layout (TASK-140, branch demo-ride; built in the UI with a 34 m drop, later made 2 m shallower). Scratch comparison: for every piece, the builder estimate (preview_open_track, front car, 50 ms steps) against a 200 Hz run of the same train read for the front car and for every car.
 
 Vertical g per piece (min / max), estimate front car | test front car | test worst car:
 - Crest, GentleToSteepDown: 0.30 / 0.89 | 0.30 / 0.89 | -0.24 / 0.89 (back car)
@@ -43,5 +43,5 @@ Conclusions:
 3. The hill readout is a separate, larger error: a point mass at entry speed, so about 0.15-0.4 g weaker airtime than even the front car (TASK-151).
 4. Latent bug: TestRunRecorder::record uses super::TIME_STEP (5 ms) for force-band and comfort durations even when the preview feeds it 50 ms readings, so preview durations are 10 times too short. Nothing in the UI reads those preview durations today.
 
-Proposed failing test (crates/sim/src/physics/tests.rs): take the demo prefix through GentleToSteepDown (pieces 0..=8), run preview_open_track, and assert its minimum vertical g on piece 8 is within 0.1 g of the worst-car minimum that ConstructionTestRunRecorder records for piece 8 on the closed demo run. Today: estimate 0.30 g, worst car -0.24 g. Fix direction: step the preview with readings for every car (reading_count = cars), correct each car's sample at its own distance, and report the worst car per sample, matching merge_worst_car_statistics.
+Proposed failing test (crates/sim/src/physics/tests.rs): take the demo prefix through GentleToSteepDown (pieces 0..=8), run preview_open_track, and assert its minimum vertical g on piece 8 is within 0.1 g of the worst-car minimum that ConstructionTestRunRecorder records for piece 8 on the closed demo run. On the committed demo: estimate 0.40 g, worst car -0.13 g. Fix direction: step the preview with readings for every car (reading_count = cars), correct each car's sample at its own distance, and report the worst car per sample, matching merge_worst_car_statistics.
 <!-- SECTION:NOTES:END -->
