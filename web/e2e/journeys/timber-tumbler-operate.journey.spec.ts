@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { advanceUntilState, canvasToPage, flattenTerrainTiles, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
+import { advanceUntilState, canvasToPage, flattenTerrainTiles, gotoGame, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
 import { queuedGuests, revenue, riders } from "../player/state";
 import { parseReplaySession } from "../../src/session-replay";
 
@@ -87,7 +87,7 @@ test("Timber Tumbler operating journey @journey", async ({ page }) => {
   const session = parseReplaySession(JSON.parse(readFileSync(new URL("../sessions/timber-tumbler-built.json", import.meta.url), "utf8")) as unknown);
   await page.setViewportSize({ width: 800, height: 480 });
   const params = new URLSearchParams({ test: "1", manualBlockAnalysis: "1", park: session.park, seed: session.seed, agents: String(session.guestCount) });
-  await page.goto(`/?${params}`);
+  await gotoGame(page, `/?${params}`);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await page.evaluate((recordedSession) => window.gameTest.replaySession(recordedSession), session);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready), { timeout: 30_000 }).toBe(true);

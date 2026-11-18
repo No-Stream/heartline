@@ -53,10 +53,10 @@ window.renderFixture = async (rotation, stacked, hideUpper, extra, checkRegion =
   const gl = canvas.getContext("webgl2");
   if (!gl) throw new Error("WebGL2 is unavailable");
   let pickingDraws = 0;
-  const drawArraysInstanced = gl.drawArraysInstanced.bind(gl);
-  gl.drawArraysInstanced = (...args) => {
+  const drawElements = gl.drawElements.bind(gl);
+  gl.drawElements = (...args) => {
     if (gl.getParameter(gl.FRAMEBUFFER_BINDING)) pickingDraws++;
-    drawArraysInstanced(...args);
+    drawElements(...args);
   };
   const renderer = createWorldRenderer(canvas, atlas, { "1": [image] });
   const upper = [[2, 2], [2, 1], [1, 1], [1, 2]][rotation];

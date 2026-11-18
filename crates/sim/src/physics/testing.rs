@@ -208,6 +208,7 @@ fn record_force_bands(
     durations: &mut ForceBandDurations,
     reading: CarReading,
     limits: ComfortableForceLimits,
+    model_key: &str,
     seconds: f64,
     location: super::features::Location,
 ) {
@@ -221,9 +222,12 @@ fn record_force_bands(
         (ForceAxis::Lateral, reading.g.lateral),
         (ForceAxis::Longitudinal, reading.g.longitudinal),
     ] {
-        if let Some((index, limit)) =
-            super::scoring::score_band_detail(axis, force_band(axis, value, limits), limits)
-        {
+        if let Some((index, limit)) = super::scoring::score_band_detail(
+            axis,
+            force_band(axis, value, limits, model_key),
+            limits,
+            model_key,
+        ) {
             let detail =
                 durations.band_details[index].get_or_insert(super::scoring::ExcessiveForceDetail {
                     value: value.abs(),
@@ -238,7 +242,7 @@ fn record_force_bands(
             }
         }
         if matches!(
-            force_band(axis, value, limits),
+            force_band(axis, value, limits, model_key),
             ForceBand::TooMuch | ForceBand::Dangerous
         ) {
             let (index, limit) = match axis {
@@ -256,7 +260,7 @@ fn record_force_bands(
                 },
             );
             detail.seconds += seconds;
-            if force_band(axis, value, limits) == ForceBand::Dangerous {
+            if force_band(axis, value, limits, model_key) == ForceBand::Dangerous {
                 durations.dangerous_seconds_by_axis[index] += seconds;
             }
             if value.abs() > detail.value {
@@ -264,7 +268,7 @@ fn record_force_bands(
                 detail.location = location;
             }
         }
-        match (axis, force_band(axis, value, limits)) {
+        match (axis, force_band(axis, value, limits, model_key)) {
             (ForceAxis::Airtime, ForceBand::Good) => durations.airtime_good += seconds,
             (ForceAxis::Airtime, ForceBand::Great) => durations.airtime_great += seconds,
             (ForceAxis::Vertical, ForceBand::Good) => durations.vertical_good += seconds,
@@ -766,9 +770,10 @@ impl TestRunRecorder {
     pub(super) fn rebind_preview_circuit(
         &mut self,
         circuit: &Circuit,
+        train: &crate::track::TrainConfiguration,
         limits: ComfortableForceLimits,
     ) {
-        let fresh = Self::for_circuit_with_limits(circuit, limits);
+        let fresh = Self::for_circuit_with_train_and_limits(circuit, train, limits);
         if self.next_sample_distance == self.circuit_length && circuit.length > self.circuit_length
         {
             self.next_sample_distance = self.last_unwrapped_distance.ceil();
@@ -930,6 +935,35 @@ impl TestRunRecorder {
     }
 
     pub fn for_circuit_with_limits(circuit: &Circuit, limits: ComfortableForceLimits) -> Self {
+        Self::for_circuit_with_windows(circuit, limits, |piece| piece.rated_speeds)
+    }
+
+    pub fn for_circuit_with_train(
+        circuit: &Circuit,
+        train: &crate::track::TrainConfiguration,
+    ) -> Self {
+        Self::for_circuit_with_train_and_limits(
+            circuit,
+            train,
+            crate::track::hybrid_model().comfortable_force_limits,
+        )
+    }
+
+    pub fn for_circuit_with_train_and_limits(
+        circuit: &Circuit,
+        train: &crate::track::TrainConfiguration,
+        limits: ComfortableForceLimits,
+    ) -> Self {
+        Self::for_circuit_with_windows(circuit, limits, |piece| {
+            crate::track::effective_rated_speeds(piece, train)
+        })
+    }
+
+    fn for_circuit_with_windows(
+        circuit: &Circuit,
+        limits: ComfortableForceLimits,
+        rated_speeds: impl Fn(&Piece) -> Option<crate::track::RatedSpeeds>,
+    ) -> Self {
         let mut recorder = Self::new(circuit.length());
         recorder.set_force_limits(limits);
         recorder.piece_starts.clone_from(&circuit.starts);
@@ -951,7 +985,7 @@ impl TestRunRecorder {
             .pieces
             .iter()
             .map(|piece| {
-                piece.rated_speeds.map(|speeds| RatedPieceSpeedWindow {
+                rated_speeds(piece).map(|speeds| RatedPieceSpeedWindow {
                     name: piece.name,
                     minimum_entry: speeds.minimum_entry,
                     maximum_entry: speeds.maximum_entry,
@@ -979,7 +1013,7 @@ impl TestRunRecorder {
     /// Records readings for one car at each physics step.
     ///
     /// Interpolation at crossed metre marks keeps the overlay compact.
-    pub fn record(&mut self, frames: &[Vec<CarReading>]) {
+    pub fn record(&mut self, frames: &[Vec<CarReading>], model_key: &str) {
         for frame in frames {
             if frame.is_empty() {
                 continue;
@@ -1043,6 +1077,7 @@ impl TestRunRecorder {
                     &mut self.force_bands,
                     reading,
                     self.force_limits,
+                    model_key,
                     self.time_step,
                     location,
                 );
@@ -1793,6 +1828,7 @@ mod tests {
                 &mut bands,
                 reading,
                 limits,
+                "Timber Tumbler",
                 sample_interval(samples, index, circuit_length, true).seconds,
                 super::super::features::Location {
                     piece_index: sample.piece_index,
@@ -1805,6 +1841,30 @@ mod tests {
         let result = score(&features, &bands);
         let notes = scoring_notes(&features);
         (result.excitement, result.intensity, result.nausea, notes)
+    }
+
+    #[test]
+    fn recorder_uses_model_key_for_vertical_force_band() {
+        let reading = CarReading {
+            distance: 10.0,
+            speed: 10.0,
+            g: GForces {
+                vertical: 2.75,
+                lateral: 0.0,
+                longitudinal: 0.0,
+            },
+            airtime: false,
+            height_m: 0.0,
+            inverted: false,
+            roll: 0.0,
+            piece_index: 0,
+        };
+        let mut wooden = TestRunRecorder::new(100.0);
+        let mut hybrid = TestRunRecorder::new(100.0);
+        wooden.record(&[vec![reading]], "Briar Blitz");
+        hybrid.record(&[vec![reading]], "Timber Tumbler");
+        assert!(wooden.force_bands.vertical_great > 0.0);
+        assert!(hybrid.force_bands.vertical_good > 0.0);
     }
 
     #[test]
@@ -1831,9 +1891,9 @@ mod tests {
             roll: 0.0,
             piece_index: 0,
         };
-        record_force_bands(&mut bands, reading, limits, 2.0, location);
+        record_force_bands(&mut bands, reading, limits, "Timber Tumbler", 2.0, location);
         reading.g.lateral = limits.maximum_lateral_g * 1.5;
-        record_force_bands(&mut bands, reading, limits, 1.0, location);
+        record_force_bands(&mut bands, reading, limits, "Timber Tumbler", 1.0, location);
         let detail = bands.excessive_details[2].unwrap();
         assert_eq!(detail.seconds, 3.0);
         assert_eq!(bands.dangerous_seconds_by_axis[2], 1.0);
@@ -2253,7 +2313,7 @@ mod tests {
     }
 
     fn record(recorder: &mut TestRunRecorder, car_reading: CarReading) {
-        recorder.record(&[vec![car_reading]]);
+        recorder.record(&[vec![car_reading]], "Timber Tumbler");
     }
 
     #[test]
@@ -2384,7 +2444,7 @@ mod tests {
         let mut completed = false;
         for _ in 0..60_000 {
             train.step(&circuit);
-            recorder.record(&train.take_readings());
+            recorder.record(&train.take_readings(), "Timber Tumbler");
             if train.distance() - start_distance >= circuit.length() {
                 completed = true;
                 break;
@@ -2647,10 +2707,8 @@ mod tests {
     }
 
     #[test]
-    fn reference_oval_and_drop_loop_produce_distinct_ratings() {
-        let mut train_configuration = hybrid_model().train;
-        train_configuration.cars = 1;
-        train_configuration.length_metres = 4.0;
+    fn reference_oval_and_demo_lap_produce_distinct_ratings() {
+        let train_configuration = hybrid_model().train;
         let gentle_circuit = circuit_from_ids(&[
             PieceId::Station,
             PieceId::LevelToGentleUp,
@@ -2674,7 +2732,7 @@ mod tests {
             },
             20.0,
         );
-        let drop_and_loop = simulate_reference_lap(
+        let demo = simulate_reference_lap(
             demo_circuit(),
             &train_configuration,
             PhysicsConfig {
@@ -2685,30 +2743,23 @@ mod tests {
         );
 
         assert!(gentle.completed, "gentle notes={:?}", gentle.notes);
+        assert!(demo.completed, "demo notes={:?}", demo.notes);
+        assert!(demo.samples.iter().any(|sample| sample.airtime));
+        assert!(!demo.samples.iter().any(|sample| sample.inverted));
+        // The demo is a friendly force-designed ride; the gentle oval has no elements at all.
         assert!(
-            drop_and_loop.completed,
-            "drop and loop notes={:?}",
-            drop_and_loop.notes
-        );
-        assert!(!gentle.samples.iter().any(|sample| sample.inverted));
-        assert!(drop_and_loop.samples.iter().any(|sample| sample.inverted));
-        // The calibrated model accounts for this lap's excessive forces and envelope penalty.
-        assert!(
-            (2.0..=3.0).contains(&drop_and_loop.excitement),
+            (4.0..=6.0).contains(&demo.excitement),
             "demo excitement was {}",
-            drop_and_loop.excitement
+            demo.excitement
         );
-        assert!((8.0..=9.0).contains(&drop_and_loop.intensity));
-        assert!(drop_and_loop.excitement > gentle.excitement);
-        assert!(drop_and_loop.samples.len() > gentle.samples.len());
+        assert!(demo.excitement > gentle.excitement + 2.0);
+        assert!(demo.samples.len() > gentle.samples.len());
     }
 
     #[test]
     fn demo_lap_records_piece_indices_matching_the_circuit() {
         let circuit = demo_circuit();
-        let mut train_configuration = hybrid_model().train;
-        train_configuration.cars = 1;
-        train_configuration.length_metres = 4.0;
+        let train_configuration = hybrid_model().train;
         let report = simulate_reference_lap(
             circuit.clone(),
             &train_configuration,
@@ -2901,7 +2952,7 @@ mod tests {
         let mut recorder = TestRunRecorder::for_circuit(&circuit);
         for _ in 0..100 {
             train.step(&circuit);
-            recorder.record(&train.take_readings());
+            recorder.record(&train.take_readings(), "Timber Tumbler");
             if !train.notes().is_empty() {
                 break;
             }

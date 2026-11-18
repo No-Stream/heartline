@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { advanceUntilState, canvasToPage, flattenTerrainTiles, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
+import { advanceUntilState, canvasToPage, flattenTerrainTiles, gotoGame, layPath, layQueue, openRide, openTool, setCoasterTicketPrice, setFacilityPrice, setGameSpeed } from "../player/driver";
 import { queuedGuests } from "../player/state";
 import { parseReplaySession } from "../../src/session-replay";
 
@@ -14,27 +14,38 @@ interface QueueGuestVisibility {
   readonly panelInterceptedGuestIds: readonly string[];
 }
 
-async function findGuestCanvasPoint(page: Page, guestId: string): Promise<CanvasPoint | null> {
-  return page.evaluate((id): CanvasPoint | null => {
+interface GuestCanvasTarget {
+  readonly point: CanvasPoint | null;
+  readonly panelIntercepted: boolean;
+}
+
+async function findGuestCanvasPoint(page: Page, guestId: string): Promise<GuestCanvasTarget> {
+  return page.evaluate((id): GuestCanvasTarget => {
     const guest = window.gameTest.guests().find((entry) => entry.id === id);
     const canvas = document.querySelector("canvas");
-    if (!guest || !canvas) return null;
+    if (!guest || !canvas) return { point: null, panelIntercepted: false };
 
     const projected = window.gameTest.project({ x: guest.x, y: guest.y, z: guest.height / 4 });
     const regionX = Math.floor(projected.x) - 32;
     const regionY = Math.floor(projected.y) - 64;
     const regionWidth = 65;
     const regionHeight = 73;
+    const bounds = canvas.getBoundingClientRect();
     const picks = window.gameTest.pickRegion(regionX, regionY, regionWidth, regionHeight);
+    let panelIntercepted = false;
     for (let row = 0; row < regionHeight; row++) {
       for (let column = 0; column < regionWidth; column++) {
         const pick = picks[row * regionWidth + column];
-        if (pick && "id" in pick && pick.id === id) {
-          return { x: regionX + column + 0.5, y: regionY + row + 0.5 };
-        }
+        if (!pick || !("id" in pick) || pick.id !== id) continue;
+        const point = { x: regionX + column + 0.5, y: regionY + row + 0.5 };
+        const pageX = bounds.left + point.x * bounds.width / canvas.width;
+        const pageY = bounds.top + point.y * bounds.height / canvas.height;
+        const target = document.elementFromPoint(pageX, pageY);
+        if (target instanceof HTMLCanvasElement) return { point, panelIntercepted };
+        if (target?.closest("[data-testid='guest-panel']")) panelIntercepted = true;
       }
     }
-    return null;
+    return { point: null, panelIntercepted };
   }, guestId);
 }
 
@@ -52,21 +63,23 @@ async function visibleQueueGuests(page: Page, guestIds: readonly string[]): Prom
   const visibleGuestIds: string[] = [];
   const panelInterceptedGuestIds: string[] = [];
   for (const guestId of guestIds) {
-    const point = await findGuestCanvasPoint(page, guestId);
-    if (!point) continue;
-    const target = await pointerTarget(page, point);
-    if (target === "canvas") visibleGuestIds.push(guestId);
-    else if (target === "guest-panel") panelInterceptedGuestIds.push(guestId);
+    const target = await findGuestCanvasPoint(page, guestId);
+    if (target.point) visibleGuestIds.push(guestId);
+    else if (target.panelIntercepted) panelInterceptedGuestIds.push(guestId);
   }
   return { guestIds: visibleGuestIds, panelInterceptedGuestIds };
 }
 
 async function clickGuestOnCanvas(page: Page, guestId: string): Promise<void> {
-  const point = await findGuestCanvasPoint(page, guestId);
-  if (!point) throw new Error(`Guest ${guestId} has no visible renderer pick in the paused queue`);
-  const target = await pointerTarget(page, point);
-  if (target !== "canvas") {
-    throw new Error(`The click point for guest ${guestId} is intercepted by ${target}; no canvas selection was sent`);
+  const target = await findGuestCanvasPoint(page, guestId);
+  if (!target.point) {
+    if (target.panelIntercepted) throw new Error(`Every renderer pick point for guest ${guestId} is covered by the guest panel`);
+    throw new Error(`Guest ${guestId} has no visible renderer pick in the paused queue`);
+  }
+  const point = target.point;
+  const pointerHitTarget = await pointerTarget(page, point);
+  if (pointerHitTarget !== "canvas") {
+    throw new Error(`The click point for guest ${guestId} is intercepted by ${pointerHitTarget}; no canvas selection was sent`);
   }
   const pagePoint = await canvasToPage(page, point);
   await page.mouse.click(pagePoint.x, pagePoint.y);
@@ -77,7 +90,7 @@ test("selects each visible queued guest with the guest panel open and closed @jo
   const session = parseReplaySession(JSON.parse(readFileSync(new URL("../sessions/timber-tumbler-built.json", import.meta.url), "utf8")) as unknown);
   await page.setViewportSize({ width: 1280, height: 720 });
   const params = new URLSearchParams({ test: "1", manualBlockAnalysis: "1", park: session.park, seed: session.seed, agents: String(session.guestCount) });
-  await page.goto(`/?${params}`);
+  await gotoGame(page, `/?${params}`);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await page.evaluate((recordedSession) => window.gameTest.replaySession(recordedSession), session);
   await expect.poll(() => page.evaluate(() => window.gameTest.ready), { timeout: 30_000 }).toBe(true);

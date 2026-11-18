@@ -1,13 +1,11 @@
-use theme_park_sim::track::{
-    TrackSample, Vec3, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
-};
+use theme_park_sim::track::{TrackSample, Vec3, catalog, coaster_models};
 
 fn append_vector(output: &mut Vec<f32>, vector: Vec3) {
     output.extend([vector.x as f32, vector.y as f32, vector.z as f32]);
 }
 
 fn main() {
-    let models = [hybrid_model(), multi_launch_model(), wooden_twister_model()];
+    let models = coaster_models();
     let pieces: Vec<_> = catalog()
         .iter()
         .filter(|piece| {

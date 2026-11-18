@@ -122,7 +122,7 @@ impl WasmSimulation {
             terrain_message: String::new(),
             scenery_message: String::new(),
             terrain_invalidated_paths: Vec::new(),
-            construction_model: ConstructionModel::Hybrid,
+            construction_model: hybrid_model().key.to_owned(),
             selected: None,
             selected_element: None,
             construction_undo_groups: Vec::new(),

@@ -143,6 +143,16 @@ fn construction_force_preview_reports_placed_track_and_last_piece_peaks() {
         pair[1]["distance"].as_f64().unwrap() - pair[0]["distance"].as_f64().unwrap() <= 1.001
     }));
     assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
+    assert_eq!(
+        preview["limits"]["ratingBands"]["vertical"],
+        serde_json::json!([
+            { "rating": "weak", "upTo": 2.0, "inclusive": true },
+            { "rating": "good", "upTo": 3.0, "inclusive": false },
+            { "rating": "great", "upTo": 4.5, "inclusive": true },
+            { "rating": "too much", "upTo": 1.3 * 4.5, "inclusive": true },
+            { "rating": "dangerous", "upTo": null, "inclusive": true },
+        ])
+    );
     assert!(preview["lastPlaced"]["maximumSpeed"].as_f64().is_some());
     assert!(preview["lastPlaced"]["minimumVerticalG"].as_f64().is_some());
     assert!(preview["lastPlaced"]["maximumVerticalG"].as_f64().is_some());
@@ -1634,24 +1644,31 @@ fn coaster_colours_start_from_the_model_and_change_the_state_hash() {
 }
 
 #[test]
+#[should_panic(expected = "unknown coaster model: nope")]
+fn selecting_an_unknown_coaster_model_fails() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_select("model:nope");
+}
+
+#[test]
 fn train_layouts_name_each_model_and_its_train_shape() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     assert_eq!(simulation.construction_train_layout(), "null");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&simulation.coaster_train_layout()).unwrap(),
-        serde_json::json!({"model": "hybrid", "carsPerTrain": 6, "rowsPerCar": 2, "seatsPerRow": 2, "lengthMetres": 18.0})
+        serde_json::json!({"model": "hybrid", "trackMaterial": "hybrid", "carsPerTrain": 6, "rowsPerCar": 2, "seatsPerRow": 2, "lengthMetres": 18.0})
     );
-    for (model, key, cars, rows) in [
-        ("model:hybrid", "hybrid", 6, 2),
-        ("model:velocity_viper", "velocity_viper", 6, 2),
-        ("model:wooden_twister", "wooden_twister", 12, 1),
+    for (model, key, material, cars, rows) in [
+        ("model:hybrid", "hybrid", "hybrid", 6, 2),
+        ("model:velocity_viper", "velocity_viper", "steel", 6, 2),
+        ("model:wooden_twister", "wooden_twister", "wood", 12, 1),
     ] {
         simulation.construction_select(model);
         simulation.construction_start(100, 100, 40, 0);
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&simulation.construction_train_layout())
                 .unwrap(),
-            serde_json::json!({"model": key, "carsPerTrain": cars, "rowsPerCar": rows, "seatsPerRow": 2, "lengthMetres": 18.0}),
+            serde_json::json!({"model": key, "trackMaterial": material, "carsPerTrain": cars, "rowsPerCar": rows, "seatsPerRow": 2, "lengthMetres": 18.0}),
             "{model}"
         );
     }
@@ -2049,6 +2066,10 @@ fn speed_turns_list_the_model_sizes_with_hand_and_design_speed() {
         ("SpeedTurnLarge20Right", "right", 20.0),
         ("SpeedTurnLarge24Left", "left", 24.0),
         ("SpeedTurnLarge24Right", "right", 24.0),
+        ("SpeedTurnLarge28Left", "left", 28.0),
+        ("SpeedTurnLarge28Right", "right", 28.0),
+        ("SpeedTurnLarge32Left", "left", 32.0),
+        ("SpeedTurnLarge32Right", "right", 32.0),
     ]
     .map(|(id, hand, speed)| (id.to_owned(), hand.to_owned(), speed));
     assert_eq!(summary, expected);
@@ -2056,11 +2077,11 @@ fn speed_turns_list_the_model_sizes_with_hand_and_design_speed() {
     simulation.construction_start(200, 200, 20, 0);
     let wooden: Vec<serde_json::Value> =
         serde_json::from_str(&simulation.construction_speed_turns()).unwrap();
-    assert_eq!(wooden.len(), 4);
+    assert_eq!(wooden.len(), 8);
     assert!(
         wooden
             .iter()
-            .all(|turn| turn["designSpeed"].as_f64().unwrap() < 24.0)
+            .all(|turn| turn["designSpeed"].as_f64().unwrap() != 24.0)
     );
 }
 

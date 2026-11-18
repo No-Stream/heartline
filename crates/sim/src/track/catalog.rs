@@ -28,6 +28,55 @@ pub fn unmeasured_catalog() -> &'static [Piece] {
     &UNMEASURED_CATALOG
 }
 
+pub fn effective_rated_speeds(
+    piece: &Piece,
+    train: &super::TrainConfiguration,
+) -> Option<RatedSpeeds> {
+    let mut rated = piece.rated_speeds?;
+    if !matches!(
+        piece.id,
+        PieceId::ZeroGRollFastLeft
+            | PieceId::ZeroGRollFastRight
+            | PieceId::ZeroGRollCompactLeft
+            | PieceId::ZeroGRollCompactRight
+            | PieceId::StallLeft
+            | PieceId::StallRight
+    ) {
+        return Some(rated);
+    }
+    assert!(train.cars > 0 && train.length_metres.is_finite() && train.length_metres > 0.0);
+    // Preserve the catalog value bit-for-bit for existing default-train replays.
+    if train.cars == 6 && train.length_metres == 18.0 {
+        return Some(rated);
+    }
+    const SAMPLE_SPACING: f64 = 0.05;
+    let steps = ((piece.length() + train.length_metres) / SAMPLE_SPACING).ceil() as usize;
+    let heights: Vec<_> = (0..=steps)
+        .map(|index| {
+            piece
+                .sample((index as f64 * SAMPLE_SPACING).min(piece.length()))
+                .position
+                .z
+        })
+        .collect();
+    let spacing_steps =
+        (train.length_metres / f64::from(train.cars) / SAMPLE_SPACING).round() as usize;
+    let maximum_mean_height = (0..=steps)
+        .map(|front| {
+            (0..usize::from(train.cars))
+                .map(|car| heights[front.saturating_sub(car * spacing_steps)])
+                .sum::<f64>()
+                / f64::from(train.cars)
+        })
+        .fold(f64::NEG_INFINITY, f64::max);
+    rated.minimum_entry = (2.0 * GRAVITY * (maximum_mean_height - heights[0]) + 36.0).sqrt();
+    assert!(
+        rated.minimum_entry <= rated.maximum_entry,
+        "configured train has no valid rated speed window"
+    );
+    Some(rated)
+}
+
 fn rolled_inversion_minimum_entry(piece: &Piece) -> f64 {
     const SAMPLE_SPACING: f64 = 0.05;
     const TRAIN_LENGTH: f64 = 18.0;
@@ -97,6 +146,10 @@ fn build_catalog() -> Vec<Piece> {
         LazyLock::new(|| Arc::new(RollGeometry::spline()));
     static FIFTEEN_PULL: LazyLock<Arc<SolvedProfile>> =
         LazyLock::new(|| Arc::new(embedded_profile("FifteenPull")));
+    static WIDE_SIXTY_CREST: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("WideSixtyCrest")));
+    static WIDE_SIXTY_PULL: LazyLock<Arc<SolvedProfile>> =
+        LazyLock::new(|| Arc::new(embedded_profile("WideSixtyPull")));
     let standard_loop_exit_x = (LOOP_PROFILE.endpoint()[0] / 2.0).round() as i32;
     let definitions = [
         (
@@ -215,6 +268,32 @@ fn build_catalog() -> Vec<Piece> {
             FlatBank,
             FlatBank,
             Shape::Profile(Arc::clone(&SIXTY_PULL)),
+        ),
+        (
+            WideLevelToSixtyDown,
+            "Begin wide 60-degree descent",
+            (WIDE_SIXTY_CREST.endpoint()[0] / 2.0).round() as i32,
+            0,
+            -(WIDE_SIXTY_CREST.endpoint()[1] / 2.0).round() as i32,
+            East,
+            Level,
+            DownSixty,
+            FlatBank,
+            FlatBank,
+            Shape::Profile(Arc::clone(&WIDE_SIXTY_CREST)),
+        ),
+        (
+            WideSixtyDownToLevel,
+            "Wide level-out from 60-degree descent",
+            (WIDE_SIXTY_PULL.endpoint()[0] / 2.0).round() as i32,
+            0,
+            -(WIDE_SIXTY_PULL.endpoint()[1] / 2.0).round() as i32,
+            East,
+            DownSixty,
+            Level,
+            FlatBank,
+            FlatBank,
+            Shape::Profile(Arc::clone(&WIDE_SIXTY_PULL)),
         ),
         (
             SteepToSixtyUp,
@@ -785,6 +864,16 @@ fn build_catalog() -> Vec<Piece> {
                         SteepToSixtyUp => {
                             Some(FIFTEEN_PULL.rated_speeds("SteepToSixtyUp", 34.0, 2.0, 5.0))
                         }
+                        WideLevelToSixtyDown => Some(RatedSpeeds {
+                            minimum_entry: 1.0,
+                            maximum_entry: 6.6,
+                        }),
+                        WideSixtyDownToLevel => Some(RatedSpeeds {
+                            minimum_entry: 2.0,
+                            maximum_entry: (38.5_f64.powi(2)
+                                - 2.0 * 9.81 * WIDE_SIXTY_PULL.endpoint()[1])
+                                .sqrt(),
+                        }),
                         SixtyDownToLevel => Some(RatedSpeeds {
                             minimum_entry: 2.0,
                             maximum_entry: (34.0_f64.powi(2)
@@ -1565,12 +1654,56 @@ fn build_catalog() -> Vec<Piece> {
             22.894120166796476,
             8.0,
         ),
+        (
+            FamilyHill3x32,
+            "FamilyHill3x32",
+            "Family hill 3 × 32 m",
+            HillFeel::Floater,
+            3,
+            32,
+            15.346681821938985,
+            8.0,
+        ),
+        (
+            FamilyHill4x40,
+            "FamilyHill4x40",
+            "Family hill 4 × 40 m",
+            HillFeel::Floater,
+            4,
+            40,
+            16.75644507723801,
+            8.0,
+        ),
+        (
+            FloaterHill20x128,
+            "FloaterHill20x128",
+            "Floater hill 20 × 128 m",
+            HillFeel::Floater,
+            20,
+            128,
+            31.531500358154,
+            8.0,
+        ),
+        (
+            FloaterHill24x160,
+            "FloaterHill24x160",
+            "Floater hill 24 × 160 m",
+            HillFeel::Floater,
+            24,
+            160,
+            35.78356229386795,
+            8.0,
+        ),
     ] {
         let profile = Arc::new(embedded_profile(profile_name));
         let maximum_entry = design_speed
             - match id {
                 EjectorHill8x48 | FloaterHill4x48 | SpeedHill6x80 => 1.0,
                 SpeedHill4x64 => 3.0,
+                // The rear cars of a full train crest a family hill harder than the point-mass design, so
+                // the window tops out where the worst car floats at about -0.55 g.
+                FamilyHill3x32 => 0.8,
+                FamilyHill4x40 => 0.6,
                 _ => 0.0,
             };
         let rated_speeds = profile.rated_speeds(name, maximum_entry, 2.0, model_radius);
@@ -1793,6 +1926,7 @@ fn build_catalog() -> Vec<Piece> {
             pieces.push(piece);
         }
     }
+    // The radius grows with the design speed so the bank stays under 75 degrees and rolls in at under 95 degrees/s.
     for (base, id, name, radius_metres, hand, design_speed) in [
         (
             TurnLargeStandalone,
@@ -1842,6 +1976,38 @@ fn build_catalog() -> Vec<Piece> {
             Hand::Right,
             24.0,
         ),
+        (
+            TurnLargeStandalone,
+            SpeedTurnLarge28Left,
+            "Large left turn banked for 28 m/s",
+            48,
+            Hand::Left,
+            28.0,
+        ),
+        (
+            TurnLargeRightStandalone,
+            SpeedTurnLarge28Right,
+            "Large right turn banked for 28 m/s",
+            48,
+            Hand::Right,
+            28.0,
+        ),
+        (
+            TurnLargeStandalone,
+            SpeedTurnLarge32Left,
+            "Large left turn banked for 32 m/s",
+            64,
+            Hand::Left,
+            32.0,
+        ),
+        (
+            TurnLargeRightStandalone,
+            SpeedTurnLarge32Right,
+            "Large right turn banked for 32 m/s",
+            64,
+            Hand::Right,
+            32.0,
+        ),
     ] {
         let mut piece = pieces
             .iter()
@@ -1850,6 +2016,12 @@ fn build_catalog() -> Vec<Piece> {
             .clone();
         piece.id = id;
         piece.name = name;
+        let grid_offset = i32::from(radius_metres) / 2;
+        piece.exit.x = grid_offset;
+        piece.exit.y = match hand {
+            Hand::Left => grid_offset,
+            Hand::Right => -grid_offset,
+        };
         piece.shape = Shape::SpeedBank { design_speed };
         piece.clear_arc_table();
         piece.family = Some(PieceFamily::SpeedTurn {

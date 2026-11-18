@@ -62,6 +62,7 @@ impl PreviewCache {
         configuration: &TrainConfiguration,
         config: PhysicsConfig,
         limits: ComfortableForceLimits,
+        model_key: &str,
     ) -> Option<TrackPreview> {
         let station = pieces
             .iter()
@@ -88,7 +89,7 @@ impl PreviewCache {
                 hash.finish()
             })
             .collect();
-        let parameters = postcard::to_allocvec(&(configuration, config, limits))
+        let parameters = postcard::to_allocvec(&(configuration, config, limits, model_key))
             .expect("preview parameters serialize");
         let common = if self.parameters == parameters && self.closed == closed {
             self.piece_hashes
@@ -115,7 +116,7 @@ impl PreviewCache {
             let mut train = snapshot.train;
             train.controls.resize(pieces.len(), None);
             let mut recorder = snapshot.recorder;
-            recorder.rebind_preview_circuit(&circuit, limits);
+            recorder.rebind_preview_circuit(&circuit, configuration, limits);
             let mut flags = snapshot.flags;
             flags.resize(length.ceil() as usize, false);
             (
@@ -132,7 +133,11 @@ impl PreviewCache {
             let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
             (
                 Train::new(&circuit, configuration, config, station_distance, 0.0),
-                TestRunRecorder::for_circuit_with_limits(&circuit, limits),
+                TestRunRecorder::for_circuit_with_train_and_limits(
+                    &circuit,
+                    configuration,
+                    limits,
+                ),
                 vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)],
                 vec![false; length.ceil() as usize],
                 vec![None; usize::from(configuration.cars)],
@@ -209,7 +214,7 @@ impl PreviewCache {
             }
             if !reached_end || circuit.open {
                 let front: Vec<_> = readings.into_iter().map(|frame| vec![frame[0]]).collect();
-                recorder.record(&front);
+                recorder.record(&front, model_key);
             }
             if reached_end {
                 return Some(TrackPreview {
@@ -246,12 +251,14 @@ pub fn preview_open_track(
     pieces: &[Piece],
     configuration: &TrainConfiguration,
     config: PhysicsConfig,
+    model_key: &str,
 ) -> Option<TrackPreview> {
     PreviewCache::default().preview(
         pieces,
         configuration,
         config,
         crate::track::hybrid_model().comfortable_force_limits,
+        model_key,
     )
 }
 
@@ -262,6 +269,7 @@ pub(super) fn preview_at_step(
     config: PhysicsConfig,
     step_limit: usize,
     time_step: f64,
+    model_key: &str,
 ) -> Option<TrackPreview> {
     assert_eq!(time_step, TIME_STEP);
     let station = pieces
@@ -283,7 +291,7 @@ pub(super) fn preview_at_step(
     };
     let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
     let mut train = Train::new(&circuit, configuration, config, station_distance, 0.0);
-    let mut recorder = TestRunRecorder::for_circuit(&circuit);
+    let mut recorder = TestRunRecorder::for_circuit_with_train(&circuit, configuration);
     recorder.set_time_step(time_step);
     let mut stationary_steps = 0;
     for _ in 0..step_limit {
@@ -292,7 +300,7 @@ pub(super) fn preview_at_step(
             if circuit.open {
                 let mut readings = train.take_readings();
                 readings[0][0].distance = length - 1e-6;
-                recorder.record(&readings);
+                recorder.record(&readings, model_key);
             }
             return Some(TrackPreview {
                 report: recorder.finish(true, false),
@@ -300,7 +308,8 @@ pub(super) fn preview_at_step(
                 force_limit_exceeded: Vec::new(),
             });
         }
-        recorder.record(&train.take_readings());
+        let readings = train.take_readings();
+        recorder.record(&readings, model_key);
         if train.speed().abs() < 0.01 {
             stationary_steps += 1;
         } else {

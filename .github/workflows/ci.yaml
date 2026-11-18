@@ -119,7 +119,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - run: make install
+      - run: npm ci
       - uses: actions/download-artifact@v4
         with:
           name: e2e-build
@@ -141,14 +141,42 @@ jobs:
     needs: e2e-build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+      options: --cpuset-cpus=0-3 --cpus=4 --memory=12g --memory-swap=12g --shm-size=2g
+    env:
+      THEME_PARK_COMPUTE_CPUS: "0-3"
+      THEME_PARK_PLAYWRIGHT_DOCKER: "1"
+      THEME_PARK_PLAYWRIGHT_IN_CONTAINER: "1"
+      THEME_PARK_LIVE_PAUSE_RENDER: "1"
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { project: journey, shard: 1/3 }
-          - { project: journey, shard: 2/3 }
-          - { project: journey, shard: 3/3 }
-          - { project: smoothness, shard: 1/1 }
+        shard: [1/3, 2/3, 3/3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-build
+          path: web/
+      - run: npm run e2e -- --project=journey --shard=${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-journey-${{ strategy.job-index }}
+          path: |
+            playwright-report/
+            test-results/
+
+  e2e-smoothness:
+    needs: e2e-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -161,11 +189,11 @@ jobs:
         with:
           name: e2e-build
           path: web/
-      - run: npm run e2e -- --project=${{ matrix.project }} --shard=${{ matrix.shard }}
+      - run: npm run e2e -- --project=smoothness --shard=1/1
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report-${{ matrix.project }}-${{ strategy.job-index }}
+          name: playwright-report-smoothness
           path: |
             playwright-report/
             test-results/

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { constructionEndSpeed, speedMatchedSelection, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
 import type { TestingSample } from "./generated/TestingSample";
+import { MODEL_FORCE_LIMITS } from "./generated/modelForceLimits";
 
 const match = {
   entrySpeed: 20,
@@ -27,7 +28,10 @@ describe("speed-matched construction selection", () => {
 
 it("uses the latest end speed only when the placed-track estimate reaches the end", () => {
   const sample: TestingSample = { distance: 10, x: 0, y: 0, z: 0, speed: 24, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] };
-  const preview = { status: "reachedEnd" as const, samples: [sample], completed: true, lastPlaced: null, launches: [], limits: { minimumVerticalG: -1, maximumVerticalG: 4, maximumLateralG: 1, maximumLongitudinalG: 1 } };
+  const preview = {
+    status: "reachedEnd" as const, samples: [sample], completed: true, lastPlaced: null, launches: [],
+    limits: MODEL_FORCE_LIMITS["Briar Blitz"],
+  };
   expect(constructionEndSpeed(preview)).toBe(24);
   expect(constructionEndSpeed({ ...preview, status: "stalled" })).toBeUndefined();
   expect(constructionEndSpeed({ ...preview, status: "timedOut" })).toBeUndefined();

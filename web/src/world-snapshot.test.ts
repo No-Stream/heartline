@@ -31,7 +31,7 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     coaster_ties() { return new Float32Array([3]); }
     coaster_supports() { return new Float32Array(); }
     coaster_colors() { return JSON.stringify({ track: "coral", supports: "timber", trains: "sage" }); }
-    coaster_train_layout() { return JSON.stringify({ model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }); }
+    coaster_train_layout() { return JSON.stringify({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }); }
     coaster_train_poses() { return new Float32Array(); }
     construction_train_poses() { return new Float32Array(); }
     coaster_train_states() { return new Float32Array([0, 4, 0, 1.1, 0.2, 1]); }
@@ -116,7 +116,7 @@ it("starts simulation time after WebAssembly initialization completes", async ()
   const [world, worldTransfer] = postMessage.mock.calls[0];
   expect(world.coasterRails).toEqual(new Float32Array([1, 2]));
   expect(world.coasterTies).toEqual(new Float32Array([3]));
-  expect(world.coasterTrain).toEqual({ model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
+  expect(world.coasterTrain).toEqual({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
   expect(worldTransfer).toContain(world.coasterRails.buffer);
   expect(worldTransfer).toContain(world.coasterTies.buffer);
   expect(workerMock.tick).not.toHaveBeenCalled();

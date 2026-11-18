@@ -5,8 +5,8 @@ use theme_park_sim::physics::rated_piece::{
 };
 use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
 use theme_park_sim::track::{
-    AirtimeRating, CoasterModel, HillFeel, Piece, PieceFamily, PieceId, TrackState, catalog,
-    hybrid_model, multi_launch_model, wooden_twister_model,
+    CoasterModel, ForceRating, ForceRatingAxis, HillFeel, Piece, PieceFamily, PieceId, TrackState,
+    catalog, coaster_models, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 
 const RETURN_PIECES: [PieceId; 9] = [
@@ -579,8 +579,8 @@ fn peak_roll_rate_degrees_per_second(piece: &Piece, speed: f64) -> f64 {
     peak_rate
 }
 
-fn models() -> [CoasterModel; 3] {
-    [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+fn models() -> Vec<CoasterModel> {
+    coaster_models()
 }
 
 #[test]
@@ -596,6 +596,8 @@ fn every_buildable_inversion_drop_and_sixty_transition_has_a_rated_window() {
         SixtyToSteepUp,
         SteepToSixtyDown,
         SixtyToSteepDown,
+        WideLevelToSixtyDown,
+        WideSixtyDownToLevel,
     ];
     let drops = [
         BankedDropLeft,
@@ -794,8 +796,12 @@ fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
         assert_eq!(
             model
                 .comfortable_force_limits
-                .classify_airtime(rating.minimum_filtered_vertical),
-            AirtimeRating::Good,
+                .classify_force(
+                ForceRatingAxis::Airtime,
+                rating.minimum_filtered_vertical,
+                model.name,
+            ),
+            ForceRating::Good,
             "{cars} cars: {:.3} g",
             rating.minimum_filtered_vertical
         );
@@ -834,8 +840,12 @@ fn every_ejector_hill_reaches_great_airtime_for_each_allowed_default_train() {
                 rating.passed
                     && model
                         .comfortable_force_limits
-                        .classify_airtime(rating.minimum_filtered_vertical)
-                        == AirtimeRating::Great
+                        .classify_force(
+                ForceRatingAxis::Airtime,
+                rating.minimum_filtered_vertical,
+                model.name,
+            )
+                        == ForceRating::Great
             });
             if !found_great {
                 failures.push(format!(
@@ -865,8 +875,12 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
                 .expect("rating must complete");
             let airtime = model
                 .comfortable_force_limits
-                .classify_airtime(rating.minimum_filtered_vertical);
-            if !matches!(airtime, AirtimeRating::Weak | AirtimeRating::Good) {
+                .classify_force(
+                ForceRatingAxis::Airtime,
+                rating.minimum_filtered_vertical,
+                model.name,
+            );
+            if !matches!(airtime, ForceRating::Weak | ForceRating::Good) {
                 failures.push(format!(
                     "{} {} at {maximum}: {airtime:?} ({:.3} g)",
                     piece.name, model.name, rating.minimum_filtered_vertical
@@ -1252,7 +1266,7 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
             )
         })
         .collect();
-    assert_eq!(speed_turns.len(), 6);
+    assert_eq!(speed_turns.len(), 10);
     let mut failures = Vec::new();
     let all_models = models();
     let mut scanned_candidates = 0;
@@ -1409,7 +1423,7 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
         }
     }
     assert_eq!(
-        scanned_candidates, 6,
+        scanned_candidates, 10,
         "full-train scan covers every speed-turn candidate"
     );
     assert!(

@@ -5,7 +5,7 @@ import type { CrestBurst } from "../render/effects";
 import { BRIDGE_LAYOUTS } from "../bridge-layouts";
 import { parseTrainStates, type TrainState } from "../train-states";
 
-export type TrackMaterial = "steel" | "wood" | "hybrid";
+export type TrackMaterial = TrainLayout["trackMaterial"];
 export interface TrainSound {
   train: number; pan: number; audibility: number; distance?: number; speed: number; material: TrackMaterial;
   onLift: boolean; clackRate: number; launch: boolean; brake: number; depart: boolean; arrive: boolean;
@@ -30,8 +30,7 @@ export interface MappingInput {
   /** Builder and tool events collected since the previous frame, already debounced. */
   ui: readonly UiEvent[];
 }
-const TRAIN_MATERIALS: Record<TrainLayout["model"], TrackMaterial> = { velocity_viper: "steel", wooden_twister: "wood", hybrid: "hybrid" };
-export function trainMaterial(layout: TrainLayout): TrackMaterial { return TRAIN_MATERIALS[layout.model]; }
+export function trainMaterial(layout: TrainLayout): TrackMaterial { return layout.trackMaterial; }
 export function spatialise(camera: Camera, viewport: Viewport, point: WorldPoint): { pan: number; audibility: number; distance: number } {
   const projected = projectWorld(camera, viewport, point);
   const dx = projected.x - viewport.width / 2;

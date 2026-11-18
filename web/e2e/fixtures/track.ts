@@ -11,7 +11,7 @@ function fixturePaint(atlas: Atlas): TrackPaint {
 }
 
 /** The demo coaster's train, which the fixture's coasters run. */
-const demoTrain = parseTrainLayout({ model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
+const demoTrain = parseTrainLayout({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
 
 const initializeDemoWorker = (worker: Worker, frozen = false): void => {
   worker.postMessage({ type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen, manualBlockAnalysis: false });

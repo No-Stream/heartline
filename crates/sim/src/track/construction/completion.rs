@@ -50,6 +50,7 @@ impl Construction {
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
             force_preview_cache: RefCell::new(crate::physics::PreviewCache::default()),
+            state_hash_memo: Cell::new(self.state_hash_memo.get()),
             #[cfg(test)]
             support_cache_misses: Cell::new(0),
             #[cfg(test)]
@@ -71,20 +72,6 @@ impl Construction {
         obstacles: &[SupportObstacle],
     ) -> Result<Self, ConstructionError> {
         let mut updated = self.copy_for_completion();
-        for &id in pieces {
-            updated.append(id, world, obstacles)?;
-        }
-        Ok(updated)
-    }
-
-    pub(super) fn append_sequence_with_cached_validation(
-        &self,
-        pieces: &[PieceId],
-        world: &World,
-        obstacles: &[SupportObstacle],
-    ) -> Result<Self, ConstructionError> {
-        let mut updated = self.copy_for_completion();
-        updated.validation_cache = RefCell::new(self.validation_cache.borrow().clone());
         for &id in pieces {
             updated.append(id, world, obstacles)?;
         }

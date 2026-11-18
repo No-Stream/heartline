@@ -9,7 +9,8 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   await page.setViewportSize({ width: 800, height: 480 });
-  await startPark(page, { park: "new", seed: 2027, speed: 1 });
+  await startPark(page, { park: "new", seed: 2027, speed: 1, livePauseRender: true });
+  await page.getByRole("button", { name: "Pause" }).click();
   await placeStation(page, {
     model: "wooden_twister",
     height: 4,
@@ -72,6 +73,9 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await closeCircuit(page);
   await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+  await page.locator("canvas").focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "false");
   await setGameSpeed(page, 16);
   await openTool(page, "Coaster");
   const crestCount = await page.evaluate(() => window.gameTest.crestBursts().length);

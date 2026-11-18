@@ -1,6 +1,6 @@
 use super::*;
 use crate::track::{Bank, HorizontalCurvature, Slope, VerticalCurvature};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, Debug)]
 pub struct ElementChoice {
@@ -40,13 +40,9 @@ impl Construction {
                 return cache.choices.clone();
             }
         }
+        let mut sequences = SequenceStates::new(self);
         let mut choices = Vec::new();
-        choices.extend(self.slope_elements(world, obstacles));
-        let mut half_loop_up = self.copy_for_element_choice();
-        let half_loop_up = half_loop_up
-            .append_cached_choice(PieceId::HalfLoopUp, world, obstacles)
-            .ok()
-            .map(|()| half_loop_up);
+        choices.extend(self.slope_elements(&mut sequences, world, obstacles));
         for (id, name, pieces) in [
             (
                 "immelmann-left",
@@ -58,15 +54,6 @@ impl Construction {
                 "Right Immelmann",
                 [PieceId::HalfLoopUp, PieceId::HalfCorkscrewRightDown],
             ),
-        ] {
-            let choice = half_loop_up.as_ref().and_then(|prefix| {
-                self.element_choice_from_prefix(id, name, pieces.to_vec(), prefix, world, obstacles)
-            });
-            if let Some(choice) = choice {
-                choices.push(choice);
-            }
-        }
-        for (id, name, pieces) in [
             (
                 "dive-loop-left",
                 "Left dive loop",
@@ -78,23 +65,14 @@ impl Construction {
                 [PieceId::HalfCorkscrewRightUp, PieceId::HalfLoopDown],
             ),
         ] {
-            let mut prefix = self.copy_for_element_choice();
-            let choice = prefix
-                .append_cached_choice(pieces[0], world, obstacles)
-                .ok()
-                .and_then(|()| {
-                    self.element_choice_from_prefix(
-                        id,
-                        name,
-                        pieces.to_vec(),
-                        &prefix,
-                        world,
-                        obstacles,
-                    )
-                });
-            if let Some(choice) = choice {
-                choices.push(choice);
-            }
+            choices.extend(self.element_choice(
+                id,
+                name,
+                pieces.to_vec(),
+                &mut sequences,
+                world,
+                obstacles,
+            ));
         }
         let mut raven_choices = Vec::new();
         let mut serpent_choices = Vec::new();
@@ -116,33 +94,22 @@ impl Construction {
                 PieceId::RavenRollLeftUp,
             ),
         ] {
-            if let Some(down_roll) = half_loop_up.as_ref().and_then(|prefix| {
-                prefix
-                    .append_sequence_with_cached_validation(&[down], world, obstacles)
-                    .ok()
-            }) {
-                raven_choices.push(self.choice_from_updated(
-                    raven_id,
-                    raven_name,
-                    vec![PieceId::HalfLoopUp, down],
-                    &down_roll,
-                    world,
-                ));
-                let pieces = vec![PieceId::HalfLoopUp, down, up, PieceId::HalfLoopDown];
-                if let Ok(serpent) = down_roll.append_sequence_with_cached_validation(
-                    &[up, PieceId::HalfLoopDown],
-                    world,
-                    obstacles,
-                ) {
-                    serpent_choices.push(self.choice_from_updated(
-                        serpent_id,
-                        serpent_name,
-                        pieces,
-                        &serpent,
-                        world,
-                    ));
-                }
-            }
+            raven_choices.extend(self.element_choice(
+                raven_id,
+                raven_name,
+                vec![PieceId::HalfLoopUp, down],
+                &mut sequences,
+                world,
+                obstacles,
+            ));
+            serpent_choices.extend(self.element_choice(
+                serpent_id,
+                serpent_name,
+                vec![PieceId::HalfLoopUp, down, up, PieceId::HalfLoopDown],
+                &mut sequences,
+                world,
+                obstacles,
+            ));
         }
         choices.extend(raven_choices);
         choices.extend(serpent_choices);
@@ -199,11 +166,14 @@ impl Construction {
             } else {
                 1
             }];
-            if let Some(choice) =
-                self.element_choice(id, name, vec![bank, turn, unbank], world, obstacles)
-            {
-                choices.push(choice);
-            }
+            choices.extend(self.element_choice(
+                id,
+                name,
+                vec![bank, turn, unbank],
+                &mut sequences,
+                world,
+                obstacles,
+            ));
         }
         for (target, turns) in [
             (
@@ -274,9 +244,14 @@ impl Construction {
                 for (id, name, turn) in turns {
                     let mut pieces = prefix.clone();
                     pieces.push(turn);
-                    if let Some(choice) = self.element_choice(id, name, pieces, world, obstacles) {
-                        choices.push(choice);
-                    }
+                    choices.extend(self.element_choice(
+                        id,
+                        name,
+                        pieces,
+                        &mut sequences,
+                        world,
+                        obstacles,
+                    ));
                 }
             }
         }
@@ -290,7 +265,12 @@ impl Construction {
         choices
     }
 
-    fn slope_elements(&self, world: &World, obstacles: &[SupportObstacle]) -> Vec<ElementChoice> {
+    fn slope_elements(
+        &self,
+        sequences: &mut SequenceStates,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Vec<ElementChoice> {
         let targets = [
             ("level", "Level out", Slope::Level),
             ("climb-gentle", "Climb gently", Slope::UpGentle),
@@ -331,8 +311,13 @@ impl Construction {
             VerticalDownContinue,
             VerticalDownExit,
         ];
-        let mut queue = VecDeque::from([(self.copy_for_element_choice(), Vec::new(), Vec::new())]);
-        while let Some((construction, path, mut visited)) = queue.pop_front() {
+        let mut queue = VecDeque::from([(Vec::new(), Vec::new())]);
+        while let Some((path, mut visited)) = queue.pop_front() {
+            let state = sequences
+                .state(&path, world, obstacles)
+                .expect("queued paths were placed");
+            let construction = state.construction.copy_for_element_choice();
+            let path_would_tunnel = state.would_tunnel;
             let end = construction.end();
             let connector = (
                 end.slope,
@@ -357,7 +342,7 @@ impl Construction {
                         name,
                         path.clone(),
                         &construction,
-                        world,
+                        path_would_tunnel,
                     ));
                     remaining -= 1;
                     if remaining == 0 {
@@ -375,11 +360,10 @@ impl Construction {
                 if construction.placeable(template).is_err() {
                     continue;
                 }
-                let mut next = construction.copy_for_element_choice();
-                if next.append(id, world, obstacles).is_ok() {
-                    let mut next_path = path.clone();
-                    next_path.push(id);
-                    queue.push_back((next, next_path, visited.clone()));
+                let mut next_path = path.clone();
+                next_path.push(id);
+                if sequences.state(&next_path, world, obstacles).is_some() {
+                    queue.push_back((next_path, visited.clone()));
                 }
             }
         }
@@ -391,28 +375,12 @@ impl Construction {
         id: &'static str,
         name: &'static str,
         pieces: Vec<PieceId>,
+        sequences: &mut SequenceStates,
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Option<ElementChoice> {
-        let updated = self
-            .append_sequence_with_cached_validation(&pieces, world, obstacles)
-            .ok()?;
-        Some(self.choice_from_updated(id, name, pieces, &updated, world))
-    }
-
-    fn element_choice_from_prefix(
-        &self,
-        id: &'static str,
-        name: &'static str,
-        pieces: Vec<PieceId>,
-        prefix: &Construction,
-        world: &World,
-        obstacles: &[SupportObstacle],
-    ) -> Option<ElementChoice> {
-        let updated = prefix
-            .append_sequence_with_cached_validation(&pieces[1..], world, obstacles)
-            .ok()?;
-        Some(self.choice_from_updated(id, name, pieces, &updated, world))
+        let state = sequences.state(&pieces, world, obstacles)?;
+        Some(self.choice_from_updated(id, name, pieces, &state.construction, state.would_tunnel))
     }
 
     fn choice_from_updated(
@@ -421,7 +389,7 @@ impl Construction {
         name: &'static str,
         pieces: Vec<PieceId>,
         updated: &Construction,
-        world: &World,
+        would_tunnel: bool,
     ) -> ElementChoice {
         let geometry: Vec<Piece> = (self.next_id..self.next_id + pieces.len())
             .map(|id| {
@@ -433,11 +401,6 @@ impl Construction {
                 updated.pieces[index].clone()
             })
             .collect();
-        let would_tunnel = self
-            .tunnel_plans_for_geometry(&geometry, world)
-            .expect("validated element geometry has tunnel plans")
-            .iter()
-            .any(|plan| plan.would_tunnel());
         let heartlining = heartlining_for_geometry(&geometry);
         ElementChoice {
             id,
@@ -474,6 +437,57 @@ impl Construction {
         }
         *self = self.append_sequence(&element.pieces, world, obstacles)?;
         Ok(())
+    }
+}
+
+/// The constructions reached by appending piece sequences to one construction, so elements
+/// that share a prefix validate it once. The first piece of each sequence reuses the
+/// validation already computed for the piece choices.
+pub(super) struct SequenceStates {
+    states: HashMap<Vec<PieceId>, Option<SequenceState>>,
+}
+
+struct SequenceState {
+    construction: Construction,
+    would_tunnel: bool,
+}
+
+impl SequenceStates {
+    fn new(construction: &Construction) -> Self {
+        let root = SequenceState {
+            construction: construction.copy_for_element_choice(),
+            would_tunnel: false,
+        };
+        Self {
+            states: HashMap::from([(Vec::new(), Some(root))]),
+        }
+    }
+
+    fn state(
+        &mut self,
+        pieces: &[PieceId],
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Option<&SequenceState> {
+        for length in 1..=pieces.len() {
+            if self.states.contains_key(&pieces[..length]) {
+                continue;
+            }
+            let state = self.states[&pieces[..length - 1]]
+                .as_ref()
+                .and_then(|parent| {
+                    let mut construction = parent.construction.copy_for_element_choice();
+                    let piece_tunnels = construction
+                        .append_cached_choice(pieces[length - 1], world, obstacles)
+                        .ok()?;
+                    Some(SequenceState {
+                        construction,
+                        would_tunnel: parent.would_tunnel || piece_tunnels,
+                    })
+                });
+            self.states.insert(pieces[..length].to_vec(), state);
+        }
+        self.states[pieces].as_ref()
     }
 }
 

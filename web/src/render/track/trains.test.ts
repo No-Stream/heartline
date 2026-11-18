@@ -5,9 +5,9 @@ import type { Atlas } from "../scene";
 import { trackPaint, trackStyle } from "./geometry";
 import { buildRiderQuads, buildTrainQuads } from "./trains";
 
-const hybrid = parseTrainLayout({ model: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
-const viper = parseTrainLayout({ ...hybrid, model: "velocity_viper" });
-const twister = parseTrainLayout({ ...hybrid, model: "wooden_twister", carsPerTrain: 12, rowsPerCar: 1 });
+const hybrid = parseTrainLayout({ model: "hybrid", trackMaterial: "hybrid", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 });
+const viper = parseTrainLayout({ ...hybrid, model: "velocity_viper", trackMaterial: "steel" });
+const twister = parseTrainLayout({ ...hybrid, model: "wooden_twister", trackMaterial: "wood", carsPerTrain: 12, rowsPerCar: 1 });
 const viewport = { width: 400, height: 300 };
 const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
 const paint = trackPaint({ steel: "#000000", wood: "#000000", train: "#000000", ink: "#221133", lineWeight: 1 }, { track: "teal", supports: "cream", trains: "plum" });
@@ -21,9 +21,10 @@ const screenLength = (layout: TrainLayout, id: number) => {
 };
 
 describe("coaster trains", () => {
-  test("reads the worker's train layout and refuses unknown models or counts", () => {
-    expect(twister).toEqual({ model: "wooden_twister", carsPerTrain: 12, rowsPerCar: 1, seatsPerRow: 2, lengthMetres: 18 });
+  test("reads the worker's train layout and refuses mismatched model metadata or counts", () => {
+    expect(twister).toEqual({ model: "wooden_twister", trackMaterial: "wood", carsPerTrain: 12, rowsPerCar: 1, seatsPerRow: 2, lengthMetres: 18 });
     expect(() => parseTrainLayout({ ...hybrid, model: "monorail" } as unknown as TrainLayout)).toThrow();
+    expect(() => parseTrainLayout({ ...hybrid, trackMaterial: "steel" })).toThrow();
     expect(() => parseTrainLayout({ ...hybrid, carsPerTrain: 0 })).toThrow();
     expect(() => parseTrainLayout({ ...hybrid, lengthMetres: 0 })).toThrow();
   });

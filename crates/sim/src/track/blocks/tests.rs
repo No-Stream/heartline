@@ -1,10 +1,64 @@
 use crate::physics::demo_circuit;
 use crate::track::blocks::brake_runs;
 
+/// The earlier demo coaster: a long gentle chain lift, a drop into a vertical loop and a level return.
+fn loop_boarding_circuit() -> crate::physics::Circuit {
+    use crate::track::{PieceId::*, PieceKind, TrackState, catalog};
+    let mut state = TrackState {
+        x: 450,
+        y: 500,
+        z: 10,
+        ..TrackState::origin()
+    };
+    let mut pieces = Vec::new();
+    for id in [
+        Station,
+        LevelToGentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUp,
+        GentleUpToLevel,
+        Straight,
+        OneTileStraight,
+        OneTileStraight,
+        OffsetLeft,
+        TurnLargeEntry,
+        TurnLargeExit,
+        LevelToGentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDown,
+        GentleDownToLevel,
+        Loop,
+        OffsetLeft,
+        OffsetLeft,
+        TurnSmallStandalone,
+        OffsetRight,
+        TurnSmallStandalone,
+        Straight,
+        OffsetRight,
+    ] {
+        let mut piece = catalog()
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        if (1..=9).contains(&pieces.len()) {
+            piece.kind = PieceKind::Lift;
+        }
+        state = piece.exit;
+        pieces.push(piece);
+    }
+    crate::physics::Circuit::new(pieces).unwrap()
+}
+
 #[test]
 fn automatic_search_finds_two_trains_on_loop_boarding_circuit() {
     use crate::track::hybrid_model;
-    let circuit = demo_circuit();
+    let circuit = loop_boarding_circuit();
     let config = crate::physics::PhysicsConfig {
         lift_speed: 5.0,
         ..Default::default()
@@ -260,7 +314,7 @@ fn capacity_verification_observes_two_real_train_cohorts() {
             captured_cohorts.push(active.clone());
         }
         cohorts.observe_active(&active);
-        for (id, outcome) in operation.step(&[]) {
+        for (id, outcome) in operation.step(&[], "Timber Tumbler") {
             assert!(!outcome.recovered);
             cohorts.complete(id);
         }
@@ -436,7 +490,7 @@ fn gentle_downhill_brake_requires_holding_force_and_validates_restart() {
 
 #[test]
 fn gentle_uphill_brake_requires_drive_force_and_validates_restart() {
-    let mut pieces = demo_circuit().pieces().to_vec();
+    let mut pieces = hilly_brake_test_circuit().pieces().to_vec();
     for piece in pieces
         .iter_mut()
         .filter(|piece| piece.id == crate::track::PieceId::GentleUp)
@@ -521,7 +575,7 @@ fn stalled_circuit_reports_zero_capacity_after_asynchronous_fallback_trial() {
 
     let mut test_train = crate::physics::CoasterRun::new(&circuit, &train, config);
     let outcome = (0..1_000)
-        .find_map(|_| test_train.step(&circuit))
+        .find_map(|_| test_train.step(&circuit, "Timber Tumbler"))
         .expect("stalled train is recovered");
     assert!(outcome.recovered);
 }
@@ -951,9 +1005,11 @@ fn existing_brakes_remain_boundaries_without_installed_stopping_runs() {
     )
     .unwrap();
     let mut distance = 0.0;
-    for piece in circuit.pieces() {
+    let pieces = circuit.pieces();
+    for (index, piece) in pieces.iter().enumerate() {
         distance += piece.length();
-        if piece.kind == PieceKind::Brakes {
+        let next = &pieces[(index + 1) % pieces.len()];
+        if piece.kind == PieceKind::Brakes && next.kind != PieceKind::Brakes {
             let end = distance.rem_euclid(circuit.length());
             let index = layout
                 .boundaries()
@@ -1137,7 +1193,7 @@ fn powered_sections_get_a_candidate_at_their_end() {
             super::BlockLayout::new(&circuit, &train, Default::default(), Vec::new()).unwrap();
         let mut test_train = crate::physics::CoasterRun::new(&circuit, &train, Default::default());
         let outcome = (0..120_000)
-            .find_map(|_| test_train.step(&circuit))
+            .find_map(|_| test_train.step(&circuit, "Timber Tumbler"))
             .expect("train finishes or is recovered");
         assert_eq!(layout.capacity(), usize::from(!outcome.recovered));
         assert!(layout.capacity_search_complete());

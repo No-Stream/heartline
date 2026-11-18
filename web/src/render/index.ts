@@ -2,7 +2,7 @@ import type { Camera, Viewport } from "../camera";
 import { gradeColor, lightingAt, NOON, type Lighting, type Rgb } from "./daylight";
 import type { Glow } from "./effects";
 import { clipNightLightsAboveLevel } from "./effects";
-import { createRenderResources, FLOATS_PER_QUAD } from "./resources";
+import { createRenderResources, FLOATS_PER_VERTEX, INDICES_PER_QUAD, VERTICES_PER_QUAD } from "./resources";
 import { cutawayBounds, CutSide, cutSideVisibleAt, polygonTouchesCutaway, type Cutaway } from "./cutaway";
 import { buildGridQuads } from "./grid";
 import { appendGeometry, buildScene, clipGeometryAboveLevel, pickScene, SHAPE_PAGES, UNDERGROUND_CONTENT_DEPTH_BIAS, UNPICKABLE_KINDS, type Atlas, type GeometryQuad, type Pick, type Scene, type Triangle, type Vertex, type WorldView } from "./scene";
@@ -113,25 +113,37 @@ function nightLight(triangle: Triangle): number {
   return COASTER_NIGHT_LIGHT[triangle.kind] ?? 0;
 }
 
-/** Packs quads into instance data, one batch per run of quads that share an atlas page or shape. */
+/** Packs quads into vertex data, four vertices per quad, one batch per run of quads that share an atlas page or shape. */
 function encode(quads: readonly QuadSource[]): Batch[] {
   const batches: Batch[] = [];
   let start = 0;
   while (start < quads.length) {
     const page = quads[start].page; let end = start + 1;
     while (end < quads.length && quads[end].page === page) end++;
-    const data = new Float32Array((end - start) * FLOATS_PER_QUAD);
+    const data = new Float32Array((end - start) * VERTICES_PER_QUAD * FLOATS_PER_VERTEX);
     for (let i = start; i < end; i++) {
-      const { vertices, color, light, pickId } = quads[i]; const offset = (i - start) * FLOATS_PER_QUAD;
-      vertices.forEach((vertex, j) => { data.set([vertex.x, vertex.y, vertex.depth, vertex.u], offset + j * 4); data[offset + 16 + j] = vertex.v; });
-      data.set([(pickId & 255) / 255, ((pickId >> 8) & 255) / 255, ((pickId >> 16) & 255) / 255], offset + 20);
-      data.set(color, offset + 23);
-      data[offset + 27] = light;
-      data[offset + 28] = quads[i].cut;
+      const { vertices, color, light, pickId, cut } = quads[i];
+      vertices.forEach((vertex, j) => {
+        const offset = ((i - start) * VERTICES_PER_QUAD + j) * FLOATS_PER_VERTEX;
+        data.set([vertex.x, vertex.y, vertex.depth, vertex.u, vertex.v, (pickId & 255) / 255, ((pickId >> 8) & 255) / 255, ((pickId >> 16) & 255) / 255], offset);
+        data.set(color, offset + 8);
+        data[offset + 12] = light;
+        data[offset + 13] = cut;
+      });
     }
     batches.push({ page, data, count: end - start }); start = end;
   }
   return batches;
+}
+
+/** Two triangles per quad over its four vertices, in the order 0-1-2 and 0-2-3. */
+function quadIndices(quadCount: number): Uint32Array {
+  const indices = new Uint32Array(quadCount * INDICES_PER_QUAD);
+  for (let quad = 0; quad < quadCount; quad++) {
+    const first = quad * VERTICES_PER_QUAD;
+    indices.set([first, first + 1, first + 2, first, first + 2, first + 3], quad * INDICES_PER_QUAD);
+  }
+  return indices;
 }
 
 const fromGeometry = (quad: GeometryQuad, cut: CutSide = CutSide.everywhere): QuadSource => ({ vertices: quad.vertices, page: quad.page ?? SHAPE_PAGES.flat, color: quad.color, light: quad.light ?? 0, pickId: 0, cut });
@@ -156,6 +168,7 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
   let depthMinimum = 0; let depthSpan = 2;
   let pickWidth = 0; let pickHeight = 0;
   let pickingDirty = true;
+  let indexedQuads = 0;
   let glowWidth = 0; let glowHeight = 0;
   let poolWidth = 0; let poolHeight = 0;
   let pixelRatio = 1;
@@ -180,10 +193,14 @@ function createWorldRendererInstance(canvas: HTMLCanvasElement, atlas: Atlas, im
   }
   function drawBatches(batches: readonly Batch[]): void {
     for (const { page, data, count } of batches) {
+      if (count > indexedQuads) {
+        indexedQuads = count;
+        gl!.bufferData(gl!.ELEMENT_ARRAY_BUFFER, quadIndices(indexedQuads), gl!.STATIC_DRAW);
+      }
       gl!.uniform1i(uniform(program, "textured"), page >= 0 ? 1 : 0);
       gl!.uniform1i(uniform(program, "shape"), page >= 0 ? 0 : shapeCodes[page]);
       gl!.bindTexture(gl!.TEXTURE_2D, page >= 0 ? textures[activeScale][page] : null); gl!.bufferData(gl!.ARRAY_BUFFER, data, gl!.DYNAMIC_DRAW);
-      gl!.drawArraysInstanced(gl!.TRIANGLES, 0, 6, count);
+      gl!.drawElements(gl!.TRIANGLES, count * INDICES_PER_QUAD, gl!.UNSIGNED_INT, 0);
     }
   }
   /** Overlays are drawn flat at `overlayDepth` in clip space: 0 to sit over everything, 1 to fill only what the world left empty. */

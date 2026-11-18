@@ -210,7 +210,7 @@ pub fn rate_piece(
             && !physics.powered_sections,
         "rating requires unpowered frictionless physics"
     );
-    assert!(model.cars_per_train_range().contains(&cars));
+    assert!(model.cars_per_train.contains(&cars));
     let track = measurement_track(model, cars, piece, target);
     let config = scaled_train(model, cars);
     let spacing = config.length_metres / f64::from(cars);

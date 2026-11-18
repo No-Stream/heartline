@@ -74,7 +74,7 @@ fn station_and_two_separate_brakes_support_two_trains() {
             operation.dispatch();
         }
         maximum_active = maximum_active.max(operation.trains().count());
-        for (_, outcome) in operation.step(&[]) {
+        for (_, outcome) in operation.step(&[], "Timber Tumbler") {
             assert!(!outcome.recovered);
             assert!(outcome.reports[0].completed);
             completed += 1;
@@ -113,7 +113,7 @@ fn station_two_brakes_recover_both_active_trains() {
         if operation.can_dispatch() {
             dispatched.push(operation.dispatch());
         }
-        assert!(operation.step(&[]).is_empty());
+        assert!(operation.step(&[], "Timber Tumbler").is_empty());
         if dispatched.len() == 2 {
             break;
         }

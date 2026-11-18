@@ -785,21 +785,22 @@ fn block_report_marks_throughput_pending_until_incremental_estimate_completes() 
 }
 
 #[test]
-fn block_suggestion_does_not_point_across_a_loop_without_a_candidate() {
+fn block_suggestion_does_not_point_across_a_hill_without_a_candidate() {
     let circuit = demo_circuit();
     let mut train = hybrid_model().train;
     train.length_metres = 5.0;
     let runs = theme_park_sim::track::blocks::brake_runs(&circuit, train.length_metres);
-    let loop_index = circuit
+    // Airtime hills, like loops, are never brake sites.
+    let hill_index = circuit
         .pieces()
         .iter()
-        .position(|piece| piece.id == PieceId::Loop)
-        .expect("demo circuit contains a loop");
-    let loop_start: f64 = circuit.pieces()[..loop_index]
+        .position(|piece| piece.id == PieceId::EjectorHill8x64)
+        .expect("demo circuit contains an ejector hill");
+    let hill_start: f64 = circuit.pieces()[..hill_index]
         .iter()
         .map(|piece| piece.length())
         .sum();
-    let loop_end = loop_start + circuit.pieces()[loop_index].length();
+    let hill_end = hill_start + circuit.pieces()[hill_index].length();
     let candidate_boundaries: Vec<_> =
         runs.iter()
             .map(|run| run.boundary_metres)
@@ -809,23 +810,23 @@ fn block_suggestion_does_not_point_across_a_loop_without_a_candidate() {
                 }
                 boundaries
             });
-    let before_loop = candidate_boundaries
+    let before_hill = candidate_boundaries
         .iter()
         .copied()
-        .filter(|boundary| *boundary <= loop_start)
+        .filter(|boundary| *boundary <= hill_start)
         .max_by(f64::total_cmp)
-        .expect("brake candidate before loop");
-    let after_loop = candidate_boundaries
+        .expect("brake candidate before the hill");
+    let after_hill = candidate_boundaries
         .iter()
         .copied()
-        .filter(|boundary| *boundary >= loop_end)
+        .filter(|boundary| *boundary >= hill_end)
         .min_by(f64::total_cmp)
-        .expect("brake candidate after loop");
+        .expect("brake candidate after the hill");
     assert!(
         runs.iter()
-            .all(|run| { run.boundary_metres <= before_loop || run.boundary_metres >= after_loop })
+            .all(|run| { run.boundary_metres <= before_hill || run.boundary_metres >= after_hill })
     );
-    assert!(loop_start >= before_loop && loop_end <= after_loop);
+    assert!(hill_start >= before_hill && hill_end <= after_hill);
 
     let validated_circuit = block_test_circuit();
     let validated_train = hybrid_model().train;
@@ -985,8 +986,8 @@ fn throughput_simulation_matches_recording_train_motion() {
         if recorded.can_dispatch() {
             assert_eq!(recorded.dispatch(), unrecorded.dispatch());
         }
-        let recorded_outcomes = recorded.step(&[]);
-        let unrecorded_outcomes = unrecorded.step(&[]);
+        let recorded_outcomes = recorded.step(&[], hybrid_model().name);
+        let unrecorded_outcomes = unrecorded.step(&[], hybrid_model().name);
         assert_eq!(recorded_outcomes.len(), unrecorded_outcomes.len());
         for ((id, outcome), (other_id, other_outcome)) in
             recorded_outcomes.iter().zip(&unrecorded_outcomes)
@@ -1097,7 +1098,7 @@ fn stalled_baseline_waits_for_active_train_before_reducing_capacity() {
             .coaster_operation
             .as_mut()
             .unwrap()
-            .step(&[])
+            .step(&[], hybrid_model().name)
             .is_empty()
         {
             break;
@@ -1178,7 +1179,7 @@ fn baseline_validation_waits_to_adopt_powered_holds_until_the_train_completes() 
                 .coaster_operation
                 .as_mut()
                 .unwrap()
-                .step(&[])
+                .step(&[], hybrid_model().name)
                 .into_iter()
                 .next()
         })
@@ -1234,7 +1235,7 @@ fn throughput_uses_sustained_dispatches_after_the_initial_fill() {
     for step in 1..=200_000 {
         assert!(
             operation
-                .step(&[])
+                .step(&[], hybrid_model().name)
                 .iter()
                 .all(|(_, outcome)| !outcome.recovered)
         );
@@ -1930,7 +1931,7 @@ fn construction_train_states_follow_block_operation_trains() {
     let mut operation = super::BlockOperation::new(layout.clone());
     operation.dispatch();
     for _ in 0..200_000 {
-        operation.step(&[]);
+        operation.step(&[], hybrid_model().name);
         if operation.can_dispatch() {
             operation.dispatch();
             break;

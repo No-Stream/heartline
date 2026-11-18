@@ -3,7 +3,8 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
-    PieceId, PieceKind, TrackState, catalog, hybrid_model, multi_launch_model, wooden_twister_model,
+    PieceId, PieceKind, TrackState, catalog, family_coaster_model, hybrid_model, hyper_model,
+    multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -13,6 +14,8 @@ fn player_circuits_close() {
         ("Timber Tumbler", hybrid_model(), true),
         ("Velocity Viper", multi_launch_model(), false),
         ("Briar Blitz", wooden_twister_model(), true),
+        ("Daisy Dash", family_coaster_model(), true),
+        ("Horizon Hawk", hyper_model(), true),
     ] {
         let world = World::new(
             512,
@@ -83,12 +86,46 @@ fn player_circuits_close() {
 }
 
 #[test]
+fn daisy_dash_completes_a_test_ride_lap() {
+    let model = family_coaster_model();
+    let circuit = build_player_circuit("Daisy Dash", model.clone());
+    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit, model.name))
+        .expect("Daisy Dash test ride did not finish");
+    let report = &outcome.reports[0];
+
+    assert!(
+        report.completed && !outcome.recovered,
+        "Daisy Dash did not complete a lap: {:?}",
+        report.notes
+    );
+}
+
+#[test]
+fn horizon_hawk_completes_a_test_ride_lap() {
+    let model = hyper_model();
+    let circuit = build_player_circuit("Horizon Hawk", model.clone());
+    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit, model.name))
+        .expect("Horizon Hawk test ride did not finish");
+    let report = &outcome.reports[0];
+
+    assert!(
+        report.completed && !outcome.recovered,
+        "Horizon Hawk did not complete a lap: {:?}",
+        report.notes
+    );
+}
+
+#[test]
 fn timber_tumbler_completes_a_test_ride_lap() {
     let model = hybrid_model();
     let circuit = build_player_circuit("Timber Tumbler", model.clone());
     let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
     let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit))
+        .find_map(|_| run.step(&circuit, model.name))
         .expect("Timber Tumbler test ride did not finish");
     let report = &outcome.reports[0];
 
@@ -179,7 +216,7 @@ fn player_journeys_build_and_ride_both_top_hats() {
         let top_hat_end = top_hat_start + top_hat.length();
         let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
         let outcome = (0..200_000)
-            .find_map(|_| run.step(&circuit))
+            .find_map(|_| run.step(&circuit, model.name))
             .unwrap_or_else(|| panic!("{name} test ride did not finish"));
         let report = &outcome.reports[0];
         assert!(
@@ -215,6 +252,8 @@ fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
         ("Timber Tumbler", hybrid_model()),
         ("Velocity Viper", multi_launch_model()),
         ("Briar Blitz", wooden_twister_model()),
+        ("Daisy Dash", family_coaster_model()),
+        ("Horizon Hawk", hyper_model()),
     ];
     for (name, model) in circuits {
         let circuit = build_player_circuit(name, model.clone());
@@ -229,10 +268,17 @@ fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
 fn timber_preview_agrees_with_closed_test_run() {
     let model = hybrid_model();
     let circuit = build_player_circuit("Timber Tumbler", model.clone());
-    let preview =
-        preview_open_track(circuit.pieces(), &model.train, PhysicsConfig::default()).unwrap();
+    let preview = preview_open_track(
+        circuit.pieces(),
+        &model.train,
+        PhysicsConfig::default(),
+        model.name,
+    )
+    .unwrap();
     let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
-    let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+    let outcome = (0..200_000)
+        .find_map(|_| run.step(&circuit, model.name))
+        .unwrap();
     assert_eq!(
         preview.status,
         if outcome.recovered {
@@ -270,7 +316,7 @@ fn assert_ride_force_bound(
     model: &theme_park_sim::track::CoasterModel,
 ) {
     let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
-    let outcome = (0..60_000).find_map(|_| run.step(circuit));
+    let outcome = (0..60_000).find_map(|_| run.step(circuit, model.name));
     let outcome = outcome.unwrap_or_else(|| panic!("{name} test ride did not finish"));
     let maximum_sample = outcome
         .reports
@@ -292,6 +338,8 @@ fn construction_test_rides_keep_raw_longitudinal_forces_physically_plausible() {
         ("Timber Tumbler", hybrid_model()),
         ("Velocity Viper", multi_launch_model()),
         ("Briar Blitz", wooden_twister_model()),
+        ("Daisy Dash", family_coaster_model()),
+        ("Horizon Hawk", hyper_model()),
     ];
     for (name, model) in circuits {
         let circuit = build_player_circuit(name, model.clone());

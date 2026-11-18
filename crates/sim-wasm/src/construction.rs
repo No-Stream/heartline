@@ -1,8 +1,8 @@
 use super::*;
 use serde::Serialize;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun};
-use theme_park_sim::track::ComfortableForceLimits;
 use theme_park_sim::track::{Bank, Hand, Heartlining, HillFeel, HillTwist, PieceFamily};
+use theme_park_sim::track::{ComfortableForceLimits, ForceRating, ForceRatingAxis};
 use ts_rs::TS;
 
 #[derive(Serialize, TS)]
@@ -121,8 +121,29 @@ pub struct ConstructionColorsWire {
 pub struct ConstructionForceLimitsWire {
     minimum_vertical_g: f64,
     maximum_vertical_g: f64,
+    rating_bands: ConstructionForceRatingBandsWire,
     maximum_lateral_g: f64,
     maximum_longitudinal_g: f64,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionForceRatingBandWire {
+    #[ts(
+        type = "\"weak\" | \"good\" | \"great\" | \"fine\" | \"strong\" | \"too much\" | \"dangerous\""
+    )]
+    rating: String,
+    up_to: Option<f64>,
+    inclusive: bool,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionForceRatingBandsWire {
+    airtime: Vec<ConstructionForceRatingBandWire>,
+    vertical: Vec<ConstructionForceRatingBandWire>,
+    lateral: Vec<ConstructionForceRatingBandWire>,
+    longitudinal: Vec<ConstructionForceRatingBandWire>,
 }
 
 #[derive(Serialize, TS)]
@@ -204,10 +225,39 @@ fn rated_speed_wire(piece: &Piece) -> Option<ConstructionRatedSpeedWire> {
     })
 }
 
-fn force_limits_wire(limits: ComfortableForceLimits) -> ConstructionForceLimitsWire {
+pub(crate) fn force_limits_wire(
+    limits: ComfortableForceLimits,
+    model_key: &str,
+) -> ConstructionForceLimitsWire {
+    let bands = |axis| {
+        limits
+            .rating_bands(axis, model_key)
+            .into_iter()
+            .map(|band| ConstructionForceRatingBandWire {
+                rating: match band.rating {
+                    ForceRating::Weak => "weak",
+                    ForceRating::Good => "good",
+                    ForceRating::Great => "great",
+                    ForceRating::Fine => "fine",
+                    ForceRating::Strong => "strong",
+                    ForceRating::TooMuch => "too much",
+                    ForceRating::Dangerous => "dangerous",
+                }
+                .to_owned(),
+                up_to: band.up_to,
+                inclusive: band.inclusive,
+            })
+            .collect()
+    };
     ConstructionForceLimitsWire {
         minimum_vertical_g: limits.minimum_vertical_g,
         maximum_vertical_g: limits.maximum_vertical_g,
+        rating_bands: ConstructionForceRatingBandsWire {
+            airtime: bands(ForceRatingAxis::Airtime),
+            vertical: bands(ForceRatingAxis::Vertical),
+            lateral: bands(ForceRatingAxis::Lateral),
+            longitudinal: bands(ForceRatingAxis::Longitudinal),
+        },
         maximum_lateral_g: limits.maximum_lateral_g,
         maximum_longitudinal_g: limits.maximum_longitudinal_g,
     }
@@ -349,23 +399,19 @@ impl WasmSimulation {
                 heading,
                 ..TrackState::origin()
             },
-            match self.construction_model {
-                ConstructionModel::Hybrid => hybrid_model(),
-                ConstructionModel::MultiLaunch => multi_launch_model(),
-                ConstructionModel::WoodenTwister => wooden_twister_model(),
-            },
+            coaster_model(&self.construction_model),
         );
-        let world = self.park.world.clone();
         let obstacles = self.facility_obstacles();
         let station_id = construction.next_piece_id();
         let tunnel_generation = self.park.next_construction_tunnel_generation();
-        let station_plan = match construction.tunnel_plan(PieceId::Station, &world, &obstacles) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.construction_message = construction_error(error);
-                return;
-            }
-        };
+        let station_plan =
+            match construction.tunnel_plan(PieceId::Station, &self.park.world, &obstacles) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    self.construction_message = construction_error(error);
+                    return;
+                }
+            };
         if let Err(error) = self
             .park
             .carve_for_construction_at(tunnel_generation, &[(station_id, station_plan)])
@@ -373,8 +419,7 @@ impl WasmSimulation {
             self.construction_message = error.to_string();
             return;
         }
-        let carved_world = self.park.world.clone();
-        if let Err(error) = construction.append(PieceId::Station, &carved_world, &obstacles) {
+        if let Err(error) = construction.append(PieceId::Station, &self.park.world, &obstacles) {
             self.park
                 .restore_tunnel_piece_at(tunnel_generation, station_id);
             self.construction_message = construction_error(error);
@@ -442,12 +487,10 @@ impl WasmSimulation {
 
     /// The coaster's train layout, or null without a coaster.
     pub fn construction_train_layout(&self) -> String {
-        let layout = self.construction.as_ref().map(|construction| {
-            train_layout(
-                train_model_key(construction.model()),
-                &construction.model().train,
-            )
-        });
+        let layout = self
+            .construction
+            .as_ref()
+            .map(|construction| train_layout(construction.model(), &construction.model().train));
         serde_json::to_string(&layout).expect("serialize train layout")
     }
 
@@ -463,6 +506,7 @@ impl WasmSimulation {
                 lift_speed: 5.0,
                 ..PhysicsConfig::default()
             },
+            construction.model().name,
         ) else {
             return "null".into();
         };
@@ -532,7 +576,10 @@ impl WasmSimulation {
             status,
             last_placed,
             launches,
-            limits: force_limits_wire(construction.model().comfortable_force_limits),
+            limits: force_limits_wire(
+                construction.model().comfortable_force_limits,
+                construction.model().name,
+            ),
         })
         .expect("construction force preview serializes")
     }
@@ -570,6 +617,7 @@ impl WasmSimulation {
                     lift_speed: 5.0,
                     ..PhysicsConfig::default()
                 },
+                construction.model().name,
             )
             .expect("construction contains a station");
         let samples: Vec<_> = preview
@@ -603,7 +651,10 @@ impl WasmSimulation {
             outer_bank,
             entry_speed,
             peaks: last_placed_force_wire(&samples, start_distance, end_distance),
-            limits: force_limits_wire(construction.model().comfortable_force_limits),
+            limits: force_limits_wire(
+                construction.model().comfortable_force_limits,
+                construction.model().name,
+            ),
             rated_speed,
         })
         .expect("candidate force preview serializes")
@@ -626,11 +677,7 @@ impl WasmSimulation {
             .construction
             .as_ref()
             .map(|construction| construction.model().clone())
-            .unwrap_or_else(|| match self.construction_model {
-                ConstructionModel::Hybrid => hybrid_model(),
-                ConstructionModel::MultiLaunch => multi_launch_model(),
-                ConstructionModel::WoodenTwister => wooden_twister_model(),
-            });
+            .unwrap_or_else(|| coaster_model(&self.construction_model));
         let options: Vec<_> = theme_park_sim::track::catalog()
             .iter()
             .filter_map(|piece| {
@@ -688,26 +735,12 @@ impl WasmSimulation {
 
     pub fn construction_select(&mut self, id: &str) {
         self.selected_element = None;
-        match id {
-            "model:hybrid" => {
-                self.construction_model = ConstructionModel::Hybrid;
-                self.construction_message.clear();
-                self.refresh_construction_support_rendering();
-                return;
-            }
-            "model:velocity_viper" => {
-                self.construction_model = ConstructionModel::MultiLaunch;
-                self.construction_message.clear();
-                self.refresh_construction_support_rendering();
-                return;
-            }
-            "model:wooden_twister" => {
-                self.construction_model = ConstructionModel::WoodenTwister;
-                self.construction_message.clear();
-                self.refresh_construction_support_rendering();
-                return;
-            }
-            _ => {}
+        if let Some(key) = id.strip_prefix("model:") {
+            let model = coaster_model(key);
+            self.construction_model = model.key.to_owned();
+            self.construction_message.clear();
+            self.refresh_construction_support_rendering();
+            return;
         }
         if let Some(element_id) = id.strip_prefix("element:") {
             let obstacles = self.facility_obstacles();
@@ -749,13 +782,13 @@ impl WasmSimulation {
         self.selected = pieceid_from_wire(id);
         if let Some(selected) = self.selected {
             let obstacles = self.facility_obstacles();
-            let world = self.world.clone();
-            if let Some(construction) = self.construction.as_mut() {
+            let park = &mut self.park;
+            if let Some(construction) = park.construction.as_mut() {
                 if theme_park_sim::track::catalog()
                     .iter()
                     .any(|piece| piece.id == selected && piece.family.is_some())
                 {
-                    let _ = construction.select_hill_variant(selected, &world, &obstacles);
+                    let _ = construction.select_hill_variant(selected, &park.world, &obstacles);
                 }
             }
         }
@@ -849,6 +882,7 @@ impl WasmSimulation {
                                 airtime_seconds: forces.as_ref().map(|force| force.airtime_seconds),
                                 limits: force_limits_wire(
                                     construction.model().comfortable_force_limits,
+                                    construction.model().name,
                                 ),
                             })
                         } else {
@@ -1044,14 +1078,14 @@ impl WasmSimulation {
 
     pub fn construction_min_cars_per_train(&self) -> u8 {
         self.construction.as_ref().map_or(0, |construction| {
-            *construction.model().cars_per_train_range().start()
+            *construction.model().cars_per_train.start()
         })
     }
 
     pub fn construction_max_cars_per_train(&self) -> u8 {
-        self.construction.as_ref().map_or(0, |construction| {
-            *construction.model().cars_per_train_range().end()
-        })
+        self.construction
+            .as_ref()
+            .map_or(0, |construction| *construction.model().cars_per_train.end())
     }
 
     pub fn construction_set_cars_per_train(&mut self, cars: u8) -> bool {
@@ -1117,13 +1151,12 @@ impl WasmSimulation {
         let obstacles = self.facility_obstacles();
         let selected = self.selected;
         let selected_element = self.selected_element.clone();
-        let world = self.park.world.clone();
         let undo_group_size = selected_element
             .as_deref()
             .and_then(|element_id| {
                 self.park.construction.as_ref().and_then(|construction| {
                     construction
-                        .element_choices(&world, &obstacles)
+                        .element_choices(&self.park.world, &obstacles)
                         .into_iter()
                         .find(|element| element.id == element_id)
                         .map(|element| element.pieces.len())
@@ -1138,13 +1171,13 @@ impl WasmSimulation {
                 .ok_or_else(|| "Construction is inactive".to_string())?;
             if let Some(element_id) = selected_element.as_deref() {
                 let element = construction
-                    .element_choices(&world, &obstacles)
+                    .element_choices(&self.park.world, &obstacles)
                     .into_iter()
                     .find(|element| element.id == element_id)
                     .ok_or_else(|| "Selected element is no longer available here.".to_string())?;
                 let first_id = construction.next_piece_id();
                 let tunnel_plans = construction
-                    .element_tunnel_plans(&element, &world, &obstacles)
+                    .element_tunnel_plans(&element, &self.park.world, &obstacles)
                     .map_err(construction_error)?;
                 let piece_ids: Vec<_> = (0..tunnel_plans.len())
                     .map(|offset| first_id + offset)
@@ -1153,13 +1186,12 @@ impl WasmSimulation {
                 if let Err(error) = self.park.carve_for_construction(&ownership) {
                     return Err(error.to_string());
                 }
-                let carved_world = self.park.world.clone();
-                if let Err(error) = self
-                    .park
+                let park = &mut self.park;
+                if let Err(error) = park
                     .construction
                     .as_mut()
                     .expect("construction remains active")
-                    .apply_element(&element, &carved_world, &obstacles)
+                    .apply_element(&element, &park.world, &obstacles)
                 {
                     for piece_id in piece_ids {
                         self.park.restore_tunnel_piece(piece_id);
@@ -1172,18 +1204,17 @@ impl WasmSimulation {
             let selected = selected.ok_or_else(|| "Select a piece first".to_string())?;
             let piece_id = construction.next_piece_id();
             let tunnel_plan = construction
-                .tunnel_plan(selected, &world, &obstacles)
+                .tunnel_plan(selected, &self.park.world, &obstacles)
                 .map_err(construction_error)?;
             if let Err(error) = self.park.carve_for_construction(&[(piece_id, tunnel_plan)]) {
                 return Err(error.to_string());
             }
-            let carved_world = self.park.world.clone();
-            if let Err(error) = self
-                .park
+            let park = &mut self.park;
+            if let Err(error) = park
                 .construction
                 .as_mut()
                 .expect("construction remains active")
-                .append(selected, &carved_world, &obstacles)
+                .append(selected, &park.world, &obstacles)
             {
                 self.park.restore_tunnel_piece(piece_id);
                 return Err(construction_error(error));
@@ -1409,14 +1440,13 @@ impl WasmSimulation {
             return;
         };
         let obstacles = self.facility_obstacles();
-        let world = self.park.world.clone();
         let Some(construction) = self.park.construction.as_ref() else {
             self.construction_message = "Construction is inactive".into();
             return;
         };
         let first_id = construction.next_piece_id();
         let tunnel_plans =
-            match construction.tunnel_plans_for_geometry(&completion.geometry, &world) {
+            match construction.tunnel_plans_for_geometry(&completion.geometry, &self.park.world) {
                 Ok(plans) => plans,
                 Err(error) => {
                     self.construction_message = construction_error(error);
@@ -1775,10 +1805,17 @@ impl WasmSimulation {
                     .map(|cell| (cell.x, cell.y, cell.height))
             })
             .collect();
-        let mut preview_world = self.world.clone();
-        preview_world
-            .carve_cells(&carve_cells)
-            .map_err(|_| SupportError::NoRoute)?;
+        let carved_world;
+        let preview_world = if carve_cells.is_empty() {
+            &self.park.world
+        } else {
+            (carved_world, _) = self
+                .park
+                .world
+                .with_cells_carved(&carve_cells)
+                .map_err(|_| SupportError::NoRoute)?;
+            &carved_world
+        };
         let mut obstacles: Vec<_> = self
             .construction_support_entries()
             .expect("valid preview requires construction")
@@ -1796,7 +1833,7 @@ impl WasmSimulation {
             supports.extend(render_preview_supports(
                 piece,
                 &obstacles,
-                &preview_world,
+                preview_world,
                 construction.model().support_style,
             )?);
             obstacles.extend(track_support_obstacles(
@@ -2040,6 +2077,12 @@ define_piece_id_wire_names!(
     ZeroGRollCompactRight,
     StallLeft,
     StallRight,
+    FamilyHill3x32,
+    FamilyHill4x40,
+    FloaterHill20x128,
+    FloaterHill24x160,
+    WideLevelToSixtyDown,
+    WideSixtyDownToLevel,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

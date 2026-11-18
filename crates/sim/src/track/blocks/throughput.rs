@@ -45,7 +45,7 @@ impl ThroughputEstimator {
             self.step += 1;
             if self
                 .operation
-                .step(&[])
+                .step_without_reports(&[])
                 .iter()
                 .any(|(_, outcome)| outcome.recovered)
             {

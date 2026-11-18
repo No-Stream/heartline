@@ -11,7 +11,7 @@ pub mod supports;
 #[cfg(test)]
 mod vertical_top_hat;
 
-pub use catalog::catalog;
+pub use catalog::{catalog, effective_rated_speeds};
 pub use colors::{CoasterColor, CoasterColors};
 pub(crate) use curves::Shape;
 pub use curves::{
@@ -20,10 +20,11 @@ pub use curves::{
     TrackSample, TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
-    AirtimeRating, CoasterModel, ComfortableForceLimits,
+    CoasterModel, ComfortableForceLimits, ForceRating, ForceRatingAxis, ForceRatingBand,
     LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
     LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules, Material, SupportStyle,
-    TrainConfiguration, hybrid_model, multi_launch_model, wooden_twister_model,
+    TrainConfiguration, coaster_models, family_coaster_model, hybrid_model, hyper_model,
+    multi_launch_model, wooden_twister_model,
 };
 
 #[cfg(test)]

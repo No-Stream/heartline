@@ -309,11 +309,13 @@ impl Park {
             .map(|cell| (cell.x, cell.y, cell.height))
             .collect();
         if !cells.is_empty() {
-            let mut candidate = self.world.clone();
-            let invalidated_paths = candidate.carve_cells(&cells).map_err(|error| match error {
-                CellEditError::InvalidCell => TunnelCarveError::InvalidPlan,
-                CellEditError::UnsupportedScenery => TunnelCarveError::SceneryUnsupported,
-            })?;
+            let (candidate, invalidated_paths) =
+                self.world
+                    .with_cells_carved(&cells)
+                    .map_err(|error| match error {
+                        CellEditError::InvalidCell => TunnelCarveError::InvalidPlan,
+                        CellEditError::UnsupportedScenery => TunnelCarveError::SceneryUnsupported,
+                    })?;
             if !invalidated_paths.is_empty() {
                 return Err(TunnelCarveError::PathObstructed);
             }

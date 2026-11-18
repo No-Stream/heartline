@@ -842,7 +842,7 @@ mod tests {
             run.recover()
         } else {
             (0..200_000)
-                .find_map(|_| run.step(&circuit))
+                .find_map(|_| run.step(&circuit, "Timber Tumbler"))
                 .expect("train finishes")
         };
         if !recovered {
@@ -1424,6 +1424,10 @@ mod tests {
         assert_eq!(park.behaviors().guests[0].money, 94);
     }
 }
+
+#[cfg(test)]
+#[path = "coaster_boarding_tests.rs"]
+mod coaster_boarding_tests;
 
 #[cfg(all(test, feature = "threads"))]
 #[path = "park_determinism_tests.rs"]

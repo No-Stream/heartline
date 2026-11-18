@@ -1,7 +1,7 @@
 use crate::track::catalog::catalog;
 use crate::track::{
     Bank, CoasterModel, HorizontalCurvature, LaunchType, PieceId, Slope, TrackState,
-    VerticalCurvature, hybrid_model, multi_launch_model, wooden_twister_model,
+    VerticalCurvature, coaster_models, hybrid_model, multi_launch_model, wooden_twister_model,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -372,7 +372,7 @@ fn chain_lifts_reach_each_models_maximum_lift_slope() {
 
 #[test]
 fn models_offer_short_straights_full_tile_offsets_and_height_steps() {
-    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
+    for model in coaster_models() {
         let state = TrackState::origin();
         let pieces = model.available_pieces(state);
         for (name, x, y, z) in [
@@ -398,7 +398,7 @@ fn models_offer_short_straights_full_tile_offsets_and_height_steps() {
 
 #[test]
 fn near_station_gaps_can_be_closed_in_a_few_pieces() {
-    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
+    for model in coaster_models() {
         for (gap, names) in [
             ((3, 0, 0), vec!["Half-tile straight", "One-tile straight"]),
             (
@@ -434,7 +434,7 @@ fn near_station_gaps_can_be_closed_in_a_few_pieces() {
 
 #[test]
 fn models_offer_short_gentle_straights() {
-    for model in [hybrid_model(), multi_launch_model(), wooden_twister_model()] {
+    for model in coaster_models() {
         for (slope, height, name) in [
             (Slope::UpGentle, 1, "One-tile gentle climb"),
             (Slope::DownGentle, -1, "One-tile gentle descent"),

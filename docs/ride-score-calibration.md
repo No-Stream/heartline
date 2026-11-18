@@ -561,3 +561,294 @@ Nausea: 4.07
   excessive forces (+0.0, 0.0 s)
   forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
 ```
+
+## 2026-11-06: Demo coaster
+
+The demo coaster in the default park is now the fixed piece list in `crates/sim/src/physics/demo_circuit.txt`, measured with `make circuit-report CIRCUIT=Demo FILE=crates/sim/src/physics/demo_circuit.txt` (the report builds it piece by piece in the default park's world from its station at (450, 500, 10)). The chain lift climbs 32 m eastward from the station, high over the area west of x = 980 m where the browser tests build their player coasters. A 24 m gentle drop reaches about 21.5 m/s, followed by five ejector hills and three left turns banked for 20 m/s, all east and north of that area, with no inversions. The return runs south over the park path, under the lift (the self-crossing) and around the south of the pond; a four-piece brake run trims the train to brake speed and four 2 m descents with two more brake pieces bring it down to the station at walking pace through the small return turns. The game runs the demo with construction-test physics (lift 5 m/s, initial 2 m/s), where excitement is 5.10; under default physics it is 4.78. The smallest rated-window entry margin is 1.77 m/s (construction test, ejector hill 12 × 64 m) and 1.73 m/s (default physics, the last banked turn). Peak forces are 3.32 g vertical in the drop pullout and hill valleys, −0.80 g on the 12 × 64 m ejector hill, 0.38 g lateral in the first slow return turn and 1.10 g longitudinal, all at least 0.25 g inside the hybrid model's 4.5 / −1.5 / 1.5 / 1.5 g limits.
+
+| Circuit | Physics | Excitement | Intensity | Nausea | Vertical max | Vertical min | Lateral peak | Longitudinal peak |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Demo | construction test | 5.10 | 5.20 | 0.64 | 3.32 g | −0.80 g | 0.38 g | 1.10 g |
+| Demo | default | 4.78 | 5.04 | 0.61 | 3.24 g | −0.71 g | 0.38 g | 1.08 g |
+
+The automatic block search does not find a two-train layout for this demo within 60 million work steps (it does for the earlier demo shape, which the block tests keep as their own fixture). A three-section layout with a stopping run ending at the lift crest, the mid-course brake run and the final brakes verified for two trains on the previous version of this layout; the search's bootstrap does not try it.
+
+Construction-test report:
+
+```text
+Demo (construction-test physics)
+Station exit offset: x -16.0 m, y +0.0 m, z +0.0 m; heading East (station exit East)
+# piece kind entry_m/s window_m/s margin_m/s v+_g v-_g lat_g long_g band roll_deg/s notes
+0 Station Station 2.00 — — 1.00 1.00 0.00 0.31 Weak 0.0
+1 LevelToGentleUp Lift 2.01[5.00] — — 1.10 0.89 0.00 0.46 Weak 0.0
+2 GentleUp Lift 5.00 — — 0.89 0.89 0.00 0.45 Weak 0.0
+3 GentleUp Lift 5.00 — — 0.89 0.89 0.00 0.45 Weak 0.0
+4 GentleUp Lift 5.00 — — 0.89 0.89 0.00 0.45 Weak 0.0
+5 GentleUpToLevel Lift 5.00 — — 1.00 0.83 0.00 0.46 Weak 0.0
+6 LevelToGentleDown Track 5.00[6.39] — — 1.00 0.46 0.00 0.34 Weak 0.0
+7 GentleDown Track 7.00[12.76] — — 0.89 0.89 0.00 0.19 Weak 0.0
+8 GentleDown Track 13.68[17.79] — — 0.89 0.89 0.00 0.20 Weak 0.0
+9 GentleDownToLevel Track 18.48[21.30] — — 3.28 0.89 0.00 0.86 Good 0.0
+10 EjectorHill8x64 Track 21.47 13.49..25.22 +3.39 3.14 -0.72 0.00 0.99 Good 0.0
+11 EjectorHill12x80 Track 21.27 16.14..26.59 +5.04 2.89 -0.38 0.00 0.77 Good 0.0
+12 SpeedTurnLarge20Left Track 20.99 17.00..23.00 +1.83 2.49 1.00 0.06 0.42 Good 71.8
+13 EjectorHill8x64 Track 20.88 13.49..25.22 +4.32 2.95 -0.54 0.00 0.91 Good 0.1
+14 Straight Track 20.25 — — 1.00 1.00 0.00 0.17 Weak 0.0
+15 Straight Track 20.54 — — 1.00 1.00 0.00 0.04 Weak 0.0
+16 SpeedTurnLarge20Left Track 20.46 17.00..23.00 +2.54 2.34 1.00 0.12 0.38 Good 69.3
+17 EjectorHill12x64 Track 20.10 15.94..21.88 +1.77 3.32 -0.80 0.00 1.10 Good 0.2
+18 EjectorHill8x64 Track 19.36 13.49..25.22 +5.48 2.75 -0.35 0.00 0.85 Good 0.0
+19 Straight Track 19.13 — — 1.00 1.00 0.00 0.17 Weak 0.0
+20 Straight Track 19.45 — — 1.00 1.00 0.00 0.01 Weak 0.0
+21 Straight Track 19.36 — — 1.00 1.00 0.00 0.02 Weak 0.0
+22 OneTileStraight Track 19.28 — — 1.00 1.00 0.00 0.03 Weak 0.0
+23 OneTileStraight Track 19.26 — — 1.00 1.00 0.00 0.04 Weak 0.0
+24 SpeedTurnLarge20Left Track 19.24 17.00..23.00 +2.09 2.11 1.00 0.22 0.34 Good 65.2
+25 Brakes Brakes 18.86[16.31] — — 1.00 1.00 0.00 0.31 Weak 0.0
+26 Brakes Brakes 16.12[12.95] — — 1.00 1.00 0.00 0.31 Weak 0.0
+27 Brakes Brakes 12.70[8.34] — — 1.00 1.00 0.00 0.31 Weak 0.0
+28 Brakes Brakes 7.97[3.91] — — 1.00 1.00 0.00 0.31 Weak 0.0
+29 TerrainFall Track 3.89[5.65] — — 1.32 0.73 0.00 0.28 Weak 0.0
+30 TerrainFall Track 5.87[8.33] — — 1.37 0.54 0.00 0.66 Weak 0.0
+31 Brakes Brakes 8.46[3.98] — — 1.00 1.00 0.00 0.30 Weak 0.0
+32 TerrainFall Track 3.97[5.70] — — 1.27 0.73 0.00 0.34 Weak 0.0
+33 Straight Track 5.91[7.20] — — 1.00 1.00 0.00 0.11 Weak 0.0
+34 Straight Track 7.18 — — 1.00 1.00 0.00 0.01 Weak 0.0
+35 Straight Track 7.05 — — 1.00 1.00 0.00 0.01 Weak 0.0
+36 Straight Track 6.92 — — 1.00 1.00 0.00 0.01 Weak 0.0
+37 TurnSmallRightStandalone Track 6.79 — — 1.00 1.00 0.38 0.01 Weak 0.0
+38 Straight Track 6.57 — — 1.00 1.00 0.00 0.01 Weak 0.0
+39 Straight Track 6.44 — — 1.00 1.00 0.00 0.01 Weak 0.0
+40 Straight Track 6.30 — — 1.00 1.00 0.00 0.01 Weak 0.0
+41 Straight Track 6.16 — — 1.00 1.00 0.00 0.01 Weak 0.0
+42 Straight Track 6.02 — — 1.00 1.00 0.00 0.01 Weak 0.0
+43 Straight Track 5.87 — — 1.00 1.00 0.00 0.01 Weak 0.0
+44 Straight Track 5.73 — — 1.00 1.00 0.00 0.01 Weak 0.0
+45 TurnSmallRightStandalone Track 5.57 — — 1.00 1.00 0.25 0.01 Weak 0.0
+46 Straight Track 5.32 — — 1.00 1.00 0.00 0.01 Weak 0.0
+47 Straight Track 5.15 — — 1.00 1.00 0.00 0.01 Weak 0.0
+48 Straight Track 4.99 — — 1.00 1.00 0.00 0.01 Weak 0.0
+49 TurnSmallRightStandalone Track 4.82 — — 1.00 1.00 0.19 0.11 Weak 0.0
+50 TerrainFall Track 4.52[6.10] — — 1.20 0.74 0.00 0.57 Weak 0.0
+51 Brakes Brakes 6.28[3.98] — — 1.00 1.00 0.00 0.31 Weak 0.0
+52 OneTileStraight Track 3.97 — — 1.00 1.00 0.00 0.31 Weak 0.0
+53 OneTileStraight Track 3.91 — — 1.00 1.00 0.00 0.31 Weak 0.0
+Completed lap: true; recovered: false
+Note: Long slow stretches reduce excitement. Consider shortening them or adding elements.
+Note: Ratings average all cars. The track ribbon and proximity events describe the front car; statistics and force advice report the most extreme values across cars.
+Score breakdown:
+Excitement: 5.10
+  airtime (+1.4, 1.9 s)
+  airtime moments (+0.5, 5.0)
+  positive forces (+0.9, 4.0 s)
+  lateral forces (+0.0, 0.0 s)
+  longitudinal forces (+0.1, 0.6 s)
+  excessive forces (-0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  top speed (+0.5, 9.8 m/s)
+  biggest drop (+0.4, 32.0 m)
+  pace (+0.1, 1.5 m/s)
+  launch (+0.0, 0.0 g)
+  variety (+0.4, 2.0)
+  whip (+0.5, 8.7)
+  roll rate (+0.1, 11.1 degrees/s)
+  ride time (+0.7, 121.2 s)
+  short ride (-0.0, 121.2 s)
+  proximity (+0.0, 0.0)
+  theming (+0.0, 0.0)
+  dead time (-0.4, 48.0 s at Large left turn banked for 20 m/s)
+  forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+  nausea (-0.0, 0.6)
+  minimum excitement (+0.0, 0.0)
+Intensity: 5.20
+  peak force (+2.2, 0.5 at Ejector hill 12 × 64 m)
+  sustained force (+2.0, 6.6 s)
+  excessive forces (+0.0, 0.0 s)
+  top speed (+0.6, 11.8 m/s)
+  biggest drop (+0.5, 32.0 m)
+  launch (+0.0, 0.0 g)
+  inversions (+0.0, 0.0)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Nausea: 0.64
+  lateral forces (+0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  fast rolls (+0.0, 0.0 s)
+  reversals (+0.0, 0.0)
+  strong positive forces (+0.6, 4.0 s)
+  time inverted (+0.0, -0.0 s)
+  excessive forces (+0.0, 0.0 s)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+```
+
+## 2026-11-06 positive vertical force band change
+
+Positive vertical force is now rated in absolute g instead of as a share of
+each model's limit. It is weak up to 2 g, good below the model's "great from"
+value, great from that value up to the model's comfortable limit, too much up
+to 1.3 times the limit, and dangerous beyond. "Great from" is 3.0 g on the
+steel-track models (Timber Tumbler, limit 4.5 g; Velocity Viper, limit 5.0 g)
+and 2.5 g on the wooden Briar Blitz (limit 4.0 g). Before, great started at
+80% of the limit: 3.6 g, 4.0 g and 3.2 g respectively. Airtime, lateral and
+longitudinal bands are unchanged.
+
+Scores are excitement / intensity / nausea, as printed by the calibration
+tests before and after the change. No scoring weights were adjusted.
+
+| Synthetic archetype | Before | After |
+| --- | --- | --- |
+| Family wooden coaster | 2.96 / 2.78 / 0.38 | 2.96 / 2.78 / 0.38 |
+| Classic Arrow looper | 4.05 / 7.24 / 5.53 | 4.05 / 7.24 / 5.53 |
+| B&M hyper | 6.62 / 6.31 / 0.53 | 6.62 / 6.31 / 0.53 |
+| RMC hybrid | 10.80 / 7.26 / 3.55 | 10.80 / 7.26 / 3.55 |
+| Intamin accelerator | 5.78 / 7.39 / 0.18 | 5.78 / 7.39 / 0.18 |
+| Intamin Blitz multi-launch | 11.09 / 7.92 / 2.98 | 11.09 / 7.92 / 2.98 |
+
+The synthetic archetypes supply their force-band durations directly, and none
+of them has any time in the good positive vertical band, so the change cannot
+move them. To check whether more great pullout time could disturb the ordering,
+a temporary run added 1, 2 and 4 seconds of great positive vertical force to
+every archetype except the family coaster. With 4 extra seconds the scores were
+Arrow 4.18, B&M hyper 6.81, RMC 10.99, Intamin accelerator 6.36 and Intamin
+Blitz 11.28 excitement; the family coaster stays at 2.96. Positive force credit
+saturates, so the owner's ordering holds with a wide margin: Intamin Blitz and
+RMC far above the Arrow looper, clearly above the B&M hyper, family lowest.
+
+The measured circuits do move, because their force histories are reclassified.
+These are the rebuilt Timber Tumbler and Velocity Viper circuits on master
+7f4502d, before and after the change:
+
+| Measured circuit | Before | After |
+| --- | --- | --- |
+| Demo | 0.54 / 8.88 / 6.98 | 0.58 / 8.97 / 7.05 |
+| Timber Tumbler | 8.21 / 6.46 / 4.07 | 8.24 / 6.56 / 4.14 |
+| Velocity Viper | 6.69 / 6.61 / 4.19 | 6.73 / 6.67 / 4.24 |
+| Briar Blitz | 0.18 / 9.36 / 6.85 | 0.24 / 9.42 / 6.92 |
+
+## Daisy Dash (family coaster)
+
+Daisy Dash by Windmill Ride Works was added on 2026-11-06 with its reference circuit in
+`web/e2e/player/circuits.txt`. The band test (`daisy_dash_is_a_gentle_family_ride_under_both_physics_configs`)
+expects excitement from 2.5 to 4.5, every force inside the model limits (3.0 / −0.6 g vertical, 1.0 g lateral,
+1.5 g longitudinal) and every rated piece entered at least 1.5 m/s inside its window. The circuit report measured:
+
+| Physics | Excitement | Intensity | Nausea | Peak vertical g | Minimum vertical g | Peak lateral g | Peak longitudinal g |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Default | 3.00 | 3.62 | 0.35 | 2.82 | −0.41 | 0.19 | 0.94 |
+| Construction test | 3.66 | 3.89 | 0.40 | 2.90 | −0.51 | 0.18 | 0.99 |
+
+The family hills only float near the top of their windows: entered 1.5 m/s inside the window, the worst car
+crests between about +0.1 g and −0.25 g, so most of the airtime moments come from the crests of the gentle rises and
+descents between the elements. Construction-test breakdown (`make circuit-report CIRCUIT="Daisy Dash" ARGS=--construction-test`):
+
+```text
+Score breakdown:
+Excitement: 3.66
+  airtime (+0.4, 0.4 s)
+  airtime moments (+0.7, 8.8)
+  positive forces (+0.6, 2.0 s)
+  lateral forces (+0.0, 0.0 s)
+  longitudinal forces (+0.1, 0.3 s)
+  excessive forces (-0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  top speed (+0.4, 8.0 m/s)
+  biggest drop (+0.3, 20.0 m)
+  pace (+0.2, 5.1 m/s)
+  launch (+0.0, 0.0 g)
+  variety (+0.0, 0.1)
+  whip (+0.4, 4.2)
+  roll rate (+0.0, 7.2 degrees/s)
+  ride time (+0.6, 55.5 s)
+  short ride (-0.0, 55.5 s)
+  proximity (+0.0, 0.0)
+  theming (+0.0, 0.0)
+  dead time (-0.0, 0.4 s at Shallow descent)
+  forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+  nausea (-0.0, 0.4)
+  minimum excitement (+0.0, 0.0)
+Intensity: 3.89
+  peak force (+2.0, 0.5 at End gentle descent)
+  sustained force (+1.1, 2.7 s)
+  excessive forces (+0.0, 0.0 s)
+  top speed (+0.5, 10.0 m/s)
+  biggest drop (+0.3, 20.0 m)
+  launch (+0.0, 0.0 g)
+  inversions (+0.0, 0.0)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Nausea: 0.40
+  lateral forces (+0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  fast rolls (+0.0, 0.0 s)
+  reversals (+0.0, 0.0)
+  strong positive forces (+0.4, 2.0 s)
+  time inverted (+0.0, -0.0 s)
+  excessive forces (+0.0, 0.0 s)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+```
+
+## Horizon Hawk (hyper)
+
+Horizon Hawk by Boulder & Marlin was added on 2026-11-06 with its reference circuit in
+`web/e2e/player/circuits.txt`. The band test (`horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs`)
+expects excitement from 6 to 8, every force at least 0.25 g inside the model limits (4.0 / −1.3 g vertical, 1.2 g
+lateral, 1.5 g longitudinal), every rated piece entered at least 1.5 m/s inside its window, at least six airtime
+moments, a drop of at least 50 m and a top speed of at least 30 m/s. The circuit report measured:
+
+| Physics | Excitement | Intensity | Nausea | Peak vertical g | Minimum vertical g | Peak lateral g | Peak longitudinal g |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Default | 6.45 | 6.50 | 0.91 | 3.16 | −0.64 | 0.17 | 1.21 |
+| Construction test | 6.70 | 6.55 | 0.91 | 3.19 | −0.81 | 0.16 | 1.24 |
+
+The ride sits near the hyper archetype (6.62), clearly above the classic looper archetype (4.05) and Daisy Dash, and
+far below the wooden hybrid and wooden twister archetypes. It scores on long floater airtime (about 8 s over nine
+or ten moments) and sustained positive force rather than ejector peaks: entered 1.5 m/s inside their windows, the
+new 24 × 160 m and 20 × 128 m camelbacks crest at about −0.6 to −0.9 g instead of their −1.0 g design, and the
+smaller floater hills near zero g. The circuit needs nine trim and brake pieces because every hill returns to the
+same level, so friction alone cannot slow the train between hills with different windows. A crest fed straight
+from the chain lift is held to the design margin by the front car's entry speed, the way its rated window is
+measured, because the rear cars cross it as the front of the train falls away.
+Construction-test breakdown (`make circuit-report CIRCUIT="Horizon Hawk" ARGS=--construction-test`):
+
+```text
+Score breakdown:
+Excitement: 6.70
+  airtime (+1.6, 2.4 s)
+  airtime moments (+0.7, 8.2)
+  positive forces (+1.0, 9.7 s)
+  lateral forces (+0.0, 0.0 s)
+  longitudinal forces (+0.2, 1.1 s)
+  excessive forces (-0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  top speed (+0.8, 22.6 m/s)
+  biggest drop (+0.6, 64.0 m)
+  pace (+0.4, 13.1 m/s)
+  launch (+0.0, 0.0 g)
+  variety (+0.4, 2.0)
+  whip (+0.4, 5.4)
+  roll rate (+0.1, 10.8 degrees/s)
+  ride time (+0.7, 84.8 s)
+  short ride (-0.0, 84.8 s)
+  proximity (+0.0, 0.0)
+  theming (+0.0, 0.0)
+  dead time (-0.1, 1.9 s at Large left turn banked for 16 m/s)
+  forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
+  nausea (-0.0, 0.9)
+  minimum excitement (+0.0, 0.0)
+Intensity: 6.55
+  peak force (+2.2, 0.6 at Floater hill 8 × 64 m)
+  sustained force (+2.7, 13.2 s)
+  excessive forces (+0.0, 0.0 s)
+  top speed (+0.9, 24.6 m/s)
+  biggest drop (+0.7, 64.0 m)
+  launch (+0.0, 0.0 g)
+  inversions (+0.0, 0.0)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+Nausea: 0.91
+  lateral forces (+0.0, 0.0 s)
+  inversions (+0.0, -0.0)
+  fast rolls (+0.0, 0.0 s)
+  reversals (+0.0, 0.0)
+  strong positive forces (+0.9, 9.7 s)
+  time inverted (+0.0, -0.0 s)
+  excessive forces (+0.0, 0.0 s)
+  forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
+```

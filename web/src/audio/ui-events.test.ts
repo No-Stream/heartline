@@ -6,7 +6,7 @@ import { constructionUiEvents, createUiEventQueue, pathUiEvent, placementUiEvent
 const rails = new Float32Array([0, 1, 1, 1, 0, 1, 0, 0, 0, 1, 2, 1, 1, 0, 1, 0, 0, 0, 1]);
 const piece = (id: number): ConstructionTrack => ({ id, label: "Straight", name: "Straight", group: "straight", slope: "Level", kind: "Track", launchTargetSpeed: null, launchMinimumSpeed: null, launchMaximumSpeed: null });
 const state = (update: Partial<ConstructionState>): ConstructionState => ({
-  type: "construction-state", complete: true, active: true, chain: false, colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "wooden_twister", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }, pieces: [], elements: [], selected: "Straight", track: [piece(0)],
+  type: "construction-state", complete: true, active: true, chain: false, colors: { track: "coral", supports: "timber", trains: "sage" }, trainLayout: { model: "wooden_twister", trackMaterial: "wood", carsPerTrain: 6, rowsPerCar: 2, seatsPerRow: 2, lengthMetres: 18 }, pieces: [], elements: [], selected: "Straight", track: [piece(0)],
   canAppend: true, canClose: false, finishPreview: false, canFinish: false, finishReason: "", canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [], message: "",
   blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
   trainCount: 1, minCarsPerTrain: 4, maxCarsPerTrain: 8, placedRails: rails, railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
@@ -19,7 +19,7 @@ describe("builder sound triggers", () => {
 
   it("plays a placement in the built coaster's material, an undo when track shrinks, and a flourish on closing", () => {
     expect(constructionUiEvents(one, two)).toEqual([{ sound: "place", material: "wood" }]);
-    expect(constructionUiEvents(one, state({ track: two.track, trainLayout: { ...two.trainLayout!, model: "velocity_viper" } }))).toEqual([{ sound: "place", material: "steel" }]);
+    expect(constructionUiEvents(one, state({ track: two.track, trainLayout: { ...two.trainLayout!, model: "velocity_viper", trackMaterial: "steel" } }))).toEqual([{ sound: "place", material: "steel" }]);
     expect(constructionUiEvents(two, one)).toEqual([{ sound: "undo" }]);
     expect(constructionUiEvents(state({ canClose: true }), state({ canClose: false, canTest: true }))).toEqual([{ sound: "finish" }]);
     expect(constructionUiEvents(state({ finishPreview: true }), state({ finishPreview: false, canTest: true, track: two.track }))).toEqual([{ sound: "finish" }]);

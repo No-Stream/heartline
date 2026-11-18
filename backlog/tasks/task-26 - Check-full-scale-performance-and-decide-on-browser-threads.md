@@ -4,6 +4,7 @@ title: Check full-scale performance and decide on browser threads
 status: To Do
 assignee: []
 created_date: '2026-11-03 01:52'
+updated_date: '2026-11-07 01:18'
 labels:
   - performance
 milestone: m-2
@@ -30,3 +31,9 @@ Measure a realistic full park against the targets, and use the evidence to decid
 - [ ] #2 Targets are met, or the shortfall and the fix are reported to the owner
 - [ ] #3 The decision on browser threads is written down with its evidence
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-06: the renderer now draws world quads as indexed triangles (four vertices per quad, drawElements) instead of instanced draws (branch ci-journeys 2cb41fb), because software WebGL (SwiftShader, used by CI and by players without a GPU) runs each instance as its own draw: frames in the CI container went from 333 to 167 ms. Check on real hardware that the larger vertex upload does not cost frame time at 10,000 guests (the earlier instanced measurement was 2.6 ms GPU per frame on the RTX 5090).
+<!-- SECTION:NOTES:END -->

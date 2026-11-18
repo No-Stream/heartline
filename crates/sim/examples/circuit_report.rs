@@ -2,14 +2,15 @@ use std::fmt::Write as _;
 #[cfg(not(test))]
 use std::fs;
 
+use theme_park_sim::demo_world::demo_world;
 use theme_park_sim::physics::{
-    Circuit, ConstructionTestRunRecorder, ForceAxis, ForceBand, PhysicsConfig, TIME_STEP, Train,
-    force_band, preview_open_track,
+    Circuit, ConstructionTestRunRecorder, DEMO_STATION_ENTRY, ForceAxis, ForceBand, PhysicsConfig,
+    TIME_STEP, Train, force_band, preview_open_track,
 };
-use theme_park_sim::track::construction::{Construction, select_speed_matched_variant_for_limits};
+use theme_park_sim::track::construction::{Construction, select_speed_matched_variant_for_train};
 use theme_park_sim::track::{
-    CoasterModel, Hand, Heading, HillFeel, HillTwist, Piece, PieceFamily, PieceId, TrackState,
-    catalog, hybrid_model, multi_launch_model, wooden_twister_model,
+    CoasterModel, Hand, Heading, HillFeel, HillTwist, Piece, PieceFamily, PieceId, PieceKind,
+    TrackState, catalog, coaster_models, effective_rated_speeds, hybrid_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -30,26 +31,35 @@ pub fn report_for_circuit(
     construction_test: bool,
     close: bool,
 ) -> Result<String, String> {
-    let model = match name {
-        "Timber Tumbler" => hybrid_model(),
-        "Velocity Viper" => multi_launch_model(),
-        "Briar Blitz" => wooden_twister_model(),
-        _ => return Err(format!("Unknown circuit model: {name}")),
+    let model = if name == "Demo" {
+        hybrid_model()
+    } else {
+        coaster_models()
+            .into_iter()
+            .find(|model| model.name == name)
+            .ok_or_else(|| format!("Unknown circuit model: {name}"))?
     };
-    let world = World::new(
-        512,
-        512,
-        Surface {
-            corners: [8; 4],
-            water: None,
-        },
-    );
-    let start = TrackState {
-        x: 482,
-        y: 498,
-        z: 6,
-        heading: Heading::North,
-        ..TrackState::origin()
+    // The demo is laid out in the default park; the player circuits use the fixtures' flat world.
+    let (world, start) = if name == "Demo" {
+        (demo_world(), DEMO_STATION_ENTRY)
+    } else {
+        (
+            World::new(
+                512,
+                512,
+                Surface {
+                    corners: [8; 4],
+                    water: None,
+                },
+            ),
+            TrackState {
+                x: 482,
+                y: 498,
+                z: 6,
+                heading: Heading::North,
+                ..TrackState::origin()
+            },
+        )
     };
     let mut construction = Construction::new(start, model.clone());
     construction
@@ -92,8 +102,9 @@ pub fn report_for_circuit(
             _ => {}
         }
         let id = if line.starts_with('@') {
-            let preview = preview_open_track(construction.pieces(), &model.train, config)
-                .ok_or("No station")?;
+            let preview =
+                preview_open_track(construction.pieces(), &model.train, config, model.name)
+                    .ok_or("No station")?;
             let speed = construction
                 .estimated_end_speed(Some(&preview))
                 .speed
@@ -212,7 +223,7 @@ pub fn report_for_circuit(
                 row.seen = true;
             }
         }
-        recorder.record(&frames);
+        recorder.record(&frames, model.name);
         if train.speed().abs() < 0.01 {
             stationary += 1;
         } else {
@@ -249,19 +260,27 @@ pub fn report_for_circuit(
             continue;
         }
         let front = row.entries[0];
-        let rated = piece.rated_speeds;
-        let worst = row.entries.iter().flatten().copied().min_by(|a, b| {
-            let margin = |speed: f64| {
-                rated.map_or(0.0, |window| {
-                    (speed - window.minimum_entry).min(window.maximum_entry - speed)
+        let rated = effective_rated_speeds(piece, &model.train);
+        // A crest fed straight from the chain lift is rated by the front car's entry speed (see the design margins
+        // in tests/known_circuit_statistics.rs), so only the front car counts there.
+        let fed_by_lift = pieces[(index + pieces.len() - 1) % pieces.len()].kind == PieceKind::Lift;
+        let checked_cars = if fed_by_lift { 1 } else { row.entries.len() };
+        let worst = row.entries[..checked_cars]
+            .iter()
+            .flatten()
+            .copied()
+            .min_by(|a, b| {
+                let margin = |speed: f64| {
+                    rated.map_or(0.0, |window| {
+                        (speed - window.minimum_entry).min(window.maximum_entry - speed)
+                    })
+                };
+                margin(*a).total_cmp(&margin(*b)).then_with(|| {
+                    (front.unwrap_or(*a) - *b)
+                        .abs()
+                        .total_cmp(&(front.unwrap_or(*a) - *a).abs())
                 })
-            };
-            margin(*a).total_cmp(&margin(*b)).then_with(|| {
-                (front.unwrap_or(*a) - *b)
-                    .abs()
-                    .total_cmp(&(front.unwrap_or(*a) - *a).abs())
-            })
-        });
+            });
         let entry = match (front, worst) {
             (Some(front), Some(worst)) if (front - worst).abs() > 0.5 => {
                 format!("{front:.2}[{worst:.2}]")
@@ -291,12 +310,12 @@ pub fn report_for_circuit(
         } else {
             (ForceAxis::Vertical, row.vertical_max)
         };
-        let mut band = force_band(axis, value, limits);
+        let mut band = force_band(axis, value, limits, model.name);
         for (axis, value) in [
             (ForceAxis::Lateral, row.lateral),
             (ForceAxis::Longitudinal, row.longitudinal),
         ] {
-            match force_band(axis, value, limits) {
+            match force_band(axis, value, limits, model.name) {
                 ForceBand::Dangerous => band = ForceBand::Dangerous,
                 ForceBand::TooMuch if band != ForceBand::Dangerous => band = ForceBand::TooMuch,
                 _ => {}
@@ -355,12 +374,12 @@ fn resolve_directive(line: &str, speed: f64, model: &CoasterModel) -> Result<Pie
                     "right" => Some(Hand::Right),
                     _ => None,
                 };
-                let expected_radius = match *size {
-                    "small" => Some(16),
-                    "large" => Some(32),
-                    _ => None,
+                let size_matches = match *size {
+                    "small" => radius_metres < 32,
+                    "large" => radius_metres >= 32,
+                    _ => false,
                 };
-                Some(hand) == expected_hand && Some(radius_metres) == expected_radius
+                Some(hand) == expected_hand && size_matches
             }
             (["@hill", feel], Some(PieceFamily::Hill(family))) => {
                 let expected = match *feel {
@@ -386,9 +405,13 @@ fn resolve_directive(line: &str, speed: f64, model: &CoasterModel) -> Result<Pie
         })
         .cloned()
         .collect();
-    let selected =
-        select_speed_matched_variant_for_limits(&candidates, speed, model.comfortable_force_limits)
-            .ok_or_else(|| format!("No available size for {line} at {speed:.2} m/s"))?;
+    let selected = select_speed_matched_variant_for_train(
+        &candidates,
+        speed,
+        &model.train,
+        model.comfortable_force_limits,
+    )
+    .ok_or_else(|| format!("No available size for {line} at {speed:.2} m/s"))?;
     if !selected.fits {
         return Err(format!("No fitting size for {line} at {speed:.2} m/s"));
     }

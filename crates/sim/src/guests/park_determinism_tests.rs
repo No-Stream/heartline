@@ -1,15 +1,15 @@
+use super::coaster_boarding_tests::{construction_for, open_station_paths};
 use super::*;
 use crate::executor::{Executor, SequentialExecutor, ThreadedExecutor};
-use crate::facilities::{ParkFacilities, coaster_access_openings, coaster_facility};
+use crate::facilities::{ParkFacilities, coaster_facility};
 use crate::guests::GuestId;
 use crate::guests::park::ParkGuests;
 use crate::park::Park;
 use crate::park::tick::COASTER_PLACE_ID;
 use crate::physics::{BlockOperation, PhysicsConfig, Train};
 use crate::track::blocks::BlockLayout;
-use crate::track::construction::Construction;
-use crate::track::{PieceId, TrackState, hybrid_model};
-use crate::world::{PathKind, Surface};
+use crate::track::hybrid_model;
+use crate::world::Surface;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CoasterEventKind {
@@ -37,44 +37,6 @@ struct Replay {
     maximum_occupied_trains: usize,
 }
 
-fn construction_for(world: &World) -> Construction {
-    let start = TrackState {
-        x: 256,
-        y: 256,
-        z: 5,
-        ..TrackState::origin()
-    };
-    let mut construction = Construction::new(start, hybrid_model());
-    for (index, id) in [
-        PieceId::Station,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::TurnLargeEntry,
-        PieceId::TurnLargeExit,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::Straight,
-        PieceId::TurnLargeEntry,
-        PieceId::TurnLargeExit,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        construction.set_chain(matches!(index, 3 | 10));
-        construction
-            .append(id, world, &[])
-            .unwrap_or_else(|error| panic!("could not append {id:?}: {error:?}"));
-    }
-    construction.close().unwrap();
-    construction
-}
-
 fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
     let mut world = World::new(
         512,
@@ -84,7 +46,7 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
             water: None,
         },
     );
-    let construction = construction_for(&world);
+    let construction = construction_for(&world, hybrid_model());
     let circuit = construction.circuit().unwrap();
     let train_configuration = construction.model().train.clone();
     let physics_config = PhysicsConfig {
@@ -106,51 +68,7 @@ fn replay<E: Executor<WalkingGuest>>(executor: &E) -> Replay {
     .unwrap();
     assert!(layout.capacity() >= 2);
 
-    let [queue, exit] = coaster_access_openings(&construction).unwrap();
-    let queue_entry = [
-        Position {
-            x: queue.position.x.saturating_sub(1),
-            ..queue.position
-        },
-        Position {
-            x: queue.position.x.saturating_add(1),
-            ..queue.position
-        },
-        Position {
-            y: queue.position.y.saturating_sub(1),
-            ..queue.position
-        },
-        Position {
-            y: queue.position.y.saturating_add(1),
-            ..queue.position
-        },
-    ]
-    .into_iter()
-    .find(|position| *position != exit.position)
-    .unwrap();
-    for position in [queue.position, exit.position, queue_entry] {
-        assert!(
-            world
-                .set_surface(
-                    position.x,
-                    position.y,
-                    Surface {
-                        corners: [position.height; 4],
-                        water: None,
-                    },
-                )
-                .is_empty()
-        );
-    }
-    world
-        .build_path_route(queue_entry, queue_entry, PathKind::Normal, 0)
-        .unwrap();
-    world
-        .build_path_route(exit.position, exit.position, PathKind::Normal, 0)
-        .unwrap();
-    world
-        .build_path_route(queue_entry, queue.position, PathKind::Queue, 0)
-        .unwrap();
+    let queue_entry = open_station_paths(&mut world, &construction);
 
     let facility = coaster_facility(&world, &construction, COASTER_PLACE_ID, 0, None).unwrap();
     let roster_size = 64;

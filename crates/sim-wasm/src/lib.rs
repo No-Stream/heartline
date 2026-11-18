@@ -50,10 +50,11 @@ use theme_park_sim::track::supports::{
     SupportError, SupportObstacle, SupportSegment, generate_dense_wooden_lattice,
     generate_steel_columns, generate_wooden_lattice,
 };
+#[cfg(test)]
+use theme_park_sim::track::wooden_twister_model;
 use theme_park_sim::track::{
     CoasterColors, CoasterModel, Heading, Material, Piece, PieceId, PieceKind, Slope, SupportStyle,
-    TrackSample, TrackState, TrainConfiguration, Vec3, catalog, hybrid_model, multi_launch_model,
-    wooden_twister_model,
+    TrackSample, TrackState, TrainConfiguration, Vec3, catalog, coaster_models, hybrid_model,
 };
 use theme_park_sim::world::{
     Brush, Corner, Direction, PathBuildError, PathKind, Position, Scenery, SceneryKind, Surface,
@@ -78,7 +79,8 @@ pub struct WasmSimulation {
     terrain_message: String,
     scenery_message: String,
     terrain_invalidated_paths: Vec<Position>,
-    construction_model: ConstructionModel,
+    #[serde(with = "construction_model_serde")]
+    construction_model: String,
     selected: Option<PieceId>,
     selected_element: Option<String>,
     construction_undo_groups: Vec<usize>,
@@ -108,11 +110,68 @@ impl std::ops::DerefMut for WasmSimulation {
     }
 }
 
-#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
-enum ConstructionModel {
-    Hybrid,
-    MultiLaunch,
-    WoodenTwister,
+fn coaster_model(key: &str) -> CoasterModel {
+    coaster_models()
+        .into_iter()
+        .find(|model| model.key == key)
+        .unwrap_or_else(|| panic!("unknown coaster model: {key}"))
+}
+
+mod construction_model_serde {
+    use super::coaster_models;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::Error as _};
+
+    pub fn serialize<S: Serializer>(key: &str, serializer: S) -> Result<S::Ok, S::Error> {
+        let index = coaster_models()
+            .iter()
+            .position(|model| model.key == key)
+            .ok_or_else(|| S::Error::custom(format!("unknown coaster model: {key}")))?;
+        serializer.serialize_u32(u32::try_from(index).map_err(S::Error::custom)?)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        let index = u32::deserialize(deserializer)? as usize;
+        coaster_models()
+            .get(index)
+            .map(|model| model.key.to_owned())
+            .ok_or_else(|| D::Error::custom(format!("unknown coaster model ordinal: {index}")))
+    }
+}
+
+#[cfg(test)]
+mod construction_model_serde_tests {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize)]
+    enum LegacyModel {
+        Hybrid,
+        MultiLaunch,
+        WoodenTwister,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct SelectedModel {
+        #[serde(with = "super::construction_model_serde")]
+        key: String,
+    }
+
+    #[test]
+    fn registry_keys_preserve_legacy_save_ordinals() {
+        for (legacy, key) in [
+            (LegacyModel::Hybrid, "hybrid"),
+            (LegacyModel::MultiLaunch, "velocity_viper"),
+            (LegacyModel::WoodenTwister, "wooden_twister"),
+        ] {
+            let old_bytes = postcard::to_allocvec(&legacy).unwrap();
+            let selected = SelectedModel {
+                key: key.to_owned(),
+            };
+            assert_eq!(postcard::to_allocvec(&selected).unwrap(), old_bytes);
+            let restored: SelectedModel = postcard::from_bytes(&old_bytes).unwrap();
+            assert_eq!(restored.key, selected.key);
+        }
+        assert!(postcard::from_bytes::<SelectedModel>(&[127]).is_err());
+    }
 }
 
 fn same_track_orientation(first: TrackState, second: TrackState) -> bool {
@@ -558,39 +617,38 @@ fn append_pose(result: &mut Vec<f32>, index: usize, sample: TrackSample) {
     append_vector(result, sample.up);
 }
 
-/// The renderer's key for a coaster model's trains; the same keys name the models in `construction_select`.
-#[derive(serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Copy, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
-enum TrainModelKey {
+enum TrackMaterial {
+    Steel,
+    Wood,
     Hybrid,
-    VelocityViper,
-    WoodenTwister,
+}
+
+fn track_material(model: &CoasterModel) -> TrackMaterial {
+    match (model.track_material, model.structure_material) {
+        (Material::Steel, Material::Steel) => TrackMaterial::Steel,
+        (Material::Wood, Material::Wood) => TrackMaterial::Wood,
+        (Material::Steel, Material::Wood) => TrackMaterial::Hybrid,
+        (Material::Wood, Material::Steel) => panic!("unsupported wood track on steel structure"),
+    }
 }
 
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 struct TrainLayoutReport {
-    model: TrainModelKey,
+    model: String,
+    track_material: TrackMaterial,
     cars_per_train: u8,
     rows_per_car: u8,
     seats_per_row: u8,
     length_metres: f64,
 }
 
-fn train_model_key(model: &CoasterModel) -> TrainModelKey {
-    [
-        (TrainModelKey::Hybrid, hybrid_model()),
-        (TrainModelKey::VelocityViper, multi_launch_model()),
-        (TrainModelKey::WoodenTwister, wooden_twister_model()),
-    ]
-    .into_iter()
-    .find_map(|(key, known)| (known.name == model.name).then_some(key))
-    .unwrap_or_else(|| panic!("no train look for coaster model {}", model.name))
-}
-
-fn train_layout(model: TrainModelKey, train: &TrainConfiguration) -> TrainLayoutReport {
+fn train_layout(model: &CoasterModel, train: &TrainConfiguration) -> TrainLayoutReport {
     TrainLayoutReport {
-        model,
+        model: model.key.to_owned(),
+        track_material: track_material(model),
         cars_per_train: train.cars,
         rows_per_car: train.rows_per_car,
         seats_per_row: train.seats_per_row,

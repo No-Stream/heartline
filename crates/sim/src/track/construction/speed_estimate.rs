@@ -86,21 +86,24 @@ mod tests {
             lift_speed: 5.0,
             ..PhysicsConfig::default()
         };
-        // The first drop ends immediately before the loop.
-        let loop_index = circuit
+        // The first drop ends where it levels out into the first hill.
+        let valley_index = circuit
             .pieces()
             .iter()
-            .position(|piece| piece.id == PieceId::Loop)
-            .unwrap();
-        let pieces = &circuit.pieces()[..loop_index];
+            .position(|piece| piece.id == PieceId::GentleDownToLevel)
+            .unwrap()
+            + 1;
+        let pieces = &circuit.pieces()[..valley_index];
         let mut construction = Construction::new(pieces[0].entry, model.clone());
         construction.pieces = pieces.to_vec();
-        let preview = preview_open_track(pieces, &model.train, config).unwrap();
+        let preview = preview_open_track(pieces, &model.train, config, model.name).unwrap();
         assert_eq!(preview.status, PreviewStatus::ReachedEnd);
         let estimate = construction.estimated_end_speed(Some(&preview));
         let sample = preview.report.samples.last().unwrap();
         let mut run = CoasterRun::new(&circuit, &model.train, config);
-        let outcome = (0..200_000).find_map(|_| run.step(&circuit)).unwrap();
+        let outcome = (0..200_000)
+            .find_map(|_| run.step(&circuit, model.name))
+            .unwrap();
         let measured = outcome.reports[0]
             .samples
             .iter()
@@ -123,7 +126,7 @@ mod tests {
         let mut construction = Construction::new(pieces[0].entry, model.clone());
         construction.pieces = pieces.to_vec();
         let mut preview =
-            preview_open_track(pieces, &model.train, PhysicsConfig::default()).unwrap();
+            preview_open_track(pieces, &model.train, PhysicsConfig::default(), model.name).unwrap();
         assert_eq!(preview.status, PreviewStatus::ReachedEnd);
         let speed = preview.report.samples.last().unwrap().speed;
         assert_eq!(

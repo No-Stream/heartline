@@ -4,8 +4,9 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
-    CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceId, TrackState, catalog,
-    hybrid_model, multi_launch_model, wooden_twister_model,
+    CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceFamily, PieceId, PieceKind,
+    TrackState, catalog, effective_rated_speeds, family_coaster_model, hybrid_model, hyper_model,
+    multi_launch_model, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -102,9 +103,16 @@ fn assert_design_margins(circuit: &Circuit, model: &CoasterModel, construction_t
         train.distance() >= circuit.length() + start,
         "train did not complete its lap"
     );
-    for (piece, speeds) in circuit.pieces().iter().zip(entries) {
-        if let Some(window) = piece.rated_speeds {
-            for speed in speeds {
+    let pieces = circuit.pieces();
+    for (index, (piece, speeds)) in pieces.iter().zip(entries).enumerate() {
+        if let Some(window) = effective_rated_speeds(piece, &model.train) {
+            // A crest fed straight from the chain lift is entered at lift speed by the front car, while the rear
+            // cars cross it as the front of the train falls away. The rated test measures such a crest by the front
+            // car's entry speed with the full train behind it, so the margin applies to the front car alone there.
+            let fed_by_lift =
+                pieces[(index + pieces.len() - 1) % pieces.len()].kind == PieceKind::Lift;
+            let checked_cars = if fed_by_lift { 1 } else { speeds.len() };
+            for speed in speeds.into_iter().take(checked_cars) {
                 let speed = speed.expect("every car should enter every rated piece");
                 // Windows narrower than 3 m/s cannot provide 1.5 m/s on both sides;
                 // keep their entry within 0.3 m/s of the centre instead.
@@ -160,7 +168,7 @@ fn ride_test(
     let mut slow_steps = 0;
     for _ in 0..60_000 {
         train.step(circuit);
-        recorder.record(&train.take_readings());
+        recorder.record(&train.take_readings(), model.name);
         assert!(
             train.notes().is_empty(),
             "test train failed: {:?}",
@@ -185,7 +193,7 @@ fn ride_test(
 fn default_test_ride(circuit: &Circuit, model: &CoasterModel) -> CoasterOutcome {
     let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
     (0..60_000)
-        .find_map(|_| run.step(circuit))
+        .find_map(|_| run.step(circuit, model.name))
         .expect("Timber Tumbler default-physics ride did not finish")
 }
 
@@ -327,39 +335,129 @@ fn assert_timber_tumbler_report(run_name: &str, report: &TestRun, limits: Comfor
     );
 }
 
+/// Rides the circuit under the game's default physics and the construction-test physics, asserting the
+/// excitement band, the design force margins and the rated-window entry margins; returns both reports.
+fn assert_rides_in_band_with_design_margins(
+    circuit: &Circuit,
+    model: &CoasterModel,
+    excitement_band: std::ops::RangeInclusive<f64>,
+) -> Vec<TestRun> {
+    let limits = model.comfortable_force_limits;
+    [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)]
+        .into_iter()
+        .map(|(lift_speed, initial_speed)| {
+            let report = ride_test(circuit, model, lift_speed, initial_speed);
+            let stats = report.statistics;
+            assert!(
+                excitement_band.contains(&report.excitement),
+                "lift {lift_speed} m/s excitement: {}",
+                report.excitement
+            );
+            assert!(
+                stats.max_positive_vertical_g <= limits.maximum_vertical_g - 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                stats.max_negative_vertical_g >= limits.minimum_vertical_g + 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                stats.max_lateral_g <= limits.maximum_lateral_g - 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                stats.max_forward_g <= limits.maximum_longitudinal_g - 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                stats.max_braking_g.abs() <= limits.maximum_longitudinal_g - 0.25,
+                "{stats:?}"
+            );
+            assert!(
+                !report
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("rated speed band")),
+                "{:?}",
+                report.notes
+            );
+            assert_design_margins(circuit, model, initial_speed != 0.0);
+            report
+        })
+        .collect()
+}
+
 #[test]
 fn velocity_viper_completes_with_comfortable_forces() {
     let model = multi_launch_model();
     let circuit = player_circuit("Velocity Viper", model.clone());
+    for report in assert_rides_in_band_with_design_margins(&circuit, &model, 6.0..=9.0) {
+        assert_eq!(report.statistics.launches, 2);
+    }
+}
+
+#[test]
+fn demo_completes_as_a_friendly_ride_with_comfortable_forces() {
+    let model = hybrid_model();
+    for report in assert_rides_in_band_with_design_margins(&demo_circuit(), &model, 4.0..=6.0) {
+        assert_eq!(report.statistics.inversions, 0);
+        assert!(
+            report.statistics.airtime_moments >= 3,
+            "demo airtime moments: {}",
+            report.statistics.airtime_moments
+        );
+    }
+}
+
+#[test]
+fn daisy_dash_is_a_gentle_family_ride_under_both_physics_configs() {
+    let model = family_coaster_model();
+    let circuit = player_circuit("Daisy Dash", model.clone());
+    let pieces = circuit.pieces();
+    let family_hills = pieces
+        .iter()
+        .filter(|piece| matches!(piece.id, PieceId::FamilyHill3x32 | PieceId::FamilyHill4x40))
+        .count();
+    let speed_matched_turns = pieces
+        .iter()
+        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
+        .count();
+    assert!(family_hills >= 2, "family hills: {family_hills}");
+    assert!(
+        speed_matched_turns >= 3,
+        "speed-matched turns: {speed_matched_turns}"
+    );
+    assert!(
+        pieces
+            .iter()
+            .any(|piece| piece.kind == PieceKind::Lift && piece.entry.heading != piece.exit.heading),
+        "the chain lift curves"
+    );
     for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
         let report = ride_test(&circuit, &model, lift_speed, initial_speed);
         let stats = report.statistics;
         let limits = model.comfortable_force_limits;
+        eprintln!(
+            "Daisy Dash at lift speed {lift_speed}: excitement {:.2}, intensity {:.2}, nausea {:.2}; stats {stats:?}",
+            report.excitement, report.intensity, report.nausea
+        );
+        assert!(report.completed);
         assert!(
-            (6.0..=9.0).contains(&report.excitement),
+            (2.5..=4.5).contains(&report.excitement),
             "excitement: {}",
             report.excitement
         );
         assert!(
-            stats.max_positive_vertical_g <= limits.maximum_vertical_g - 0.25,
+            stats.max_positive_vertical_g <= limits.maximum_vertical_g
+                && stats.max_negative_vertical_g >= limits.minimum_vertical_g
+                && stats.max_lateral_g <= limits.maximum_lateral_g
+                && stats.max_forward_g <= limits.maximum_longitudinal_g
+                && stats.max_braking_g.abs() <= limits.maximum_longitudinal_g,
             "{stats:?}"
         );
-        assert!(
-            stats.max_negative_vertical_g >= limits.minimum_vertical_g + 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_lateral_g <= limits.maximum_lateral_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_forward_g <= limits.maximum_longitudinal_g - 0.25,
-            "{stats:?}"
-        );
-        assert!(
-            stats.max_braking_g.abs() <= limits.maximum_longitudinal_g - 0.25,
-            "{stats:?}"
-        );
+        assert_eq!(stats.inversions, 0);
+        assert_eq!(stats.launches, 0);
+        assert!(stats.airtime_moments >= 2, "{stats:?}");
         assert!(
             !report
                 .notes
@@ -368,8 +466,48 @@ fn velocity_viper_completes_with_comfortable_forces() {
             "{:?}",
             report.notes
         );
-        assert_eq!(stats.launches, 2);
         assert_design_margins(&circuit, &model, initial_speed != 0.0);
+    }
+}
+
+#[test]
+fn horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs() {
+    let model = hyper_model();
+    let circuit = player_circuit("Horizon Hawk", model.clone());
+    let pieces = circuit.pieces();
+    let lift: Vec<_> = pieces
+        .iter()
+        .filter(|piece| piece.kind == PieceKind::Lift)
+        .collect();
+    assert!(!lift.is_empty());
+    assert!(
+        lift.iter()
+            .all(|piece| piece.entry.heading == piece.exit.heading),
+        "the chain lift is straight"
+    );
+    assert!(
+        pieces
+            .iter()
+            .any(|piece| piece.id == PieceId::WideLevelToSixtyDown),
+        "the first drop is 60 degrees"
+    );
+    for camelback in [PieceId::FloaterHill20x128, PieceId::FloaterHill24x160] {
+        assert!(
+            pieces.iter().any(|piece| piece.id == camelback),
+            "{camelback:?}"
+        );
+    }
+    for report in assert_rides_in_band_with_design_margins(&circuit, &model, 6.0..=8.0) {
+        let stats = report.statistics;
+        eprintln!(
+            "Horizon Hawk: excitement {:.2}, intensity {:.2}, nausea {:.2}; stats {stats:?}",
+            report.excitement, report.intensity, report.nausea
+        );
+        assert_eq!(stats.inversions, 0);
+        assert_eq!(stats.launches, 0);
+        assert!(stats.airtime_moments >= 6, "{stats:?}");
+        assert!(stats.biggest_drop >= 50.0, "{stats:?}");
+        assert!(stats.max_speed >= 30.0, "{stats:?}");
     }
 }
 
@@ -507,28 +645,5 @@ fn timber_tumbler_meets_player_ride_targets_under_both_physics_configs() {
         construction_report.statistics.airtime_moments >= 4,
         "construction-test physics airtime moments: {}",
         construction_report.statistics.airtime_moments
-    );
-}
-
-#[test]
-fn demo_and_velocity_match_provisional_excitement_references() {
-    let demo_model = hybrid_model();
-    let velocity_model = multi_launch_model();
-    let demo = construction_test(&demo_circuit(), &demo_model);
-    let velocity = construction_test(
-        &player_circuit("Velocity Viper", velocity_model.clone()),
-        &velocity_model,
-    );
-    // The current scale includes penalties for the demo's measured excessive forces.
-    assert!(
-        (0.4..=0.7).contains(&demo.excitement),
-        "demo excitement: {}",
-        demo.excitement
-    );
-    // The force-designed player circuit targets a positive score in its calibration band.
-    assert!(
-        (6.0..=9.0).contains(&velocity.excitement),
-        "Velocity Viper excitement: {}",
-        velocity.excitement
     );
 }

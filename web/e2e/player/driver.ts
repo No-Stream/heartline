@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import type { CoasterModelKey } from "../../src/generated/coaster-models";
 
 export type ToolName = "Watch" | "Coaster" | "Paths" | "Landscape" | "Facilities" | "Scenery";
 
@@ -58,10 +59,17 @@ type Tile = { x: number; y: number; z: number };
 type GameSpeed = 1 | 2 | 4 | 8 | 16;
 
 export async function startPark(page: Page, options: { park: "new" | "demo"; seed: number; speed: GameSpeed; livePauseRender?: boolean }): Promise<void> {
-  await page.goto(`/?park=${options.park}&seed=${options.seed}${options.livePauseRender ? "&livePauseRender=1" : ""}`);
+  const path = `/?park=${options.park}&seed=${options.seed}${options.livePauseRender ? "&livePauseRender=1" : ""}`;
+  await gotoGame(page, path);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Watch");
   await setGameSpeed(page, options.speed);
+}
+
+export async function gotoGame(page: Page, path: string): Promise<void> {
+  const url = new URL(path, "http://localhost");
+  if (process.env.THEME_PARK_LIVE_PAUSE_RENDER === "1") url.searchParams.set("livePauseRender", "1");
+  await page.goto(`${url.pathname}${url.search}${url.hash}`);
 }
 
 export async function setGameSpeed(page: Page, targetSpeed: GameSpeed): Promise<void> {
@@ -289,7 +297,7 @@ export async function layQueue(page: Page, start: Tile, end: Tile): Promise<void
   await layPath(page, start, end, "queue");
 }
 
-export async function placeStation(page: Page, options: { tile: Tile; direction: Tile; height: number; model: "hybrid" | "velocity_viper" | "wooden_twister" }): Promise<void> {
+export async function placeStation(page: Page, options: { tile: Tile; direction: Tile; height: number; model: CoasterModelKey }): Promise<void> {
   await selectUnits(page, "metric");
   await openTool(page, "Coaster");
   await page.getByRole("combobox", { name: "Coaster model" }).selectOption(`model:${options.model}`);

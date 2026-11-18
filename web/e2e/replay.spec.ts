@@ -184,10 +184,10 @@ test("the app pauses WebGL drawing while it replays a recorded session @fast", a
       window.rendererDrawCalls += 1;
       return drawArrays.apply(this, args);
     };
-    const drawArraysInstanced = prototype.drawArraysInstanced;
-    prototype.drawArraysInstanced = function (...args) {
+    const drawElements = prototype.drawElements;
+    prototype.drawElements = function (...args) {
       window.rendererDrawCalls += 1;
-      return drawArraysInstanced.apply(this, args);
+      return drawElements.apply(this, args);
     };
   });
 

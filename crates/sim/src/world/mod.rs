@@ -328,6 +328,17 @@ impl World {
         &mut self,
         cells: &[(u16, u16, i16)],
     ) -> Result<Vec<Position>, CellEditError> {
+        let (candidate, invalidated_paths) = self.with_cells_carved(cells)?;
+        *self = candidate;
+        Ok(invalidated_paths)
+    }
+
+    /// Returns a copy with `cells` carved and the paths that carving invalidated, as
+    /// `carve_cells` would leave this world, without changing it.
+    pub fn with_cells_carved(
+        &self,
+        cells: &[(u16, u16, i16)],
+    ) -> Result<(Self, Vec<Position>), CellEditError> {
         let mut unique_cells = cells.to_vec();
         unique_cells.sort_unstable();
         unique_cells.dedup();
@@ -349,10 +360,9 @@ impl World {
         {
             return Err(CellEditError::UnsupportedScenery);
         }
-        *self = candidate;
         invalidated_paths.sort_unstable();
         invalidated_paths.dedup();
-        Ok(invalidated_paths)
+        Ok((candidate, invalidated_paths))
     }
 
     /// Applies a batch of one-height terrain edits atomically, preserving scenery support.

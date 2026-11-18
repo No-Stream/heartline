@@ -4,7 +4,7 @@ use theme_park_sim::physics::{
     Circuit, CoasterRun, ForceEvaluator, GRAVITY, PhysicsConfig, TIME_STEP, Train,
 };
 use theme_park_sim::track::{
-    Bank, Heading, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model,
+    Bank, Heading, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models, hybrid_model,
     multi_launch_model, wooden_twister_model,
 };
 
@@ -221,7 +221,7 @@ fn run_one_car_coaster(
         },
     );
     for _ in 0..100_000 {
-        if let Some(outcome) = run.step(circuit) {
+        if let Some(outcome) = run.step(circuit, "Timber Tumbler") {
             return outcome;
         }
     }
@@ -323,7 +323,7 @@ fn assert_rated_piece_endpoints(ids: &[PieceId]) {
     for &id in ids {
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
         let rated = piece.rated_speeds.expect("piece must have a rated window");
-        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+        for model in coaster_models()
             .iter()
             .filter(|model| model.allows_piece(piece))
         {
@@ -407,6 +407,11 @@ fn sixty_degree_pull_profiles_keep_trains_within_force_limits() {
         SteepToSixtyUp,
         SixtyToSteepDown,
     ]);
+}
+
+#[test]
+fn wide_sixty_degree_drop_passes_full_trains_at_both_rated_endpoints() {
+    assert_rated_piece_endpoints(&[PieceId::WideLevelToSixtyDown, PieceId::WideSixtyDownToLevel]);
 }
 
 #[test]
@@ -735,7 +740,7 @@ fn ride_test_reports_whether_the_train_clears_the_top_hat() {
             PhysicsConfig::default(),
         );
         let outcome = (0..200_000)
-            .find_map(|_| run.step(&circuit))
+            .find_map(|_| run.step(&circuit, wooden_twister_model().name))
             .expect("ride test did not finish");
         let report = &outcome.reports[0];
         assert_eq!(
@@ -1089,7 +1094,7 @@ fn connected_crest_endpoints() {
             GentleDownToLevel,
         ],
     ];
-    let models = [wooden_twister_model(), hybrid_model(), multi_launch_model()];
+    let models = coaster_models();
     for sequence in sequences {
         let (circuit, _, _) = circuit_with_elements(sequence);
         for id in [
@@ -1393,7 +1398,7 @@ fn connected_half_rolls_pass_full_trains_at_both_rated_endpoints() {
             .unwrap();
         let end = start + piece.length();
         let rated = piece.rated_speeds.unwrap();
-        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+        for model in coaster_models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
@@ -1502,7 +1507,7 @@ fn connected_banked_drops_pass_full_trains_at_both_rated_endpoints() {
             .unwrap();
         let end = start + piece.length();
         let rated = piece.rated_speeds.unwrap();
-        for model in [wooden_twister_model(), hybrid_model(), multi_launch_model()]
+        for model in coaster_models()
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
@@ -1579,6 +1584,92 @@ fn connected_corkscrew_rated_samples() {
                         cars,
                         speed,
                         target == HalfCorkscrewLeftUp,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn wide_sixty_degree_drop_passes_full_trains_at_both_rated_endpoints() {
+    use PieceId::*;
+    let catalog = catalog();
+    let mut state = TrackState::origin();
+    let pieces: Vec<Piece> = [
+        Station,
+        WideLevelToSixtyDown,
+        WideSixtyDownToLevel,
+        Straight,
+        Straight,
+        Straight,
+    ]
+    .into_iter()
+    .map(|id| {
+        let piece = catalog
+            .iter()
+            .find(|piece| piece.id == id)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        state = piece.exit;
+        piece
+    })
+    .collect();
+    let circuit = Circuit::open(pieces).unwrap();
+    let models = coaster_models();
+    for id in [WideLevelToSixtyDown, WideSixtyDownToLevel] {
+        let index = circuit
+            .pieces()
+            .iter()
+            .position(|piece| piece.id == id)
+            .unwrap();
+        let piece = &circuit.pieces()[index];
+        let rated = piece.rated_speeds.expect("drop needs a rated speed window");
+        let start: f64 = circuit.pieces()[..index].iter().map(Piece::length).sum();
+        let end = start + piece.length();
+        let allowing: Vec<_> = models
+            .iter()
+            .filter(|model| model.allows_piece(piece))
+            .collect();
+        assert!(!allowing.is_empty(), "{id:?}");
+        for model in allowing {
+            for cars in [*model.cars_per_train.start(), *model.cars_per_train.end()] {
+                let mut configuration = model.train.clone();
+                configuration.length_metres *= f64::from(cars) / f64::from(configuration.cars);
+                configuration.cars = cars;
+                for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let mut train =
+                        Train::new(&circuit, &configuration, unpowered(), start, entry_speed);
+                    let mut minimum_vertical = f64::INFINITY;
+                    let mut maximum_vertical = f64::NEG_INFINITY;
+                    let mut maximum_longitudinal: f64 = 0.0;
+                    while train.distance() < end + configuration.length_metres {
+                        train.step(&circuit);
+                        for frame in train.take_readings() {
+                            for car in frame
+                                .into_iter()
+                                .filter(|car| (start..end).contains(&car.distance))
+                            {
+                                minimum_vertical = minimum_vertical.min(car.g.vertical);
+                                maximum_vertical = maximum_vertical.max(car.g.vertical);
+                                maximum_longitudinal =
+                                    maximum_longitudinal.max(car.g.longitudinal.abs());
+                            }
+                        }
+                        assert!(train.notes().is_empty() && train.speed() > 0.0, "{id:?}");
+                    }
+                    let limits = model.comfortable_force_limits;
+                    eprintln!(
+                        "{id:?} {} {cars} cars at {entry_speed:.3}: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, longitudinal {maximum_longitudinal:.3}",
+                        model.name
+                    );
+                    assert!(
+                        minimum_vertical >= limits.minimum_vertical_g
+                            && maximum_vertical <= limits.maximum_vertical_g
+                            && maximum_longitudinal <= limits.maximum_longitudinal_g,
+                        "{id:?} {} {cars} cars at {entry_speed:.3} m/s: vertical {minimum_vertical:.3}..{maximum_vertical:.3}, longitudinal {maximum_longitudinal:.3}; limits {limits:?}",
+                        model.name
                     );
                 }
             }

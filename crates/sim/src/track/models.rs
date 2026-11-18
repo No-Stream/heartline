@@ -76,30 +76,133 @@ pub struct ComfortableForceLimits {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AirtimeRating {
+pub enum ForceRating {
     Weak,
     Good,
     Great,
+    Fine,
+    Strong,
     TooMuch,
     Dangerous,
 }
 
-impl ComfortableForceLimits {
-    /// Rates negative vertical force using the airtime bands shown by the force overlay.
-    pub fn classify_airtime(self, vertical_g: f64) -> AirtimeRating {
-        let airtime_g = -vertical_g;
-        let comfortable_airtime_limit_g = -self.minimum_vertical_g;
-        if airtime_g <= 0.2 {
-            AirtimeRating::Weak
-        } else if airtime_g <= 0.9 {
-            AirtimeRating::Good
-        } else if airtime_g <= comfortable_airtime_limit_g {
-            AirtimeRating::Great
-        } else if airtime_g <= 1.3 * comfortable_airtime_limit_g {
-            AirtimeRating::TooMuch
-        } else {
-            AirtimeRating::Dangerous
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForceRatingAxis {
+    /// Negative vertical force, measured as a positive magnitude.
+    Airtime,
+    Vertical,
+    Lateral,
+    Longitudinal,
+}
+
+/// One rating band: magnitudes up to `up_to` g (inclusive or not), or every larger magnitude when `up_to` is `None`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ForceRatingBand {
+    pub rating: ForceRating,
+    pub up_to: Option<f64>,
+    pub inclusive: bool,
+}
+
+impl ForceRatingBand {
+    fn covers(self, magnitude: f64) -> bool {
+        match self.up_to {
+            None => true,
+            Some(bound) if self.inclusive => magnitude <= bound,
+            Some(bound) => magnitude < bound,
         }
+    }
+}
+
+/// Positive vertical force from which riders rate a pullout great, by model key. Riders judge pullouts in absolute
+/// g: a steel ride can pull 3 to 3.5 g, and 2.5 g feels mild, so this does not scale with the model's limit.
+pub fn great_positive_vertical_g(model_key: &str) -> f64 {
+    match model_key {
+        "Briar Blitz" | "Daisy Dash" => 2.5,
+        "Timber Tumbler" | "Velocity Viper" | "Horizon Hawk" => 3.0,
+        _ => panic!("unknown coaster model: {model_key}"),
+    }
+}
+
+impl ComfortableForceLimits {
+    /// How riders feel each force, from the gentlest band up; the force overlay shows these same bands. Anything past
+    /// the model's comfortable limit is too much, and past 1.3 times the limit it is dangerous.
+    pub fn rating_bands(self, axis: ForceRatingAxis, model_key: &str) -> Vec<ForceRatingBand> {
+        assert!(
+            self.minimum_vertical_g < 0.0
+                && self.maximum_vertical_g > 0.0
+                && self.maximum_lateral_g > 0.0
+                && self.maximum_longitudinal_g > 0.0
+        );
+        use ForceRating::*;
+        let band = |rating, up_to: f64, inclusive| ForceRatingBand {
+            rating,
+            up_to: Some(up_to),
+            inclusive,
+        };
+        let (mut bands, limit, at_limit) = match axis {
+            ForceRatingAxis::Airtime => {
+                let limit = -self.minimum_vertical_g;
+                let weak_boundary = 0.2_f64.min(limit);
+                let mut bands = vec![band(Weak, weak_boundary, weak_boundary < limit)];
+                if limit > 0.2 {
+                    let good_boundary = 0.9_f64.min(limit);
+                    bands.push(band(Good, good_boundary, good_boundary < limit));
+                }
+                (bands, limit, Great)
+            }
+            ForceRatingAxis::Vertical => {
+                let great_from = great_positive_vertical_g(model_key);
+                assert!(
+                    great_from > 2.0 && great_from < self.maximum_vertical_g,
+                    "great positive vertical force must start between 2 g and the {} g limit",
+                    self.maximum_vertical_g
+                );
+                (
+                    vec![band(Weak, 2.0, true), band(Good, great_from, false)],
+                    self.maximum_vertical_g,
+                    Great,
+                )
+            }
+            ForceRatingAxis::Lateral => (
+                vec![band(Fine, 0.5 * self.maximum_lateral_g, true)],
+                self.maximum_lateral_g,
+                Strong,
+            ),
+            ForceRatingAxis::Longitudinal => (
+                vec![band(Fine, 0.5 * self.maximum_longitudinal_g, true)],
+                self.maximum_longitudinal_g,
+                Strong,
+            ),
+        };
+        bands.extend([
+            band(at_limit, limit, true),
+            band(TooMuch, 1.3 * limit, true),
+            ForceRatingBand {
+                rating: Dangerous,
+                up_to: None,
+                inclusive: true,
+            },
+        ]);
+        bands
+    }
+
+    /// Rates a force in g on one axis. Airtime takes the vertical g itself, so −1.1 g is great airtime.
+    pub fn classify_force(
+        self,
+        axis: ForceRatingAxis,
+        value_g: f64,
+        model_key: &str,
+    ) -> ForceRating {
+        let magnitude = match axis {
+            ForceRatingAxis::Airtime => -value_g,
+            ForceRatingAxis::Vertical => value_g,
+            ForceRatingAxis::Lateral | ForceRatingAxis::Longitudinal => value_g.abs(),
+        };
+        self.rating_bands(axis, model_key)
+            .into_iter()
+            .find(|band| band.covers(magnitude))
+            .expect("the last band covers every magnitude")
+            .rating
     }
 }
 
@@ -108,8 +211,14 @@ pub struct LaunchSpeedBounds {
     pub minimum: f64,
     pub maximum: f64,
 }
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct CoasterModel {
+    #[serde(skip)]
+    pub key: &'static str,
+    #[serde(skip)]
+    pub cars_per_train: std::ops::RangeInclusive<u8>,
+    #[serde(skip)]
+    pub ui_description: &'static str,
     #[serde(with = "crate::save::catalog_text")]
     pub manufacturer: crate::save::CatalogText,
     #[serde(with = "crate::save::catalog_text")]
@@ -132,15 +241,6 @@ pub struct CoasterModel {
     pub default_colors: CoasterColors,
 }
 impl CoasterModel {
-    pub fn cars_per_train_range(&self) -> std::ops::RangeInclusive<u8> {
-        match self.name {
-            "Briar Blitz" => 4..=12,
-            "Timber Tumbler" => 4..=8,
-            "Velocity Viper" => 3..=6,
-            _ => panic!("unknown coaster model: {}", self.name),
-        }
-    }
-
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         hash.write_bytes(self.manufacturer.as_bytes());
         hash.write_bytes(self.name.as_bytes());
@@ -214,8 +314,79 @@ impl CoasterModel {
             .collect()
     }
 }
+
+#[derive(serde::Deserialize)]
+struct SavedCoasterModel {
+    #[serde(with = "crate::save::catalog_text")]
+    manufacturer: crate::save::CatalogText,
+    #[serde(with = "crate::save::catalog_text")]
+    name: crate::save::CatalogText,
+    #[serde(with = "crate::save::catalog_text")]
+    description: crate::save::CatalogText,
+    allowed_pieces: Vec<PieceId>,
+    sloped_turn_slopes: Vec<Slope>,
+    minimum_radius_metres: f64,
+    comfortable_force_limits: ComfortableForceLimits,
+    minimum_height_cm: u16,
+    allowed_inversions: Vec<Inversion>,
+    lift_rules: Option<LiftRules>,
+    launch_types: Vec<LaunchType>,
+    support_style: SupportStyle,
+    train: TrainConfiguration,
+    track_material: Material,
+    structure_material: Material,
+    default_colors: CoasterColors,
+}
+
+impl<'de> serde::Deserialize<'de> for CoasterModel {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+
+        let saved = SavedCoasterModel::deserialize(deserializer)?;
+        let identity = coaster_models()
+            .into_iter()
+            .find(|model| model.name == saved.name)
+            .ok_or_else(|| D::Error::custom(format!("unknown coaster model: {}", saved.name)))?;
+
+        Ok(Self {
+            key: identity.key,
+            cars_per_train: identity.cars_per_train,
+            ui_description: identity.ui_description,
+            manufacturer: saved.manufacturer,
+            name: saved.name,
+            description: saved.description,
+            allowed_pieces: saved.allowed_pieces,
+            sloped_turn_slopes: saved.sloped_turn_slopes,
+            minimum_radius_metres: saved.minimum_radius_metres,
+            comfortable_force_limits: saved.comfortable_force_limits,
+            minimum_height_cm: saved.minimum_height_cm,
+            allowed_inversions: saved.allowed_inversions,
+            lift_rules: saved.lift_rules,
+            launch_types: saved.launch_types,
+            support_style: saved.support_style,
+            train: saved.train,
+            track_material: saved.track_material,
+            structure_material: saved.structure_material,
+            default_colors: saved.default_colors,
+        })
+    }
+}
+
+pub fn coaster_models() -> Vec<CoasterModel> {
+    vec![
+        hybrid_model(),
+        multi_launch_model(),
+        wooden_twister_model(),
+        family_coaster_model(),
+        hyper_model(),
+    ]
+}
+
 pub fn wooden_twister_model() -> CoasterModel {
     CoasterModel {
+        key: "wooden_twister",
+        cars_per_train: 4..=12,
+        ui_description: "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains.",
         manufacturer: "Great Coaster Workshop",
         name: "Briar Blitz",
         description: "An articulated wooden twister with a chain lift and dense timber structure. The steel-structure loop is a plausible extension.",
@@ -227,6 +398,10 @@ pub fn wooden_twister_model() -> CoasterModel {
                 SpeedTurnLarge16Right,
                 SpeedTurnLarge20Left,
                 SpeedTurnLarge20Right,
+                SpeedTurnLarge28Left,
+                SpeedTurnLarge28Right,
+                SpeedTurnLarge32Left,
+                SpeedTurnLarge32Right,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,
@@ -314,6 +489,8 @@ pub fn wooden_twister_model() -> CoasterModel {
                 TwisterHelixRight,
                 AirtimeHill,
                 FloaterHill4x48,
+                FamilyHill3x32,
+                FamilyHill4x40,
                 FloaterHill8x64,
                 FloaterHill12x80,
                 FloaterHill6x64,
@@ -363,6 +540,9 @@ pub fn wooden_twister_model() -> CoasterModel {
 }
 pub fn hybrid_model() -> CoasterModel {
     CoasterModel {
+        key: "hybrid",
+        cars_per_train: 4..=8,
+        ui_description: "Steel box track on a wooden structure.",
         manufacturer: "Rocky Road Construction",
         name: "Timber Tumbler",
         description: "Steel box track on a wooden structure. Some elements are plausible extensions beyond the rides that inspired this model.",
@@ -376,6 +556,10 @@ pub fn hybrid_model() -> CoasterModel {
                 SpeedTurnLarge20Right,
                 SpeedTurnLarge24Left,
                 SpeedTurnLarge24Right,
+                SpeedTurnLarge28Left,
+                SpeedTurnLarge28Right,
+                SpeedTurnLarge32Left,
+                SpeedTurnLarge32Right,
                 Straight,
                 BankedStraightLeft,
                 BankedStraightRight,
@@ -523,6 +707,8 @@ pub fn hybrid_model() -> CoasterModel {
                 EjectorHill12x80,
                 EjectorHill16x96,
                 FloaterHill4x48,
+                FamilyHill3x32,
+                FamilyHill4x40,
                 FloaterHill8x64,
                 FloaterHill12x80,
                 FloaterHill6x64,
@@ -580,6 +766,9 @@ pub fn hybrid_model() -> CoasterModel {
 
 pub fn multi_launch_model() -> CoasterModel {
     CoasterModel {
+        key: "velocity_viper",
+        cars_per_train: 3..=6,
+        ui_description: "Multi-launch steel track and columns with short, standard, and long launch sections.",
         manufacturer: "Impulse Engineering",
         name: "Velocity Viper",
         description: "A steel coaster with linear motor launches. Some elements are plausible extensions beyond the rides that inspired this model.",
@@ -593,6 +782,10 @@ pub fn multi_launch_model() -> CoasterModel {
                 SpeedTurnLarge20Right,
                 SpeedTurnLarge24Left,
                 SpeedTurnLarge24Right,
+                SpeedTurnLarge28Left,
+                SpeedTurnLarge28Right,
+                SpeedTurnLarge32Left,
+                SpeedTurnLarge32Right,
                 LaunchedTopHat,
                 Straight,
                 BankedStraightLeft,
@@ -741,6 +934,8 @@ pub fn multi_launch_model() -> CoasterModel {
                 EjectorHill12x80,
                 EjectorHill16x96,
                 FloaterHill4x48,
+                FamilyHill3x32,
+                FamilyHill4x40,
                 FloaterHill8x64,
                 FloaterHill12x80,
                 FloaterHill6x64,
@@ -789,5 +984,413 @@ pub fn multi_launch_model() -> CoasterModel {
             supports: CoasterColor::Cream,
             trains: CoasterColor::Coral,
         },
+    }
+}
+
+/// A gentle steel family coaster: a curved low lift, 45-degree drops at most, floaty family hills,
+/// turns banked for speed and no inversions, so children from 100 cm can ride.
+pub fn family_coaster_model() -> CoasterModel {
+    CoasterModel {
+        key: "family_coaster",
+        cars_per_train: 4..=10,
+        ui_description: "A gentle steel family coaster with a curving lift, soft floaty hills and turns banked for speed. Children from 100 cm can ride.",
+        manufacturer: "Windmill Ride Works",
+        name: "Daisy Dash",
+        description: "A low steel family coaster with a tyre-driven curving lift, gentle drops, floaty family hills and turns banked for speed. No inversions.",
+        allowed_pieces: {
+            use PieceId::*;
+            vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                Straight,
+                BankedStraightLeft,
+                BankedStraightRight,
+                HalfTileStraight,
+                OneTileStraight,
+                OneTileGentleUp,
+                OneTileGentleDown,
+                GentleUp,
+                GentleDown,
+                SteepUp,
+                SteepDown,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                GentleToSteepUp,
+                SteepToGentleUp,
+                LevelToGentleDown,
+                GentleDownToLevel,
+                LongGentleDownToLevel,
+                GentleToSteepDown,
+                SteepToGentleDown,
+                TurnSmallEntry,
+                TurnSmall,
+                TurnSmallExit,
+                TurnSmallStandalone,
+                TurnSmallRightEntry,
+                TurnSmallRight,
+                TurnSmallRightExit,
+                TurnSmallRightStandalone,
+                TurnLargeEntry,
+                TurnLarge,
+                TurnLargeExit,
+                TurnLargeStandalone,
+                TurnLargeRightEntry,
+                TurnLargeRight,
+                TurnLargeRightExit,
+                TurnLargeRightStandalone,
+                BankLeft,
+                UnbankLeft,
+                BankRight,
+                UnbankRight,
+                BankedTurnEntry,
+                BankedTurn,
+                BankedTurnExit,
+                BankedTurnStandalone,
+                SmallRightBankedTurnEntry,
+                SmallRightBankedTurn,
+                SmallRightBankedTurnExit,
+                SmallRightBankedTurnStandalone,
+                LargeLeftBankedTurnEntry,
+                LargeLeftBankedTurn,
+                LargeLeftBankedTurnExit,
+                LargeLeftBankedTurnStandalone,
+                LargeRightBankedTurnEntry,
+                LargeRightBankedTurn,
+                LargeRightBankedTurnExit,
+                LargeRightBankedTurnStandalone,
+                OffsetLeft,
+                OffsetRight,
+                ShortOffsetLeft,
+                ShortOffsetRight,
+                FullOffsetLeft,
+                FullOffsetRight,
+                ShortRise,
+                ShortFall,
+                Brakes,
+                Station,
+                TerrainRise,
+                TerrainFall,
+                FamilyHill3x32,
+                FamilyHill4x40,
+            ]
+        },
+        sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
+        minimum_radius_metres: 8.0,
+        comfortable_force_limits: ComfortableForceLimits {
+            minimum_vertical_g: -0.6,
+            maximum_vertical_g: 3.0,
+            maximum_lateral_g: 1.0,
+            // Every hill's heart-line surge reaches about 1.4 g at its window top, so a lower
+            // longitudinal limit would leave the family hills without their float.
+            maximum_longitudinal_g: 1.5,
+        },
+        minimum_height_cm: 100,
+        allowed_inversions: vec![],
+        lift_rules: Some(LiftRules {
+            max_slope: Slope::UpGentle,
+            curved: true,
+        }),
+        launch_types: vec![],
+        support_style: SupportStyle::SteelColumns,
+        train: TrainConfiguration {
+            cars: 10,
+            rows_per_car: 1,
+            seats_per_row: 2,
+            length_metres: 15.0,
+            width_metres: 1.8,
+            height_metres: 1.6,
+            launch: None,
+        },
+        track_material: Material::Steel,
+        structure_material: Material::Steel,
+        default_colors: CoasterColors {
+            track: CoasterColor::Mustard,
+            supports: CoasterColor::Sky,
+            trains: CoasterColor::Rose,
+        },
+    }
+}
+
+/// A steel hyper coaster: a tall straight chain lift, a 60-degree first drop, long floater camelbacks and wide
+/// turns banked for speed, with four-across trains and no inversions or launches.
+pub fn hyper_model() -> CoasterModel {
+    CoasterModel {
+        key: "hyper",
+        cars_per_train: 4..=8,
+        ui_description: "A tall steel hyper coaster with a straight chain lift, a steep first drop, long floater camelbacks and wide turns banked for speed. Four riders across, no inversions.",
+        manufacturer: "Boulder & Marlin",
+        name: "Horizon Hawk",
+        description: "A steel hyper coaster with a straight chain lift, a 60-degree first drop, long floater camelbacks, wide turns banked for speed and four-across open trains. No inversions or launches.",
+        allowed_pieces: {
+            use PieceId::*;
+            vec![
+                SpeedTurnLarge16Left,
+                SpeedTurnLarge16Right,
+                SpeedTurnLarge20Left,
+                SpeedTurnLarge20Right,
+                SpeedTurnLarge28Left,
+                SpeedTurnLarge28Right,
+                SpeedTurnLarge32Left,
+                SpeedTurnLarge32Right,
+                SpeedTurnSmall12Left,
+                SpeedTurnSmall12Right,
+                SpeedTurnSmall16Left,
+                SpeedTurnSmall16Right,
+                SpeedTurnSmall20Left,
+                SpeedTurnSmall20Right,
+                Straight,
+                BankedStraightLeft,
+                BankedStraightRight,
+                HalfTileStraight,
+                OneTileStraight,
+                OneTileGentleUp,
+                OneTileGentleDown,
+                GentleUp,
+                GentleDown,
+                SteepUp,
+                SteepDown,
+                SixtyDownToLevel,
+                WideLevelToSixtyDown,
+                WideSixtyDownToLevel,
+                SteepToSixtyDown,
+                SixtyDown,
+                SixtyToSteepDown,
+                LevelToGentleUp,
+                GentleUpToLevel,
+                GentleToSteepUp,
+                SteepToGentleUp,
+                LevelToGentleDown,
+                GentleDownToLevel,
+                LongGentleDownToLevel,
+                GentleToSteepDown,
+                SteepToGentleDown,
+                TurnSmallEntry,
+                TurnSmall,
+                TurnSmallExit,
+                TurnSmallStandalone,
+                TurnSmallRightEntry,
+                TurnSmallRight,
+                TurnSmallRightExit,
+                TurnSmallRightStandalone,
+                TurnLargeEntry,
+                TurnLarge,
+                TurnLargeExit,
+                TurnLargeStandalone,
+                TurnLargeRightEntry,
+                TurnLargeRight,
+                TurnLargeRightExit,
+                TurnLargeRightStandalone,
+                BankLeft,
+                UnbankLeft,
+                BankRight,
+                UnbankRight,
+                BankedTurnEntry,
+                BankedTurn,
+                BankedTurnExit,
+                BankedTurnStandalone,
+                SmallRightBankedTurnEntry,
+                SmallRightBankedTurn,
+                SmallRightBankedTurnExit,
+                SmallRightBankedTurnStandalone,
+                LargeLeftBankedTurnEntry,
+                LargeLeftBankedTurn,
+                LargeLeftBankedTurnExit,
+                LargeLeftBankedTurnStandalone,
+                LargeRightBankedTurnEntry,
+                LargeRightBankedTurn,
+                LargeRightBankedTurnExit,
+                LargeRightBankedTurnStandalone,
+                OffsetLeft,
+                OffsetRight,
+                ShortOffsetLeft,
+                ShortOffsetRight,
+                FullOffsetLeft,
+                FullOffsetRight,
+                ShortRise,
+                ShortFall,
+                Brakes,
+                Station,
+                TerrainRise,
+                TerrainFall,
+                FloaterHill12x80OuterLeft,
+                FloaterHill12x80OuterRight,
+                FloaterHill12x96OuterLeft,
+                FloaterHill12x96OuterRight,
+                FloaterHill16x112OuterLeft,
+                FloaterHill16x112OuterRight,
+                FloaterHill4x48OuterLeft,
+                FloaterHill4x48OuterRight,
+                FloaterHill8x64OuterLeft,
+                FloaterHill8x64OuterRight,
+                FloaterHill6x64OuterLeft,
+                FloaterHill6x64OuterRight,
+                FloaterHill4x48,
+                FamilyHill3x32,
+                FamilyHill4x40,
+                FloaterHill8x64,
+                FloaterHill6x64,
+                SpeedHill4x64,
+                SpeedHill6x80,
+                FloaterHill12x80,
+                FloaterHill12x96,
+                FloaterHill16x112,
+                FloaterHill20x128,
+                FloaterHill24x160,
+            ]
+        },
+        sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
+        minimum_radius_metres: 8.0,
+        comfortable_force_limits: ComfortableForceLimits {
+            minimum_vertical_g: -1.3,
+            maximum_vertical_g: 4.0,
+            maximum_lateral_g: 1.2,
+            // The heart-line surge over every floater hill and the first drop's crest reaches 1.2 to 1.5 g, so a
+            // lower longitudinal limit would leave the ride without its smaller hills or a 60-degree drop.
+            maximum_longitudinal_g: 1.5,
+        },
+        minimum_height_cm: 132,
+        allowed_inversions: vec![],
+        lift_rules: Some(LiftRules {
+            max_slope: Slope::UpSteep,
+            curved: false,
+        }),
+        launch_types: vec![],
+        support_style: SupportStyle::SteelColumns,
+        train: TrainConfiguration {
+            cars: 8,
+            rows_per_car: 1,
+            seats_per_row: 4,
+            length_metres: 20.0,
+            width_metres: 2.8,
+            height_metres: 2.2,
+            launch: None,
+        },
+        track_material: Material::Steel,
+        structure_material: Material::Steel,
+        default_colors: CoasterColors {
+            track: CoasterColor::Sky,
+            supports: CoasterColor::Cream,
+            trains: CoasterColor::Mustard,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[derive(serde::Serialize)]
+    struct LegacyCoasterModel {
+        #[serde(with = "crate::save::catalog_text")]
+        manufacturer: crate::save::CatalogText,
+        #[serde(with = "crate::save::catalog_text")]
+        name: crate::save::CatalogText,
+        #[serde(with = "crate::save::catalog_text")]
+        description: crate::save::CatalogText,
+        allowed_pieces: Vec<PieceId>,
+        sloped_turn_slopes: Vec<Slope>,
+        minimum_radius_metres: f64,
+        comfortable_force_limits: ComfortableForceLimits,
+        minimum_height_cm: u16,
+        allowed_inversions: Vec<Inversion>,
+        lift_rules: Option<LiftRules>,
+        launch_types: Vec<LaunchType>,
+        support_style: SupportStyle,
+        train: TrainConfiguration,
+        track_material: Material,
+        structure_material: Material,
+        default_colors: CoasterColors,
+    }
+
+    impl From<&CoasterModel> for LegacyCoasterModel {
+        fn from(model: &CoasterModel) -> Self {
+            Self {
+                manufacturer: model.manufacturer,
+                name: model.name,
+                description: model.description,
+                allowed_pieces: model.allowed_pieces.clone(),
+                sloped_turn_slopes: model.sloped_turn_slopes.clone(),
+                minimum_radius_metres: model.minimum_radius_metres,
+                comfortable_force_limits: model.comfortable_force_limits,
+                minimum_height_cm: model.minimum_height_cm,
+                allowed_inversions: model.allowed_inversions.clone(),
+                lift_rules: model.lift_rules,
+                launch_types: model.launch_types.clone(),
+                support_style: model.support_style,
+                train: model.train.clone(),
+                track_material: model.track_material,
+                structure_material: model.structure_material,
+                default_colors: model.default_colors,
+            }
+        }
+    }
+
+    #[test]
+    fn registry_preserves_keys_names_and_legacy_order() {
+        let models = coaster_models();
+
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| (model.key, model.name))
+                .collect::<Vec<_>>(),
+            [
+                ("hybrid", "Timber Tumbler"),
+                ("velocity_viper", "Velocity Viper"),
+                ("wooden_twister", "Briar Blitz"),
+                ("family_coaster", "Daisy Dash"),
+                ("hyper", "Horizon Hawk"),
+            ]
+        );
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.key)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            models.len()
+        );
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.name)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            models.len()
+        );
+        assert_eq!(models[0].cars_per_train, 4..=8);
+        assert_eq!(models[1].cars_per_train, 3..=6);
+        assert_eq!(models[2].cars_per_train, 4..=12);
+        assert_eq!(
+            models[0].ui_description,
+            "Steel box track on a wooden structure."
+        );
+        assert_eq!(
+            models[1].ui_description,
+            "Multi-launch steel track and columns with short, standard, and long launch sections."
+        );
+        assert_eq!(
+            models[2].ui_description,
+            "Twisting wooden track on a dense wooden structure, with a chain lift and articulated trains."
+        );
+    }
+
+    #[test]
+    fn registry_metadata_preserves_legacy_save_bytes_and_loads_old_models() {
+        for model in coaster_models() {
+            let legacy = LegacyCoasterModel::from(&model);
+            let legacy_bytes = postcard::to_allocvec(&legacy).unwrap();
+
+            assert_eq!(postcard::to_allocvec(&model).unwrap(), legacy_bytes);
+
+            let restored: CoasterModel = postcard::from_bytes(&legacy_bytes).unwrap();
+            assert_eq!(restored.key, model.key);
+            assert_eq!(restored.cars_per_train, model.cars_per_train);
+            assert_eq!(restored.ui_description, model.ui_description);
+            assert_eq!(postcard::to_allocvec(&restored).unwrap(), legacy_bytes);
+        }
     }
 }
