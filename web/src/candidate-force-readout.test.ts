@@ -34,7 +34,7 @@ describe("candidate force readout", () => {
   });
 
   it("uses the corresponding peak flags to distinguish brief forces and violations", () => {
-    const lines = candidateForceReadout({ ...preview, peaks: { ...preview.peaks, minimumVerticalG: -1.2, maximumVerticalG: 4.2, maximumVerticalLimitExceeded: true, maximumAbsoluteLateralG: 1.2 } }, "metric");
+    const lines = candidateForceReadout({ ...preview, peaks: { ...preview.peaks, minimumVerticalG: -1.2, maximumVerticalG: 4.2, maximumVerticalLimitExceeded: true, maximumAbsoluteLateralG: 2.0, lateralLimitExceeded: false } }, "metric");
     expect(lines[2]).toContain("brief airtime");
     expect(lines[3]).toContain("too much");
     expect(lines[4]).toContain("brief");

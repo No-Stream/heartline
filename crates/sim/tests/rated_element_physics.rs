@@ -174,7 +174,7 @@ fn rolled_inversion_minimum_speeds_clear_with_energy_margin() {
         let rated = piece.rated_speeds.expect("rolled inversion must be rated");
         let (circuit, start, end) = circuit_for_level_piece(id);
         for model in [hybrid_model(), multi_launch_model()] {
-            for cars in [6, 12] {
+            for cars in model.cars_per_train.clone() {
                 assert_train_crosses_element(
                     &model,
                     &circuit,
@@ -204,7 +204,7 @@ fn level_elements_clear_from_their_minimum_after_a_steep_crest() {
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in [6, 12] {
+            for cars in model.cars_per_train.clone() {
                 assert_train_crosses_element(
                     &model,
                     &circuit,
@@ -237,7 +237,7 @@ fn half_inversion_windows_hold_after_preceding_inversion() {
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
         let rated = piece.rated_speeds.unwrap();
         for model in [hybrid_model(), multi_launch_model()] {
-            for cars in [6, 12] {
+            for cars in model.cars_per_train.clone() {
                 for speed in [rated.minimum_entry, rated.maximum_entry] {
                     assert_train_crosses_element(
                         &model,
@@ -287,7 +287,7 @@ fn sixty_degree_windows_hold_with_connected_approaches() {
                 continue;
             };
             for model in [hybrid_model(), multi_launch_model()] {
-                for cars in [6, 12] {
+                for cars in model.cars_per_train.clone() {
                     for speed in [rated.minimum_entry, rated.maximum_entry] {
                         assert_train_crosses_element(
                             &model,
@@ -413,6 +413,7 @@ fn scan_train_element(
     entry_speed: f64,
 ) -> ElementScan {
     let mut train_config = model.train.clone();
+    train_config.length_metres *= f64::from(cars) / f64::from(train_config.cars);
     train_config.cars = cars;
     let mut train = Train::new(
         circuit,
@@ -713,7 +714,7 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
             .into_iter()
             .filter(|model| model.allows_piece(template))
         {
-            for cars in [6, 12] {
+            for cars in model.cars_per_train.clone() {
                 for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
                     let is_ascending = template.exit.position().z > template.entry.position().z
                         || matches!(
@@ -771,7 +772,7 @@ fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
     let rated = piece.rated_speeds.unwrap();
     let model = wooden_twister_model();
     let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
-    for cars in [6, 12] {
+    for cars in model.cars_per_train.clone() {
         let mut speeds = vec![rated.minimum_entry];
         let mut speed = rated.maximum_entry;
         while speed > rated.minimum_entry {
@@ -794,9 +795,7 @@ fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
         let rating = rate_piece(&model, cars, piece, rated.maximum_entry, rating_physics())
             .expect("rating must complete");
         assert_eq!(
-            model
-                .comfortable_force_limits
-                .classify_force(
+            model.comfortable_force_limits.classify_force(
                 ForceRatingAxis::Airtime,
                 rating.minimum_filtered_vertical,
                 model.name,
@@ -838,14 +837,11 @@ fn every_ejector_hill_reaches_great_airtime_for_each_allowed_default_train() {
                 let rating = rate_piece(model, model.train.cars, piece, speed, rating_physics())
                     .expect("rating must complete");
                 rating.passed
-                    && model
-                        .comfortable_force_limits
-                        .classify_force(
-                ForceRatingAxis::Airtime,
-                rating.minimum_filtered_vertical,
-                model.name,
-            )
-                        == ForceRating::Great
+                    && model.comfortable_force_limits.classify_force(
+                        ForceRatingAxis::Airtime,
+                        rating.minimum_filtered_vertical,
+                        model.name,
+                    ) == ForceRating::Great
             });
             if !found_great {
                 failures.push(format!(
@@ -873,9 +869,7 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
         {
             let rating = rate_piece(&model, model.train.cars, piece, maximum, rating_physics())
                 .expect("rating must complete");
-            let airtime = model
-                .comfortable_force_limits
-                .classify_force(
+            let airtime = model.comfortable_force_limits.classify_force(
                 ForceRatingAxis::Airtime,
                 rating.minimum_filtered_vertical,
                 model.name,
@@ -1013,7 +1007,7 @@ fn every_tilted_roll_and_drop_variant_passes_full_train_at_both_window_ends() {
                 .into_iter()
                 .filter(|model| model.allows_piece(piece))
             {
-                for cars in [6, 12] {
+                for cars in model.cars_per_train.clone() {
                     for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
                         let minimum_speed_required = entry_speed == rated.minimum_entry
                             && piece.exit.position().z > piece.entry.position().z;
@@ -1180,7 +1174,7 @@ fn banked_straights_and_rollouts_pass_full_train_at_rated_window_ends() {
                     .into_iter()
                     .filter(|model| model.allows_piece(piece))
                 {
-                    for cars in [6, 12] {
+                    for cars in model.cars_per_train.clone() {
                         for speed in [rated.minimum_entry, rated.maximum_entry] {
                             assert_train_crosses_element(
                                 &model,
@@ -1234,7 +1228,7 @@ fn wave_and_overbank_turns_have_contiguous_rated_windows() {
         let mut speed = rated.minimum_entry;
         while speed <= rated.maximum_entry {
             for model in [hybrid_model(), multi_launch_model()] {
-                for cars in [6, 12] {
+                for cars in model.cars_per_train.clone() {
                     assert_train_crosses_element(
                         &model,
                         &circuit,
@@ -1297,7 +1291,7 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
         while speed <= rated.maximum_entry {
             for (model_index, model) in all_models.iter().enumerate() {
                 let model_allows_piece = model.allows_piece(piece);
-                for cars in [6, 12] {
+                for cars in model.cars_per_train.clone() {
                     let scan = scan_train_element(model, &circuit, start..end, cars, speed);
                     let forces = scan.forces;
                     if !scan.all_cars_seen {

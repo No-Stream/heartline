@@ -7,7 +7,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits generate-report-types check-report-types generate-profiles bench-player-force-preview generate-rated-windows
+.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits generate-report-types check-report-types generate-profiles bench-player-force-preview generate-rated-windows
 
 install:
 	npm ci
@@ -46,6 +46,19 @@ test: test-rust test-threads test-flexibility test-web
 
 test-rust:
 	$(CARGO) test --workspace -- --skip track::construction::walk_tests::seeded_
+
+test-rated-windows:
+	$(CARGO) test -p theme-park-sim --example measure_force_windows
+
+test-force-rule:
+	$(CARGO) test -p theme-park-sim --lib physics::force_evaluation::tests
+	$(CARGO) test -p theme-park-sim --test rated_element_physics
+
+test-construction-cache:
+	$(CARGO) test -p theme-park-sim --lib track::construction::cache_tests
+
+test-inversion-compile:
+	$(CARGO) test -p theme-park-sim --test inversion_physics --no-run
 
 test-threads:
 	$(CARGO) test -p theme-park-sim --features threads -- --skip track::construction::walk_tests::seeded_

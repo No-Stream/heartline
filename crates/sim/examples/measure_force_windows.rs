@@ -33,29 +33,62 @@ const DESIGN_CAPPED_PIECES: [PieceId; 6] = [
 const AXIS_NAMES: [&str; 3] = ["vertical", "lateral", "longitudinal"];
 const MAXIMUM_ROLL_RATE: f64 = Piece::MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND;
 
-/// Whether a floater hill gives some allowed model's default train more than Good airtime at this speed.
-fn floater_airtime_too_strong(piece: &Piece, speed: f64) -> bool {
-    if !hill_family(piece).is_some_and(|family| {
-        matches!(family.feel, HillFeel::Floater | HillFeel::StrongFloater) && family.twist.is_none()
-    }) {
-        return false;
-    }
+/// Whether each allowed model's default train stays below the hill's airtime ceiling.
+fn rated_hill_airtime_within_feel_ceiling(piece: &Piece, speed: f64) -> bool {
+    let Some(family) = hill_family(piece).filter(|family| {
+        matches!(
+            family.feel,
+            HillFeel::Ejector | HillFeel::Floater | HillFeel::StrongFloater
+        ) && family.twist.is_none()
+    }) else {
+        return true;
+    };
+
     models()
         .into_iter()
         .filter(|model| model.allows_piece(piece))
-        .any(|model| {
+        .all(|model| {
             let rating = rate_piece(&model, model.train.cars, piece, speed, unpowered()).unwrap();
-            !matches!(
-                model
-                    .comfortable_force_limits
-                    .classify_force(
-                        ForceRatingAxis::Airtime,
-                        rating.minimum_filtered_vertical,
-                        model.name,
-                    ),
-                ForceRating::Weak | ForceRating::Good
-            )
+            let airtime = model.comfortable_force_limits.classify_force(
+                ForceRatingAxis::Airtime,
+                rating.minimum_filtered_vertical,
+                model.name,
+            );
+            match family.feel {
+                HillFeel::Ejector => {
+                    !matches!(airtime, ForceRating::TooMuch | ForceRating::Dangerous)
+                }
+                HillFeel::Floater | HillFeel::StrongFloater => {
+                    matches!(airtime, ForceRating::Weak | ForceRating::Good)
+                }
+                _ => unreachable!("only airtime hill feels are checked"),
+            }
         })
+}
+
+/// The maximum entry speed at which each allowed default train keeps the hill's intended airtime feel.
+fn cap_maximum_for_hill_feel(piece: &Piece, minimum_entry: f64, maximum_entry: f64) -> Option<f64> {
+    let family = hill_family(piece).filter(|family| {
+        matches!(
+            family.feel,
+            HillFeel::Ejector | HillFeel::Floater | HillFeel::StrongFloater
+        ) && family.twist.is_none()
+    })?;
+    if rated_hill_airtime_within_feel_ceiling(piece, maximum_entry) {
+        return None;
+    }
+    assert!(
+        rated_hill_airtime_within_feel_ceiling(piece, minimum_entry),
+        "{:?}: default train airtime exceeds the {:?} ceiling at its minimum",
+        piece.id,
+        family.feel
+    );
+    Some(refine_boundary(
+        minimum_entry,
+        maximum_entry,
+        false,
+        |speed| rated_hill_airtime_within_feel_ceiling(piece, speed),
+    ))
 }
 
 fn hill_family(piece: &Piece) -> Option<HillFamily> {
@@ -276,22 +309,16 @@ fn scan(template: &'static Piece) -> ScannedWindow {
     };
 
     let (maximum_entry, maximum_source, upper_failure) =
-        if floater_airtime_too_strong(template, maximum_entry) {
-            assert!(
-                !floater_airtime_too_strong(template, minimum_entry),
-                "{:?}: more than Good airtime at its minimum",
-                template.id
-            );
-            let maximum = refine_boundary(minimum_entry, maximum_entry, false, |speed| {
-                !floater_airtime_too_strong(template, speed)
-            });
-            let above = format!(
-                "default-train airtime above Good at {:.2} m/s",
-                maximum + 0.01
-            );
-            (maximum, RatedWindowSource::AirtimeFeel, Some(above))
-        } else {
-            (maximum_entry, maximum_source, upper_failure)
+        match cap_maximum_for_hill_feel(template, minimum_entry, maximum_entry) {
+            Some(maximum) => {
+                let feel = hill_family(template).unwrap().feel;
+                let above = format!(
+                    "default-train airtime leaves {feel:?} feel above {:.2} m/s",
+                    maximum + 0.01
+                );
+                (maximum, RatedWindowSource::AirtimeFeel, Some(above))
+            }
+            None => (maximum_entry, maximum_source, upper_failure),
         };
 
     let mut acceptance_failures = Vec::new();
@@ -334,13 +361,11 @@ fn scan(template: &'static Piece) -> ScannedWindow {
             for cars in model.cars_per_train.clone() {
                 let rating =
                     rate_piece(&model, cars, template, maximum_entry, unpowered()).unwrap();
-                let class = model
-                    .comfortable_force_limits
-                    .classify_force(
-                        ForceRatingAxis::Airtime,
-                        rating.minimum_filtered_vertical,
-                        model.name,
-                    );
+                let class = model.comfortable_force_limits.classify_force(
+                    ForceRatingAxis::Airtime,
+                    rating.minimum_filtered_vertical,
+                    model.name,
+                );
                 let default_train = cars == model.train.cars;
                 airtime.push(format!(
                     "{} {cars} cars{}: {:.3} g {class:?}",
@@ -348,12 +373,10 @@ fn scan(template: &'static Piece) -> ScannedWindow {
                     if default_train { " (default)" } else { "" },
                     rating.minimum_filtered_vertical
                 ));
-                if family.feel == HillFeel::Ejector
-                    && default_train
-                    && class != ForceRating::Great
+                if family.feel == HillFeel::Ejector && default_train && class != ForceRating::Great
                 {
                     acceptance_failures.push(format!(
-                        "{:?}: {} default {cars}-car train has {class:?} airtime ({:.3} g) at the {maximum_entry} m/s maximum; relabel it a floater",
+                        "{:?}: {} default {cars}-car train has {class:?} airtime ({:.3} g) at the {maximum_entry} m/s maximum; expected Great",
                         template.id, model.name, rating.minimum_filtered_vertical
                     ));
                 }
@@ -512,9 +535,11 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{failure, refine_boundary, unmeasured_catalog};
+    use super::{cap_maximum_for_hill_feel, failure, refine_boundary, unmeasured_catalog};
     use theme_park_sim::physics::rated_piece::{rate_piece, unpowered};
-    use theme_park_sim::track::{PieceId, hybrid_model};
+    use theme_park_sim::track::{
+        ForceRating, ForceRatingAxis, PieceId, coaster_models, hybrid_model,
+    };
 
     #[test]
     fn accepts_evaluator_approved_brief_excursion_at_corkscrew_speed() {
@@ -541,5 +566,83 @@ mod tests {
         let passes = |speed: f64| (5.123..=20.987).contains(&speed);
         assert_eq!(refine_boundary(5.0, 5.25, true, passes), 5.13);
         assert_eq!(refine_boundary(20.75, 21.0, false, passes), 20.98);
+    }
+
+    #[test]
+    fn caps_ejector_and_floater_families_for_every_default_train() {
+        for (piece_id, upper_speed, ejector) in [
+            (PieceId::EjectorHill8x48, 25.0, true),
+            (PieceId::WoodenEjectorHill6x48, 20.01, true),
+            (PieceId::FloaterHill12x80, 30.0, false),
+        ] {
+            let piece = unmeasured_catalog()
+                .iter()
+                .find(|piece| piece.id == piece_id)
+                .unwrap();
+            let minimum = piece.rated_speeds.unwrap().minimum_entry;
+            let maximum = cap_maximum_for_hill_feel(piece, minimum, upper_speed).unwrap();
+            let allowed_models: Vec<_> = coaster_models()
+                .into_iter()
+                .filter(|model| model.allows_piece(piece))
+                .collect();
+            assert!(!allowed_models.is_empty());
+            let allowed_rating = |rating| {
+                if ejector {
+                    rating == ForceRating::Great
+                } else {
+                    matches!(rating, ForceRating::Weak | ForceRating::Good)
+                }
+            };
+            let airtime = |model: &theme_park_sim::track::CoasterModel, speed| {
+                let rating =
+                    rate_piece(model, model.train.cars, piece, speed, unpowered()).unwrap();
+                model.comfortable_force_limits.classify_force(
+                    ForceRatingAxis::Airtime,
+                    rating.minimum_filtered_vertical,
+                    model.name,
+                )
+            };
+            assert!(
+                allowed_models
+                    .iter()
+                    .all(|model| allowed_rating(airtime(model, maximum))),
+                "{piece_id:?}"
+            );
+            assert!(
+                allowed_models
+                    .iter()
+                    .any(|model| !allowed_rating(airtime(model, maximum + 0.01))),
+                "{piece_id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn caps_wooden_ejector_window_at_briar_blitz_great_airtime() {
+        let piece = unmeasured_catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::WoodenEjectorHill6x48)
+            .expect("catalog contains the wooden ejector hill");
+        let rated_speeds = piece.rated_speeds.expect("the hill has rated speeds");
+        let capped_maximum = cap_maximum_for_hill_feel(piece, rated_speeds.minimum_entry, 20.01)
+            .expect("the computed maximum exceeds the intended airtime feel");
+        let model = coaster_models()
+            .into_iter()
+            .find(|model| model.name == "Briar Blitz")
+            .expect("catalog contains Briar Blitz");
+
+        let classify_at = |speed| {
+            let rating = rate_piece(&model, model.train.cars, piece, speed, unpowered()).unwrap();
+            model.comfortable_force_limits.classify_force(
+                ForceRatingAxis::Airtime,
+                rating.minimum_filtered_vertical,
+                model.name,
+            )
+        };
+
+        assert_eq!(model.train.cars, 12);
+        assert!(capped_maximum < 20.01);
+        assert_eq!(classify_at(capped_maximum), ForceRating::Great);
+        assert_ne!(classify_at(capped_maximum + 0.01), ForceRating::Great);
     }
 }

@@ -133,11 +133,7 @@ impl PreviewCache {
             let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
             (
                 Train::new(&circuit, configuration, config, station_distance, 0.0),
-                TestRunRecorder::for_circuit_with_train_and_limits(
-                    &circuit,
-                    configuration,
-                    limits,
-                ),
+                TestRunRecorder::for_circuit_with_train_and_limits(&circuit, configuration, limits),
                 vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)],
                 vec![false; length.ceil() as usize],
                 vec![None; usize::from(configuration.cars)],

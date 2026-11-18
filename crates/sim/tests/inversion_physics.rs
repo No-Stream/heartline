@@ -1592,7 +1592,7 @@ fn connected_corkscrew_rated_samples() {
 }
 
 #[test]
-fn wide_sixty_degree_drop_passes_full_trains_at_both_rated_endpoints() {
+fn connected_wide_sixty_degree_drop_passes_full_trains_at_both_rated_endpoints() {
     use PieceId::*;
     let catalog = catalog();
     let mut state = TrackState::origin();
