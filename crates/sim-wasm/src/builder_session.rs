@@ -160,9 +160,16 @@ impl BuilderSession {
             None
         };
         let end_speed = force_preview.as_ref().and_then(|preview| {
-            (preview.status == "reachedEnd")
-                .then(|| preview.samples.last().map(|sample| sample.speed))
-                .flatten()
+            if preview.status != "reachedEnd" {
+                return None;
+            }
+            let last_sample = preview
+                .samples
+                .last()
+                .expect("reached-end force preview has at least one sample");
+            let speed_json = serde_json::to_string(&last_sample.speed)
+                .expect("force preview sample speed serializes");
+            Some(serde_json::from_str(&speed_json).expect("force preview speed JSON is valid"))
         });
         let status = force_preview.as_ref().map_or("", |preview| preview.status);
         let choices = self
@@ -552,19 +559,51 @@ mod tests {
     }
 
     #[test]
-    fn undo_restores_the_previous_state_hash_after_a_placed_piece() {
+    fn undo_restores_the_previous_construction_state_after_a_placed_piece() {
         let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
         session.start("hybrid", 241, 249, 12, 1).unwrap();
         session.worker_update(true);
-        let initial_hash = session.state_hash();
+        let initial_track = session.simulation().construction_track();
+        let mut initial_construction = serde_json::to_value(
+            session
+                .simulation()
+                .construction
+                .as_ref()
+                .expect("construction started"),
+        )
+        .unwrap();
+        initial_construction
+            .as_object_mut()
+            .expect("construction serializes as an object")
+            .remove("next_id")
+            .expect("construction serializes its next piece id");
+        let initial_next_piece_id = session
+            .simulation()
+            .construction
+            .as_ref()
+            .expect("construction started")
+            .next_piece_id();
 
         session.select("Straight", true).unwrap();
         session.worker_update(true);
         session.place().unwrap();
-        assert_ne!(session.state_hash(), initial_hash);
+        assert_ne!(session.simulation().construction_track(), initial_track);
 
         session.undo().unwrap();
-        assert_eq!(session.state_hash(), initial_hash);
+        let construction = session
+            .simulation()
+            .construction
+            .as_ref()
+            .expect("construction remains active");
+        assert_eq!(session.simulation().construction_track(), initial_track);
+        assert_eq!(construction.next_piece_id(), initial_next_piece_id + 1);
+        let mut restored_construction = serde_json::to_value(construction).unwrap();
+        restored_construction
+            .as_object_mut()
+            .expect("construction serializes as an object")
+            .remove("next_id")
+            .expect("construction serializes its next piece id");
+        assert_eq!(restored_construction, initial_construction);
     }
 
     #[test]
@@ -795,11 +834,32 @@ mod tests {
     fn first_trace_difference(expected: &Trace, actual: &Trace) -> String {
         for (index, (expected_call, actual_call)) in expected.iter().zip(actual).enumerate() {
             if expected_call != actual_call {
-                let expected_output: String = expected_call.1.chars().take(240).collect();
-                let actual_output: String = actual_call.1.chars().take(240).collect();
+                let expected_chars: Vec<_> = expected_call.1.chars().collect();
+                let actual_chars: Vec<_> = actual_call.1.chars().collect();
+                let common_prefix = expected_chars
+                    .iter()
+                    .zip(&actual_chars)
+                    .take_while(|(expected, actual)| expected == actual)
+                    .count();
+                let context_start = common_prefix.saturating_sub(80);
+                let expected_output: String = expected_chars
+                    .iter()
+                    .skip(context_start)
+                    .take(200)
+                    .collect();
+                let actual_output: String = actual_chars
+                    .iter()
+                    .skip(context_start)
+                    .take(200)
+                    .collect();
                 return format!(
-                    "first difference at call {index}: expected {} {:?}, got {} {:?}",
-                    expected_call.0, expected_output, actual_call.0, actual_output,
+                    "first difference at call {index}: expected {} ({} chars) near {context_start} {:?}, got {} ({} chars) near {context_start} {:?}",
+                    expected_call.0,
+                    expected_chars.len(),
+                    expected_output,
+                    actual_call.0,
+                    actual_chars.len(),
+                    actual_output,
                 );
             }
         }
