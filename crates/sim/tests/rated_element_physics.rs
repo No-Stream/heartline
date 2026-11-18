@@ -174,17 +174,16 @@ fn rolled_inversion_minimum_speeds_clear_with_energy_margin() {
         let rated = piece.rated_speeds.expect("rolled inversion must be rated");
         let (circuit, start, end) = circuit_for_level_piece(id);
         for model in [hybrid_model(), multi_launch_model()] {
-            for cars in model.cars_per_train.clone() {
-                assert_train_crosses_element(
-                    &model,
-                    &circuit,
-                    id,
-                    start..end,
-                    cars,
-                    rated.minimum_entry,
-                    true,
-                );
-            }
+            let cars = model.train.cars;
+            assert_train_crosses_element(
+                &model,
+                &circuit,
+                id,
+                start..end,
+                cars,
+                rated.minimum_entry,
+                true,
+            );
         }
     }
 }
@@ -204,17 +203,16 @@ fn level_elements_clear_from_their_minimum_after_a_steep_crest() {
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in model.cars_per_train.clone() {
-                assert_train_crosses_element(
-                    &model,
-                    &circuit,
-                    piece.id,
-                    start..end,
-                    cars,
-                    piece.rated_speeds.unwrap().minimum_entry,
-                    false,
-                );
-            }
+            let cars = model.train.cars;
+            assert_train_crosses_element(
+                &model,
+                &circuit,
+                piece.id,
+                start..end,
+                cars,
+                piece.rated_speeds.unwrap().minimum_entry,
+                false,
+            );
         }
     }
 }
@@ -237,18 +235,9 @@ fn half_inversion_windows_hold_after_preceding_inversion() {
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
         let rated = piece.rated_speeds.unwrap();
         for model in [hybrid_model(), multi_launch_model()] {
-            for cars in model.cars_per_train.clone() {
-                for speed in [rated.minimum_entry, rated.maximum_entry] {
-                    assert_train_crosses_element(
-                        &model,
-                        &circuit,
-                        id,
-                        start..end,
-                        cars,
-                        speed,
-                        false,
-                    );
-                }
+            let cars = model.train.cars;
+            for speed in [rated.minimum_entry, rated.maximum_entry] {
+                assert_train_crosses_element(&model, &circuit, id, start..end, cars, speed, false);
             }
         }
     }
@@ -286,19 +275,21 @@ fn sixty_degree_windows_hold_with_connected_approaches() {
             let Some(rated) = piece.rated_speeds else {
                 continue;
             };
-            for model in [hybrid_model(), multi_launch_model()] {
-                for cars in model.cars_per_train.clone() {
-                    for speed in [rated.minimum_entry, rated.maximum_entry] {
-                        assert_train_crosses_element(
-                            &model,
-                            &circuit,
-                            id,
-                            start..end,
-                            cars,
-                            speed,
-                            false,
-                        );
-                    }
+            for model in models()
+                .into_iter()
+                .filter(|model| model.allows_piece(piece))
+            {
+                let cars = model.train.cars;
+                for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    assert_train_crosses_element(
+                        &model,
+                        &circuit,
+                        id,
+                        start..end,
+                        cars,
+                        speed,
+                        false,
+                    );
                 }
             }
         }
@@ -661,7 +652,7 @@ fn every_level_to_level_rated_maximum_passes_for_default_trains_in_isolation() {
 }
 
 #[test]
-fn level_to_level_inversion_rated_maxima_pass_for_all_allowed_trains_in_isolation() {
+fn level_to_level_inversion_rated_maxima_pass_for_allowed_default_trains_in_isolation() {
     let mut checked_configurations = 0;
     for piece in catalog().iter().filter(|piece| {
         piece.inversion.is_some()
@@ -675,16 +666,15 @@ fn level_to_level_inversion_rated_maxima_pass_for_all_allowed_trains_in_isolatio
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in model.cars_per_train.clone() {
-                let rating = rate_piece(&model, cars, piece, maximum_entry, rating_physics())
-                    .unwrap_or_else(|error| panic!("{:?} {}: {error}", piece.id, model.name));
-                assert!(
-                    rating.passed,
-                    "{:?} {} {cars} cars at {maximum_entry}: {rating:?}",
-                    piece.id, model.name
-                );
-                checked_configurations += 1;
-            }
+            let cars = model.train.cars;
+            let rating = rate_piece(&model, cars, piece, maximum_entry, rating_physics())
+                .unwrap_or_else(|error| panic!("{:?} {}: {error}", piece.id, model.name));
+            assert!(
+                rating.passed,
+                "{:?} {} {cars} cars at {maximum_entry}: {rating:?}",
+                piece.id, model.name
+            );
+            checked_configurations += 1;
         }
     }
     assert!(
@@ -694,7 +684,7 @@ fn level_to_level_inversion_rated_maxima_pass_for_all_allowed_trains_in_isolatio
 }
 
 #[test]
-fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
+fn every_level_to_level_rated_element_passes_default_trains_at_both_window_ends() {
     let mut failures = Vec::new();
     for template in catalog().iter().filter(|piece| {
         piece.rated_speeds.is_some()
@@ -714,39 +704,38 @@ fn every_level_to_level_rated_element_passes_full_train_at_both_window_ends() {
             .into_iter()
             .filter(|model| model.allows_piece(template))
         {
-            for cars in model.cars_per_train.clone() {
-                for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
-                    let is_ascending = template.exit.position().z > template.entry.position().z
-                        || matches!(
-                            template.id,
-                            PieceId::TopHat
-                                | PieceId::LaunchedTopHat
-                                | PieceId::HalfLoopUp
-                                | PieceId::Loop
-                                | PieceId::LoopRight
-                                | PieceId::LargeLoop
-                                | PieceId::LargeLoopRight
-                                | PieceId::SteelLoop
-                                | PieceId::SteelLoopRight
-                        );
-                    if std::panic::catch_unwind(|| {
-                        assert_train_crosses_element(
-                            &model,
-                            &circuit,
-                            template.id,
-                            element_start..element_end,
-                            cars,
-                            entry_speed,
-                            entry_speed == rated.minimum_entry && is_ascending,
-                        );
-                    })
-                    .is_err()
-                    {
-                        failures.push(format!(
-                            "{:?} {} {cars} cars at {entry_speed}",
-                            template.id, model.name
-                        ));
-                    }
+            let cars = model.train.cars;
+            for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                let is_ascending = template.exit.position().z > template.entry.position().z
+                    || matches!(
+                        template.id,
+                        PieceId::TopHat
+                            | PieceId::LaunchedTopHat
+                            | PieceId::HalfLoopUp
+                            | PieceId::Loop
+                            | PieceId::LoopRight
+                            | PieceId::LargeLoop
+                            | PieceId::LargeLoopRight
+                            | PieceId::SteelLoop
+                            | PieceId::SteelLoopRight
+                    );
+                if std::panic::catch_unwind(|| {
+                    assert_train_crosses_element(
+                        &model,
+                        &circuit,
+                        template.id,
+                        element_start..element_end,
+                        cars,
+                        entry_speed,
+                        entry_speed == rated.minimum_entry && is_ascending,
+                    );
+                })
+                .is_err()
+                {
+                    failures.push(format!(
+                        "{:?} {} {cars} cars at {entry_speed}",
+                        template.id, model.name
+                    ));
                 }
             }
         }
@@ -772,39 +761,36 @@ fn wooden_strong_floater_is_rated_and_available_on_briar_blitz() {
     let rated = piece.rated_speeds.unwrap();
     let model = wooden_twister_model();
     let (circuit, element_start, element_end) = circuit_for_level_piece(piece.id);
-    for cars in model.cars_per_train.clone() {
-        let mut speeds = vec![rated.minimum_entry];
-        let mut speed = rated.maximum_entry;
-        while speed > rated.minimum_entry {
-            speeds.push(speed);
-            speed -= 1.0;
-        }
-        for entry_speed in speeds {
-            assert_train_crosses_element(
-                &model,
-                &circuit,
-                piece.id,
-                element_start..element_end,
-                cars,
-                entry_speed,
-                false,
-            );
-        }
+    let cars = model.train.cars;
+    let mut speeds = vec![rated.minimum_entry];
+    let mut speed = rated.maximum_entry;
+    while speed > rated.minimum_entry {
+        speeds.push(speed);
+        speed -= 1.0;
     }
-    for cars in model.cars_per_train.clone() {
-        let rating = rate_piece(&model, cars, piece, rated.maximum_entry, rating_physics())
-            .expect("rating must complete");
-        assert_eq!(
-            model.comfortable_force_limits.classify_force(
-                ForceRatingAxis::Airtime,
-                rating.minimum_filtered_vertical,
-                model.name,
-            ),
-            ForceRating::Good,
-            "{cars} cars: {:.3} g",
-            rating.minimum_filtered_vertical
+    for entry_speed in speeds {
+        assert_train_crosses_element(
+            &model,
+            &circuit,
+            piece.id,
+            element_start..element_end,
+            cars,
+            entry_speed,
+            false,
         );
     }
+    let rating = rate_piece(&model, cars, piece, rated.maximum_entry, rating_physics())
+        .expect("rating must complete");
+    assert_eq!(
+        model.comfortable_force_limits.classify_force(
+            ForceRatingAxis::Airtime,
+            rating.minimum_filtered_vertical,
+            model.name,
+        ),
+        ForceRating::Good,
+        "{cars} cars: {:.3} g",
+        rating.minimum_filtered_vertical
+    );
 }
 
 #[test]
@@ -886,7 +872,7 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
 }
 
 #[test]
-fn every_rated_endpoint_passes_for_every_train_with_the_force_evaluator() {
+fn every_rated_endpoint_passes_for_each_allowed_default_train_with_the_force_evaluator() {
     let mut failures = Vec::new();
     for piece in catalog()
         .iter()
@@ -897,16 +883,15 @@ fn every_rated_endpoint_passes_for_every_train_with_the_force_evaluator() {
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in model.cars_per_train.clone() {
-                for speed in [rated.minimum_entry, rated.maximum_entry] {
-                    let rating = rate_piece(&model, cars, piece, speed, rating_physics())
-                        .expect("rating must complete");
-                    if !rating.passed {
-                        failures.push(format!(
-                            "{:?} {} {cars} cars at {speed}: {rating:?}",
-                            piece.id, model.name
-                        ));
-                    }
+            let cars = model.train.cars;
+            for speed in [rated.minimum_entry, rated.maximum_entry] {
+                let rating = rate_piece(&model, cars, piece, speed, rating_physics())
+                    .expect("rating must complete");
+                if !rating.passed {
+                    failures.push(format!(
+                        "{:?} {} {cars} cars at {speed}: {rating:?}",
+                        piece.id, model.name
+                    ));
                 }
             }
         }
@@ -1007,20 +992,19 @@ fn every_tilted_roll_and_drop_variant_passes_full_train_at_both_window_ends() {
                 .into_iter()
                 .filter(|model| model.allows_piece(piece))
             {
-                for cars in model.cars_per_train.clone() {
-                    for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
-                        let minimum_speed_required = entry_speed == rated.minimum_entry
-                            && piece.exit.position().z > piece.entry.position().z;
-                        assert_train_crosses_element(
-                            &model,
-                            &circuit,
-                            piece_id,
-                            element_start..element_end,
-                            cars,
-                            entry_speed,
-                            minimum_speed_required,
-                        );
-                    }
+                let cars = model.train.cars;
+                for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let minimum_speed_required = entry_speed == rated.minimum_entry
+                        && piece.exit.position().z > piece.entry.position().z;
+                    assert_train_crosses_element(
+                        &model,
+                        &circuit,
+                        piece_id,
+                        element_start..element_end,
+                        cars,
+                        entry_speed,
+                        minimum_speed_required,
+                    );
                 }
             }
         }
@@ -1063,21 +1047,20 @@ fn banked_straights_pass_isolated_ratings_at_both_window_ends() {
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            for cars in model.cars_per_train.clone() {
-                for speed in [rated.minimum_entry, rated.maximum_entry] {
-                    let rating = rate_piece(&model, cars, piece, speed, rating_physics())
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "{:?} {} {cars} cars at {speed}: {error}",
-                                piece.id, model.name
-                            )
-                        });
-                    assert!(
-                        rating.passed,
-                        "{:?} {} {cars} cars at {speed}: {rating:?}",
-                        piece.id, model.name
-                    );
-                }
+            let cars = model.train.cars;
+            for speed in [rated.minimum_entry, rated.maximum_entry] {
+                let rating = rate_piece(&model, cars, piece, speed, rating_physics())
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{:?} {} {cars} cars at {speed}: {error}",
+                            piece.id, model.name
+                        )
+                    });
+                assert!(
+                    rating.passed,
+                    "{:?} {} {cars} cars at {speed}: {rating:?}",
+                    piece.id, model.name
+                );
             }
         }
     }
@@ -1174,18 +1157,17 @@ fn banked_straights_and_rollouts_pass_full_train_at_rated_window_ends() {
                     .into_iter()
                     .filter(|model| model.allows_piece(piece))
                 {
-                    for cars in model.cars_per_train.clone() {
-                        for speed in [rated.minimum_entry, rated.maximum_entry] {
-                            assert_train_crosses_element(
-                                &model,
-                                &circuit,
-                                id,
-                                start..end,
-                                cars,
-                                speed,
-                                false,
-                            );
-                        }
+                    let cars = model.train.cars;
+                    for speed in [rated.minimum_entry, rated.maximum_entry] {
+                        assert_train_crosses_element(
+                            &model,
+                            &circuit,
+                            id,
+                            start..end,
+                            cars,
+                            speed,
+                            false,
+                        );
                     }
                 }
             }
@@ -1228,17 +1210,8 @@ fn wave_and_overbank_turns_have_contiguous_rated_windows() {
         let mut speed = rated.minimum_entry;
         while speed <= rated.maximum_entry {
             for model in [hybrid_model(), multi_launch_model()] {
-                for cars in model.cars_per_train.clone() {
-                    assert_train_crosses_element(
-                        &model,
-                        &circuit,
-                        id,
-                        start..end,
-                        cars,
-                        speed,
-                        false,
-                    );
-                }
+                let cars = model.train.cars;
+                assert_train_crosses_element(&model, &circuit, id, start..end, cars, speed, false);
             }
             speed += 1.0;
         }
@@ -1291,75 +1264,74 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
         while speed <= rated.maximum_entry {
             for (model_index, model) in all_models.iter().enumerate() {
                 let model_allows_piece = model.allows_piece(piece);
-                for cars in model.cars_per_train.clone() {
-                    let scan = scan_train_element(model, &circuit, start..end, cars, speed);
-                    let forces = scan.forces;
-                    if !scan.all_cars_seen {
-                        failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: not every car entered in the candidate scan",
-                            piece.id, model.name
-                        ));
-                    }
-                    if !scan.train_cleared {
-                        failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: train did not clear in the candidate scan",
-                            piece.id, model.name
-                        ));
-                    }
-                    if scan.stalled {
-                        failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: train stalled in the candidate scan",
-                            piece.id, model.name
-                        ));
-                    }
-                    if scan.rolled_back {
-                        failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: train rolled back in the candidate scan",
-                            piece.id, model.name
-                        ));
-                    }
-                    if model_allows_piece && let Some(violation) = &scan.violation {
-                        failures.push(format!(
-                            "{:?} {} {cars} cars at {speed:.1} m/s: {violation}",
-                            piece.id, model.name
-                        ));
-                    }
-                    window_forces.minimum_vertical =
-                        window_forces.minimum_vertical.min(forces.minimum_vertical);
-                    window_forces.maximum_vertical =
-                        window_forces.maximum_vertical.max(forces.maximum_vertical);
-                    if forces.maximum_lateral > window_forces.maximum_lateral {
-                        window_forces.maximum_lateral = forces.maximum_lateral;
-                        window_forces.peak_lateral_distance = forces.peak_lateral_distance;
-                        window_forces.peak_lateral_speed = forces.peak_lateral_speed;
-                        window_lateral_context =
-                            format!("{} {cars} cars at {speed:.1} m/s", model.name);
-                    }
-                    window_forces.maximum_longitudinal = window_forces
-                        .maximum_longitudinal
-                        .max(forces.maximum_longitudinal);
-                    let model_window = &mut model_window_forces[model_index];
-                    model_window.minimum_vertical =
-                        model_window.minimum_vertical.min(forces.minimum_vertical);
-                    model_window.maximum_vertical =
-                        model_window.maximum_vertical.max(forces.maximum_vertical);
-                    if forces.maximum_lateral > model_window.maximum_lateral {
-                        model_window.maximum_lateral = forces.maximum_lateral;
-                        model_window.peak_lateral_distance = forces.peak_lateral_distance;
-                        model_window.peak_lateral_speed = forces.peak_lateral_speed;
-                    }
-                    model_window.maximum_longitudinal = model_window
-                        .maximum_longitudinal
-                        .max(forces.maximum_longitudinal);
-                    if (speed - design_speed).abs() < 1e-8
-                        && forces.maximum_lateral > maximum_design_speed_lateral
-                    {
-                        maximum_design_speed_lateral = forces.maximum_lateral;
-                        design_lateral_context = format!(
-                            "{} {cars} cars at {:.2} m, car speed {:.2} m/s",
-                            model.name, forces.peak_lateral_distance, forces.peak_lateral_speed
-                        );
-                    }
+                let cars = model.train.cars;
+                let scan = scan_train_element(model, &circuit, start..end, cars, speed);
+                let forces = scan.forces;
+                if !scan.all_cars_seen {
+                    failures.push(format!(
+                        "{:?} {} {cars} cars at {speed:.1} m/s: not every car entered in the candidate scan",
+                        piece.id, model.name
+                    ));
+                }
+                if !scan.train_cleared {
+                    failures.push(format!(
+                        "{:?} {} {cars} cars at {speed:.1} m/s: train did not clear in the candidate scan",
+                        piece.id, model.name
+                    ));
+                }
+                if scan.stalled {
+                    failures.push(format!(
+                        "{:?} {} {cars} cars at {speed:.1} m/s: train stalled in the candidate scan",
+                        piece.id, model.name
+                    ));
+                }
+                if scan.rolled_back {
+                    failures.push(format!(
+                        "{:?} {} {cars} cars at {speed:.1} m/s: train rolled back in the candidate scan",
+                        piece.id, model.name
+                    ));
+                }
+                if model_allows_piece && let Some(violation) = &scan.violation {
+                    failures.push(format!(
+                        "{:?} {} {cars} cars at {speed:.1} m/s: {violation}",
+                        piece.id, model.name
+                    ));
+                }
+                window_forces.minimum_vertical =
+                    window_forces.minimum_vertical.min(forces.minimum_vertical);
+                window_forces.maximum_vertical =
+                    window_forces.maximum_vertical.max(forces.maximum_vertical);
+                if forces.maximum_lateral > window_forces.maximum_lateral {
+                    window_forces.maximum_lateral = forces.maximum_lateral;
+                    window_forces.peak_lateral_distance = forces.peak_lateral_distance;
+                    window_forces.peak_lateral_speed = forces.peak_lateral_speed;
+                    window_lateral_context =
+                        format!("{} {cars} cars at {speed:.1} m/s", model.name);
+                }
+                window_forces.maximum_longitudinal = window_forces
+                    .maximum_longitudinal
+                    .max(forces.maximum_longitudinal);
+                let model_window = &mut model_window_forces[model_index];
+                model_window.minimum_vertical =
+                    model_window.minimum_vertical.min(forces.minimum_vertical);
+                model_window.maximum_vertical =
+                    model_window.maximum_vertical.max(forces.maximum_vertical);
+                if forces.maximum_lateral > model_window.maximum_lateral {
+                    model_window.maximum_lateral = forces.maximum_lateral;
+                    model_window.peak_lateral_distance = forces.peak_lateral_distance;
+                    model_window.peak_lateral_speed = forces.peak_lateral_speed;
+                }
+                model_window.maximum_longitudinal = model_window
+                    .maximum_longitudinal
+                    .max(forces.maximum_longitudinal);
+                if (speed - design_speed).abs() < 1e-8
+                    && forces.maximum_lateral > maximum_design_speed_lateral
+                {
+                    maximum_design_speed_lateral = forces.maximum_lateral;
+                    design_lateral_context = format!(
+                        "{} {cars} cars at {:.2} m, car speed {:.2} m/s",
+                        model.name, forces.peak_lateral_distance, forces.peak_lateral_speed
+                    );
                 }
             }
             speed += 1.0;
@@ -1427,7 +1399,7 @@ fn speed_matched_turns_stay_inside_rated_force_limits_and_roll_rate() {
 }
 
 #[test]
-fn floater_point_mass_forecast_compared_with_full_train() {
+fn floater_point_mass_forecast_compared_with_default_train() {
     use theme_park_sim::track::predicted_hill_forces;
 
     let piece = catalog()
@@ -1437,31 +1409,29 @@ fn floater_point_mass_forecast_compared_with_full_train() {
     let entry_speed = piece.rated_speeds.unwrap().maximum_entry;
     let forecast = predicted_hill_forces(piece, entry_speed).unwrap();
     let (circuit, start, end) = circuit_for_level_piece(piece.id);
-    for cars in [6, 12] {
-        let mut config = hybrid_model().train;
-        config.cars = cars;
-        let mut train = Train::new(&circuit, &config, unpowered(), start, entry_speed);
-        let mut minimum = f64::INFINITY;
-        for _ in 0..100_000 {
-            train.step(&circuit);
-            for frame in train.take_readings() {
-                for reading in frame {
-                    if (start..end).contains(&reading.distance) {
-                        minimum = minimum.min(reading.g.vertical);
-                    }
+    let config = hybrid_model().train;
+    let cars = config.cars;
+    let mut train = Train::new(&circuit, &config, unpowered(), start, entry_speed);
+    let mut minimum = f64::INFINITY;
+    for _ in 0..100_000 {
+        train.step(&circuit);
+        for frame in train.take_readings() {
+            for reading in frame {
+                if (start..end).contains(&reading.distance) {
+                    minimum = minimum.min(reading.g.vertical);
                 }
             }
-            if train.distance() >= end + config.length_metres {
-                break;
-            }
-            assert!(train.speed() > 0.0 && train.notes().is_empty());
         }
-        assert!(minimum.is_finite());
-        assert!(train.distance() >= end + config.length_metres);
-        eprintln!(
-            "FloaterHill8x64 {cars} cars at {entry_speed:.3} m/s: forecast {:.3} g, full train {minimum:.3} g, difference {:+.3} g",
-            forecast.minimum_vertical_g,
-            minimum - forecast.minimum_vertical_g
-        );
+        if train.distance() >= end + config.length_metres {
+            break;
+        }
+        assert!(train.speed() > 0.0 && train.notes().is_empty());
     }
+    assert!(minimum.is_finite());
+    assert!(train.distance() >= end + config.length_metres);
+    eprintln!(
+        "FloaterHill8x64 {cars} cars at {entry_speed:.3} m/s: forecast {:.3} g, full train {minimum:.3} g, difference {:+.3} g",
+        forecast.minimum_vertical_g,
+        minimum - forecast.minimum_vertical_g
+    );
 }
