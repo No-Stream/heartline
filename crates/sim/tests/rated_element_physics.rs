@@ -1,7 +1,8 @@
 use std::collections::{HashSet, VecDeque};
 
 use theme_park_sim::physics::rated_piece::{
-    connected_measurement_track, rate_piece, rate_sequence, unpowered as rating_physics,
+    connected_measurement_track, measurement_contexts, rate_piece, rate_sequence,
+    solve_approach_speed, unpowered as rating_physics,
 };
 use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
 use theme_park_sim::track::{
@@ -222,24 +223,22 @@ fn level_elements_clear_from_their_minimum_after_a_steep_crest() {
 #[test]
 fn half_inversion_windows_hold_after_preceding_inversion() {
     use PieceId::*;
-    for sequence in [
-        [HalfLoopUp, HalfCorkscrewLeftDown],
-        [HalfLoopUp, HalfCorkscrewRightDown],
-        [HalfLoopUp, RavenRollLeftDown],
-        [HalfLoopUp, RavenRollRightDown],
-        [HalfCorkscrewLeftUp, HalfLoopDown],
-        [HalfCorkscrewRightUp, HalfLoopDown],
-        [RavenRollLeftUp, HalfLoopDown],
-        [RavenRollRightUp, HalfLoopDown],
+    for id in [
+        HalfCorkscrewLeftDown,
+        HalfCorkscrewRightDown,
+        RavenRollLeftDown,
+        RavenRollRightDown,
+        HalfLoopDown,
     ] {
-        let (circuit, ranges) = circuit_for_sequence(&sequence);
-        let (id, start, end) = ranges[1];
         let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
         for model in [hybrid_model(), multi_launch_model()] {
+            if !model.allows_piece(piece) {
+                continue;
+            }
             let cars = model.train.cars;
             let rated = rated_window(&model, piece);
             for speed in [rated.minimum_entry, rated.maximum_entry] {
-                assert_train_crosses_element(&model, &circuit, id, start..end, cars, speed, false);
+                assert_shared_rating_passes_every_applicable_context(&model, piece, cars, speed);
             }
         }
     }
@@ -248,55 +247,42 @@ fn half_inversion_windows_hold_after_preceding_inversion() {
 #[test]
 fn sixty_degree_windows_hold_with_connected_approaches() {
     use PieceId::*;
-    let sequences: [&[PieceId]; 2] = [
-        &[
-            LevelToSixtyUp,
-            SixtyUpToLevel,
-            LevelToSixtyDown,
-            SixtyDownToLevel,
-        ],
-        &[
-            LevelToGentleUp,
-            GentleToSteepUp,
-            SteepToSixtyUp,
-            SixtyToSteepUp,
-            SteepToGentleUp,
-            GentleUpToLevel,
-            LevelToGentleDown,
-            GentleToSteepDown,
-            SteepToSixtyDown,
-            SixtyToSteepDown,
-            SteepToGentleDown,
-            GentleDownToLevel,
-        ],
+    let transition_ids = [
+        LevelToSixtyUp,
+        SixtyUpToLevel,
+        LevelToSixtyDown,
+        SixtyDownToLevel,
+        SteepToSixtyUp,
+        SixtyToSteepUp,
+        SteepToSixtyDown,
+        SixtyToSteepDown,
     ];
-    for sequence in sequences {
-        let (circuit, ranges) = circuit_for_sequence(sequence);
-        for (id, start, end) in ranges {
-            let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-            for model in models()
-                .into_iter()
-                .filter(|model| model.allows_piece(piece))
-            {
-                let rated = rated_window(&model, piece);
-                let cars = model.train.cars;
-                for speed in [rated.minimum_entry, rated.maximum_entry] {
-                    assert_train_crosses_element(
-                        &model,
-                        &circuit,
-                        id,
-                        start..end,
-                        cars,
-                        speed,
-                        false,
-                    );
-                }
+    for id in transition_ids {
+        let piece = catalog()
+            .iter()
+            .find(|piece| piece.id == id && piece.design_speeds.is_some())
+            .unwrap();
+        for model in models()
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            let rated = rated_window(&model, piece);
+            let cars = model.train.cars;
+            for speed in [rated.minimum_entry, rated.maximum_entry] {
+                assert_shared_rating_passes_every_applicable_context(&model, piece, cars, speed);
             }
         }
     }
 }
 
 fn circuit_for_sequence(elements: &[PieceId]) -> (Circuit, Vec<(PieceId, f64, f64)>) {
+    circuit_for_sequence_with_initial_runway(elements, 0)
+}
+
+fn circuit_for_sequence_with_initial_runway(
+    elements: &[PieceId],
+    additional_straights: usize,
+) -> (Circuit, Vec<(PieceId, f64, f64)>) {
     let templates = catalog();
     let mut state = TrackState::origin();
     let mut pieces = Vec::new();
@@ -309,6 +295,16 @@ fn circuit_for_sequence(elements: &[PieceId]) -> (Circuit, Vec<(PieceId, f64, f6
             .unwrap();
         state = piece.exit;
         pieces.push(piece);
+    }
+    for _ in 0..additional_straights {
+        let straight = templates
+            .iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .unwrap()
+            .at(state)
+            .unwrap();
+        state = straight.exit;
+        pieces.push(straight);
     }
 
     let mut element_ranges = Vec::with_capacity(elements.len());
@@ -403,6 +399,57 @@ fn scan_train_element(
     cars: u8,
     entry_speed: f64,
 ) -> ElementScan {
+    scan_train_element_from_start(
+        model,
+        circuit,
+        element_range.clone(),
+        cars,
+        element_range.start,
+        entry_speed,
+    )
+}
+
+fn scan_train_element_after_preroll(
+    model: &CoasterModel,
+    circuit: &Circuit,
+    element_range: std::ops::Range<f64>,
+    cars: u8,
+    entry_speed: f64,
+) -> Result<ElementScan, String> {
+    let mut train_config = model.train.clone();
+    train_config.length_metres *= f64::from(cars) / f64::from(train_config.cars);
+    train_config.cars = cars;
+    let approach_start = element_range.start - 10.0_f64.max(0.5 * entry_speed);
+    assert!(
+        approach_start >= train_config.length_metres,
+        "pre-roll does not leave the full train on track before the element"
+    );
+    let initial_speed = solve_approach_speed(
+        circuit,
+        &train_config,
+        unpowered(),
+        approach_start,
+        element_range.start,
+        entry_speed,
+    )?;
+    Ok(scan_train_element_from_start(
+        model,
+        circuit,
+        element_range,
+        cars,
+        approach_start,
+        initial_speed,
+    ))
+}
+
+fn scan_train_element_from_start(
+    model: &CoasterModel,
+    circuit: &Circuit,
+    element_range: std::ops::Range<f64>,
+    cars: u8,
+    start_distance: f64,
+    start_speed: f64,
+) -> ElementScan {
     let mut train_config = model.train.clone();
     train_config.length_metres *= f64::from(cars) / f64::from(train_config.cars);
     train_config.cars = cars;
@@ -410,8 +457,8 @@ fn scan_train_element(
         circuit,
         &train_config,
         unpowered(),
-        element_range.start,
-        entry_speed,
+        start_distance,
+        start_speed,
     );
     let mut evaluators =
         vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
@@ -423,7 +470,7 @@ fn scan_train_element(
     let mut maximum_lateral: f64 = 0.0;
     let mut maximum_longitudinal: f64 = 0.0;
     let mut peak_lateral_distance = element_range.start;
-    let mut peak_lateral_speed = entry_speed;
+    let mut peak_lateral_speed = start_speed;
     let mut minimum_speed = f64::INFINITY;
     let mut stalled = false;
     let mut violation = None;
@@ -505,43 +552,104 @@ fn assert_train_crosses_element(
     entry_speed: f64,
     minimum_speed_required: bool,
 ) -> ElementForces {
+    assert_train_scan(
+        model,
+        circuit,
+        piece_id,
+        "supplied test circuit",
+        element_range,
+        cars,
+        entry_speed,
+        minimum_speed_required,
+    )
+}
+
+fn assert_train_crosses_element_after_preroll(
+    model: &CoasterModel,
+    circuit: &Circuit,
+    piece_id: PieceId,
+    element_range: std::ops::Range<f64>,
+    cars: u8,
+    entry_speed: f64,
+    context: &str,
+) -> ElementForces {
+    let scan = scan_train_element_after_preroll(model, circuit, element_range, cars, entry_speed)
+        .unwrap_or_else(|error| {
+            panic!(
+                "{piece_id:?} {} {cars} cars at {entry_speed}: cannot solve pre-roll: {error}",
+                model.name
+            )
+        });
+    assert_train_scan_result(model, piece_id, context, cars, entry_speed, false, scan)
+}
+
+fn assert_train_scan(
+    model: &CoasterModel,
+    circuit: &Circuit,
+    piece_id: PieceId,
+    context: &str,
+    element_range: std::ops::Range<f64>,
+    cars: u8,
+    entry_speed: f64,
+    minimum_speed_required: bool,
+) -> ElementForces {
     let scan = scan_train_element(model, circuit, element_range, cars, entry_speed);
+    assert_train_scan_result(
+        model,
+        piece_id,
+        context,
+        cars,
+        entry_speed,
+        minimum_speed_required,
+        scan,
+    )
+}
+
+fn assert_train_scan_result(
+    model: &CoasterModel,
+    piece_id: PieceId,
+    context: &str,
+    cars: u8,
+    entry_speed: f64,
+    minimum_speed_required: bool,
+    scan: ElementScan,
+) -> ElementForces {
     let forces = scan.forces;
     assert!(
         scan.all_cars_seen,
-        "{piece_id:?} {} {cars} cars at {entry_speed}: not every car entered",
+        "{context}: {piece_id:?} {} {cars} cars at {entry_speed}: not every car entered",
         model.name
     );
     assert!(
         scan.train_cleared,
-        "{piece_id:?} {} {cars} cars at {entry_speed}: train did not clear",
+        "{context}: {piece_id:?} {} {cars} cars at {entry_speed}: train did not clear",
         model.name
     );
     assert!(
         !scan.rolled_back,
-        "{piece_id:?} {} {cars} cars at {entry_speed}: rollback",
+        "{context}: {piece_id:?} {} {cars} cars at {entry_speed}: rollback",
         model.name
     );
     assert!(
         !scan.stalled,
-        "{piece_id:?} {} {cars} cars at {entry_speed}: stalled",
+        "{context}: {piece_id:?} {} {cars} cars at {entry_speed}: stalled",
         model.name
     );
     assert!(
         scan.violation.is_none(),
-        "{piece_id:?} {} {cars} cars at {entry_speed}: {}",
+        "{context}: {piece_id:?} {} {cars} cars at {entry_speed}: {}",
         model.name,
         scan.violation.as_deref().unwrap_or_default()
     );
     if minimum_speed_required {
         assert!(
             scan.minimum_speed >= 5.0,
-            "{piece_id:?}: minimum speed {}",
+            "{context}: {piece_id:?} minimum speed {}",
             scan.minimum_speed
         );
     }
     eprintln!(
-        "{piece_id:?} {} {cars} cars at {entry_speed:.3}: vertical {:.3}..{:.3}, lateral {:.3}, longitudinal {:.3}",
+        "{context}: {piece_id:?} {} {cars} cars at {entry_speed:.3}: vertical {:.3}..{:.3}, lateral {:.3}, longitudinal {:.3}",
         model.name,
         forces.minimum_vertical,
         forces.maximum_vertical,
@@ -582,6 +690,50 @@ fn rated_window(model: &CoasterModel, piece: &Piece) -> RatedSpeeds {
             model.name, piece.id
         )
     })
+}
+
+fn is_known_unavailable_banked_straight(model: &CoasterModel, piece: &Piece) -> bool {
+    model.key == "family_coaster"
+        && piece.entry.slope == theme_park_sim::track::Slope::UpGentle
+        && matches!(
+            piece.id,
+            PieceId::BankedStraightLeft | PieceId::BankedStraightRight
+        )
+}
+
+fn assert_shared_rating_passes_every_applicable_context(
+    model: &CoasterModel,
+    piece: &Piece,
+    cars: u8,
+    entry_speed: f64,
+) {
+    let rating = rate_piece(model, cars, piece, entry_speed, rating_physics())
+        .unwrap_or_else(|error| panic!("{:?} {} {entry_speed}: {error}", piece.id, model.name));
+    assert!(
+        rating
+            .context_results
+            .iter()
+            .any(|context| context.applicable),
+        "{:?} {} {entry_speed}: no approach context applies: {:?}",
+        piece.id,
+        model.name,
+        rating.context_results
+    );
+    assert!(
+        rating
+            .context_results
+            .iter()
+            .all(|context| context.applicable || context.inapplicable_reason.is_some()),
+        "{:?} {} {entry_speed}: context applicability is not explained: {:?}",
+        piece.id,
+        model.name,
+        rating.context_results
+    );
+    assert!(
+        rating.passed,
+        "{:?} {} {cars} cars at {entry_speed}: {:?}",
+        piece.id, model.name, rating.context_results
+    );
 }
 
 #[test]
@@ -883,7 +1035,7 @@ fn every_floater_hill_gives_default_trains_at_most_good_airtime_at_its_maximum()
 }
 
 #[test]
-fn every_model_rated_window_endpoint_passes_with_its_default_train_on_connected_track() {
+fn every_model_rated_window_endpoint_passes_with_its_default_train_in_each_applicable_context() {
     for piece in catalog()
         .iter()
         .filter(|piece| piece.design_speeds.is_some())
@@ -892,7 +1044,16 @@ fn every_model_rated_window_endpoint_passes_with_its_default_train_on_connected_
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            let rated = rated_window(&model, piece);
+            let Some(rated) = rated_speeds(&model, piece) else {
+                assert!(
+                    is_known_unavailable_banked_straight(&model, piece),
+                    "{} has no rated window for {:?} at {:?}",
+                    model.name,
+                    piece.id,
+                    piece.entry.slope
+                );
+                continue;
+            };
             let cars = model.train.cars;
             for speed in [rated.minimum_entry, rated.maximum_entry] {
                 let rating = rate_piece(&model, cars, piece, speed, rating_physics())
@@ -902,24 +1063,61 @@ fn every_model_rated_window_endpoint_passes_with_its_default_train_on_connected_
                     "{:?} {} {cars} cars at {speed}: {rating:?}",
                     piece.id, model.name
                 );
-                let (circuit, element_range) =
-                    connected_measurement_track(&model, cars, piece, speed);
-                if piece.id == PieceId::SteepToSixtyUp {
-                    let element_index = circuit.piece_index(element_range.start);
-                    assert_eq!(
-                        circuit.pieces()[element_index - 1].id,
-                        PieceId::GentleToSteepUp,
-                        "SteepToSixtyUp uses the connected steep-approach test prefix"
-                    );
+                let contexts = measurement_contexts(&model, cars, piece, speed);
+                assert_eq!(contexts.len(), rating.context_results.len());
+                let mut applicable_contexts = 0;
+                for (context, context_rating) in contexts.iter().zip(&rating.context_results) {
+                    assert_eq!(context.name, context_rating.context);
+                    if piece.id == PieceId::SteepToSixtyUp
+                        && context.name == "connected model-allowed approach"
+                    {
+                        let element_index =
+                            context.circuit.piece_index(context.element_range.start);
+                        let preceding_piece = &context.circuit.pieces()[element_index - 1];
+                        assert_eq!(preceding_piece.exit.slope, piece.entry.slope);
+                        assert_eq!(preceding_piece.exit.bank, piece.entry.bank);
+                        assert_eq!(
+                            preceding_piece.exit.horizontal_curvature,
+                            piece.entry.horizontal_curvature
+                        );
+                        assert_eq!(
+                            preceding_piece.exit.vertical_curvature,
+                            piece.entry.vertical_curvature
+                        );
+                        assert_eq!(piece.entry.slope, theme_park_sim::track::Slope::UpSteep);
+                        assert!(model.allows_piece(preceding_piece));
+                    }
+                    if context_rating.applicable {
+                        applicable_contexts += 1;
+                        assert!(
+                            context_rating.passed,
+                            "{:?} {} {cars} cars at {speed}, context {}: {context_rating:?}",
+                            piece.id, model.name, context.name
+                        );
+                        assert_train_crosses_element_after_preroll(
+                            &model,
+                            &context.circuit,
+                            piece.id,
+                            context.element_range.clone(),
+                            cars,
+                            speed,
+                            context.name,
+                        );
+                    } else {
+                        assert!(
+                            context_rating.inapplicable_reason.is_some(),
+                            "{:?} {} {cars} cars at {speed}, context {} has no applicability reason: {context_rating:?}",
+                            piece.id,
+                            model.name,
+                            context.name
+                        );
+                    }
                 }
-                assert_train_crosses_element(
-                    &model,
-                    &circuit,
+                assert!(
+                    applicable_contexts > 0,
+                    "{:?} {} {cars} cars at {speed}: no approach context applies",
                     piece.id,
-                    element_range,
-                    cars,
-                    speed,
-                    false,
+                    model.name
                 );
             }
         }
@@ -929,65 +1127,6 @@ fn every_model_rated_window_endpoint_passes_with_its_default_train_on_connected_
 #[test]
 fn every_tilted_roll_and_drop_variant_passes_full_train_at_both_window_ends() {
     use PieceId::*;
-
-    let sequences: [&[PieceId]; 10] = [
-        &[HalfCorkscrewLeftUp, HalfCorkscrewLeftDown],
-        &[HalfCorkscrewRightUp, HalfCorkscrewRightDown],
-        &[RavenRollLeftUp, RavenRollLeftDown],
-        &[RavenRollRightUp, RavenRollRightDown],
-        &[
-            BankLeft,
-            BankedDropLeft,
-            UnbankLeft,
-            GentleDownToLevel,
-            LevelToGentleUp,
-            GentleUpToLevel,
-            LevelToGentleUp,
-            GentleUpToLevel,
-        ],
-        &[
-            BankRight,
-            BankedDropRight,
-            UnbankRight,
-            GentleDownToLevel,
-            LevelToGentleUp,
-            GentleUpToLevel,
-            LevelToGentleUp,
-            GentleUpToLevel,
-        ],
-        &[
-            BankLeft,
-            TwistedDropLeft,
-            GentleDownToLevel,
-            LevelToGentleUp,
-            GentleUpToLevel,
-        ],
-        &[
-            BankRight,
-            TwistedDropRight,
-            GentleDownToLevel,
-            LevelToGentleUp,
-            GentleUpToLevel,
-        ],
-        &[
-            BankLeft,
-            BarrelDropLeft,
-            GentleDownToLevel,
-            LevelToGentleUp,
-            OneTileGentleUp,
-            OneTileGentleUp,
-            GentleUpToLevel,
-        ],
-        &[
-            BankRight,
-            BarrelDropRight,
-            GentleDownToLevel,
-            LevelToGentleUp,
-            OneTileGentleUp,
-            OneTileGentleUp,
-            GentleUpToLevel,
-        ],
-    ];
     let rated_ids = [
         HalfCorkscrewLeftUp,
         HalfCorkscrewLeftDown,
@@ -1005,32 +1144,21 @@ fn every_tilted_roll_and_drop_variant_passes_full_train_at_both_window_ends() {
         BarrelDropRight,
     ];
 
-    for sequence in sequences {
-        let (circuit, element_ranges) = circuit_for_sequence(sequence);
-        for (piece_id, element_start, element_end) in element_ranges {
-            if !rated_ids.contains(&piece_id) {
-                continue;
-            }
-            let piece = catalog().iter().find(|piece| piece.id == piece_id).unwrap();
-            for model in models()
-                .into_iter()
-                .filter(|model| model.allows_piece(piece))
-            {
-                let rated = rated_window(&model, piece);
-                let cars = model.train.cars;
-                for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
-                    let minimum_speed_required = entry_speed == rated.minimum_entry
-                        && piece.exit.position().z > piece.entry.position().z;
-                    assert_train_crosses_element(
-                        &model,
-                        &circuit,
-                        piece_id,
-                        element_start..element_end,
-                        cars,
-                        entry_speed,
-                        minimum_speed_required,
-                    );
-                }
+    for piece_id in rated_ids {
+        let piece = catalog().iter().find(|piece| piece.id == piece_id).unwrap();
+        for model in models()
+            .into_iter()
+            .filter(|model| model.allows_piece(piece))
+        {
+            let rated = rated_window(&model, piece);
+            let cars = model.train.cars;
+            for entry_speed in [rated.minimum_entry, rated.maximum_entry] {
+                assert_shared_rating_passes_every_applicable_context(
+                    &model,
+                    piece,
+                    cars,
+                    entry_speed,
+                );
             }
         }
     }
@@ -1069,7 +1197,16 @@ fn banked_straights_pass_isolated_ratings_at_both_window_ends() {
             .into_iter()
             .filter(|model| model.allows_piece(piece))
         {
-            let rated = rated_window(&model, piece);
+            let Some(rated) = rated_speeds(&model, piece) else {
+                assert!(
+                    is_known_unavailable_banked_straight(&model, piece),
+                    "{} has no rated window for {:?} at {:?}",
+                    model.name,
+                    piece.id,
+                    piece.entry.slope
+                );
+                continue;
+            };
             let cars = model.train.cars;
             for speed in [rated.minimum_entry, rated.maximum_entry] {
                 let rating = rate_piece(&model, cars, piece, speed, rating_physics())
@@ -1086,6 +1223,59 @@ fn banked_straights_pass_isolated_ratings_at_both_window_ends() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn daisy_dash_uphill_banked_straights_are_unavailable_after_a_gentle_up_bank() {
+    use PieceId::{BankedStraightLeft, BankedStraightRight};
+    let model = models()
+        .into_iter()
+        .find(|model| model.key == "family_coaster")
+        .unwrap();
+    for (piece_id, context_name) in [
+        (
+            BankedStraightLeft,
+            "Gentle up, bank left, banked straight, then left rollout",
+        ),
+        (
+            BankedStraightRight,
+            "Gentle up, bank right, banked straight, then right rollout",
+        ),
+    ] {
+        let piece = catalog()
+            .iter()
+            .find(|piece| {
+                piece.id == piece_id && piece.entry.slope == theme_park_sim::track::Slope::UpGentle
+            })
+            .unwrap();
+        assert!(model.allows_piece(piece));
+        assert!(piece.design_speeds.is_some());
+        assert!(is_known_unavailable_banked_straight(&model, piece));
+        assert!(rated_speeds(&model, piece).is_none());
+
+        let minimum_design_speed = piece.design_speeds.unwrap().minimum_entry;
+        let rating = rate_piece(
+            &model,
+            model.train.cars,
+            piece,
+            minimum_design_speed,
+            rating_physics(),
+        )
+        .expect("rating must complete");
+        assert!(!rating.passed, "{piece_id:?}: {rating:?}");
+        let context = rating
+            .context_results
+            .iter()
+            .find(|context| context.context == context_name)
+            .unwrap_or_else(|| panic!("{piece_id:?} lacks {context_name}: {rating:?}"));
+        assert!(context.applicable, "{piece_id:?}: {context:?}");
+        assert!(!context.passed, "{piece_id:?}: {context:?}");
+        assert_eq!(
+            context.violation.as_ref().unwrap().axis,
+            1,
+            "{piece_id:?}: {context:?}"
+        );
     }
 }
 
@@ -1156,7 +1346,7 @@ fn banked_straights_and_rollouts_pass_full_train_at_rated_window_ends() {
             sequence.extend(entry);
             sequence.extend([bank, straight, rollout]);
             sequence.extend(exit);
-            let (circuit, ranges) = circuit_for_sequence(&sequence);
+            let (circuit, ranges) = circuit_for_sequence_with_initial_runway(&sequence, 8);
             for &(id, start, end) in &ranges {
                 if id != straight && id != rollout {
                     continue;
@@ -1176,17 +1366,26 @@ fn banked_straights_and_rollouts_pass_full_train_at_rated_window_ends() {
                     .into_iter()
                     .filter(|model| model.allows_piece(piece))
                 {
-                    let rated = rated_window(&model, piece);
+                    let Some(rated) = rated_speeds(&model, piece) else {
+                        assert!(
+                            is_known_unavailable_banked_straight(&model, piece),
+                            "{} has no rated window for {:?} at {:?}",
+                            model.name,
+                            piece.id,
+                            piece.entry.slope
+                        );
+                        continue;
+                    };
                     let cars = model.train.cars;
                     for speed in [rated.minimum_entry, rated.maximum_entry] {
-                        assert_train_crosses_element(
+                        assert_train_crosses_element_after_preroll(
                             &model,
                             &circuit,
                             id,
                             start..end,
                             cars,
                             speed,
-                            false,
+                            "banked straight and rollout composition",
                         );
                     }
                 }

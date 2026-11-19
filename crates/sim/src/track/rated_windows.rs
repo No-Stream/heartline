@@ -11,6 +11,8 @@ pub enum RatedWindowSource {
     ClearanceMinimum,
     /// The edge where some allowed train first fails the duration-aware force evaluator.
     ForceBound,
+    /// The lowest speed where at least one unpowered approach can reach the element entrance.
+    ApproachMinimum,
     /// Forces stay within the limits past this maximum; the catalog keeps it as a design choice.
     DesignCap,
     /// Above this a descending half corkscrew clears faster than its 22 m/s clearing-speed rule.

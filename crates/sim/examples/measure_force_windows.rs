@@ -165,7 +165,7 @@ fn refine_boundary(
 }
 
 /// The first allowed configuration that fails at this speed, described for the review table.
-fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<String> {
+fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<ScanFailure> {
     assert!(
         model.allows_piece(piece),
         "{} does not allow {:?}",
@@ -180,16 +180,31 @@ fn failure(piece: &Piece, model: &CoasterModel, speed: f64) -> Option<String> {
         )
     });
     if let Some(reason) = rating.failure {
-        return Some(format!(
-            "{} {cars} cars: {reason} (lowest train speed {:.3} m/s)",
-            model.name, rating.minimum_speed
-        ));
+        let kind = if rating
+            .context_results
+            .iter()
+            .all(|context| !context.applicable)
+        {
+            FailureKind::ApproachReachability
+        } else {
+            FailureKind::Other
+        };
+        return Some(ScanFailure {
+            kind,
+            diagnostic: format!(
+                "{} {cars} cars: {reason} (lowest train speed {:.3} m/s)",
+                model.name, rating.minimum_speed
+            ),
+        });
     }
     if let Some(violation) = &rating.violation {
-        return Some(format!(
-            "{} {cars} cars: {} {:+.3} g past the duration rule",
-            model.name, AXIS_NAMES[violation.axis], violation.force
-        ));
+        return Some(ScanFailure {
+            kind: FailureKind::Other,
+            diagnostic: format!(
+                "{} {cars} cars: {} {:+.3} g past the duration rule",
+                model.name, AXIS_NAMES[violation.axis], violation.force
+            ),
+        });
     }
     assert!(
         rating.passed,
@@ -463,13 +478,38 @@ struct ScannedWindow {
     acceptance_failures: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FailureKind {
+    ApproachReachability,
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScanFailure {
+    kind: FailureKind,
+    diagnostic: String,
+}
+
+fn minimum_source(failure: &ScanFailure) -> RatedWindowSource {
+    if failure.kind == FailureKind::ApproachReachability {
+        RatedWindowSource::ApproachMinimum
+    } else if failure.diagnostic.contains("clearance")
+        || failure.diagnostic.contains("stalled")
+        || failure.diagnostic.contains("did not clear")
+    {
+        RatedWindowSource::ClearanceMinimum
+    } else {
+        RatedWindowSource::ForceBound
+    }
+}
+
 fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
     assert!(model.allows_piece(template));
     let old = template.design_speeds.unwrap();
     let ceiling = 100.0_f64.max(3.0 * old.maximum_entry);
     let first_index = (old.minimum_entry / GRID_STEP).floor() as usize + 1;
     let last_index = (ceiling / GRID_STEP).ceil() as usize;
-    let grid: Vec<(f64, Option<String>)> = (first_index..=last_index)
+    let grid: Vec<(f64, Option<ScanFailure>)> = (first_index..=last_index)
         .map(|index| {
             let speed = index as f64 * GRID_STEP;
             (speed, failure(template, model, speed))
@@ -489,11 +529,13 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
                     minimum_source: None,
                     maximum_source: None,
                     unavailable_reason: Some(format!(
-                        "no passing speed above catalog minimum {:.2} m/s: {diagnostic}",
-                        old.minimum_entry
+                        "no passing speed above catalog minimum {:.2} m/s: {}",
+                        old.minimum_entry, diagnostic.diagnostic
                     )),
                     upper_failure: None,
-                    minimum_failure: minimum_failure.clone(),
+                    minimum_failure: minimum_failure
+                        .as_ref()
+                        .map(|failure| failure.diagnostic.clone()),
                     passes_again_above: None,
                     airtime: Vec::new(),
                     acceptance_failures: Vec::new(),
@@ -507,19 +549,19 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
             let minimum = refine_boundary(below, grid[first_pass].0, true, |speed| {
                 failure(template, model, speed).is_none()
             });
-            let clearance = diagnostic.contains("clearance")
-                || diagnostic.contains("stalled")
-                || diagnostic.contains("did not clear");
-            let source = if clearance {
-                RatedWindowSource::ClearanceMinimum
+            let boundary_failure = if first_pass == 0 {
+                diagnostic
             } else {
-                RatedWindowSource::ForceBound
+                grid[first_pass - 1]
+                    .1
+                    .as_ref()
+                    .expect("the sample before the first pass must fail")
             };
-            (minimum, source)
+            (minimum, minimum_source(boundary_failure))
         }
     };
     let mut last_pass = minimum_entry;
-    let mut first_failure: Option<(f64, String)> = None;
+    let mut first_failure: Option<(f64, ScanFailure)> = None;
     for (speed, failure) in grid.iter().filter(|(speed, _)| *speed > minimum_entry) {
         match failure {
             None => last_pass = *speed,
@@ -559,12 +601,17 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
             let maximum = refine_boundary(last_pass, failing_speed, false, |speed| {
                 failure(template, model, speed).is_none()
             });
-            let source = if diagnostic.contains("clearing speed exceeds 22 m/s") {
+            let source = if diagnostic
+                .diagnostic
+                .contains("clearing speed exceeds 22 m/s")
+            {
                 RatedWindowSource::ClearanceMaximum
             } else {
                 RatedWindowSource::ForceBound
             };
-            let boundary = failure(template, model, maximum + 0.01).unwrap_or(diagnostic);
+            let boundary = failure(template, model, maximum + 0.01)
+                .unwrap_or(diagnostic)
+                .diagnostic;
             (maximum, source, Some(boundary))
         }
     };
@@ -602,8 +649,8 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
     for speed in [minimum_entry, maximum_entry] {
         if let Some(diagnostic) = failure(template, model, speed) {
             acceptance_failures.push(format!(
-                "{:?}: endpoint {speed} fails: {diagnostic}",
-                template.id
+                "{:?}: endpoint {speed} fails: {}",
+                template.id, diagnostic.diagnostic
             ));
         }
     }
@@ -659,7 +706,7 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
         maximum_source: Some(maximum_source),
         unavailable_reason: None,
         upper_failure,
-        minimum_failure,
+        minimum_failure: minimum_failure.map(|failure| failure.diagnostic),
         passes_again_above,
         airtime,
         acceptance_failures,
@@ -882,14 +929,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAXIMUM_ROLL_RATE, ScannedWindow, cap_maximum_for_hill_feel, failure,
-        generated_rated_windows_contents, refine_boundary, roll_rate_rule, scan,
-        unmeasured_catalog,
+        FailureKind, MAXIMUM_ROLL_RATE, RatedWindowSource, ScannedWindow,
+        cap_maximum_for_hill_feel, failure, generated_rated_windows_contents, minimum_source,
+        refine_boundary, roll_rate_rule, scan, unmeasured_catalog,
     };
     use theme_park_sim::physics::rated_piece::{rate_piece, unpowered};
     use theme_park_sim::track::{
-        CoasterModel, ForceRating, ForceRatingAxis, PieceId, Slope, coaster_models, hybrid_model,
-        hyper_model,
+        CoasterModel, ForceRating, ForceRatingAxis, PieceId, Slope, coaster_models,
+        family_coaster_model, hybrid_model, hyper_model,
     };
 
     fn scan_models(
@@ -921,6 +968,34 @@ mod tests {
             rating.maximum_filtered_force[0]
         );
         assert_eq!(failure(piece, &model, 19.83), None);
+    }
+
+    #[test]
+    fn unreachable_approach_boundary_has_its_own_minimum_source() {
+        let piece = unmeasured_catalog()
+            .iter()
+            .find(|piece| {
+                piece.id == PieceId::BankedStraightLeft && piece.entry.slope == Slope::DownGentle
+            })
+            .expect("catalog contains the downhill banked straight");
+        let model = family_coaster_model();
+        let failure = failure(piece, &model, 9.36).expect("entry speed is not reachable");
+
+        assert_eq!(failure.kind, FailureKind::ApproachReachability);
+        assert_eq!(minimum_source(&failure), RatedWindowSource::ApproachMinimum);
+    }
+
+    #[test]
+    fn measured_force_failure_keeps_the_force_bound_source() {
+        let piece = unmeasured_catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::Corkscrew)
+            .expect("catalog contains the corkscrew");
+        let model = hybrid_model();
+        let failure = failure(piece, &model, 40.0).expect("40 m/s exceeds the force window");
+
+        assert_eq!(failure.kind, FailureKind::Other);
+        assert_eq!(minimum_source(&failure), RatedWindowSource::ForceBound);
     }
 
     #[test]
