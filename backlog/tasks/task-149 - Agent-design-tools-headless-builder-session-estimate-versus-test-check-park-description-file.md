@@ -7,6 +7,7 @@ status: In Progress
 assignee: []
 created_date: '2026-11-18 17:03'
 updated_date: '2026-11-18 23:21'
+updated_date: '2026-11-19 00:17'
 labels:
   - tooling
 dependencies: []
@@ -69,4 +70,18 @@ The single requested `make test-rust` run passed 948 tests across 22 suites; `ma
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-18: plan items 1-2 merged to master (a4aeac4, pushed): ride files, headless builder session, design command-line tool, explicit block layouts. Items 3 (native agreement table), 4 (browser agreement spec), 5 (one code path for worker and tool) and 8 (park description loader) started in parallel in worktrees dt-agreement, dt-browser-agreement, dt-one-path and dt-park.
+## Native agreement table work (2026-11-18)
+
+The native report now prints placement, finished-track, measured front-car and per-axis worst-car force peaks and entry speeds, with individual check 2 and check 3 failure reasons. JSON includes the same values. Check 2 uses the finished preview versus the front car; check 3 uses the placement preview versus the envelope across cars. The station is excluded because it is not a placed piece. Expanded elements are split into physical pieces using the candidate's samples. Piece ranges are half-open except at the final endpoint; finished-preview entry speed is interpolated at the piece boundary without extrapolation. Missing data is reported as a failed comparison. Agreement failures remain informational and `check` says that they exit zero until work item 6.
+
+The full catalog tables and their failure details are in TASK-146 and plan section 9. Release `tools/design check content/rides/*.ride.json` took 33.02 s and exited zero: expectations passed on all rides, agreement passed on Velocity Viper and failed on the other four. All 227 pieces passed check 2; 17 failed check 3. The separate demo-ride comparison remains pending its branch. The three synthetic tests existed at the starting commit; further axis and piece-boundary coverage and catalog integration were added without disabling them.
+
+The requested short straight-and-hill end-to-end fixture remains failing. Two straight-and-hill prefixes could not be closed by finish search (`No nearby connection to the station was found`); a direct four-turn loop with an AirtimeHill substituted for a straight also failed to close (`The track must connect back to its station.`). The test remains enabled in `crates/design-tools/tests/rides.rs`. Stop after the two failed attempts on the finish-search approach; a follow-up should construct a verified closed short ride with a hill from the geometry and then rerun the gates. The existing catalog integration and Timber agreement command exercise the full native path, but do not satisfy the short-fixture requirement.
+
+Verification: `make build` passed. The requested workspace Rust command ran every binary and failed only `design-tools/tests/rides.rs` (2 passed, 1 failed, none ignored); the failing test is the short fixture described above. The other binaries passed, including 680 simulation library tests and 169 wasm library tests. `make lint` passed. `make check` passed generated types (1), its Rust subset (228), web tests (468), art tests (9), and fast browser tests (43). `make test-web` passed 468 web and 9 art tests. No existing test was disabled or deleted. The incomplete work remains uncommitted; the workspace Rust gate must pass before it is ready to land.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-18 lead, using tools/design to build the short agreement fixture (Launch 14 m/s, AirtimeHill, two small turns, finish, close; agreement passes on all 9 pieces). Friction for the agent guide (item 10): every call prints dozens of ts-rs 'failed to parse serde attribute' build warnings before the reply; there is no 'help' ride command (only the plan lists commands); 'finish' brings the track back to the station but a separate 'close' is still needed, and the state after finish says 'No nearby connection to the station was found' while 'can test: true' (same family as TASK-153).
 <!-- SECTION:NOTES:END -->
