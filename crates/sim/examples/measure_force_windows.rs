@@ -979,7 +979,23 @@ mod tests {
             })
             .expect("catalog contains the downhill banked straight");
         let model = family_coaster_model();
-        let failure = failure(piece, &model, 9.36).expect("entry speed is not reachable");
+        let speed = 1.0;
+        let rating = rate_piece(&model, model.train.cars, piece, speed, unpowered()).unwrap();
+        assert!(!rating.passed, "{rating:?}");
+        assert_eq!(
+            rating.failure,
+            Some("no approach context can attain the requested entry speed"),
+            "{rating:?}"
+        );
+        assert!(
+            rating.context_results.iter().all(|context| {
+                !context.applicable
+                    && context.inapplicable_reason.is_some()
+                    && context.failure.is_none()
+            }),
+            "{rating:?}"
+        );
+        let failure = failure(piece, &model, speed).expect("entry speed is not reachable");
 
         assert_eq!(failure.kind, FailureKind::ApproachReachability);
         assert_eq!(minimum_source(&failure), RatedWindowSource::ApproachMinimum);
