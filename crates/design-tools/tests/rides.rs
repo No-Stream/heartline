@@ -116,15 +116,19 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
 
     let mut arguments = vec!["check".to_owned(), "--json".to_owned()];
     arguments.extend(rides.iter().map(|path| path.display().to_string()));
-    let output = run_cli(&arguments, "").unwrap();
-    let reports: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let output = run_cli_with_status(&arguments, "");
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    let reports: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
 
     assert_eq!(reports.as_array().unwrap().len(), rides.len());
+    let mut has_agreement_failures = false;
     for report in reports.as_array().unwrap() {
         assert_eq!(
             report["agreementGate"],
-            "informational; agreement failures exit zero"
+            "enabled; finished-track agreement failures exit nonzero"
         );
+        assert!(report["expectationFailures"].as_array().unwrap().is_empty());
+        has_agreement_failures |= !report["agreement"]["passed"].as_bool().unwrap();
         let rated_speed_margins = report["ratedSpeedMargins"].as_array().unwrap();
         if !rated_speed_margins.is_empty() {
             let physics_configurations: std::collections::BTreeSet<_> = rated_speed_margins
@@ -175,12 +179,15 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
         for failure in agreement["failures"].as_array().unwrap() {
             assert!(matches!(
                 failure["check"].as_str().unwrap(),
-                "FinishedEstimateVsFrontCar" | "PlacementEstimateVsWorstCar"
+                "FinishedEstimateVsFrontCar"
+                    | "FinishedEstimateVsWorstCar"
+                    | "PlacementEstimateVsWorstCar"
             ));
             assert!(failure["metric"].is_string());
             assert!(failure["reason"].is_string());
         }
     }
+    assert_eq!(output.exit_code, i32::from(has_agreement_failures));
 }
 
 #[test]
@@ -207,10 +214,62 @@ fn agreement_command_prints_the_force_values_for_a_closed_ride() {
         "{output}"
     );
     assert!(output.contains("placement[min/max/lat/long g]"), "{output}");
-    assert!(output.contains("finished[min/max/lat/long g]"), "{output}");
-    assert!(output.contains("front[min/max/lat/long g]"), "{output}");
-    assert!(output.contains("worst[min/max/lat/long g]"), "{output}");
+    assert!(
+        output.contains("finished-front[min/max/lat/long g]"),
+        "{output}"
+    );
+    assert!(
+        output.contains("finished-worst[min/max/lat/long g]"),
+        "{output}"
+    );
+    assert!(
+        output.contains("measured-front[min/max/lat/long g]"),
+        "{output}"
+    );
+    assert!(
+        output.contains("measured-worst[min/max/lat/long g]"),
+        "{output}"
+    );
     assert!(output.contains("Agreement:"), "{output}");
+}
+
+#[test]
+fn timber_tumbler_steepening_descent_placement_matches_the_closed_run() {
+    let timber_tumbler = ride_files()
+        .into_iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "timber-tumbler.ride.json")
+        })
+        .unwrap();
+    let output = run_cli(
+        &[
+            "ride".into(),
+            timber_tumbler.display().to_string(),
+            "agreement".into(),
+            "--json".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    let report: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let piece = report["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["pieceName"] == "GentleToSteepDown")
+        .unwrap();
+    let placement_longitudinal = piece["placementEstimate"]["maximumLongitudinalG"]
+        .as_f64()
+        .unwrap();
+    let measured_longitudinal = piece["measuredWorst"]["maximumLongitudinalG"]
+        .as_f64()
+        .unwrap();
+
+    assert!(
+        (placement_longitudinal - measured_longitudinal).abs() <= 0.3,
+        "Timber Tumbler GentleToSteepDown placement estimate {placement_longitudinal:.3} g differs from its closed-run measurement {measured_longitudinal:.3} g"
+    );
 }
 
 #[test]

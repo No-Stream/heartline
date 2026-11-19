@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "vitest run web/src web/bench",
+    "test": "vitest run web/src web/bench web/e2e/rides/design-json.test.ts",
+    "test:design-json": "vitest run web/e2e/rides/design-json.test.ts",
+    "test:canvas-sizing": "vitest run web/src/canvas-sizing.test.ts",
     "test:art": "vitest run --config web/art/vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "dev": "vite --config web/vite.config.ts",

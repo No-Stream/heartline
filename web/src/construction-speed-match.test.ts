@@ -22,7 +22,13 @@ describe("speed-matched construction estimates", () => {
 it("uses the latest end speed only when the placed-track estimate reaches the end", () => {
   const sample: TestingSample = { distance: 10, x: 0, y: 0, z: 0, speed: 24, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] };
   const preview = {
-    status: "reachedEnd" as const, samples: [sample], completed: true, lastPlaced: null, launches: [],
+    status: "reachedEnd" as const,
+    samples: [sample],
+    forceEnvelopeSamples: [sample],
+    pieceForcePeaks: [],
+    completed: true,
+    lastPlaced: null,
+    launches: [],
     limits: MODEL_FORCE_LIMITS["Briar Blitz"],
   };
   expect(constructionEndSpeed(preview)).toBe(24);

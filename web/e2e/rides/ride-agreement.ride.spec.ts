@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,10 +5,11 @@ import { expect, test, type TestInfo } from "@playwright/test";
 import { candidateForceReadout, hillReadout } from "../../src/candidate-force-readout";
 import type { TestingReport } from "../../src/generated/TestingReport";
 import type { CoasterModelKey } from "../../src/generated/coaster-models";
-import { advanceUntilState, placeStation, showBuilderTab, startPark, testRide } from "../player/driver";
+import { advanceUntilState, flattenTerrainTiles, placeStation, showBuilderTab, startPark, testRide } from "../player/driver";
 import { placeCircuit } from "../player/place-circuit";
 import { expectRideReportExplained } from "../player/ride-report";
 import { readRide, type RideFile } from "../player/rides";
+import { runDesignJson } from "./design-json";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const ridesDirectory = resolve(repositoryRoot, "content/rides");
@@ -30,6 +30,7 @@ if (requestedRide && selectedRideStems.length === 0) {
 const rides = selectedRideStems.map((stem) => ({ stem, ride: readRide(stem) }));
 
 const newParkSurfaceHeight = 8;
+const minimumStationHeight = 4;
 const browserAgreementFastRide = "browser-agreement-fast";
 
 for (const { stem, ride } of rides) {
@@ -40,10 +41,15 @@ for (const { stem, ride } of rides) {
     page.on("pageerror", (error) => pageErrors.push(`${error.message}\n${error.stack ?? "(no stack)"}`));
 
     await startPark(page, { park: "new", seed: 149, speed: 1, testMode: true });
+    const stationHeight = Math.max(minimumStationHeight, ride.station.z - newParkSurfaceHeight);
+    const stationSurfaceHeight = ride.station.z - stationHeight;
+    if (stationSurfaceHeight !== newParkSurfaceHeight) {
+      await flattenTerrainTiles(page, [{ x: ride.station.x, y: ride.station.y, height: stationSurfaceHeight }]);
+    }
     await placeStation(page, {
       model: ride.model as CoasterModelKey,
-      height: ride.station.z - newParkSurfaceHeight,
-      tile: { x: ride.station.x, y: ride.station.y, z: 2 },
+      height: stationHeight,
+      tile: { x: ride.station.x, y: ride.station.y, z: stationSurfaceHeight / 4 },
       direction: stationDirection(ride.station.x, ride.station.y, ride.station.heading),
     });
 
@@ -140,6 +146,7 @@ type NativeRideCheck = {
       readonly entrySpeedMeasuredFront: number | null;
       readonly placementEstimate: ForcePeaks | null;
       readonly finishedTrackEstimate: ForcePeaks | null;
+      readonly finishedTrackWorstCarEstimate: ForcePeaks | null;
       readonly measuredFront: ForcePeaks | null;
       readonly measuredWorst: ForcePeaks | null;
       readonly check2: "Passed" | "Failed";
@@ -151,6 +158,8 @@ type NativeRideCheck = {
       readonly check: string;
       readonly metric: string;
       readonly reason: string;
+      readonly classification?: "downstream track" | "estimate error";
+      readonly cause?: string;
     }[];
   };
 };
@@ -218,23 +227,17 @@ function stationDirection(x: number, y: number, heading: RideFile["station"]["he
 
 function runNativeCheck(stem: string): NativeRideCheckWithSamples {
   const ridePath = resolve(ridesDirectory, `${stem}.ride.json`);
-  const output = execFileSync(resolve(repositoryRoot, "tools/design"), [
+  const result = runDesignJson<NativeRideCheck[]>(resolve(repositoryRoot, "tools/design"), [
     "check",
     "--json",
     ridePath,
-  ], {
-    cwd: repositoryRoot,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const [result] = JSON.parse(output) as NativeRideCheck[];
+  ], repositoryRoot)[0];
   if (!result) throw new Error(`Native design check omitted ${stem}`);
-  const testOutput = execFileSync(resolve(repositoryRoot, "tools/design"), ["ride", ridePath, "test", "--json"], {
-    cwd: repositoryRoot,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const rideTest = JSON.parse(testOutput) as NativeRideTest;
+  const rideTest = runDesignJson<NativeRideTest>(
+    resolve(repositoryRoot, "tools/design"),
+    ["ride", ridePath, "test", "--json"],
+    repositoryRoot,
+  );
   if (!rideTest.testRun) throw new Error(`Native test report omitted ${stem}`);
   return { ...result, reportSamples: rideTest.testRun.samples };
 }
@@ -333,8 +336,13 @@ async function reportCheckResults(
   report: TestingReport,
 ): Promise<void> {
   const check2Passed = nativeCheck.agreement.rows.filter(({ check2 }) => check2 === "Passed").length;
-  const check3Passed = nativeCheck.agreement.rows.filter(({ check3 }) => check3 === "Passed").length;
-  const browserCheck2 = browserCheck2Results(nativeCheck, report);
+  const check3Failures = nativeCheck.agreement.failures.filter(({ check }) => check === "PlacementEstimateVsWorstCar");
+  const downstreamTrackFailures = check3Failures.filter(({ classification }) => classification === "downstream track").length;
+  const estimateErrorFailures = check3Failures.filter(({ classification }) => classification === "estimate error").length;
+  const unclassifiedPlacementFailures = check3Failures
+    .filter(({ classification }) => classification !== "downstream track" && classification !== "estimate error")
+    .map(({ pieceIndex, pieceName, metric }) => `piece ${pieceIndex} ${pieceName} ${metric}`);
+  const browserAgreement = browserAgreementResults(nativeCheck, report);
   const browserReportEnvelope = compareReportEnvelope(report, nativeCheck);
   const details = {
     ride: ride.name,
@@ -342,26 +350,36 @@ async function reportCheckResults(
     check2: {
       passedPieces: check2Passed,
       totalPieces: nativeCheck.agreement.rows.length,
-      browserReport: browserCheck2,
+      browserReport: browserAgreement,
     },
     check3: {
-      passedPieces: check3Passed,
-      totalPieces: nativeCheck.agreement.rows.length,
-      perPieceWorstCarSource: "native agreement table; the browser report exposes ride-wide statistics only",
+      failureMessages: check3Failures.length,
+      affectedPieces: new Set(check3Failures.map(({ pieceIndex }) => pieceIndex)).size,
+      downstreamTrackFailures,
+      estimateErrorFailures,
+      unclassifiedFailures: unclassifiedPlacementFailures,
+      failures: check3Failures,
+      perPieceWorstCarSource: "browser test report peaks, checked against the native per-piece agreement table",
+      gate: "informational; downstream track is expected and estimate errors are reported for correction",
     },
     agreement: nativeCheck.agreement,
     browserReportEnvelope,
     expectationTargetSemantics: "The ride-file sustainedMaxVerticalG and sustainedMinVerticalG targets currently compare with maxPositiveVerticalG and maxNegativeVerticalG peaks, matching the native checker; no sustained-force target is verified.",
     expectationFailures: nativeCheck.expectationFailures,
   };
-  console.info(`${ride.name}: check 2 native ${check2Passed}/${nativeCheck.agreement.rows.length} pieces; browser report ${browserCheck2.passedPieces}/${browserCheck2.totalPieces}; check 3 native ${check3Passed}/${nativeCheck.agreement.rows.length} pieces`);
+  console.info(`${ride.name}: check 2 native ${check2Passed}/${nativeCheck.agreement.rows.length} pieces; browser report parity ${browserAgreement.passedPieces}/${browserAgreement.totalPieces}; check 3 placement failures ${check3Failures.length} (${downstreamTrackFailures} downstream track, ${estimateErrorFailures} estimate error)`);
   await testInfo.attach("ride-agreement-checks.json", {
     body: Buffer.from(JSON.stringify(details, null, 2)),
     contentType: "application/json",
   });
+  expect(nativeCheck.agreement.passed, `${ride.name} native agreement`).toBe(true);
+  expect(browserAgreement.failures, `${ride.name} browser agreement measurements`).toEqual([]);
+  expect(unclassifiedPlacementFailures, `${ride.name} classified placement failures`).toEqual([]);
+  expect(check2Passed, `${ride.name} check 2 passing pieces`).toBe(nativeCheck.agreement.rows.length);
+  expect(browserAgreement.passedPieces, `${ride.name} browser agreement pieces`).toBe(nativeCheck.agreement.rows.length);
 }
 
-function browserCheck2Results(nativeCheck: NativeRideCheckWithSamples, report: TestingReport): {
+function browserAgreementResults(nativeCheck: NativeRideCheckWithSamples, report: TestingReport): {
   readonly passedPieces: number;
   readonly totalPieces: number;
   readonly failures: readonly string[];
@@ -379,6 +397,16 @@ function browserCheck2Results(nativeCheck: NativeRideCheckWithSamples, report: T
     };
   }
   const samplesByPiece = new Map<number, BrowserReportSample[]>();
+  const browserPeaksByPiece = new Map(report.pieceForcePeaks.map((piece) => [piece.pieceIndex, piece]));
+  if (browserPeaksByPiece.size !== report.pieceForcePeaks.length) {
+    return {
+      passedPieces: 0,
+      totalPieces: nativeCheck.agreement.rows.length,
+      failures: ["browser testing report contains duplicate per-piece peak entries"],
+      browserToNativeSampleDifferences: [],
+      sampleIdentityValid: true,
+    };
+  }
   const sampleMismatches: string[] = [];
   const identityFailures: string[] = [];
   nativeReportSamples.forEach((nativeSample, index) => {
@@ -406,6 +434,15 @@ function browserCheck2Results(nativeCheck: NativeRideCheckWithSamples, report: T
       sampleIdentityValid: false,
     };
   }
+  if (sampleMismatches.length > 0) {
+    return {
+      passedPieces: 0,
+      totalPieces: nativeCheck.agreement.rows.length,
+      failures: [`${sampleMismatches.length} browser/native report sample values differ: ${sampleMismatches.slice(0, 5).join("; ")}`],
+      browserToNativeSampleDifferences: sampleMismatches,
+      sampleIdentityValid: true,
+    };
+  }
 
   nativeReportSamples.forEach((nativeSample, index) => {
     const browserSample = report.samples[index];
@@ -425,28 +462,62 @@ function browserCheck2Results(nativeCheck: NativeRideCheckWithSamples, report: T
   const failures: string[] = [];
   for (const row of nativeCheck.agreement.rows) {
     const pieceSamples = samplesByPiece.get(row.pieceIndex);
-    if (!pieceSamples?.length || !row.finishedTrackEstimate || row.finishedEntrySpeedEstimate === null) {
-      failures.push(`piece ${row.pieceIndex} ${row.pieceName}: browser report samples or finished estimate unavailable`);
+    const browserPeaks = browserPeaksByPiece.get(row.pieceIndex);
+    if (
+      !pieceSamples?.length ||
+      !browserPeaks ||
+      !row.measuredFront ||
+      !row.measuredWorst ||
+      !row.finishedTrackEstimate ||
+      !row.finishedTrackWorstCarEstimate ||
+      !row.placementEstimate ||
+      row.finishedEntrySpeedEstimate === null ||
+      row.entrySpeedMeasuredFront === null
+    ) {
+      failures.push(`piece ${row.pieceIndex} ${row.pieceName}: browser report samples or per-piece peaks unavailable`);
       failedPieces.add(row.pieceIndex);
       continue;
     }
-    const measured: ForcePeaks = {
-      minimumVerticalG: Math.min(...pieceSamples.map(({ verticalG }) => verticalG)),
-      maximumVerticalG: Math.max(...pieceSamples.map(({ verticalG }) => verticalG)),
-      maximumLateralG: Math.max(...pieceSamples.map(({ lateralG }) => Math.abs(lateralG))),
-      maximumLongitudinalG: Math.max(...pieceSamples.map(({ longitudinalG }) => Math.abs(longitudinalG))),
-    };
-    const entrySpeedMeasured = pieceSamples[0].speed;
-    if (Math.abs(row.finishedEntrySpeedEstimate - entrySpeedMeasured) > 0.5) {
-      failures.push(`piece ${row.pieceIndex} entry speed: estimate ${row.finishedEntrySpeedEstimate.toFixed(3)} vs browser front car ${entrySpeedMeasured.toFixed(3)} m/s`);
+    if (!browserPeaks.frontCar || !browserPeaks.worstCar) {
+      failures.push(`piece ${row.pieceIndex} ${row.pieceName}: browser report omitted front-car or worst-car peaks`);
+      failedPieces.add(row.pieceIndex);
+      continue;
+    }
+    if (Math.abs(row.entrySpeedMeasuredFront - pieceSamples[0].speed) > 1e-6) {
+      failures.push(`piece ${row.pieceIndex} entry speed measurement: native ${row.entrySpeedMeasuredFront.toFixed(3)} vs browser front car ${pieceSamples[0].speed.toFixed(3)} m/s`);
       failedPieces.add(row.pieceIndex);
     }
-    for (const axis of Object.keys(measured) as (keyof ForcePeaks)[]) {
-      const difference = Math.abs(row.finishedTrackEstimate[axis] - measured[axis]);
-      if (difference > 0.2) {
-        failures.push(`piece ${row.pieceIndex} ${axis}: estimate differs from browser front-car report by ${difference.toFixed(3)} g`);
-        failedPieces.add(row.pieceIndex);
+    if (Math.abs(row.finishedEntrySpeedEstimate - pieceSamples[0].speed) > 0.5) {
+      failures.push(`piece ${row.pieceIndex} finished entry speed: estimate ${row.finishedEntrySpeedEstimate.toFixed(3)} vs browser front car ${pieceSamples[0].speed.toFixed(3)} m/s`);
+      failedPieces.add(row.pieceIndex);
+    }
+    for (const [car, actual, expected] of [
+      ["front car", browserPeaks.frontCar, row.measuredFront],
+      ["worst car", browserPeaks.worstCar, row.measuredWorst],
+    ] as const) {
+      for (const axis of Object.keys(expected) as (keyof ForcePeaks)[]) {
+        const difference = Math.abs(expected[axis] - actual[axis]);
+        if (difference > 1e-6) {
+          failures.push(`piece ${row.pieceIndex} ${car} ${axis}: browser/native report differs by ${difference.toExponential(2)} g`);
+          failedPieces.add(row.pieceIndex);
+        }
       }
+    }
+    for (const [car, estimate, measured] of [
+      ["front car", row.finishedTrackEstimate, browserPeaks.frontCar],
+      ["worst car", row.finishedTrackWorstCarEstimate, browserPeaks.worstCar],
+    ] as const) {
+      for (const axis of Object.keys(measured) as (keyof ForcePeaks)[]) {
+        const difference = Math.abs(estimate[axis] - measured[axis]);
+        if (difference > 0.2) {
+          failures.push(`piece ${row.pieceIndex} finished estimate vs ${car} ${axis}: browser estimate differs from measured force by ${difference.toFixed(3)} g, over 0.2 g`);
+          failedPieces.add(row.pieceIndex);
+        }
+      }
+    }
+    if (row.check2 !== "Passed") {
+      failures.push(`piece ${row.pieceIndex} ${row.pieceName}: native check 2 failed (${row.check2})`);
+      failedPieces.add(row.pieceIndex);
     }
   }
   return {

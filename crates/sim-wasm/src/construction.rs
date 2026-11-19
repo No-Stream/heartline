@@ -1,7 +1,10 @@
 use super::*;
 use serde::Serialize;
 use theme_park_sim::park::ride_test::RideKey;
-use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun};
+use theme_park_sim::physics::{
+    Circuit, ForcePeakValues, PhysicsConfig, PieceForcePeaks, PreviewForceSample, PreviewStatus,
+    TestRun,
+};
 use theme_park_sim::track::{
     Bank, CoasterModel, Hand, Heartlining, HillFeel, HillTwist, PieceFamily,
 };
@@ -85,6 +88,21 @@ pub(crate) fn testing_report_json(report: &TestRun, circuit: &Circuit) -> String
 }
 
 pub(crate) fn testing_report(report: &TestRun, circuit: &Circuit) -> crate::reports::TestingReport {
+    let mut peaks_by_piece: std::collections::BTreeMap<_, _> = report
+        .piece_force_peaks()
+        .into_iter()
+        .map(|peaks| (peaks.piece_index, peaks))
+        .collect();
+    let piece_force_peaks = (0..circuit.pieces().len())
+        .map(|piece_index| {
+            let peaks = peaks_by_piece.remove(&piece_index);
+            crate::reports::PieceForcePeaksReport {
+                piece_index,
+                front_car: peaks.and_then(|peaks| peaks.front_car.map(Into::into)),
+                worst_car: peaks.and_then(|peaks| peaks.worst_car.map(Into::into)),
+            }
+        })
+        .collect();
     let samples = report
         .samples
         .iter()
@@ -128,6 +146,7 @@ pub(crate) fn testing_report(report: &TestRun, circuit: &Circuit) -> crate::repo
         .collect();
     crate::reports::TestingReport {
         samples,
+        piece_force_peaks,
         launches: report_launches(circuit, report),
         notes: report.notes.clone(),
         proximity_events,
@@ -264,6 +283,8 @@ pub struct ConstructionLaunchEstimateWire {
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionForcePreviewWire {
     pub samples: Vec<crate::reports::TestingSample>,
+    pub force_envelope_samples: Vec<crate::reports::TestingSample>,
+    pub piece_force_peaks: Vec<crate::reports::PieceForcePeaksReport>,
     pub completed: bool,
     pub status: &'static str,
     pub last_placed: Option<ConstructionLastPlacedForceWire>,
@@ -286,6 +307,8 @@ pub struct ConstructionCandidateForcePreviewWire {
     pub entry_speed: Option<f64>,
     pub peaks: Option<ConstructionLastPlacedForceWire>,
     pub samples: Vec<crate::reports::TestingSample>,
+    pub force_envelope_samples: Vec<crate::reports::TestingSample>,
+    pub piece_force_peaks: Vec<crate::reports::PieceForcePeaksReport>,
     pub limits: ConstructionForceLimitsWire,
     pub rated_speed: Option<ConstructionRatedSpeedWire>,
 }
@@ -379,10 +402,76 @@ fn open_track_position(pieces: &[Piece], distance: f64) -> Vec3 {
     panic!("force preview sample lies beyond the open track");
 }
 
+fn testing_sample_from_force_envelope(
+    pieces: &[Piece],
+    sample: PreviewForceSample,
+    limits: ComfortableForceLimits,
+) -> crate::reports::TestingSample {
+    let vertical_force = if sample.minimum_vertical_g / limits.minimum_vertical_g
+        > sample.maximum_vertical_g / limits.maximum_vertical_g
+    {
+        sample.minimum_vertical_g
+    } else {
+        sample.maximum_vertical_g
+    };
+    let position = open_track_position(pieces, sample.distance) / 4.0;
+    crate::reports::TestingSample {
+        distance: sample.distance,
+        x: position.x,
+        y: position.y,
+        z: position.z,
+        speed: sample.speed,
+        vertical_g: vertical_force,
+        lateral_g: sample.lateral_g,
+        longitudinal_g: sample.longitudinal_g,
+        airtime: vertical_force < 0.0,
+        force_limit_exceeded: sample.force_limit_exceeded,
+    }
+}
+
+fn piece_force_peaks_wire(peaks: &[PieceForcePeaks]) -> Vec<crate::reports::PieceForcePeaksReport> {
+    peaks
+        .iter()
+        .map(|peaks| crate::reports::PieceForcePeaksReport {
+            piece_index: peaks.piece_index,
+            front_car: peaks.front_car.map(Into::into),
+            worst_car: peaks.worst_car.map(Into::into),
+        })
+        .collect()
+}
+
+fn worst_car_force_peaks_for_piece_range(
+    peaks: &[PieceForcePeaks],
+    first_piece_index: usize,
+    last_piece_index: usize,
+) -> Option<ForcePeakValues> {
+    let mut result: Option<ForcePeakValues> = None;
+    for piece_peaks in peaks
+        .iter()
+        .filter(|peaks| (first_piece_index..=last_piece_index).contains(&peaks.piece_index))
+    {
+        let Some(candidate) = piece_peaks.worst_car else {
+            continue;
+        };
+        result = Some(result.map_or(candidate, |current| {
+            ForcePeakValues {
+                minimum_vertical_g: current.minimum_vertical_g.min(candidate.minimum_vertical_g),
+                maximum_vertical_g: current.maximum_vertical_g.max(candidate.maximum_vertical_g),
+                maximum_lateral_g: current.maximum_lateral_g.max(candidate.maximum_lateral_g),
+                maximum_longitudinal_g: current
+                    .maximum_longitudinal_g
+                    .max(candidate.maximum_longitudinal_g),
+            }
+        }));
+    }
+    result
+}
+
 fn last_placed_force_wire(
     samples: &[crate::reports::TestingSample],
     start_distance: f64,
     end_distance: f64,
+    force_peaks: Option<ForcePeakValues>,
 ) -> Option<ConstructionLastPlacedForceWire> {
     let samples: Vec<_> = samples
         .iter()
@@ -391,38 +480,32 @@ fn last_placed_force_wire(
     if samples.is_empty() {
         return None;
     }
-    let peak_flag = |value: fn(&crate::reports::TestingSample) -> f64, axis: usize| {
+    let exceeded = |axis: usize| {
         samples
             .iter()
-            .max_by(|left, right| value(left).total_cmp(&value(right)))
-            .expect("nonempty samples")
-            .force_limit_exceeded[axis]
+            .any(|sample| sample.force_limit_exceeded[axis])
     };
+    let measured_peaks =
+        force_peaks.expect("nonempty force envelope must have per-piece peak measurements");
+    let minimum_vertical_limit_exceeded = samples
+        .iter()
+        .any(|sample| sample.force_limit_exceeded[0] && sample.vertical_g < 0.0);
+    let maximum_vertical_limit_exceeded = samples
+        .iter()
+        .any(|sample| sample.force_limit_exceeded[0] && sample.vertical_g > 0.0);
     Some(ConstructionLastPlacedForceWire {
-        minimum_vertical_limit_exceeded: peak_flag(|sample| -sample.vertical_g, 0),
-        maximum_vertical_limit_exceeded: peak_flag(|sample| sample.vertical_g, 0),
-        lateral_limit_exceeded: peak_flag(|sample| sample.lateral_g.abs(), 1),
-        longitudinal_limit_exceeded: peak_flag(|sample| sample.longitudinal_g.abs(), 2),
+        minimum_vertical_limit_exceeded,
+        maximum_vertical_limit_exceeded,
+        lateral_limit_exceeded: exceeded(1),
+        longitudinal_limit_exceeded: exceeded(2),
         maximum_speed: samples
             .iter()
             .map(|sample| sample.speed)
             .fold(f64::NEG_INFINITY, f64::max),
-        minimum_vertical_g: samples
-            .iter()
-            .map(|sample| sample.vertical_g)
-            .fold(f64::INFINITY, f64::min),
-        maximum_vertical_g: samples
-            .iter()
-            .map(|sample| sample.vertical_g)
-            .fold(f64::NEG_INFINITY, f64::max),
-        maximum_absolute_lateral_g: samples
-            .iter()
-            .map(|sample| sample.lateral_g.abs())
-            .fold(0.0, f64::max),
-        maximum_absolute_longitudinal_g: samples
-            .iter()
-            .map(|sample| sample.longitudinal_g.abs())
-            .fold(0.0, f64::max),
+        minimum_vertical_g: measured_peaks.minimum_vertical_g,
+        maximum_vertical_g: measured_peaks.maximum_vertical_g,
+        maximum_absolute_lateral_g: measured_peaks.maximum_lateral_g,
+        maximum_absolute_longitudinal_g: measured_peaks.maximum_longitudinal_g,
     })
 }
 
@@ -621,6 +704,7 @@ impl WasmSimulation {
     pub fn construction_force_preview(&self) -> Option<ConstructionForcePreviewWire> {
         let construction = self.construction.as_ref()?;
         let pieces = construction.pieces();
+        let limits = construction.model().comfortable_force_limits;
         let preview = construction.force_preview(
             pieces,
             PhysicsConfig {
@@ -648,10 +732,28 @@ impl WasmSimulation {
                 }
             })
             .collect();
+        let force_envelope_samples: Vec<_> = preview
+            .force_envelope_samples
+            .iter()
+            .copied()
+            .map(|sample| testing_sample_from_force_envelope(pieces, sample, limits))
+            .collect();
+        let piece_force_peaks = piece_force_peaks_wire(&preview.piece_force_peaks);
         let last_placed = pieces.last().and_then(|piece| {
             (piece.kind != PieceKind::Station).then(|| {
                 let end_distance: f64 = pieces.iter().map(Piece::length).sum();
-                last_placed_force_wire(&samples, end_distance - piece.length(), end_distance)
+                let piece_index = pieces.len() - 1;
+                let worst_peaks = worst_car_force_peaks_for_piece_range(
+                    &preview.piece_force_peaks,
+                    piece_index,
+                    piece_index,
+                );
+                last_placed_force_wire(
+                    &force_envelope_samples,
+                    end_distance - piece.length(),
+                    end_distance,
+                    worst_peaks,
+                )
             })?
         });
         let mut start_distance = 0.0;
@@ -666,7 +768,7 @@ impl WasmSimulation {
                         .launch_speed_bounds(*id)
                         .expect("launch has speed bounds")
                         .maximum;
-                    let peak_longitudinal_g = samples
+                    let peak_longitudinal_g = force_envelope_samples
                         .iter()
                         .filter(|sample| {
                             sample.distance >= start_distance && sample.distance <= end_distance
@@ -690,6 +792,8 @@ impl WasmSimulation {
         };
         Some(ConstructionForcePreviewWire {
             samples,
+            force_envelope_samples,
+            piece_force_peaks,
             completed: preview.report.completed,
             status,
             last_placed,
@@ -751,6 +855,7 @@ impl WasmSimulation {
                 },
             )
             .expect("construction contains a station");
+        let limits = construction.model().comfortable_force_limits;
         let samples: Vec<_> = preview
             .report
             .samples
@@ -771,7 +876,21 @@ impl WasmSimulation {
                 }
             })
             .collect();
+        let force_envelope_samples: Vec<_> = preview
+            .force_envelope_samples
+            .iter()
+            .copied()
+            .filter(|sample| sample.distance >= start_distance && sample.distance <= end_distance)
+            .map(|sample| testing_sample_from_force_envelope(&pieces, sample, limits))
+            .collect();
         let entry_speed = entry_speed(&samples, start_distance);
+        let first_candidate_piece_index = construction.pieces().len();
+        let last_candidate_piece_index = pieces.len() - 1;
+        let worst_peaks = worst_car_force_peaks_for_piece_range(
+            &preview.piece_force_peaks,
+            first_candidate_piece_index,
+            last_candidate_piece_index,
+        );
         let status = match preview.status {
             PreviewStatus::ReachedEnd => "reachedEnd",
             PreviewStatus::Stalled => "stalled",
@@ -781,13 +900,20 @@ impl WasmSimulation {
             status,
             outer_bank,
             entry_speed,
-            peaks: last_placed_force_wire(&samples, start_distance, end_distance),
+            peaks: last_placed_force_wire(
+                &force_envelope_samples,
+                start_distance,
+                end_distance,
+                worst_peaks,
+            ),
             samples: samples
                 .into_iter()
                 .filter(|sample| {
                     sample.distance >= start_distance && sample.distance <= end_distance
                 })
                 .collect(),
+            force_envelope_samples,
+            piece_force_peaks: piece_force_peaks_wire(&preview.piece_force_peaks),
             limits: force_limits_wire(
                 construction.model().comfortable_force_limits,
                 construction.model().name,
@@ -2290,6 +2416,54 @@ pub(crate) fn wire_piecekind(value: PieceKind) -> &'static str {
         PieceKind::Launch => "Launch",
         PieceKind::Brakes => "Brakes",
         PieceKind::Station => "Station",
+    }
+}
+
+#[cfg(test)]
+mod force_wire_tests {
+    use super::{ForcePeakValues, last_placed_force_wire};
+
+    fn sample(vertical_g: f64) -> crate::reports::TestingSample {
+        crate::reports::TestingSample {
+            distance: 4.0,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            speed: 12.0,
+            vertical_g,
+            lateral_g: 0.0,
+            longitudinal_g: 0.0,
+            airtime: vertical_g < 0.0,
+            force_limit_exceeded: [true, false, false],
+        }
+    }
+
+    fn peaks(vertical_g: f64) -> ForcePeakValues {
+        ForcePeakValues {
+            minimum_vertical_g: vertical_g.min(0.0),
+            maximum_vertical_g: vertical_g.max(0.0),
+            maximum_lateral_g: 0.0,
+            maximum_longitudinal_g: 0.0,
+        }
+    }
+
+    #[test]
+    fn vertical_limit_flags_keep_minimum_and_maximum_directions_separate() {
+        let negative = last_placed_force_wire(&[sample(-1.2)], 0.0, 8.0, Some(peaks(-1.2)))
+            .expect("sample lies on selected piece");
+        let positive = last_placed_force_wire(&[sample(3.2)], 0.0, 8.0, Some(peaks(3.2)))
+            .expect("sample lies on selected piece");
+
+        assert!(negative.minimum_vertical_limit_exceeded);
+        assert!(!negative.maximum_vertical_limit_exceeded);
+        assert!(!positive.minimum_vertical_limit_exceeded);
+        assert!(positive.maximum_vertical_limit_exceeded);
+    }
+
+    #[test]
+    #[should_panic(expected = "nonempty force envelope must have per-piece peak measurements")]
+    fn nonempty_force_envelope_requires_piece_peak_measurements() {
+        let _ = last_placed_force_wire(&[sample(-1.2)], 0.0, 8.0, None);
     }
 }
 

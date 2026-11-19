@@ -1,6 +1,4 @@
-use theme_park_sim::physics::{
-    CoasterRun, PhysicsConfig, PreviewStatus, demo_circuit, preview_open_track,
-};
+use theme_park_sim::physics::{CoasterRun, PhysicsConfig, demo_circuit};
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
     PieceId, PieceKind, TrackState, catalog, family_coaster_model, hybrid_model, hyper_model,
@@ -262,46 +260,6 @@ fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
     let model = hybrid_model();
     let circuit = demo_circuit();
     assert_ride_force_bound("demo", &circuit, &model);
-}
-
-#[test]
-fn timber_preview_agrees_with_closed_test_run() {
-    let model = hybrid_model();
-    let circuit = build_player_circuit("Timber Tumbler", model.clone());
-    let preview = preview_open_track(circuit.pieces(), &model, PhysicsConfig::default()).unwrap();
-    let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
-    let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit, model.name))
-        .unwrap();
-    assert_eq!(
-        preview.status,
-        if outcome.recovered {
-            PreviewStatus::Stalled
-        } else {
-            PreviewStatus::ReachedEnd
-        }
-    );
-    for sample in &preview.report.samples {
-        let recorded = outcome.reports[0]
-            .samples
-            .iter()
-            .find(|other| other.distance == sample.distance)
-            .unwrap();
-        assert!((sample.speed - recorded.speed).abs() < 0.5);
-        assert!((sample.vertical_g - recorded.vertical_g).abs() < 0.3);
-        assert!((sample.lateral_g - recorded.lateral_g).abs() < 0.3);
-        assert!(
-            (sample.longitudinal_g - recorded.longitudinal_g).abs() < 0.3,
-            "preview {sample:?} run {recorded:?} piece {:?}",
-            circuit.pieces()[sample.piece_index].id
-        );
-    }
-    assert!(!preview.report.samples.is_empty());
-    if outcome.recovered {
-        assert!(
-            (preview.report.furthest_distance - outcome.reports[0].furthest_distance).abs() < 1.0
-        );
-    }
 }
 
 fn assert_ride_force_bound(

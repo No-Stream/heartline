@@ -88,7 +88,8 @@ export function candidateForceReadout(preview: CandidateForcePreview, units: Uni
   }
   if (preview.peaks === null) return ["The train reaches this piece, but no force samples are available."];
   const lines = [
-    "Front-car force estimates (sampled along the track)",
+    "Worst-car force estimates (sampled along the track)",
+    "Placement estimate is provisional until the following piece exists.",
     speedReadout(preview.entrySpeed, preview.ratedSpeed, units),
     `Estimated minimum vertical force: ${formatForce(preview.peaks.minimumVerticalG)} g (${verticalRating(preview.peaks.minimumVerticalG, preview.limits, preview.peaks.minimumVerticalLimitExceeded)})`,
     `Estimated maximum vertical force: ${formatForce(preview.peaks.maximumVerticalG)} g (${verticalRating(preview.peaks.maximumVerticalG, preview.limits, preview.peaks.maximumVerticalLimitExceeded)})`,

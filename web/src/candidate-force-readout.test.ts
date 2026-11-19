@@ -6,6 +6,8 @@ const preview = {
   status: "reachedEnd" as const,
   outerBank: false,
   samples: [],
+  forceEnvelopeSamples: [],
+  pieceForcePeaks: [],
   entrySpeed: 20,
   ratedSpeed: { minimumEntry: 19, maximumEntry: 21 },
   peaks: { maximumSpeed: 22, minimumVerticalG: -0.5, maximumVerticalG: 3.4, maximumAbsoluteLateralG: 0.3, maximumAbsoluteLongitudinalG: 0.2, minimumVerticalLimitExceeded: false, maximumVerticalLimitExceeded: false, lateralLimitExceeded: false, longitudinalLimitExceeded: false },
@@ -15,18 +17,20 @@ const preview = {
 describe("candidate force readout", () => {
   it("shows estimated entry speed and peak forces in the chosen units", () => {
     expect(candidateForceReadout(preview, "metric")).toEqual([
-      "Front-car force estimates (sampled along the track)",
+      "Worst-car force estimates (sampled along the track)",
+      "Placement estimate is provisional until the following piece exists.",
       "Estimated entry speed: 72 km/h (within rated range 68.4–75.6 km/h)",
       "Estimated minimum vertical force: −0.5 g (good airtime)",
       "Estimated maximum vertical force: 3.4 g (great)",
       "Estimated lateral force: 0.3 g (fine); longitudinal force: 0.2 g (fine)",
     ]);
-    expect(candidateForceReadout(preview, "imperial")[1]).toBe("Estimated entry speed: 44.7 mph (within rated range 42.5–47 mph)");
+    expect(candidateForceReadout(preview, "imperial")[2]).toBe("Estimated entry speed: 44.7 mph (within rated range 42.5–47 mph)");
   });
 
   it("labels outer-bank lateral force alongside the vertical force bands", () => {
     expect(candidateForceReadout({ ...preview, outerBank: true }, "metric")).toEqual([
-      "Front-car force estimates (sampled along the track)",
+      "Worst-car force estimates (sampled along the track)",
+      "Placement estimate is provisional until the following piece exists.",
       "Estimated entry speed: 72 km/h (within rated range 68.4–75.6 km/h)",
       "Estimated minimum vertical force: −0.5 g (good airtime)",
       "Estimated maximum vertical force: 3.4 g (great)",
@@ -36,13 +40,13 @@ describe("candidate force readout", () => {
 
   it("uses the corresponding peak flags to distinguish brief forces and violations", () => {
     const lines = candidateForceReadout({ ...preview, peaks: { ...preview.peaks, minimumVerticalG: -1.2, maximumVerticalG: 4.2, maximumVerticalLimitExceeded: true, maximumAbsoluteLateralG: 2.0, lateralLimitExceeded: false } }, "metric");
-    expect(lines[2]).toContain("brief airtime");
-    expect(lines[3]).toContain("too much");
-    expect(lines[4]).toContain("brief");
+    expect(lines[3]).toContain("brief airtime");
+    expect(lines[4]).toContain("too much");
+    expect(lines[5]).toContain("brief");
   });
 
   it("reports when no size fits or the train cannot reach the piece", () => {
-    expect(candidateForceReadout({ ...preview, entrySpeed: 25 }, "metric")[1]).toContain("outside rated range");
+    expect(candidateForceReadout({ ...preview, entrySpeed: 25 }, "metric")[2]).toContain("outside rated range");
     expect(candidateForceReadout({ ...preview, status: "stalled", entrySpeed: null, peaks: null }, "metric"))
       .toEqual(["The train does not reach this piece; no force estimate is available."]);
     expect(candidateForceReadout({ ...preview, status: "stalled", peaks: null }, "metric"))

@@ -80,18 +80,22 @@ function sceneInput(overrides: Partial<ComposeSceneInput> = {}): ComposeSceneInp
 
 describe("composeScene", () => {
   it("draws the live construction estimate as a pickable track ribbon", () => {
-    const samples = [
+    const forceEnvelopeSamples = [
       { distance: 0, x: 1, y: 1, z: 1, speed: 4, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
       { distance: 1, x: 2, y: 1, z: 1, speed: 8, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
     ];
-    const construction = { constructionForcePreview: { samples }, testingReport: null, pieces: [], elements: [], previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array() } as unknown as ConstructionState;
+    const construction = { constructionForcePreview: { samples: [], forceEnvelopeSamples }, testingReport: null, pieces: [], elements: [], previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array() } as unknown as ConstructionState;
     const scene = composeScene(sceneInput({ construction, testingMetric: "speed" }));
     expect(scene.geometryPasses[5](camera, viewport, atlas, "1").some((quad) => quad.id === "testing-0")).toBe(true);
   });
   it("colours the selected candidate track by its force limit closeness before placement", () => {
     const samples = [
       { distance: 20, x: 1, y: 1, z: 1, speed: 16, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
-      { distance: 21, x: 2, y: 1, z: 1, speed: 16, verticalG: 4.1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+      { distance: 21, x: 2, y: 1, z: 1, speed: 16, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+    ];
+    const forceEnvelopeSamples = [
+      samples[0],
+      { ...samples[1], verticalG: 4.1 },
     ];
     const limits = {
       minimumVerticalG: -1.5,
@@ -101,7 +105,7 @@ describe("composeScene", () => {
       ratingBands: {},
     };
     const construction = {
-      candidateForcePreview: { samples, limits },
+      candidateForcePreview: { samples, forceEnvelopeSamples, limits },
       canAppend: true,
       previewRails: new Float32Array(),
       previewTies: new Float32Array(),
