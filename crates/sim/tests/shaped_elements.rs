@@ -54,7 +54,7 @@ fn lift_prefix(model: &CoasterModel, speed_mps: f64) -> Vec<Piece> {
 
 fn runout_from(piece: &Piece, train: &TrainConfiguration) -> Vec<Piece> {
     let straight_template = catalog()
-        .into_iter()
+        .iter()
         .find(|candidate| candidate.id == PieceId::Straight)
         .expect("catalog includes straight track");
     let straight_count = (train.length_metres / straight_template.length()).ceil() as usize + 2;

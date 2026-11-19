@@ -166,10 +166,8 @@ fn explore_representative_hill_calibration_coefficients() {
     let diagnostic_counts = cases
         .iter()
         .map(|case| {
-            (
-                models[case.model_index].key,
-                diagnostic_candidate_seeds(case, &models[case.model_index]).len(),
-            )
+            let model = model_for_case(&models, case);
+            (model.key, diagnostic_candidate_seeds(case, model).len())
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -212,10 +210,10 @@ fn generate_dataset(
         let seeds = if retain_exploration {
             diagnostic_candidate_seeds(case, model)
         } else {
-            coefficient_candidate_seeds(case, &model)
+            coefficient_candidate_seeds(case, model)
         };
         for seed in seeds {
-            let result = measure_case(case, &model, seed);
+            let result = measure_case(case, model, seed);
             let measurement = match result {
                 Ok(measurement) => {
                     if retain_exploration {
@@ -664,8 +662,8 @@ mod tests {
             .next()
             .expect("grid has cases");
         let model = &models[case.model_index];
-        let seeds = coefficient_candidate_seeds(&case, &model);
-        assert_eq!(seeds, coefficient_candidate_seeds(&case, &model));
+        let seeds = coefficient_candidate_seeds(&case, model);
+        assert_eq!(seeds, coefficient_candidate_seeds(&case, model));
         assert!(!seeds.is_empty());
         assert!(seeds.iter().all(|seed| seed.pull_g >= 1.25));
         assert!(seeds.iter().all(|seed| seed.crest_g <= 0.2));

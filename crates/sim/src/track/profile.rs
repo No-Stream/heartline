@@ -817,7 +817,7 @@ fn minimum_mean_height_for_train(
             let spacing = length_metres / cars as f64;
             (0..cars)
                 .map(|reference_car| {
-                    let mean_height = (0..cars)
+                    (0..cars)
                         .map(|other_car| {
                             rail_height(
                                 profile,
@@ -826,8 +826,7 @@ fn minimum_mean_height_for_train(
                             )
                         })
                         .sum::<f64>()
-                        / cars as f64;
-                    mean_height
+                        / cars as f64
                 })
                 .fold(f64::INFINITY, f64::min)
         }
@@ -873,6 +872,7 @@ fn train_mean_heights(
     (six_car_means, twelve_car_means)
 }
 
+#[cfg(test)]
 fn worst_speed_squared(
     profile: &SolvedProfile,
     distance: f64,

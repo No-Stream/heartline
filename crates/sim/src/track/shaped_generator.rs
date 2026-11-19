@@ -272,9 +272,9 @@ pub fn render_generated_table(report: &GenerationReport) -> Result<String, Vec<S
             GridCellOutcome::Refused(CellRefusal::BelowFirstVerifiedSpeed {
                 minimum_speed_mps,
             }) => {
-                write!(
+                writeln!(
                     source,
-                    "GeneratedTableOutcome::Refused(CellRefusal::BelowFirstVerifiedSpeed {{ minimum_speed_mps: {minimum_speed_mps:.1} }}),\n"
+                    "GeneratedTableOutcome::Refused(CellRefusal::BelowFirstVerifiedSpeed {{ minimum_speed_mps: {minimum_speed_mps:.1} }}),"
                 )
                 .unwrap();
             }

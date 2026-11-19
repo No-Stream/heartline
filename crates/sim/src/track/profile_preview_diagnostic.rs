@@ -266,7 +266,7 @@ fn hill_feels(model: &CoasterModel) -> [(&'static str, f64); 3] {
 
 fn profile_piece(profile: &super::SolvedProfile, entry: TrackState) -> Piece {
     let mut piece = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .unwrap()
         .at(entry)
@@ -326,7 +326,7 @@ fn lift_prefix(model: &CoasterModel, speed_mps: f64, physics: PhysicsConfig) -> 
 
 fn runout(exit: TrackState, train: &crate::track::TrainConfiguration) -> Vec<Piece> {
     let straight = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .unwrap();
     let straight_count = (train.length_metres / straight.length()).ceil() as usize + 2;
