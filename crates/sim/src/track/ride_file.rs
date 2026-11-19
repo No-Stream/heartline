@@ -1,4 +1,5 @@
 use crate::track::blocks::BlockSectionPlacement;
+use crate::track::shaped::{ElementIntent, ElementSpec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,9 +45,17 @@ pub struct RideStation {
 #[serde(untagged)]
 pub enum RideStep {
     Place(RidePlaceStep),
+    Shape(RideShapeStep),
     Chain(RideChainStep),
     Close(RideCloseStep),
     BlockSections(RideBlockSectionsStep),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RideShapeStep {
+    pub intent: ElementIntent,
+    pub spec: ElementSpec,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -99,7 +108,11 @@ pub struct RideExpect {
 
 #[cfg(test)]
 mod tests {
-    use super::{RideFile, RideFileFormat, RideHeading, RideStep};
+    use super::{RideFile, RideFileFormat, RideHeading, RideShapeStep, RideStep};
+    use crate::track::shaped::{
+        ElementIntent, ElementSpec, HillSizeHint, ResolvedTurnGeometry, SpeedTurnKnot, TurnSizeHint,
+    };
+    use crate::track::{Hand, HillFeel};
     use serde_json::{Value, json};
 
     const VALID_RIDE: &str = r#"
@@ -195,5 +208,76 @@ mod tests {
         let mut ride: Value = serde_json::from_str(VALID_RIDE).unwrap();
         ride["steps"][5] = json!({"autoBlocks": true});
         assert!(serde_json::from_value::<RideFile>(ride).is_err());
+    }
+
+    #[test]
+    fn shaped_ride_step_round_trips_intent_and_resolved_geometry() {
+        let ride: RideFile = serde_json::from_str(VALID_RIDE).unwrap();
+        let mut shaped_ride = ride;
+        shaped_ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: ElementIntent::Hill {
+                feel: HillFeel::Floater,
+                strength_g: Some(-0.5),
+                size: HillSizeHint::Height(36.0),
+            },
+            spec: serde_json::from_value(json!({
+                "kind": "hill",
+                "design_speed_mps": 34.0,
+                "cars": 8,
+                "target_g": -0.5,
+                "delivered_g": -0.48,
+                "height_m": 36.0,
+                "span_m": 64.0,
+                "profile": {
+                    "points": [
+                        {"distance": 0.0, "x": 0.0, "z": 0.0, "angle": 0.0, "heart_curvature": 0.0, "curvature": 0.0},
+                        {"distance": 2.0, "x": 2.0, "z": 0.0, "angle": 0.0, "heart_curvature": 0.0, "curvature": 0.0}
+                    ],
+                    "cached_minimum_entry": null,
+                    "cached_minimum_radius": null
+                }
+            }))
+            .unwrap(),
+        }));
+        shaped_ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: ElementIntent::Turn {
+                hand: Hand::Left,
+                size: TurnSizeHint::Radius(64.0),
+            },
+            spec: ElementSpec::Turn {
+                design_speed_mps: 28.0,
+                cars: 8,
+                hand: Hand::Left,
+                vertical_g: 3.0,
+                lateral_g: 0.0,
+                radius_m: 64.0,
+                bank_degrees: 65.0,
+                geometry: ResolvedTurnGeometry {
+                    peak_bank: 65.0_f64.to_radians(),
+                    length: 100.0,
+                    knots: vec![
+                        SpeedTurnKnot {
+                            x: 0.0,
+                            y: 0.0,
+                            heading: 0.0,
+                        },
+                        SpeedTurnKnot {
+                            x: 64.0,
+                            y: 64.0,
+                            heading: 90.0_f64.to_radians(),
+                        },
+                    ],
+                },
+            },
+        }));
+
+        let encoded = serde_json::to_value(&shaped_ride).unwrap();
+        assert!(encoded["steps"][6]["intent"].is_object());
+        assert!(encoded["steps"][6]["spec"].to_string().contains("profile"));
+        assert!(encoded["steps"][7]["spec"].to_string().contains("knots"));
+        assert_eq!(
+            serde_json::from_value::<RideFile>(encoded).unwrap(),
+            shaped_ride
+        );
     }
 }

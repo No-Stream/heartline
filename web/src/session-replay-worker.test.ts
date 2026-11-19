@@ -40,3 +40,26 @@ it("waits for the car count change before replaying the next command", async () 
   await replay;
   expect(worker.sent).toEqual([command, { type: "finish" }]);
 });
+
+it("waits for exact shaped geometry placement before replaying the next command", async () => {
+  class FakeWorker extends EventTarget {
+    readonly sent: { type: string }[] = [];
+    postMessage(action: { type: string }): void {
+      this.sent.push(action);
+      if (action.type === "finish") this.dispatchEvent(new MessageEvent("message", { data: { type: "finished" } }));
+    }
+  }
+  const worker = new FakeWorker();
+  const command = {
+    type: "construction-append-resolved",
+    intentJson: "{\"kind\":\"hill\",\"feel\":\"floater\",\"strength_g\":null,\"size\":\"Auto\"}",
+    specJson: "{\"kind\":\"hill\",\"design_speed_mps\":34,\"cars\":8}",
+  };
+  const session: ReplaySession = { format: "theme-park-session", version: 1, seed: "1", park: "new", guestCount: 0, commands: [{ tick: 0, command }], checkpoints: [], finalTick: 0 };
+  const replay = replaySessionIntoWorker(worker as unknown as Worker, session, { action: { type: "finish" }, replyType: "finished" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(worker.sent).toEqual([command]);
+  worker.dispatchEvent(new MessageEvent("message", { data: { type: "construction-state", complete: true } }));
+  await replay;
+  expect(worker.sent).toEqual([command, { type: "finish" }]);
+});

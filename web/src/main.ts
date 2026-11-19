@@ -91,6 +91,7 @@ function isParkMutationIntent(action: WorkerAction): boolean {
     case "construction-set-chain":
     case "construction-set-launch-intensity":
     case "construction-append":
+    case "construction-append-resolved":
     case "construction-undo":
     case "construction-delete":
     case "construction-close":

@@ -40,6 +40,114 @@ pub struct RatedPieceEntryMargin {
     pub construction_test: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ShapedElementReportRow {
+    pub piece_index: usize,
+    pub element: String,
+    pub design_speed_mps: f64,
+    pub default_entry_speed_mps: Option<f64>,
+    pub construction_entry_speed_mps: Option<f64>,
+    pub intent: String,
+    pub delivered: String,
+    pub headroom: String,
+    pub size: String,
+}
+
+pub fn render_shaped_elements_table(rows: &[ShapedElementReportRow]) -> String {
+    let mut output = String::from("Elements:\n");
+    writeln!(
+        output,
+        "# piece element design_m/s default_entry_m/s construction_entry_m/s intent delivered headroom size"
+    )
+    .unwrap();
+    for row in rows {
+        writeln!(
+            output,
+            "{:>3} {:<24} {:>9} {:>17} {:>23} {:<30} {:<14} {:<14} {}",
+            row.piece_index,
+            row.element,
+            format_optional(Some(row.design_speed_mps)),
+            format_optional(row.default_entry_speed_mps),
+            format_optional(row.construction_entry_speed_mps),
+            row.intent,
+            row.delivered,
+            row.headroom,
+            row.size
+        )
+        .unwrap();
+    }
+    output
+}
+
+pub(crate) fn shaped_element_entry_speeds(
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &CoasterModel,
+    piece_indices: &[usize],
+) -> Result<BTreeMap<usize, (Option<f64>, Option<f64>)>, String> {
+    for &piece_index in piece_indices {
+        if piece_index >= circuit.pieces().len() {
+            return Err(format!(
+                "shaped element piece index {piece_index} is outside the circuit"
+            ));
+        }
+    }
+    let default_entries = shaped_entry_speeds_for_configuration(circuit, model, false);
+    let construction_entries = shaped_entry_speeds_for_configuration(circuit, model, true);
+    Ok(piece_indices
+        .iter()
+        .map(|&piece_index| {
+            (
+                piece_index,
+                (
+                    default_entries[piece_index],
+                    construction_entries[piece_index],
+                ),
+            )
+        })
+        .collect())
+}
+
+fn shaped_entry_speeds_for_configuration(
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &CoasterModel,
+    construction_test: bool,
+) -> Vec<Option<f64>> {
+    let (lift_speed, initial_speed) = if construction_test {
+        (5.0, 2.0)
+    } else {
+        (PhysicsConfig::default().lift_speed, 0.0)
+    };
+    let start = if construction_test {
+        0.0
+    } else {
+        circuit.pieces()[0].length() / 2.0
+    };
+    let mut train = Train::new(
+        circuit,
+        &model.train,
+        PhysicsConfig {
+            lift_speed,
+            ..PhysicsConfig::default()
+        },
+        start,
+        initial_speed,
+    );
+    let mut entries = vec![None; circuit.pieces().len()];
+    let completion_distance = circuit.length() + start;
+    for _ in 0..60_000 {
+        train.step(circuit);
+        for frame in train.take_readings() {
+            if let Some(lead_car) = frame.first() {
+                entries[lead_car.piece_index].get_or_insert(lead_car.speed);
+            }
+        }
+        if !train.notes().is_empty() || train.distance() >= completion_distance {
+            break;
+        }
+    }
+    entries
+}
+
 /// Simulates both physics configurations used by the design-margin integration tests.
 pub(crate) fn rated_speed_margins(
     circuit: &theme_park_sim::physics::Circuit,
@@ -281,7 +389,7 @@ pub fn render_ride_report_with_margins(
     let placed_piece_count = ride
         .steps
         .iter()
-        .filter(|step| matches!(step, RideStep::Place(_)))
+        .filter(|step| matches!(step, RideStep::Place(_) | RideStep::Shape(_)))
         .count();
     let mut piece_indices: BTreeMap<usize, ()> = (1..=placed_piece_count)
         .map(|piece_index| (piece_index, ()))
@@ -306,11 +414,20 @@ pub fn render_ride_report_with_margins(
     piece_names.insert(0, "Station".to_owned());
     let mut piece_index = 0;
     for step in &ride.steps {
-        if let RideStep::Place(place) = step {
-            piece_index += 1;
-            piece_names
-                .entry(piece_index)
-                .or_insert_with(|| place.place.clone());
+        match step {
+            RideStep::Place(place) => {
+                piece_index += 1;
+                piece_names
+                    .entry(piece_index)
+                    .or_insert_with(|| place.place.clone());
+            }
+            RideStep::Shape(_) => {
+                piece_index += 1;
+                piece_names
+                    .entry(piece_index)
+                    .or_insert_with(|| "shaped element".to_owned());
+            }
+            _ => {}
         }
     }
 
@@ -765,5 +882,52 @@ mod tests {
             maximum_lateral_g,
             maximum_longitudinal_g,
         }
+    }
+}
+
+#[cfg(test)]
+mod shaped_element_report_tests {
+    use super::{
+        ShapedElementReportRow, render_shaped_elements_table, shaped_element_entry_speeds,
+    };
+    use theme_park_sim::physics::demo_circuit;
+    use theme_park_sim::track::hybrid_model;
+
+    #[test]
+    fn shaped_element_table_reports_both_entries_intent_delivery_and_headroom() {
+        let table = render_shaped_elements_table(&[ShapedElementReportRow {
+            piece_index: 3,
+            element: "Floater hill".to_owned(),
+            design_speed_mps: 34.0,
+            default_entry_speed_mps: Some(33.8),
+            construction_entry_speed_mps: Some(34.2),
+            intent: "sustained airtime -0.5 g".to_owned(),
+            delivered: "-0.48 g".to_owned(),
+            headroom: "0.37 g".to_owned(),
+            size: "height 36 m, span 64 m".to_owned(),
+        }]);
+
+        assert!(table.contains("default_entry_m/s construction_entry_m/s"));
+        assert!(table.contains("  3 Floater hill"));
+        for expected in [
+            "34.00",
+            "33.80",
+            "34.20",
+            "sustained airtime -0.5 g",
+            "-0.48 g",
+            "0.37 g",
+            "height 36 m, span 64 m",
+        ] {
+            assert!(table.contains(expected), "missing {expected:?} in {table}");
+        }
+    }
+
+    #[test]
+    fn shaped_element_entry_speeds_cover_default_and_construction_physics() {
+        let entries = shaped_element_entry_speeds(&demo_circuit(), &hybrid_model(), &[1]).unwrap();
+        let (default_entry, construction_entry) = entries[&1];
+
+        assert!(default_entry.is_some_and(f64::is_finite));
+        assert!(construction_entry.is_some_and(f64::is_finite));
     }
 }

@@ -6,43 +6,42 @@ use theme_park_sim::physics::{Contribution, Location, ScoreBreakdown, Term};
 #[wasm_bindgen]
 pub fn piece_shapes_json() -> String {
     const SAMPLES: usize = 32;
-    let shapes: Vec<PieceShapeReport> = catalog()
-        .iter()
-        .map(|piece| {
-            let origin = piece.entry.position();
-            let angle = -(piece.entry.heading as i32 as f64) * std::f64::consts::FRAC_PI_4;
-            let (sin, cos) = angle.sin_cos();
-            let local = |vector: Vec3| {
-                [
-                    vector.x * cos - vector.y * sin,
-                    vector.x * sin + vector.y * cos,
-                    vector.z,
-                ]
-            };
-            let points = (0..=SAMPLES)
-                .map(|index| {
-                    let sample = piece.sample(piece.length() * (index as f64 / SAMPLES as f64));
-                    let position = local(sample.position - origin);
-                    let up = local(sample.up);
-                    [position[0], position[1], position[2], up[0], up[1], up[2]]
-                        .map(|value| (value * 1000.0).round() / 1000.0)
-                })
-                .collect();
-            PieceShapeReport {
-                id: crate::construction::wire_pieceid(piece.id).into(),
-                name: piece.name.into(),
-                kind: crate::construction::wire_piecekind(piece.kind).into(),
-                turn: (piece.exit.heading as i32 - piece.entry.heading as i32 + 4).rem_euclid(8)
-                    - 4,
-                entry_slope: crate::construction::wire_slope(piece.entry.slope).into(),
-                exit_slope: crate::construction::wire_slope(piece.exit.slope).into(),
-                entry_bank: crate::construction::wire_bank(piece.entry.bank).into(),
-                exit_bank: crate::construction::wire_bank(piece.exit.bank).into(),
-                points,
-            }
+    let shapes: Vec<PieceShapeReport> = catalog().iter().map(piece_shape_report).collect();
+    serde_json::to_string(&shapes).expect("serialize piece shapes")
+}
+
+pub(crate) fn piece_shape_report(piece: &Piece) -> PieceShapeReport {
+    const SAMPLES: usize = 32;
+    let origin = piece.entry.position();
+    let angle = -(piece.entry.heading as i32 as f64) * std::f64::consts::FRAC_PI_4;
+    let (sin, cos) = angle.sin_cos();
+    let local = |vector: Vec3| {
+        [
+            vector.x * cos - vector.y * sin,
+            vector.x * sin + vector.y * cos,
+            vector.z,
+        ]
+    };
+    let points = (0..=SAMPLES)
+        .map(|index| {
+            let sample = piece.sample(piece.length() * (index as f64 / SAMPLES as f64));
+            let position = local(sample.position - origin);
+            let up = local(sample.up);
+            [position[0], position[1], position[2], up[0], up[1], up[2]]
+                .map(|value| (value * 1000.0).round() / 1000.0)
         })
         .collect();
-    serde_json::to_string(&shapes).expect("serialize piece shapes")
+    PieceShapeReport {
+        id: crate::construction::wire_pieceid(piece.id).into(),
+        name: piece.name.into(),
+        kind: crate::construction::wire_piecekind(piece.kind).into(),
+        turn: (piece.exit.heading as i32 - piece.entry.heading as i32 + 4).rem_euclid(8) - 4,
+        entry_slope: crate::construction::wire_slope(piece.entry.slope).into(),
+        exit_slope: crate::construction::wire_slope(piece.exit.slope).into(),
+        entry_bank: crate::construction::wire_bank(piece.entry.bank).into(),
+        exit_bank: crate::construction::wire_bank(piece.exit.bank).into(),
+        points,
+    }
 }
 
 #[wasm_bindgen]
@@ -54,7 +53,7 @@ impl WasmSimulation {
 
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PieceShapeReport {
+pub struct PieceShapeReport {
     id: String,
     name: String,
     kind: String,
@@ -422,6 +421,9 @@ mod wire_tests {
         RideInfoReport::export_all_to(&output).unwrap();
         PieceShapeReport::export_all_to(&output).unwrap();
         crate::construction::ConstructionPieceWire::export_all_to(&output).unwrap();
+        crate::construction::ConstructionShapeSpecWire::export_all_to(&output).unwrap();
+        crate::construction::ConstructionShapeRefusalWire::export_all_to(&output).unwrap();
+        crate::construction::ConstructionShapedElementWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionHillOptionWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionSpeedTurnWire::export_all_to(&output).unwrap();
         crate::construction::ConstructionElementWire::export_all_to(&output).unwrap();

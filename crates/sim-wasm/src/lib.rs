@@ -14,6 +14,8 @@ mod save;
 #[cfg(test)]
 mod save_tests;
 mod scenery;
+#[cfg(feature = "shaped-benchmark")]
+pub mod shaped_benchmark;
 mod world;
 pub use reports::piece_shapes_json;
 
@@ -84,6 +86,8 @@ pub struct WasmSimulation {
     #[serde(with = "construction_model_serde")]
     construction_model: String,
     selected: Option<PieceId>,
+    #[serde(default)]
+    selected_shape: Option<theme_park_sim::track::shaped::ElementIntent>,
     selected_element: Option<String>,
     construction_undo_groups: Vec<usize>,
     construction_completion: Option<Completion>,
@@ -339,6 +343,12 @@ impl WasmSimulation {
                 .into_iter()
                 .find(|element| element.id == element_id)
                 .map_or_else(Vec::new, |element| element.geometry);
+        }
+        if let Some(intent) = self.selected_shape.as_ref() {
+            return self
+                .construction_shape_candidate(intent)
+                .map(|solved| vec![solved.piece])
+                .unwrap_or_default();
         }
         construction
             .available_choices(&self.park.world, &obstacles)

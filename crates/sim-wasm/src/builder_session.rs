@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::coaster_models;
 use theme_park_sim::track::ride_file::{RideFile, RideFileFormat, RideHeading, RideStep};
+use theme_park_sim::track::shaped::{ElementIntent, ElementSpec};
 
 use crate::WasmSimulation;
 use crate::construction::{
     ConstructionCandidateForcePreviewWire, ConstructionElementWire, ConstructionForcePreviewWire,
-    ConstructionPieceWire,
+    ConstructionPieceWire, ConstructionShapedElementWire,
 };
 use crate::construction_speed_match::ConstructionSpeedMatchWire;
 use wasm_bindgen::prelude::*;
@@ -36,6 +37,7 @@ pub struct BuilderEstimates {
     pub hill_options_json: String,
     pub speed_turns_json: String,
     pub candidate_preview: Option<ConstructionCandidateForcePreviewWire>,
+    pub selected_shape: Option<ConstructionShapedElementWire>,
     pub speed_match: Option<ConstructionSpeedMatchWire>,
 }
 
@@ -67,6 +69,7 @@ struct BuilderWorkerEstimates<'a> {
     hill_options: serde_json::Value,
     speed_turns: serde_json::Value,
     candidate_force_preview: &'a Option<ConstructionCandidateForcePreviewWire>,
+    selected_shape: &'a Option<ConstructionShapedElementWire>,
     speed_match: &'a Option<ConstructionSpeedMatchWire>,
 }
 
@@ -81,6 +84,7 @@ impl BuilderEstimates {
             speed_turns: serde_json::from_str(&self.speed_turns_json)
                 .expect("speed turns are valid JSON"),
             candidate_force_preview: &self.candidate_preview,
+            selected_shape: &self.selected_shape,
             speed_match: &self.speed_match,
         };
         serde_json::to_string(&wire).expect("builder worker estimates serialize")
@@ -247,6 +251,7 @@ fn worker_update(
     } else {
         None
     };
+    let selected_shape = simulation.construction_selected_shape_wire(complete);
     let selected = simulation.construction_selected();
     let speed_match = if complete {
         simulation.construction_speed_match(&selected, *end_speed_cache)
@@ -262,6 +267,7 @@ fn worker_update(
         hill_options_json,
         speed_turns_json,
         candidate_preview,
+        selected_shape,
         speed_match,
     }
 }
@@ -419,6 +425,32 @@ impl BuilderSession {
             }
         }
         Ok(())
+    }
+
+    pub fn append_resolved(
+        &mut self,
+        intent: &ElementIntent,
+        spec: &ElementSpec,
+    ) -> Result<BuilderEstimates, BuilderSessionError> {
+        self.end_speed_cache = None;
+        let previous_piece_count = self
+            .simulation
+            .construction
+            .as_ref()
+            .map(|construction| construction.piece_ids().len());
+        self.simulation
+            .construction_append_resolved_typed(intent, spec)
+            .map_err(|message| self.bridge_error("place saved shaped element", message))?;
+        if let (Some(previous_piece_count), Some(construction)) =
+            (previous_piece_count, self.simulation.construction.as_ref())
+        {
+            if let Some(piece_ids) = construction.piece_ids().get(previous_piece_count..) {
+                if !piece_ids.is_empty() {
+                    self.placed_piece_bridge_ids.push(piece_ids.to_vec());
+                }
+            }
+        }
+        Ok(self.estimates())
     }
 
     pub fn set_chain(&mut self, enabled: bool) -> Result<(), BuilderSessionError> {
@@ -693,6 +725,17 @@ impl BuilderSession {
                                 invalid_ride_step(step_index, Some(piece_index), error)
                             })?;
                     }
+                }
+                RideStep::Shape(shape) => {
+                    let piece_index = self
+                        .simulation
+                        .construction
+                        .as_ref()
+                        .expect("ride replay has active construction")
+                        .pieces()
+                        .len();
+                    self.append_resolved(&shape.intent, &shape.spec)
+                        .map_err(|error| invalid_ride_step(step_index, Some(piece_index), error))?;
                 }
                 RideStep::Chain(chain) => {
                     self.set_chain(chain.chain)
@@ -1043,6 +1086,10 @@ mod tests {
                         session.estimates();
                     }
                 }
+                RideStep::Shape(shape) => {
+                    session.append_resolved(&shape.intent, &shape.spec).unwrap();
+                    session.estimates();
+                }
                 RideStep::Chain(chain) => {
                     session.set_chain(chain.chain).unwrap();
                     session.estimates();
@@ -1297,6 +1344,24 @@ mod tests {
                 trace_digest(&expected),
                 "{ride_name}: {}",
                 first_trace_difference(&expected, &actual)
+            );
+        }
+    }
+
+    #[test]
+    fn classic_builder_outputs_keep_the_recorded_digests() {
+        for (ride_name, model_key, expected_digest) in [
+            ("Timber Tumbler", "hybrid", 0x86b8428065693580),
+            ("Velocity Viper", "velocity_viper", 0x37cd85a2272307c5),
+            ("Briar Blitz", "wooden_twister", 0x66873957335c8b1c),
+        ] {
+            let commands = circuit_lines(ride_name);
+            let actual = session_trace(model_key, &commands);
+            assert_eq!(
+                trace_digest(&actual),
+                expected_digest,
+                "{ride_name}: {}",
+                first_trace_difference(&benchmark_trace(ride_name, model_key, &commands), &actual)
             );
         }
     }

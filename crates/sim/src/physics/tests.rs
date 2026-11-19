@@ -2013,6 +2013,137 @@ fn incremental_preview_matches_fresh_runs_after_track_edits() {
 }
 
 #[test]
+fn all_car_preview_records_each_train_car_and_preserves_lead_preview_samples() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let pieces = &circuit.pieces()[..circuit.pieces().len() - 1];
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let prefix_length = (pieces.len() / 3).max(2);
+    let mut cached = PreviewCache::default();
+    cached
+        .preview(&pieces[..prefix_length], &model, config)
+        .unwrap();
+
+    let preview = cached.preview_all_cars(pieces, &model, config).unwrap();
+    let fresh = PreviewCache::default()
+        .preview(pieces, &model, config)
+        .unwrap();
+    let fresh_all_cars = PreviewCache::default()
+        .preview_all_cars(pieces, &model, config)
+        .unwrap();
+    assert_eq!(preview.status, fresh.status);
+    assert_eq!(preview.report.samples, fresh.report.samples);
+    assert_eq!(preview.force_limit_exceeded, fresh.force_limit_exceeded);
+    assert!(preview.end_speed_mps.is_some());
+    assert_eq!(preview.end_speed_mps, fresh.end_speed_mps);
+    let cached_candidate_peaks: Vec<_> = preview
+        .report
+        .car_piece_force_peaks()
+        .into_iter()
+        .filter(|peaks| peaks.piece_index == prefix_length)
+        .collect();
+    let fresh_candidate_peaks: Vec<_> = fresh_all_cars
+        .report
+        .car_piece_force_peaks()
+        .into_iter()
+        .filter(|peaks| peaks.piece_index == prefix_length)
+        .collect();
+    assert_eq!(
+        cached_candidate_peaks, fresh_candidate_peaks,
+        "cached calibration preserves each car's force-filter history"
+    );
+
+    let sampled_cars: std::collections::BTreeSet<_> = preview
+        .report
+        .car_piece_force_peaks()
+        .into_iter()
+        .filter(|peaks| peaks.piece_index == prefix_length)
+        .map(|peaks| peaks.car_index)
+        .collect();
+    assert_eq!(
+        sampled_cars,
+        (0..usize::from(model.train.cars)).collect(),
+        "full-train calibration records every car on the same piece"
+    );
+    let sustained_cars: std::collections::BTreeSet<_> = preview
+        .report
+        .car_piece_sustained_force_peaks()
+        .into_iter()
+        .filter(|peaks| peaks.piece_index == prefix_length)
+        .map(|peaks| peaks.car_index)
+        .collect();
+    assert_eq!(sustained_cars, sampled_cars);
+
+    let cached_lead_only = cached.preview(pieces, &model, config).unwrap();
+    assert_eq!(cached_lead_only.report, fresh.report);
+    assert_eq!(cached_lead_only.end_speed_mps, fresh.end_speed_mps);
+}
+
+#[test]
+fn candidate_preview_matches_full_train_piece_force_summaries() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let pieces = &circuit.pieces()[..circuit.pieces().len() - 1];
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let prefix_length = (pieces.len() / 3).max(2);
+    let candidate_piece_index = prefix_length;
+
+    let mut full_cache = PreviewCache::default();
+    full_cache
+        .preview(&pieces[..prefix_length], &model, config)
+        .unwrap();
+    let full = full_cache.preview_all_cars(pieces, &model, config).unwrap();
+
+    let mut candidate_cache = PreviewCache::default();
+    candidate_cache
+        .preview(&pieces[..prefix_length], &model, config)
+        .unwrap();
+    let candidate = candidate_cache
+        .preview_candidate(pieces, &model, config, candidate_piece_index)
+        .unwrap();
+
+    assert_eq!(candidate.status, full.status);
+    assert_eq!(candidate.end_speed_mps, full.end_speed_mps);
+    let expected_force_peaks: Vec<_> = full
+        .report
+        .car_piece_force_peaks()
+        .into_iter()
+        .filter(|peaks| peaks.piece_index == candidate_piece_index)
+        .collect();
+    let expected_sustained_peaks: Vec<_> = full
+        .report
+        .car_piece_sustained_force_peaks()
+        .into_iter()
+        .filter(|peaks| peaks.piece_index == candidate_piece_index)
+        .collect();
+    assert_eq!(candidate.cars.len(), usize::from(model.train.cars));
+    for (car_index, car) in candidate.cars.iter().enumerate() {
+        assert_eq!(car.car_index, car_index);
+        assert_eq!(car.peaks, expected_force_peaks[car_index].peaks);
+        assert_eq!(
+            car.sustained_minimum_vertical_g,
+            expected_sustained_peaks[car_index].peaks.minimum_vertical_g
+        );
+    }
+
+    let resumed_preview = candidate_cache.preview(pieces, &model, config).unwrap();
+    let fresh_preview = PreviewCache::default()
+        .preview(pieces, &model, config)
+        .unwrap();
+    assert_eq!(resumed_preview.report, fresh_preview.report);
+    assert_eq!(
+        resumed_preview.force_limit_exceeded,
+        fresh_preview.force_limit_exceeded
+    );
+}
+
+#[test]
 fn incremental_preview_matches_fresh_when_a_step_crosses_multiple_metres() {
     let circuit = demo_circuit();
     let model = hybrid_model();

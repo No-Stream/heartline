@@ -1,8 +1,9 @@
 import { evaluatedForceRating, rateForce, rateVertical, type ForceLimits, type ForceRating } from "./force-overlay";
-import { formatSpeed, type Units } from "./units";
+import { formatLength, formatSpeed, type Units } from "./units";
 
 import type { ConstructionCandidateForcePreviewWire } from "./generated/ConstructionCandidateForcePreviewWire";
 import type { ConstructionHillEstimateWire } from "./generated/ConstructionHillEstimateWire";
+import type { ConstructionShapedElementWire } from "./generated/ConstructionShapedElementWire";
 
 export type CandidateForcePreview = Omit<ConstructionCandidateForcePreviewWire, "status"> & {
   readonly status: "reachedEnd" | "stalled" | "timedOut";
@@ -10,6 +11,53 @@ export type CandidateForcePreview = Omit<ConstructionCandidateForcePreviewWire, 
 
 function formatForce(force: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(force).replace("-", "−");
+}
+
+function formatCalibratedForce(force: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(force).replace("-", "−");
+}
+
+function shapeRefusalMessage(shape: ConstructionShapedElementWire, units: Units): string[] {
+  if (!shape.refusal) return [];
+  switch (shape.refusal.kind) {
+    case "stall":
+      return [`Would stall at ${formatSpeed(shape.refusal.entrySpeedMps, units, 0)}; tallest feasible hill is ${formatLength(shape.refusal.heightM, units)}.`];
+    case "infeasibleTarget":
+      return [`Target ${formatCalibratedForce(shape.refusal.targetG)} g exceeds available headroom of ${formatCalibratedForce(shape.refusal.availableHeadroomG)} g.`];
+    case "previewTimedOut":
+      return ["The train preview timed out before this shape could be calibrated."];
+    case "invalidContext":
+      return ["The train cannot reach this element's entry connector."];
+    case "unsupportedConnector":
+      return ["Shaped elements need a level, straight entry connector."];
+  }
+}
+
+export function shapedElementReadout(shape: ConstructionShapedElementWire, units: Units): string[] {
+  const refusal = shapeRefusalMessage(shape, units);
+  if (refusal.length > 0) return refusal;
+  if (!shape.spec) return ["Calibrating this shaped element…"];
+
+  const { spec } = shape;
+  const trainLine = `Design speed: ${formatSpeed(spec.designSpeedMps, units, 0)} · ${spec.cars}-car train`;
+  if (spec.kind === "hill") {
+    if (spec.targetG === null || spec.deliveredG === null || spec.heightM === null || spec.spanM === null) {
+      throw new Error("Shaped hill calibration is missing target, delivered force, or dimensions");
+    }
+    return [
+      trainLine,
+      `Airtime target: ${formatCalibratedForce(spec.targetG)} g · calibrated: ${formatCalibratedForce(spec.deliveredG)} g`,
+      `Resolved size: ${formatLength(spec.heightM, units)} high × ${formatLength(spec.spanM, units)} span`,
+    ];
+  }
+  if (spec.radiusM === null || spec.bankDegrees === null || spec.lateralG === null) {
+    throw new Error("Shaped turn calibration is missing radius, bank, or lateral force");
+  }
+  return [
+    trainLine,
+    `Resolved size: ${formatLength(spec.radiusM, units)} radius · ${formatCalibratedForce(spec.bankDegrees)}° bank`,
+    `Lateral force at design speed: ${formatCalibratedForce(spec.lateralG)} g`,
+  ];
 }
 
 function verticalRating(force: number, limits: CandidateForcePreview["limits"], exceeded: boolean): string {

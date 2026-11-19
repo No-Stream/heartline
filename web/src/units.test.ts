@@ -28,7 +28,7 @@ describe("unit conversions", () => {
   });
 
   it("rounds imperial input displays to whole feet and returns valid station heights", () => {
-    for (let stationHeight = 4; stationHeight <= 100; stationHeight += 2) {
+    for (let stationHeight = 2; stationHeight <= 100; stationHeight += 2) {
       const displayedFeet = metresToInput(stationHeight, "imperial");
       const roundTrippedHeight = Math.round(displayToMetres(displayedFeet, "imperial") / 2) * 2;
       expect(Number.isInteger(displayedFeet)).toBe(true);

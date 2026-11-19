@@ -19,6 +19,7 @@ const wasmMock = vi.hoisted(() => ({
   setLaunchIntensity: vi.fn(),
   constructionSelect: vi.fn(),
   constructionAppend: vi.fn(),
+  constructionAppendResolved: vi.fn(),
   constructionUndo: vi.fn(),
   constructionDelete: vi.fn(),
   constructionStart: vi.fn(),
@@ -67,7 +68,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     }
     estimates(_simulation: object, complete: boolean) {
       wasmMock.builderEstimate(complete);
-      return JSON.stringify({ constructionForcePreview: null, pieces: [], elements: [], hillOptions: [], speedTurns: [], candidateForcePreview: null, speedMatch: null });
+      return JSON.stringify({ constructionForcePreview: null, pieces: [], elements: [], hillOptions: [], speedTurns: [], candidateForcePreview: null, selectedShape: null, speedMatch: null });
     }
     free() {}
   },
@@ -131,6 +132,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     }
     construction_select(piece: string) { wasmMock.constructionSelect(piece); }
     construction_append() { wasmMock.constructionAppend(); wasmMock.constructionTrackLength += 1; }
+    construction_append_resolved(intentJson: string, specJson: string) { wasmMock.constructionAppendResolved(intentJson, specJson); wasmMock.constructionTrackLength += 1; return ""; }
     construction_undo() { wasmMock.constructionUndo(); wasmMock.constructionTrackLength -= 1; }
     construction_delete(id: number) { wasmMock.constructionDelete(id); wasmMock.constructionTrackLength -= 1; }
     construction_advance_block_analysis(budget: number) { return wasmMock.advanceBlockAnalysis(budget); }
@@ -195,6 +197,7 @@ afterEach(() => {
   wasmMock.setLaunchIntensity.mockReset();
   wasmMock.constructionSelect.mockReset();
   wasmMock.constructionAppend.mockReset();
+  wasmMock.constructionAppendResolved.mockReset();
   wasmMock.constructionUndo.mockReset();
   wasmMock.constructionDelete.mockReset();
   wasmMock.constructionStart.mockReset();
@@ -258,6 +261,28 @@ it("sends one complete placement state before the finish search result", async (
     finishReason: "Checking for a connection to the station.",
   }]);
   expect(messages.findIndex((message) => message.type === "construction-finish-status")).toBeLessThan(messages.findIndex((message) => message.type === "construction-finish-ready"));
+});
+
+it("dispatches saved shaped geometry through the exact resolved append bridge", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+  onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
+  await Promise.resolve();
+  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  await Promise.resolve();
+
+  const intentJson = '{"kind":"hill","feel":"Floater","strength_g":null,"size":"Auto"}';
+  const specJson = '{"kind":"hill","design_speed_mps":34,"cars":8,"target_g":-0.5,"delivered_g":-0.5,"height_m":36,"span_m":52,"profile":{"points":[],"cached_minimum_entry":null,"cached_minimum_radius":null}}';
+  postMessage.mockClear();
+  onMessage({ data: { type: "construction-append-resolved", intentJson, specJson } } as MessageEvent);
+  await Promise.resolve();
+
+  expect(wasmMock.constructionAppendResolved).toHaveBeenCalledExactlyOnceWith(intentJson, specJson);
+  expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true]);
+  expect(postMessage.mock.calls.some(([message]) => message.type === "world")).toBe(true);
 });
 
 it("publishes finish status for inactive construction and keeps a no-search await immediate", async () => {

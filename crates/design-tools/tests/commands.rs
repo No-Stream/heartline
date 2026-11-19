@@ -253,6 +253,99 @@ fn choices_include_every_model_hill_and_speed_turn_variant_with_rated_windows() 
 }
 
 #[test]
+fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
+    let ride = TempFile::new("shaped-placement.ride.json");
+    let session = TempFile::new("shaped-placement.session.json");
+
+    run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "new --model velocity_viper --station 100,100,10,east".into(),
+            "place LaunchLong --launch-speed 16".into(),
+            "place turn left feel=banked radius=64".into(),
+        ],
+        "",
+    )
+    .unwrap();
+
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
+    assert_eq!(saved["steps"][1]["intent"]["kind"], "turn");
+    assert_eq!(saved["steps"][1]["intent"]["hand"], "Left");
+    assert_eq!(saved["steps"][1]["spec"]["kind"], "turn");
+    assert!(saved["steps"][1]["spec"]["geometry"]["knots"].is_array());
+
+    let replay = run_cli(&["ride".into(), ride.path().into(), "state".into()], "").unwrap();
+    assert!(replay.contains("Pieces: 2"), "{replay}");
+
+    run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "export".into(),
+            "--session".into(),
+            session.path().into(),
+        ],
+        "",
+    )
+    .unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_slice(&fs::read(&session.0).unwrap()).unwrap();
+    let resolved_append = exported["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["command"]["type"] == "construction-append-resolved")
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(
+            resolved_append["command"]["intentJson"].as_str().unwrap()
+        )
+        .unwrap(),
+        saved["steps"][1]["intent"]
+    );
+    let exported_spec: serde_json::Value =
+        serde_json::from_str(resolved_append["command"]["specJson"].as_str().unwrap()).unwrap();
+    let saved_spec = &saved["steps"][1]["spec"];
+    for field in [
+        "kind",
+        "design_speed_mps",
+        "cars",
+        "hand",
+        "vertical_g",
+        "lateral_g",
+        "radius_m",
+        "bank_degrees",
+    ] {
+        assert_eq!(
+            exported_spec[field], saved_spec[field],
+            "spec field {field}"
+        );
+    }
+    assert_eq!(
+        exported_spec["geometry"]["length"],
+        saved_spec["geometry"]["length"]
+    );
+    assert_eq!(
+        exported_spec["geometry"]["peak_bank"],
+        saved_spec["geometry"]["peak_bank"]
+    );
+    assert_eq!(
+        exported_spec["geometry"]["knots"].as_array().unwrap().len(),
+        saved_spec["geometry"]["knots"].as_array().unwrap().len()
+    );
+    for (knot_index, (exported, saved)) in exported_spec["geometry"]["knots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(saved_spec["geometry"]["knots"].as_array().unwrap())
+        .enumerate()
+    {
+        assert_eq!(exported, saved, "resolved geometry knot {knot_index}");
+    }
+}
+
+#[test]
 fn probe_reports_candidate_geometry_and_does_not_change_the_ride_file() {
     let ride = TempFile::new("probe.ride.json");
     ride.write(OPEN_RIDE);

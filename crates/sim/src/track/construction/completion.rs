@@ -50,6 +50,7 @@ impl Construction {
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
             force_preview_cache: RefCell::new(crate::physics::PreviewCache::default()),
+            shaped_solve_cache: RefCell::new(None),
             state_hash_memo: Cell::new(self.state_hash_memo.get()),
             #[cfg(test)]
             support_cache_misses: Cell::new(0),

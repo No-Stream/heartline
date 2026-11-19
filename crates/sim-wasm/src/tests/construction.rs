@@ -33,6 +33,24 @@ fn candidate_force_preview_reports_selected_track_without_placing_it() {
 }
 
 #[test]
+fn construction_selection_round_trips_shaped_element_intents() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_start(100, 100, 20, 0);
+
+    for selection in [
+        "shape:hill:floater:-0.5:auto",
+        "shape:hill:ejector:-1:fixed-36",
+        "shape:turn:left:fullyBanked:auto",
+        "shape:turn:right:fullyBanked:fixed-64",
+    ] {
+        simulation.construction_select(selection);
+
+        assert_eq!(simulation.construction_selected(), selection);
+        assert!(simulation.construction_message().is_empty());
+    }
+}
+
+#[test]
 fn candidate_force_preview_is_empty_after_undoing_the_station() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
     simulation.construction_start(100, 100, 20, 0);

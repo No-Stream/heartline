@@ -58,6 +58,21 @@ pub struct CarPieceForcePeaks {
     pub peaks: ForcePeakValues,
 }
 
+/// Duration-aware vertical-force peaks for one car on one circuit piece.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CarPieceSustainedForcePeaks {
+    pub piece_index: usize,
+    pub car_index: usize,
+    pub peaks: SustainedForcePeaks,
+}
+
+/// Filtered force summaries for one candidate piece and one car.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CandidateForcePeakSummary {
+    pub(crate) force: ForcePeakValues,
+    pub(crate) sustained: SustainedForcePeaks,
+}
+
 /// Circuit location of a force peak, using zero-based car and piece indices.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ForcePeakLocation {
@@ -444,6 +459,52 @@ impl TestRun {
                         peaks,
                     },
                 )
+            })
+            .collect()
+    }
+
+    /// Returns duration-aware vertical-force peaks grouped by car and circuit piece.
+    ///
+    /// Samples from adjacent pieces are never joined, so a sustained force elsewhere on
+    /// the circuit cannot be attributed to this piece.
+    pub fn car_piece_sustained_force_peaks(&self) -> Vec<CarPieceSustainedForcePeaks> {
+        self.rating_inputs
+            .iter()
+            .enumerate()
+            .flat_map(|(car_index, input)| {
+                let mut peaks_by_piece = BTreeMap::new();
+                for segment in sustained_sample_segments(input) {
+                    let mut samples_for_piece = Vec::new();
+                    let mut piece_index = None;
+                    for sample in segment.samples {
+                        if piece_index.is_some_and(|current| current != sample.piece_index) {
+                            include_sustained_piece_peaks(
+                                &mut peaks_by_piece,
+                                piece_index.expect("a nonempty piece run has an index"),
+                                &samples_for_piece,
+                                input.circuit_length,
+                            );
+                            samples_for_piece.clear();
+                        }
+                        piece_index = Some(sample.piece_index);
+                        samples_for_piece.push(sample);
+                    }
+                    if let Some(piece_index) = piece_index {
+                        include_sustained_piece_peaks(
+                            &mut peaks_by_piece,
+                            piece_index,
+                            &samples_for_piece,
+                            input.circuit_length,
+                        );
+                    }
+                }
+                peaks_by_piece.into_iter().map(move |(piece_index, peaks)| {
+                    CarPieceSustainedForcePeaks {
+                        piece_index,
+                        car_index,
+                        peaks,
+                    }
+                })
             })
             .collect()
     }
@@ -1127,6 +1188,38 @@ fn sustained_peaks_in_segment(
     result
 }
 
+fn include_sustained_piece_peaks(
+    peaks_by_piece: &mut BTreeMap<usize, SustainedForcePeaks>,
+    piece_index: usize,
+    samples: &[TestSample],
+    circuit_length: f64,
+) {
+    let candidate = sustained_peaks_in_segment(samples, circuit_length, false).peaks;
+    let peaks = peaks_by_piece.entry(piece_index).or_default();
+    peaks.maximum_vertical_g = max_option(peaks.maximum_vertical_g, candidate.maximum_vertical_g);
+    peaks.minimum_vertical_g = min_option(peaks.minimum_vertical_g, candidate.minimum_vertical_g);
+}
+
+pub(crate) fn candidate_force_peak_summary(
+    samples: &[TestSample],
+    circuit_length: f64,
+) -> Option<CandidateForcePeakSummary> {
+    let first_sample = samples.first()?;
+    assert!(circuit_length.is_finite() && circuit_length > 0.0);
+    assert!(
+        samples
+            .iter()
+            .all(|sample| sample.piece_index == first_sample.piece_index),
+        "candidate force samples must contain one piece"
+    );
+    let force = force_peaks_by_piece(samples.iter())
+        .into_values()
+        .next()
+        .expect("candidate samples produce force peaks");
+    let sustained = sustained_peaks_in_segment(samples, circuit_length, false).peaks;
+    Some(CandidateForcePeakSummary { force, sustained })
+}
+
 fn sample_interval_seconds(
     previous: TestSample,
     current: TestSample,
@@ -1460,6 +1553,14 @@ impl TestRunRecorder {
         self.force_limits = limits;
     }
 
+    pub(super) fn set_force_evaluator(&mut self, evaluator: ForceEvaluator) {
+        assert!(
+            !self.started,
+            "cannot change force evaluator after recording starts"
+        );
+        self.force_evaluator = evaluator;
+    }
+
     pub fn for_circuit_with_model(circuit: &Circuit, model: &CoasterModel) -> Self {
         let mut recorder = Self::new(circuit.length());
         recorder.set_force_limits(model.comfortable_force_limits);
@@ -1516,203 +1617,218 @@ impl TestRunRecorder {
                 continue;
             }
             assert_eq!(frame.len(), 1, "a test recorder tracks one car");
-            let mut reading = frame[0];
-            let evaluated = self.force_evaluator.update(reading.g);
-            reading.g = evaluated.filtered;
-            reading.airtime = reading.g.vertical < 0.0;
-            let metre = reading.distance.rem_euclid(self.circuit_length).floor() as usize;
-            for axis in 0..3 {
-                if !evaluated.axis_within_limits[axis] {
-                    self.violation_seconds[axis] += self.time_step;
-                    self.metre_violations[metre][axis] = true;
-                }
+            self.record_reading(frame[0], model_key);
+        }
+    }
+
+    pub(super) fn record_train_car(
+        &mut self,
+        frames: &[Vec<CarReading>],
+        car_index: usize,
+        model_key: &str,
+    ) {
+        for frame in frames {
+            if frame.is_empty() {
+                continue;
             }
-            let active = reading.speed > 1.0
-                && (self.piece_summaries.is_empty()
-                    || matches!(
-                        self.piece_summaries[reading.piece_index].kind,
-                        crate::track::PieceKind::Track
-                            | crate::track::PieceKind::Launch
-                            | crate::track::PieceKind::Brakes
-                    ));
-            let piece_name = self
-                .piece_summaries
-                .get(reading.piece_index)
-                .map_or("Track", |piece| piece.name);
-            let location = super::features::Location {
+            let reading = *frame
+                .get(car_index)
+                .expect("train frame includes every configured car");
+            self.record_reading(reading, model_key);
+        }
+    }
+
+    fn record_reading(&mut self, mut reading: CarReading, model_key: &str) {
+        let evaluated = self.force_evaluator.update(reading.g);
+        reading.g = evaluated.filtered;
+        reading.airtime = reading.g.vertical < 0.0;
+        let metre = reading.distance.rem_euclid(self.circuit_length).floor() as usize;
+        for axis in 0..3 {
+            if !evaluated.axis_within_limits[axis] {
+                self.violation_seconds[axis] += self.time_step;
+                self.metre_violations[metre][axis] = true;
+            }
+        }
+        let active = reading.speed > 1.0
+            && (self.piece_summaries.is_empty()
+                || matches!(
+                    self.piece_summaries[reading.piece_index].kind,
+                    crate::track::PieceKind::Track
+                        | crate::track::PieceKind::Launch
+                        | crate::track::PieceKind::Brakes
+                ));
+        let piece_name = self
+            .piece_summaries
+            .get(reading.piece_index)
+            .map_or("Track", |piece| piece.name);
+        let location = super::features::Location {
+            piece_index: reading.piece_index,
+            piece_name,
+            distance_m: reading.distance.rem_euclid(self.circuit_length),
+            seconds_from_start: self.comfort.elapsed(),
+        };
+        for (index, (value, limit)) in [
+            reading.g.vertical.max(0.0),
+            (-reading.g.vertical).max(0.0),
+            reading.g.lateral.abs(),
+            reading.g.longitudinal.max(0.0),
+            (-reading.g.longitudinal).max(0.0),
+        ]
+        .into_iter()
+        .zip(super::scoring::peak_force_limits())
+        .enumerate()
+        {
+            if value > 0.0
+                && self.force_bands.peak_details[index].is_none_or(|detail| value > detail.value)
+            {
+                self.force_bands.peak_details[index] = Some(super::scoring::ExcessiveForceDetail {
+                    value,
+                    limit,
+                    seconds: 0.0,
+                    location,
+                });
+            }
+        }
+        if active {
+            record_force_bands(
+                &mut self.force_bands,
+                reading,
+                self.force_limits,
+                model_key,
+                self.time_step,
+                location,
+            );
+        }
+        self.comfort.record(
+            [
+                reading.g.vertical,
+                reading.g.lateral,
+                reading.g.longitudinal,
+            ],
+            self.time_step,
+            active,
+            super::features::Location {
                 piece_index: reading.piece_index,
                 piece_name,
                 distance_m: reading.distance.rem_euclid(self.circuit_length),
-                seconds_from_start: self.comfort.elapsed(),
-            };
-            for (index, (value, limit)) in [
-                reading.g.vertical.max(0.0),
-                (-reading.g.vertical).max(0.0),
-                reading.g.lateral.abs(),
-                reading.g.longitudinal.max(0.0),
-                (-reading.g.longitudinal).max(0.0),
-            ]
-            .into_iter()
-            .zip(super::scoring::peak_force_limits())
-            .enumerate()
-            {
-                if value > 0.0
-                    && self.force_bands.peak_details[index]
-                        .is_none_or(|detail| value > detail.value)
-                {
-                    self.force_bands.peak_details[index] =
-                        Some(super::scoring::ExcessiveForceDetail {
-                            value,
-                            limit,
-                            seconds: 0.0,
-                            location,
-                        });
-                }
-            }
-            if active {
-                record_force_bands(
-                    &mut self.force_bands,
-                    reading,
-                    self.force_limits,
-                    model_key,
-                    self.time_step,
-                    location,
-                );
-            }
-            self.comfort.record(
-                [
-                    reading.g.vertical,
-                    reading.g.lateral,
-                    reading.g.longitudinal,
-                ],
-                self.time_step,
-                active,
-                super::features::Location {
-                    piece_index: reading.piece_index,
-                    piece_name,
-                    distance_m: reading.distance.rem_euclid(self.circuit_length),
-                    seconds_from_start: 0.0,
-                },
-            );
-            let force_peak_location = ForcePeakLocation {
-                piece_index: reading.piece_index,
-                distance_m: reading.distance.rem_euclid(self.circuit_length),
-                car_index: 0,
-            };
-            if self
-                .force_peak_locations
-                .maximum_positive_vertical_g
-                .is_none()
-                || reading.g.vertical > self.maximum_positive_vertical_g
-            {
-                self.force_peak_locations.maximum_positive_vertical_g = Some(force_peak_location);
-            }
-            if self
-                .force_peak_locations
-                .maximum_negative_vertical_g
-                .is_none()
-                || reading.g.vertical < self.maximum_negative_vertical_g
-            {
-                self.force_peak_locations.maximum_negative_vertical_g = Some(force_peak_location);
-            }
-            if self.force_peak_locations.maximum_lateral_g.is_none()
-                || reading.g.lateral.abs() > self.maximum_lateral_g
-            {
-                self.force_peak_locations.maximum_lateral_g = Some(force_peak_location);
-            }
-            if self.force_peak_locations.maximum_forward_g.is_none()
-                || reading.g.longitudinal.max(0.0) > self.maximum_forward_g
-            {
-                self.force_peak_locations.maximum_forward_g = Some(force_peak_location);
-            }
-            if self.force_peak_locations.maximum_braking_g.is_none()
-                || (-reading.g.longitudinal).max(0.0) > self.maximum_braking_g
-            {
-                self.force_peak_locations.maximum_braking_g = Some(force_peak_location);
-            }
-            self.maximum_positive_vertical_g =
-                self.maximum_positive_vertical_g.max(reading.g.vertical);
-            self.maximum_negative_vertical_g =
-                self.maximum_negative_vertical_g.min(reading.g.vertical);
-            self.maximum_lateral_g = self.maximum_lateral_g.max(reading.g.lateral.abs());
-            self.maximum_forward_g = self.maximum_forward_g.max(reading.g.longitudinal.max(0.0));
-            self.maximum_braking_g = self
-                .maximum_braking_g
-                .max((-reading.g.longitudinal).max(0.0));
-            self.maximum_speed = self.maximum_speed.max(reading.speed);
-            self.maximum_height = self.maximum_height.max(reading.height_m);
-            let wrapped_distance = reading.distance.rem_euclid(self.circuit_length);
-            if !self.piece_starts.is_empty() {
-                let piece_index = self
-                    .piece_starts
-                    .partition_point(|start| *start <= wrapped_distance)
-                    - 1;
-                if self.last_piece_index != Some(piece_index) {
-                    let entry_speed =
-                        self.rated_piece_entry_speed(piece_index, wrapped_distance, reading.speed);
-                    self.record_rated_speed_band(piece_index, entry_speed);
-                    self.last_piece_index = Some(piece_index);
-                }
-            }
-            if !self.started {
-                self.visited_ranges
-                    .push((wrapped_distance, wrapped_distance));
-                self.started = true;
-                self.start_unwrapped_distance = wrapped_distance;
-                self.last_wrapped_distance = wrapped_distance;
-                self.last_unwrapped_distance = wrapped_distance;
-                self.next_sample_distance =
-                    next_sample_at_or_after(wrapped_distance, self.circuit_length);
-                if (self.next_sample_distance - wrapped_distance).abs() < 1e-9 {
-                    self.store_sample(wrapped_distance, reading);
-                    self.next_sample_distance =
-                        next_sample_after(self.next_sample_distance, self.circuit_length);
-                }
-                self.last_reading = Some(reading);
-                continue;
-            }
-
-            let mut delta = wrapped_distance - self.last_wrapped_distance;
-            if delta < -self.circuit_length / 2.0 {
-                delta += self.circuit_length;
-            } else if delta > self.circuit_length / 2.0 {
-                delta -= self.circuit_length;
-            }
-            let endpoint = self.last_wrapped_distance + delta;
-            if endpoint < 0.0 {
-                self.add_visited_range(0.0, self.last_wrapped_distance);
-                self.add_visited_range(endpoint + self.circuit_length, self.circuit_length);
-            } else if endpoint >= self.circuit_length {
-                self.add_visited_range(self.last_wrapped_distance, self.circuit_length);
-                self.add_visited_range(0.0, endpoint - self.circuit_length);
-            } else {
-                self.add_visited_range(
-                    self.last_wrapped_distance.min(endpoint),
-                    self.last_wrapped_distance.max(endpoint),
-                );
-            }
-            let unwrapped_distance = self.last_unwrapped_distance + delta;
-            self.furthest_distance = self
-                .furthest_distance
-                .max(unwrapped_distance - self.start_unwrapped_distance);
-            if delta > 0.0 {
-                let previous = self.last_reading.expect("started recorder has a reading");
-                while self.next_sample_distance <= unwrapped_distance + 1e-9 {
-                    let fraction = ((self.next_sample_distance - self.last_unwrapped_distance)
-                        / delta)
-                        .clamp(0.0, 1.0);
-                    self.store_sample(
-                        self.next_sample_distance.rem_euclid(self.circuit_length),
-                        interpolate_reading(previous, reading, fraction),
-                    );
-                    self.next_sample_distance =
-                        next_sample_after(self.next_sample_distance, self.circuit_length);
-                }
-            }
-            self.last_wrapped_distance = wrapped_distance;
-            self.last_unwrapped_distance = unwrapped_distance;
-            self.last_reading = Some(reading);
+                seconds_from_start: 0.0,
+            },
+        );
+        let force_peak_location = ForcePeakLocation {
+            piece_index: reading.piece_index,
+            distance_m: reading.distance.rem_euclid(self.circuit_length),
+            car_index: 0,
+        };
+        if self
+            .force_peak_locations
+            .maximum_positive_vertical_g
+            .is_none()
+            || reading.g.vertical > self.maximum_positive_vertical_g
+        {
+            self.force_peak_locations.maximum_positive_vertical_g = Some(force_peak_location);
         }
+        if self
+            .force_peak_locations
+            .maximum_negative_vertical_g
+            .is_none()
+            || reading.g.vertical < self.maximum_negative_vertical_g
+        {
+            self.force_peak_locations.maximum_negative_vertical_g = Some(force_peak_location);
+        }
+        if self.force_peak_locations.maximum_lateral_g.is_none()
+            || reading.g.lateral.abs() > self.maximum_lateral_g
+        {
+            self.force_peak_locations.maximum_lateral_g = Some(force_peak_location);
+        }
+        if self.force_peak_locations.maximum_forward_g.is_none()
+            || reading.g.longitudinal.max(0.0) > self.maximum_forward_g
+        {
+            self.force_peak_locations.maximum_forward_g = Some(force_peak_location);
+        }
+        if self.force_peak_locations.maximum_braking_g.is_none()
+            || (-reading.g.longitudinal).max(0.0) > self.maximum_braking_g
+        {
+            self.force_peak_locations.maximum_braking_g = Some(force_peak_location);
+        }
+        self.maximum_positive_vertical_g = self.maximum_positive_vertical_g.max(reading.g.vertical);
+        self.maximum_negative_vertical_g = self.maximum_negative_vertical_g.min(reading.g.vertical);
+        self.maximum_lateral_g = self.maximum_lateral_g.max(reading.g.lateral.abs());
+        self.maximum_forward_g = self.maximum_forward_g.max(reading.g.longitudinal.max(0.0));
+        self.maximum_braking_g = self
+            .maximum_braking_g
+            .max((-reading.g.longitudinal).max(0.0));
+        self.maximum_speed = self.maximum_speed.max(reading.speed);
+        self.maximum_height = self.maximum_height.max(reading.height_m);
+        let wrapped_distance = reading.distance.rem_euclid(self.circuit_length);
+        if !self.piece_starts.is_empty() {
+            let piece_index = self
+                .piece_starts
+                .partition_point(|start| *start <= wrapped_distance)
+                - 1;
+            if self.last_piece_index != Some(piece_index) {
+                let entry_speed =
+                    self.rated_piece_entry_speed(piece_index, wrapped_distance, reading.speed);
+                self.record_rated_speed_band(piece_index, entry_speed);
+                self.last_piece_index = Some(piece_index);
+            }
+        }
+        if !self.started {
+            self.visited_ranges
+                .push((wrapped_distance, wrapped_distance));
+            self.started = true;
+            self.start_unwrapped_distance = wrapped_distance;
+            self.last_wrapped_distance = wrapped_distance;
+            self.last_unwrapped_distance = wrapped_distance;
+            self.next_sample_distance =
+                next_sample_at_or_after(wrapped_distance, self.circuit_length);
+            if (self.next_sample_distance - wrapped_distance).abs() < 1e-9 {
+                self.store_sample(wrapped_distance, reading);
+                self.next_sample_distance =
+                    next_sample_after(self.next_sample_distance, self.circuit_length);
+            }
+            self.last_reading = Some(reading);
+            return;
+        }
+
+        let mut delta = wrapped_distance - self.last_wrapped_distance;
+        if delta < -self.circuit_length / 2.0 {
+            delta += self.circuit_length;
+        } else if delta > self.circuit_length / 2.0 {
+            delta -= self.circuit_length;
+        }
+        let endpoint = self.last_wrapped_distance + delta;
+        if endpoint < 0.0 {
+            self.add_visited_range(0.0, self.last_wrapped_distance);
+            self.add_visited_range(endpoint + self.circuit_length, self.circuit_length);
+        } else if endpoint >= self.circuit_length {
+            self.add_visited_range(self.last_wrapped_distance, self.circuit_length);
+            self.add_visited_range(0.0, endpoint - self.circuit_length);
+        } else {
+            self.add_visited_range(
+                self.last_wrapped_distance.min(endpoint),
+                self.last_wrapped_distance.max(endpoint),
+            );
+        }
+        let unwrapped_distance = self.last_unwrapped_distance + delta;
+        self.furthest_distance = self
+            .furthest_distance
+            .max(unwrapped_distance - self.start_unwrapped_distance);
+        if delta > 0.0 {
+            let previous = self.last_reading.expect("started recorder has a reading");
+            while self.next_sample_distance <= unwrapped_distance + 1e-9 {
+                let fraction = ((self.next_sample_distance - self.last_unwrapped_distance) / delta)
+                    .clamp(0.0, 1.0);
+                self.store_sample(
+                    self.next_sample_distance.rem_euclid(self.circuit_length),
+                    interpolate_reading(previous, reading, fraction),
+                );
+                self.next_sample_distance =
+                    next_sample_after(self.next_sample_distance, self.circuit_length);
+            }
+        }
+        self.last_wrapped_distance = wrapped_distance;
+        self.last_unwrapped_distance = unwrapped_distance;
+        self.last_reading = Some(reading);
     }
 
     pub fn record_dueling(
@@ -2366,6 +2482,129 @@ mod tests {
     }
 
     #[test]
+    fn car_piece_sustained_force_peaks_isolate_piece_and_car() {
+        let mut first_car = report_for_samples(vec![
+            sample_on_piece(0, 0.0, -1.2),
+            sample_on_piece(0, 1.0, -1.2),
+            sample_on_piece(0, 2.0, -1.2),
+            sample_on_piece(0, 3.0, -1.2),
+            sample_on_piece(0, 4.0, -1.2),
+            sample_on_piece(1, 5.0, -0.7),
+            sample_on_piece(1, 6.0, -0.7),
+            sample_on_piece(1, 7.0, -0.7),
+            sample_on_piece(1, 8.0, -0.7),
+        ]);
+        first_car.rating_inputs[0].visited_ranges = vec![(0.0, 9.0)];
+        let mut second_car = report_for_samples(vec![
+            sample_on_piece(0, 0.0, -1.1),
+            sample_on_piece(0, 1.0, -1.1),
+            sample_on_piece(0, 2.0, -1.1),
+            sample_on_piece(0, 3.0, -1.1),
+            sample_on_piece(0, 4.0, -1.1),
+            sample_on_piece(1, 5.0, -0.9),
+            sample_on_piece(1, 6.0, -0.9),
+            sample_on_piece(1, 7.0, -0.9),
+            sample_on_piece(1, 8.0, -0.9),
+        ]);
+        second_car.rating_inputs[0].visited_ranges = vec![(0.0, 9.0)];
+        first_car
+            .rating_inputs
+            .push(second_car.rating_inputs[0].clone());
+
+        let peaks = first_car.car_piece_sustained_force_peaks();
+
+        assert_eq!(
+            peaks,
+            vec![
+                CarPieceSustainedForcePeaks {
+                    piece_index: 0,
+                    car_index: 0,
+                    peaks: SustainedForcePeaks {
+                        maximum_vertical_g: None,
+                        minimum_vertical_g: Some(-1.2),
+                    },
+                },
+                CarPieceSustainedForcePeaks {
+                    piece_index: 1,
+                    car_index: 0,
+                    peaks: SustainedForcePeaks {
+                        maximum_vertical_g: None,
+                        minimum_vertical_g: Some(-0.7),
+                    },
+                },
+                CarPieceSustainedForcePeaks {
+                    piece_index: 0,
+                    car_index: 1,
+                    peaks: SustainedForcePeaks {
+                        maximum_vertical_g: None,
+                        minimum_vertical_g: Some(-1.1),
+                    },
+                },
+                CarPieceSustainedForcePeaks {
+                    piece_index: 1,
+                    car_index: 1,
+                    peaks: SustainedForcePeaks {
+                        maximum_vertical_g: None,
+                        minimum_vertical_g: Some(-0.9),
+                    },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn car_piece_sustained_force_peaks_do_not_join_short_adjacent_piece_runs() {
+        let mut report = report_for_samples(vec![
+            sample_on_piece(0, 0.0, -1.2),
+            sample_on_piece(0, 1.0, -1.2),
+            sample_on_piece(1, 2.0, -1.2),
+            sample_on_piece(1, 3.0, -1.2),
+        ]);
+        report.rating_inputs[0].visited_ranges = vec![(0.0, 4.0)];
+
+        let peaks = report.car_piece_sustained_force_peaks();
+
+        assert_eq!(peaks.len(), 2);
+        assert!(
+            peaks
+                .iter()
+                .all(|peak| peak.peaks.minimum_vertical_g.is_none())
+        );
+    }
+
+    #[test]
+    fn candidate_force_summary_reports_force_peaks_and_duration_qualified_airtime() {
+        let short_run = [
+            sample_on_piece(1, 0.0, -0.8),
+            sample_on_piece(1, 1.0, -0.8),
+            sample_on_piece(1, 2.0, -0.8),
+        ];
+        let short_summary = candidate_force_peak_summary(&short_run, 10.0)
+            .expect("candidate samples produce an instantaneous peak");
+        assert_eq!(
+            short_summary.force,
+            ForcePeakValues {
+                minimum_vertical_g: -0.8,
+                maximum_vertical_g: -0.8,
+                maximum_lateral_g: 0.0,
+                maximum_longitudinal_g: 0.0,
+            }
+        );
+        assert_eq!(short_summary.sustained.minimum_vertical_g, None);
+
+        let sustained_run = [
+            sample_on_piece(1, 0.0, -0.8),
+            sample_on_piece(1, 1.0, -0.9),
+            sample_on_piece(1, 2.0, -0.8),
+            sample_on_piece(1, 3.0, -0.8),
+        ];
+        let sustained_summary = candidate_force_peak_summary(&sustained_run, 10.0)
+            .expect("candidate samples produce an instantaneous peak");
+        assert_eq!(sustained_summary.force.minimum_vertical_g, -0.9);
+        assert_eq!(sustained_summary.sustained.minimum_vertical_g, Some(-0.8));
+    }
+
+    #[test]
     fn sustained_force_peaks_respect_partial_lap_gaps_and_observed_seams() {
         let mut report = report_for_samples(vec![
             sample_at(0.0, 10.0, -1.0),
@@ -2446,6 +2685,13 @@ mod tests {
             roll: 0.0,
             piece_index: 0,
             force_limit_exceeded: [false; 3],
+        }
+    }
+
+    fn sample_on_piece(piece_index: usize, distance: f64, vertical_g: f64) -> TestSample {
+        TestSample {
+            piece_index,
+            ..sample_at(distance, 10.0, vertical_g)
         }
     }
 

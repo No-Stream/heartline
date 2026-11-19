@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConstructionHillOption, ConstructionPiece, PieceShape } from "./construction-protocol";
-import { speedTurnPalette, steppedPieceSelection, groupedPieces, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, steppedHillSelection, steppedPiece, stepperOptions, type HillAttribute } from "./construction-choices";
+import { speedTurnPalette, steppedPieceSelection, groupedPieces, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, shapedPaletteChoices, steppedHillSelection, steppedPiece, stepperOptions, type HillAttribute } from "./construction-choices";
 
 function shape(id: string, turn: number, kind = "Track"): PieceShape {
   return { id, name: id, kind, turn, entrySlope: "Level", exitSlope: "Level", entryBank: "Level", exitBank: "Level", points: [] };
@@ -25,6 +25,16 @@ const pieces = [
 ];
 
 describe("construction steppers", () => {
+  it("offers default shaped hill feels and fully banked turns in a separate palette group", () => {
+    expect(shapedPaletteChoices()).toEqual([
+      { id: "shape:hill:floater:default:auto", label: "Floater hill", group: "hill" },
+      { id: "shape:hill:strongFloater:default:auto", label: "Strong floater hill", group: "hill" },
+      { id: "shape:hill:ejector:default:auto", label: "Ejector hill", group: "hill" },
+      { id: "shape:turn:left:fullyBanked:auto", label: "Fully banked left turn", group: "turn" },
+      { id: "shape:turn:right:fullyBanked:auto", label: "Fully banked right turn", group: "turn" },
+    ]);
+  });
+
   it("keeps each model's available slope transitions in the Slopes group", () => {
     const modelTransitions = [
       {

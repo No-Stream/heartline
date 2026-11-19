@@ -5,7 +5,7 @@ import type { Facility, FacilityAction } from "./facilities";
 import init, { BuilderSessionBridge, WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_wasm.js";
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
-import type { ConstructionAction, ConstructionElement, ConstructionForcePreview, ConstructionHillOption, ConstructionPiece, ConstructionSpeedTurn, ConstructionTrack, PieceShape } from "./construction-protocol";
+import type { ConstructionAction, ConstructionElement, ConstructionForcePreview, ConstructionHillOption, ConstructionPiece, ConstructionShapedElement, ConstructionSpeedTurn, ConstructionTrack, PieceShape } from "./construction-protocol";
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
@@ -154,6 +154,7 @@ type BuilderWorkerEstimates = {
   readonly elements: ConstructionElement[];
   readonly hillOptions: ConstructionHillOption[];
   readonly speedTurns: ConstructionSpeedTurn[];
+  readonly selectedShape: ConstructionShapedElement | null;
   readonly candidateForcePreview: CandidateForcePreview | null;
   readonly speedMatch: ConstructionSpeedMatch | null;
 };
@@ -183,6 +184,7 @@ function sendConstruction(complete = true): void {
   sendWorkerMessage(outputScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     hillOptions: estimates.hillOptions,
     speedTurns: estimates.speedTurns,
+    selectedShape: estimates.selectedShape,
     selected: selected || null, track,
     canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
@@ -607,6 +609,7 @@ workerScope.addEventListener("message", (event) => {
         case "construction-set-chain": simulation.construction_set_chain(action.enabled); break;
         case "construction-set-launch-intensity": simulation.construction_set_launch_intensity(action.id, action.targetSpeed); break;
         case "construction-append": simulation.construction_append(); break;
+        case "construction-append-resolved": simulation.construction_append_resolved(action.intentJson, action.specJson); break;
         case "construction-undo": simulation.construction_undo(); break;
         case "construction-delete": simulation.construction_delete(action.id); break;
         case "construction-close": simulation.construction_close(); break;
@@ -633,9 +636,9 @@ workerScope.addEventListener("message", (event) => {
         case "construction-delete-mode": return;
         default: assertNever(action);
       }
-      if (["construction-start", "construction-append", "construction-undo", "construction-delete"].includes(action.type)
+      if (["construction-start", "construction-append", "construction-append-resolved", "construction-undo", "construction-delete"].includes(action.type)
         && simulation.construction_active() && !simulation.construction_selected().startsWith("element:")) sendConstruction(false);
-      if (["construction-start", "construction-append", "construction-undo", "construction-delete", "construction-close", "construction-finish-confirm", "construction-set-open"].includes(action.type)) sendWorld();
+      if (["construction-start", "construction-append", "construction-append-resolved", "construction-undo", "construction-delete", "construction-close", "construction-finish-confirm", "construction-set-open"].includes(action.type)) sendWorld();
       sendConstruction();
       sendRideInfo();
       scheduleBlockAnalysis();

@@ -87,6 +87,7 @@ fn ride_fixtures_preserve_the_circuit_text_sequences() {
         for (step, source_command) in track_steps.iter().zip(source_commands) {
             let ride_command = match step {
                 RideStep::Place(place) => place.place.as_str().to_owned(),
+                RideStep::Shape(_) => panic!("{} contains a shaped step", fixture.name),
                 RideStep::Chain(chain) => if chain.chain { "+chain" } else { "-chain" }.to_owned(),
                 RideStep::Close(_) => panic!("{} closes before its final step", fixture.name),
                 RideStep::BlockSections(_) => panic!("{} filtered block sections", fixture.name),

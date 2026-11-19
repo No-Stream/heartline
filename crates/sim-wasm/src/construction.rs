@@ -2,6 +2,9 @@ use super::*;
 use serde::Serialize;
 use theme_park_sim::park::ride_test::RideKey;
 use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun};
+use theme_park_sim::track::shaped::{
+    ElementIntent, ElementSpec, HillSizeHint, ShapedConstructionError, SolveRefusal, TurnSizeHint,
+};
 use theme_park_sim::track::{
     Bank, CoasterModel, Hand, Heartlining, HillFeel, HillTwist, PieceFamily,
 };
@@ -54,6 +57,293 @@ pub struct ConstructionSpeedTurnWire {
     hand: &'static str,
     design_speed: f64,
 }
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionShapeSpecWire {
+    #[ts(type = "\"hill\" | \"turn\"")]
+    pub kind: &'static str,
+    pub design_speed_mps: f64,
+    pub cars: u8,
+    pub target_g: Option<f64>,
+    pub delivered_g: Option<f64>,
+    pub vertical_g: Option<f64>,
+    pub lateral_g: Option<f64>,
+    pub height_m: Option<f64>,
+    pub span_m: Option<f64>,
+    pub radius_m: Option<f64>,
+    pub bank_degrees: Option<f64>,
+}
+
+#[derive(Serialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ConstructionShapeRefusalWire {
+    Stall {
+        entry_speed_mps: f64,
+        height_m: f64,
+    },
+    InfeasibleTarget {
+        target_g: f64,
+        available_headroom_g: f64,
+    },
+    PreviewTimedOut,
+    InvalidContext,
+    UnsupportedConnector,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionShapedElementWire {
+    pub selection: String,
+    #[ts(type = "\"hill\" | \"turn\"")]
+    pub kind: &'static str,
+    pub feel: Option<&'static str>,
+    #[ts(type = "\"left\" | \"right\" | null")]
+    pub hand: Option<&'static str>,
+    pub strength_g: Option<f64>,
+    pub fixed_size: Option<f64>,
+    pub spec: Option<ConstructionShapeSpecWire>,
+    pub refusal: Option<ConstructionShapeRefusalWire>,
+    pub piece_shape: Option<crate::reports::PieceShapeReport>,
+}
+
+fn parse_shape_selection(selection: &str) -> Result<ElementIntent, String> {
+    let parts: Vec<_> = selection.split(':').collect();
+    match parts.as_slice() {
+        ["shape", "hill", feel, strength, size] => {
+            let feel = match *feel {
+                "floater" => HillFeel::Floater,
+                "strongFloater" => HillFeel::StrongFloater,
+                "ejector" => HillFeel::Ejector,
+                _ => return Err(format!("Unknown shaped hill feel {feel:?}")),
+            };
+            let strength_g = if *strength == "default" {
+                None
+            } else {
+                let value = strength
+                    .parse::<f64>()
+                    .map_err(|_| format!("Invalid shaped hill strength {strength:?}"))?;
+                if !value.is_finite() {
+                    return Err(format!("Invalid shaped hill strength {strength:?}"));
+                }
+                Some(value)
+            };
+            let size = parse_shape_size(size, "hill height")?
+                .map_or(HillSizeHint::Auto, HillSizeHint::Height);
+            Ok(ElementIntent::Hill {
+                feel,
+                strength_g,
+                size,
+            })
+        }
+        ["shape", "turn", hand, "fullyBanked", size] => {
+            let hand = parse_shape_hand(hand)?;
+            let size = parse_shape_size(size, "turn radius")?
+                .map_or(TurnSizeHint::Auto, TurnSizeHint::Radius);
+            Ok(ElementIntent::Turn { hand, size })
+        }
+        ["shape", "turn", _, feel, _] => Err(format!("Unsupported shaped turn feel {feel:?}")),
+        _ => Err(format!("Invalid shaped element selection {selection:?}")),
+    }
+}
+
+fn parse_shape_size(size: &str, label: &str) -> Result<Option<f64>, String> {
+    if size == "auto" {
+        return Ok(None);
+    }
+    let Some(value) = size.strip_prefix("fixed-") else {
+        return Err(format!("Invalid shaped element {label} {size:?}"));
+    };
+    let value = value
+        .parse::<f64>()
+        .map_err(|_| format!("Invalid shaped element {label} {size:?}"))?;
+    if !value.is_finite() || value <= 0.0 {
+        return Err(format!("Invalid shaped element {label} {size:?}"));
+    }
+    Ok(Some(value))
+}
+
+fn parse_shape_hand(hand: &str) -> Result<Hand, String> {
+    match hand {
+        "left" => Ok(Hand::Left),
+        "right" => Ok(Hand::Right),
+        _ => Err(format!("Unknown shaped turn hand {hand:?}")),
+    }
+}
+
+fn shape_selection_id(intent: &ElementIntent) -> String {
+    match intent {
+        ElementIntent::Hill {
+            feel,
+            strength_g,
+            size,
+        } => {
+            let feel = match feel {
+                HillFeel::Floater => "floater",
+                HillFeel::StrongFloater => "strongFloater",
+                HillFeel::Ejector => "ejector",
+                other => panic!("unsupported shaped hill feel {other:?}"),
+            };
+            let strength = strength_g.map_or_else(|| "default".into(), |value| value.to_string());
+            let size = match size {
+                HillSizeHint::Auto => "auto".into(),
+                HillSizeHint::Height(height) => format!("fixed-{height}"),
+            };
+            format!("shape:hill:{feel}:{strength}:{size}")
+        }
+        ElementIntent::Turn { hand, size } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let size = match size {
+                TurnSizeHint::Auto => "auto".into(),
+                TurnSizeHint::Radius(radius) => format!("fixed-{radius}"),
+            };
+            format!("shape:turn:{hand}:fullyBanked:{size}")
+        }
+    }
+}
+
+fn shape_size_hint(intent: &ElementIntent) -> Option<f64> {
+    match intent {
+        ElementIntent::Hill { size, .. } => match size {
+            HillSizeHint::Auto => None,
+            HillSizeHint::Height(height) => Some(*height),
+        },
+        ElementIntent::Turn { size, .. } => match size {
+            TurnSizeHint::Auto => None,
+            TurnSizeHint::Radius(radius) => Some(*radius),
+        },
+    }
+}
+
+fn shape_feel(intent: &ElementIntent) -> Option<&'static str> {
+    match intent {
+        ElementIntent::Hill { feel, .. } => Some(match feel {
+            HillFeel::Floater => "floater",
+            HillFeel::StrongFloater => "strongFloater",
+            HillFeel::Ejector => "ejector",
+            other => panic!("unsupported shaped hill feel {other:?}"),
+        }),
+        ElementIntent::Turn { .. } => Some("fullyBanked"),
+    }
+}
+
+fn shape_strength(intent: &ElementIntent) -> Option<f64> {
+    match intent {
+        ElementIntent::Hill { strength_g, .. } => *strength_g,
+        ElementIntent::Turn { .. } => None,
+    }
+}
+
+fn shape_hand(intent: &ElementIntent) -> Option<&'static str> {
+    match intent {
+        ElementIntent::Hill { .. } => None,
+        ElementIntent::Turn { hand, .. } => Some(match hand {
+            Hand::Left => "left",
+            Hand::Right => "right",
+        }),
+    }
+}
+
+fn shaped_spec_wire(spec: &ElementSpec) -> ConstructionShapeSpecWire {
+    match spec {
+        ElementSpec::Hill {
+            design_speed_mps,
+            cars,
+            target_g,
+            delivered_g,
+            height_m,
+            span_m,
+            ..
+        } => ConstructionShapeSpecWire {
+            kind: "hill",
+            design_speed_mps: *design_speed_mps,
+            cars: *cars,
+            target_g: Some(*target_g),
+            delivered_g: Some(*delivered_g),
+            vertical_g: None,
+            lateral_g: None,
+            height_m: Some(*height_m),
+            span_m: Some(*span_m),
+            radius_m: None,
+            bank_degrees: None,
+        },
+        ElementSpec::Turn {
+            design_speed_mps,
+            cars,
+            vertical_g,
+            lateral_g,
+            radius_m,
+            bank_degrees,
+            ..
+        } => ConstructionShapeSpecWire {
+            kind: "turn",
+            design_speed_mps: *design_speed_mps,
+            cars: *cars,
+            target_g: None,
+            delivered_g: None,
+            vertical_g: Some(*vertical_g),
+            lateral_g: Some(*lateral_g),
+            height_m: None,
+            span_m: None,
+            radius_m: Some(*radius_m),
+            bank_degrees: Some(*bank_degrees),
+        },
+    }
+}
+
+fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
+    match refusal {
+        SolveRefusal::Stall {
+            entry_speed_mps,
+            height_m,
+        } => ConstructionShapeRefusalWire::Stall {
+            entry_speed_mps,
+            height_m,
+        },
+        SolveRefusal::InfeasibleTarget {
+            target_g,
+            available_headroom_g,
+        } => ConstructionShapeRefusalWire::InfeasibleTarget {
+            target_g,
+            available_headroom_g,
+        },
+        SolveRefusal::PreviewTimedOut => ConstructionShapeRefusalWire::PreviewTimedOut,
+        SolveRefusal::InvalidContext => ConstructionShapeRefusalWire::InvalidContext,
+        SolveRefusal::UnsupportedConnector => ConstructionShapeRefusalWire::UnsupportedConnector,
+    }
+}
+
+fn solve_refusal_message(refusal: SolveRefusal) -> String {
+    match refusal {
+        SolveRefusal::Stall { height_m, .. } => format!("Hill stalls at {height_m:.1} m."),
+        SolveRefusal::InfeasibleTarget { target_g, .. } => {
+            format!("The force target {target_g:.2} g is not feasible for this model.")
+        }
+        SolveRefusal::PreviewTimedOut => "The train preview timed out.".into(),
+        SolveRefusal::InvalidContext => "The train cannot reach this element entry.".into(),
+        SolveRefusal::UnsupportedConnector => {
+            "Shaped elements need a level, straight entry connector.".into()
+        }
+    }
+}
+
+fn shaped_construction_error_message(error: ShapedConstructionError) -> String {
+    match error {
+        ShapedConstructionError::Solve(refusal) => solve_refusal_message(refusal),
+        ShapedConstructionError::Construction(error) => construction_error(error),
+        ShapedConstructionError::InvalidResolvedSpec => {
+            "The saved shaped element does not match its resolved geometry.".into()
+        }
+    }
+}
+
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionElementWire {
@@ -77,6 +367,9 @@ pub struct ConstructionTrackWire {
     launch_target_speed: Option<f64>,
     launch_minimum_speed: Option<f64>,
     launch_maximum_speed: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    piece_shape: Option<crate::reports::PieceShapeReport>,
 }
 
 /// The wire form of a finished test report, shared by the builder and the ride info window.
@@ -886,6 +1179,7 @@ impl WasmSimulation {
     pub fn construction_select(&mut self, id: &str) {
         self.selected_element = None;
         if let Some(key) = id.strip_prefix("model:") {
+            self.selected_shape = None;
             let model = coaster_model(key);
             self.construction_model = model.key.to_owned();
             self.construction_message.clear();
@@ -893,6 +1187,7 @@ impl WasmSimulation {
             return;
         }
         if let Some(element_id) = id.strip_prefix("element:") {
+            self.selected_shape = None;
             let obstacles = self.facility_obstacles();
             self.selected = None;
             self.selected_element = self.park.construction.as_ref().and_then(|construction| {
@@ -910,6 +1205,24 @@ impl WasmSimulation {
             self.refresh_construction_support_rendering();
             return;
         }
+        if id.starts_with("shape:") {
+            self.selected = None;
+            self.selected_element = None;
+            match parse_shape_selection(id) {
+                Ok(intent) => {
+                    self.selected_shape = Some(intent);
+                    self.construction_message.clear();
+                    self.refresh_construction_support_rendering();
+                }
+                Err(error) => {
+                    self.selected_shape = None;
+                    self.construction_message = error;
+                    self.construction_preview_supports_cache.clear();
+                }
+            }
+            return;
+        }
+        self.selected_shape = None;
         let id = if let Some(parameters) = id.strip_prefix("hill:") {
             let matching = theme_park_sim::track::catalog().iter().find(|piece| {
                 piece.family.is_some_and(|family| {
@@ -955,12 +1268,99 @@ impl WasmSimulation {
     }
 
     pub fn construction_selected(&self) -> String {
+        if let Some(intent) = self.selected_shape.as_ref() {
+            return shape_selection_id(intent);
+        }
         if let Some(element_id) = self.selected_element.as_deref() {
             return format!("element:{element_id}");
         }
         self.selected
             .map(|id| wire_pieceid(id).to_owned())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn construction_shape_candidate(
+        &self,
+        intent: &ElementIntent,
+    ) -> Result<theme_park_sim::track::shaped::SolvedElement, SolveRefusal> {
+        let construction = self
+            .construction
+            .as_ref()
+            .ok_or(SolveRefusal::InvalidContext)?;
+        let prefix = construction.pieces();
+        let preview = construction
+            .force_preview(
+                prefix,
+                PhysicsConfig {
+                    lift_speed: 5.0,
+                    ..PhysicsConfig::default()
+                },
+            )
+            .ok_or(SolveRefusal::PreviewTimedOut)?;
+        if preview.status == PreviewStatus::TimedOut {
+            return Err(SolveRefusal::PreviewTimedOut);
+        }
+        let entry_speed_mps = preview
+            .end_speed_mps
+            .filter(|speed| speed.is_finite() && *speed > 0.0)
+            .ok_or(SolveRefusal::InvalidContext)?;
+        construction.shape_candidate(
+            intent,
+            entry_speed_mps,
+            PhysicsConfig {
+                lift_speed: 5.0,
+                ..PhysicsConfig::default()
+            },
+        )
+    }
+
+    pub(crate) fn construction_selected_shape_wire(
+        &self,
+        include_calibration: bool,
+    ) -> Option<ConstructionShapedElementWire> {
+        let intent = self.selected_shape.as_ref()?;
+        let selection = shape_selection_id(intent);
+        let (kind, feel, hand) = match intent {
+            ElementIntent::Hill { .. } => ("hill", shape_feel(intent), None),
+            ElementIntent::Turn { .. } => ("turn", shape_feel(intent), shape_hand(intent)),
+        };
+        if !include_calibration {
+            return Some(ConstructionShapedElementWire {
+                selection,
+                kind,
+                feel,
+                hand,
+                strength_g: shape_strength(intent),
+                fixed_size: shape_size_hint(intent),
+                spec: None,
+                refusal: None,
+                piece_shape: None,
+            });
+        }
+        match self.construction_shape_candidate(intent) {
+            Ok(solved) => Some(ConstructionShapedElementWire {
+                selection,
+                kind,
+                feel,
+                hand,
+                strength_g: shape_strength(intent),
+                fixed_size: shape_size_hint(intent),
+                spec: Some(shaped_spec_wire(&solved.spec)),
+                refusal: None,
+                piece_shape: Some(crate::reports::piece_shape_report(&solved.piece)),
+            }),
+            Err(refusal) => Some(ConstructionShapedElementWire {
+                selection,
+                kind,
+                feel,
+                hand,
+                strength_g: shape_strength(intent),
+                fixed_size: shape_size_hint(intent),
+                spec: None,
+                refusal: Some(solve_refusal_wire(refusal)),
+                piece_shape: None,
+            }),
+        }
     }
 
     pub fn construction_choices(&self) -> String {
@@ -1133,6 +1533,9 @@ impl WasmSimulation {
                         launch_maximum_speed: construction
                             .launch_speed_bounds(*id)
                             .map(|bounds| bounds.maximum),
+                        piece_shape: piece
+                            .element_spec()
+                            .map(|_| crate::reports::piece_shape_report(piece)),
                     })
                     .collect()
             })
@@ -1145,6 +1548,14 @@ impl WasmSimulation {
             return false;
         };
         let obstacles = self.facility_obstacles();
+        if let Some(intent) = self.selected_shape.as_ref() {
+            let Ok(solved) = self.construction_shape_candidate(intent) else {
+                return false;
+            };
+            return construction
+                .validate_shaped_piece(&solved.piece, &self.world, &obstacles)
+                .is_ok();
+        }
         if let Some(element_id) = self.selected_element.as_deref() {
             return construction
                 .element_choices(&self.world, &obstacles)
@@ -1164,6 +1575,20 @@ impl WasmSimulation {
     }
 
     pub fn construction_preview_reason(&self) -> String {
+        if let Some(intent) = self.selected_shape.as_ref() {
+            let solved = match self.construction_shape_candidate(intent) {
+                Ok(solved) => solved,
+                Err(refusal) => return solve_refusal_message(refusal),
+            };
+            return self
+                .construction
+                .as_ref()
+                .expect("solving shaped intent requires construction")
+                .validate_shaped_piece(&solved.piece, &self.world, &self.facility_obstacles())
+                .err()
+                .map(construction_error)
+                .unwrap_or_default();
+        }
         if let Some(element_id) = self.selected_element.as_deref() {
             let available = self.construction.as_ref().is_some_and(|construction| {
                 construction
@@ -1338,6 +1763,14 @@ impl WasmSimulation {
     }
 
     pub fn construction_append(&mut self) {
+        if let Some(intent) = self.selected_shape.clone() {
+            let result = self
+                .construction_shape_candidate(&intent)
+                .map_err(solve_refusal_message)
+                .and_then(|solved| self.construction_append_resolved_typed(&intent, &solved.spec));
+            self.construction_message = result.err().unwrap_or_default();
+            return;
+        }
         self.construction_finish_invalidate();
         let obstacles = self.facility_obstacles();
         let selected = self.selected;
@@ -1429,6 +1862,84 @@ impl WasmSimulation {
         if changed {
             self.refresh_construction_support_rendering();
         }
+    }
+
+    pub(crate) fn construction_append_resolved_typed(
+        &mut self,
+        intent: &ElementIntent,
+        spec: &ElementSpec,
+    ) -> Result<(), String> {
+        self.construction_finish_invalidate();
+        let obstacles = self.facility_obstacles();
+        let (first_id, tunnel_plan) = {
+            let construction = self
+                .park
+                .construction
+                .as_ref()
+                .ok_or_else(|| "Construction is inactive".to_string())?;
+            let piece = construction
+                .piece_from_resolved_spec(spec)
+                .map_err(|refusal| solve_refusal_message(refusal))?;
+            let first_id = construction.next_piece_id();
+            let tunnel_plans = construction
+                .tunnel_plans_for_geometry(std::slice::from_ref(&piece), &self.park.world)
+                .map_err(construction_error)?;
+            let tunnel_plan = tunnel_plans
+                .into_iter()
+                .next()
+                .expect("one shaped piece has one tunnel plan");
+            (first_id, tunnel_plan)
+        };
+        let ownership = [(first_id, tunnel_plan)];
+        self.park
+            .carve_for_construction(&ownership)
+            .map_err(|error| error.to_string())?;
+        let result = self
+            .park
+            .construction
+            .as_mut()
+            .expect("construction remains active")
+            .append_resolved(intent, spec, &self.park.world, &obstacles)
+            .map_err(shaped_construction_error_message);
+        if let Err(error) = result {
+            self.park.restore_tunnel_piece(first_id);
+            return Err(error);
+        }
+        self.construction_undo_groups.push(1);
+        self.selected_shape = None;
+        self.selected_element = None;
+        self.close_live_coaster();
+        self.clear_block_layout();
+        self.park.support_render_cache.clear();
+        self.construction_recorder = None;
+        self.construction_report = None;
+        self.construction_train = None;
+        self.construction_outcome = None;
+        self.select_compatible_piece();
+        self.refresh_construction_support_rendering();
+        Ok(())
+    }
+
+    pub fn construction_append_resolved(&mut self, intent_json: &str, spec_json: &str) -> String {
+        let intent = match serde_json::from_str::<ElementIntent>(intent_json) {
+            Ok(intent) => intent,
+            Err(error) => {
+                self.construction_message = format!("Invalid saved shaped intent: {error}");
+                return self.construction_message.clone();
+            }
+        };
+        let spec = match serde_json::from_str::<ElementSpec>(spec_json) {
+            Ok(spec) => spec,
+            Err(error) => {
+                self.construction_message = format!("Invalid saved shaped geometry: {error}");
+                return self.construction_message.clone();
+            }
+        };
+        self.construction_message = self
+            .construction_append_resolved_typed(&intent, &spec)
+            .err()
+            .unwrap_or_default();
+        self.construction_message.clone()
     }
 
     pub fn construction_undo(&mut self) {
@@ -2245,6 +2756,9 @@ define_piece_id_wire_names!(
     FloaterHill24x160,
     WideLevelToSixtyDown,
     WideSixtyDownToLevel,
+    ShapedHill,
+    ShapedTurnLeft,
+    ShapedTurnRight,
 );
 
 fn wire_heading(value: Heading) -> &'static str {

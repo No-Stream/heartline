@@ -1,44 +1,48 @@
-#[cfg(test)]
 use std::f64::consts::PI;
 
 use crate::state_hash::StateHasher;
 use crate::track::curves::{HEART_HEIGHT_METRES, RatedSpeeds};
-#[cfg(test)]
 const HEART_HEIGHT: f64 = HEART_HEIGHT_METRES;
 
 const GRAVITY: f64 = 9.81;
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 enum Schedule {
     Constant(f64),
-    Loop { bottom: f64, top: f64, hold: f64 },
+    #[cfg(test)]
+    Loop {
+        bottom: f64,
+        top: f64,
+        hold: f64,
+    },
 }
 
-#[cfg(test)]
 impl Schedule {
-    fn force(self, angle: f64) -> f64 {
+    fn force(self, _angle: f64) -> f64 {
         match self {
             Self::Constant(force) => force,
+            #[cfg(test)]
             Self::Loop { bottom, top, hold } => {
-                if angle <= hold {
+                if _angle <= hold {
                     bottom
                 } else {
-                    top + (bottom - top) * (1.0 + (PI * (angle - hold) / (PI - hold)).cos()) / 2.0
+                    top + (bottom - top) * (1.0 + (PI * (_angle - hold) / (PI - hold)).cos()) / 2.0
                 }
             }
         }
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 enum Segment {
-    Arc { angle: f64, schedule: Schedule },
+    Arc {
+        angle: f64,
+        schedule: Schedule,
+    },
+    #[cfg(test)]
     Insert(f64),
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug)]
 pub(crate) struct ProfileSpec {
     segments: Vec<Segment>,
@@ -47,11 +51,12 @@ pub(crate) struct ProfileSpec {
     mirror_apex: bool,
     start_angle: f64,
     taper_angle: Option<f64>,
+    #[cfg(test)]
     name: &'static str,
 }
 
-#[cfg(test)]
 impl ProfileSpec {
+    #[cfg(test)]
     pub(crate) fn half_loop(maximum_entry: f64, bottom: f64, top: f64) -> Self {
         Self {
             segments: vec![Segment::Arc {
@@ -70,6 +75,7 @@ impl ProfileSpec {
             name: "half loop",
         }
     }
+    #[cfg(test)]
     pub(crate) fn pull(start_angle: f64, end_angle: f64, maximum_entry: f64, force: f64) -> Self {
         Self {
             segments: vec![Segment::Arc {
@@ -84,6 +90,7 @@ impl ProfileSpec {
             name: "pull profile",
         }
     }
+    #[cfg(test)]
     pub(crate) fn crest(
         start_angle: f64,
         end_angle: f64,
@@ -105,6 +112,7 @@ impl ProfileSpec {
             name: "crest profile",
         }
     }
+    #[cfg(test)]
     pub(crate) fn full_loop(maximum_entry: f64, bottom: f64, top: f64) -> Self {
         Self {
             mirror_apex: true,
@@ -136,9 +144,23 @@ impl ProfileSpec {
             mirror_apex: true,
             start_angle: 0.0,
             taper_angle: None,
+            #[cfg(test)]
             name: "airtime hill",
         }
     }
+    pub(crate) fn hill_with_taper(
+        design_speed: f64,
+        pull_force: f64,
+        crest_force: f64,
+        flank_angle: f64,
+        taper_angle: f64,
+    ) -> Self {
+        assert!(taper_angle.is_finite() && taper_angle > 0.0 && taper_angle <= PI / 4.0);
+        let mut spec = Self::hill(design_speed, pull_force, crest_force, flank_angle);
+        spec.taper_angle = Some(taper_angle);
+        spec
+    }
+    #[cfg(test)]
     pub(crate) fn zero_g_hill(design_speed: f64, pull_force: f64, flank_angle: f64) -> Self {
         Self::hill(design_speed, pull_force, 0.0, flank_angle).named("zero-g hill")
     }
@@ -157,10 +179,12 @@ impl ProfileSpec {
             name: "test arc",
         }
     }
+    #[cfg(test)]
     pub(crate) fn named(mut self, name: &'static str) -> Self {
         self.name = name;
         self
     }
+    #[cfg(test)]
     pub(crate) fn with_taper_angle(mut self, taper_angle: f64) -> Self {
         assert!(taper_angle > 0.0 && taper_angle <= PI / 4.0);
         self.taper_angle = Some(taper_angle);
@@ -179,10 +203,47 @@ struct Point {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct SolvedProfile {
+pub struct SolvedProfile {
     points: Vec<Point>,
     cached_minimum_entry: Option<f64>,
     cached_minimum_radius: Option<f64>,
+}
+
+impl SolvedProfile {
+    pub(crate) fn resolved_points(&self) -> Vec<[f64; 6]> {
+        self.points
+            .iter()
+            .map(|point| {
+                [
+                    point.distance,
+                    point.x,
+                    point.z,
+                    point.angle,
+                    point.heart_curvature,
+                    point.curvature,
+                ]
+            })
+            .collect()
+    }
+
+    pub(crate) fn append_level_straight(&mut self, length: f64) {
+        assert!(length.is_finite() && length >= 0.0);
+        if length == 0.0 {
+            return;
+        }
+        let last = *self.points.last().expect("profile contains an endpoint");
+        assert!(last.angle.sin().abs() < 1e-9 && last.angle.cos() > 0.0);
+        self.points.push(Point {
+            distance: last.distance + length,
+            x: last.x + length,
+            z: last.z,
+            angle: last.angle,
+            heart_curvature: 0.0,
+            curvature: 0.0,
+        });
+        self.cached_minimum_entry = None;
+        self.cached_minimum_radius = None;
+    }
 }
 
 include!("profiles.generated.rs");
@@ -481,8 +542,11 @@ fn profile_curvature_from_derivatives(tangent: [f64; 2], second: [f64; 2]) -> f6
     (tangent[0] * second[1] - tangent[1] * second[0]) / tangent[0].hypot(tangent[1]).powi(3)
 }
 
-#[cfg(test)]
-fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize) -> SolvedProfile {
+pub(crate) fn integrate_checked(
+    spec: &ProfileSpec,
+    previous: Option<&SolvedProfile>,
+    steps: usize,
+) -> Result<SolvedProfile, f64> {
     let mut points = vec![Point {
         distance: 0.0,
         x: 0.0,
@@ -497,6 +561,7 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
     let mut distance = 0.0;
     for (segment_index, segment) in spec.segments.iter().enumerate() {
         match *segment {
+            #[cfg(test)]
             Segment::Insert(length) if length > 0.0 => {
                 assert_eq!(points.last().unwrap().curvature, 0.0);
                 heart_x += length * angle.cos();
@@ -511,6 +576,7 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                     curvature: 0.0,
                 });
             }
+            #[cfg(test)]
             Segment::Insert(_) => {}
             Segment::Arc {
                 angle: delta,
@@ -549,11 +615,13 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                     let speed_squared = previous.map_or(point_speed_squared, |profile| {
                         worst_speed_squared(profile, distance, spec.maximum_entry, spec.mirror_apex)
                     });
-                    assert!(
-                        speed_squared.is_finite() && speed_squared > 0.0,
-                        "{}: non-positive design speed squared at angle {midpoint_angle}",
-                        spec.name
-                    );
+                    if !speed_squared.is_finite() || speed_squared <= 0.0 {
+                        let height_m = previous
+                            .map_or(heart_z - HEART_HEIGHT * midpoint_angle.cos(), |profile| {
+                                minimum_mean_height(profile, distance, spec.mirror_apex)
+                            });
+                        return Err(height_m);
+                    }
                     let curvature =
                         GRAVITY * (schedule.force(midpoint_angle) - midpoint_angle.cos()) * taper
                             / speed_squared;
@@ -582,11 +650,13 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
                     let end_speed_squared = previous.map_or(end_point_speed_squared, |profile| {
                         worst_speed_squared(profile, distance, spec.maximum_entry, spec.mirror_apex)
                     });
-                    assert!(
-                        end_speed_squared.is_finite() && end_speed_squared > 0.0,
-                        "{}: non-positive design speed squared at angle {angle}",
-                        spec.name
-                    );
+                    if !end_speed_squared.is_finite() || end_speed_squared <= 0.0 {
+                        let height_m = previous
+                            .map_or(heart_z - HEART_HEIGHT * angle.cos(), |profile| {
+                                minimum_mean_height(profile, distance, spec.mirror_apex)
+                            });
+                        return Err(height_m);
+                    }
                     let heart_curvature =
                         GRAVITY * (schedule.force(angle) - angle.cos()) * end_taper
                             / end_speed_squared;
@@ -615,11 +685,21 @@ fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize)
             }
         }
     }
-    SolvedProfile {
+    Ok(SolvedProfile {
         points,
         cached_minimum_entry: None,
         cached_minimum_radius: None,
-    }
+    })
+}
+
+#[cfg(test)]
+fn integrate(spec: &ProfileSpec, previous: Option<&SolvedProfile>, steps: usize) -> SolvedProfile {
+    integrate_checked(spec, previous, steps).unwrap_or_else(|height_m| {
+        panic!(
+            "{}: non-positive design speed squared at height {height_m}",
+            spec.name
+        )
+    })
 }
 
 fn train_mean_height(profile: &SolvedProfile, front_distance: f64, cars: usize) -> f64 {
@@ -630,7 +710,6 @@ fn train_mean_height(profile: &SolvedProfile, front_distance: f64, cars: usize) 
         / cars as f64
 }
 
-#[cfg(test)]
 fn minimum_mean_height(profile: &SolvedProfile, distance: f64, mirror: bool) -> f64 {
     let (six_car_means, twelve_car_means) = train_mean_heights(profile, distance, mirror);
     six_car_means
@@ -678,7 +757,6 @@ fn train_mean_heights(
     (six_car_means, twelve_car_means)
 }
 
-#[cfg(test)]
 fn worst_speed_squared(
     profile: &SolvedProfile,
     distance: f64,
@@ -1039,8 +1117,7 @@ fn hill_crest_start(profile: &SolvedProfile, flank_angle: f64, name: &str) -> f6
         .distance
 }
 
-#[cfg(test)]
-fn reflect_hill(half: &SolvedProfile) -> SolvedProfile {
+pub(crate) fn reflect_hill(half: &SolvedProfile) -> SolvedProfile {
     let apex = *half.points.last().unwrap();
     let mut profile = half.clone();
     profile

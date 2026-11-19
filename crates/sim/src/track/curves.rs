@@ -1,6 +1,8 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::f64::consts::FRAC_PI_4;
 use std::ops::{Add, Div, Mul, Sub};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use super::Material;
 use super::roll::{RollGeometry, RollSample, Twist};
@@ -389,6 +391,9 @@ pub enum PieceId {
     FloaterHill24x160,
     WideLevelToSixtyDown,
     WideSixtyDownToLevel,
+    ShapedHill,
+    ShapedTurnLeft,
+    ShapedTurnRight,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PieceKind {
@@ -416,11 +421,22 @@ pub(crate) enum Shape {
     Plain,
     AirtimeHill,
     Overbank,
-    WaveTurn { bump: f64, peak: f64 },
+    WaveTurn {
+        bump: f64,
+        peak: f64,
+    },
     Profile(Arc<SolvedProfile>),
+    ShapedProfile {
+        spec: Arc<crate::track::shaped::ElementSpec>,
+    },
     Roll(Arc<RollGeometry>),
     RolledProfile(Arc<SolvedProfile>, Twist),
-    SpeedBank { design_speed: f64 },
+    SpeedBank {
+        design_speed: f64,
+    },
+    ResolvedBank {
+        spec: Arc<crate::track::shaped::ElementSpec>,
+    },
 }
 impl Shape {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
@@ -430,6 +446,8 @@ impl Shape {
             Self::Overbank => 2,
             Self::WaveTurn { .. } => 14,
             Self::SpeedBank { .. } => 15,
+            Self::ResolvedBank { .. } => 16,
+            Self::ShapedProfile { .. } => 17,
             Self::Profile(_) => 11,
             Self::Roll(_) => 12,
             Self::RolledProfile(_, _) => 13,
@@ -441,6 +459,7 @@ impl Shape {
                 hash.write_f64(*peak);
             }
             Self::SpeedBank { design_speed } => hash.write_f64(*design_speed),
+            Self::ResolvedBank { spec } | Self::ShapedProfile { spec } => spec.hash_into(hash),
             Self::Profile(profile) => profile.hash_into(hash),
             Self::Roll(roll) => roll.hash_into(hash),
             Self::RolledProfile(profile, twist) => {
@@ -778,14 +797,35 @@ fn smooth(t: f64) -> (f64, f64, f64) {
 fn curvature(velocity: Vec3, acceleration: Vec3) -> f64 {
     velocity.cross(acceleration).length() / velocity.length().powi(3)
 }
-const SPEED_TURN_STEPS: usize = 4096;
+pub(crate) const SPEED_TURN_STEPS: usize = 4096;
 const SPEED_TURN_RAMP: f64 = 0.39;
 const SPEED_TURN_EASING: f64 = 0.08;
 
-struct SpeedTurnGeometry {
-    peak_bank: f64,
-    length: f64,
-    knots: Vec<(f64, f64, f64)>,
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SpeedTurnKnot {
+    pub x: f64,
+    pub y: f64,
+    pub heading: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SpeedTurnGeometry {
+    pub peak_bank: f64,
+    pub length: f64,
+    pub knots: Vec<SpeedTurnKnot>,
+}
+
+impl SpeedTurnGeometry {
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_f64(self.peak_bank);
+        hash.write_f64(self.length);
+        hash.write_len(self.knots.len());
+        for knot in &self.knots {
+            hash.write_f64(knot.x);
+            hash.write_f64(knot.y);
+            hash.write_f64(knot.heading);
+        }
+    }
 }
 
 fn speed_turn_bank_fraction(t: f64) -> f64 {
@@ -816,21 +856,21 @@ fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
         let distance = length * step;
         let (mut x, mut y, mut heading) = (0.0, 0.0, 0.0);
         let mut knots = Vec::with_capacity(SPEED_TURN_STEPS + 1);
-        knots.push((x, y, heading));
+        knots.push(SpeedTurnKnot { x, y, heading });
         for curvature in curvatures {
             let angle = curvature * distance;
             let midpoint = heading + angle / 2.0;
             x += distance * midpoint.cos();
             y += distance * midpoint.sin();
             heading += angle;
-            knots.push((x, y, heading));
+            knots.push(SpeedTurnKnot { x, y, heading });
         }
         ((x + y) / 2.0, length, knots)
     };
     let (mut low, mut high) = (0.0, std::f64::consts::FRAC_PI_2 - 0.0001);
     for _ in 0..40 {
         let peak_bank = (low + high) / 2.0;
-        if integrate(peak_bank).0 > radius {
+        if speed_turn_radius_for_peak_bank(peak_bank, design_speed) > radius {
             low = peak_bank;
         } else {
             high = peak_bank;
@@ -845,34 +885,57 @@ fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
     }
 }
 
-/// Footprint radius and design speed of each speed turn; the radius grows with the speed.
-const SPEED_TURN_DESIGNS: [(f64, f64); 5] = [
-    (32.0, 16.0),
-    (32.0, 20.0),
-    (32.0, 24.0),
-    (48.0, 28.0),
-    (64.0, 32.0),
-];
+pub(crate) fn speed_turn_radius_for_peak_bank(peak_bank: f64, design_speed: f64) -> f64 {
+    assert!(peak_bank.is_finite() && peak_bank > 0.0 && peak_bank < std::f64::consts::FRAC_PI_2);
+    assert!(design_speed.is_finite() && design_speed > 0.0);
+    let curvature_at = |index: usize| {
+        let t = (index as f64 + 0.5) / SPEED_TURN_STEPS as f64;
+        (peak_bank * speed_turn_bank_fraction(t)).tan() * crate::physics::GRAVITY
+            / design_speed.powi(2)
+    };
+    let step = 1.0 / SPEED_TURN_STEPS as f64;
+    let total_curvature = (0..SPEED_TURN_STEPS).map(curvature_at).sum::<f64>();
+    let length = std::f64::consts::FRAC_PI_2 / (total_curvature * step);
+    let distance = length * step;
+    let (mut x, mut y, mut heading) = (0.0, 0.0, 0.0);
+    for index in 0..SPEED_TURN_STEPS {
+        let angle = curvature_at(index) * distance;
+        let midpoint = heading + angle / 2.0;
+        x += distance * midpoint.cos();
+        y += distance * midpoint.sin();
+        heading += angle;
+    }
+    (x + y) / 2.0
+}
 
-fn speed_turn_geometry(radius: f64, design_speed: f64) -> &'static SpeedTurnGeometry {
-    // Each fit takes a few milliseconds, so only the turns a construction actually samples are fitted.
-    static GEOMETRIES: [OnceLock<SpeedTurnGeometry>; 2 * SPEED_TURN_DESIGNS.len()] =
-        [const { OnceLock::new() }; 2 * SPEED_TURN_DESIGNS.len()];
-    let (index, fitted_radius) = SPEED_TURN_DESIGNS
-        .iter()
-        .flat_map(|&(design_radius, speed)| {
-            [design_radius, design_radius * std::f64::consts::SQRT_2]
-                .map(|fitted_radius| (fitted_radius, speed))
-        })
-        .enumerate()
-        .find(|(_, (fitted_radius, speed))| {
-            (fitted_radius - radius).abs() < 1e-8 && *speed == design_speed
-        })
-        .map(|(index, (fitted_radius, _))| (index, fitted_radius))
-        .unwrap_or_else(|| {
-            panic!("speed turn must have a fitted geometry: radius {radius}, speed {design_speed}")
-        });
-    GEOMETRIES[index].get_or_init(|| build_speed_turn(fitted_radius, design_speed))
+pub(crate) fn speed_turn_geometry(radius: f64, design_speed: f64) -> Arc<SpeedTurnGeometry> {
+    assert!(radius.is_finite() && radius > 0.0);
+    assert!(design_speed.is_finite() && design_speed > 0.0);
+    type Key = (u64, u64);
+    static GEOMETRIES: LazyLock<Mutex<HashMap<Key, Arc<SpeedTurnGeometry>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    thread_local! {
+        static LAST_GEOMETRY: RefCell<Option<(Key, Arc<SpeedTurnGeometry>)>> = const { RefCell::new(None) };
+    }
+    let key = (radius.to_bits(), design_speed.to_bits());
+    if let Some(geometry) = LAST_GEOMETRY.with(|last| {
+        last.borrow()
+            .as_ref()
+            .filter(|(cached_key, _)| *cached_key == key)
+            .map(|(_, geometry)| Arc::clone(geometry))
+    }) {
+        return geometry;
+    }
+    let geometry = {
+        let mut cache = GEOMETRIES.lock().expect("speed-turn cache lock");
+        Arc::clone(
+            cache
+                .entry(key)
+                .or_insert_with(|| Arc::new(build_speed_turn(radius, design_speed))),
+        )
+    };
+    LAST_GEOMETRY.with(|last| *last.borrow_mut() = Some((key, Arc::clone(&geometry))));
+    geometry
 }
 
 impl Piece {
@@ -925,19 +988,45 @@ impl Piece {
         peak.to_degrees()
     }
 
+    fn speed_turn_radius(&self) -> f64 {
+        let displacement = self.exit.position() - self.entry.position();
+        let radius = displacement.dot(self.entry.tangent().unit());
+        let Some(PieceFamily::SpeedTurn { radius_metres, .. }) = self.family else {
+            return radius;
+        };
+        let canonical_radius = f64::from(radius_metres);
+        [canonical_radius, canonical_radius * std::f64::consts::SQRT_2]
+            .into_iter()
+            .find(|candidate| (candidate - radius).abs() < 1e-8)
+            .unwrap_or_else(|| {
+                panic!(
+                    "classic speed turn connector radius {radius} does not match its family radius {canonical_radius}"
+                )
+            })
+    }
+
     fn speed_turn_frame(&self, design_speed: f64, t: f64) -> (Vec3, Vec3, Vec3, f64) {
+        let geometry = speed_turn_geometry(self.speed_turn_radius(), design_speed);
+        self.speed_turn_frame_with_geometry(&geometry, t)
+    }
+
+    fn speed_turn_frame_with_geometry(
+        &self,
+        geometry: &SpeedTurnGeometry,
+        t: f64,
+    ) -> (Vec3, Vec3, Vec3, f64) {
         let forward = self.entry.tangent().unit();
         let left = Vec3::new(-forward.y, forward.x, 0.0);
         let vertical = Vec3::new(0.0, 0.0, 1.0);
         let displacement = self.exit.position() - self.entry.position();
         let hand = displacement.dot(left).signum();
-        let radius = displacement.dot(forward);
-        let geometry = speed_turn_geometry(radius, design_speed);
         let scaled = t.clamp(0.0, 1.0) * SPEED_TURN_STEPS as f64;
         let index = (scaled.floor() as usize).min(SPEED_TURN_STEPS - 1);
         let fraction = scaled - index as f64;
-        let (x0, y0, heading0) = geometry.knots[index];
-        let (x1, y1, heading1) = geometry.knots[index + 1];
+        let knot0 = geometry.knots[index];
+        let knot1 = geometry.knots[index + 1];
+        let (x0, y0, heading0) = (knot0.x, knot0.y, knot0.heading);
+        let (x1, y1, heading1) = (knot1.x, knot1.y, knot1.heading);
         let h = geometry.length / SPEED_TURN_STEPS as f64;
         let h00 = 2.0 * fraction.powi(3) - 3.0 * fraction.powi(2) + 1.0;
         let h10 = fraction.powi(3) - 2.0 * fraction.powi(2) + fraction;
@@ -957,7 +1046,16 @@ impl Piece {
     }
 
     fn speed_turn_raw(&self, design_speed: f64, t: f64) -> (Vec3, Vec3, Vec3) {
-        let position = |u| self.speed_turn_frame(design_speed, u).0;
+        let geometry = speed_turn_geometry(self.speed_turn_radius(), design_speed);
+        self.speed_turn_raw_with_geometry(&geometry, t)
+    }
+
+    fn speed_turn_raw_with_geometry(
+        &self,
+        geometry: &SpeedTurnGeometry,
+        t: f64,
+    ) -> (Vec3, Vec3, Vec3) {
+        let position = |u| self.speed_turn_frame_with_geometry(geometry, u).0;
         let point = position(t);
         let step = 0.0001;
         if t == 0.0 || t == 1.0 {
@@ -966,10 +1064,7 @@ impl Piece {
             } else {
                 self.exit.tangent()
             };
-            let radius =
-                (self.exit.position() - self.entry.position()).dot(self.entry.tangent().unit());
-            let length = speed_turn_geometry(radius, design_speed).length;
-            return (point, tangent * length, Vec3::new(0.0, 0.0, 0.0));
+            return (point, tangent * geometry.length, Vec3::new(0.0, 0.0, 0.0));
         }
         let (previous, next) = (position(t - step), position(t + step));
         (
@@ -1092,9 +1187,22 @@ impl Piece {
         }
     }
 
+    pub fn element_spec(&self) -> Option<&crate::track::shaped::ElementSpec> {
+        match &self.shape {
+            Shape::ShapedProfile { spec } | Shape::ResolvedBank { spec } => Some(spec),
+            _ => None,
+        }
+    }
+
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
         if let Shape::SpeedBank { design_speed } = self.shape {
             return self.speed_turn_raw(design_speed, t);
+        }
+        if let Shape::ResolvedBank { spec } = &self.shape {
+            let crate::track::shaped::ElementSpec::Turn { geometry, .. } = spec.as_ref() else {
+                panic!("resolved bank shape has a non-turn specification")
+            };
+            return self.speed_turn_raw_with_geometry(geometry, t);
         }
         if let Shape::RolledProfile(profile, twist) = &self.shape {
             let sample = self.rolled_profile_sample(profile, *twist, t);
@@ -1105,7 +1213,17 @@ impl Piece {
                 geometry.sample(self.entry, self.exit, self.mirrored, self.tangent_scale, t);
             return (sample.position, sample.first, sample.second);
         }
-        if let Shape::Profile(profile) = &self.shape {
+        let shaped_profile = match &self.shape {
+            Shape::Profile(profile) => Some(profile.as_ref()),
+            Shape::ShapedProfile { spec } => match spec.as_ref() {
+                crate::track::shaped::ElementSpec::Hill { profile, .. } => Some(profile),
+                crate::track::shaped::ElementSpec::Turn { .. } => {
+                    panic!("resolved profile shape has a turn specification")
+                }
+            },
+            _ => None,
+        };
+        if let Some(profile) = shaped_profile {
             let ascending = self.exit.z >= self.entry.z;
             let distance = if ascending {
                 t * profile.length()
@@ -1361,6 +1479,23 @@ impl Piece {
                 roll,
             };
         }
+        if let Shape::ResolvedBank { spec } = &self.shape {
+            let crate::track::shaped::ElementSpec::Turn { geometry, .. } = spec.as_ref() else {
+                panic!("resolved bank shape has a non-turn specification")
+            };
+            let (position, heart, desired_up, roll) =
+                self.speed_turn_frame_with_geometry(geometry, t);
+            let (_, first, second) = self.speed_turn_raw_with_geometry(geometry, t);
+            let tangent = first.unit();
+            return TrackSample {
+                position,
+                heart,
+                tangent,
+                up: (desired_up - tangent * desired_up.dot(tangent)).unit(),
+                curvature: curvature(first, second),
+                roll,
+            };
+        }
         if let Shape::RolledProfile(profile, twist) = &self.shape {
             let sample = self.rolled_profile_sample(profile, *twist, t);
             return TrackSample {
@@ -1389,7 +1524,8 @@ impl Piece {
         let (position, velocity, acceleration) = self.raw(t);
         let tangent = velocity.unit();
         let horizontal = (tangent.x * tangent.x + tangent.y * tangent.y).sqrt();
-        let base_up = if matches!(&self.shape, Shape::Profile(_)) {
+        let profile_shape = matches!(&self.shape, Shape::Profile(_) | Shape::ShapedProfile { .. });
+        let base_up = if profile_shape {
             let forward = Vec3::new(self.entry.tangent().x, self.entry.tangent().y, 0.0).unit();
             (forward * (-tangent.z) + Vec3::new(0.0, 0.0, 1.0) * tangent.dot(forward)).unit()
         } else {
@@ -1409,7 +1545,7 @@ impl Piece {
         } else {
             0.0
         };
-        let bank = if matches!(&self.shape, Shape::Profile(_)) {
+        let bank = if profile_shape {
             self.entry.bank.radians()
         } else {
             self.entry.bank.radians() + (self.exit.bank.radians() - self.entry.bank.radians()) * s
@@ -1424,7 +1560,7 @@ impl Piece {
             up,
             curvature: velocity.cross(acceleration).length() / velocity.length().powi(3),
             roll: angle
-                + if matches!(&self.shape, Shape::Profile(_))
+                + if profile_shape
                     && (self.entry.bank == Bank::Inverted || self.exit.bank == Bank::Inverted)
                 {
                     std::f64::consts::PI * s

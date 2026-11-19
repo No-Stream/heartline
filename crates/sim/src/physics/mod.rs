@@ -24,13 +24,16 @@ pub use scoring::{
     Contribution, ForceAxis, ForceBand, ForceDetail, ScoreBreakdown, Term, force_band,
 };
 mod testing;
+pub(crate) use testing::candidate_force_peak_summary;
 pub use testing::{
-    CarPieceForcePeaks, ForcePeakLocation, ForcePeakLocations, ForcePeakValues, PieceForcePeaks,
-    SustainedForcePeakLocations, SustainedForcePeaks, TestRun, TestRunRecorder, TestSample,
+    CarPieceForcePeaks, CarPieceSustainedForcePeaks, ForcePeakLocation, ForcePeakLocations,
+    ForcePeakValues, PieceForcePeaks, SustainedForcePeakLocations, SustainedForcePeaks, TestRun,
+    TestRunRecorder, TestSample,
 };
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};
 mod preview;
+pub(crate) use preview::{CandidateCalibrationPreview, CandidateCarForces};
 pub use preview::{PreviewCache, PreviewStatus, TrackPreview, preview_open_track};
 mod block_operation;
 pub use block_operation::BlockOperation;
