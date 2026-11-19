@@ -51,10 +51,10 @@ for (const { stem, ride } of rides) {
     let estimateComparisons = 0;
     await placeCircuit(page, ride.steps, {
       carsPerTrain: ride.carsPerTrain,
-      onEstimate: async (phase, step, index) => {
-        if (!("place" in step)) throw new Error(`Estimate callback for non-placement step ${index + 1}`);
-        const expected = expectedByStep.get(index);
-        if (!expected) throw new Error(`Native estimate missing for ride step ${index + 1} (${step.place})`);
+      onEstimate: async (phase, step, stepNumber) => {
+        if (!("place" in step)) throw new Error(`Estimate callback for non-placement step ${stepNumber}`);
+        const expected = expectedByStep.get(stepNumber);
+        if (!expected) throw new Error(`Native estimate missing for ride step ${stepNumber} (${step.place})`);
         const nativeSnapshot = expected[phase === "selected" ? "selection" : "placement"];
         const browserView = await page.evaluate(() => {
           const requireElement = <T extends Element>(selector: string): T => {
@@ -105,8 +105,8 @@ for (const { stem, ride } of rides) {
           ...nativeSnapshot,
           selectedPieceId: nativeSnapshot.selected.startsWith("element:") ? null : nativeSnapshot.selected,
         };
-        const mismatch = firstMismatch(expectedWire, browserWire, `${phase} estimate at ride step ${index + 1}`);
-        expect(mismatch, `${phase} estimate at ride step ${index + 1}`).toBeNull();
+        const mismatch = firstMismatch(expectedWire, browserWire, `${phase} estimate at ride step ${stepNumber}`);
+        expect(mismatch, `${phase} estimate at ride step ${stepNumber}`).toBeNull();
         expectFormattedReadouts(browserView.readouts, browserSnapshot);
         estimateComparisons += 1;
       },

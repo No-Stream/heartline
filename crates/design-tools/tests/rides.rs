@@ -1,8 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use theme_park_design_tools::run_cli;
+use theme_park_design_tools::run_cli_with_status;
 
 static NEXT_TEMP_RIDE: AtomicUsize = AtomicUsize::new(0);
 
@@ -43,6 +45,17 @@ fn ride_files() -> Vec<PathBuf> {
         .collect();
     paths.sort();
     paths
+}
+
+fn write_expectation_failure_ride(ride: &TempRide, expectations: serde_json::Value) {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../content/rides/browser-agreement-fast.ride.json"),
+    )
+    .unwrap();
+    let mut ride_json: serde_json::Value = serde_json::from_str(&source).unwrap();
+    ride_json["expect"] = expectations;
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
 }
 
 #[test]
@@ -110,8 +123,36 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
     for report in reports.as_array().unwrap() {
         assert_eq!(
             report["agreementGate"],
-            "informational until work item 6; agreement failures exit zero"
+            "informational; agreement failures exit zero"
         );
+        let rated_speed_margins = report["ratedSpeedMargins"].as_array().unwrap();
+        if !rated_speed_margins.is_empty() {
+            let physics_configurations: std::collections::BTreeSet<_> = rated_speed_margins
+                .iter()
+                .map(|margin| margin["physicsConfiguration"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                physics_configurations,
+                ["construction-test", "default"].into_iter().collect()
+            );
+            for margin in rated_speed_margins {
+                assert!(margin["pieceId"].is_string());
+                assert!(margin["entrySpeed"].is_number() || margin["entrySpeed"].is_null());
+                assert!(margin["ratedWindow"].is_array());
+                assert_eq!(
+                    margin["status"],
+                    if !margin["unavailableReason"].is_null() {
+                        "UNAVAILABLE"
+                    } else {
+                        match margin["ruleMargin"].as_f64() {
+                            Some(rule_margin) if rule_margin >= 0.0 => "PASS",
+                            Some(_) => "FAIL",
+                            None => "UNAVAILABLE",
+                        }
+                    },
+                );
+            }
+        }
         let agreement = &report["agreement"];
         let rows = agreement["rows"].as_array().unwrap();
         assert!(!rows.is_empty(), "{} has no per-piece rows", report["path"]);
@@ -170,6 +211,87 @@ fn agreement_command_prints_the_force_values_for_a_closed_ride() {
     assert!(output.contains("front[min/max/lat/long g]"), "{output}");
     assert!(output.contains("worst[min/max/lat/long g]"), "{output}");
     assert!(output.contains("Agreement:"), "{output}");
+}
+
+#[test]
+fn check_prints_observed_values_for_passing_and_failing_expectations() {
+    let ride = TempRide::new();
+    write_expectation_failure_ride(
+        &ride,
+        serde_json::json!({
+            "excitement": [100.0, 101.0],
+            "sustainedMinVerticalG": [-1.2, -0.8],
+            "inversions": 0
+        }),
+    );
+
+    let text = run_cli(&["check".into(), ride.path()], "").unwrap_err();
+
+    assert!(
+        text.contains("Rated entry-speed margin (default physics"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Rated entry-speed margin (construction-test physics"),
+        "{text}"
+    );
+    assert!(
+        text.contains("expectation excitement expected 100.00 to 101.00, observed "),
+        "{text}"
+    );
+    assert!(
+        text.contains("expectation inversions expected 0, observed 0 (pass)"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "expectation sustained minimum vertical g expected -1.20 to -0.80, observed "
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn failed_check_json_is_written_to_stdout_with_a_failure_exit_code() {
+    let ride = TempRide::new();
+    write_expectation_failure_ride(
+        &ride,
+        serde_json::json!({"excitement": [100.0, 101.0], "inversions": 0}),
+    );
+
+    let output = run_cli_with_status(&["check".into(), "--json".into(), ride.path()], "");
+
+    assert_eq!(output.exit_code, 1);
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    let reports: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(
+        reports[0]["expectationFailures"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(reports[0]["expectations"][0]["passed"], false);
+    assert!(reports[0]["expectations"][0]["observed"].is_number());
+    assert_eq!(reports[0]["expectations"][1]["passed"], true);
+    assert!(reports[0]["expectations"][1]["observed"].is_number());
+}
+
+#[test]
+fn binary_check_json_failure_uses_stdout_and_exits_nonzero() {
+    let ride = TempRide::new();
+    write_expectation_failure_ride(&ride, serde_json::json!({"excitement": [100.0, 101.0]}));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_heartline-design"))
+        .args(["check", "--json", &ride.path()])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reports: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reports[0]["expectations"][0]["passed"], false);
 }
 
 #[test]

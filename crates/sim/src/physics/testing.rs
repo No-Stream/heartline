@@ -50,6 +50,39 @@ pub struct PieceForcePeaks {
     pub worst_car: Option<ForcePeakValues>,
 }
 
+/// Per-metre force peaks for one car on one piece.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CarPieceForcePeaks {
+    pub piece_index: usize,
+    pub car_index: usize,
+    pub peaks: ForcePeakValues,
+}
+
+/// Circuit location of a force peak, using zero-based car and piece indices.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ForcePeakLocation {
+    pub piece_index: usize,
+    pub distance_m: f64,
+    pub car_index: usize,
+}
+
+/// Source locations for the force peaks shown in ride statistics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ForcePeakLocations {
+    pub maximum_positive_vertical_g: Option<ForcePeakLocation>,
+    pub maximum_negative_vertical_g: Option<ForcePeakLocation>,
+    pub maximum_lateral_g: Option<ForcePeakLocation>,
+    pub maximum_forward_g: Option<ForcePeakLocation>,
+    pub maximum_braking_g: Option<ForcePeakLocation>,
+}
+
+/// Source locations for vertical forces sustained for the report's minimum durations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SustainedForcePeakLocations {
+    pub maximum_vertical_g: Option<ForcePeakLocation>,
+    pub minimum_vertical_g: Option<ForcePeakLocation>,
+}
+
 /// A completed or interrupted test run, including advisory ride ratings.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TestRun {
@@ -87,6 +120,8 @@ struct RatingInput {
     force_limits: ComfortableForceLimits,
     force_bands: ForceBandDurations,
     statistics: RideStatistics,
+    #[serde(default)]
+    force_peak_locations: ForcePeakLocations,
     envelope: EnvelopeExceedance,
 }
 
@@ -118,6 +153,7 @@ impl RatingInput {
         }
         hash_force_bands(hash, self.force_bands);
         write_ride_statistics(hash, self.statistics);
+        hash_force_peak_locations(hash, self.force_peak_locations);
         hash.write_f64(self.envelope.g_seconds);
         hash.write_f64(self.envelope.seconds);
         hash.write_option(self.envelope.worst.as_ref(), |hash, worst| {
@@ -185,6 +221,22 @@ fn hash_force_bands(hash: &mut StateHasher, bands: ForceBandDurations) {
         for seconds in bands.dangerous_seconds_by_axis {
             hash.write_f64(seconds);
         }
+    }
+}
+
+fn hash_force_peak_locations(hash: &mut StateHasher, locations: ForcePeakLocations) {
+    for location in [
+        locations.maximum_positive_vertical_g,
+        locations.maximum_negative_vertical_g,
+        locations.maximum_lateral_g,
+        locations.maximum_forward_g,
+        locations.maximum_braking_g,
+    ] {
+        hash.write_option(location, |hash, location| {
+            hash.write_len(location.piece_index);
+            hash.write_f64(location.distance_m);
+            hash.write_len(location.car_index);
+        });
     }
 }
 
@@ -379,6 +431,76 @@ impl TestRun {
             .collect()
     }
 
+    /// Returns the measured per-metre force envelope for every car and piece.
+    pub fn car_piece_force_peaks(&self) -> Vec<CarPieceForcePeaks> {
+        self.rating_inputs
+            .iter()
+            .enumerate()
+            .flat_map(|(car_index, input)| {
+                force_peaks_by_piece(input.samples.iter()).into_iter().map(
+                    move |(piece_index, peaks)| CarPieceForcePeaks {
+                        piece_index,
+                        car_index,
+                        peaks,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Returns the exact recorded locations of each run-wide force peak.
+    pub fn force_peak_locations(&self) -> ForcePeakLocations {
+        let mut result = ForcePeakLocations::default();
+        let mut positive_vertical = f64::NEG_INFINITY;
+        let mut negative_vertical = f64::INFINITY;
+        let mut lateral = f64::NEG_INFINITY;
+        let mut forward = f64::NEG_INFINITY;
+        let mut braking = f64::NEG_INFINITY;
+        for (car_index, input) in self.rating_inputs.iter().enumerate() {
+            let with_car = |location: Option<ForcePeakLocation>| {
+                location.map(|mut location| {
+                    location.car_index = car_index;
+                    location
+                })
+            };
+            if input.statistics.max_positive_vertical_g > positive_vertical {
+                if let Some(location) =
+                    with_car(input.force_peak_locations.maximum_positive_vertical_g)
+                {
+                    positive_vertical = input.statistics.max_positive_vertical_g;
+                    result.maximum_positive_vertical_g = Some(location);
+                }
+            }
+            if input.statistics.max_negative_vertical_g < negative_vertical {
+                if let Some(location) =
+                    with_car(input.force_peak_locations.maximum_negative_vertical_g)
+                {
+                    negative_vertical = input.statistics.max_negative_vertical_g;
+                    result.maximum_negative_vertical_g = Some(location);
+                }
+            }
+            if input.statistics.max_lateral_g > lateral {
+                if let Some(location) = with_car(input.force_peak_locations.maximum_lateral_g) {
+                    lateral = input.statistics.max_lateral_g;
+                    result.maximum_lateral_g = Some(location);
+                }
+            }
+            if input.statistics.max_forward_g > forward {
+                if let Some(location) = with_car(input.force_peak_locations.maximum_forward_g) {
+                    forward = input.statistics.max_forward_g;
+                    result.maximum_forward_g = Some(location);
+                }
+            }
+            if input.statistics.max_braking_g > braking {
+                if let Some(location) = with_car(input.force_peak_locations.maximum_braking_g) {
+                    braking = input.statistics.max_braking_g;
+                    result.maximum_braking_g = Some(location);
+                }
+            }
+        }
+        result
+    }
+
     /// Returns the strongest vertical g that any car sustained for at least 0.5 s and the
     /// strongest negative vertical g any car sustained for at least 0.3 s.
     pub fn sustained_force_peaks(&self) -> SustainedForcePeaks {
@@ -391,16 +513,53 @@ impl TestRun {
                     segment.closed_cycle,
                 );
                 result.maximum_vertical_g =
-                    max_option(result.maximum_vertical_g, peaks.maximum_vertical_g);
+                    max_option(result.maximum_vertical_g, peaks.peaks.maximum_vertical_g);
                 result.minimum_vertical_g =
-                    min_option(result.minimum_vertical_g, peaks.minimum_vertical_g);
+                    min_option(result.minimum_vertical_g, peaks.peaks.minimum_vertical_g);
+            }
+        }
+        result
+    }
+
+    /// Returns the car and piece for each sustained vertical-force peak.
+    pub fn sustained_force_peak_locations(&self) -> SustainedForcePeakLocations {
+        let mut result = SustainedForcePeakLocations::default();
+        let mut maximum_vertical_g = None;
+        let mut minimum_vertical_g = None;
+        for (car_index, input) in self.rating_inputs.iter().enumerate() {
+            for segment in sustained_sample_segments(input) {
+                let details = sustained_peaks_in_segment(
+                    &segment.samples,
+                    input.circuit_length,
+                    segment.closed_cycle,
+                );
+                if let Some(value) = details.peaks.maximum_vertical_g
+                    && maximum_vertical_g.is_none_or(|current| value > current)
+                {
+                    maximum_vertical_g = Some(value);
+                    result.maximum_vertical_g =
+                        details.maximum_vertical_location.map(|mut location| {
+                            location.car_index = car_index;
+                            location
+                        });
+                }
+                if let Some(value) = details.peaks.minimum_vertical_g
+                    && minimum_vertical_g.is_none_or(|current| value < current)
+                {
+                    minimum_vertical_g = Some(value);
+                    result.minimum_vertical_g =
+                        details.minimum_vertical_location.map(|mut location| {
+                            location.car_index = car_index;
+                            location
+                        });
+                }
             }
         }
         result
     }
 
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRun-v5");
+        hash.write_tag(b"TestRun-v6");
         hash.write_len(self.samples.len());
         for sample in &self.samples {
             write_sample(hash, *sample);
@@ -806,16 +965,30 @@ fn sustained_sample_segments(input: &RatingInput) -> Vec<SustainedSampleSegment>
         .collect()
 }
 
+struct SustainedPeakDetails {
+    peaks: SustainedForcePeaks,
+    maximum_vertical_location: Option<ForcePeakLocation>,
+    minimum_vertical_location: Option<ForcePeakLocation>,
+}
+
 fn sustained_peaks_in_segment(
     samples: &[TestSample],
     circuit_length: f64,
     closed_cycle: bool,
-) -> SustainedForcePeaks {
+) -> SustainedPeakDetails {
     if samples.len() < 2 {
-        return SustainedForcePeaks::default();
+        return SustainedPeakDetails {
+            peaks: SustainedForcePeaks::default(),
+            maximum_vertical_location: None,
+            minimum_vertical_location: None,
+        };
     }
 
-    let mut result = SustainedForcePeaks::default();
+    let mut result = SustainedPeakDetails {
+        peaks: SustainedForcePeaks::default(),
+        maximum_vertical_location: None,
+        minimum_vertical_location: None,
+    };
     for start_index in 0..samples.len() {
         let maximum_steps = if closed_cycle {
             samples.len() - 1
@@ -827,6 +1000,11 @@ fn sustained_peaks_in_segment(
         if start.vertical_g > 0.0 {
             let mut elapsed_seconds = 0.0;
             let mut minimum_vertical_g = start.vertical_g;
+            let mut minimum_vertical_location = ForcePeakLocation {
+                piece_index: start.piece_index,
+                distance_m: start.distance,
+                car_index: 0,
+            };
             for step in 1..=maximum_steps {
                 let previous_index = (start_index + step - 1) % samples.len();
                 let current_index = (start_index + step) % samples.len();
@@ -847,17 +1025,38 @@ fn sustained_peaks_in_segment(
                 if available_seconds >= seconds_needed {
                     let fraction = seconds_needed / interval_seconds;
                     let endpoint_vertical_g = interpolate_vertical_g(previous, current, fraction);
-                    result.maximum_vertical_g = max_option(
-                        result.maximum_vertical_g,
-                        Some(minimum_vertical_g.min(endpoint_vertical_g)),
-                    );
+                    let candidate = minimum_vertical_g.min(endpoint_vertical_g);
+                    if result
+                        .peaks
+                        .maximum_vertical_g
+                        .is_none_or(|current| candidate > current)
+                    {
+                        result.peaks.maximum_vertical_g = Some(candidate);
+                        result.maximum_vertical_location =
+                            Some(if endpoint_vertical_g < minimum_vertical_g {
+                                ForcePeakLocation {
+                                    piece_index: current.piece_index,
+                                    distance_m: current.distance,
+                                    car_index: 0,
+                                }
+                            } else {
+                                minimum_vertical_location
+                            });
+                    }
                     break;
                 }
                 if current.vertical_g <= 0.0 {
                     break;
                 }
                 elapsed_seconds += interval_seconds;
-                minimum_vertical_g = minimum_vertical_g.min(current.vertical_g);
+                if current.vertical_g < minimum_vertical_g {
+                    minimum_vertical_g = current.vertical_g;
+                    minimum_vertical_location = ForcePeakLocation {
+                        piece_index: current.piece_index,
+                        distance_m: current.distance,
+                        car_index: 0,
+                    };
+                }
             }
         }
 
@@ -866,6 +1065,11 @@ fn sustained_peaks_in_segment(
         }
         let mut elapsed_seconds = 0.0;
         let mut maximum_vertical_g = start.vertical_g;
+        let mut maximum_vertical_location = ForcePeakLocation {
+            piece_index: start.piece_index,
+            distance_m: start.distance,
+            car_index: 0,
+        };
 
         for step in 1..=maximum_steps {
             let previous_index = (start_index + step - 1) % samples.len();
@@ -886,17 +1090,38 @@ fn sustained_peaks_in_segment(
             if available_seconds >= seconds_needed {
                 let fraction = seconds_needed / interval_seconds;
                 let endpoint_vertical_g = interpolate_vertical_g(previous, current, fraction);
-                result.minimum_vertical_g = min_option(
-                    result.minimum_vertical_g,
-                    Some(maximum_vertical_g.max(endpoint_vertical_g)),
-                );
+                let candidate = maximum_vertical_g.max(endpoint_vertical_g);
+                if result
+                    .peaks
+                    .minimum_vertical_g
+                    .is_none_or(|current| candidate < current)
+                {
+                    result.peaks.minimum_vertical_g = Some(candidate);
+                    result.minimum_vertical_location =
+                        Some(if endpoint_vertical_g > maximum_vertical_g {
+                            ForcePeakLocation {
+                                piece_index: current.piece_index,
+                                distance_m: current.distance,
+                                car_index: 0,
+                            }
+                        } else {
+                            maximum_vertical_location
+                        });
+                }
                 break;
             }
             if current.vertical_g >= 0.0 {
                 break;
             }
             elapsed_seconds += interval_seconds;
-            maximum_vertical_g = maximum_vertical_g.max(current.vertical_g);
+            if current.vertical_g > maximum_vertical_g {
+                maximum_vertical_g = current.vertical_g;
+                maximum_vertical_location = ForcePeakLocation {
+                    piece_index: current.piece_index,
+                    distance_m: current.distance,
+                    car_index: 0,
+                };
+            }
         }
     }
     result
@@ -1050,6 +1275,8 @@ pub struct TestRunRecorder {
     maximum_lateral_g: f64,
     maximum_forward_g: f64,
     maximum_braking_g: f64,
+    #[serde(default)]
+    force_peak_locations: ForcePeakLocations,
     maximum_speed: f64,
     maximum_height: f64,
     last_piece_index: Option<usize>,
@@ -1115,6 +1342,7 @@ impl TestRunRecorder {
         ] {
             hash.write_f64(value);
         }
+        hash_force_peak_locations(hash, self.force_peak_locations);
         hash_force_bands(hash, self.force_bands);
         self.comfort.hash_into(hash);
         hash.write_len(self.piece_starts.len());
@@ -1195,6 +1423,7 @@ impl TestRunRecorder {
             maximum_lateral_g: 0.0,
             maximum_forward_g: 0.0,
             maximum_braking_g: 0.0,
+            force_peak_locations: ForcePeakLocations::default(),
             maximum_speed: 0.0,
             maximum_height: 0.0,
             last_piece_index: None,
@@ -1365,6 +1594,42 @@ impl TestRunRecorder {
                     seconds_from_start: 0.0,
                 },
             );
+            let force_peak_location = ForcePeakLocation {
+                piece_index: reading.piece_index,
+                distance_m: reading.distance.rem_euclid(self.circuit_length),
+                car_index: 0,
+            };
+            if self
+                .force_peak_locations
+                .maximum_positive_vertical_g
+                .is_none()
+                || reading.g.vertical > self.maximum_positive_vertical_g
+            {
+                self.force_peak_locations.maximum_positive_vertical_g = Some(force_peak_location);
+            }
+            if self
+                .force_peak_locations
+                .maximum_negative_vertical_g
+                .is_none()
+                || reading.g.vertical < self.maximum_negative_vertical_g
+            {
+                self.force_peak_locations.maximum_negative_vertical_g = Some(force_peak_location);
+            }
+            if self.force_peak_locations.maximum_lateral_g.is_none()
+                || reading.g.lateral.abs() > self.maximum_lateral_g
+            {
+                self.force_peak_locations.maximum_lateral_g = Some(force_peak_location);
+            }
+            if self.force_peak_locations.maximum_forward_g.is_none()
+                || reading.g.longitudinal.max(0.0) > self.maximum_forward_g
+            {
+                self.force_peak_locations.maximum_forward_g = Some(force_peak_location);
+            }
+            if self.force_peak_locations.maximum_braking_g.is_none()
+                || (-reading.g.longitudinal).max(0.0) > self.maximum_braking_g
+            {
+                self.force_peak_locations.maximum_braking_g = Some(force_peak_location);
+            }
             self.maximum_positive_vertical_g =
                 self.maximum_positive_vertical_g.max(reading.g.vertical);
             self.maximum_negative_vertical_g =
@@ -1570,6 +1835,7 @@ impl TestRunRecorder {
             force_limits: self.force_limits,
             force_bands: self.force_bands,
             statistics,
+            force_peak_locations: self.force_peak_locations,
             envelope: self.comfort.finish(),
         };
         let mut report = TestRun {
@@ -2147,6 +2413,7 @@ mod tests {
             },
             force_bands: ForceBandDurations::default(),
             statistics: RideStatistics::default(),
+            force_peak_locations: ForcePeakLocations::default(),
             envelope: EnvelopeExceedance::default(),
         };
         TestRun {

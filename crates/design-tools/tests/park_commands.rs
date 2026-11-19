@@ -108,6 +108,35 @@ fn park_build_fails_when_a_coaster_ride_reference_is_missing() {
 }
 
 #[test]
+fn park_build_rejects_a_station_height_that_differs_from_the_ride_file() {
+    let park = TempFile::new("station-height-mismatch.park.json");
+    let save = TempFile::new("station-height-mismatch.park");
+    let source_path = repository_root().join("content/parks/horizon-hawk.park.json");
+    let mut description: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(source_path).unwrap()).unwrap();
+    description["coasters"][0]["station"]["z"] = serde_json::json!(12);
+    fs::write(&park.0, serde_json::to_vec(&description).unwrap()).unwrap();
+
+    let error = run_cli(
+        &[
+            "park".into(),
+            "build".into(),
+            park.path().into(),
+            "--save".into(),
+            save.path().into(),
+        ],
+        "",
+    )
+    .unwrap_err();
+
+    assert!(error.contains("coasters[0]"), "{error}");
+    assert!(error.contains("station height mismatch"), "{error}");
+    assert!(error.contains("ride file is 10"), "{error}");
+    assert!(error.contains("park description is 12"), "{error}");
+    assert!(!save.0.exists());
+}
+
+#[test]
 fn park_build_rejects_multiple_coasters_before_resolving_ride_files() {
     let park = TempFile::new("multiple-coasters.park.json");
     let save = TempFile::new("multiple-coasters.park");

@@ -290,6 +290,15 @@ pub struct ConstructionCandidateForcePreviewWire {
     pub rated_speed: Option<ConstructionRatedSpeedWire>,
 }
 
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionCandidateGeometryWire {
+    pub end_tile_x: f64,
+    pub end_tile_y: f64,
+    pub end_height: f64,
+    pub length: f64,
+}
+
 fn hill_feel_wire(feel: HillFeel) -> &'static str {
     match feel {
         HillFeel::Ejector => "ejector",
@@ -784,6 +793,17 @@ impl WasmSimulation {
                 construction.model().name,
             ),
             rated_speed,
+        })
+    }
+
+    pub fn construction_candidate_geometry(&self) -> Option<ConstructionCandidateGeometryWire> {
+        let candidate = self.construction_preview();
+        let end = candidate.last()?.exit.position();
+        Some(ConstructionCandidateGeometryWire {
+            end_tile_x: end.x / 4.0,
+            end_tile_y: end.y / 4.0,
+            end_height: end.z,
+            length: candidate.iter().map(Piece::length).sum(),
         })
     }
 }

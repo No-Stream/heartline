@@ -2,6 +2,21 @@
 
 use super::{CoasterModel, Piece, PieceId, RatedSpeeds, Slope};
 
+/// Returns the speed headroom left after applying the design-test entry margin.
+///
+/// Windows at least 3 m/s wide require 1.5 m/s from either edge. Narrower
+/// windows require the entry speed to stay within 0.3 m/s of the centre.
+/// A nonnegative result passes either rule.
+pub fn rated_speed_margin(window: RatedSpeeds, entry_speed: f64) -> f64 {
+    assert!(entry_speed.is_finite());
+    if window.maximum_entry - window.minimum_entry < 3.0 {
+        let centre = (window.minimum_entry + window.maximum_entry) / 2.0;
+        0.3 - (entry_speed - centre).abs()
+    } else {
+        (entry_speed - window.minimum_entry).min(window.maximum_entry - entry_speed) - 1.5
+    }
+}
+
 /// Why a rated window ends where it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RatedWindowSource {

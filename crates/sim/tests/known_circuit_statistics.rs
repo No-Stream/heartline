@@ -6,7 +6,7 @@ use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
     CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceFamily, PieceId, PieceKind,
     TrackState, catalog, family_coaster_model, hybrid_model, hyper_model, multi_launch_model,
-    rated_speeds, wooden_twister_model,
+    rated_speed_margin, rated_speeds, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -114,22 +114,12 @@ fn assert_design_margins(circuit: &Circuit, model: &CoasterModel, construction_t
             let checked_cars = if fed_by_lift { 1 } else { speeds.len() };
             for speed in speeds.into_iter().take(checked_cars) {
                 let speed = speed.expect("every car should enter every rated piece");
-                // Windows narrower than 3 m/s cannot provide 1.5 m/s on both sides;
-                // keep their entry within 0.3 m/s of the centre instead.
-                if window.maximum_entry - window.minimum_entry < 3.0 {
-                    let centre = (window.minimum_entry + window.maximum_entry) / 2.0;
-                    assert!(
-                        (speed - centre).abs() <= 0.3,
-                        "{:?}: {speed:.3} m/s, centre {centre:.3}",
-                        piece.id
-                    );
-                } else {
-                    assert!(
-                        speed >= window.minimum_entry + 1.5 && speed <= window.maximum_entry - 1.5,
-                        "{:?}: {speed:.3} m/s, window {window:?}",
-                        piece.id
-                    );
-                }
+                let margin = rated_speed_margin(window, speed);
+                assert!(
+                    margin >= 0.0,
+                    "construction_test={construction_test} car entry at {:?}: {speed:.3} m/s, rule margin {margin:.3} m/s, window {window:?}",
+                    piece.id
+                );
             }
         }
     }

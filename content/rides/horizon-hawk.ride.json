@@ -6,7 +6,7 @@
   "station": {
     "x": 241,
     "y": 249,
-    "z": 12,
+    "z": 10,
     "heading": "north"
   },
   "carsPerTrain": 8,

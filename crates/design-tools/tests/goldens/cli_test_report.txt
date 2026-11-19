@@ -26,7 +26,7 @@ Score breakdown:
     nausea (-0.0, 0.0)
     minimum excitement (+0.2, 0.0)
   intensity:
-    peak force (+0.8, 0.2 at Station)
+    peak force (+0.8, 0.2 at Station); peakVertical 1.00 g at Station (piece 0, car 0)
     sustained force (+0.0, 0.0 s)
     excessive forces (+0.0, 0.0 s)
     top speed (+0.0, 0.0 m/s)
@@ -45,17 +45,35 @@ Score breakdown:
     forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
 Statistics:
   length 138.0 m; duration 118.2 s; average speed 1.2 m/s; maximum speed 2.0 m/s
-  vertical 1.00/0.00 g; lateral 0.03 g; forward 0.00 g; braking 0.01 g
+  peak forces: vertical +1.00 g at Station (piece 0, car 0); vertical 0.00 g at Station (piece 0, car 0); lateral 0.03 g at TurnSmallStandalone (piece 5, car 3); forward 0.00 g at Station (piece 0, car 1); braking 0.01 g at TurnSmallStandalone (piece 1, car 0)
   airtime 0.0 s ejector, 0.0 s floater, 0 moments; strong forces 0.0 s, longest 0.0 s; lateral 0.0 s
   maximum height 10.0 m; biggest drop 0.0 m at 0.0 degrees; inversions 0; launches 0 at 0.0 m/s; drops 0
-  sustained by any car: highest vertical 1.00 g held 0.5 s; lowest vertical none held 0.3 s
-# piece entry_m/s window_m/s margin_m/s est_v+/-_g front_v+/-_g worst_v+/-_g worst_lat_g worst_long_g ratings status notes
-  0 Station                          —             —        —           —   1.00/1.00   1.00/1.00      0.00       0.01  — 
-  1 TurnSmallStandalone           2.00             —        —   1.00/1.00   1.00/1.00   1.00/1.00      0.03       0.01 airtime:weak vertical:weak lateral:fine longitudinal:fine reachedEnd 
-  2 TurnSmallStandalone           1.17             —        —   1.00/1.00   1.00/1.00   1.00/1.00      0.01       0.01 airtime:weak vertical:weak lateral:fine longitudinal:fine stalled 
-  3 Straight                         —             —        —           —           —           —         —          —  stalled 
-  4 TurnSmallStandalone              —             —        —           —           —           —         —          —  stalled 
-  5 TurnSmallStandalone              —             —        —           —           —   1.00/1.00      0.03       0.00  stalled 
+  sustained by any car: highest vertical 1.00 g at Station (piece 0, car 0) held 0.5 s; lowest vertical none held 0.3 s
+# piece entry_m/s window_m/s margin_m/s estimate_front_car_0_v+/-_g ratings status notes
+  1 TurnSmallStandalone           2.00             —        — car 0 v+/- 1.00/1.00 g lat 0.03 g long 0.01 g airtime:weak vertical:weak lateral:fine longitudinal:fine reachedEnd
+  2 TurnSmallStandalone           1.17             —        — car 0 v+/- 1.00/1.00 g lat 0.01 g long 0.01 g airtime:weak vertical:weak lateral:fine longitudinal:fine stalled
+  3 Straight                         —             —        —                    —  stalled
+  4 TurnSmallStandalone              —             —        —                    —  stalled
+  5 TurnSmallStandalone              —             —        —                    —  stalled
+Measured force peaks by piece and car (one-metre samples):
+# piece car vertical+/-_g lateral_g longitudinal_g
+  1 TurnSmallStandalone      car  0    1.00/1.00      0.03           0.01
+  2 TurnSmallStandalone      car  0    1.00/1.00      0.01           0.01
+  1 TurnSmallStandalone      car  1    1.00/1.00      0.02           0.01
+  2 TurnSmallStandalone      car  1    1.00/1.00      0.00           0.01
+  5 TurnSmallStandalone      car  1    1.00/1.00      0.01           0.00
+  1 TurnSmallStandalone      car  2    1.00/1.00      0.02           0.01
+  2 TurnSmallStandalone      car  2    1.00/1.00      0.00           0.01
+  5 TurnSmallStandalone      car  2    1.00/1.00      0.03           0.00
+  1 TurnSmallStandalone      car  3    1.00/1.00      0.02           0.01
+  2 TurnSmallStandalone      car  3    1.00/1.00      0.00           0.01
+  5 TurnSmallStandalone      car  3    1.00/1.00      0.03           0.00
+Rated entry-speed margin (default physics, lift 3.0 m/s, initial speed 0.0 m/s):
+# piece car entry_m/s window_m/s rule_margin_m/s status
+Rule margin is positive when the rated-window rule passes. Windows at least 3 m/s wide require 1.50 m/s from both edges; narrower windows require entry within 0.30 m/s of the centre. Lift-fed crests check the front car only.
+Rated entry-speed margin (construction-test physics, lift 5.0 m/s, initial speed 2.0 m/s):
+# piece car entry_m/s window_m/s rule_margin_m/s status
+Rule margin is positive when the rated-window rule passes. Windows at least 3 m/s wide require 1.50 m/s from both edges; narrower windows require entry within 0.30 m/s of the centre. Lift-fed crests check the front car only.
 Notes:
 - The train could not finish the circuit after travelling 56.4 m. Add a lift or launch, or shorten the circuit.
 - Ratings average all cars. The track ribbon and proximity events describe the front car; statistics and force advice report the most extreme values across cars.

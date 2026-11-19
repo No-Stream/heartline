@@ -7,6 +7,7 @@ struct RideFixture {
     file: &'static str,
     model: &'static str,
     cars_per_train: u8,
+    station_height: i32,
 }
 
 const RIDE_FIXTURES: [RideFixture; 5] = [
@@ -15,30 +16,35 @@ const RIDE_FIXTURES: [RideFixture; 5] = [
         file: "timber-tumbler.ride.json",
         model: "hybrid",
         cars_per_train: 6,
+        station_height: 12,
     },
     RideFixture {
         name: "Velocity Viper",
         file: "velocity-viper.ride.json",
         model: "velocity_viper",
         cars_per_train: 6,
+        station_height: 12,
     },
     RideFixture {
         name: "Briar Blitz",
         file: "briar-blitz.ride.json",
         model: "wooden_twister",
         cars_per_train: 12,
+        station_height: 12,
     },
     RideFixture {
         name: "Daisy Dash",
         file: "daisy-dash.ride.json",
         model: "family_coaster",
         cars_per_train: 10,
+        station_height: 12,
     },
     RideFixture {
         name: "Horizon Hawk",
         file: "horizon-hawk.ride.json",
         model: "hyper",
         cars_per_train: 8,
+        station_height: 10,
     },
 ];
 
@@ -60,7 +66,7 @@ fn ride_fixtures_preserve_the_circuit_text_sequences() {
         assert_eq!(ride.cars_per_train, fixture.cars_per_train);
         assert_eq!(ride.station.x, 241);
         assert_eq!(ride.station.y, 249);
-        assert_eq!(ride.station.z, 12);
+        assert_eq!(ride.station.z, fixture.station_height);
         assert!(matches!(
             ride.station.heading,
             theme_park_sim::track::ride_file::RideHeading::North
