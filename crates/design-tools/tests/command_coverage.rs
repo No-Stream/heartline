@@ -478,3 +478,59 @@ fn report_samples_and_agreement_run_on_the_closed_ride() {
     let agreement = run_cli(&["ride".into(), ride.path().into(), "agreement".into()], "").unwrap();
     assert!(agreement.contains("Agreement:"), "{agreement}");
 }
+
+#[test]
+fn check_json_exposes_worker_estimates_and_raw_agreement_values() {
+    let ride = TempRide::new();
+    fs::write(
+        &ride.0,
+        r#"{
+      "format": "heartline-ride",
+      "version": 1,
+      "name": "Browser agreement fixture",
+      "model": "hybrid",
+      "station": { "x": 100, "y": 100, "z": 10, "heading": "east" },
+      "carsPerTrain": 4,
+      "trains": 1,
+      "steps": [
+        { "place": "TurnSmallStandalone" },
+        { "place": "TurnSmallStandalone" },
+        { "place": "Straight" },
+        { "place": "TurnSmallStandalone" },
+        { "place": "TurnSmallStandalone" },
+        { "close": true }
+      ]
+    }"#,
+    )
+    .unwrap();
+
+    let reply = run_cli(&["check".into(), ride.path().into(), "--json".into()], "").unwrap();
+    let checks: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    let browser_estimates = checks[0]["browserEstimates"].as_array().unwrap();
+    assert_eq!(browser_estimates.len(), 5);
+    assert_eq!(browser_estimates[0]["stepIndex"], 0);
+    for stage in ["selection", "placement"] {
+        let snapshot = &browser_estimates[0][stage];
+        assert_eq!(snapshot["selected"], "TurnSmallStandalone");
+        assert!(snapshot["constructionForcePreview"].is_object());
+        assert!(snapshot["candidateForcePreview"].is_object());
+        assert!(snapshot["speedMatch"].is_null() || snapshot["speedMatch"].is_object());
+        assert!(snapshot["hillEstimate"].is_null() || snapshot["hillEstimate"].is_object());
+    }
+
+    let agreement_row = &checks[0]["agreement"]["rows"][0];
+    assert!(agreement_row["placementEntrySpeedEstimate"].is_number());
+    assert!(agreement_row["finishedEntrySpeedEstimate"].is_number());
+    assert!(agreement_row["entrySpeedMeasuredFront"].is_number());
+    for metric in [
+        "placementEstimate",
+        "finishedTrackEstimate",
+        "measuredFront",
+        "measuredWorst",
+    ] {
+        assert!(
+            agreement_row[metric].is_object(),
+            "missing {metric}: {agreement_row}"
+        );
+    }
+}

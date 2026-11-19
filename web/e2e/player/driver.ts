@@ -58,8 +58,8 @@ export async function canvasSize(page: Page): Promise<{ width: number; height: n
 type Tile = { x: number; y: number; z: number };
 type GameSpeed = 1 | 2 | 4 | 8 | 16;
 
-export async function startPark(page: Page, options: { park: "new" | "demo"; seed: number; speed: GameSpeed; livePauseRender?: boolean }): Promise<void> {
-  const path = `/?park=${options.park}&seed=${options.seed}${options.livePauseRender ? "&livePauseRender=1" : ""}`;
+export async function startPark(page: Page, options: { park: "new" | "demo"; seed: number; speed: GameSpeed; livePauseRender?: boolean; testMode?: boolean }): Promise<void> {
+  const path = `/?park=${options.park}&seed=${options.seed}${options.livePauseRender ? "&livePauseRender=1" : ""}${options.testMode ? "&test=1" : ""}`;
   await gotoGame(page, path);
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Watch");

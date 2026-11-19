@@ -1496,20 +1496,32 @@ fn render_map(session: &BuilderSession) -> Result<CommandReply, String> {
 }
 
 fn test_ride(ride: &RideFile) -> Result<(TestRun, Vec<RidePieceEstimate>), String> {
-    let (mut session, estimates) = replay_with_estimates(ride)?;
+    let (mut session, estimates, _) = replay_with_estimates(ride, false)?;
+    finish_test_run(&mut session).map(|test_run| (test_run, estimates))
+}
+
+fn test_ride_with_browser_estimates(
+    ride: &RideFile,
+) -> Result<(TestRun, Vec<RidePieceEstimate>, Vec<Value>), String> {
+    let (mut session, estimates, browser_estimates) = replay_with_estimates(ride, true)?;
+    let test_run = finish_test_run(&mut session)?;
+    Ok((test_run, estimates, browser_estimates))
+}
+
+fn finish_test_run(session: &mut BuilderSession) -> Result<TestRun, String> {
     session.test().map_err(|error| error.to_string())?;
-    let test_run = session
+    session
         .simulation()
         .construction_report
         .as_ref()
         .cloned()
-        .ok_or_else(|| "ride test completed without a native report".to_owned())?;
-    Ok((test_run, estimates))
+        .ok_or_else(|| "ride test completed without a native report".to_owned())
 }
 
 fn replay_with_estimates(
     ride: &RideFile,
-) -> Result<(BuilderSession, Vec<RidePieceEstimate>), String> {
+    include_browser_estimates: bool,
+) -> Result<(BuilderSession, Vec<RidePieceEstimate>, Vec<Value>), String> {
     let simulation = WasmSimulation::new(42, 0, "new".into());
     let mut session = BuilderSession::new(simulation);
     let heading = match ride.station.heading {
@@ -1533,6 +1545,7 @@ fn replay_with_estimates(
         .map_err(|error| error.to_string())?;
     session.estimates();
     let mut estimates = Vec::new();
+    let mut browser_estimates = Vec::new();
     for (step_index, step) in ride.steps.iter().enumerate() {
         match step {
             RideStep::Place(place) => {
@@ -1557,7 +1570,10 @@ fn replay_with_estimates(
                         step_index + 1
                     )
                 })?;
-                session
+                let selection_snapshot = include_browser_estimates
+                    .then(|| builder_estimates_snapshot(&session, &placement))
+                    .transpose()?;
+                let mut placement_estimates = session
                     .place()
                     .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
                 if let Some(speed) = place.launch_speed {
@@ -1575,7 +1591,7 @@ fn replay_with_estimates(
                     session
                         .set_launch_speed(bridge_id, speed)
                         .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
-                    session.estimates();
+                    placement_estimates = session.estimates();
                 }
                 let construction_after = session
                     .simulation()
@@ -1637,6 +1653,16 @@ fn replay_with_estimates(
                     estimates.push(estimate);
                     piece_start = piece_end;
                 }
+                if let Some(selection_snapshot) = selection_snapshot {
+                    browser_estimates.push(json!({
+                        "stepIndex": step_index,
+                        "pieceIndex": first_piece_index,
+                        "pieceCount": added_piece_count,
+                        "pieceId": place.place,
+                        "selection": selection_snapshot,
+                        "placement": builder_estimates_snapshot(&session, &placement_estimates)?,
+                    }));
+                }
             }
             RideStep::Chain(chain) => {
                 session
@@ -1688,7 +1714,37 @@ fn replay_with_estimates(
             .map_err(|error| format!("ride step {}: {error}", ride.steps.len() + 1))?;
         session.estimates();
     }
-    Ok((session, estimates))
+    Ok((session, estimates, browser_estimates))
+}
+
+fn builder_estimates_snapshot(
+    session: &BuilderSession,
+    estimates: &BuilderEstimates,
+) -> Result<Value, String> {
+    let selected = session.simulation().construction_selected();
+    if selected.is_empty() {
+        return Err("builder snapshot has no selected piece".into());
+    }
+    let force_preview = estimates
+        .force_preview
+        .as_ref()
+        .ok_or("builder snapshot has no construction force preview")?;
+    let candidate_preview = estimates
+        .candidate_preview
+        .as_ref()
+        .ok_or("builder snapshot has no candidate force preview")?;
+    let hill_estimate = estimates
+        .choices
+        .iter()
+        .find(|choice| choice.id == selected)
+        .and_then(|choice| choice.hill_estimate.as_ref());
+    Ok(json!({
+        "selected": selected,
+        "constructionForcePreview": force_preview,
+        "candidateForcePreview": candidate_preview,
+        "speedMatch": estimates.speed_match,
+        "hillEstimate": hill_estimate,
+    }))
 }
 
 fn ride_piece_estimate(
@@ -2024,7 +2080,8 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
         let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
         let ride: RideFile = serde_json::from_slice(&bytes)
             .map_err(|error| format!("parse ride {path}: {error}"))?;
-        let (test_run, estimates) = test_ride(&ride).map_err(|error| format!("{path}: {error}"))?;
+        let (test_run, estimates, browser_estimates) =
+            test_ride_with_browser_estimates(&ride).map_err(|error| format!("{path}: {error}"))?;
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
         let failures = check_expectations(&ride, &test_run);
         for failure in &failures {
@@ -2055,6 +2112,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
             "agreementGate": "informational until work item 6; agreement failures exit zero",
             "expectationFailures": failures,
             "agreement": agreement_json(&agreement),
+            "browserEstimates": browser_estimates,
         }));
     }
     if !expectation_failures.is_empty() {
@@ -2324,7 +2382,7 @@ mod agreement_replay_tests {
         )
         .unwrap();
 
-        let (_, estimates) = replay_with_estimates(&ride).unwrap();
+        let (_, estimates, _) = replay_with_estimates(&ride, false).unwrap();
 
         assert_eq!(estimates.len(), 4);
         assert_eq!(

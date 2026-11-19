@@ -84,7 +84,22 @@ fn short_straight_and_hill_ride_runs_through_native_agreement() {
 #[test]
 fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
     let rides = ride_files();
-    assert_eq!(rides.len(), 5, "expected the five catalog rides");
+    let ride_names: Vec<_> = rides
+        .iter()
+        .map(|path| path.file_name().unwrap().to_str().unwrap().to_owned())
+        .collect();
+    for catalog_ride in [
+        "briar-blitz.ride.json",
+        "daisy-dash.ride.json",
+        "horizon-hawk.ride.json",
+        "timber-tumbler.ride.json",
+        "velocity-viper.ride.json",
+    ] {
+        assert!(
+            ride_names.iter().any(|name| name == catalog_ride),
+            "missing catalog ride {catalog_ride} in {ride_names:?}"
+        );
+    }
 
     let mut arguments = vec!["check".to_owned(), "--json".to_owned()];
     arguments.extend(rides.iter().map(|path| path.display().to_string()));

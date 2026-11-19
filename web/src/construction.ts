@@ -1,5 +1,6 @@
 import { carsPerTrainControl } from "./cars-per-train";
 import { constructionEndSpeed, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
+import { configureLaunchSpeedInput } from "./construction-launch-speed";
 import { candidateForceReadout, hillReadout } from "./candidate-force-readout";
 import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
 import { coasterModelOptionsMarkup } from "./coaster-model-options";
@@ -11,7 +12,7 @@ import type { BlockReport, ConstructionElement, ConstructionHillOption, Construc
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
-import { displaySpeedToMetresPerSecond, displayToMetres, formatLength, formatSpeed, metresPerSecondToDisplay, metresToInput, speedUnitLabel, unitLabel, type Units } from "./units";
+import { displayToMetres, formatLength, formatSpeed, metresPerSecondToDisplay, metresToInput, speedUnitLabel, unitLabel, type Units } from "./units";
 import type { UndergroundCutawayMode } from "./underground-cutaway";
 import "./print-modern.css";
 import "./construction.css";
@@ -755,15 +756,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
         label.textContent = `Launch ${piece} target (${speedUnitLabel(units)})`;
         const input = document.createElement("input");
         input.type = "number";
-        input.min = String(Math.ceil(metresPerSecondToDisplay(launchMinimumSpeed, units)));
-        input.max = String(Math.floor(metresPerSecondToDisplay(launchMaximumSpeed, units)));
-        input.step = "1";
-        input.value = String(Math.round(metresPerSecondToDisplay(launchTargetSpeed, units)));
-        input.setAttribute("aria-label", label.textContent);
-        input.addEventListener("change", () => {
-          if (!Number.isFinite(input.valueAsNumber)) return;
-          const speed = Math.max(Number(input.min), Math.min(Number(input.max), input.valueAsNumber));
-          dispatch({ type: "construction-set-launch-intensity", id, targetSpeed: displaySpeedToMetresPerSecond(speed, units) });
+        configureLaunchSpeedInput(input, {
+          id,
+          targetSpeed: launchTargetSpeed,
+          minimumSpeed: launchMinimumSpeed,
+          maximumSpeed: launchMaximumSpeed,
+          units,
+          label: label.textContent,
+          dispatch,
         });
         label.append(input);
         group.append(label);

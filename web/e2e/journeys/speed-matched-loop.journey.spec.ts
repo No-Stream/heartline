@@ -25,7 +25,7 @@ test("selects a loop sized for the estimated launch speed and previews its force
   const launchTarget = page.getByLabel("Launch 2 target (km/h)");
   await launchTarget.fill("108");
   await launchTarget.press("Tab");
-  await expect(launchTarget).toHaveValue("108");
+  await expect(launchTarget).toHaveValue("108.0");
 
   await page.getByRole("radiogroup", { name: "Next piece" }).locator('[data-piece="Loop"]').click();
   await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", "LargeLoop");
