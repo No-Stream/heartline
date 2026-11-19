@@ -7,7 +7,7 @@ WASM_BINDGEN_VERSION := 0.2.105
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits generate-report-types check-report-types generate-profiles design-tools test-design-tools
+.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ride-agreement ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits generate-report-types check-report-types generate-profiles design-tools test-design-tools
 
 install:
 	npm ci
@@ -71,6 +71,9 @@ serve:
 
 e2e: build
 	npm run e2e
+
+ride-agreement: build design-tools
+	RIDE="$(RIDE)" npm run e2e -- --project rides
 
 e2e-design-session: build design-tools
 	npm run e2e -- --grep 'replays a design tool explicit block layout through the real worker'

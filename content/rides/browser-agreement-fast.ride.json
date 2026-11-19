@@ -1,0 +1,30 @@
+{
+  "format": "heartline-ride",
+  "version": 1,
+  "name": "Browser agreement fast circuit",
+  "model": "hybrid",
+  "station": {
+    "x": 100,
+    "y": 100,
+    "z": 12,
+    "heading": "north"
+  },
+  "carsPerTrain": 4,
+  "trains": 1,
+  "steps": [
+    { "place": "TurnSmallStandalone" },
+    { "place": "TurnSmallStandalone" },
+    { "place": "OneTileStraight" },
+    { "place": "OneTileStraight" },
+    { "place": "HalfTileStraight" },
+    { "place": "HalfTileStraight" },
+    { "place": "HalfTileStraight" },
+    { "place": "HalfTileStraight" },
+    { "place": "TurnSmallStandalone" },
+    { "place": "TurnSmallStandalone" },
+    { "close": true }
+  ],
+  "expect": {
+    "inversions": 0
+  }
+}

@@ -14,7 +14,7 @@ import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
 import type { CameraAction, InputAction, ScreenPoint, UndergroundStyle } from "./input/actions";
-import { constructionRiderPositions, validateBlockAnalysisBudget, type FrameLogEntry, type GameTest, type SnapshotArrivalEntry } from "./game-test";
+import { constructionRiderPositions, readConstructionEstimates, validateBlockAnalysisBudget, type FrameLogEntry, type GameTest, type SnapshotArrivalEntry } from "./game-test";
 import { blockLayoutChanged } from "./block-analysis-progress";
 import { createWorldRenderer, loadAtlas, type Cutaway, type WorldView, type WorldSprite } from "./render/index";
 import { CUTAWAY_RADIUS, cutawayLevelForTrack, insideCutaway } from "./render/cutaway";
@@ -395,6 +395,7 @@ const gameTest: GameTest = {
   guestDetail() { return latestGuestDetail; },
   rideInfo() { return latestRideInfo; },
   testingReport() { return construction?.testingReport ?? null; },
+  constructionEstimates() { return readConstructionEstimates(construction); },
   constructionForcePreview() { return construction?.constructionForcePreview ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
   trainStates() {
