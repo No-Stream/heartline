@@ -6,10 +6,6 @@ export type ConstructionSpeedMatch = ConstructionSpeedMatchWire;
 
 const unreachableMessage = "The train does not reach this piece, so a size cannot be recommended.";
 
-export function speedMatchedSelection(piece: string, match: ConstructionSpeedMatch | null, exact: boolean): string {
-  return exact ? piece : match?.recommendedId ?? piece;
-}
-
 export function speedMatchMessage(match: ConstructionSpeedMatch, selected: string | null): string {
   if (match.entrySpeed === null) return unreachableMessage;
   const recommendation = match.variants.find(({ id }) => id === match.recommendedId);

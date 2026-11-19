@@ -8,6 +8,7 @@ assignee: []
 created_date: '2026-11-18 17:03'
 updated_date: '2026-11-18 23:21'
 updated_date: '2026-11-19 00:17'
+updated_date: '2026-11-19 01:46'
 labels:
   - tooling
 dependencies: []
@@ -84,4 +85,20 @@ Verification: `make build` passed. The requested workspace Rust command ran ever
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-18 lead, using tools/design to build the short agreement fixture (Launch 14 m/s, AirtimeHill, two small turns, finish, close; agreement passes on all 9 pieces). Friction for the agent guide (item 10): every call prints dozens of ts-rs 'failed to parse serde attribute' build warnings before the reply; there is no 'help' ride command (only the plan lists commands); 'finish' brings the track back to the station but a separate 'close' is still needed, and the state after finish says 'No nearby connection to the station was found' while 'can test: true' (same family as TASK-153).
+## Work item 5: shared worker builder path (2026-11-18)
+
+`BuilderSessionBridge` holds the worker's end-speed cache in Rust and shares station scaling, selection and estimate ordering with the native `BuilderSession`. The worker retains its simulation for world and rendering calls; loading a park replaces the bridge and rollback restores the previous bridge and cache. Refused selections still surface through the construction message. The benchmark uses `BuilderSession`, preserving the update order and digest labels. The unused TypeScript selection helper and its direct test were removed; the palette cycling test now checks exact actions directly, and a Rust bridge parity test covers selection, estimates and refusals. The UI still uses `constructionEndSpeed` for palette stepping.
+
+The pre- and post-change native benchmark digests match: Timber Tumbler `6680331c7159b664`, Velocity Viper `30269b4f64e2ff89`, Briar Blitz `d2efecdf247f3cd7`. Native placement p95 before/after was 119.9/120.7 ms, 99.9/105.8 ms, and 101.9/102.2 ms respectively. Velocity Viper exceeded the 5% target by measuring +5.9% in this pair of runs.
+
+Browser full-state placement p95 before/after was 168.0/199.6 ms for Timber Tumbler, 135.8/167.4 ms for Velocity Viper, and 145.1/145.0 ms for Briar Blitz. The one-minute machine load average fell from 4.92 to 3.73 during the baseline browser run and rose from 4.74 to 7.12 during the post-change run. Contention may contribute, but these single measurements do not establish the cause or prove the browser latency target. The browser benchmark was run once on each revision as requested.
+
+Verification so far: the workspace Rust command passed 950 tests in 22 suites; `make lint` passed after formatting; `make check` passed generated types (1 test), the Rust subset (228 tests), 467 web tests, 9 art tests and 43 fast browser tests; `make test-web` passed 467 web and 9 art tests; `PLAYWRIGHT_PORT=4791 make e2e-feature` passed 196 tests. The first `make check` failed because two worker test mocks omitted the new bridge export; their fixtures now use boundary doubles, and the complete check passed. The first lint run stopped on Rust formatting; formatting was applied and lint passed. The plan's `rides` browser project is not present on this branch; work item 4 is in a parallel worktree.
+
+`PLAYWRIGHT_PORT=4792 make journeys` passed all 11 tests. Final `make lint` also passed after the worker test fixtures were updated. The browser lock delayed both requested browser gates while other sessions ran.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-18 lead latency recheck for item 5, native construction bench run alternately master/branch twice under load 10-15: placement median Timber 108.0/109.9 master vs 108.4/107.7 branch; Viper 89.6/91.6 vs 89.5/89.9; Briar 84.4/87.1 vs 87.8/84.5 ms. Master's own Viper p95 moved 101.2 -> 117.2 ms between runs, so the earlier +5.9% p95 was noise; no regression. Item 5 accepted.
 <!-- SECTION:NOTES:END -->

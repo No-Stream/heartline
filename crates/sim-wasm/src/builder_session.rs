@@ -11,6 +11,7 @@ use crate::construction::{
     ConstructionPieceWire,
 };
 use crate::construction_speed_match::ConstructionSpeedMatchWire;
+use wasm_bindgen::prelude::*;
 
 pub struct BuilderSession {
     simulation: WasmSimulation,
@@ -49,10 +50,89 @@ impl Debug for BuilderEstimates {
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BuilderSelection {
     pub requested_id: String,
     pub selected_id: String,
     pub speed_match: Option<ConstructionSpeedMatchWire>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuilderWorkerEstimates<'a> {
+    construction_force_preview: &'a Option<ConstructionForcePreviewWire>,
+    pieces: &'a Vec<ConstructionPieceWire>,
+    elements: &'a Vec<ConstructionElementWire>,
+    hill_options: serde_json::Value,
+    speed_turns: serde_json::Value,
+    candidate_force_preview: &'a Option<ConstructionCandidateForcePreviewWire>,
+    speed_match: &'a Option<ConstructionSpeedMatchWire>,
+}
+
+impl BuilderEstimates {
+    pub fn to_worker_json(&self) -> String {
+        let wire = BuilderWorkerEstimates {
+            construction_force_preview: &self.force_preview,
+            pieces: &self.choices,
+            elements: &self.elements,
+            hill_options: serde_json::from_str(&self.hill_options_json)
+                .expect("hill options are valid JSON"),
+            speed_turns: serde_json::from_str(&self.speed_turns_json)
+                .expect("speed turns are valid JSON"),
+            candidate_force_preview: &self.candidate_preview,
+            speed_match: &self.speed_match,
+        };
+        serde_json::to_string(&wire).expect("builder worker estimates serialize")
+    }
+}
+
+/// The worker keeps its simulation for rendering and other bridge calls. This adapter owns only
+/// the builder session's cached estimate state and delegates the ordering to the same functions
+/// used by the native BuilderSession.
+#[wasm_bindgen]
+pub struct BuilderSessionBridge {
+    end_speed_cache: Option<f64>,
+}
+
+#[wasm_bindgen]
+impl BuilderSessionBridge {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            end_speed_cache: None,
+        }
+    }
+
+    pub fn invalidate(&mut self) {
+        self.end_speed_cache = None;
+    }
+
+    pub fn start(&mut self, simulation: &mut WasmSimulation, x: i32, y: i32, z: i32, heading: u8) {
+        self.invalidate();
+        start_construction(simulation, x, y, z, heading);
+    }
+
+    /// Selects with the worker's historical refusal behavior: the caller reads the bridge
+    /// message from the simulation and displays it with the rest of construction state.
+    pub fn select(&mut self, simulation: &mut WasmSimulation, id: &str, exact: bool) -> String {
+        serde_json::to_string(&select_piece(simulation, self.end_speed_cache, id, exact))
+            .expect("builder selection serializes")
+    }
+
+    pub fn estimates(&mut self, simulation: &mut WasmSimulation, complete: bool) -> String {
+        worker_estimates_json(worker_update(
+            simulation,
+            &mut self.end_speed_cache,
+            complete,
+        ))
+    }
+}
+
+impl Default for BuilderSessionBridge {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +162,96 @@ impl Display for BuilderSessionError {
 }
 
 impl std::error::Error for BuilderSessionError {}
+
+fn start_construction(simulation: &mut WasmSimulation, x: i32, y: i32, z: i32, heading: u8) {
+    simulation.construction_start(x * 2, y * 2, z / 2, heading * 2);
+}
+
+fn select_piece(
+    simulation: &mut WasmSimulation,
+    end_speed_cache: Option<f64>,
+    id: &str,
+    exact: bool,
+) -> BuilderSelection {
+    let speed_match = simulation.construction_speed_match(id, end_speed_cache);
+    let selected_id = if exact {
+        id
+    } else {
+        speed_match
+            .as_ref()
+            .and_then(|speed_match| speed_match.recommended_id)
+            .unwrap_or(id)
+    }
+    .to_owned();
+    simulation.construction_select(&selected_id);
+    BuilderSelection {
+        requested_id: id.to_owned(),
+        selected_id,
+        speed_match,
+    }
+}
+
+fn worker_update(
+    simulation: &mut WasmSimulation,
+    end_speed_cache: &mut Option<f64>,
+    complete: bool,
+) -> BuilderEstimates {
+    let force_preview = if complete {
+        simulation.construction_force_preview()
+    } else {
+        None
+    };
+    let end_speed = force_preview.as_ref().and_then(|preview| {
+        if preview.status != "reachedEnd" {
+            return None;
+        }
+        let last_sample = preview
+            .samples
+            .last()
+            .expect("reached-end force preview has at least one sample");
+        let speed_json = serde_json::to_string(&last_sample.speed)
+            .expect("force preview sample speed serializes");
+        Some(serde_json::from_str(&speed_json).expect("force preview speed JSON is valid"))
+    });
+    let status = force_preview.as_ref().map_or("", |preview| preview.status);
+    let choices = simulation.construction_choices_preview(end_speed, status);
+    let elements = if complete {
+        simulation.construction_elements_typed()
+    } else {
+        Vec::new()
+    };
+    if complete {
+        *end_speed_cache = end_speed;
+    }
+    let hill_options_json = simulation.construction_hill_options();
+    let speed_turns_json = simulation.construction_speed_turns();
+    let candidate_preview = if complete {
+        simulation.construction_candidate_force_preview()
+    } else {
+        None
+    };
+    let selected = simulation.construction_selected();
+    let speed_match = if complete {
+        simulation.construction_speed_match(&selected, *end_speed_cache)
+    } else {
+        None
+    };
+
+    BuilderEstimates {
+        force_preview,
+        end_speed,
+        choices,
+        elements,
+        hill_options_json,
+        speed_turns_json,
+        candidate_preview,
+        speed_match,
+    }
+}
+
+fn worker_estimates_json(estimates: BuilderEstimates) -> String {
+    estimates.to_worker_json()
+}
 
 impl BuilderSession {
     pub fn new(simulation: WasmSimulation) -> Self {
@@ -169,11 +339,14 @@ impl BuilderSession {
             )));
         }
         self.end_speed_cache = None;
-        self.simulation
-            .construction_select(&format!("model:{model_key}"));
+        select_piece(
+            &mut self.simulation,
+            self.end_speed_cache,
+            &format!("model:{model_key}"),
+            true,
+        );
         self.check_bridge_message("select coaster model")?;
-        self.simulation
-            .construction_start(x * 2, y * 2, z / 2, heading * 2);
+        start_construction(&mut self.simulation, x, y, z, heading);
         self.check_bridge_message("start construction")
     }
 
@@ -182,19 +355,7 @@ impl BuilderSession {
         id: &str,
         exact: bool,
     ) -> Result<BuilderSelection, BuilderSessionError> {
-        let speed_match = self
-            .simulation
-            .construction_speed_match(id, self.end_speed_cache);
-        let selected_id = if exact {
-            id
-        } else {
-            speed_match
-                .as_ref()
-                .and_then(|speed_match| speed_match.recommended_id)
-                .unwrap_or(id)
-        }
-        .to_owned();
-        self.simulation.construction_select(&selected_id);
+        let selection = select_piece(&mut self.simulation, self.end_speed_cache, id, exact);
         if !self.simulation.construction_message().is_empty() {
             let message = self.simulation.construction_message();
             let message = if message == "Unknown piece" {
@@ -204,69 +365,12 @@ impl BuilderSession {
             };
             return Err(self.bridge_error("select piece", message));
         }
-        Ok(BuilderSelection {
-            requested_id: id.to_owned(),
-            selected_id,
-            speed_match,
-        })
+        Ok(selection)
     }
 
     /// Reads the bridge estimates used by the builder panel in the worker.
     pub fn worker_update(&mut self, complete: bool) -> BuilderEstimates {
-        let force_preview = if complete {
-            self.simulation.construction_force_preview()
-        } else {
-            None
-        };
-        let end_speed = force_preview.as_ref().and_then(|preview| {
-            if preview.status != "reachedEnd" {
-                return None;
-            }
-            let last_sample = preview
-                .samples
-                .last()
-                .expect("reached-end force preview has at least one sample");
-            let speed_json = serde_json::to_string(&last_sample.speed)
-                .expect("force preview sample speed serializes");
-            Some(serde_json::from_str(&speed_json).expect("force preview speed JSON is valid"))
-        });
-        let status = force_preview.as_ref().map_or("", |preview| preview.status);
-        let choices = self
-            .simulation
-            .construction_choices_preview(end_speed, status);
-        let elements = if complete {
-            self.simulation.construction_elements_typed()
-        } else {
-            Vec::new()
-        };
-        if complete {
-            self.end_speed_cache = end_speed;
-        }
-        let hill_options_json = self.simulation.construction_hill_options();
-        let speed_turns_json = self.simulation.construction_speed_turns();
-        let candidate_preview = if complete {
-            self.simulation.construction_candidate_force_preview()
-        } else {
-            None
-        };
-        let selected = self.simulation.construction_selected();
-        let speed_match = if complete {
-            self.simulation
-                .construction_speed_match(&selected, self.end_speed_cache)
-        } else {
-            None
-        };
-
-        BuilderEstimates {
-            force_preview,
-            end_speed,
-            choices,
-            elements,
-            hill_options_json,
-            speed_turns_json,
-            candidate_preview,
-            speed_match,
-        }
+        worker_update(&mut self.simulation, &mut self.end_speed_cache, complete)
     }
 
     pub fn estimates(&mut self) -> BuilderEstimates {
@@ -278,7 +382,7 @@ impl BuilderSession {
         Ok(self.estimates())
     }
 
-    fn append_selected(&mut self) -> Result<(), BuilderSessionError> {
+    pub fn append_selected(&mut self) -> Result<(), BuilderSessionError> {
         self.end_speed_cache = None;
         let previous_piece_count = self
             .simulation
@@ -683,7 +787,7 @@ mod tests {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    use super::BuilderSession;
+    use super::{BuilderSession, BuilderSessionBridge};
     use crate::WasmSimulation;
     use theme_park_sim::track::blocks::BlockSectionPlacement;
     use theme_park_sim::track::ride_file::{
@@ -1162,6 +1266,74 @@ mod tests {
                 first_trace_difference(&expected, &actual)
             );
         }
+    }
+
+    #[test]
+    fn worker_bridge_uses_the_same_selection_and_estimate_sequence() {
+        let mut native_session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        let mut worker_simulation = WasmSimulation::new(42, 0, "new".into());
+        let mut worker_session = BuilderSessionBridge::new();
+
+        native_session.start("hybrid", 100, 100, 12, 1).unwrap();
+        worker_session.select(&mut worker_simulation, "model:hybrid", false);
+        worker_session.start(&mut worker_simulation, 100, 100, 12, 1);
+        assert_eq!(
+            native_session.simulation().state_hash(),
+            worker_simulation.state_hash()
+        );
+
+        let native_initial = native_session.worker_update(true);
+        let worker_initial: serde_json::Value =
+            serde_json::from_str(&worker_session.estimates(&mut worker_simulation, true)).unwrap();
+        assert_eq!(
+            worker_initial,
+            serde_json::from_str::<serde_json::Value>(&native_initial.to_worker_json()).unwrap()
+        );
+
+        let native_selection = native_session.select("Straight", true).unwrap();
+        let worker_selection: serde_json::Value =
+            serde_json::from_str(&worker_session.select(&mut worker_simulation, "Straight", true))
+                .unwrap();
+        assert_eq!(
+            worker_selection,
+            serde_json::to_value(native_selection).unwrap()
+        );
+        native_session.append_selected().unwrap();
+        worker_session.invalidate();
+        worker_simulation.construction_finish_invalidate();
+        worker_simulation.construction_append();
+
+        let native_complete = native_session.worker_update(true);
+        let worker_complete: serde_json::Value =
+            serde_json::from_str(&worker_session.estimates(&mut worker_simulation, true)).unwrap();
+        assert_eq!(
+            worker_complete,
+            serde_json::from_str::<serde_json::Value>(&native_complete.to_worker_json()).unwrap()
+        );
+
+        let native_selection = native_session.select("Loop", false).unwrap();
+        let worker_selection: serde_json::Value =
+            serde_json::from_str(&worker_session.select(&mut worker_simulation, "Loop", false))
+                .unwrap();
+        assert_eq!(
+            worker_selection,
+            serde_json::to_value(native_selection).unwrap()
+        );
+        assert_eq!(
+            native_session.simulation().construction_selected(),
+            worker_simulation.construction_selected()
+        );
+
+        let native_partial = native_session.worker_update(false);
+        let worker_partial: serde_json::Value =
+            serde_json::from_str(&worker_session.estimates(&mut worker_simulation, false)).unwrap();
+        assert_eq!(
+            worker_partial,
+            serde_json::from_str::<serde_json::Value>(&native_partial.to_worker_json()).unwrap()
+        );
+
+        worker_session.select(&mut worker_simulation, "unknown-piece", false);
+        assert_eq!(worker_simulation.construction_message(), "Unknown piece");
     }
 
     fn circuit_lines(ride_name: &str) -> Vec<&'static str> {
