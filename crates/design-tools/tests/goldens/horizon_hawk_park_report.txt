@@ -1,13 +1,13 @@
 Park: Horizon Hawk Park (seed 42, 16 guests, 20 minutes)
 Coaster: Horizon Hawk (hyper)
-Scores: excitement 7.24, intensity 6.49, nausea 0.91
-Expectations: not set
-Force targets: excitement 6.0-8.0 (pass); pullout 3.1; target 3.0 to 3.5 g for 0.5 s (pass); airtime -0.7; target -1.2 to -0.8 g for 0.3 s (fail); lateral 0.2 g / <= 0.6 g (pass)
-Worst pieces: pullout Floater hill 24 × 160 m; airtime Begin wide 60-degree descent; lateral Large left turn banked for 28 m/s; longitudinal Floater hill 8 × 64 m
+Scores: excitement 7.19, intensity 6.32, nausea 0.84
+Expectations: pass
+Force targets: excitement 6.0-8.0 (pass); pullout 3.2; target 3.0 to 3.5 g for 0.5 s (pass); airtime -0.7; target -1.2 to -0.8 g for 0.3 s (fail); lateral 0.2 g / <= 0.6 g (pass)
+Worst pieces: pullout Begin gentle climb; airtime End gentle climb; lateral Large left turn banked for 28 m/s; longitudinal Begin wide 60-degree descent
 Native agreement: fail
-Trains: 1; seats per train: 32; completed guest rides: 41; unique riders: 9 (56.2% of guests)
-Riders/hour: 123.0 / 1031.4
-Average guest rating: 42.8/100 enjoyment
+Trains: 1; seats per train: 32; completed guest rides: 50; unique riders: 9 (56.2% of guests)
+Riders/hour: 150.0 / 1313.6
+Average guest rating: 36.8/100 enjoyment
 Guests with unmet needs: 9 (56.2% of guests)
 Queue lengths at end:
   facility 1: 0
@@ -32,10 +32,10 @@ Park facts:
   entrance: 1
   food_stall: 1
 Guest outcomes:
-  average spending per guest: 76.88
-  total revenue: 1230
+  average spending per guest: 80.25
+  total revenue: 1284
   revenue per facility:
     entrance #1: 0
     food_stall #2: 960
-    coaster #4294967295: 270
+    coaster #4294967295: 324
   guests with unmet needs: 9 (56.2%)
