@@ -15,6 +15,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use theme_park_sim_wasm::WasmSimulation;
+use theme_park_sim_wasm::builder_session::BuilderSession;
 
 const CIRCUITS: &str = include_str!("../../../web/e2e/player/circuits.txt");
 
@@ -31,28 +32,49 @@ impl Timings {
         let started_at = Instant::now();
         let result = black_box(run());
         let elapsed = started_at.elapsed();
-        if let Some(digest) = &mut self.digest {
-            let output = format!("{result:?}");
-            call.hash(digest);
-            output.hash(digest);
-            if std::env::var_os("DIGEST_TRACE").is_some() {
-                let mut call_digest = DefaultHasher::new();
-                output.hash(&mut call_digest);
-                println!(
-                    "{call}: {:016x} {}",
-                    call_digest.finish(),
-                    &output[..output
-                        .len()
-                        .min(if std::env::var_os("DIGEST_FULL").is_some() {
-                            usize::MAX
-                        } else {
-                            160
-                        })]
-                );
-            }
-        }
+        self.record(call, &result);
         self.by_call.entry(call).or_default().push(elapsed);
         result
+    }
+
+    fn measure<T>(&mut self, call: &'static str, run: impl FnOnce() -> T) -> T {
+        let started_at = Instant::now();
+        let result = black_box(run());
+        self.by_call
+            .entry(call)
+            .or_default()
+            .push(started_at.elapsed());
+        result
+    }
+
+    fn record<T: Debug>(&mut self, call: &'static str, result: &T) {
+        let Some(digest) = &mut self.digest else {
+            return;
+        };
+        let output = format!("{result:?}");
+        call.hash(digest);
+        output.hash(digest);
+        if std::env::var_os("DIGEST_TRACE").is_some() {
+            let mut call_digest = DefaultHasher::new();
+            output.hash(&mut call_digest);
+            println!(
+                "{call}: {:016x} {}",
+                call_digest.finish(),
+                &output[..output
+                    .len()
+                    .min(if std::env::var_os("DIGEST_FULL").is_some() {
+                        usize::MAX
+                    } else {
+                        160
+                    })]
+            );
+        }
+    }
+
+    fn record_with<T: Debug>(&mut self, call: &'static str, result: impl FnOnce() -> T) {
+        if self.digest.is_some() {
+            self.record(call, &result());
+        }
     }
 }
 
@@ -93,118 +115,104 @@ fn circuit_lines(name: &str) -> Vec<&'static str> {
 }
 
 fn build_with_worker_updates(model_id: &str, name: &str, digest: bool) -> Timings {
-    let mut simulation = WasmSimulation::new(42, 0, "new".into());
+    let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
     let mut timings = Timings {
         digest: digest.then(DefaultHasher::new),
         ..Timings::default()
     };
-    simulation.construction_select(model_id);
-    simulation.construction_start(482, 498, 6, 2);
-    let mut end_speed = None;
-    send_construction(&mut simulation, &mut timings, true, &mut end_speed);
+    let model_key = model_id
+        .strip_prefix("model:")
+        .expect("benchmark model ids use the model: prefix");
+    timings.measure("session: start", || {
+        session.start(model_key, 241, 249, 12, 1).unwrap();
+    });
+    send_session_construction(&mut session, &mut timings, true);
     let mut piece_count = 1;
     for piece_name in circuit_lines(name) {
         match piece_name {
             "+chain" | "-chain" => {
-                simulation.construction_set_chain(piece_name == "+chain");
-                end_speed = None;
-                send_construction(&mut simulation, &mut timings, true, &mut end_speed);
+                timings.measure("session: set_chain", || {
+                    session.set_chain(piece_name == "+chain").unwrap();
+                });
+                send_session_construction(&mut session, &mut timings, true);
                 continue;
             }
             _ => {}
         }
         let selection_started_at = Instant::now();
-        timings.time("select: speed match", || {
-            simulation.construction_speed_match_json(piece_name, end_speed)
+        let selection = timings.measure("session: select", || {
+            session.select(piece_name, true).unwrap()
         });
-        timings.time("select: construction_select", || {
-            simulation.construction_select(piece_name)
+        timings.record_with("select: speed match", || {
+            serde_json::to_string(&selection.speed_match).unwrap()
         });
-        send_construction(&mut simulation, &mut timings, true, &mut end_speed);
+        timings.record("select: construction_select", &());
+        send_session_construction(&mut session, &mut timings, true);
         timings
             .selection_updates
             .push(selection_started_at.elapsed());
 
         let placement_started_at = Instant::now();
-        end_speed = None;
-        timings.time("append: finish invalidate", || {
-            simulation.construction_finish_invalidate()
+        timings.measure("session: append_selected", || {
+            session.append_selected().unwrap();
         });
-        timings.time("append: construction_append", || {
-            simulation.construction_append()
-        });
-        if !simulation.construction_selected().starts_with("element:") {
-            send_construction(&mut simulation, &mut timings, false, &mut end_speed);
+        timings.record("append: finish invalidate", &());
+        timings.record("append: construction_append", &());
+        if !session
+            .simulation()
+            .construction_selected()
+            .starts_with("element:")
+        {
+            send_session_construction(&mut session, &mut timings, false);
         }
-        send_world(&simulation, &mut timings);
-        send_construction(&mut simulation, &mut timings, true, &mut end_speed);
+        send_world(session.simulation(), &mut timings);
+        send_session_construction(&mut session, &mut timings, true);
         timings
             .placement_updates
             .push(placement_started_at.elapsed());
         piece_count += 1;
         let track: serde_json::Value =
-            serde_json::from_str(&simulation.construction_track()).unwrap();
+            serde_json::from_str(&session.simulation().construction_track()).unwrap();
         assert_eq!(
             track.as_array().unwrap().len(),
             piece_count,
             "{name}: {piece_name} was not placed: {}",
-            simulation.construction_message()
+            session.simulation().construction_message()
         );
     }
     if timings.digest.is_some() {
         for _ in 0..3 {
-            simulation.construction_undo();
-            send_construction(&mut simulation, &mut timings, false, &mut end_speed);
-            send_world(&simulation, &mut timings);
-            send_construction(&mut simulation, &mut timings, true, &mut end_speed);
+            timings.measure("session: undo", || session.undo().unwrap());
+            send_session_construction(&mut session, &mut timings, false);
+            send_world(session.simulation(), &mut timings);
+            send_session_construction(&mut session, &mut timings, true);
         }
     }
     timings
 }
 
-fn send_world(simulation: &WasmSimulation, timings: &mut Timings) {
-    timings.time("world: snapshot arrays", || {
-        (
-            simulation.world_dimensions(),
-            simulation.world_surfaces(),
-            simulation.world_paths(),
-            simulation.world_path_metadata(),
-            simulation.world_facility_openings(),
-            simulation.world_carved(),
-        )
-    });
-    timings.time("world: coaster_supports", || simulation.coaster_supports());
-}
-
-fn send_construction(
-    simulation: &mut WasmSimulation,
-    timings: &mut Timings,
-    complete: bool,
-    end_speed: &mut Option<f64>,
-) {
+fn send_session_construction(session: &mut BuilderSession, timings: &mut Timings, complete: bool) {
     let prefix = if complete { "full" } else { "partial" };
     let label = |call: &str| -> &'static str { format!("{prefix}: {call}").leak() };
-    let force_preview: serde_json::Value = if complete {
-        serde_json::from_str(&timings.time(label("force_preview_json"), || {
-            simulation.construction_force_preview_json()
-        }))
-        .unwrap()
-    } else {
-        serde_json::Value::Null
-    };
-    let preview_end_speed = (force_preview["status"] == "reachedEnd").then(|| {
-        force_preview["samples"].as_array().unwrap().last().unwrap()["speed"]
-            .as_f64()
-            .unwrap()
-    });
-    let status = force_preview["status"].as_str().unwrap_or("").to_owned();
-    timings.time(label("choices_with_preview"), || {
-        simulation.construction_choices_with_preview(preview_end_speed, &status)
+    let estimates = timings.measure(label("session estimates"), || {
+        let estimates = session.worker_update(complete);
+        black_box(estimates.to_worker_json());
+        estimates
     });
     if complete {
-        timings.time(label("elements"), || simulation.construction_elements());
+        timings.record_with(label("force_preview_json"), || {
+            serde_json::to_string(&estimates.force_preview).unwrap()
+        });
     }
-    let selected = simulation.construction_selected();
+    timings.record_with(label("choices_with_preview"), || {
+        serde_json::to_string(&estimates.choices).unwrap()
+    });
+    if complete {
+        timings.record_with(label("elements"), || {
+            serde_json::to_string(&estimates.elements).unwrap()
+        });
+    }
+    let simulation = session.simulation();
     timings.time(label("track"), || simulation.construction_track());
     timings.time(label("preview rails, ties, supports"), || {
         (
@@ -242,13 +250,10 @@ fn send_construction(
             simulation.construction_chain(),
         )
     });
-    if complete {
-        *end_speed = preview_end_speed;
-    }
-    timings.time(label("hill_options, speed_turns"), || {
+    timings.record_with(label("hill_options, speed_turns"), || {
         (
-            simulation.construction_hill_options(),
-            simulation.construction_speed_turns(),
+            estimates.hill_options_json.clone(),
+            estimates.speed_turns_json.clone(),
         )
     });
     timings.time(label("can_close"), || simulation.construction_can_close());
@@ -263,11 +268,11 @@ fn send_construction(
         simulation.construction_test_report_json()
     });
     if complete {
-        timings.time(label("candidate_force_preview_json"), || {
-            simulation.construction_candidate_force_preview_json()
+        timings.record_with(label("candidate_force_preview_json"), || {
+            serde_json::to_string(&estimates.candidate_preview).unwrap()
         });
-        timings.time(label("speed_match_json"), || {
-            simulation.construction_speed_match_json(&selected, *end_speed)
+        timings.record_with(label("speed_match_json"), || {
+            serde_json::to_string(&estimates.speed_match).unwrap()
         });
     }
     timings.time(label("operate getters"), || {
@@ -280,6 +285,20 @@ fn send_construction(
             simulation.construction_max_cars_per_train(),
         )
     });
+}
+
+fn send_world(simulation: &WasmSimulation, timings: &mut Timings) {
+    timings.time("world: snapshot arrays", || {
+        (
+            simulation.world_dimensions(),
+            simulation.world_surfaces(),
+            simulation.world_paths(),
+            simulation.world_path_metadata(),
+            simulation.world_facility_openings(),
+            simulation.world_carved(),
+        )
+    });
+    timings.time("world: coaster_supports", || simulation.coaster_supports());
 }
 
 fn percentile(sorted: &[Duration], fraction: f64) -> Duration {

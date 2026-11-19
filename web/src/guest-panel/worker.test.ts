@@ -20,6 +20,10 @@ const wasmMock = vi.hoisted(() => ({
   constructionAppend: vi.fn(),
   constructionUndo: vi.fn(),
   constructionDelete: vi.fn(),
+  constructionStart: vi.fn(),
+  builderInvalidated: vi.fn(),
+  builderSelected: vi.fn(),
+  builderEstimate: vi.fn(),
   constructionTrackLength: 0,
   finishConfirmCloses: false,
   finishAvailable: false,
@@ -46,6 +50,26 @@ it("rejects block analysis budgets outside the supported range", () => {
 vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
   default: wasmMock.initialize,
   piece_shapes_json: wasmMock.pieceShapes,
+  BuilderSessionBridge: class {
+    invalidate() {
+      wasmMock.builderInvalidated();
+    }
+    start(simulation: { construction_start(x: number, y: number, z: number, heading: number): void }, x: number, y: number, z: number, heading: number) {
+      this.invalidate();
+      wasmMock.constructionStart(x, y, z, heading);
+      simulation.construction_start(x, y, z, heading);
+    }
+    select(simulation: { construction_select(piece: string): void }, piece: string, exact: boolean) {
+      wasmMock.builderSelected(piece, exact);
+      simulation.construction_select(piece);
+      return "";
+    }
+    estimates(_simulation: object, complete: boolean) {
+      wasmMock.builderEstimate(complete);
+      return JSON.stringify({ constructionForcePreview: null, pieces: [], elements: [], hillOptions: [], speedTurns: [], candidateForcePreview: null, speedMatch: null });
+    }
+    free() {}
+  },
   WasmSimulation: class {
     chain = false;
     carsPerTrain = 6;
@@ -96,15 +120,16 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
       this.carsPerTrain = cars;
       return true;
     }
-    construction_start() { wasmMock.constructionActive.mockReturnValue(true); wasmMock.constructionTrackLength = 1; }
+    construction_start(_x: number, _y: number, _z: number, _heading: number) {
+      wasmMock.constructionActive.mockReturnValue(true);
+      wasmMock.constructionTrackLength = 1;
+    }
     construction_select(piece: string) { wasmMock.constructionSelect(piece); }
     construction_append() { wasmMock.constructionAppend(); wasmMock.constructionTrackLength += 1; }
     construction_undo() { wasmMock.constructionUndo(); wasmMock.constructionTrackLength -= 1; }
     construction_delete(id: number) { wasmMock.constructionDelete(id); wasmMock.constructionTrackLength -= 1; }
     construction_advance_block_analysis(budget: number) { return wasmMock.advanceBlockAnalysis(budget); }
     construction_advance_block_placement_for_test(budget: number) { wasmMock.advanceBlockPlacement(budget); }
-    construction_choices_with_preview(_entrySpeed: number | undefined, _status: string) { return "[]"; }
-    construction_elements() { return "[]"; }
     construction_selected() { return ""; }
     construction_track() { return JSON.stringify(Array.from({ length: wasmMock.constructionTrackLength }, (_, id) => ({ id, label: "Straight", name: "Straight", group: "straight", slope: "level", kind: "track" }))); }
     construction_rails() { return new Float32Array(); }
@@ -126,11 +151,6 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_placed_supports() { return new Float32Array(); }
     construction_can_close() { return false; }
     construction_test_report_json() { return "null"; }
-    construction_force_preview_json() { return "null"; }
-    construction_candidate_force_preview_json() { return "null"; }
-    construction_speed_match_json() { return "null"; }
-    construction_hill_options() { return "[]"; }
-    construction_speed_turns() { return "[]"; }
     construction_can_test() { return false; }
     construction_finish_preview_active() { return false; }
     construction_can_finish() { return wasmMock.finishAvailable; }
@@ -171,6 +191,10 @@ afterEach(() => {
   wasmMock.constructionAppend.mockReset();
   wasmMock.constructionUndo.mockReset();
   wasmMock.constructionDelete.mockReset();
+  wasmMock.constructionStart.mockReset();
+  wasmMock.builderInvalidated.mockReset();
+  wasmMock.builderSelected.mockReset();
+  wasmMock.builderEstimate.mockReset();
   wasmMock.constructionTrackLength = 0;
   wasmMock.finishConfirmCloses = false;
   wasmMock.finishAvailable = false;
@@ -189,9 +213,11 @@ it("sends an incomplete station state before the complete state", async () => {
   onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
   await Promise.resolve();
   postMessage.mockClear();
-  onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
+  onMessage({ data: { type: "construction-start", x: 5, y: 7, z: 8, heading: 2 } } as MessageEvent);
   await Promise.resolve();
   expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true]);
+  expect(wasmMock.constructionStart).toHaveBeenCalledWith(5, 7, 8, 2);
+  expect(wasmMock.builderEstimate.mock.calls.map(([complete]) => complete)).toEqual([false, true]);
   const sent = postMessage.mock.calls.map(([message]) => message);
   expect(sent.findIndex((message) => message.type === "world")).toBeLessThan(sent.findIndex((message) => message.type === "construction-state" && message.complete));
 });

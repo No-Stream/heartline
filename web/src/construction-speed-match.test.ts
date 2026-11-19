@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constructionEndSpeed, speedMatchedSelection, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
+import { constructionEndSpeed, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
 import { MODEL_FORCE_LIMITS } from "./generated/modelForceLimits";
 
 const match = {
@@ -9,14 +9,7 @@ const match = {
   variants: [{ id: "Loop", label: "Loop" }, { id: "LargeLoop", label: "Large loop" }],
 };
 
-describe("speed-matched construction selection", () => {
-  it("selects the recommendation on a family choice and preserves explicit size choices", () => {
-    expect(speedMatchedSelection("Loop", match, false)).toBe("LargeLoop");
-    expect(speedMatchedSelection("Loop", match, true)).toBe("Loop");
-    expect(speedMatchedSelection("Loop", null, false)).toBe("Loop");
-    expect(speedMatchedSelection("Loop", { ...match, recommendedId: null }, false)).toBe("Loop");
-  });
-
+describe("speed-matched construction estimates", () => {
   it("explains when no available size fits or no estimate is available", () => {
     expect(speedMatchMessage({ ...match, fits: false }, "Loop")).toBe("No available size fits the estimated entry speed. Large loop has the nearest rated range.");
     expect(speedMatchMessage({ ...match, entrySpeed: null, recommendedId: null, fits: null }, "Loop")).toBe("The train does not reach this piece, so a size cannot be recommended.");
