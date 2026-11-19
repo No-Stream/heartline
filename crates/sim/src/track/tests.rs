@@ -87,7 +87,11 @@ fn speed_matched_turn_catalog_banks_for_each_design_speed() {
         assert_eq!(piece.entry.bank, Bank::Level, "{id:?} entry bank");
         assert_eq!(piece.exit.slope, Slope::Level, "{id:?} exit slope");
         assert_eq!(piece.exit.bank, Bank::Level, "{id:?} exit bank");
-        let rated = piece.rated_speeds.expect("speed turns are rated");
+        let model = models
+            .iter()
+            .find(|model| model.allows_piece(piece))
+            .expect("speed turns must be allowed by a model");
+        let rated = rated_speeds(model, piece).expect("speed turns are rated");
         near(rated.minimum_entry, design_speed - 3.0);
         near(rated.maximum_entry, design_speed + 3.0);
 
@@ -400,7 +404,7 @@ fn speed_matched_turns_keep_the_heart_on_a_planar_path_with_a_steady_center() {
 
 #[test]
 fn airtime_rating_matches_the_force_overlay_bands() {
-    use super::models::{ForceRating, ForceRatingAxis};
+    use super::models::{ForceRating, ForceRatingAxis, family_coaster_model};
 
     let steel_limits = hybrid_model().comfortable_force_limits;
     let airtime = |vertical_g| {
@@ -420,6 +424,16 @@ fn airtime_rating_matches_the_force_overlay_bands() {
         airtime(-1.300_001 * -steel_limits.minimum_vertical_g),
         ForceRating::Dangerous
     );
+
+    let family_limits = family_coaster_model().comfortable_force_limits;
+    let family_airtime = |vertical_g| {
+        family_limits.classify_force(ForceRatingAxis::Airtime, vertical_g, "Daisy Dash")
+    };
+    assert_eq!(family_airtime(-0.5), ForceRating::Good);
+    assert_eq!(family_airtime(-0.6), ForceRating::Great);
+    assert_eq!(family_airtime(-0.600_001), ForceRating::TooMuch);
+    assert_eq!(family_airtime(-0.78), ForceRating::TooMuch);
+    assert_eq!(family_airtime(-0.780_001), ForceRating::Dangerous);
 }
 
 #[test]
@@ -477,7 +491,14 @@ fn outer_banks_cover_each_steel_airtime_hill_and_exclude_wood() {
             let piece = matching[0];
             assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
             assert_eq!(piece.inversion, None);
-            assert!(piece.rated_speeds.is_some(), "{}", piece.name);
+            for model in &steel_models {
+                assert!(
+                    rated_speeds(model, piece).is_some(),
+                    "{} {}",
+                    model.name,
+                    piece.name
+                );
+            }
             assert!(!wood.allows_piece(piece), "{}", piece.name);
             for model in &steel_models {
                 assert!(model.allows_piece(piece), "{} {}", model.name, piece.name);
@@ -525,7 +546,14 @@ fn zero_g_rolls_and_stall_are_handed_steel_inversions() {
                 let piece = matching[0];
                 assert_eq!(piece.heartlining, Some(Heartlining::Heartlined));
                 assert_eq!(piece.inversion, Some(Inversion::HeartlineRoll));
-                assert!(piece.rated_speeds.is_some(), "{}", piece.name);
+                for model in &steel_models {
+                    assert!(
+                        rated_speeds(model, piece).is_some(),
+                        "{} {}",
+                        model.name,
+                        piece.name
+                    );
+                }
                 assert!(!wood.allows_piece(piece), "{}", piece.name);
                 for model in &steel_models {
                     assert!(model.allows_piece(piece), "{} {}", model.name, piece.name);
@@ -678,8 +706,16 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             })
             .unwrap_or_else(|| panic!("catalog is missing {name}"));
         assert!(matches!(piece.shape, Shape::Profile(_)), "{name}");
-        let rated = piece.rated_speeds.expect("hill has a rated speed window");
-        assert!(rated.maximum_entry - rated.minimum_entry >= 2.0, "{name}");
+        for model in &models {
+            if model.allows_piece(piece) {
+                let rated = rated_speeds(model, piece).expect("allowed hill has a rated window");
+                assert!(
+                    rated.maximum_entry - rated.minimum_entry >= 2.0,
+                    "{} {name}",
+                    model.name
+                );
+            }
+        }
         let Some(PieceFamily::Hill(family)) = piece.family else {
             panic!("{name} should have hill family metadata");
         };
@@ -707,10 +743,14 @@ fn straight_hills_are_rated_profiles_allowed_by_expected_models_and_reachable() 
             PieceId::FamilyHill4x40 => 0.6,
             _ => 0.0,
         };
+        let unmeasured = super::catalog::unmeasured_catalog()
+            .iter()
+            .find(|template| template.id == piece.id)
+            .unwrap();
         assert_eq!(
             family.design_speed_metres_per_second - reduction,
-            rated.maximum_entry,
-            "{name} rated maximum"
+            unmeasured.design_speeds.unwrap().maximum_entry,
+            "{name} maximum before the measured window"
         );
 
         for model in &models {
@@ -762,11 +802,23 @@ fn full_loop_profiles_match_their_rated_geometry() {
         (PieceId::SteelLoop, 27.0, 25.2, 31.8, 137.0, 8.5),
     ];
     let pieces = catalog();
+    let models = coaster_models();
     for (id, maximum_entry, expected_minimum, expected_rise, expected_length, radius_floor) in
         expected
     {
         let piece = pieces.iter().find(|piece| piece.id == id).unwrap();
-        let rated_speeds = piece.rated_speeds.unwrap();
+        let model = models
+            .iter()
+            .find(|model| model.allows_piece(piece))
+            .expect("loop must be allowed by a model");
+        let rated_window = rated_speeds(model, piece).unwrap();
+        let design_maximum_entry = super::catalog::unmeasured_catalog()
+            .iter()
+            .find(|template| template.id == id)
+            .unwrap()
+            .design_speeds
+            .unwrap()
+            .maximum_entry;
         let rise = (0..=2048)
             .map(|index| {
                 piece
@@ -779,18 +831,18 @@ fn full_loop_profiles_match_their_rated_geometry() {
         eprintln!(
             "{id:?}: rise={rise:.3} m, length={:.3} m, rated entry={:.3}..{:.3} m/s, minimum rail radius={minimum_radius:.3} m, exit=({}, {}, {})",
             piece.length(),
-            rated_speeds.minimum_entry,
-            rated_speeds.maximum_entry,
+            rated_window.minimum_entry,
+            rated_window.maximum_entry,
             piece.exit.x,
             piece.exit.y,
             piece.exit.z
         );
 
-        assert_eq!(rated_speeds.maximum_entry, maximum_entry, "{id:?}");
+        assert_eq!(design_maximum_entry, maximum_entry, "{id:?}");
         assert!(
-            (rated_speeds.minimum_entry - expected_minimum).abs() < 0.3,
+            (rated_window.minimum_entry - expected_minimum).abs() < 0.3,
             "{id:?}: minimum entry {}",
-            rated_speeds.minimum_entry
+            rated_window.minimum_entry
         );
         assert!((rise / expected_rise - 1.0).abs() < 0.03, "{id:?}: {rise}");
         assert!(
@@ -1904,7 +1956,11 @@ fn sixty_degree_pull_profiles_match_connectors_and_reverse() {
         for item in [up, down] {
             assert!((item.sample(0.0).position - item.entry.position()).length() < 1e-8);
             assert!((item.sample(item.length()).position - item.exit.position()).length() < 1e-8);
-            assert!(item.rated_speeds.is_some());
+            let model = coaster_models()
+                .into_iter()
+                .find(|model| model.allows_piece(item))
+                .unwrap();
+            assert!(rated_speeds(&model, item).is_some());
         }
         for index in 0..=20 {
             let fraction = index as f64 / 20.0;
@@ -1922,7 +1978,12 @@ fn sixty_degree_pull_profiles_match_connectors_and_reverse() {
         SixtyToSteepUp,
         SteepToSixtyDown,
     ] {
-        assert!(piece(id).rated_speeds.is_some(), "{id:?}");
+        let item = piece(id);
+        let model = coaster_models()
+            .into_iter()
+            .find(|model| model.allows_piece(item))
+            .unwrap();
+        assert!(rated_speeds(&model, item).is_some(), "{id:?}");
     }
 }
 
@@ -2620,7 +2681,11 @@ fn top_hat_has_a_tall_summit_and_level_connectors() {
             .collect();
         assert!(slopes.iter().copied().fold(0.0, f64::max) > 0.65);
         assert!(slopes.iter().copied().fold(0.0, f64::min) < -0.65);
-        assert!(piece.rated_speeds.is_some());
+        let model = coaster_models()
+            .into_iter()
+            .find(|model| model.allows_piece(piece))
+            .unwrap();
+        assert!(rated_speeds(&model, piece).is_some());
         near_vec(piece.sample(0.0).tangent, piece.entry.tangent());
         near_vec(piece.sample(piece.length()).tangent, piece.exit.tangent());
     }
@@ -2798,86 +2863,5 @@ fn barrel_drop_supports_stay_outside_inverted_sections() {
                 "{id:?}: {support:?} at {distance} m is near vertical"
             );
         }
-    }
-}
-
-#[test]
-fn configured_train_rolled_inversion_speed_windows_are_physically_valid() {
-    const SAMPLE_SPACING: f64 = 0.05;
-    for id in [
-        PieceId::ZeroGRollFastLeft,
-        PieceId::ZeroGRollCompactLeft,
-        PieceId::StallLeft,
-    ] {
-        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-        let rated = piece.rated_speeds.unwrap();
-        for (cars, car_length) in (3..=8)
-            .map(|cars| (cars, 3.0))
-            .chain((4..=12).map(|cars| (cars, 1.5)))
-        {
-            let length = car_length * f64::from(cars);
-            let steps = ((piece.length() + length) / SAMPLE_SPACING).ceil() as usize;
-            let heights: Vec<_> = (0..=steps)
-                .map(|index| {
-                    piece
-                        .sample((index as f64 * SAMPLE_SPACING).min(piece.length()))
-                        .position
-                        .z
-                })
-                .collect();
-            let initial_height = heights[0];
-            let spacing_steps = (length / f64::from(cars) / SAMPLE_SPACING).round() as usize;
-            let maximum_mean_height = (0..=steps)
-                .map(|front| {
-                    (0..cars)
-                        .map(|car| heights[front.saturating_sub(car as usize * spacing_steps)])
-                        .sum::<f64>()
-                        / f64::from(cars)
-                })
-                .fold(f64::NEG_INFINITY, f64::max);
-            let minimum = (2.0 * crate::physics::GRAVITY * (maximum_mean_height - initial_height)
-                + 36.0)
-                .sqrt();
-            eprintln!(
-                "{id:?} {cars} cars: minimum {minimum:.4}, maximum {:.4}, catalog minimum {:.4}",
-                rated.maximum_entry, rated.minimum_entry
-            );
-            assert!(
-                minimum < rated.maximum_entry,
-                "{id:?} {cars} cars: {minimum} >= {}",
-                rated.maximum_entry
-            );
-            let mut train = hybrid_model().train;
-            train.cars = cars;
-            train.length_metres = length;
-            let actual = super::effective_rated_speeds(piece, &train).unwrap();
-            assert!((actual.minimum_entry - minimum).abs() < 1e-9);
-            assert_eq!(actual.maximum_entry, rated.maximum_entry);
-        }
-    }
-}
-
-#[test]
-fn default_train_uses_exact_catalog_rating_at_any_elevation() {
-    let train = hybrid_model().train;
-    for id in [
-        PieceId::ZeroGRollFastLeft,
-        PieceId::ZeroGRollCompactLeft,
-        PieceId::StallLeft,
-    ] {
-        let piece = catalog().iter().find(|piece| piece.id == id).unwrap();
-        let placed = piece
-            .at(TrackState {
-                z: 100,
-                ..piece.entry
-            })
-            .unwrap();
-        assert_eq!(
-            super::effective_rated_speeds(&placed, &train)
-                .unwrap()
-                .minimum_entry
-                .to_bits(),
-            piece.rated_speeds.unwrap().minimum_entry.to_bits()
-        );
     }
 }

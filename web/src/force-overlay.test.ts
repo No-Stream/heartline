@@ -6,7 +6,7 @@ import type { TestingSample } from "./generated/TestingSample";
 const steel: ForceLimits = MODEL_FORCE_LIMITS["Velocity Viper"];
 const wood: ForceLimits = MODEL_FORCE_LIMITS["Briar Blitz"];
 const sample = (distance: number, forces: Partial<TestingSample> = {}): TestingSample => ({
-  distance, x: distance, y: 0, z: 1, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, ...forces,
+  distance, x: distance, y: 0, z: 1, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false], ...forces,
 });
 
 describe("limit closeness", () => {
@@ -16,6 +16,10 @@ describe("limit closeness", () => {
     expect(limitCloseness(sample(0, { verticalG: 1, lateralG: -1.2 }), steel)).toBeCloseTo(0.8);
     expect(limitCloseness(sample(0, { verticalG: 1, longitudinalG: 3 }), steel)).toBeCloseTo(2);
     expect(limitCloseness(sample(0), steel)).toBeCloseTo(0.2);
+  });
+  it("continues to calculate closeness from forces regardless of violation flags", () => {
+    expect(limitCloseness(sample(0, { verticalG: 1, forceLimitExceeded: [true, false, false] }), steel)).toBeCloseTo(0.2);
+    expect(limitCloseness(sample(0, { verticalG: 5.5, forceLimitExceeded: [false, false, false] }), steel)).toBeCloseTo(1.1);
   });
   it("bands the closeness into comfortable, near and past the limit", () => {
     expect(limitBand(0.5)).toBe("comfortable");
@@ -80,9 +84,9 @@ describe("force labels", () => {
   });
   it("labels each stretch past a limit anywhere on the track, worst first, and fades the old ones", () => {
     const samples = [
-      sample(0, { verticalG: 5.5 }), sample(1, { verticalG: 6.5 }), sample(2),
+      sample(0, { verticalG: 5.5, forceLimitExceeded: [true, false, false] }), sample(1, { verticalG: 6.5, forceLimitExceeded: [true, false, false] }), sample(2),
       ...Array.from({ length: 40 }, (_, index) => sample(index + 3)),
-      sample(43, { verticalG: -1.8 }), sample(44, { verticalG: 5.2 }),
+      sample(43, { verticalG: -1.8, forceLimitExceeded: [true, false, false] }), sample(44, { verticalG: 5.2, forceLimitExceeded: [true, false, false] }),
     ];
     const labels = selectForceLabels(samples, steel);
     const pastLimit = labels.filter((label) => label.pastLimit);
@@ -91,6 +95,20 @@ describe("force labels", () => {
     ]);
     expect(labels.filter((label) => label.kind === "peakVertical")).toHaveLength(2);
     expect(forceLabelText(pastLimit[1], samples[43], steel, "metric")).toBe("−1.8 g · too much airtime");
+  });
+  it("uses violation flags for labels and rates unflagged excursions as brief", () => {
+    const samples = [
+      sample(0, { verticalG: 5.4, lateralG: 1.7 }),
+      sample(1, { verticalG: 4.9, lateralG: 1.4, forceLimitExceeded: [true, true, false] }),
+    ];
+    const labels = selectForceLabels(samples, steel);
+    expect(labels.filter((label) => label.pastLimit).map((label) => [label.kind, label.sampleIndex])).toEqual([
+      ["peakVertical", 1], ["peakLateral", 1],
+    ]);
+    expect(forceReadoutLines(samples[0], steel, "metric")[1].value).toBe("5.4 g · brief");
+    expect(forceReadoutLines(samples[0], steel, "metric")[2].value).toBe("1.7 g · brief");
+    expect(forceReadoutLines(samples[1], steel, "metric")[1].value).toBe("4.9 g · too much");
+    expect(forceLabelText(labels.find((label) => label.kind === "peakLateral" && label.pastLimit)!, samples[1], steel, "metric")).toBe("1.4 g · too much lateral");
   });
   it("shows every value at a point with its rating", () => {
     expect(forceReadoutLines(sample(0, { speed: 20, verticalG: -0.6, lateralG: 1.2, longitudinalG: -0.2 }), steel, "metric")).toEqual([

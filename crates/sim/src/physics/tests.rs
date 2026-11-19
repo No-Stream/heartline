@@ -240,23 +240,17 @@ fn lead_car_forces_match_recorded_forces_and_do_not_change_state_hash() {
 #[test]
 fn open_track_preview_matches_closed_run_until_the_open_end() {
     let circuit = demo_circuit();
-    let configuration = hybrid_model().train;
+    let model = hybrid_model();
+    let configuration = model.train.clone();
     let config = PhysicsConfig {
         lift_speed: 5.0,
         ..PhysicsConfig::default()
     };
-    let preview = preview::preview_at_step(
-        circuit.pieces(),
-        &configuration,
-        config,
-        200_000,
-        TIME_STEP,
-        "Timber Tumbler",
-    )
-    .unwrap();
+    let preview =
+        preview::preview_at_step(circuit.pieces(), &model, config, 200_000, TIME_STEP).unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let preview = preview.report;
-    let mut run = CoasterRun::new(&circuit, &configuration, config);
+    let mut run = CoasterRun::new(&circuit, &configuration, &model, config);
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, "Timber Tumbler"))
         .unwrap();
@@ -274,24 +268,17 @@ fn open_track_preview_matches_closed_run_until_the_open_end() {
 #[test]
 fn open_track_prefix_matches_closed_run_until_its_end() {
     let circuit = demo_circuit();
-    let configuration = hybrid_model().train;
+    let model = hybrid_model();
+    let configuration = model.train.clone();
     let config = PhysicsConfig {
         lift_speed: 5.0,
         ..PhysicsConfig::default()
     };
     let pieces = &circuit.pieces()[..circuit.pieces().len() - 1];
-    let preview = preview::preview_at_step(
-        pieces,
-        &configuration,
-        config,
-        200_000,
-        TIME_STEP,
-        "Timber Tumbler",
-    )
-    .unwrap();
+    let preview = preview::preview_at_step(pieces, &model, config, 200_000, TIME_STEP).unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let preview = preview.report;
-    let mut run = CoasterRun::new(&circuit, &configuration, config);
+    let mut run = CoasterRun::new(&circuit, &configuration, &model, config);
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, "Timber Tumbler"))
         .unwrap();
@@ -316,12 +303,11 @@ fn approximate_open_preview_stays_close_to_closed_demo_run() {
     };
     let preview = preview_open_track(
         &circuit.pieces()[..circuit.pieces().len() - 1],
-        &model.train,
+        &model,
         config,
-        "Timber Tumbler",
     )
     .unwrap();
-    let mut run = CoasterRun::new(&circuit, &model.train, config);
+    let mut run = CoasterRun::new(&circuit, &model.train, &model, config);
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, "Timber Tumbler"))
         .unwrap();
@@ -358,15 +344,14 @@ fn approximate_open_preview_stays_close_to_closed_demo_run() {
 #[test]
 fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
     let circuit = demo_circuit();
-    let configuration = hybrid_model().train;
+    let model = hybrid_model();
     let preview = preview_open_track(
         &circuit.pieces()[..1],
-        &configuration,
+        &model,
         PhysicsConfig {
             powered_sections: false,
             ..PhysicsConfig::default()
         },
-        "Timber Tumbler",
     )
     .unwrap();
     assert_eq!(preview.status, PreviewStatus::Stalled);
@@ -378,15 +363,7 @@ fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
             .all(|sample| sample.distance < circuit.pieces()[0].length())
     );
     assert!(preview.furthest_distance < circuit.pieces()[0].length());
-    assert!(
-        preview_open_track(
-            &[],
-            &configuration,
-            PhysicsConfig::default(),
-            "Timber Tumbler"
-        )
-        .is_none()
-    );
+    assert!(preview_open_track(&[], &model, PhysicsConfig::default(),).is_none());
 }
 
 #[test]
@@ -396,13 +373,7 @@ fn open_track_preview_does_not_extrapolate_past_an_uphill_stall() {
     for piece in &mut pieces[1..] {
         piece.kind = PieceKind::Track;
     }
-    let preview = preview_open_track(
-        &pieces,
-        &hybrid_model().train,
-        PhysicsConfig::default(),
-        "Timber Tumbler",
-    )
-    .unwrap();
+    let preview = preview_open_track(&pieces, &hybrid_model(), PhysicsConfig::default()).unwrap();
     let length: f64 = pieces.iter().map(Piece::length).sum();
     assert_eq!(preview.status, PreviewStatus::Stalled);
     let preview = preview.report;
@@ -415,11 +386,10 @@ fn open_track_preview_distinguishes_timeout_from_stall() {
     let circuit = demo_circuit();
     let preview = preview::preview_at_step(
         &circuit.pieces()[..2],
-        &hybrid_model().train,
+        &hybrid_model(),
         PhysicsConfig::default(),
         1,
         TIME_STEP,
-        "Timber Tumbler",
     )
     .unwrap();
     assert_eq!(preview.status, PreviewStatus::TimedOut);
@@ -654,7 +624,7 @@ fn wooden_twister_completes_a_lap_through_its_structure() {
         }
     }
 
-    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, "Timber Tumbler"))
         .expect("train completed a lap");
@@ -1367,10 +1337,12 @@ fn demo_has_track_crossing_with_vertical_clearance() {
 #[test]
 fn coaster_run_starts_at_station_completes_and_records_forces() {
     let circuit = super::demo_circuit();
-    let configuration = crate::track::hybrid_model().train;
+    let model = crate::track::hybrid_model();
+    let configuration = model.train.clone();
     let mut run = super::CoasterRun::new(
         &circuit,
         &configuration,
+        &model,
         super::PhysicsConfig {
             lift_speed: 5.0,
             ..super::PhysicsConfig::default()
@@ -1413,8 +1385,14 @@ fn coaster_run_starts_at_station_completes_and_records_forces() {
 #[test]
 fn coaster_run_can_recover_without_a_completed_ride() {
     let circuit = super::demo_circuit();
-    let configuration = crate::track::hybrid_model().train;
-    let mut run = super::CoasterRun::new(&circuit, &configuration, super::PhysicsConfig::default());
+    let model = crate::track::hybrid_model();
+    let configuration = model.train.clone();
+    let mut run = super::CoasterRun::new(
+        &circuit,
+        &configuration,
+        &model,
+        super::PhysicsConfig::default(),
+    );
     let outcome = run.recover();
     assert!(outcome.recovered);
     assert!(!outcome.reports[0].completed);
@@ -1430,10 +1408,12 @@ fn coaster_run_can_recover_without_a_completed_ride() {
 #[test]
 fn coaster_run_recovers_a_train_that_cannot_leave_the_station() {
     let circuit = super::demo_circuit();
-    let configuration = crate::track::hybrid_model().train;
+    let model = crate::track::hybrid_model();
+    let configuration = model.train.clone();
     let mut run = super::CoasterRun::new(
         &circuit,
         &configuration,
+        &model,
         super::PhysicsConfig {
             powered_sections: false,
             ..super::PhysicsConfig::default()
@@ -1471,7 +1451,8 @@ fn block_operation_keeps_trains_separate_and_completes_runs() {
         pieces[index].kind = PieceKind::Lift;
     }
     let circuit = Circuit::new(pieces).unwrap();
-    let configuration = crate::track::hybrid_model().train;
+    let model = crate::track::hybrid_model();
+    let configuration = model.train.clone();
     let boundary = |end: usize| {
         circuit.pieces()[..end]
             .iter()
@@ -1488,7 +1469,7 @@ fn block_operation_keeps_trains_separate_and_completes_runs() {
         vec![boundary(2), boundary(6), boundary(10), boundary(13)],
     )
     .unwrap();
-    let mut operation = super::BlockOperation::new(layout);
+    let mut operation = super::BlockOperation::new(layout, &model);
     let mut dispatched = 0;
     let mut completed = 0;
     let mut maximum_concurrent = 0;
@@ -1731,10 +1712,12 @@ fn uphill_brake_drive_restarts_without_initial_rollback() {
 #[test]
 fn coaster_run_waits_for_a_block_and_resumes_without_recovery() {
     let circuit = super::demo_circuit();
-    let configuration = crate::track::hybrid_model().train;
+    let model = crate::track::hybrid_model();
+    let configuration = model.train.clone();
     let mut run = super::CoasterRun::new(
         &circuit,
         &configuration,
+        &model,
         super::PhysicsConfig {
             lift_speed: 5.0,
             ..Default::default()
@@ -1997,4 +1980,69 @@ fn banked_drops_complete_physics_laps_with_finite_forces() {
             );
         }
     }
+}
+
+#[test]
+fn incremental_preview_matches_fresh_runs_after_track_edits() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let pieces = circuit.pieces();
+    let mut cache = PreviewCache::default();
+    for length in [3, 4, 5, 8, 6, 9, pieces.len()] {
+        let track = &pieces[..length.min(pieces.len())];
+        let cached = cache.preview(track, &model, config).unwrap();
+        let fresh = PreviewCache::default()
+            .preview(track, &model, config)
+            .unwrap();
+        assert_eq!(cached.status, fresh.status);
+        assert_eq!(
+            cached.report.samples, fresh.report.samples,
+            "samples at length {length}"
+        );
+        assert!(
+            cached.report == fresh.report,
+            "report differs at length {length}"
+        );
+        assert_eq!(cached.force_limit_exceeded, fresh.force_limit_exceeded);
+    }
+    assert!(cache.snapshot_count() > 0);
+}
+
+#[test]
+fn incremental_preview_matches_fresh_when_a_step_crosses_multiple_metres() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let config = PhysicsConfig {
+        station_speed: 300.0,
+        drive_acceleration: 100_000.0,
+        drag_coefficient: 0.0,
+        rolling_resistance: 0.0,
+        ..PhysicsConfig::default()
+    };
+    let mut train = Train::new(
+        &circuit,
+        &model.train,
+        config,
+        circuit.pieces()[0].length() / 2.0,
+        0.0,
+    );
+    train.step(&circuit);
+    let previous_distance = train.distance();
+    train.step(&circuit);
+    assert!(train.distance() - previous_distance > 1.0);
+
+    let mut cache = PreviewCache::default();
+    let pieces = circuit.pieces();
+    cache.preview(&pieces[..2], &model, config).unwrap();
+    let cached = cache.preview(&pieces[..3], &model, config).unwrap();
+    let fresh = PreviewCache::default()
+        .preview(&pieces[..3], &model, config)
+        .unwrap();
+    assert_eq!(cached.status, fresh.status);
+    assert_eq!(cached.report.samples, fresh.report.samples);
+    assert_eq!(cached.force_limit_exceeded, fresh.force_limit_exceeded);
 }

@@ -1,6 +1,7 @@
 use super::coaster_run::merge_worst_car_statistics;
 use super::{CarReading, Circuit, TestRun, TestRunRecorder};
 use crate::state_hash::StateHasher;
+use crate::track::CoasterModel;
 use crate::track::proximity::TrainPosition;
 
 /// Records each car independently for a construction test.
@@ -10,15 +11,15 @@ pub struct ConstructionTestRunRecorder {
 }
 
 impl ConstructionTestRunRecorder {
-    pub fn for_circuit_with_train_and_limits(
+    pub fn for_circuit_with_train_and_model(
         circuit: &Circuit,
         train: &crate::track::TrainConfiguration,
-        limits: crate::track::ComfortableForceLimits,
+        model: &CoasterModel,
     ) -> Self {
         assert!(train.cars > 0);
         Self {
             cars: (0..train.cars)
-                .map(|_| TestRunRecorder::for_circuit_with_train_and_limits(circuit, train, limits))
+                .map(|_| TestRunRecorder::for_circuit_with_model(circuit, model))
                 .collect(),
         }
     }
@@ -99,10 +100,10 @@ mod tests {
         let circuit = crate::physics::demo_circuit();
         let mut model = crate::track::hybrid_model();
         model.train.cars = 2;
-        let mut original = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+        let mut original = ConstructionTestRunRecorder::for_circuit_with_train_and_model(
             &circuit,
             &model.train,
-            model.comfortable_force_limits,
+            &model,
         );
         for distance in 0..10 {
             original.record(

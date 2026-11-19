@@ -8,10 +8,12 @@ const HISTORICAL_TIMBER_TUMBLER: &str =
 const SPEED_MATCHED_PREFIX: &str = "+chain\nLevelToGentleUp\nGentleUp\nGentleUpToLevel\n-chain\nLevelToGentleDown\nGentleDown\nGentleDown\nGentleDownToLevel\n";
 
 #[test]
-fn timber_report_marks_its_four_out_of_window_pieces_and_extreme_lateral_force() {
+fn timber_report_marks_its_five_out_of_window_pieces_and_extreme_lateral_force() {
     // This calibration assertion describes the layout at 39d9e51. Keep that
     // layout as a fixture so later improvements to the shipped ride do not
-    // change what this report regression test measures.
+    // change what this report regression test measures. The flagged set is
+    // judged against the Timber Tumbler's own rated windows, which include the
+    // bank-in and bank-out transitions.
     let report = circuit_report::report_for_circuit(
         HISTORICAL_TIMBER_TUMBLER,
         "Timber Tumbler",
@@ -28,8 +30,8 @@ fn timber_report_marks_its_four_out_of_window_pieces_and_extreme_lateral_force()
         .collect();
     assert_eq!(
         outside_rows.len(),
-        4,
-        "expected the four rated-speed violations from the calibration report; flagged rows: {outside_rows:#?}\n{report}"
+        5,
+        "expected the five rated-speed violations from the calibration report; flagged rows: {outside_rows:#?}\n{report}"
     );
     let outside_piece_ids: BTreeSet<&str> = outside_rows
         .iter()
@@ -40,10 +42,11 @@ fn timber_report_marks_its_four_out_of_window_pieces_and_extreme_lateral_force()
         BTreeSet::from([
             "SteepToSixtyUp",
             "SixtyToSteepUp",
-            "SteepToSixtyDown",
             "SixtyToSteepDown",
+            "BankLeft",
+            "UnbankLeft",
         ]),
-        "the four rated-speed flags should identify the pieces recorded in the calibration run"
+        "the five rated-speed flags should identify the pieces recorded in the calibration run"
     );
 
     let maximum_lateral_g = rows

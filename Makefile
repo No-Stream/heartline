@@ -8,8 +8,7 @@ PARK ?= content/parks/horizon-hawk.park.json
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ride-agreement ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits generate-report-types check-report-types generate-profiles design-tools test-design-tools
-.PHONY: park-report
+.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits generate-report-types check-report-types generate-profiles bench-player-force-preview generate-rated-windows ride-agreement design-tools test-design-tools park-report
 
 install:
 	npm ci
@@ -38,6 +37,9 @@ test-design-tools:
 generate-profiles:
 	UPDATE_SOLVED_PROFILES=1 $(CARGO) test -p theme-park-sim --lib track::profile::tests::solved_profiles_are_current
 
+generate-rated-windows:
+	UPDATE_RATED_WINDOWS=1 $(CARGO) run --release -p theme-park-sim --example measure_force_windows
+
 # The CLI version must match the wasm-bindgen crate version in Cargo.lock.
 wasm-bindgen:
 	@if ! "$(WASM_BINDGEN)" --version 2>/dev/null | grep -qxF "wasm-bindgen $(WASM_BINDGEN_VERSION)"; then $(CARGO) install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked --force; fi
@@ -54,6 +56,19 @@ test: test-rust test-threads test-flexibility test-web
 
 test-rust:
 	$(CARGO) test --workspace -- --skip track::construction::walk_tests::seeded_
+
+test-rated-windows:
+	$(CARGO) test -p theme-park-sim --example measure_force_windows
+
+test-force-rule:
+	$(CARGO) test -p theme-park-sim --lib physics::force_evaluation::tests
+	$(CARGO) test -p theme-park-sim --test rated_element_physics
+
+test-construction-cache:
+	$(CARGO) test -p theme-park-sim --lib track::construction::cache_tests
+
+test-inversion-compile:
+	$(CARGO) test -p theme-park-sim --test inversion_physics --no-run
 
 test-threads:
 	$(CARGO) test -p theme-park-sim --features threads -- --skip track::construction::walk_tests::seeded_
@@ -135,6 +150,9 @@ bench-builder-updates-browser: wasm-bindgen
 
 bench-player-circuits:
 	$(CARGO) run --release -p theme-park-sim --example player_circuit_preview_bench
+
+bench-player-force-preview:
+	$(CARGO) run --release -p theme-park-sim-wasm --example player_circuit_force_preview_bench -- --append-only
 
 CIRCUIT ?= Timber Tumbler
 FILE ?= web/e2e/player/circuits.txt

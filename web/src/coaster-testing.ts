@@ -5,7 +5,7 @@ import type { TrackStyle } from "./render/track/geometry";
 import { formatLength, formatSpeed, speedUnitLabel, type Units } from "./units";
 import type { InputAction } from "./input/actions";
 import type { ConstructionForcePreview } from "./construction-protocol";
-import { LIMIT_BAND_COLORS, LIMIT_BAND_LABELS, limitBand, limitCloseness, type LimitBand } from "./force-overlay";
+import { LIMIT_BAND_COLORS, LIMIT_BAND_LABELS, sampleLimitBand, type LimitBand } from "./force-overlay";
 
 import type { TestingSample } from "./generated/TestingSample";
 import type { TestingReport } from "./generated/TestingReport";
@@ -69,12 +69,14 @@ export function buildTestingRibbon(
   const quads: GeometryQuad[] = [];
   const selectedIndex = selectedDistance === undefined ? undefined : nearestTestingSegment(samples, selectedDistance);
   const vertex = (sample: TestingSample): Vertex => projectVertex(camera, viewport, sample, 0.06);
-  const exceedsLimit = (sample: TestingSample): boolean => !!limits && (
-    metric === "verticalG" ? sample.verticalG < limits.minimumVerticalG || sample.verticalG > limits.maximumVerticalG
-      : metric === "lateralG" ? Math.abs(sample.lateralG) > limits.maximumLateralG
-        : metric === "longitudinalG" ? Math.abs(sample.longitudinalG) > limits.maximumLongitudinalG : false
-  );
-  const band = (start: TestingSample, end: TestingSample): LimitBand => limitBand(Math.max(limitCloseness(start, limits!), limitCloseness(end, limits!)));
+  const exceedsLimit = (sample: TestingSample): boolean =>
+    metric === "verticalG" ? sample.forceLimitExceeded[0]
+      : metric === "lateralG" ? sample.forceLimitExceeded[1]
+        : metric === "longitudinalG" ? sample.forceLimitExceeded[2] : false;
+  const band = (start: TestingSample, end: TestingSample): LimitBand => {
+    const bands = [sampleLimitBand(start, limits!), sampleLimitBand(end, limits!)];
+    return bands.includes("past") ? "past" : bands.includes("near") ? "near" : "comfortable";
+  };
   for (let index = 0; index + 1 < samples.length; index++) {
     const distanceDelta = samples[index + 1].distance - samples[index].distance;
     if (distanceDelta <= 0 || distanceDelta > 1.001) continue;
@@ -240,8 +242,8 @@ export function formatConstructionEstimate(estimate: ConstructionForcePreview, u
     { name: "lateral", value: (sample: TestingSample) => sample.lateralG, excess: (value: number) => Math.abs(value) - limits.maximumLateralG, limit: () => `absolute limit ${number(limits.maximumLateralG)} g` },
     { name: "longitudinal", value: (sample: TestingSample) => sample.longitudinalG, excess: (value: number) => Math.abs(value) - limits.maximumLongitudinalG, limit: () => `absolute limit ${number(limits.maximumLongitudinalG)} g` },
   ];
-  const violations = axesToCheck.flatMap((axis) => {
-    const worst = samples.reduce<TestingSample | null>((current, sample) => axis.excess(axis.value(sample)) > (current ? axis.excess(axis.value(current)) : 0) ? sample : current, null);
+  const violations = axesToCheck.flatMap((axis, axisIndex) => {
+    const worst = samples.filter((sample) => sample.forceLimitExceeded[axisIndex]).reduce<TestingSample | null>((current, sample) => !current || axis.excess(axis.value(sample)) > axis.excess(axis.value(current)) ? sample : current, null);
     if (!worst) return [];
     const value = axis.value(worst);
     return [{ name: axis.name, detail: `${axis.name} ${number(value)} g at ${formatLength(worst.distance, units)} (${axis.limit(value)})` }];

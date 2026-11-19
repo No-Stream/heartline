@@ -104,7 +104,7 @@ pub fn render_ride_report(
     .unwrap();
     writeln!(
         output,
-        "  vertical {:.1}/{:.1} g; lateral {:.1} g; forward {:.1} g; braking {:.1} g",
+        "  vertical {:.2}/{:.2} g; lateral {:.2} g; forward {:.2} g; braking {:.2} g",
         test_run.statistics.max_positive_vertical_g,
         test_run.statistics.max_negative_vertical_g,
         test_run.statistics.max_lateral_g,
@@ -133,6 +133,16 @@ pub fn render_ride_report(
         test_run.statistics.launches,
         test_run.statistics.launch_peak_speed,
         test_run.statistics.drops
+    )
+    .unwrap();
+    let sustained = test_run.sustained_force_peaks();
+    let held_g =
+        |value: Option<f64>| value.map_or_else(|| "none".to_owned(), |g| format!("{g:.2} g"));
+    writeln!(
+        output,
+        "  sustained by any car: highest vertical {} held 0.5 s; lowest vertical {} held 0.3 s",
+        held_g(sustained.maximum_vertical_g),
+        held_g(sustained.minimum_vertical_g)
     )
     .unwrap();
     writeln!(
@@ -224,7 +234,7 @@ pub fn render_ride_report(
 }
 
 fn format_optional(value: Option<f64>) -> String {
-    value.map_or_else(|| "—".to_owned(), |value| format!("{value:.1}"))
+    value.map_or_else(|| "—".to_owned(), |value| format!("{value:.2}"))
 }
 
 fn write_contributions(output: &mut String, category: &str, contributions: &[Contribution]) {
@@ -239,13 +249,13 @@ fn write_contributions(output: &mut String, category: &str, contributions: &[Con
 }
 
 fn format_signed(value: Option<f64>) -> String {
-    value.map_or_else(|| "—".to_owned(), |value| format!("{value:+.1}"))
+    value.map_or_else(|| "—".to_owned(), |value| format!("{value:+.2}"))
 }
 
 fn format_window(window: Option<(f64, f64)>) -> String {
     window.map_or_else(
         || "—".to_owned(),
-        |(minimum, maximum)| format!("{minimum:.1}-{maximum:.1}"),
+        |(minimum, maximum)| format!("{minimum:.2}-{maximum:.2}"),
     )
 }
 
@@ -254,7 +264,7 @@ fn format_vertical_peaks(peaks: Option<ForcePeakValues>) -> String {
         || "—".to_owned(),
         |peaks| {
             format!(
-                "{:.1}/{:.1}",
+                "{:.2}/{:.2}",
                 peaks.maximum_vertical_g, peaks.minimum_vertical_g
             )
         },
@@ -299,13 +309,13 @@ mod tests {
             .find(|line| line.contains("FloaterHill24x160"))
             .unwrap();
         for expected_value in [
-            "33.1",
-            "27.0-34.5",
-            "+1.4",
-            "3.6/-0.9",
-            "2.5/2.5",
-            "0.2",
-            "0.4",
+            "33.10",
+            "27.00-34.50",
+            "+1.40",
+            "3.60/-0.90",
+            "2.50/2.50",
+            "0.20",
+            "0.40",
             "airtime:great vertical:great lateral:fine longitudinal:fine",
             "reachedEnd first drop",
         ] {
@@ -348,11 +358,7 @@ mod tests {
         let circuit = demo_circuit();
         let model = hybrid_model();
         let sample_distance = circuit.pieces()[0].length() + 1.0;
-        let mut recorder = TestRunRecorder::for_circuit_with_train_and_limits(
-            &circuit,
-            &model.train,
-            model.comfortable_force_limits,
-        );
+        let mut recorder = TestRunRecorder::for_circuit_with_model(&circuit, &model);
         recorder.record(
             &[vec![CarReading {
                 distance: sample_distance,

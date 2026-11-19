@@ -9,6 +9,7 @@ const container = document.querySelector<HTMLElement>("section")!;
 /** Stands in for main.ts and the worker: piece steps resolve in the panel, and a selection comes back as the new state. */
 function dispatch(action: InputAction): void {
   actions.push(action);
+  if (["construction-append", "construction-finish-preview", "construction-finish-confirm", "construction-finish-cancel"].includes(action.type)) panel.setInputPending(true);
   if (action.type === "piece-step" || action.type === "piece-group") panel.choose(action);
   if (action.type === "construction-select") setConstructionState({ selected: action.piece });
 }
@@ -52,7 +53,14 @@ function updateConstructionFinishStatus(status: Pick<ConstructionState, "canFini
   panel.updateFinishStatus(status.canFinish, status.finishReason);
 }
 panel.update(state);
-Object.assign(window, { constructionActions: actions, setConstructionState, updateConstructionFinishStatus, setConstructionUnits: (units: "metric" | "imperial") => panel.setUnits(units), selectConstructionBlock: (index: number | null) => panel.setSelectedBlock(index) });
+Object.assign(window, {
+  constructionActions: actions,
+  setConstructionState,
+  completeConstructionInput: () => panel.setInputPending(false),
+  updateConstructionFinishStatus,
+  setConstructionUnits: (units: "metric" | "imperial") => panel.setUnits(units),
+  selectConstructionBlock: (index: number | null) => panel.setSelectedBlock(index),
+});
 
 const testingPanel = createTestingPanel(document.querySelector<HTMLElement>("[data-testing]")!,
   { steel: "#e04730", train: "#1f85ad", wood: "#805030", ink: "#211519", lineWeight: 1 }, () => {}, () => {});

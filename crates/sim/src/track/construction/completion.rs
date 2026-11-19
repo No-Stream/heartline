@@ -49,6 +49,7 @@ impl Construction {
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
+            force_preview_cache: RefCell::new(crate::physics::PreviewCache::default()),
             state_hash_memo: Cell::new(self.state_hash_memo.get()),
             #[cfg(test)]
             support_cache_misses: Cell::new(0),

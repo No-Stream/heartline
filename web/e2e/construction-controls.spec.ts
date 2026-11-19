@@ -23,7 +23,13 @@ test.afterAll(async () => {
   if (outDir) await rm(outDir, { recursive: true });
 });
 
-type Window = { constructionActions: unknown[]; setConstructionState(state: object): void; updateConstructionFinishStatus(status: { canFinish: boolean; finishReason: string }): void; setConstructionUnits(units: "metric" | "imperial"): void };
+type Window = {
+  constructionActions: unknown[];
+  setConstructionState(state: object): void;
+  completeConstructionInput(): void;
+  updateConstructionFinishStatus(status: { canFinish: boolean; finishReason: string }): void;
+  setConstructionUnits(units: "metric" | "imperial"): void;
+};
 const recorded = (page: import("@playwright/test").Page) => page.evaluate(() => (window as unknown as Window).constructionActions);
 
 test("busy construction controls remain interactive and accept button input", async ({ page }) => {
@@ -41,6 +47,41 @@ test("busy construction controls remain interactive and accept button input", as
     { type: "construction-append" },
     { type: "construction-select", piece: "TurnSmallStandalone" },
   ]);
+});
+
+test("Finish waits for an authoritative construction state", async ({ page }) => {
+  await page.goto(fixtureUrl);
+  const finish = page.getByRole("button", { name: "Finish coaster", exact: true });
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: true, canFinish: true }));
+  await expect(finish).toBeEnabled();
+  await page.getByRole("button", { name: "Place piece" }).click();
+  await expect(finish).toBeDisabled();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: true, canFinish: true }));
+  await expect(finish).toBeDisabled();
+  await page.evaluate(() => (window as unknown as Window).completeConstructionInput());
+  await expect(finish).toBeEnabled();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: false, canFinish: true }));
+  await expect(finish).toBeDisabled();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: true, canFinish: false }));
+  await expect(finish).toBeDisabled();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ complete: true, canFinish: true }));
+  await expect(finish).toBeEnabled();
+  await finish.click();
+  expect(await recorded(page)).toContainEqual({ type: "construction-finish-preview" });
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: true }));
+  const confirm = page.getByRole("button", { name: "Confirm coaster finish", exact: true });
+  const cancel = page.getByRole("button", { name: "Cancel finish preview", exact: true });
+  await expect(confirm).toBeDisabled();
+  await expect(cancel).toBeDisabled();
+  await page.evaluate(() => (window as unknown as Window).completeConstructionInput());
+  await expect(confirm).toBeEnabled();
+  await expect(cancel).toBeEnabled();
+  await cancel.click();
+  await expect(cancel).toBeDisabled();
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: false, canFinish: true }));
+  await page.evaluate(() => (window as unknown as Window).completeConstructionInput());
+  await expect(finish).toBeEnabled();
+  expect(await recorded(page)).toContainEqual({ type: "construction-finish-cancel" });
 });
 
 test("choosing the already-selected piece group does not dispatch another selection", async ({ page }) => {
@@ -211,12 +252,15 @@ test("finish controls explain missing connections and confirm or cancel a previe
   await expect(finish).toBeEnabled();
   await finish.click();
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: true }));
+  await page.evaluate(() => (window as unknown as Window).completeConstructionInput());
   await expect(page.getByRole("button", { name: "Confirm coaster finish" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel finish preview" })).toBeVisible();
   await page.getByRole("button", { name: "Cancel finish preview" }).click();
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: false }));
+  await page.evaluate(() => (window as unknown as Window).completeConstructionInput());
   await finish.click();
   await page.evaluate(() => (window as unknown as Window).setConstructionState({ finishPreview: true }));
+  await page.evaluate(() => (window as unknown as Window).completeConstructionInput());
   await page.getByRole("button", { name: "Confirm coaster finish" }).click();
 
   expect(await recorded(page)).toEqual([

@@ -5,8 +5,8 @@ use theme_park_sim::physics::{
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
     CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceFamily, PieceId, PieceKind,
-    TrackState, catalog, effective_rated_speeds, family_coaster_model, hybrid_model, hyper_model,
-    multi_launch_model, wooden_twister_model,
+    TrackState, catalog, family_coaster_model, hybrid_model, hyper_model, multi_launch_model,
+    rated_speeds, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -105,7 +105,7 @@ fn assert_design_margins(circuit: &Circuit, model: &CoasterModel, construction_t
     );
     let pieces = circuit.pieces();
     for (index, (piece, speeds)) in pieces.iter().zip(entries).enumerate() {
-        if let Some(window) = effective_rated_speeds(piece, &model.train) {
+        if let Some(window) = rated_speeds(model, piece) {
             // A crest fed straight from the chain lift is entered at lift speed by the front car, while the rear
             // cars cross it as the front of the train falls away. The rated test measures such a crest by the front
             // car's entry speed with the full train behind it, so the margin applies to the front car alone there.
@@ -160,11 +160,8 @@ fn ride_test(
         start_distance,
         initial_speed,
     );
-    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
-        circuit,
-        &model.train,
-        model.comfortable_force_limits,
-    );
+    let mut recorder =
+        ConstructionTestRunRecorder::for_circuit_with_train_and_model(circuit, &model.train, model);
     let mut slow_steps = 0;
     for _ in 0..60_000 {
         train.step(circuit);
@@ -191,7 +188,7 @@ fn ride_test(
 }
 
 fn default_test_ride(circuit: &Circuit, model: &CoasterModel) -> CoasterOutcome {
-    let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
+    let mut run = CoasterRun::new(circuit, &model.train, model, PhysicsConfig::default());
     (0..60_000)
         .find_map(|_| run.step(circuit, model.name))
         .expect("Timber Tumbler default-physics ride did not finish")
@@ -239,7 +236,7 @@ fn assert_timber_margins(circuit: &Circuit, model: &CoasterModel, construction: 
                 let piece = &circuit.pieces()[reading.piece_index];
                 if !entries[reading.piece_index][car] {
                     entries[reading.piece_index][car] = true;
-                    if let Some(window) = effective_rated_speeds(piece, &model.train) {
+                    if let Some(window) = rated_speeds(model, piece) {
                         minimum_speed_margin = minimum_speed_margin.min(
                             (reading.speed - window.minimum_entry)
                                 .min(window.maximum_entry - reading.speed),
@@ -283,7 +280,7 @@ fn assert_timber_margins(circuit: &Circuit, model: &CoasterModel, construction: 
                 "construction={construction} minimum speed margin {minimum_speed_margin} m/s; minimum force margin {minimum_force_margin} g"
             );
             for (index, piece) in circuit.pieces().iter().enumerate() {
-                if effective_rated_speeds(piece, &model.train).is_some() {
+                if rated_speeds(model, piece).is_some() {
                     assert!(
                         entries[index].iter().all(|seen| *seen),
                         "missing car entry for {:?}",

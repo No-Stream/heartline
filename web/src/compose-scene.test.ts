@@ -5,6 +5,7 @@ import type { Facility } from "./facilities";
 import type { Scenery } from "./scenery-tool";
 import type { CoasterSnapshot } from "./protocol";
 import type { ConstructionState } from "./construction-protocol";
+import type { TestingSample } from "./generated/TestingSample";
 
 const camera = { centerX: 2, centerY: 2, zoom: 1, rotation: 0 as const };
 const viewport = { width: 400, height: 300 };
@@ -80,8 +81,8 @@ function sceneInput(overrides: Partial<ComposeSceneInput> = {}): ComposeSceneInp
 describe("composeScene", () => {
   it("draws the live construction estimate as a pickable track ribbon", () => {
     const samples = [
-      { distance: 0, x: 1, y: 1, z: 1, speed: 4, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
-      { distance: 1, x: 2, y: 1, z: 1, speed: 8, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+      { distance: 0, x: 1, y: 1, z: 1, speed: 4, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+      { distance: 1, x: 2, y: 1, z: 1, speed: 8, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
     ];
     const construction = { constructionForcePreview: { samples }, testingReport: null, pieces: [], elements: [], previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array() } as unknown as ConstructionState;
     const scene = composeScene(sceneInput({ construction, testingMetric: "speed" }));
@@ -89,8 +90,8 @@ describe("composeScene", () => {
   });
   it("colours the selected candidate track by its force limit closeness before placement", () => {
     const samples = [
-      { distance: 20, x: 1, y: 1, z: 1, speed: 16, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
-      { distance: 21, x: 2, y: 1, z: 1, speed: 16, verticalG: 4.1, lateralG: 0, longitudinalG: 0, airtime: false },
+      { distance: 20, x: 1, y: 1, z: 1, speed: 16, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+      { distance: 21, x: 2, y: 1, z: 1, speed: 16, verticalG: 4.1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
     ];
     const limits = {
       minimumVerticalG: -1.5,
@@ -118,7 +119,7 @@ describe("composeScene", () => {
     expect(candidateRibbon?.color).toEqual([242 / 255, 181 / 255, 58 / 255, 1]);
   });
   it("highlights the ride window's point on the track without any builder report", () => {
-    const samples = [0, 1, 2].map((distance) => ({ distance, x: 1 + distance, y: 2, z: 0, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false }));
+    const samples = [0, 1, 2].map((distance): TestingSample => ({ distance, x: 1 + distance, y: 2, z: 0, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] }));
     const quads = composeScene(sceneInput({ rideHighlight: { samples, distance: 1.25 } })).geometryPasses[5](camera, viewport, atlas, "1");
     expect(quads.find(({ id }) => id === "testing-1")?.color).toEqual([58 / 255, 46 / 255, 88 / 255, 1]);
     expect(composeScene(sceneInput({})).geometryPasses[5](camera, viewport, atlas, "1").some(({ id }) => id.startsWith("testing-"))).toBe(false);
@@ -186,9 +187,9 @@ describe("composeScene", () => {
       previewSupports: new Float32Array(),
       testingReport: {
         samples: [
-          { distance: 0, x: 1, y: 2, z: 0, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
-          { distance: 1, x: 2, y: 2, z: 0, speed: 12, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
-          { distance: 2, x: 3, y: 2, z: 0, speed: 14, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false },
+          { distance: 0, x: 1, y: 2, z: 0, speed: 10, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+          { distance: 1, x: 2, y: 2, z: 0, speed: 12, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+          { distance: 2, x: 3, y: 2, z: 0, speed: 14, verticalG: 1, lateralG: 0, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
         ],
         proximityEvents: [],
       },

@@ -30,7 +30,7 @@ pub use testing::{
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};
 mod preview;
-pub use preview::{PreviewStatus, TrackPreview, preview_open_track};
+pub use preview::{PreviewCache, PreviewStatus, TrackPreview, preview_open_track};
 mod block_operation;
 pub use block_operation::BlockOperation;
 
@@ -463,8 +463,12 @@ impl Train {
     ) {
         self.step_block_brake_impl(circuit, brake_pieces, hold, 0, TIME_STEP);
     }
+    #[cfg(test)]
     fn step_preview(&mut self, circuit: &Circuit, time_step: f64) {
         self.step_block_brake_impl(circuit, &[], false, 1, time_step);
+    }
+    fn step_preview_all_cars(&mut self, circuit: &Circuit, time_step: f64) {
+        self.step_block_brake_impl(circuit, &[], false, self.cars, time_step);
     }
     fn step_block_brake_impl(
         &mut self,
@@ -716,3 +720,7 @@ fn rider_g(piece: &Piece, distance: f64, speed: f64, acceleration: f64) -> GForc
         longitudinal: force.dot(sample.tangent) / GRAVITY,
     }
 }
+
+pub mod force_evaluation;
+pub use force_evaluation::{EvaluatedForce, ForceEvaluator, ForceFilter};
+pub mod rated_piece;

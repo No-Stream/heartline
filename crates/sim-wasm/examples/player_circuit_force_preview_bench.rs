@@ -8,11 +8,19 @@ const WARMUP_RUNS: usize = 5;
 const MEASURED_RUNS: usize = 100;
 
 fn main() {
-    for (name, model_id, candidate, prefix_length) in [
+    let circuits = [
         ("Timber Tumbler", "model:hybrid", "Loop", 21),
         ("Velocity Viper", "model:velocity_viper", "Loop", 9),
         ("Briar Blitz", "model:wooden_twister", "SteelLoop", 11),
-    ] {
+    ];
+    for (name, model_id, _, _) in circuits {
+        measure_append_previews(name, model_id);
+    }
+    if std::env::args().any(|argument| argument == "--append-only") {
+        return;
+    }
+
+    for (name, model_id, candidate, prefix_length) in circuits {
         let mut complete = build_player_circuit(model_id, name, None);
         measure_preview(&mut complete, name);
         let mut simulation = build_player_circuit(model_id, name, Some(prefix_length));
@@ -27,13 +35,153 @@ fn main() {
         let speed_match: serde_json::Value =
             serde_json::from_str(&simulation.construction_speed_match_json(candidate, entry_speed))
                 .unwrap();
-        let selected = speed_match["recommendedId"].as_str().unwrap_or(candidate);
-        simulation.construction_select(selected);
-        measure_candidate_preview(&simulation, name, selected);
-        measure_speed_match(&simulation, name, selected, entry_speed);
-        measure_added_action_work(&simulation, name, selected, entry_speed, 1, "placement");
-        measure_added_action_work(&simulation, name, selected, entry_speed, 2, "selection");
+        let requested_candidate = speed_match["recommendedId"].as_str().unwrap_or(candidate);
+        let available_choices: serde_json::Value =
+            serde_json::from_str(&simulation.construction_choices()).unwrap();
+        let is_available = |id: &str| {
+            available_choices.as_array().is_some_and(|choices| {
+                choices
+                    .iter()
+                    .any(|choice| choice["id"] == id && choice["refusal"] == "")
+            })
+        };
+        let selected = if is_available(requested_candidate) {
+            requested_candidate.to_owned()
+        } else {
+            available_choices
+                .as_array()
+                .and_then(|choices| {
+                    choices
+                        .iter()
+                        .find(|choice| choice["refusal"] == "")
+                        .and_then(|choice| choice["id"].as_str())
+                })
+                .unwrap_or_else(|| {
+                    panic!("{name} has no valid candidate after the measured prefix")
+                })
+                .to_owned()
+        };
+        if selected != requested_candidate {
+            println!(
+                "{name}: speed-matched candidate {requested_candidate} is unavailable after the prefix; measuring available {selected} geometry"
+            );
+        }
+        simulation.construction_select(&selected);
+        assert!(
+            simulation.construction_preview_valid(),
+            "{name} {selected} must be a valid candidate at the measured prefix"
+        );
+        measure_candidate_preview(&simulation, name, &selected);
+        measure_speed_match(&simulation, name, candidate, entry_speed);
+        measure_added_action_work(&simulation, name, candidate, entry_speed, 1, "placement");
+        measure_added_action_work(&simulation, name, candidate, entry_speed, 2, "selection");
     }
+}
+
+fn measure_append_previews(name: &str, model_id: &str) {
+    let mut simulation = WasmSimulation::new(42, 0, "new".into());
+    simulation.construction_select(model_id);
+    simulation.construction_start(482, 498, 6, 2);
+
+    let header = format!("[{name}]");
+    let mut sections = CIRCUITS.split(&header);
+    sections.next().unwrap();
+    let section = sections
+        .next()
+        .unwrap_or_else(|| panic!("{name} circuit missing"));
+    assert!(sections.next().is_none(), "duplicate {name} circuit");
+    let mut append_latencies = Vec::new();
+    let mut placed_preview_latencies = Vec::new();
+    let mut candidate_preview_latencies = Vec::new();
+    let mut combined_preview_latencies = Vec::new();
+    let mut append_update_latencies = Vec::new();
+    let mut piece_count = 1;
+
+    for piece_name in section
+        .lines()
+        .map(str::trim)
+        .take_while(|line| !line.starts_with('['))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        match piece_name {
+            "+chain" => {
+                simulation.construction_set_chain(true);
+                black_box(simulation.construction_force_preview_json());
+                black_box(simulation.construction_candidate_force_preview_json());
+                continue;
+            }
+            "-chain" => {
+                simulation.construction_set_chain(false);
+                black_box(simulation.construction_force_preview_json());
+                black_box(simulation.construction_candidate_force_preview_json());
+                continue;
+            }
+            _ => {}
+        }
+
+        simulation.construction_select(piece_name);
+        black_box(simulation.construction_force_preview_json());
+        black_box(simulation.construction_candidate_force_preview_json());
+
+        let update_started_at = Instant::now();
+        let append_started_at = Instant::now();
+        simulation.construction_append();
+        let append_elapsed = append_started_at.elapsed();
+
+        let placed_preview_started_at = Instant::now();
+        let placed_preview = simulation.construction_force_preview_json();
+        let placed_preview_elapsed = placed_preview_started_at.elapsed();
+
+        let candidate_preview_started_at = Instant::now();
+        let candidate_preview = simulation.construction_candidate_force_preview_json();
+        let candidate_preview_elapsed = candidate_preview_started_at.elapsed();
+        let update_elapsed = update_started_at.elapsed();
+
+        piece_count += 1;
+        let track: serde_json::Value =
+            serde_json::from_str(&simulation.construction_track()).unwrap();
+        assert_eq!(track.as_array().unwrap().len(), piece_count);
+        assert!(
+            !serde_json::from_str::<serde_json::Value>(&placed_preview)
+                .unwrap()
+                .is_null()
+        );
+        assert!(
+            !serde_json::from_str::<serde_json::Value>(&candidate_preview)
+                .unwrap()
+                .is_null()
+        );
+        black_box((placed_preview, candidate_preview));
+        append_latencies.push(append_elapsed);
+        placed_preview_latencies.push(placed_preview_elapsed);
+        candidate_preview_latencies.push(candidate_preview_elapsed);
+        combined_preview_latencies.push(placed_preview_elapsed + candidate_preview_elapsed);
+        append_update_latencies.push(update_elapsed);
+    }
+
+    assert!(
+        !append_latencies.is_empty(),
+        "{name} circuit has no append actions"
+    );
+    append_latencies.sort_unstable();
+    placed_preview_latencies.sort_unstable();
+    candidate_preview_latencies.sort_unstable();
+    combined_preview_latencies.sort_unstable();
+    append_update_latencies.sort_unstable();
+    println!(
+        "{name}: {} appends; construction p95 {:.3} ms; placed preview p95 {:.3} ms; candidate preview p95 {:.3} ms; both previews p95 {:.3} ms; append update p95 {:.3} ms, max {:.3} ms",
+        append_latencies.len(),
+        milliseconds(percentile_95(&append_latencies)),
+        milliseconds(percentile_95(&placed_preview_latencies)),
+        milliseconds(percentile_95(&candidate_preview_latencies)),
+        milliseconds(percentile_95(&combined_preview_latencies)),
+        milliseconds(percentile_95(&append_update_latencies)),
+        milliseconds(append_update_latencies[append_update_latencies.len() - 1]),
+    );
+}
+
+fn percentile_95(sorted_elapsed: &[Duration]) -> Duration {
+    sorted_elapsed[(sorted_elapsed.len() * 95).div_ceil(100) - 1]
 }
 
 fn measure_added_action_work(

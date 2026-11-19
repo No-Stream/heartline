@@ -795,59 +795,63 @@ moments, a drop of at least 50 m and a top speed of at least 30 m/s. The circuit
 
 | Physics | Excitement | Intensity | Nausea | Peak vertical g | Minimum vertical g | Peak lateral g | Peak longitudinal g |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Default | 6.45 | 6.50 | 0.91 | 3.16 | −0.64 | 0.17 | 1.21 |
-| Construction test | 6.70 | 6.55 | 0.91 | 3.19 | −0.81 | 0.16 | 1.24 |
+| Default | 6.50 | 6.25 | 0.83 | 3.33 | −0.80 | 0.20 | 1.09 |
+| Construction test | 6.67 | 6.32 | 0.84 | 3.39 | −0.86 | 0.18 | 1.17 |
 
-The ride sits near the hyper archetype (6.62), clearly above the classic looper archetype (4.05) and Daisy Dash, and
-far below the wooden hybrid and wooden twister archetypes. It scores on long floater airtime (about 8 s over nine
-or ten moments) and sustained positive force rather than ejector peaks: entered 1.5 m/s inside their windows, the
-new 24 × 160 m and 20 × 128 m camelbacks crest at about −0.6 to −0.9 g instead of their −1.0 g design, and the
-smaller floater hills near zero g. The circuit needs nine trim and brake pieces because every hill returns to the
-same level, so friction alone cannot slow the train between hills with different windows. A crest fed straight
-from the chain lift is held to the design margin by the front car's entry speed, the way its rated window is
-measured, because the rear cars cross it as the front of the train falls away.
+The ride was redesigned on 2026-11-18 after the first drop, when TASK-126's narrower windows put the old 24 × 160 m
+camelback 0.2 m/s inside its window instead of 1.5 m/s. After the lift and drop it runs a trim, a turn banked for
+32 m/s and the 24 × 160 m camelback; a two-piece brake run and a turn banked for 28 m/s; the 20 × 128 m pair and a
+second 28 m/s turn; a trim and two 12 m hops built from gentle slope pieces; and a brake run around a 16 m/s turn
+into the station. It scores on long floater airtime (about 7.5 s over eight moments) and sustained positive force
+rather than ejector peaks. Entered 1.5 m/s inside their windows, the camelbacks crest at only about −0.4 to −0.6 g,
+because each floater window's maximum is the speed at which the worst car reaches −0.9 g. The hops reach −0.8 to
+−0.9 g but only for about 0.2 s, so no car holds −0.8 g for 0.3 s anywhere on the ride (the owner's airtime target);
+the strongest held airtime, −0.74 g, is the rear car over the first drop. The tightest margin is the second 28 m/s
+turn, entered 1.52 m/s above its window minimum under default physics. A crest fed straight from the chain lift is
+held to the design margin by the front car's entry speed, the way its rated window is measured, because the rear
+cars cross it as the front of the train falls away.
 Construction-test breakdown (`make circuit-report CIRCUIT="Horizon Hawk" ARGS=--construction-test`):
 
 ```text
 Score breakdown:
-Excitement: 6.70
-  airtime (+1.6, 2.4 s)
-  airtime moments (+0.7, 8.2)
-  positive forces (+1.0, 9.7 s)
+Excitement: 6.67
+  airtime (+1.8, 2.9 s)
+  airtime moments (+0.6, 7.5)
+  positive forces (+1.0, 7.3 s)
   lateral forces (+0.0, 0.0 s)
-  longitudinal forces (+0.2, 1.1 s)
+  longitudinal forces (+0.1, 0.3 s)
   excessive forces (-0.0, 0.0 s)
   inversions (+0.0, -0.0)
   top speed (+0.8, 22.6 m/s)
   biggest drop (+0.6, 64.0 m)
-  pace (+0.4, 13.1 m/s)
+  pace (+0.4, 13.2 m/s)
   launch (+0.0, 0.0 g)
   variety (+0.4, 2.0)
-  whip (+0.4, 5.4)
-  roll rate (+0.1, 10.8 degrees/s)
-  ride time (+0.7, 84.8 s)
-  short ride (-0.0, 84.8 s)
+  whip (+0.5, 7.4)
+  roll rate (+0.0, 9.3 degrees/s)
+  ride time (+0.6, 60.4 s)
+  short ride (-0.0, 60.4 s)
   proximity (+0.0, 0.0)
   theming (+0.0, 0.0)
-  dead time (-0.1, 1.9 s at Large left turn banked for 16 m/s)
+  dead time (-0.1, 2.4 s at Large left turn banked for 16 m/s)
   forces above the ASTM comfort envelope (-0.0, 0.0 g-s)
-  nausea (-0.0, 0.9)
+  nausea (-0.0, 0.8)
   minimum excitement (+0.0, 0.0)
-Intensity: 6.55
-  peak force (+2.2, 0.6 at Floater hill 8 × 64 m)
-  sustained force (+2.7, 13.2 s)
+Intensity: 6.32
+  peak force (+2.2, 0.6 at Begin gentle climb)
+  sustained force (+2.5, 10.5 s)
   excessive forces (+0.0, 0.0 s)
   top speed (+0.9, 24.6 m/s)
   biggest drop (+0.7, 64.0 m)
   launch (+0.0, 0.0 g)
   inversions (+0.0, 0.0)
   forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
-Nausea: 0.91
+Nausea: 0.84
   lateral forces (+0.0, 0.0 s)
   inversions (+0.0, -0.0)
   fast rolls (+0.0, 0.0 s)
   reversals (+0.0, 0.0)
-  strong positive forces (+0.9, 9.7 s)
+  strong positive forces (+0.8, 7.3 s)
   time inverted (+0.0, -0.0 s)
   excessive forces (+0.0, 0.0 s)
   forces above the ASTM comfort envelope (+0.0, 0.0 g-s)

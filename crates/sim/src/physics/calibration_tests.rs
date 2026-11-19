@@ -568,12 +568,13 @@ fn build_player_circuit(name: &str, entries: &[String]) -> (CoasterModel, super:
 
 #[test]
 fn calibration_table_recorder_uses_each_model_force_limits() {
-    let circuit = demo_circuit();
+    let circuit = shared_calibration_circuit();
+    let piece_index = 2;
     let scores = [hybrid_model(), wooden_twister_model()].map(|model| {
         let mut recorder = calibration_recorder(&circuit, &model);
         for _ in 0..400 {
             let reading = CarReading {
-                distance: circuit.starts[10],
+                distance: circuit.starts[piece_index],
                 speed: 10.0,
                 g: GForces {
                     vertical: 4.2,
@@ -584,7 +585,7 @@ fn calibration_table_recorder_uses_each_model_force_limits() {
                 height_m: 0.0,
                 inverted: false,
                 roll: 0.0,
-                piece_index: 10,
+                piece_index,
             };
             recorder.record(&[vec![reading; usize::from(model.train.cars)]], model.name);
         }
@@ -603,15 +604,60 @@ fn calibration_table_recorder_uses_each_model_force_limits() {
     assert!(excessive(&scores[1]) > 0.0);
 }
 
+fn shared_calibration_circuit() -> super::Circuit {
+    use PieceId::*;
+
+    let world = World::new(
+        128,
+        128,
+        Surface {
+            corners: [0; 4],
+            water: None,
+        },
+    );
+    let start = TrackState {
+        x: 50,
+        y: 50,
+        z: 5,
+        ..TrackState::origin()
+    };
+    let mut construction = Construction::new(start, hybrid_model());
+    for id in [
+        Station,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+        Straight,
+        TurnSmallStandalone,
+        TurnSmallStandalone,
+    ] {
+        construction
+            .append(id, &world, &[])
+            .unwrap_or_else(|error| panic!("shared calibration circuit rejects {id:?}: {error:?}"));
+    }
+    construction
+        .close()
+        .expect("shared calibration circuit closes");
+    let circuit = construction
+        .circuit()
+        .expect("closed calibration construction makes a circuit");
+    for model in [hybrid_model(), wooden_twister_model()] {
+        assert!(
+            circuit
+                .pieces()
+                .iter()
+                .all(|piece| model.allows_piece(piece)),
+            "{} does not allow every shared calibration circuit piece",
+            model.name
+        );
+    }
+    circuit
+}
+
 fn calibration_recorder(
     circuit: &super::Circuit,
     model: &CoasterModel,
 ) -> ConstructionTestRunRecorder {
-    ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
-        circuit,
-        &model.train,
-        model.comfortable_force_limits,
-    )
+    ConstructionTestRunRecorder::for_circuit_with_train_and_model(circuit, &model.train, model)
 }
 
 fn run_lap(circuit: &super::Circuit, model: &CoasterModel, initial_speed: f64) -> super::TestRun {
@@ -690,4 +736,54 @@ fn print_circuit(name: &str, report: &super::TestRun) {
             breakdown: report.breakdown.clone(),
         },
     );
+}
+
+#[test]
+fn incremental_force_preview_matches_fresh_player_circuit_prefixes() {
+    for (name, entries) in read_player_circuits() {
+        let (model, circuit) = build_player_circuit(&name, &entries);
+        let pieces = circuit.pieces();
+        let config = PhysicsConfig {
+            lift_speed: 5.0,
+            ..PhysicsConfig::default()
+        };
+        let mut cache = super::PreviewCache::default();
+        for length in (1..=pieces.len()).chain((1..pieces.len()).rev()) {
+            let track = &pieces[..length];
+            let cached = cache.preview(track, &model, config).unwrap();
+            let fresh = super::PreviewCache::default()
+                .preview(track, &model, config)
+                .unwrap();
+            assert_eq!(cached.status, fresh.status, "{name} length {length}");
+            assert_eq!(
+                cached.report.samples, fresh.report.samples,
+                "{name} length {length}"
+            );
+            assert_eq!(
+                cached.force_limit_exceeded, fresh.force_limit_exceeded,
+                "{name} length {length}"
+            );
+        }
+        let mut edited = pieces.to_vec();
+        let middle = edited.len() / 2;
+        edited[middle].kind = if edited[middle].kind == crate::track::PieceKind::Brakes {
+            crate::track::PieceKind::Track
+        } else {
+            crate::track::PieceKind::Brakes
+        };
+        cache.preview(pieces, &model, config).unwrap();
+        let cached = cache.preview(&edited, &model, config).unwrap();
+        let fresh = super::PreviewCache::default()
+            .preview(&edited, &model, config)
+            .unwrap();
+        assert_eq!(cached.status, fresh.status, "{name} middle edit");
+        assert_eq!(
+            cached.report.samples, fresh.report.samples,
+            "{name} middle edit"
+        );
+        assert_eq!(
+            cached.force_limit_exceeded, fresh.force_limit_exceeded,
+            "{name} middle edit"
+        );
+    }
 }

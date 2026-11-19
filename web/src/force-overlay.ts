@@ -30,7 +30,7 @@ export function limitBand(closeness: number): LimitBand {
 }
 
 export type ForceAxis = "airtime" | "vertical" | "lateral" | "longitudinal";
-export type ForceRating = "weak" | "good" | "great" | "fine" | "strong" | "too much" | "dangerous";
+export type ForceRating = "brief" | "weak" | "good" | "great" | "fine" | "strong" | "too much" | "dangerous";
 /** Rates a force in g on one axis. Airtime takes the vertical g itself. */
 export function rateForce(axis: ForceAxis, valueG: number, limits: ForceLimits): ForceRating {
   validateLimits(limits);
@@ -45,6 +45,25 @@ const AIRTIME_BELOW_G = 0.3;
 export function rateVertical(verticalG: number, limits: ForceLimits): { axis: "airtime" | "vertical"; rating: ForceRating } {
   const axis = verticalG < AIRTIME_BELOW_G ? "airtime" : "vertical";
   return { axis, rating: rateForce(axis, verticalG, limits) };
+}
+
+/** Rate the displayed filtered sample using the evaluator's per-axis violation flag. */
+function sampleForceRating(axis: ForceAxis, sample: TestingSample, limits: ForceLimits): ForceRating {
+  const axisIndex = axis === "vertical" || axis === "airtime" ? 0 : axis === "lateral" ? 1 : 2;
+  const value = axisIndex === 0 ? sample.verticalG : axisIndex === 1 ? sample.lateralG : sample.longitudinalG;
+  return evaluatedForceRating(axis, value, limits, sample.forceLimitExceeded[axisIndex]);
+}
+
+export function evaluatedForceRating(axis: ForceAxis, value: number, limits: ForceLimits, exceeded: boolean): ForceRating {
+  const rating = rateForce(axis, value, limits);
+  if (exceeded) return rating === "dangerous" ? rating : "too much";
+  return rating === "too much" || rating === "dangerous" ? "brief" : rating;
+}
+
+/** Colour the sample by its evaluator result, retaining closeness for nonviolations. */
+export function sampleLimitBand(sample: TestingSample, limits: ForceLimits): LimitBand {
+  if (sample.forceLimitExceeded.some(Boolean)) return "past";
+  return limitCloseness(sample, limits) >= NEAR_LIMIT_CLOSENESS ? "near" : "comfortable";
 }
 
 export type ForceLabelKind = "topSpeed" | "peakVertical" | "airtime" | "peakLateral" | "peakLongitudinal";
@@ -67,10 +86,10 @@ interface LabelAxis {
 }
 const labelAxes: readonly LabelAxis[] = [
   { kind: "topSpeed", score: (sample) => sample.speed, notable: (sample) => sample.speed > 0, pastLimit: () => false },
-  { kind: "peakVertical", score: (sample) => sample.verticalG, notable: (sample, limits) => rateForce("vertical", sample.verticalG, limits) !== "weak", pastLimit: (sample, limits) => sample.verticalG > limits.maximumVerticalG },
-  { kind: "airtime", score: (sample) => -sample.verticalG, notable: (sample) => sample.verticalG < AIRTIME_BELOW_G, pastLimit: (sample, limits) => sample.verticalG < limits.minimumVerticalG },
-  { kind: "peakLateral", score: (sample) => Math.abs(sample.lateralG), notable: (sample, limits) => rateForce("lateral", sample.lateralG, limits) !== "fine", pastLimit: (sample, limits) => Math.abs(sample.lateralG) > limits.maximumLateralG },
-  { kind: "peakLongitudinal", score: (sample) => Math.abs(sample.longitudinalG), notable: () => false, pastLimit: (sample, limits) => Math.abs(sample.longitudinalG) > limits.maximumLongitudinalG },
+  { kind: "peakVertical", score: (sample) => sample.verticalG, notable: (sample, limits) => rateForce("vertical", sample.verticalG, limits) !== "weak", pastLimit: (sample) => sample.forceLimitExceeded[0] && sample.verticalG >= AIRTIME_BELOW_G },
+  { kind: "airtime", score: (sample) => -sample.verticalG, notable: (sample) => sample.verticalG < AIRTIME_BELOW_G, pastLimit: (sample) => sample.forceLimitExceeded[0] && sample.verticalG < AIRTIME_BELOW_G },
+  { kind: "peakLateral", score: (sample) => Math.abs(sample.lateralG), notable: (sample, limits) => rateForce("lateral", sample.lateralG, limits) !== "fine", pastLimit: (sample) => sample.forceLimitExceeded[1] },
+  { kind: "peakLongitudinal", score: (sample) => Math.abs(sample.longitudinalG), notable: () => false, pastLimit: (sample) => sample.forceLimitExceeded[2] },
 ];
 
 /**
@@ -118,11 +137,11 @@ export function forceLabelText(label: ForceLabel, sample: TestingSample, limits:
   if (label.kind === "topSpeed") return formatSpeed(sample.speed, units, 0);
   if (label.kind === "peakVertical" || label.kind === "airtime") {
     const axis = label.kind === "airtime" ? "airtime" : "vertical";
-    return `${gText(sample.verticalG)} · ${rateForce(axis, sample.verticalG, limits)} ${axis}`;
+    return `${gText(sample.verticalG)} · ${sampleForceRating(axis, sample, limits)} ${axis}`;
   }
   const axis = label.kind === "peakLateral" ? "lateral" : "longitudinal";
   const value = axis === "lateral" ? sample.lateralG : sample.longitudinalG;
-  return `${gText(value)} · ${rateForce(axis, value, limits)} ${axis}`;
+  return `${gText(value)} · ${sampleForceRating(axis, sample, limits)} ${axis}`;
 }
 
 /** One line per value at a point of the estimate, each force with its rating. */
@@ -130,9 +149,9 @@ export function forceReadoutLines(sample: TestingSample, limits: ForceLimits, un
   const vertical = rateVertical(sample.verticalG, limits);
   return [
     { name: "Speed", value: formatSpeed(sample.speed, units) },
-    { name: "Vertical", value: `${gText(sample.verticalG)} · ${vertical.rating}${vertical.axis === "airtime" ? " airtime" : ""}` },
-    { name: "Lateral", value: `${gText(sample.lateralG)} · ${rateForce("lateral", sample.lateralG, limits)}` },
-    { name: "Longitudinal", value: `${gText(sample.longitudinalG)} · ${rateForce("longitudinal", sample.longitudinalG, limits)}` },
+    { name: "Vertical", value: `${gText(sample.verticalG)} · ${sampleForceRating(vertical.axis, sample, limits)}${vertical.axis === "airtime" ? " airtime" : ""}` },
+    { name: "Lateral", value: `${gText(sample.lateralG)} · ${sampleForceRating("lateral", sample, limits)}` },
+    { name: "Longitudinal", value: `${gText(sample.longitudinalG)} · ${sampleForceRating("longitudinal", sample, limits)}` },
   ];
 }
 
@@ -205,7 +224,7 @@ export function createForceOverlay(container: HTMLElement): {
   const renderHoverText = (): void => {
     const sample = hoverIndex === null ? undefined : estimate?.samples[hoverIndex];
     if (!sample || !estimate) { hoverReadout.replaceChildren(); return; }
-    const band = limitBand(limitCloseness(sample, estimate.limits));
+    const band = sampleLimitBand(sample, estimate.limits);
     hoverReadout.dataset.band = band;
     hoverReadout.replaceChildren(...forceReadoutLines(sample, estimate.limits, activeUnits).flatMap(({ name, value }) => {
       const term = document.createElement("span");

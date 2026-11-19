@@ -4,7 +4,7 @@ use theme_park_sim::physics::{
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::{
     PieceId, PieceKind, TrackState, catalog, family_coaster_model, hybrid_model, hyper_model,
-    multi_launch_model, wooden_twister_model,
+    multi_launch_model, rated_speeds, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -89,7 +89,7 @@ fn player_circuits_close() {
 fn daisy_dash_completes_a_test_ride_lap() {
     let model = family_coaster_model();
     let circuit = build_player_circuit("Daisy Dash", model.clone());
-    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, model.name))
         .expect("Daisy Dash test ride did not finish");
@@ -106,7 +106,7 @@ fn daisy_dash_completes_a_test_ride_lap() {
 fn horizon_hawk_completes_a_test_ride_lap() {
     let model = hyper_model();
     let circuit = build_player_circuit("Horizon Hawk", model.clone());
-    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, model.name))
         .expect("Horizon Hawk test ride did not finish");
@@ -123,7 +123,7 @@ fn horizon_hawk_completes_a_test_ride_lap() {
 fn timber_tumbler_completes_a_test_ride_lap() {
     let model = hybrid_model();
     let circuit = build_player_circuit("Timber Tumbler", model.clone());
-    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, model.name))
         .expect("Timber Tumbler test ride did not finish");
@@ -214,7 +214,7 @@ fn player_journeys_build_and_ride_both_top_hats() {
             .sum();
         let top_hat = &circuit.pieces()[top_hat_index];
         let top_hat_end = top_hat_start + top_hat.length();
-        let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+        let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
         let outcome = (0..200_000)
             .find_map(|_| run.step(&circuit, model.name))
             .unwrap_or_else(|| panic!("{name} test ride did not finish"));
@@ -237,7 +237,7 @@ fn player_journeys_build_and_ride_both_top_hats() {
                     .total_cmp(&(right.distance - top_hat_start).abs())
             })
             .unwrap();
-        let rated = top_hat.rated_speeds.unwrap();
+        let rated = rated_speeds(&model, top_hat).unwrap();
         assert!(
             (rated.minimum_entry..=rated.maximum_entry).contains(&entry_sample.speed),
             "{name} top-hat entry speed {} outside {rated:?}",
@@ -268,14 +268,8 @@ fn test_rides_keep_recorded_longitudinal_forces_physically_plausible() {
 fn timber_preview_agrees_with_closed_test_run() {
     let model = hybrid_model();
     let circuit = build_player_circuit("Timber Tumbler", model.clone());
-    let preview = preview_open_track(
-        circuit.pieces(),
-        &model.train,
-        PhysicsConfig::default(),
-        model.name,
-    )
-    .unwrap();
-    let mut run = CoasterRun::new(&circuit, &model.train, PhysicsConfig::default());
+    let preview = preview_open_track(circuit.pieces(), &model, PhysicsConfig::default()).unwrap();
+    let mut run = CoasterRun::new(&circuit, &model.train, &model, PhysicsConfig::default());
     let outcome = (0..200_000)
         .find_map(|_| run.step(&circuit, model.name))
         .unwrap();
@@ -315,7 +309,7 @@ fn assert_ride_force_bound(
     circuit: &theme_park_sim::physics::Circuit,
     model: &theme_park_sim::track::CoasterModel,
 ) {
-    let mut run = CoasterRun::new(circuit, &model.train, PhysicsConfig::default());
+    let mut run = CoasterRun::new(circuit, &model.train, model, PhysicsConfig::default());
     let outcome = (0..60_000).find_map(|_| run.step(circuit, model.name));
     let outcome = outcome.unwrap_or_else(|| panic!("{name} test ride did not finish"));
     let maximum_sample = outcome

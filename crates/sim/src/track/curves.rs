@@ -635,7 +635,8 @@ pub struct Piece {
     pub inversion: Option<Inversion>,
     pub heartlining: Option<Heartlining>,
     pub structure_material: Option<Material>,
-    pub rated_speeds: Option<RatedSpeeds>,
+    #[serde(rename = "rated_speeds")]
+    pub design_speeds: Option<RatedSpeeds>,
     pub family: Option<PieceFamily>,
     pub entry: TrackState,
     pub exit: TrackState,
@@ -875,6 +876,55 @@ fn speed_turn_geometry(radius: f64, design_speed: f64) -> &'static SpeedTurnGeom
 }
 
 impl Piece {
+    /// The roll-rate design rule for rated rolling pieces, in degrees per second.
+    pub const MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND: f64 = 200.0;
+
+    /// Peak roll rate in degrees per second on a rolled hill entered at `entry_speed`, with each car's speed set by
+    /// the mean height of an 18 m train of 6 or 12 cars.
+    pub fn rolled_hill_peak_roll_rate(&self, entry_speed: f64) -> f64 {
+        let Shape::RolledProfile(profile, twist) = &self.shape else {
+            panic!("{:?} is not a rolled hill", self.id)
+        };
+        let mut peak = 0.0_f64;
+        for index in 0..=2000 {
+            let distance = self.length() * f64::from(index) / 2000.0;
+            let t = self.parameter_at_distance(distance);
+            let (_, angle_first, _) = twist.sample(t * profile.length(), self.mirrored);
+            let roll_per_metre = angle_first * profile.length() / self.raw(t).1.length();
+            for cars in [6, 12] {
+                let spacing = 18.0 / cars as f64;
+                for car in 0..cars {
+                    let mean_height = (0..cars)
+                        .map(|other| {
+                            let other_distance = distance + (car as f64 - other as f64) * spacing;
+                            self.sample(other_distance.clamp(0.0, self.length()))
+                                .position
+                                .z
+                                - self.entry.position().z
+                        })
+                        .sum::<f64>()
+                        / cars as f64;
+                    let speed = (entry_speed.powi(2) - 2.0 * 9.81 * mean_height).sqrt();
+                    peak = peak.max((roll_per_metre * speed).abs().to_degrees());
+                }
+            }
+        }
+        peak
+    }
+
+    /// Peak roll rate in degrees per second along the piece at a constant `speed`.
+    pub fn constant_speed_peak_roll_rate(&self, speed: f64) -> f64 {
+        let step = self.length() / 4000.0;
+        let mut peak = 0.0_f64;
+        for index in 1..4000 {
+            let distance = f64::from(index) * step;
+            let before = self.sample(distance - step);
+            let after = self.sample(distance + step);
+            peak = peak.max((after.roll - before.roll).abs() * speed / (2.0 * step));
+        }
+        peak.to_degrees()
+    }
+
     fn speed_turn_frame(&self, design_speed: f64, t: f64) -> (Vec3, Vec3, Vec3, f64) {
         let forward = self.entry.tangent().unit();
         let left = Vec3::new(-forward.y, forward.x, 0.0);
@@ -1000,7 +1050,7 @@ impl Piece {
         hash.write_option(self.structure_material, |hash, material| {
             hash.write_u8(material as u8);
         });
-        hash.write_option(self.rated_speeds, |hash, speeds| {
+        hash.write_option(self.design_speeds, |hash, speeds| {
             hash.write_f64(speeds.minimum_entry);
             hash.write_f64(speeds.maximum_entry);
         });
@@ -1705,7 +1755,7 @@ mod shape_tests {
             inversion: None,
             heartlining: None::<Heartlining>,
             structure_material: None,
-            rated_speeds: None,
+            design_speeds: None,
             family: None,
             entry,
             exit: TrackState {
@@ -1875,41 +1925,13 @@ mod shape_tests {
             })
         }) {
             count += 1;
-            let Shape::RolledProfile(profile, twist) = &piece.shape else {
-                unreachable!()
-            };
-            let entry_speed = piece.rated_speeds.unwrap().maximum_entry;
-            let mut peak = 0.0_f64;
-            for index in 0..=2000 {
-                let distance = piece.length() * f64::from(index) / 2000.0;
-                let t = piece.parameter_at_distance(distance);
-                let (_, angle_first, _) = twist.sample(t * profile.length(), piece.mirrored);
-                let roll_per_metre = angle_first * profile.length() / piece.raw(t).1.length();
-                for cars in [6, 12] {
-                    let spacing = 18.0 / cars as f64;
-                    for car in 0..cars {
-                        let mean_height = (0..cars)
-                            .map(|other| {
-                                let other_distance =
-                                    distance + (car as f64 - other as f64) * spacing;
-                                piece
-                                    .sample(other_distance.clamp(0.0, piece.length()))
-                                    .position
-                                    .z
-                                    - piece.entry.position().z
-                            })
-                            .sum::<f64>()
-                            / cars as f64;
-                        let speed = (entry_speed.powi(2) - 2.0 * 9.81 * mean_height).sqrt();
-                        peak = peak.max((roll_per_metre * speed).abs().to_degrees());
-                    }
-                }
-            }
+            let entry_speed = piece.design_speeds.unwrap().maximum_entry;
+            let peak = piece.rolled_hill_peak_roll_rate(entry_speed);
             eprintln!(
                 "{:?} at {entry_speed:.2} m/s: {peak:.3} degrees/s",
                 piece.id
             );
-            if peak > 200.0 + 1e-6 {
+            if peak > Piece::MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND + 1e-6 {
                 failures.push((piece.id, peak));
             }
         }

@@ -3,7 +3,7 @@
 use super::Park;
 use super::tick::{add_proximity_and_theming, step_demo_train};
 use crate::physics::{Circuit, ConstructionTestRunRecorder, PhysicsConfig, TestRun, Train};
-use crate::track::{ComfortableForceLimits, TrainConfiguration, hybrid_model};
+use crate::track::{CoasterModel, TrainConfiguration, hybrid_model};
 
 const MAXIMUM_TEST_STEPS: u32 = 200_000;
 const STOPPED_STEPS_BEFORE_GIVING_UP: u32 = 200;
@@ -22,7 +22,7 @@ pub enum RideKey {
 fn run_test_to_outcome(
     circuit: &Circuit,
     train_configuration: &TrainConfiguration,
-    limits: ComfortableForceLimits,
+    model: &CoasterModel,
     model_key: &str,
     mut demo_circuit_and_train: Option<(&Circuit, Train)>,
 ) -> Result<TestRun, String> {
@@ -36,10 +36,10 @@ fn run_test_to_outcome(
         0.0,
         2.0,
     );
-    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_model(
         circuit,
         train_configuration,
-        limits,
+        model,
     );
     let mut slow_steps = 0;
     for _ in 0..MAXIMUM_TEST_STEPS {
@@ -103,7 +103,7 @@ impl Park {
         let mut report = run_test_to_outcome(
             &circuit,
             &model.train,
-            model.comfortable_force_limits,
+            model,
             model.name,
             self.demo_coaster
                 .as_ref()
@@ -138,13 +138,8 @@ impl Park {
             .as_ref()
             .ok_or("This park has no demo coaster")?;
         let model = hybrid_model();
-        let mut report = run_test_to_outcome(
-            &coaster.circuit,
-            &model.train,
-            model.comfortable_force_limits,
-            model.name,
-            None,
-        )?;
+        let mut report =
+            run_test_to_outcome(&coaster.circuit, &model.train, &model, model.name, None)?;
         let obstacles = self.proximity_obstacles();
         add_proximity_and_theming(
             &self.world,

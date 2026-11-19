@@ -1,8 +1,10 @@
 use super::*;
 use serde::Serialize;
 use theme_park_sim::park::ride_test::RideKey;
-use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun, preview_open_track};
-use theme_park_sim::track::{Bank, Hand, Heartlining, HillFeel, HillTwist, PieceFamily};
+use theme_park_sim::physics::{Circuit, PhysicsConfig, PreviewStatus, TestRun};
+use theme_park_sim::track::{
+    Bank, CoasterModel, Hand, Heartlining, HillFeel, HillTwist, PieceFamily,
+};
 use theme_park_sim::track::{ComfortableForceLimits, ForceRating, ForceRatingAxis};
 use ts_rs::TS;
 
@@ -98,6 +100,7 @@ pub(crate) fn testing_report(report: &TestRun, circuit: &Circuit) -> crate::repo
                 lateral_g: sample.lateral_g,
                 longitudinal_g: sample.longitudinal_g,
                 airtime: sample.airtime,
+                force_limit_exceeded: sample.force_limit_exceeded,
             }
         })
         .collect();
@@ -243,6 +246,10 @@ pub struct ConstructionLastPlacedForceWire {
     pub maximum_vertical_g: f64,
     pub maximum_absolute_lateral_g: f64,
     pub maximum_absolute_longitudinal_g: f64,
+    pub minimum_vertical_limit_exceeded: bool,
+    pub maximum_vertical_limit_exceeded: bool,
+    pub lateral_limit_exceeded: bool,
+    pub longitudinal_limit_exceeded: bool,
 }
 
 #[derive(Serialize, TS)]
@@ -304,8 +311,8 @@ fn hill_twist_wire(twist: Option<HillTwist>) -> &'static str {
     }
 }
 
-fn rated_speed_wire(piece: &Piece) -> Option<ConstructionRatedSpeedWire> {
-    piece.rated_speeds.map(|speeds| ConstructionRatedSpeedWire {
+fn rated_speed_wire(model: &CoasterModel, piece: &Piece) -> Option<ConstructionRatedSpeedWire> {
+    theme_park_sim::track::rated_speeds(model, piece).map(|speeds| ConstructionRatedSpeedWire {
         minimum_entry: speeds.minimum_entry,
         maximum_entry: speeds.maximum_entry,
     })
@@ -375,7 +382,18 @@ fn last_placed_force_wire(
     if samples.is_empty() {
         return None;
     }
+    let peak_flag = |value: fn(&crate::reports::TestingSample) -> f64, axis: usize| {
+        samples
+            .iter()
+            .max_by(|left, right| value(left).total_cmp(&value(right)))
+            .expect("nonempty samples")
+            .force_limit_exceeded[axis]
+    };
     Some(ConstructionLastPlacedForceWire {
+        minimum_vertical_limit_exceeded: peak_flag(|sample| -sample.vertical_g, 0),
+        maximum_vertical_limit_exceeded: peak_flag(|sample| sample.vertical_g, 0),
+        lateral_limit_exceeded: peak_flag(|sample| sample.lateral_g.abs(), 1),
+        longitudinal_limit_exceeded: peak_flag(|sample| sample.longitudinal_g.abs(), 2),
         maximum_speed: samples
             .iter()
             .map(|sample| sample.speed)
@@ -594,14 +612,12 @@ impl WasmSimulation {
     pub fn construction_force_preview(&self) -> Option<ConstructionForcePreviewWire> {
         let construction = self.construction.as_ref()?;
         let pieces = construction.pieces();
-        let preview = preview_open_track(
+        let preview = construction.force_preview(
             pieces,
-            &construction.model().train,
             PhysicsConfig {
                 lift_speed: 5.0,
                 ..PhysicsConfig::default()
             },
-            construction.model().name,
         )?;
         let samples: Vec<_> = preview
             .report
@@ -619,6 +635,7 @@ impl WasmSimulation {
                     lateral_g: sample.lateral_g,
                     longitudinal_g: sample.longitudinal_g,
                     airtime: sample.airtime,
+                    force_limit_exceeded: sample.force_limit_exceeded,
                 }
             })
             .collect();
@@ -706,26 +723,25 @@ impl WasmSimulation {
             )
         });
         let rated_speed =
-            theme_park_sim::track::effective_rated_speeds(first, &construction.model().train).map(
-                |speeds| ConstructionRatedSpeedWire {
+            theme_park_sim::track::rated_speeds(construction.model(), first).map(|speeds| {
+                ConstructionRatedSpeedWire {
                     minimum_entry: speeds.minimum_entry,
                     maximum_entry: speeds.maximum_entry,
-                },
-            );
+                }
+            });
         let start_distance: f64 = construction.pieces().iter().map(Piece::length).sum();
         let mut pieces = construction.pieces().to_vec();
         pieces.extend(candidate);
         let end_distance: f64 = pieces.iter().map(Piece::length).sum();
-        let preview = preview_open_track(
-            &pieces,
-            &construction.model().train,
-            PhysicsConfig {
-                lift_speed: 5.0,
-                ..PhysicsConfig::default()
-            },
-            construction.model().name,
-        )
-        .expect("construction contains a station");
+        let preview = construction
+            .force_preview(
+                &pieces,
+                PhysicsConfig {
+                    lift_speed: 5.0,
+                    ..PhysicsConfig::default()
+                },
+            )
+            .expect("construction contains a station");
         let samples: Vec<_> = preview
             .report
             .samples
@@ -742,6 +758,7 @@ impl WasmSimulation {
                     lateral_g: sample.lateral_g,
                     longitudinal_g: sample.longitudinal_g,
                     airtime: sample.airtime,
+                    force_limit_exceeded: sample.force_limit_exceeded,
                 }
             })
             .collect();
@@ -806,7 +823,7 @@ impl WasmSimulation {
                         height: family.height_metres,
                         span: family.span_metres,
                         twist: hill_twist_wire(family.twist),
-                        rated_speed: rated_speed_wire(piece),
+                        rated_speed: rated_speed_wire(&model, piece),
                     })
             })
             .collect();
@@ -984,7 +1001,7 @@ impl WasmSimulation {
                             Some(ConstructionHillEstimateWire {
                                 entry_speed: speed,
                                 source,
-                                rated_speed: rated_speed_wire(&piece),
+                                rated_speed: rated_speed_wire(construction.model(), &piece),
                                 minimum_vertical_g: forces
                                     .as_ref()
                                     .map(|force| force.minimum_vertical_g),
@@ -1669,10 +1686,10 @@ impl WasmSimulation {
             2.0,
         );
         self.construction_recorder = Some(
-            ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+            ConstructionTestRunRecorder::for_circuit_with_train_and_model(
                 &circuit,
                 &construction.model().train,
-                construction.model().comfortable_force_limits,
+                construction.model(),
             ),
         );
         self.construction_report = None;

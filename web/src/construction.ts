@@ -30,6 +30,7 @@ export interface ConstructionPanel {
   setUndergroundCutawayMode(mode: UndergroundCutawayMode): void;
   setHeightMarkers(track: string, station: string): void;
   setQueueNotice(notice: string): void;
+  setInputPending(pending: boolean): void;
 }
 
 const groupNames: Record<string, string> = { straight: "Straight", turn: "Turns", slope: "Slopes", bank: "Banks", inversion: "Inversions", special: "Special" };
@@ -340,6 +341,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const tabs = builderTabs.map(({ id }) => ({ id, tab: element<HTMLButtonElement>(`[data-builder-tab="${id}"]`), panel: element(`[data-builder-tabpanel="${id}"]`) }));
   let shapes = new Map<string, PieceShape>();
   let state: ConstructionState | undefined;
+  let inputPending = false;
+  function updateFinishControls(): void {
+    const unavailable = inputPending || !state?.complete;
+    finish.disabled = unavailable || !state?.canFinish;
+    confirmFinish.disabled = unavailable;
+    cancelFinish.disabled = unavailable;
+  }
   let paletteKey = "";
   let elementsKey = "";
   let trackKey = "";
@@ -966,6 +974,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       } else stepSelection(action.attribute, action.step);
     },
     setQueueNotice(notice) { element("[data-construction-queue]").textContent = notice; },
+    setInputPending(pending) {
+      inputPending = pending;
+      updateFinishControls();
+    },
     setDeleteMode(enabled) { deleteMode.checked = enabled; },
     setSelectedBlock(index) {
       if (index !== null && !state?.blockReport.sections.some((section) => section.editableIndex === index)) {
@@ -1008,6 +1020,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       close.classList.toggle("tool-panel__action--primary", next.canClose);
       finish.hidden = closed || next.finishPreview;
       renderFinishStatus(next);
+      updateFinishControls();
       finishConfirmation.hidden = closed || !next.finishPreview;
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");
       const focusInPalette = palette.contains(document.activeElement);

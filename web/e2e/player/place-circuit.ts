@@ -218,4 +218,5 @@ export async function placeCircuit(
     if (step.launchSpeed !== undefined) await setLaunchSpeed(page, step.launchSpeed);
     await options.onEstimate?.("placed", step, index);
   }
+  await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
 }

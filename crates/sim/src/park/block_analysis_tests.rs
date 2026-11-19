@@ -371,16 +371,12 @@ fn manual_layout_installation_waits_until_active_train_is_gone() {
 fn installing_a_live_layout_preserves_the_coaster_model_force_limits() {
     let mut park = block_test_park();
     let layout = unverified_layout(&park);
-    let limits = park
-        .construction
-        .as_ref()
-        .unwrap()
-        .model()
-        .comfortable_force_limits;
+    let model = park.construction.as_ref().unwrap().model().clone();
+    let limits = model.comfortable_force_limits;
     park.coaster_open = true;
     park.install_block_layout(layout.clone(), false);
 
-    let expected = crate::physics::BlockOperation::new_with_limits(layout, limits);
+    let expected = crate::physics::BlockOperation::new_with_limits(layout, &model, limits);
     assert_eq!(
         park.coaster_operation.as_ref().unwrap().state_hash(),
         expected.state_hash()
@@ -422,10 +418,10 @@ fn coaster_facility_uses_and_preserves_the_latest_front_car_ratings() {
     let (circuit, _) = construction_inputs(&park);
     let mut model = crate::track::hybrid_model();
     model.train.cars = 2;
-    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_limits(
+    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_model(
         &circuit,
         &model.train,
-        model.comfortable_force_limits,
+        &model,
     );
     let mut distance = 0.0;
     while distance < circuit.length() {

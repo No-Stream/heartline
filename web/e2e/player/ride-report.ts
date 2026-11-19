@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import type { TestingReport } from "../../src/generated/TestingReport";
+import { formatTestingNote } from "../../src/coaster-testing";
 import { groupScoreFindings, splitScoreFindings } from "../../src/score-findings";
 
 function hasOnlyFiniteNumbers(value: unknown): boolean {
@@ -30,8 +31,12 @@ export async function expectRideReportExplained(page: Page): Promise<TestingRepo
     await expect(testingPanel.locator('[data-score-finding="envelope"]')).toHaveCount(1);
     await expect(testingPanel.locator('[data-score-finding="envelope"] .testing-finding__text')).toContainText("ASTM");
   }
+  const selectedUnits = await page.locator("[data-units]").getAttribute("data-units");
+  if (selectedUnits !== "imperial" && selectedUnits !== "metric") {
+    throw new Error(`Unknown selected units in ride report: ${selectedUnits}`);
+  }
   for (const note of report.notes.filter((entry) => /ASTM/i.test(entry))) {
-    await expect(testingPanel.locator("[data-notes]")).toContainText(note);
+    await expect(testingPanel.locator("[data-notes]")).toContainText(formatTestingNote(note, selectedUnits));
   }
 
   return report;

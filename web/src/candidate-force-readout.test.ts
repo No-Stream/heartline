@@ -8,7 +8,7 @@ const preview = {
   samples: [],
   entrySpeed: 20,
   ratedSpeed: { minimumEntry: 19, maximumEntry: 21 },
-  peaks: { maximumSpeed: 22, minimumVerticalG: -0.5, maximumVerticalG: 3.4, maximumAbsoluteLateralG: 0.3, maximumAbsoluteLongitudinalG: 0.2 },
+  peaks: { maximumSpeed: 22, minimumVerticalG: -0.5, maximumVerticalG: 3.4, maximumAbsoluteLateralG: 0.3, maximumAbsoluteLongitudinalG: 0.2, minimumVerticalLimitExceeded: false, maximumVerticalLimitExceeded: false, lateralLimitExceeded: false, longitudinalLimitExceeded: false },
   limits: MODEL_FORCE_LIMITS["Briar Blitz"],
 };
 
@@ -32,6 +32,13 @@ describe("candidate force readout", () => {
       "Estimated maximum vertical force: 3.4 g (great)",
       "Estimated outer-bank lateral force: 0.3 g (fine); longitudinal force: 0.2 g (fine)",
     ]);
+  });
+
+  it("uses the corresponding peak flags to distinguish brief forces and violations", () => {
+    const lines = candidateForceReadout({ ...preview, peaks: { ...preview.peaks, minimumVerticalG: -1.2, maximumVerticalG: 4.2, maximumVerticalLimitExceeded: true, maximumAbsoluteLateralG: 2.0, lateralLimitExceeded: false } }, "metric");
+    expect(lines[2]).toContain("brief airtime");
+    expect(lines[3]).toContain("too much");
+    expect(lines[4]).toContain("brief");
   });
 
   it("reports when no size fits or the train cannot reach the piece", () => {

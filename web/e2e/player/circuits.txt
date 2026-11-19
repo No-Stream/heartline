@@ -216,7 +216,7 @@ Brakes
 Brakes
 
 [Horizon Hawk]
-# Straight chain lift to 64 m and the wide 60-degree first drop
+# Straight chain lift up 64 m and the wide 60-degree first drop
 +chain
 LevelToGentleUp
 GentleToSteepUp
@@ -227,34 +227,44 @@ GentleUpToLevel
 -chain
 WideLevelToSixtyDown
 WideSixtyDownToLevel
-# A trim at the bottom keeps the first camelback inside its window
+# A trim at the bottom and the turn banked for 32 m/s keep the 24 x 160 m camelback inside its window
 Brakes
-# The 24 x 160 m camelback, the turn banked for 32 m/s and two trims before the 20 x 128 m pair
-FloaterHill24x160
 SpeedTurnLarge32Left
+FloaterHill24x160
+# Mid-course brake run and the turn banked for 28 m/s
 Brakes
 Brakes
-FloaterHill20x128
-FloaterHill20x128
-# Turn banked for 28 m/s, a trim and a run of floater hills
 SpeedTurnLarge28Left
-Brakes
-FloaterHill16x112
-FloaterHill12x96
-FloaterHill12x96
-FloaterHill12x96
+# The 20 x 128 m camelback pair and the second turn banked for 28 m/s
 Straight
+Straight
+FloaterHill20x128
+FloaterHill20x128
+SpeedTurnLarge28Left
+# A trim, then two 12 m hops made of slope pieces for the sharpest airtime of the ride
 Brakes
-# Turn banked for 20 m/s and the low floater run back east
-SpeedTurnLarge20Left
-FloaterHill6x64
-FloaterHill6x64
-FloaterHill6x64
-FloaterHill8x64
-FloaterHill8x64
 Brakes
-# Last turn, banked for 16 m/s, and the brake run into the station
+LevelToGentleUp
+OneTileGentleUp
+OneTileGentleUp
+GentleUpToLevel
+LevelToGentleDown
+OneTileGentleDown
+OneTileGentleDown
+GentleDownToLevel
+LevelToGentleUp
+OneTileGentleUp
+OneTileGentleUp
+GentleUpToLevel
+LevelToGentleDown
+OneTileGentleDown
+OneTileGentleDown
+GentleDownToLevel
+# Brake run around the last turn, banked for 16 m/s, into the station
+Brakes
+Brakes
 SpeedTurnLarge16Left
+Brakes
 Brakes
 TerrainFall
 OneTileStraight

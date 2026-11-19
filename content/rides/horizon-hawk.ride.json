@@ -46,16 +46,25 @@
       "place": "Brakes"
     },
     {
-      "place": "FloaterHill24x160"
-    },
-    {
       "place": "SpeedTurnLarge32Left"
     },
     {
+      "place": "FloaterHill24x160"
+    },
+    {
       "place": "Brakes"
     },
     {
       "place": "Brakes"
+    },
+    {
+      "place": "SpeedTurnLarge28Left"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Straight"
     },
     {
       "place": "FloaterHill20x128"
@@ -70,46 +79,67 @@
       "place": "Brakes"
     },
     {
-      "place": "FloaterHill16x112"
-    },
-    {
-      "place": "FloaterHill12x96"
-    },
-    {
-      "place": "FloaterHill12x96"
-    },
-    {
-      "place": "FloaterHill12x96"
-    },
-    {
-      "place": "Straight"
-    },
-    {
       "place": "Brakes"
     },
     {
-      "place": "SpeedTurnLarge20Left"
+      "place": "LevelToGentleUp"
     },
     {
-      "place": "FloaterHill6x64"
+      "place": "OneTileGentleUp"
     },
     {
-      "place": "FloaterHill6x64"
+      "place": "OneTileGentleUp"
     },
     {
-      "place": "FloaterHill6x64"
+      "place": "GentleUpToLevel"
     },
     {
-      "place": "FloaterHill8x64"
+      "place": "LevelToGentleDown"
     },
     {
-      "place": "FloaterHill8x64"
+      "place": "OneTileGentleDown"
+    },
+    {
+      "place": "OneTileGentleDown"
+    },
+    {
+      "place": "GentleDownToLevel"
+    },
+    {
+      "place": "LevelToGentleUp"
+    },
+    {
+      "place": "OneTileGentleUp"
+    },
+    {
+      "place": "OneTileGentleUp"
+    },
+    {
+      "place": "GentleUpToLevel"
+    },
+    {
+      "place": "LevelToGentleDown"
+    },
+    {
+      "place": "OneTileGentleDown"
+    },
+    {
+      "place": "OneTileGentleDown"
+    },
+    {
+      "place": "GentleDownToLevel"
+    },
+    {
+      "place": "Brakes"
     },
     {
       "place": "Brakes"
     },
     {
       "place": "SpeedTurnLarge16Left"
+    },
+    {
+      "place": "Brakes"
     },
     {
       "place": "Brakes"
@@ -123,5 +153,18 @@
     {
       "close": true
     }
-  ]
+  ],
+  "expect": {
+    "excitement": [
+      6.0,
+      8.0
+    ],
+    "sustainedMaxVerticalG": [
+      3.0,
+      3.5
+    ],
+    "maxLateralG": 0.6,
+    "inversions": 0,
+    "airtimeMomentsAtLeast": 6
+  }
 }

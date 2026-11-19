@@ -210,11 +210,13 @@ fn save_uses_new_version_and_rejects_old_version() {
     let simulation = WasmSimulation::new(42, 20, String::from("demo"));
     let mut bytes = simulation.save_state().unwrap();
     assert_eq!(&bytes[..7], b"TPSAVE\x03");
-    bytes[6] = 1;
-    assert_eq!(
-        super::save::checked_payload(&bytes),
-        Err("Unsupported or invalid park save version")
-    );
+    for old_version in [1, 2] {
+        bytes[6] = old_version;
+        assert_eq!(
+            super::save::checked_payload(&bytes),
+            Err("Unsupported or invalid park save version")
+        );
+    }
 }
 
 #[test]

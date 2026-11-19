@@ -16,7 +16,7 @@ use crate::track::{
     CoasterColors, CoasterModel, Heartlining, HillFeel,
     LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
     LaunchSpeedBounds, Piece, PieceFamily, PieceId, PieceKind, Shape, SupportStyle, TrackState,
-    TrainConfiguration, Vec3, catalog,
+    TrainConfiguration, Vec3, catalog, rated_speeds,
 };
 use crate::world::World;
 use std::cell::{Cell, RefCell};
@@ -94,23 +94,13 @@ pub struct SpeedMatchedVariant {
 pub fn select_speed_matched_variant(
     candidates: &[Piece],
     entry_speed: f64,
-) -> Option<SpeedMatchedVariant> {
-    select_speed_matched_variant_with_windows(candidates, entry_speed, -1.5, |piece| {
-        piece.rated_speeds
-    })
-}
-
-pub fn select_speed_matched_variant_for_train(
-    candidates: &[Piece],
-    entry_speed: f64,
-    train: &super::TrainConfiguration,
-    limits: super::ComfortableForceLimits,
+    model: &CoasterModel,
 ) -> Option<SpeedMatchedVariant> {
     select_speed_matched_variant_with_windows(
         candidates,
         entry_speed,
-        limits.minimum_vertical_g,
-        |piece| super::effective_rated_speeds(piece, train),
+        model.comfortable_force_limits.minimum_vertical_g,
+        |piece| rated_speeds(model, piece),
     )
 }
 
@@ -236,6 +226,8 @@ pub struct Construction {
     choices_cache: RefCell<Option<ChoicesCache>>,
     #[serde(skip)]
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
+    #[serde(skip)]
+    force_preview_cache: RefCell<crate::physics::PreviewCache>,
     /// `state_hash` of the current editable state; every mutation of a hashed field clears it.
     #[serde(skip)]
     state_hash_memo: Cell<Option<u64>>,
@@ -266,6 +258,7 @@ impl Construction {
             validation_cache: RefCell::new(None),
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
+            force_preview_cache: RefCell::new(crate::physics::PreviewCache::default()),
             state_hash_memo: Cell::new(None),
             #[cfg(test)]
             support_cache_misses: Cell::new(0),
@@ -276,6 +269,15 @@ impl Construction {
 
     pub fn start(&self) -> TrackState {
         self.start
+    }
+    pub fn force_preview(
+        &self,
+        pieces: &[Piece],
+        config: crate::physics::PhysicsConfig,
+    ) -> Option<crate::physics::TrackPreview> {
+        self.force_preview_cache
+            .borrow_mut()
+            .preview(pieces, &self.model, config)
     }
     pub fn end(&self) -> TrackState {
         self.pieces.last().map_or(self.start, |piece| piece.exit)
@@ -383,6 +385,15 @@ impl Construction {
     }
 
     pub fn choices(&self, world: &World, obstacles: &[SupportObstacle]) -> Vec<PieceChoice> {
+        self.choices_with_rated_speeds(world, obstacles, rated_speeds)
+    }
+
+    fn choices_with_rated_speeds(
+        &self,
+        world: &World,
+        obstacles: &[SupportObstacle],
+        rated_speeds_for_piece: impl Fn(&CoasterModel, &Piece) -> Option<super::RatedSpeeds>,
+    ) -> Vec<PieceChoice> {
         if let Some(cache) = self.choices_cache.borrow().as_ref() {
             if cache.state_hash == self.state_hash()
                 && cache.world_id == world.instance_id()
@@ -433,7 +444,10 @@ impl Construction {
                 continue;
             }
             let template = template_for(base.id, self.end());
-            let placed = self.model_placeable_geometry(template);
+            let placed = self
+                .model_placeable_geometry_with_rated_speeds(template, |model, piece| {
+                    rated_speeds_for_piece(model, piece)
+                });
             let mut would_tunnel = false;
             let (result, validation) = if self.closed {
                 (Err(ConstructionError::Closed), None)
@@ -698,7 +712,20 @@ impl Construction {
     }
 
     fn model_placeable_geometry(&self, template: &Piece) -> Result<Piece, ConstructionError> {
+        self.model_placeable_geometry_with_rated_speeds(template, rated_speeds)
+    }
+
+    fn model_placeable_geometry_with_rated_speeds(
+        &self,
+        template: &Piece,
+        rated_speeds_for_piece: impl FnOnce(&CoasterModel, &Piece) -> Option<super::RatedSpeeds>,
+    ) -> Result<Piece, ConstructionError> {
         if !self.model.allows_piece(template) {
+            return Err(ConstructionError::ModelForbidden);
+        }
+        if template.design_speeds.is_some()
+            && rated_speeds_for_piece(&self.model, template).is_none()
+        {
             return Err(ConstructionError::ModelForbidden);
         }
         let piece = template

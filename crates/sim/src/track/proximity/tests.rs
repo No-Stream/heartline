@@ -86,6 +86,7 @@ fn speed_samples(speed: f64, length: usize) -> Vec<TestSample> {
             lateral_g: 0.0,
             longitudinal_g: 0.0,
             airtime: false,
+            force_limit_exceeded: [false; 3],
             height_m: 0.0,
             inverted: false,
             roll: 0.0,

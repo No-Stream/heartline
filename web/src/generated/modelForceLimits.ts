@@ -120,8 +120,8 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "good",
-          "upTo": 0.9,
-          "inclusive": true
+          "upTo": 0.6,
+          "inclusive": false
         },
         {
           "rating": "great",

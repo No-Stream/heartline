@@ -12,8 +12,14 @@ use super::{
 
 /// Diagonal templates stretch horizontally by sqrt(2) so all endpoints stay on the grid.
 pub fn catalog() -> &'static [Piece] {
-    static CATALOG: LazyLock<Vec<Piece>> = LazyLock::new(build_catalog);
-    &CATALOG
+    unmeasured_catalog()
+}
+
+/// The catalog geometry and design windows that seed measured-window generation.
+#[doc(hidden)]
+pub fn unmeasured_catalog() -> &'static [Piece] {
+    static UNMEASURED_CATALOG: LazyLock<Vec<Piece>> = LazyLock::new(build_catalog);
+    &UNMEASURED_CATALOG
 }
 
 fn rolled_inversion_minimum_entry(piece: &Piece) -> f64 {
@@ -46,55 +52,6 @@ fn rolled_inversion_minimum_entry(piece: &Piece) -> f64 {
         })
         .fold(f64::NEG_INFINITY, f64::max);
     (2.0 * GRAVITY * (maximum_mean_height - initial_height) + MINIMUM_SPEED.powi(2)).sqrt()
-}
-
-pub fn effective_rated_speeds(
-    piece: &Piece,
-    train: &super::TrainConfiguration,
-) -> Option<RatedSpeeds> {
-    let mut rated = piece.rated_speeds?;
-    if !matches!(
-        piece.id,
-        PieceId::ZeroGRollFastLeft
-            | PieceId::ZeroGRollFastRight
-            | PieceId::ZeroGRollCompactLeft
-            | PieceId::ZeroGRollCompactRight
-            | PieceId::StallLeft
-            | PieceId::StallRight
-    ) {
-        return Some(rated);
-    }
-    assert!(train.cars > 0 && train.length_metres.is_finite() && train.length_metres > 0.0);
-    // Preserve the catalog value bit-for-bit for existing default-train replays.
-    if train.cars == 6 && train.length_metres == 18.0 {
-        return Some(rated);
-    }
-    const SAMPLE_SPACING: f64 = 0.05;
-    let steps = ((piece.length() + train.length_metres) / SAMPLE_SPACING).ceil() as usize;
-    let heights: Vec<_> = (0..=steps)
-        .map(|index| {
-            piece
-                .sample((index as f64 * SAMPLE_SPACING).min(piece.length()))
-                .position
-                .z
-        })
-        .collect();
-    let spacing_steps =
-        (train.length_metres / f64::from(train.cars) / SAMPLE_SPACING).round() as usize;
-    let maximum_mean_height = (0..=steps)
-        .map(|front| {
-            (0..usize::from(train.cars))
-                .map(|car| heights[front.saturating_sub(car * spacing_steps)])
-                .sum::<f64>()
-                / f64::from(train.cars)
-        })
-        .fold(f64::NEG_INFINITY, f64::max);
-    rated.minimum_entry = (2.0 * GRAVITY * (maximum_mean_height - heights[0]) + 36.0).sqrt();
-    assert!(
-        rated.minimum_entry <= rated.maximum_entry,
-        "configured train has no valid rated speed window"
-    );
-    Some(rated)
 }
 
 fn build_catalog() -> Vec<Piece> {
@@ -798,7 +755,7 @@ fn build_catalog() -> Vec<Piece> {
                         _ => None,
                     },
                     structure_material: None,
-                    rated_speeds: match id {
+                    design_speeds: match id {
                         LevelToSixtyDown => Some(RatedSpeeds {
                             minimum_entry: 5.0,
                             maximum_entry: 19.0,
@@ -941,7 +898,7 @@ fn build_catalog() -> Vec<Piece> {
         piece.exit.y = 2;
         piece.exit.z = 0;
         piece.shape = Shape::Profile(profile.clone());
-        piece.rated_speeds = Some(profile.rated_speeds(name, maximum_entry, 1.5, model_radius));
+        piece.design_speeds = Some(profile.rated_speeds(name, maximum_entry, 1.5, model_radius));
         piece.structure_material = material;
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
         piece.clear_arc_table();
@@ -1208,7 +1165,7 @@ fn build_catalog() -> Vec<Piece> {
             TwisterHelixLeft => piece.exit.z = -4,
             HybridOverbankLeft => {
                 piece.shape = Shape::Overbank;
-                piece.rated_speeds = Some(RatedSpeeds {
+                piece.design_speeds = Some(RatedSpeeds {
                     minimum_entry: 5.0,
                     maximum_entry: 13.0,
                 });
@@ -1218,7 +1175,7 @@ fn build_catalog() -> Vec<Piece> {
                     bump: 2.0,
                     peak: std::f64::consts::FRAC_PI_2,
                 };
-                piece.rated_speeds = Some(RatedSpeeds {
+                piece.design_speeds = Some(RatedSpeeds {
                     minimum_entry: 8.0,
                     maximum_entry: 23.0,
                 });
@@ -1418,7 +1375,7 @@ fn build_catalog() -> Vec<Piece> {
         } else {
             piece.shape = Shape::Roll(Arc::clone(&BANKED_DROP));
         }
-        piece.rated_speeds = Some(match id {
+        piece.design_speeds = Some(match id {
             BankedDropLeft | BankedDropRight | TwistedDropLeft | TwistedDropRight => RatedSpeeds {
                 minimum_entry: 12.0,
                 maximum_entry: 15.0,
@@ -1485,7 +1442,7 @@ fn build_catalog() -> Vec<Piece> {
         piece.id = id;
         piece.name = name;
         piece.exit.x = (profile.endpoint()[0] / 2.0).round() as i32;
-        piece.rated_speeds = Some(profile.rated_speeds(name, maximum_entry, 2.0, 8.0));
+        piece.design_speeds = Some(profile.rated_speeds(name, maximum_entry, 2.0, 8.0));
         piece.shape = Shape::Profile(profile);
         piece.tangent_scale = (piece.exit.position() - piece.entry.position()).length();
         piece.clear_arc_table();
@@ -1702,7 +1659,7 @@ fn build_catalog() -> Vec<Piece> {
         piece.exit.x = (endpoint[0] / 2.0).round() as i32;
         piece.exit.z = (endpoint[1] / 2.0).round() as i32;
         piece.shape = Shape::Profile(profile);
-        piece.rated_speeds = Some(rated_speeds);
+        piece.design_speeds = Some(rated_speeds);
         piece.family = Some(PieceFamily::Hill(HillFamily {
             feel,
             height_metres,
@@ -1819,7 +1776,7 @@ fn build_catalog() -> Vec<Piece> {
             };
             family.twist = Some(twist);
             piece.heartlining = Some(Heartlining::Heartlined);
-            let rated = piece.rated_speeds.as_mut().unwrap();
+            let rated = piece.design_speeds.as_mut().unwrap();
             // The train needs more entry energy when its rear cars are below a steep crest.
             rated.minimum_entry += 1.0;
             assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
@@ -1910,7 +1867,7 @@ fn build_catalog() -> Vec<Piece> {
             let mut rated = profile.rated_speeds(profile_name, design.design_speed, 2.0, 8.0);
             rated.minimum_entry = rolled_inversion_minimum_entry(&piece);
             assert!(rated.maximum_entry - rated.minimum_entry >= 2.0);
-            piece.rated_speeds = Some(rated);
+            piece.design_speeds = Some(rated);
             pieces.push(piece);
         }
     }
@@ -2017,7 +1974,7 @@ fn build_catalog() -> Vec<Piece> {
             hand,
             design_speed_metres_per_second: design_speed,
         });
-        piece.rated_speeds = Some(RatedSpeeds {
+        piece.design_speeds = Some(RatedSpeeds {
             minimum_entry: design_speed - 3.0,
             maximum_entry: design_speed + 3.0,
         });
@@ -2032,7 +1989,7 @@ fn build_catalog() -> Vec<Piece> {
         piece.name = name;
         piece.entry.bank = bank;
         piece.exit.bank = bank;
-        piece.rated_speeds = Some(RatedSpeeds {
+        piece.design_speeds = Some(RatedSpeeds {
             minimum_entry: 5.0,
             maximum_entry: 30.0,
         });
@@ -2052,12 +2009,20 @@ fn build_catalog() -> Vec<Piece> {
         piece.exit.x = 16;
         piece.tangent_scale *= 2.0;
         piece.shape = Shape::Roll(Arc::new(RollGeometry::spline()));
-        piece.rated_speeds = Some(RatedSpeeds {
+        piece.design_speeds = Some(RatedSpeeds {
             minimum_entry: 5.0,
             maximum_entry: 30.0,
         });
         piece.clear_arc_table();
         pieces.push(piece);
+    }
+    for piece in &mut pieces {
+        if matches!(piece.id, BankLeft | UnbankLeft | BankRight | UnbankRight) {
+            piece.design_speeds = Some(RatedSpeeds {
+                minimum_entry: 5.0,
+                maximum_entry: 30.0,
+            });
+        }
     }
     let bank_transition_ids = [
         BankLeft,
@@ -2086,10 +2051,10 @@ fn build_catalog() -> Vec<Piece> {
                 if slope == UpGentle {
                     match piece.id {
                         BankedStraightLeft | BankedStraightRight => {
-                            transition.rated_speeds.as_mut().unwrap().minimum_entry = 20.0
+                            transition.design_speeds.as_mut().unwrap().minimum_entry = 20.0
                         }
                         RolloutLeft | RolloutRight => {
-                            transition.rated_speeds.as_mut().unwrap().minimum_entry = 22.0
+                            transition.design_speeds.as_mut().unwrap().minimum_entry = 22.0
                         }
                         _ => {}
                     }

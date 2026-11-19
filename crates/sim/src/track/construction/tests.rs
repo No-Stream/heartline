@@ -224,13 +224,8 @@ fn viper_can_build_a_launch_to_fifty_metres_per_second() {
             .unwrap();
         construction.set_launch_intensity(index, target).unwrap();
     }
-    let preview = preview_open_track(
-        construction.pieces(),
-        &model.train,
-        PhysicsConfig::default(),
-        model.name,
-    )
-    .unwrap();
+    let preview =
+        preview_open_track(construction.pieces(), &model, PhysicsConfig::default()).unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let last_sample = preview.report.samples.last().unwrap();
     let peak_force = preview
@@ -301,6 +296,94 @@ fn choices_report_model_and_connector_rejections() {
             .unwrap()
             .result,
         Err(ConstructionError::Unavailable)
+    );
+}
+
+#[test]
+fn unavailable_rated_piece_uses_the_model_forbidden_construction_path() {
+    let template = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::BankedStraightLeft)
+        .expect("catalog contains a banked straight");
+    let allowed_construction = Construction::new(start(), hybrid_model());
+    assert!(allowed_construction.model.allows_piece(template));
+    assert_eq!(
+        allowed_construction
+            .model_placeable_geometry_with_rated_speeds(template, |_, _| None)
+            .unwrap_err(),
+        ConstructionError::ModelForbidden
+    );
+
+    let mut restricted_model = hybrid_model();
+    restricted_model
+        .allowed_pieces
+        .retain(|piece_id| *piece_id != PieceId::BankedStraightLeft);
+    let restricted_construction = Construction::new(start(), restricted_model);
+    assert_eq!(
+        restricted_construction
+            .model_placeable_geometry_with_rated_speeds(template, |_, _| {
+                panic!("unrated lookup must not run for a model-forbidden piece")
+            })
+            .unwrap_err(),
+        ConstructionError::ModelForbidden
+    );
+}
+
+#[test]
+fn unavailable_rated_piece_is_not_offered_as_a_placeable_choice() {
+    let normal_world = world();
+    let mut normal_construction = Construction::new(start(), hybrid_model());
+    normal_construction
+        .append(PieceId::BankLeft, &normal_world, &[])
+        .expect("left bank transition is placeable");
+    let normal_choices = normal_construction.choices(&normal_world, &[]);
+    assert_eq!(
+        normal_choices
+            .iter()
+            .find(|choice| choice.id == PieceId::BankedStraightLeft)
+            .expect("matching left-banked straight appears in catalog choices")
+            .result,
+        Ok(())
+    );
+    assert!(
+        normal_construction
+            .available_choices(&normal_world, &[])
+            .iter()
+            .any(|(piece, _)| piece.id == PieceId::BankedStraightLeft),
+        "the allowed piece is normally placeable after its matching bank transition"
+    );
+
+    let unavailable_world = world();
+    let mut unavailable_construction = Construction::new(start(), hybrid_model());
+    unavailable_construction
+        .append(PieceId::BankLeft, &unavailable_world, &[])
+        .expect("left bank transition is placeable");
+    let unavailable_choices = unavailable_construction.choices_with_rated_speeds(
+        &unavailable_world,
+        &[],
+        |model, piece| {
+            if piece.id == PieceId::BankedStraightLeft {
+                None
+            } else {
+                rated_speeds(model, piece)
+            }
+        },
+    );
+
+    assert_eq!(
+        unavailable_choices
+            .iter()
+            .find(|choice| choice.id == PieceId::BankedStraightLeft)
+            .expect("banked straight remains visible in catalog choices")
+            .result,
+        Err(ConstructionError::ModelForbidden)
+    );
+    assert!(
+        unavailable_construction
+            .available_choices(&unavailable_world, &[])
+            .iter()
+            .all(|(piece, _)| piece.id != PieceId::BankedStraightLeft),
+        "a banked straight with an explicitly unavailable window is not placeable"
     );
 }
 

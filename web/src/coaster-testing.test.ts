@@ -5,9 +5,9 @@ import { LIMIT_BAND_COLORS } from "./force-overlay";
 import { MODEL_FORCE_LIMITS } from "./generated/modelForceLimits";
 
 const samples: TestingSample[] = [
-  { distance: 0, x: 2, y: 3, z: 1, speed: 4, verticalG: 1, lateralG: 0.2, longitudinalG: 0, airtime: false },
-  { distance: 1, x: 3, y: 3, z: 1, speed: 12, verticalG: -0.2, lateralG: 0.5, longitudinalG: 0.1, airtime: true },
-  { distance: 2, x: 4, y: 3, z: 1, speed: 20, verticalG: 3, lateralG: 1, longitudinalG: -0.1, airtime: false },
+  { distance: 0, x: 2, y: 3, z: 1, speed: 4, verticalG: 1, lateralG: 0.2, longitudinalG: 0, airtime: false, forceLimitExceeded: [false, false, false] },
+  { distance: 1, x: 3, y: 3, z: 1, speed: 12, verticalG: -0.2, lateralG: 0.5, longitudinalG: 0.1, airtime: true, forceLimitExceeded: [false, false, false] },
+  { distance: 2, x: 4, y: 3, z: 1, speed: 20, verticalG: 3, lateralG: 1, longitudinalG: -0.1, airtime: false, forceLimitExceeded: [false, false, false] },
 ];
 const camera = { centerX: 3, centerY: 3, zoom: 1, rotation: 0 as const };
 const viewport = { width: 800, height: 500 };
@@ -79,7 +79,7 @@ describe("coaster testing overlay", () => {
   });
   it("describes the latest estimated forces, limit violations, and a stalled train", () => {
     const limits = woodLimits;
-    const estimate = { samples: [samples[0], { ...samples[1], verticalG: -2.5, lateralG: -2 }], completed: false, status: "stalled" as const, limits, launches: [], lastPlaced: { maximumSpeed: 12, minimumVerticalG: -2.5, maximumVerticalG: 1, maximumAbsoluteLateralG: 2, maximumAbsoluteLongitudinalG: 0.1 } };
+    const estimate = { samples: [samples[0], { ...samples[1], verticalG: -2.5, lateralG: -2, forceLimitExceeded: [true, true, false] as [boolean, boolean, boolean] }], completed: false, status: "stalled" as const, limits, launches: [], lastPlaced: { maximumSpeed: 12, minimumVerticalG: -2.5, maximumVerticalG: 1, maximumAbsoluteLateralG: 2, maximumAbsoluteLongitudinalG: 0.1, minimumVerticalLimitExceeded: false, maximumVerticalLimitExceeded: false, lateralLimitExceeded: false, longitudinalLimitExceeded: false } };
     expect(formatConstructionEstimate(estimate, "metric")).toContain("43.2 km/h");
     expect(formatConstructionEstimate(estimate, "metric")).toContain("−2.5–1.0 g");
     expect(formatConstructionEstimate(estimate, "metric")).toContain("vertical and lateral");
@@ -89,7 +89,7 @@ describe("coaster testing overlay", () => {
     expect(formatConstructionEstimate({ ...estimate, status: "timedOut" }, "imperial")).toContain("timed out. Last recorded distance: 3 ft");
     expect(formatConstructionEstimate(estimate, "metric")).toContain("Last placed piece");
     expect(formatConstructionEstimate({ ...estimate, samples: [samples[0]], completed: true, status: "reachedEnd" }, "metric")).not.toContain("comfortable limits");
-    const laterPeak = { ...samples[2], verticalG: 6, lateralG: 0, longitudinalG: 2 };
+    const laterPeak = { ...samples[2], verticalG: 6, lateralG: 0, longitudinalG: 2, forceLimitExceeded: [true, false, true] as [boolean, boolean, boolean] };
     const warning = formatConstructionEstimate({ ...estimate, samples: [...estimate.samples, laterPeak] }, "metric");
     expect(warning).toContain("vertical 6.0 g at 2 m (limit 4.0 g)");
     expect(warning).toContain("longitudinal 2.0 g at 2 m (absolute limit 1.5 g)");
@@ -156,7 +156,7 @@ describe("coaster testing overlay", () => {
 
   it("marks force-limit violations on the corresponding force ribbon", () => {
     const limits = woodLimits;
-    const readings = [{ ...samples[0], verticalG: -2, lateralG: 2 }, samples[1], samples[2]];
+    const readings = [{ ...samples[0], verticalG: -2, lateralG: 2, forceLimitExceeded: [true, true, false] as [boolean, boolean, boolean] }, samples[1], samples[2]];
     const vertical = buildTestingRibbon(readings, "verticalG", camera, viewport, style, undefined, limits);
     const lateral = buildTestingRibbon(readings, "lateralG", camera, viewport, style, undefined, limits);
     expect(vertical[0].color).toEqual([0.85, 0.1, 0.1, 1]);
@@ -168,8 +168,8 @@ describe("coaster testing overlay", () => {
 
   it("colours limit closeness by band and outlines stretches past a limit in ink", () => {
     const limits = steelLimits;
-    const at = (distance: number, verticalG: number): TestingSample => ({ ...samples[0], distance, x: 2 + distance, verticalG, lateralG: 0 });
-    const quads = buildTestingRibbon([at(0, 1), at(1, 1), at(2, -1.3), at(3, -1.3), at(4, 6)], "limitCloseness", camera, viewport, style, undefined, limits);
+    const at = (distance: number, verticalG: number, exceeded = false): TestingSample => ({ ...samples[0], distance, x: 2 + distance, verticalG, lateralG: 0, forceLimitExceeded: [exceeded, false, false] });
+    const quads = buildTestingRibbon([at(0, 1), at(1, 1), at(2, -1.3), at(3, -1.3), at(4, 6, true)], "limitCloseness", camera, viewport, style, undefined, limits);
     const colorOf = (hex: string): number[] => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255).concat(1);
     expect(quads.map((quad) => quad.color)).toEqual([
       colorOf(LIMIT_BAND_COLORS.comfortable), colorOf(LIMIT_BAND_COLORS.near), colorOf(LIMIT_BAND_COLORS.near),
@@ -226,6 +226,9 @@ describe("coaster testing overlay", () => {
   });
 
   it("formats measured values in ride testing notes using the selected units", () => {
+    const note = "At Standalone small left turn (447.0 m along the track), lateral force magnitude was 7.5 g, above the 3.0 g limit. High forces exceeded the estimated ASTM F2291 comfort envelope for 2.8 s total during this car's ride. Lower speeds or gentler transitions can improve comfort.";
+    expect(formatTestingNote(note, "metric")).toContain("(447 m along the track)");
+    expect(formatTestingNote(note, "imperial")).toContain("(1,467 ft along the track)");
     expect(formatTestingNote(
       "At Loop (200.0 m along the track), vertical force magnitude was 5.0 g, above the 4.0 g limit. High forces exceeded the estimated ASTM F2291 comfort envelope for 2.4 s total during this car's ride. Lower speeds or gentler transitions can improve comfort.",
       "imperial",

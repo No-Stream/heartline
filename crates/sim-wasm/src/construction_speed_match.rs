@@ -1,8 +1,8 @@
 use crate::WasmSimulation;
 use crate::construction::{pieceid_from_wire, wire_pieceid};
 use serde::Serialize;
-use theme_park_sim::track::construction::select_speed_matched_variant_for_train;
-use theme_park_sim::track::{Piece, PieceId, catalog};
+use theme_park_sim::track::construction::select_speed_matched_variant;
+use theme_park_sim::track::{Piece, PieceId, catalog, rated_speeds};
 use ts_rs::TS;
 use wasm_bindgen::prelude::*;
 
@@ -56,17 +56,19 @@ impl WasmSimulation {
     ) -> Option<ConstructionSpeedMatchWire> {
         let construction = self.construction.as_ref()?;
         let id = pieceid_from_wire(id)?;
-        let selected_piece = catalog()
-            .iter()
-            .find(|piece| piece.id == id && piece.rated_speeds.is_some())?;
+        let model = construction.model();
+        let selected_piece = catalog().iter().find(|piece| piece.id == id)?;
+        if !model.allows_piece(selected_piece) || rated_speeds(model, selected_piece).is_none() {
+            return None;
+        }
         let obstacles = self.facility_obstacles();
         let candidates: Vec<_> = if selected_piece.family.is_some() {
             catalog()
                 .iter()
                 .filter(|piece| {
                     same_family(selected_piece, piece)
-                        && piece.rated_speeds.is_some()
-                        && construction.model().allowed_pieces.contains(&piece.id)
+                        && model.allows_piece(piece)
+                        && rated_speeds(model, piece).is_some()
                         && construction
                             .validate(piece.id, &self.world, &obstacles)
                             .is_ok()
@@ -80,19 +82,14 @@ impl WasmSimulation {
                 .filter(|(piece, choice)| {
                     choice.result.is_ok()
                         && same_family(selected_piece, piece)
-                        && piece.rated_speeds.is_some()
+                        && model.allows_piece(piece)
+                        && rated_speeds(model, piece).is_some()
                 })
                 .map(|(piece, _)| piece)
                 .collect()
         };
-        let recommendation = entry_speed.and_then(|speed| {
-            select_speed_matched_variant_for_train(
-                &candidates,
-                speed,
-                &construction.model().train,
-                construction.model().comfortable_force_limits,
-            )
-        });
+        let recommendation =
+            entry_speed.and_then(|speed| select_speed_matched_variant(&candidates, speed, model));
         let result = ConstructionSpeedMatchWire {
             entry_speed,
             recommended_id: recommendation.map(|choice| wire_pieceid(choice.id)),
@@ -170,16 +167,14 @@ mod tests {
     }
 
     #[test]
-    fn speed_match_reports_when_the_model_has_no_available_variant() {
+    fn speed_match_returns_null_when_the_model_disallows_the_selected_piece() {
         let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
         simulation.construction_select("model:wooden_twister");
         simulation.construction_start(200, 200, 20, 0);
-        let result: serde_json::Value =
-            serde_json::from_str(&simulation.construction_speed_match_json("Loop", Some(5.0)))
-                .unwrap();
-        assert!(result["variants"].as_array().unwrap().is_empty());
-        assert!(result["recommendedId"].is_null());
-        assert_eq!(result["fits"], false);
+        assert_eq!(
+            simulation.construction_speed_match_json("Loop", Some(5.0)),
+            "null"
+        );
     }
 
     #[test]

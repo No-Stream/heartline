@@ -140,11 +140,16 @@ impl ComfortableForceLimits {
             inclusive,
         };
         let (mut bands, limit, at_limit) = match axis {
-            ForceRatingAxis::Airtime => (
-                vec![band(Weak, 0.2, true), band(Good, 0.9, true)],
-                -self.minimum_vertical_g,
-                Great,
-            ),
+            ForceRatingAxis::Airtime => {
+                let limit = -self.minimum_vertical_g;
+                let weak_boundary = 0.2_f64.min(limit);
+                let mut bands = vec![band(Weak, weak_boundary, weak_boundary < limit)];
+                if limit > 0.2 {
+                    let good_boundary = 0.9_f64.min(limit);
+                    bands.push(band(Good, good_boundary, good_boundary < limit));
+                }
+                (bands, limit, Great)
+            }
             ForceRatingAxis::Vertical => {
                 let great_from = great_positive_vertical_g(model_key);
                 assert!(

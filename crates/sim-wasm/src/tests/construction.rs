@@ -20,6 +20,14 @@ fn candidate_force_preview_reports_selected_track_without_placing_it() {
     assert_eq!(preview["outerBank"], false);
     assert!(preview["entrySpeed"].as_f64().unwrap() > 0.0);
     assert!(preview["peaks"]["maximumVerticalG"].as_f64().is_some());
+    for flag in [
+        "minimumVerticalLimitExceeded",
+        "maximumVerticalLimitExceeded",
+        "lateralLimitExceeded",
+        "longitudinalLimitExceeded",
+    ] {
+        assert!(preview["peaks"][flag].is_boolean());
+    }
     assert_eq!(preview["limits"]["maximumVerticalG"], 4.5);
     assert_eq!(simulation.construction_track(), before);
 }
@@ -143,6 +151,11 @@ fn construction_force_preview_reports_placed_track_and_last_piece_peaks() {
         sample["x"].as_f64().is_some()
             && sample["y"].as_f64().is_some()
             && sample["z"].as_f64().is_some()
+            && sample["forceLimitExceeded"]
+                .as_array()
+                .is_some_and(|flags| {
+                    flags.len() == 3 && flags.iter().all(serde_json::Value::is_boolean)
+                })
     }));
     assert!(samples.windows(2).all(|pair| {
         pair[1]["distance"].as_f64().unwrap() - pair[0]["distance"].as_f64().unwrap() <= 1.001

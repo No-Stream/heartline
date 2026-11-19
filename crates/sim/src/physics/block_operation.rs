@@ -1,8 +1,8 @@
 use super::{Circuit, CoasterOutcome, CoasterRun, PhysicsConfig, Train};
 use crate::state_hash::StateHasher;
-use crate::track::TrainConfiguration;
 use crate::track::blocks::BlockLayout;
 use crate::track::proximity::TrainPosition;
+use crate::track::{CoasterModel, TrainConfiguration, coaster_models};
 use crate::track::{ComfortableForceLimits, PieceKind};
 
 #[cfg(test)]
@@ -26,6 +26,7 @@ pub struct BlockOperation {
     next_id: u64,
     record_reports: bool,
     force_limits: Option<ComfortableForceLimits>,
+    model_key: Option<String>,
     interlock_triggered: bool,
     #[cfg(test)]
     panic_on_interlock: bool,
@@ -39,7 +40,7 @@ impl BlockOperation {
     }
 
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"BlockOperation-v2");
+        hash.write_tag(b"BlockOperation-v3");
         self.circuit.hash_into(hash);
         self.configuration.hash_into(hash);
         self.config.hash_into(hash);
@@ -62,27 +63,40 @@ impl BlockOperation {
             hash.write_f64(limits.maximum_lateral_g);
             hash.write_f64(limits.maximum_longitudinal_g);
         });
+        hash.write_option(self.model_key.as_deref(), |hash, key| {
+            hash.write_bytes(key.as_bytes())
+        });
         hash.write_bool(self.interlock_triggered);
     }
 
-    pub fn new(layout: BlockLayout) -> Self {
-        Self::with_reports(layout, true, None)
+    pub fn new(layout: BlockLayout, model: &CoasterModel) -> Self {
+        Self::with_reports(layout, Some(model), true, None)
     }
 
-    pub fn new_with_limits(layout: BlockLayout, limits: ComfortableForceLimits) -> Self {
-        Self::with_reports(layout, true, Some(limits))
+    pub fn new_with_limits(
+        layout: BlockLayout,
+        model: &CoasterModel,
+        limits: ComfortableForceLimits,
+    ) -> Self {
+        Self::with_reports(layout, Some(model), true, Some(limits))
     }
 
     /// Run the same block operation without collecting per-rider ride reports.
     pub fn new_without_reports(layout: BlockLayout) -> Self {
-        Self::with_reports(layout, false, None)
+        Self::with_reports(layout, None, false, None)
     }
 
     fn with_reports(
         layout: BlockLayout,
+        model: Option<&CoasterModel>,
         record_reports: bool,
         force_limits: Option<ComfortableForceLimits>,
     ) -> Self {
+        assert_eq!(
+            record_reports,
+            model.is_some(),
+            "recording a block operation requires its coaster model"
+        );
         let circuit = layout.circuit();
         let station = circuit
             .pieces
@@ -100,6 +114,7 @@ impl BlockOperation {
             next_id: 0,
             record_reports,
             force_limits,
+            model_key: model.map(|model| model.key.to_owned()),
             interlock_triggered: false,
             #[cfg(test)]
             panic_on_interlock: false,
@@ -228,14 +243,23 @@ impl BlockOperation {
     pub fn dispatch(&mut self) -> u64 {
         assert!(self.can_dispatch());
         let run = if self.record_reports {
+            let model_key = self
+                .model_key
+                .as_deref()
+                .expect("recording block operation has a model key");
+            let model = coaster_models()
+                .into_iter()
+                .find(|model| model.key == model_key)
+                .expect("block operation model remains in the model catalog");
             match self.force_limits {
                 Some(limits) => CoasterRun::new_with_limits(
                     &self.circuit,
                     &self.configuration,
+                    &model,
                     self.config,
                     limits,
                 ),
-                None => CoasterRun::new(&self.circuit, &self.configuration, self.config),
+                None => CoasterRun::new(&self.circuit, &self.configuration, &model, self.config),
             }
         } else {
             CoasterRun::new_without_reports(&self.circuit, &self.configuration, self.config)
@@ -440,7 +464,7 @@ mod state_hash_tests {
         let layout =
             BlockLayout::unverified_baseline(&circuit, &model.train, PhysicsConfig::default())
                 .unwrap();
-        let mut operation = BlockOperation::new(layout);
+        let mut operation = BlockOperation::new(layout, &model);
         operation.dispatch();
         operation.step_without_reports(&[]);
     }
@@ -452,9 +476,9 @@ mod state_hash_tests {
         let config = PhysicsConfig::default();
         let layout = BlockLayout::unverified_baseline(&circuit, &model.train, config).unwrap();
         let limits = model.comfortable_force_limits;
-        let mut operation = BlockOperation::new_with_limits(layout, limits);
+        let mut operation = BlockOperation::new_with_limits(layout, &model, limits);
         operation.dispatch();
-        let expected = CoasterRun::new_with_limits(&circuit, &model.train, config, limits);
+        let expected = CoasterRun::new_with_limits(&circuit, &model.train, &model, config, limits);
         let mut actual_hash = StateHasher::new();
         operation.trains[0].run.hash_into(&mut actual_hash);
         let mut expected_hash = StateHasher::new();
@@ -464,7 +488,8 @@ mod state_hash_tests {
 
         let mut changed_limits = limits;
         changed_limits.maximum_lateral_g += 1.0;
-        let changed = CoasterRun::new_with_limits(&circuit, &model.train, config, changed_limits);
+        let changed =
+            CoasterRun::new_with_limits(&circuit, &model.train, &model, config, changed_limits);
         let mut changed_hash = StateHasher::new();
         changed.hash_into(&mut changed_hash);
         assert_ne!(actual_hash, changed_hash.finish());
@@ -480,7 +505,7 @@ mod state_hash_tests {
         let first = BlockOperation::new_without_reports(layout.clone());
         let second = BlockOperation::new_without_reports(layout.clone());
         assert_eq!(first.state_hash(), second.state_hash());
-        let recorded = BlockOperation::new(layout.clone());
+        let recorded = BlockOperation::new(layout.clone(), &hybrid_model());
         assert_ne!(first.state_hash(), recorded.state_hash());
 
         let mut dispatched = BlockOperation::new_without_reports(layout);
@@ -617,7 +642,7 @@ mod tests {
         let boundaries = validated_brake_boundaries(&circuit)[..2].to_vec();
         let layout = BlockLayout::new(&circuit, &configuration, config, boundaries).unwrap();
         assert_eq!(layout.capacity(), 1);
-        let mut operation = BlockOperation::new(layout);
+        let mut operation = BlockOperation::new(layout, &hybrid_model());
         operation.dispatch();
         for _ in 1..=60_000 {
             if let Some((_, outcome)) = operation.step(&[], "Timber Tumbler").into_iter().next() {
@@ -656,7 +681,7 @@ mod tests {
         )
         .unwrap();
         assert!(layout.capacity() >= 3);
-        let mut operation = BlockOperation::new(layout);
+        let mut operation = BlockOperation::new(layout, &hybrid_model());
         let mut completed = 0;
         let mut maximum_active = 0;
         operation.panic_on_interlock = true;
@@ -741,7 +766,7 @@ mod tests {
                     .then_some(boundary)
             })
             .expect("an installed brake ends at its boundary");
-        let mut operation = BlockOperation::new(layout);
+        let mut operation = BlockOperation::new(layout, &hybrid_model());
         operation.dispatch();
         while !operation.can_dispatch() {
             assert!(operation.step(&[], "Timber Tumbler").is_empty());
@@ -774,7 +799,7 @@ mod tests {
             ..Default::default()
         };
         let layout = validated_test_layout(&circuit, &configuration, config);
-        let mut operation = BlockOperation::new(layout);
+        let mut operation = BlockOperation::new(layout, &hybrid_model());
         operation.dispatch();
         while !operation.can_dispatch() {
             assert!(operation.step(&[], "Timber Tumbler").is_empty());
@@ -851,8 +876,8 @@ mod tests {
             if !distinct_layouts.contains(&signature) {
                 distinct_layouts.push(signature);
             }
-            let mut first = BlockOperation::new(layout.clone());
-            let mut second = BlockOperation::new(layout);
+            let mut first = BlockOperation::new(layout.clone(), &hybrid_model());
+            let mut second = BlockOperation::new(layout, &hybrid_model());
             let mut maximum_active = 0;
             for _ in 0..if requested_trains == 3 { 15_000 } else { 4500 } {
                 assert_eq!(first.can_dispatch(), second.can_dispatch());
@@ -940,8 +965,8 @@ mod tests {
             let layout = BlockLayout::new(&circuit, &configuration, config, boundaries.clone())
                 .unwrap_or_else(|reason| panic!("extra={extra_straights}, trains={requested_trains}, boundaries={boundaries:?}: {reason}"));
             assert!(layout.capacity() >= requested_trains);
-            let mut first = BlockOperation::new(layout.clone());
-            let mut second = BlockOperation::new(layout);
+            let mut first = BlockOperation::new(layout.clone(), &hybrid_model());
+            let mut second = BlockOperation::new(layout, &hybrid_model());
             let mut maximum_active = 0;
             let mut full_train_steps = 0;
             for _ in 0..20_000 {
@@ -1007,7 +1032,7 @@ mod tests {
         };
         let layout = validated_test_layout(&circuit, &configuration, config);
         assert!(layout.capacity() >= 3);
-        let mut operation = BlockOperation::new(layout);
+        let mut operation = BlockOperation::new(layout, &hybrid_model());
         operation.panic_on_interlock = true;
         let mut visited: BTreeMap<u64, BTreeSet<usize>> = BTreeMap::new();
         let mut slowing = BTreeSet::new();

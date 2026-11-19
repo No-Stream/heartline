@@ -14,7 +14,8 @@ test("Horizon Hawk hyper coaster journey @journey", async ({ page }, testInfo) =
   expect(circuit).toContain("WideLevelToSixtyDown");
   expect(circuit).toContain("FloaterHill24x160");
   expect(circuit).toContain("FloaterHill20x128");
-  expect(circuit.filter((piece) => /^FloaterHill\d+x\d+$/.test(piece)).length).toBeGreaterThanOrEqual(4);
+  expect(circuit.filter((piece) => /^FloaterHill\d+x\d+$/.test(piece)).length).toBeGreaterThanOrEqual(3);
+  expect(circuit.filter((piece) => piece === "GentleUpToLevel").length).toBeGreaterThanOrEqual(3);
   expect(circuit.filter((piece) => piece.startsWith("SpeedTurnLarge")).length).toBeGreaterThanOrEqual(4);
 
   await startPark(page, { park: "new", seed: 2028, speed: 1 });

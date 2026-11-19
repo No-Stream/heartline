@@ -16,7 +16,10 @@ test("Velocity Viper keyboard construction journey @journey", async ({ page }) =
   await placeCircuit(page, circuit, true);
   await page.locator("canvas").focus();
   await page.keyboard.press("c");
-  await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+  const closeCircuitButton = page.getByRole("button", { name: "Close circuit" });
+  const testCoasterButton = page.getByRole("button", { name: "Test coaster" });
+  await expect(closeCircuitButton).toBeDisabled();
+  await expect(testCoasterButton).toBeEnabled();
   await setGameSpeed(page, 16);
   await openTool(page, "Coaster");
   await page.locator("canvas").focus();
