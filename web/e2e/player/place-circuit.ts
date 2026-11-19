@@ -58,7 +58,7 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
     await page.locator(`[data-speed-match-variant="${piece}"]`).click();
   } else {
     const direct = page.locator(`[data-piece="${piece}"]`);
-    const hill = /^(WoodenEjector|Ejector|Floater|Family|Speed)Hill(\d+)x(\d+)$/.exec(piece);
+    const hill = /^(WoodenEjector|Ejector|Floater|Family|Speed)Hill(\d+)x(\d+)(OuterLeft|OuterRight)?$/.exec(piece);
     const roll = /^ZeroGRoll(Fast|Compact)(Left|Right)$/.exec(piece);
     // A palette click on a hill is re-sized by the worker for the predicted speed, so hills are sized in the inspector.
     if (!hill && !roll) {
@@ -71,7 +71,9 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
       const feel = roll ? "Zero-g roll" : piece === "WoodenEjectorHill8x64" ? "Strong floater"
         : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" || hill![1] === "Family" ? "Floater" : "Speed hill";
       await stepHill(page, "feel", feel);
-      await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : "Upright");
+      const twist = hill?.[4] === "OuterLeft" ? "Outer bank left"
+        : hill?.[4] === "OuterRight" ? "Outer bank right" : "Upright";
+      await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : twist);
       await stepHill(page, "height", `${roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
       await stepHill(page, "span", `${roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
     }
