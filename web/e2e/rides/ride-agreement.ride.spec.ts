@@ -2,14 +2,14 @@ import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type TestInfo } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { candidateForceReadout, hillReadout } from "../../src/candidate-force-readout";
 import type { TestingReport } from "../../src/generated/TestingReport";
 import type { CoasterModelKey } from "../../src/generated/coaster-models";
-import { advanceUntilState, placeStation, showBuilderTab, startPark, testRide } from "../player/driver";
+import { advanceUntilState, clickCanvas, openTool, placeStation, selectUnits, setGameSpeed, showBuilderTab, startPark, testRide } from "../player/driver";
 import { placeCircuit } from "../player/place-circuit";
 import { expectRideReportExplained } from "../player/ride-report";
-import { readRide, type RideFile } from "../player/rides";
+import { readRide, type RideFeatureStep, type RideFile, type RideStep } from "../player/rides";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const ridesDirectory = resolve(repositoryRoot, "content/rides");
@@ -36,13 +36,22 @@ for (const { stem, ride } of rides) {
   test(`${ride.name} estimate and report agree with the builder${stem === browserAgreementFastRide ? " @fast" : ""}`, async ({ page }, testInfo) => {
     test.setTimeout(360_000);
     const nativeCheck = runNativeCheck(stem);
+    expectRideFeatures(ride, nativeCheck);
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(`${error.message}\n${error.stack ?? "(no stack)"}`));
 
-    await startPark(page, { park: "new", seed: 149, speed: 1, testMode: true });
+    if (stem === "velocity-viper") await page.setViewportSize({ width: 800, height: 480 });
+    await startPark(page, {
+      park: "new",
+      seed: stem === "velocity-viper" ? 2026 : 149,
+      speed: 1,
+      livePauseRender: stem === "velocity-viper",
+      testMode: true,
+    });
+    const stationHeight = await prepareStationTerrain(page, ride);
     await placeStation(page, {
       model: ride.model as CoasterModelKey,
-      height: ride.station.z - newParkSurfaceHeight,
+      height: stationHeight,
       tile: { x: ride.station.x, y: ride.station.y, z: 2 },
       direction: stationDirection(ride.station.x, ride.station.y, ride.station.heading),
     });
@@ -115,21 +124,140 @@ for (const { stem, ride } of rides) {
 
     await showBuilderTab(page, "Build");
     await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+    const crestBurstsBeforeTest = stem === "briar-blitz" || stem === "velocity-viper"
+      ? await page.evaluate(() => window.gameTest.crestBursts().length)
+      : null;
+    if (stem === "velocity-viper") await setGameSpeed(page, 16);
     await testRide(page);
     await advanceUntilState(page, async () => !!(await page.evaluate(() => window.gameTest.testingReport())), { ticks: 40_000 });
 
     const report = await expectRideReportExplained(page);
     expectRideTargets(ride, report);
+    expect(report.notes.join(" ")).not.toMatch(/could not finish|rolled back|rated speed band/i);
+    await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status"))
+      .toHaveText("Train completed a lap.");
+    await expect(page.locator("[data-testing]")).toContainText("Scores (about 0–10)");
+    if (stem === "briar-blitz" || stem === "velocity-viper") {
+      if (crestBurstsBeforeTest === null) throw new Error(`${stem} did not record its initial crest bursts`);
+      expect(await page.evaluate(() => window.gameTest.crestBursts().length)).toBeGreaterThan(crestBurstsBeforeTest);
+    }
+    if (stem === "timber-tumbler") {
+      await expect(page.locator('[data-score-finding="airtime"] .testing-effect[data-score="excitement"]')).toHaveText(/^Excitement \+/);
+      const maximumHeight = page.locator("[data-report-maximum-height]");
+      const metricMaximumHeight = Number((await maximumHeight.textContent())?.match(/\d+(?:\.\d+)?/)?.[0]);
+      expectNoPageErrors(pageErrors, "before Timber unit conversion");
+      await selectUnits(page, "imperial");
+      const imperialMaximumHeight = Number((await maximumHeight.textContent())?.match(/\d+(?:\.\d+)?/)?.[0]);
+      expect(metricMaximumHeight).toBeCloseTo(imperialMaximumHeight * 0.3048, 0);
+      expectNoPageErrors(pageErrors, "after Timber imperial unit toggle");
+      await selectUnits(page, "metric");
+      expectNoPageErrors(pageErrors, "after Timber metric unit toggle");
+
+      expectNoPageErrors(pageErrors, "before Timber speed overlay selection");
+      await page.getByLabel("Track overlay").selectOption("speed");
+      expectNoPageErrors(pageErrors, "after Timber speed overlay selection");
+      const overlaySize = await page.locator("canvas").evaluate((canvas: HTMLCanvasElement) => ({
+        width: canvas.width,
+        height: canvas.height,
+      }));
+      const overlayPick = await page.evaluate((size) => {
+        const report = window.gameTest.testingReport();
+        if (!report) throw new Error("Missing coaster test report");
+        for (const sample of report.samples) {
+          const point = window.gameTest.project(sample);
+          if (point.x < 0 || point.x >= size.width || point.y < 0 || point.y >= size.height) continue;
+          if (window.gameTest.pick(point.x, point.y)?.kind === "testing") return point;
+        }
+        throw new Error("No speed overlay segment was pickable");
+      }, overlaySize);
+      await clickCanvas(page, overlayPick);
+      await expect(page.locator("[data-inspection]")).toContainText("Vertical:");
+      expectNoPageErrors(pageErrors, "after Timber overlay inspection");
+    }
+    if (stem === "velocity-viper") await expectLaunchReport(page, report);
     await reportCheckResults(testInfo, ride, nativeCheck, report);
+
+    if (stem === "velocity-viper") await expectVelocityViperTestingPanelScreenshot(page);
+    expectNoPageErrors(pageErrors, `before ${ride.name} screenshot`);
     await page.screenshot({ path: testInfo.outputPath(`${stem}-ride.png`), fullPage: true });
 
-    expect(pageErrors).toEqual([]);
+    expectNoPageErrors(pageErrors, `after ${ride.name} screenshot`);
   });
+}
+
+function expectNoPageErrors(pageErrors: readonly string[], checkpoint: string): void {
+  expect(pageErrors, `Unexpected page errors ${checkpoint}`).toEqual([]);
+}
+
+async function prepareStationTerrain(page: Page, ride: RideFile): Promise<number> {
+  await selectUnits(page, "metric");
+  await openTool(page, "Coaster");
+  const coasterModel = page.getByRole("combobox", { name: "Coaster model" });
+  await coasterModel.selectOption(`model:${ride.model}`);
+
+  const stationHeight = page.getByLabel("Station height above ground (metres)");
+  const minimumAttribute = await stationHeight.getAttribute("min");
+  if (minimumAttribute === null) throw new Error("Station height control has no minimum");
+  const minimumStationHeight = Number(minimumAttribute);
+  if (!Number.isFinite(minimumStationHeight)) throw new Error(`Invalid station height minimum: ${minimumAttribute}`);
+
+  const stationHeightAboveGround = ride.station.z - newParkSurfaceHeight;
+  if (stationHeightAboveGround >= minimumStationHeight) return stationHeightAboveGround;
+
+  const adjustedSurfaceHeight = ride.station.z - minimumStationHeight;
+  if (!Number.isInteger(adjustedSurfaceHeight) || adjustedSurfaceHeight < 0) {
+    throw new Error(`Cannot lower terrain to place ${ride.name} at absolute station height ${ride.station.z}`);
+  }
+  await page.evaluate(({ x, y, height }) => {
+    window.gameTest.setSurface(x, y, [height, height, height, height]);
+  }, { x: ride.station.x, y: ride.station.y, height: adjustedSurfaceHeight });
+  await page.evaluate(() => window.gameTest.advanceTicks(0));
+  return minimumStationHeight;
+}
+
+async function expectLaunchReport(page: Page, report: TestingReport): Promise<void> {
+  const launchPositions = page.getByRole("region", { name: "Launch positions" }).locator("li");
+  await expect(launchPositions).toHaveCount(4);
+  const launchCentres = (await launchPositions.allTextContents()).map((text) => {
+    const match = /(\d+(?:\.\d+)?) m from station/.exec(text);
+    if (!match) throw new Error(`Launch position has no distance: ${text}`);
+    return Number(match[1]);
+  });
+  const launchSpeeds = launchCentres.map((centre) => report.samples.reduce((closest, sample) =>
+    Math.abs(sample.distance - centre) < Math.abs(closest.distance - centre) ? sample : closest).speed);
+  expect(launchSpeeds).toHaveLength(4);
+  for (const speed of launchSpeeds) expect(speed).toBeGreaterThan(2);
+}
+
+async function expectVelocityViperTestingPanelScreenshot(page: Page): Promise<void> {
+  await page.locator("canvas").focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "true");
+  await page.setViewportSize({ width: 1280, height: 1200 });
+  const testingPanel = page.locator("[data-testing]");
+  await page.evaluate(() => {
+    const dock = document.querySelector<HTMLElement>("[data-dock]");
+    const testing = document.querySelector<HTMLElement>("[data-testing]");
+    if (!dock || !testing) throw new Error("Coaster testing panel is missing");
+    dock.scrollTop += testing.getBoundingClientRect().top - dock.getBoundingClientRect().top;
+  });
+  const panelHeight = await testingPanel.evaluate((element) => Math.ceil(element.getBoundingClientRect().height));
+  await page.setViewportSize({ width: 1280, height: Math.max(720, panelHeight + 100) });
+  const snapshotPath = process.env.THEME_PARK_PLAYWRIGHT_DOCKER === "1"
+    ? ["..", "..", "..", "journeys", "velocity-viper.journey.spec.ts-snapshots", "coaster-testing-panel.png"]
+    : ["..", "..", "journeys", "velocity-viper.journey.spec.ts-snapshots", "coaster-testing-panel.png"];
+  await expect(testingPanel).toHaveScreenshot(snapshotPath, { animations: "disabled" });
+  await page.setViewportSize({ width: 1280, height: 720 });
 }
 
 type NativeRideCheck = {
   readonly name: string;
   readonly expectationFailures: readonly string[];
+  readonly expectations: readonly {
+    readonly metric: string;
+    readonly observed: unknown;
+    readonly passed: boolean;
+  }[];
   readonly browserEstimates: readonly NativeBrowserEstimate[];
   readonly agreement: {
     readonly passed: boolean;
@@ -309,21 +437,154 @@ function expectFormattedReadouts(
 
 function expectRideTargets(ride: RideFile, report: TestingReport): void {
   const targets = ride.expect;
-  if (!targets) return;
-  if (targets.excitement) expect(report.rating.excitement).toBeGreaterThanOrEqual(targets.excitement[0]);
-  if (targets.excitement) expect(report.rating.excitement).toBeLessThanOrEqual(targets.excitement[1]);
-  if (targets.sustainedMaxVerticalG) {
+  if (targets?.excitement) expect(report.rating.excitement).toBeGreaterThanOrEqual(targets.excitement[0]);
+  if (targets?.excitement) expect(report.rating.excitement).toBeLessThanOrEqual(targets.excitement[1]);
+  if (targets?.sustainedMaxVerticalG) {
     // The CLI currently applies these ride-file targets to the report's maximum-force fields.
     expect(report.statistics.maxPositiveVerticalG).toBeGreaterThanOrEqual(targets.sustainedMaxVerticalG[0]);
     expect(report.statistics.maxPositiveVerticalG).toBeLessThanOrEqual(targets.sustainedMaxVerticalG[1]);
   }
-  if (targets.sustainedMinVerticalG) {
+  if (targets?.sustainedMinVerticalG) {
     expect(report.statistics.maxNegativeVerticalG).toBeGreaterThanOrEqual(targets.sustainedMinVerticalG[0]);
     expect(report.statistics.maxNegativeVerticalG).toBeLessThanOrEqual(targets.sustainedMinVerticalG[1]);
   }
-  if (targets.maxLateralG !== undefined) expect(report.statistics.maxLateralG).toBeLessThanOrEqual(targets.maxLateralG);
-  if (targets.inversions !== undefined) expect(report.statistics.inversions).toBe(targets.inversions);
-  if (targets.airtimeMomentsAtLeast !== undefined) expect(report.statistics.airtimeMoments).toBeGreaterThanOrEqual(targets.airtimeMomentsAtLeast);
+  if (targets?.maxLateralG !== undefined) expect(report.statistics.maxLateralG).toBeLessThanOrEqual(targets.maxLateralG);
+  if (targets?.inversions !== undefined) expect(report.statistics.inversions).toBe(targets.inversions);
+  if (targets?.airtimeMomentsAtLeast !== undefined) {
+    expect(report.statistics.airtimeMoments).toBeGreaterThanOrEqual(targets.airtimeMomentsAtLeast);
+  }
+  if (targets?.withinComfortableForceLimits !== undefined) {
+    const allSamplesWithinLimits = report.samples.every((sample) => sample.forceLimitExceeded.every((exceeded) => !exceeded));
+    expect(allSamplesWithinLimits).toBe(targets.withinComfortableForceLimits);
+  }
+  if (targets?.inversionsAtLeast !== undefined) {
+    expect(report.statistics.inversions).toBeGreaterThanOrEqual(targets.inversionsAtLeast);
+  }
+  if (targets?.launches !== undefined) expect(report.statistics.launches).toBe(targets.launches);
+  if (targets?.biggestDropAtLeast !== undefined) {
+    expect(report.statistics.biggestDrop).toBeGreaterThanOrEqual(targets.biggestDropAtLeast);
+  }
+  if (targets?.maxSpeedAtLeast !== undefined) {
+    expect(report.statistics.maxSpeed).toBeGreaterThanOrEqual(targets.maxSpeedAtLeast);
+  }
+  if (targets?.invertedSeconds !== undefined) {
+    expect(report.statistics.invertedSeconds).toBeCloseTo(targets.invertedSeconds, 4);
+  }
+}
+
+function expectRideFeatures(ride: RideFile, nativeCheck: NativeRideCheck): void {
+  const features = ride.expect?.features;
+  if (!features) return;
+
+  const piecePrefixes = Object.entries(features.piecePrefixesAtLeast ?? {});
+  const prefixGroups = features.piecePrefixGroupsAtLeast ?? [];
+  const piecePrefixesAfter = features.piecePrefixesAfter ?? [];
+  const sequences = [...(features.orderedSteps ?? []), ...(features.adjacentSteps ?? [])];
+  const invalidPiecePrefix = piecePrefixes.some(([prefix, minimumCount]) =>
+    prefix.length === 0 || !Number.isInteger(minimumCount) || minimumCount < 1);
+  const invalidPrefixGroup = prefixGroups.some((group) => group.prefixes.length === 0
+    || group.prefixes.some((prefix) => prefix.length === 0)
+    || !Number.isInteger(group.minimum)
+    || group.minimum < 1);
+  const invalidPiecePrefixesAfter = piecePrefixesAfter.some(({ prefix, after }) =>
+    prefix.length === 0
+    || ("place" in after && after.place.length === 0)
+    || ("placePrefix" in after && after.placePrefix.length === 0));
+  const invalidHeartlinedInversionCount = features.heartlinedInversionsAtLeast !== undefined
+    && (!Number.isInteger(features.heartlinedInversionsAtLeast) || features.heartlinedInversionsAtLeast < 1);
+  const invalidSequence = sequences.some((sequence) => sequence.length === 0
+    || sequence.some((step) => ("place" in step && step.place.length === 0)
+      || ("placePrefix" in step && step.placePrefix.length === 0)));
+  if (invalidPiecePrefix || invalidPrefixGroup || invalidPiecePrefixesAfter
+    || invalidHeartlinedInversionCount || invalidSequence) {
+    throw new Error(`${ride.name} has an empty or invalid feature expectation`);
+  }
+
+  if (features.heartlinedInversionsAtLeast !== undefined) {
+    const minimumCount = features.heartlinedInversionsAtLeast;
+    if (!Number.isInteger(minimumCount) || minimumCount < 1) {
+      throw new Error(`${ride.name} has an invalid heartlined inversion feature expectation`);
+    }
+    const nativeExpectation = nativeCheck.expectations.find(
+      (expectation) => expectation.metric === "heartlined inversion pieces",
+    );
+    if (!nativeExpectation || typeof nativeExpectation.observed !== "number") {
+      throw new Error(`${ride.name} native check omitted its heartlined inversion count`);
+    }
+    expect(nativeExpectation.passed).toBe(true);
+    expect(nativeExpectation.observed).toBeGreaterThanOrEqual(minimumCount);
+  }
+
+  for (const [piecePrefix, minimumCount] of Object.entries(features.piecePrefixesAtLeast ?? {})) {
+    const observedCount = ride.steps.filter((step) => "place" in step && step.place.startsWith(piecePrefix)).length;
+    expect(observedCount, `${ride.name} needs at least ${minimumCount} pieces starting with ${piecePrefix}`)
+      .toBeGreaterThanOrEqual(minimumCount);
+  }
+  for (const group of prefixGroups) {
+    const observedCount = ride.steps.filter((step) => "place" in step
+      && group.prefixes.some((prefix) => step.place.startsWith(prefix))).length;
+    expect(observedCount, `${ride.name} needs at least ${group.minimum} pieces matching ${group.prefixes.join(" or ")}`)
+      .toBeGreaterThanOrEqual(group.minimum);
+  }
+  for (const { prefix, after } of piecePrefixesAfter) {
+    const afterIndex = ride.steps.findIndex((step) => rideFeatureMatches(step, after));
+    expect(afterIndex, `${ride.name} must contain the feature after ${describeRideFeatureSequence([after])}`)
+      .toBeGreaterThanOrEqual(0);
+    const matchingBeforeAnchor = ride.steps.slice(0, afterIndex).some((step) =>
+      "place" in step && step.place.startsWith(prefix));
+    expect(matchingBeforeAnchor, `${ride.name} places every ${prefix} after ${describeRideFeatureSequence([after])}`)
+      .toBe(false);
+  }
+  for (const sequence of features.orderedSteps ?? []) {
+    expect(
+      containsOrderedRideFeatures(ride.steps, sequence),
+      `${ride.name} must contain the ordered feature sequence ${describeRideFeatureSequence(sequence)}`,
+    ).toBe(true);
+  }
+  for (const sequence of features.adjacentSteps ?? []) {
+    expect(
+      containsAdjacentRideFeatures(ride.steps, sequence),
+      `${ride.name} must contain adjacent feature steps ${describeRideFeatureSequence(sequence)}`,
+    ).toBe(true);
+  }
+}
+
+function containsOrderedRideFeatures(
+  rideSteps: readonly RideStep[],
+  expectedSteps: readonly RideFeatureStep[],
+): boolean {
+  let nextRideStepIndex = 0;
+  for (const expectedStep of expectedSteps) {
+    while (nextRideStepIndex < rideSteps.length && !rideFeatureMatches(rideSteps[nextRideStepIndex], expectedStep)) {
+      nextRideStepIndex += 1;
+    }
+    if (nextRideStepIndex === rideSteps.length) return false;
+    nextRideStepIndex += 1;
+  }
+  return true;
+}
+
+function containsAdjacentRideFeatures(
+  rideSteps: readonly RideStep[],
+  expectedSteps: readonly RideFeatureStep[],
+): boolean {
+  return rideSteps.some((_, startIndex) => expectedSteps.every((expectedStep, offset) =>
+    rideFeatureMatches(rideSteps[startIndex + offset], expectedStep)));
+}
+
+function rideFeatureMatches(rideStep: RideStep | undefined, expectedStep: RideFeatureStep): boolean {
+  if (!rideStep) return false;
+  if ("place" in expectedStep) return "place" in rideStep && rideStep.place === expectedStep.place;
+  if ("placePrefix" in expectedStep) return "place" in rideStep && rideStep.place.startsWith(expectedStep.placePrefix);
+  return "chain" in rideStep && rideStep.chain === expectedStep.chain;
+}
+
+function describeRideFeatureSequence(sequence: readonly RideFeatureStep[]): string {
+  return sequence.map((step) => {
+    if ("place" in step) return `place ${step.place}`;
+    if ("placePrefix" in step) return `place starting with ${step.placePrefix}`;
+    return `chain ${step.chain}`;
+  }).join(" then ");
 }
 
 async function reportCheckResults(

@@ -4,6 +4,7 @@ use super::scoring::{ForceBandDurations, Scores, Term, score};
 use super::testing::RideStatistics;
 use super::{CarReading, ConstructionTestRunRecorder, GForces, PhysicsConfig, Train, demo_circuit};
 use crate::track::construction::Construction;
+use crate::track::ride_file::{RideFile, RideHeading, RideStep};
 use crate::track::{
     CoasterModel, Heading, Heartlining, Inversion, PieceId, TrackState, catalog, coaster_models,
     hybrid_model, wooden_twister_model,
@@ -472,29 +473,21 @@ fn calibration_table_prints_synthetic_archetype_scores_and_breakdowns() {
     );
 }
 
-fn read_player_circuits() -> BTreeMap<String, Vec<String>> {
-    let mut circuits = BTreeMap::new();
-    let mut current_name: Option<String> = None;
-    for line in include_str!("../../../../web/e2e/player/circuits.txt").lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            let name = line[1..line.len() - 1].to_owned();
-            assert!(circuits.insert(name.clone(), Vec::new()).is_none());
-            current_name = Some(name);
-            continue;
-        }
-        let name = current_name
-            .as_ref()
-            .expect("circuit entries follow a header");
-        circuits
-            .get_mut(name)
-            .expect("current circuit was inserted")
-            .push(line.to_owned());
-    }
-    circuits
+fn read_player_circuits() -> BTreeMap<String, RideFile> {
+    [
+        include_str!("../../../../content/rides/timber-tumbler.ride.json"),
+        include_str!("../../../../content/rides/velocity-viper.ride.json"),
+        include_str!("../../../../content/rides/briar-blitz.ride.json"),
+        include_str!("../../../../content/rides/daisy-dash.ride.json"),
+        include_str!("../../../../content/rides/horizon-hawk.ride.json"),
+    ]
+    .into_iter()
+    .map(|source| {
+        let ride: RideFile = serde_json::from_str(source)
+            .unwrap_or_else(|error| panic!("could not parse player ride file: {error}"));
+        (ride.name.clone(), ride)
+    })
+    .collect()
 }
 
 fn model_for_circuit(name: &str) -> CoasterModel {
@@ -508,11 +501,11 @@ fn piece_id_for_name(name: &str) -> PieceId {
     catalog()
         .iter()
         .find(|piece| format!("{:?}", piece.id) == name)
-        .unwrap_or_else(|| panic!("circuits.txt references unknown piece {name}"))
+        .unwrap_or_else(|| panic!("ride file references unknown piece {name}"))
         .id
 }
 
-fn build_player_circuit(name: &str, entries: &[String]) -> (CoasterModel, super::Circuit) {
+fn build_player_circuit(name: &str, ride: &RideFile) -> (CoasterModel, super::Circuit) {
     let model = model_for_circuit(name);
     let world = World::new(
         512,
@@ -524,10 +517,15 @@ fn build_player_circuit(name: &str, entries: &[String]) -> (CoasterModel, super:
     );
     let mut construction = Construction::new(
         TrackState {
-            x: 482,
-            y: 498,
+            x: ride.station.x * 2,
+            y: ride.station.y * 2,
             z: 6,
-            heading: Heading::North,
+            heading: match ride.station.heading {
+                RideHeading::East => Heading::East,
+                RideHeading::North => Heading::North,
+                RideHeading::West => Heading::West,
+                RideHeading::South => Heading::South,
+            },
             ..TrackState::origin()
         },
         model.clone(),
@@ -536,19 +534,17 @@ fn build_player_circuit(name: &str, entries: &[String]) -> (CoasterModel, super:
         .append(PieceId::Station, &world, &[])
         .expect("station begins player circuit");
     let mut chain_enabled = false;
-    for entry in entries {
-        match entry.as_str() {
-            "+chain" => {
-                chain_enabled = true;
-                construction.set_chain(true);
+    for step in &ride.steps {
+        match step {
+            RideStep::Chain(chain) => {
+                chain_enabled = chain.chain;
+                construction.set_chain(chain.chain);
             }
-            "-chain" => {
-                chain_enabled = false;
-                construction.set_chain(false);
-            }
-            _ => construction
-                .append(piece_id_for_name(entry), &world, &[])
-                .unwrap_or_else(|error| panic!("{name} cannot place {entry}: {error:?}")),
+            RideStep::Place(place) => construction
+                .append(piece_id_for_name(&place.place), &world, &[])
+                .unwrap_or_else(|error| panic!("{name} cannot place {}: {error:?}", place.place)),
+            RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
+            RideStep::BlockSections(_) => {}
         }
     }
     assert!(!chain_enabled, "{name} must end with chain disabled");
@@ -709,8 +705,8 @@ fn calibration_table_prints_demo_and_player_circuit_scores() {
     );
     for model in coaster_models() {
         let name = model.name;
-        let entries = circuits.get(name).expect("known player circuit");
-        let (model, circuit) = build_player_circuit(name, entries);
+        let ride = circuits.get(name).expect("known player ride");
+        let (model, circuit) = build_player_circuit(name, ride);
         let report = run_lap(&circuit, &model, 2.0);
         print_circuit(name, &report);
     }
@@ -740,8 +736,8 @@ fn print_circuit(name: &str, report: &super::TestRun) {
 
 #[test]
 fn incremental_force_preview_matches_fresh_player_circuit_prefixes() {
-    for (name, entries) in read_player_circuits() {
-        let (model, circuit) = build_player_circuit(&name, &entries);
+    for (name, ride) in read_player_circuits() {
+        let (model, circuit) = build_player_circuit(&name, &ride);
         let pieces = circuit.pieces();
         let config = PhysicsConfig {
             lift_speed: 5.0,

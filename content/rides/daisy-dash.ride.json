@@ -132,5 +132,25 @@
     {
       "close": true
     }
-  ]
+  ],
+  "expect": {
+    "excitement": [2.5, 4.5],
+    "withinComfortableForceLimits": true,
+    "inversions": 0,
+    "launches": 0,
+    "airtimeMomentsAtLeast": 2,
+    "features": {
+      "piecePrefixesAtLeast": {
+        "FamilyHill": 2,
+        "SpeedTurnLarge": 3
+      },
+      "orderedSteps": [
+        [
+          { "chain": true },
+          { "place": "TurnSmallStandalone" },
+          { "chain": false }
+        ]
+      ]
+    }
+  }
 }

@@ -1,9 +1,12 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
+use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim_wasm::WasmSimulation;
 
-const CIRCUITS: &str = include_str!("../../../web/e2e/player/circuits.txt");
+const TIMBER_TUMBLER: &str = include_str!("../../../content/rides/timber-tumbler.ride.json");
+const VELOCITY_VIPER: &str = include_str!("../../../content/rides/velocity-viper.ride.json");
+const BRIAR_BLITZ: &str = include_str!("../../../content/rides/briar-blitz.ride.json");
 const WARMUP_RUNS: usize = 5;
 const MEASURED_RUNS: usize = 100;
 
@@ -83,13 +86,7 @@ fn measure_append_previews(name: &str, model_id: &str) {
     simulation.construction_select(model_id);
     simulation.construction_start(482, 498, 6, 2);
 
-    let header = format!("[{name}]");
-    let mut sections = CIRCUITS.split(&header);
-    sections.next().unwrap();
-    let section = sections
-        .next()
-        .unwrap_or_else(|| panic!("{name} circuit missing"));
-    assert!(sections.next().is_none(), "duplicate {name} circuit");
+    let ride = ride_file(name);
     let mut append_latencies = Vec::new();
     let mut placed_preview_latencies = Vec::new();
     let mut candidate_preview_latencies = Vec::new();
@@ -97,27 +94,21 @@ fn measure_append_previews(name: &str, model_id: &str) {
     let mut append_update_latencies = Vec::new();
     let mut piece_count = 1;
 
-    for piece_name in section
-        .lines()
-        .map(str::trim)
-        .take_while(|line| !line.starts_with('['))
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        match piece_name {
-            "+chain" => {
-                simulation.construction_set_chain(true);
+    for step in &ride.steps {
+        let piece_name = match step {
+            RideStep::Chain(step) => {
+                simulation.construction_set_chain(step.chain);
                 black_box(simulation.construction_force_preview_json());
                 black_box(simulation.construction_candidate_force_preview_json());
                 continue;
             }
-            "-chain" => {
-                simulation.construction_set_chain(false);
-                black_box(simulation.construction_force_preview_json());
-                black_box(simulation.construction_candidate_force_preview_json());
+            RideStep::Place(step) => step.place.as_str(),
+            RideStep::Close(step) => {
+                assert!(step.close, "{name} has a false close step");
                 continue;
             }
-            _ => {}
-        }
+            _ => panic!("{name} benchmark does not support this ride step"),
+        };
 
         simulation.construction_select(piece_name);
         black_box(simulation.construction_force_preview_json());
@@ -294,31 +285,21 @@ fn build_player_circuit(
     simulation.construction_select(model_id);
     simulation.construction_start(482, 498, 6, 2);
 
-    let header = format!("[{name}]");
-    let mut sections = CIRCUITS.split(&header);
-    sections.next().unwrap();
-    let section = sections
-        .next()
-        .unwrap_or_else(|| panic!("{name} circuit missing"));
-    assert!(sections.next().is_none(), "duplicate {name} circuit");
+    let ride = ride_file(name);
     let mut piece_count = 1;
-    for piece_name in section
-        .lines()
-        .map(str::trim)
-        .take_while(|line| !line.starts_with('['))
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        match piece_name {
-            "+chain" => {
-                simulation.construction_set_chain(true);
+    for step in &ride.steps {
+        let piece_name = match step {
+            RideStep::Chain(step) => {
+                simulation.construction_set_chain(step.chain);
                 continue;
             }
-            "-chain" => {
-                simulation.construction_set_chain(false);
+            RideStep::Place(step) => step.place.as_str(),
+            RideStep::Close(step) => {
+                assert!(step.close, "{name} has a false close step");
                 continue;
             }
-            _ => {}
-        }
+            _ => panic!("{name} benchmark does not support this ride step"),
+        };
         simulation.construction_select(piece_name);
         simulation.construction_append();
         let track: serde_json::Value =
@@ -331,18 +312,25 @@ fn build_player_circuit(
     }
     let track: serde_json::Value = serde_json::from_str(&simulation.construction_track()).unwrap();
     let expected_piece_count = prefix_length.unwrap_or_else(|| {
-        section
-            .lines()
-            .map(str::trim)
-            .take_while(|line| !line.starts_with('['))
-            .filter(|line| {
-                !line.is_empty() && !line.starts_with('#') && *line != "+chain" && *line != "-chain"
-            })
+        ride.steps
+            .iter()
+            .filter(|step| matches!(step, RideStep::Place(_)))
             .count()
     }) + 1;
     assert_eq!(track.as_array().unwrap().len(), expected_piece_count);
     assert!(simulation.construction_active());
     simulation
+}
+
+fn ride_file(name: &str) -> RideFile {
+    let json = match name {
+        "Timber Tumbler" => TIMBER_TUMBLER,
+        "Velocity Viper" => VELOCITY_VIPER,
+        "Briar Blitz" => BRIAR_BLITZ,
+        _ => panic!("unknown benchmark ride {name}"),
+    };
+    serde_json::from_str(json)
+        .unwrap_or_else(|error| panic!("invalid ride file for {name}: {error}"))
 }
 
 fn measure_preview(simulation: &mut WasmSimulation, name: &str) {

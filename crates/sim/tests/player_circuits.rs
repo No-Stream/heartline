@@ -2,9 +2,10 @@ use theme_park_sim::physics::{
     CoasterRun, PhysicsConfig, PreviewStatus, demo_circuit, preview_open_track,
 };
 use theme_park_sim::track::construction::Construction;
+use theme_park_sim::track::ride_file::{RideFile, RideHeading, RideStep};
 use theme_park_sim::track::{
-    PieceId, PieceKind, TrackState, catalog, family_coaster_model, hybrid_model, hyper_model,
-    multi_launch_model, rated_speeds, wooden_twister_model,
+    Heading, PieceId, PieceKind, TrackState, catalog, family_coaster_model, hybrid_model,
+    hyper_model, multi_launch_model, rated_speeds, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -17,61 +18,31 @@ fn player_circuits_close() {
         ("Daisy Dash", family_coaster_model(), true),
         ("Horizon Hawk", hyper_model(), true),
     ] {
-        let world = World::new(
-            512,
-            512,
-            Surface {
-                corners: [8; 4],
-                water: None,
-            },
-        );
-        let start = TrackState {
-            x: 482,
-            y: 498,
-            z: 6,
-            heading: theme_park_sim::track::Heading::North,
-            ..TrackState::origin()
-        };
-        let mut construction = Construction::new(start, model);
+        let ride = player_ride(name);
+        let world = player_world();
+        let mut construction = Construction::new(player_station(&ride), model.clone());
         construction.append(PieceId::Station, &world, &[]).unwrap();
-        let header = format!("[{name}]");
-        let mut sections = include_str!("../../../web/e2e/player/circuits.txt").split(&header);
-        sections.next().unwrap();
-        let circuit = sections
-            .next()
-            .unwrap_or_else(|| panic!("{name} circuit missing"));
-        assert!(sections.next().is_none(), "duplicate {name} circuit");
-        let pieces = catalog();
         let mut count = 0;
         let mut chain_piece_count = 0;
-        for name in circuit
-            .lines()
-            .map(str::trim)
-            .take_while(|line| !line.starts_with('['))
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        {
-            match name {
-                "+chain" => {
-                    construction.set_chain(true);
-                    continue;
+        for step in &ride.steps {
+            match step {
+                RideStep::Chain(chain) => construction.set_chain(chain.chain),
+                RideStep::Place(place) => {
+                    let piece = catalog()
+                        .iter()
+                        .find(|piece| format!("{:?}", piece.id) == place.place)
+                        .unwrap_or_else(|| panic!("Unknown piece {}", place.place));
+                    construction
+                        .append(piece.id, &world, &[])
+                        .unwrap_or_else(|error| panic!("{}: {error:?}", place.place));
+                    if construction.pieces().last().unwrap().kind == PieceKind::Lift {
+                        chain_piece_count += 1;
+                    }
+                    count += 1;
                 }
-                "-chain" => {
-                    construction.set_chain(false);
-                    continue;
-                }
-                _ => {}
+                RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
+                RideStep::BlockSections(_) => {}
             }
-            let piece = pieces
-                .iter()
-                .find(|piece| format!("{:?}", piece.id) == name)
-                .unwrap_or_else(|| panic!("Unknown piece {name}"));
-            construction
-                .append(piece.id, &world, &[])
-                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
-            if construction.pieces().last().unwrap().kind == PieceKind::Lift {
-                chain_piece_count += 1;
-            }
-            count += 1;
         }
         assert!(count > 0);
         assert!(
@@ -140,53 +111,70 @@ fn build_player_circuit(
     name: &str,
     model: theme_park_sim::track::CoasterModel,
 ) -> theme_park_sim::physics::Circuit {
-    let world = World::new(
+    let ride = player_ride(name);
+    let world = player_world();
+    let mut construction = Construction::new(player_station(&ride), model.clone());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    for step in ride.steps {
+        match step {
+            RideStep::Chain(chain) => construction.set_chain(chain.chain),
+            RideStep::Place(place) => {
+                let id = catalog()
+                    .iter()
+                    .find(|piece| format!("{:?}", piece.id) == place.place)
+                    .unwrap_or_else(|| panic!("unknown piece {}", place.place))
+                    .id;
+                construction
+                    .append(id, &world, &[])
+                    .unwrap_or_else(|error| panic!("{}: {error:?}", place.place));
+            }
+            RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
+            RideStep::BlockSections(_) => {}
+        }
+    }
+    construction.close().unwrap();
+    construction.circuit().unwrap()
+}
+
+fn player_ride(name: &str) -> RideFile {
+    let source = match name {
+        "Timber Tumbler" => include_str!("../../../content/rides/timber-tumbler.ride.json"),
+        "Velocity Viper" => include_str!("../../../content/rides/velocity-viper.ride.json"),
+        "Briar Blitz" => include_str!("../../../content/rides/briar-blitz.ride.json"),
+        "Daisy Dash" => include_str!("../../../content/rides/daisy-dash.ride.json"),
+        "Horizon Hawk" => include_str!("../../../content/rides/horizon-hawk.ride.json"),
+        _ => panic!("unknown player ride {name}"),
+    };
+    let ride: RideFile = serde_json::from_str(source)
+        .unwrap_or_else(|error| panic!("could not parse {name} ride file: {error}"));
+    assert_eq!(ride.name, name);
+    ride
+}
+
+fn player_world() -> World {
+    World::new(
         512,
         512,
         Surface {
             corners: [8; 4],
             water: None,
         },
-    );
-    let start = TrackState {
-        x: 482,
-        y: 498,
+    )
+}
+
+fn player_station(ride: &RideFile) -> TrackState {
+    TrackState {
+        x: ride.station.x * 2,
+        y: ride.station.y * 2,
         z: 6,
-        heading: theme_park_sim::track::Heading::North,
+        heading: match ride.station.heading {
+            RideHeading::East => Heading::East,
+            RideHeading::North => Heading::North,
+            RideHeading::West => Heading::West,
+            RideHeading::South => Heading::South,
+        },
         ..TrackState::origin()
-    };
-    let mut construction = Construction::new(start, model.clone());
-    construction.append(PieceId::Station, &world, &[]).unwrap();
-    let circuit_text = include_str!("../../../web/e2e/player/circuits.txt");
-    let section = circuit_text
-        .split(&format!("[{name}]"))
-        .nth(1)
-        .unwrap_or_else(|| panic!("{name} circuit missing"));
-    for name in section
-        .lines()
-        .map(str::trim)
-        .take_while(|line| !line.starts_with('['))
-    {
-        if name.is_empty() || name.starts_with('#') {
-            continue;
-        }
-        if name == "+chain" {
-            construction.set_chain(true);
-            continue;
-        }
-        if name == "-chain" {
-            construction.set_chain(false);
-            continue;
-        }
-        let id = catalog()
-            .iter()
-            .find(|piece| format!("{:?}", piece.id) == name)
-            .unwrap()
-            .id;
-        construction.append(id, &world, &[]).unwrap();
     }
-    construction.close().unwrap();
-    construction.circuit().unwrap()
 }
 
 #[test]

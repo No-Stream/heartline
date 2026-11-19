@@ -195,5 +195,37 @@
     {
       "close": true
     }
-  ]
+  ],
+  "expect": {
+    "inversions": 0,
+    "invertedSeconds": 0.0,
+    "features": {
+      "piecePrefixesAtLeast": {
+        "TopHat": 1
+      },
+      "piecePrefixGroupsAtLeast": [
+        {
+          "prefixes": ["TightTwister", "Twister"],
+          "minimum": 2
+        }
+      ],
+      "piecePrefixesAfter": [
+        {
+          "prefix": "BankedTurnStandalone",
+          "after": { "chain": false }
+        }
+      ],
+      "orderedSteps": [
+        [
+          { "chain": true },
+          { "place": "TurnSmallStandalone" },
+          { "chain": false }
+        ],
+        [
+          { "chain": false },
+          { "place": "BankedTurnStandalone" }
+        ]
+      ]
+    }
+  }
 }

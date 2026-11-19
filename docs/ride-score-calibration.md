@@ -564,7 +564,7 @@ Nausea: 4.07
 
 ## 2026-11-06: Demo coaster
 
-The demo coaster in the default park is now the fixed piece list in `crates/sim/src/physics/demo_circuit.txt`, measured with `make circuit-report CIRCUIT=Demo FILE=crates/sim/src/physics/demo_circuit.txt` (the report builds it piece by piece in the default park's world from its station at (450, 500, 10)). The chain lift climbs 32 m eastward from the station, high over the area west of x = 980 m where the browser tests build their player coasters. A 24 m gentle drop reaches about 21.5 m/s, followed by five ejector hills and three left turns banked for 20 m/s, all east and north of that area, with no inversions. The return runs south over the park path, under the lift (the self-crossing) and around the south of the pond; a four-piece brake run trims the train to brake speed and four 2 m descents with two more brake pieces bring it down to the station at walking pace through the small return turns. The game runs the demo with construction-test physics (lift 5 m/s, initial 2 m/s), where excitement is 5.10; under default physics it is 4.78. The smallest rated-window entry margin is 1.77 m/s (construction test, ejector hill 12 × 64 m) and 1.73 m/s (default physics, the last banked turn). Peak forces are 3.32 g vertical in the drop pullout and hill valleys, −0.80 g on the 12 × 64 m ejector hill, 0.38 g lateral in the first slow return turn and 1.10 g longitudinal, all at least 0.25 g inside the hybrid model's 4.5 / −1.5 / 1.5 / 1.5 g limits.
+At the time of this measurement, the demo coaster in the default park used a fixed piece list measured with the former circuit report (the report builds it piece by piece in the default park's world from its station at (450, 500, 10)). The chain lift climbs 32 m eastward from the station, high over the area west of x = 980 m where the browser tests build their player coasters. A 24 m gentle drop reaches about 21.5 m/s, followed by five ejector hills and three left turns banked for 20 m/s, all east and north of that area, with no inversions. The return runs south over the park path, under the lift (the self-crossing) and around the south of the pond; a four-piece brake run trims the train to brake speed and four 2 m descents with two more brake pieces bring it down to the station at walking pace through the small return turns. The game runs the demo with construction-test physics (lift 5 m/s, initial 2 m/s), where excitement is 5.10; under default physics it is 4.78. The smallest rated-window entry margin is 1.77 m/s (construction test, ejector hill 12 × 64 m) and 1.73 m/s (default physics, the last banked turn). Peak forces are 3.32 g vertical in the drop pullout and hill valleys, −0.80 g on the 12 × 64 m ejector hill, 0.38 g lateral in the first slow return turn and 1.10 g longitudinal, all at least 0.25 g inside the hybrid model's 4.5 / −1.5 / 1.5 / 1.5 g limits.
 
 | Circuit | Physics | Excitement | Intensity | Nausea | Vertical max | Vertical min | Lateral peak | Longitudinal peak |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -727,7 +727,7 @@ These are the rebuilt Timber Tumbler and Velocity Viper circuits on master
 ## Daisy Dash (family coaster)
 
 Daisy Dash by Windmill Ride Works was added on 2026-11-06 with its reference circuit in
-`web/e2e/player/circuits.txt`. The band test (`daisy_dash_is_a_gentle_family_ride_under_both_physics_configs`)
+`content/rides/daisy-dash.ride.json`. The band test (`daisy_dash_is_a_gentle_family_ride_under_both_physics_configs`)
 expects excitement from 2.5 to 4.5, every force inside the model limits (3.0 / −0.6 g vertical, 1.0 g lateral,
 1.5 g longitudinal) and every rated piece entered at least 1.5 m/s inside its window. The circuit report measured:
 
@@ -788,7 +788,7 @@ Nausea: 0.40
 ## Horizon Hawk (hyper)
 
 Horizon Hawk by Boulder & Marlin was added on 2026-11-06 with its reference circuit in
-`web/e2e/player/circuits.txt`. The band test (`horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs`)
+`content/rides/horizon-hawk.ride.json`. The band test (`horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs`)
 expects excitement from 6 to 8, every force at least 0.25 g inside the model limits (4.0 / −1.3 g vertical, 1.2 g
 lateral, 1.5 g longitudinal), every rated piece entered at least 1.5 m/s inside its window, at least six airtime
 moments, a drop of at least 50 m and a top speed of at least 30 m/s. The circuit report measured:

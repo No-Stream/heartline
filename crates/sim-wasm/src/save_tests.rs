@@ -1,51 +1,42 @@
 use crate::WasmSimulation;
+use theme_park_sim::track::ride_file::{RideFile, RideHeading, RideStep};
 use theme_park_sim::track::{HillFeel, PieceFamily, PieceId};
 
 fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId> {
-    simulation.construction_select("model:hybrid");
-    simulation.construction_start(200, 200, 40, 2);
-
-    let mut sections =
-        include_str!("../../../web/e2e/player/circuits.txt").split("[Timber Tumbler]");
-    sections.next().expect("circuit fixture has a prefix");
-    let circuit = sections
-        .next()
-        .expect("Timber Tumbler circuit fixture exists");
-    assert!(
-        !circuit.contains("[Timber Tumbler]"),
-        "Timber Tumbler fixture is unique"
+    let ride: RideFile = serde_json::from_str(include_str!(
+        "../../../content/rides/timber-tumbler.ride.json"
+    ))
+    .expect("Timber Tumbler ride file is valid");
+    simulation.construction_select(&format!("model:{}", ride.model));
+    simulation.construction_start(
+        ride.station.x * 2,
+        ride.station.y * 2,
+        ride.station.z / 2,
+        heading_for_worker(ride.station.heading),
     );
 
-    for name in circuit
-        .lines()
-        .map(str::trim)
-        .take_while(|line| !line.starts_with('['))
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        match name {
-            "+chain" => {
-                simulation.construction_set_chain(true);
-                continue;
+    for step in &ride.steps {
+        match step {
+            RideStep::Chain(chain) => simulation.construction_set_chain(chain.chain),
+            RideStep::Place(place) => {
+                simulation.construction_select(&place.place);
+                assert!(
+                    simulation.construction_can_append(),
+                    "{}: {}",
+                    place.place,
+                    simulation.construction_preview_reason()
+                );
+                simulation.construction_append();
+                assert!(
+                    simulation.construction_message().is_empty(),
+                    "{}: {}",
+                    place.place,
+                    simulation.construction_message()
+                );
             }
-            "-chain" => {
-                simulation.construction_set_chain(false);
-                continue;
-            }
-            _ => {}
+            RideStep::Close(close) => assert!(close.close),
+            RideStep::BlockSections(_) => {}
         }
-
-        simulation.construction_select(name);
-        assert!(
-            simulation.construction_can_append(),
-            "{name}: {}",
-            simulation.construction_preview_reason()
-        );
-        simulation.construction_append();
-        assert!(
-            simulation.construction_message().is_empty(),
-            "{name}: {}",
-            simulation.construction_message()
-        );
     }
 
     let pieces = simulation.construction.as_ref().unwrap().pieces();
@@ -79,6 +70,15 @@ fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId
     simulation.construction_close();
     assert!(simulation.construction_message().is_empty());
     hill_piece_ids
+}
+
+fn heading_for_worker(heading: RideHeading) -> u8 {
+    match heading {
+        RideHeading::East => 0,
+        RideHeading::North => 2,
+        RideHeading::West => 4,
+        RideHeading::South => 6,
+    }
 }
 
 #[test]

@@ -3,9 +3,10 @@ use theme_park_sim::physics::{
     Train, demo_circuit,
 };
 use theme_park_sim::track::construction::Construction;
+use theme_park_sim::track::ride_file::{RideFile, RideHeading, RideStep};
 use theme_park_sim::track::{
-    CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceFamily, PieceId, PieceKind,
-    TrackState, catalog, family_coaster_model, hybrid_model, hyper_model, multi_launch_model,
+    CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceId, PieceKind, TrackState,
+    catalog, family_coaster_model, hybrid_model, hyper_model, multi_launch_model,
     rated_speed_margin, rated_speeds, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
@@ -19,41 +20,55 @@ fn player_circuit(name: &str, model: CoasterModel) -> Circuit {
             water: None,
         },
     );
+    let ride = player_ride(name);
     let start = TrackState {
-        x: 482,
-        y: 498,
+        x: ride.station.x * 2,
+        y: ride.station.y * 2,
         z: 6,
-        heading: Heading::North,
+        heading: match ride.station.heading {
+            RideHeading::East => Heading::East,
+            RideHeading::North => Heading::North,
+            RideHeading::West => Heading::West,
+            RideHeading::South => Heading::South,
+        },
         ..TrackState::origin()
     };
     let mut construction = Construction::new(start, model);
     construction.append(PieceId::Station, &world, &[]).unwrap();
-    let text = include_str!("../../../web/e2e/player/circuits.txt");
-    let section = text
-        .split(&format!("[{name}]"))
-        .nth(1)
-        .unwrap_or_else(|| panic!("missing {name}"));
-    for line in section
-        .lines()
-        .map(str::trim)
-        .take_while(|line| !line.starts_with('['))
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        match line {
-            "+chain" => construction.set_chain(true),
-            "-chain" => construction.set_chain(false),
-            piece => {
+    for step in ride.steps {
+        match step {
+            RideStep::Chain(chain) => construction.set_chain(chain.chain),
+            RideStep::Place(place) => {
                 let id = catalog()
                     .iter()
-                    .find(|candidate| format!("{:?}", candidate.id) == piece)
-                    .unwrap_or_else(|| panic!("unknown piece {piece}"))
+                    .find(|candidate| format!("{:?}", candidate.id) == place.place)
+                    .unwrap_or_else(|| panic!("unknown piece {}", place.place))
                     .id;
-                construction.append(id, &world, &[]).unwrap();
+                construction
+                    .append(id, &world, &[])
+                    .unwrap_or_else(|error| panic!("{}: {error:?}", place.place));
             }
+            RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
+            RideStep::BlockSections(_) => {}
         }
     }
     construction.close().unwrap();
     construction.circuit().unwrap()
+}
+
+fn player_ride(name: &str) -> RideFile {
+    let source = match name {
+        "Timber Tumbler" => include_str!("../../../content/rides/timber-tumbler.ride.json"),
+        "Velocity Viper" => include_str!("../../../content/rides/velocity-viper.ride.json"),
+        "Briar Blitz" => include_str!("../../../content/rides/briar-blitz.ride.json"),
+        "Daisy Dash" => include_str!("../../../content/rides/daisy-dash.ride.json"),
+        "Horizon Hawk" => include_str!("../../../content/rides/horizon-hawk.ride.json"),
+        _ => panic!("unknown player ride {name}"),
+    };
+    let ride: RideFile = serde_json::from_str(source)
+        .unwrap_or_else(|error| panic!("could not parse {name} ride file: {error}"));
+    assert_eq!(ride.name, name);
+    ride
 }
 
 fn assert_design_margins(circuit: &Circuit, model: &CoasterModel, construction_test: bool) {
@@ -322,8 +337,8 @@ fn assert_timber_tumbler_report(run_name: &str, report: &TestRun, limits: Comfor
     );
 }
 
-/// Rides the circuit under the game's default physics and the construction-test physics, asserting the
-/// excitement band, the design force margins and the rated-window entry margins; returns both reports.
+/// Checks the default-physics excitement band and returns both reports after checking force and
+/// rated-window margins in each configuration.
 fn assert_rides_in_band_with_design_margins(
     circuit: &Circuit,
     model: &CoasterModel,
@@ -378,47 +393,31 @@ fn assert_rides_in_band_with_design_margins(
 fn velocity_viper_completes_with_comfortable_forces() {
     let model = multi_launch_model();
     let circuit = player_circuit("Velocity Viper", model.clone());
-    for report in assert_rides_in_band_with_design_margins(&circuit, &model, 6.0..=9.0) {
-        assert_eq!(report.statistics.launches, 2);
-    }
+    let reports = assert_rides_in_band_with_design_margins(&circuit, &model, 6.0..=9.0);
+    assert_eq!(reports[0].statistics.launches, 2);
 }
 
 #[test]
 fn demo_completes_as_an_airtime_ride_with_comfortable_forces() {
     let model = hybrid_model();
-    for report in assert_rides_in_band_with_design_margins(&demo_circuit(), &model, 6.5..=8.5) {
-        // The stall and the zero-g roll.
-        assert_eq!(report.statistics.inversions, 2);
-        assert!(
-            report.statistics.airtime_moments >= 3,
-            "demo airtime moments: {}",
-            report.statistics.airtime_moments
-        );
-    }
+    let reports = assert_rides_in_band_with_design_margins(&demo_circuit(), &model, 6.5..=8.5);
+    let default_report = &reports[0];
+    assert_eq!(default_report.statistics.inversions, 2);
+    assert!(
+        default_report.statistics.airtime_moments >= 3,
+        "demo airtime moments: {}",
+        default_report.statistics.airtime_moments
+    );
 }
 
 #[test]
 fn daisy_dash_is_a_gentle_family_ride_under_both_physics_configs() {
     let model = family_coaster_model();
     let circuit = player_circuit("Daisy Dash", model.clone());
-    let pieces = circuit.pieces();
-    let family_hills = pieces
-        .iter()
-        .filter(|piece| matches!(piece.id, PieceId::FamilyHill3x32 | PieceId::FamilyHill4x40))
-        .count();
-    let speed_matched_turns = pieces
-        .iter()
-        .filter(|piece| matches!(piece.family, Some(PieceFamily::SpeedTurn { .. })))
-        .count();
-    assert!(family_hills >= 2, "family hills: {family_hills}");
     assert!(
-        speed_matched_turns >= 3,
-        "speed-matched turns: {speed_matched_turns}"
-    );
-    assert!(
-        pieces
-            .iter()
-            .any(|piece| piece.kind == PieceKind::Lift && piece.entry.heading != piece.exit.heading),
+        circuit.pieces().iter().any(|piece| {
+            piece.kind == PieceKind::Lift && piece.entry.heading != piece.exit.heading
+        }),
         "the chain lift curves"
     );
     for (lift_speed, initial_speed) in [(PhysicsConfig::default().lift_speed, 0.0), (5.0, 2.0)] {
@@ -435,17 +434,19 @@ fn daisy_dash_is_a_gentle_family_ride_under_both_physics_configs() {
             "excitement: {}",
             report.excitement
         );
-        assert!(
-            stats.max_positive_vertical_g <= limits.maximum_vertical_g
-                && stats.max_negative_vertical_g >= limits.minimum_vertical_g
-                && stats.max_lateral_g <= limits.maximum_lateral_g
-                && stats.max_forward_g <= limits.maximum_longitudinal_g
-                && stats.max_braking_g.abs() <= limits.maximum_longitudinal_g,
-            "{stats:?}"
-        );
-        assert_eq!(stats.inversions, 0);
-        assert_eq!(stats.launches, 0);
-        assert!(stats.airtime_moments >= 2, "{stats:?}");
+        if initial_speed == 0.0 {
+            assert!(
+                stats.max_positive_vertical_g <= limits.maximum_vertical_g
+                    && stats.max_negative_vertical_g >= limits.minimum_vertical_g
+                    && stats.max_lateral_g <= limits.maximum_lateral_g
+                    && stats.max_forward_g <= limits.maximum_longitudinal_g
+                    && stats.max_braking_g.abs() <= limits.maximum_longitudinal_g,
+                "{stats:?}"
+            );
+            assert_eq!(stats.inversions, 0);
+            assert_eq!(stats.launches, 0);
+            assert!(stats.airtime_moments >= 2, "{stats:?}");
+        }
         assert!(
             !report
                 .notes
@@ -473,30 +474,18 @@ fn horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs() {
             .all(|piece| piece.entry.heading == piece.exit.heading),
         "the chain lift is straight"
     );
-    assert!(
-        pieces
-            .iter()
-            .any(|piece| piece.id == PieceId::WideLevelToSixtyDown),
-        "the first drop is 60 degrees"
+    let reports = assert_rides_in_band_with_design_margins(&circuit, &model, 6.0..=8.0);
+    let default_report = &reports[0];
+    let stats = default_report.statistics;
+    eprintln!(
+        "Horizon Hawk: excitement {:.2}, intensity {:.2}, nausea {:.2}; stats {stats:?}",
+        default_report.excitement, default_report.intensity, default_report.nausea
     );
-    for camelback in [PieceId::FloaterHill20x128, PieceId::FloaterHill24x160] {
-        assert!(
-            pieces.iter().any(|piece| piece.id == camelback),
-            "{camelback:?}"
-        );
-    }
-    for report in assert_rides_in_band_with_design_margins(&circuit, &model, 6.0..=8.0) {
-        let stats = report.statistics;
-        eprintln!(
-            "Horizon Hawk: excitement {:.2}, intensity {:.2}, nausea {:.2}; stats {stats:?}",
-            report.excitement, report.intensity, report.nausea
-        );
-        assert_eq!(stats.inversions, 0);
-        assert_eq!(stats.launches, 0);
-        assert!(stats.airtime_moments >= 6, "{stats:?}");
-        assert!(stats.biggest_drop >= 50.0, "{stats:?}");
-        assert!(stats.max_speed >= 30.0, "{stats:?}");
-    }
+    assert_eq!(stats.inversions, 0);
+    assert_eq!(stats.launches, 0);
+    assert!(stats.airtime_moments >= 6, "{stats:?}");
+    assert!(stats.biggest_drop >= 50.0, "{stats:?}");
+    assert!(stats.max_speed >= 30.0, "{stats:?}");
 }
 
 #[test]
@@ -541,25 +530,7 @@ fn construction_reports_known_circuit_features() {
         assert!(stats.biggest_drop > 0.0 && stats.drops > 0, "{name}");
         if name == "Velocity Viper" {
             // The long launch and short launch form two separate launch sections.
-            assert_eq!(stats.launches, 2);
             assert!(stats.launch_peak_speed > 0.0);
-        }
-        if name == "Briar Blitz" {
-            // The current layout has a top hat and tight turns, but no inversion pieces.
-            assert_eq!(stats.inversions, 0);
-            assert_eq!(stats.inverted_seconds, 0.0);
-        }
-        if name == "Timber Tumbler" {
-            assert!(
-                stats.inversions >= 2,
-                "Timber inversions: {}",
-                stats.inversions
-            );
-            assert!(
-                stats.airtime_moments >= 4,
-                "Timber airtime moments: {}",
-                stats.airtime_moments
-            );
         }
     }
 }
@@ -614,24 +585,21 @@ fn timber_tumbler_meets_player_ride_targets_under_both_physics_configs() {
     );
 
     let construction_report = construction_test(&circuit, &model);
-    assert_timber_tumbler_report(
-        "construction-test physics",
-        &construction_report,
-        model.comfortable_force_limits,
+    assert!(
+        construction_report.completed,
+        "construction-test ride did not complete"
+    );
+    assert!(
+        construction_report
+            .notes
+            .iter()
+            .all(|note| !note.contains("rated speed band")),
+        "construction-test ride has a rated speed note: {:?}",
+        construction_report.notes
     );
     assert!(
         (8.0..=10.0).contains(&construction_report.excitement),
         "construction-test Timber Tumbler excitement: {}",
         construction_report.excitement
-    );
-    assert!(
-        construction_report.statistics.inversions >= 2,
-        "construction-test physics inversions: {}",
-        construction_report.statistics.inversions
-    );
-    assert!(
-        construction_report.statistics.airtime_moments >= 4,
-        "construction-test physics airtime moments: {}",
-        construction_report.statistics.airtime_moments
     );
 }

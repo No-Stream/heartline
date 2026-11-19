@@ -2,7 +2,9 @@
 // Chrome, one exact selection and one placement per piece, and reports how long the worker
 // takes to answer each placement with its full construction state.
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
 
@@ -34,13 +36,14 @@ async function main() {
     browser = await chromium.launch({ channel: 'chrome', headless: true });
     const page = await browser.newPage();
     await page.goto(`${url}/construction-bench/`);
-    const circuits = [['Timber Tumbler', 'model:hybrid'], ['Velocity Viper', 'model:velocity_viper'], ['Briar Blitz', 'model:wooden_twister']];
-    for (const [name, model] of circuits) {
-      const result = await page.evaluate(placeCircuit, { name, model });
+    const rides = ['timber-tumbler', 'velocity-viper', 'briar-blitz'].map(async (filename) =>
+      JSON.parse(await readFile(resolve(`content/rides/${filename}.ride.json`), 'utf8')));
+    for (const ride of await Promise.all(rides)) {
+      const result = await page.evaluate(placeCircuit, ride);
       const sorted = (values) => [...values].sort((first, second) => first - second);
       const percentile = (values, fraction) => sorted(values)[Math.max(1, Math.ceil(values.length * fraction)) - 1];
       const describe = (values) => `median ${percentile(values, 0.5).toFixed(1)} ms, p95 ${percentile(values, 0.95).toFixed(1)} ms, max ${Math.max(...values).toFixed(1)} ms`;
-      console.log(`Browser worker ${name}: ${result.placements.length} placements; full state after placement ${describe(result.placements)}; first state after placement ${describe(result.firstStates)}; selection ${describe(result.selections)}`);
+      console.log(`Browser worker ${ride.name}: ${result.placements.length} placements; full state after placement ${describe(result.placements)}; first state after placement ${describe(result.firstStates)}; selection ${describe(result.selections)}`);
     }
   } finally {
     if (browser) await browser.close();
@@ -52,16 +55,7 @@ async function main() {
   }
 }
 
-async function placeCircuit({ name, model }) {
-  const text = await (await fetch('/e2e/player/circuits.txt')).text();
-  const sections = text.split(`[${name}]`);
-  if (sections.length !== 2) throw new Error(`Expected one ${name} circuit`);
-  const lines = [];
-  for (const raw of sections[1].split('\n')) {
-    const line = raw.trim();
-    if (line.startsWith('[')) break;
-    if (line && !line.startsWith('#')) lines.push(line);
-  }
+async function placeCircuit({ name, model, steps }) {
   const worker = new Worker('/src/worker.ts', { type: 'module' });
   const pending = [];
   let wake;
@@ -83,19 +77,25 @@ async function placeCircuit({ name, model }) {
   try {
     worker.postMessage({ type: 'init', seed: 42n, park: 'new', guestCount: 0, frozen: false, manualBlockAnalysis: false });
     await receive((message) => message.type === 'ready');
-    worker.postMessage({ type: 'construction-select', piece: model, exact: true });
+    worker.postMessage({ type: 'construction-select', piece: `model:${model}`, exact: true });
     await receive(fullState(() => true));
     worker.postMessage({ type: 'construction-start', x: 241, y: 249, z: 12, heading: 1 });
     let state = await receive(fullState((message) => message.track.length === 1));
     const placements = [];
     const firstStates = [];
     const selections = [];
-    for (const piece of lines) {
-      if (piece === '+chain' || piece === '-chain') {
-        worker.postMessage({ type: 'construction-set-chain', enabled: piece === '+chain' });
-        state = await receive(fullState((message) => message.chain === (piece === '+chain')));
+    for (const step of steps) {
+      if ('chain' in step) {
+        worker.postMessage({ type: 'construction-set-chain', enabled: step.chain });
+        state = await receive(fullState((message) => message.chain === step.chain));
         continue;
       }
+      if ('close' in step) {
+        if (!step.close) throw new Error(`${name} has a false close step`);
+        continue;
+      }
+      if (!('place' in step)) throw new Error(`${name} has an unsupported ride step`);
+      const piece = step.place;
       pending.length = 0;
       const selectionStart = performance.now();
       worker.postMessage({ type: 'construction-select', piece, exact: true });

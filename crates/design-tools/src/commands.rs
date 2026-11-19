@@ -6,13 +6,13 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use theme_park_sim::physics::{ForcePeakValues, TestRun};
+use theme_park_sim::physics::{Circuit, ForcePeakValues, TestRun};
 use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::ride_file::{
-    RideBlockSectionsStep, RideChainStep, RideCloseStep, RideFile, RideFileFormat, RideHeading,
-    RidePlaceStep, RideStation, RideStep,
+    RideBlockSectionsStep, RideChainStep, RideCloseStep, RideExpectFeatureStep, RideExpectFeatures,
+    RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideStation, RideStep,
 };
-use theme_park_sim::track::{CoasterModel, Heading as TrackHeading, coaster_models};
+use theme_park_sim::track::{CoasterModel, Heading as TrackHeading, Heartlining, coaster_models};
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
 use theme_park_sim_wasm::construction::{
@@ -850,6 +850,21 @@ fn execute_command(
             let selection = session
                 .select(&id, !matched)
                 .map_err(|error| error.to_string())?;
+            if matched {
+                let speed_match = selection
+                    .speed_match
+                    .as_ref()
+                    .ok_or_else(|| format!("{id} has no speed-matched variants"))?;
+                if speed_match.fits != Some(true) {
+                    let entry_speed = speed_match.entry_speed.map_or_else(
+                        || "the current end speed".to_owned(),
+                        |speed| format!("{speed:.2} m/s"),
+                    );
+                    return Err(format!(
+                        "no speed-matched variant for {id} fits at {entry_speed}"
+                    ));
+                }
+            }
             let estimates = session.estimates();
             if let Some(choice) = estimates
                 .choices
@@ -2719,7 +2734,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
         let rated_speed_margins = crate::report::rated_speed_margins(&circuit, &model)
             .map_err(|error| format!("{path}: {error}"))?;
-        let expectation_results = evaluate_expectations(&ride, &test_run);
+        let expectation_results = evaluate_expectations(&ride, &test_run, &model, &circuit)?;
         let failures: Vec<_> = expectation_results
             .iter()
             .filter(|result| !result.passed)
@@ -2793,12 +2808,17 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
     Ok(CliResponse::Success(text))
 }
 
-pub(crate) fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<String> {
-    evaluate_expectations(ride, test_run)
+pub(crate) fn check_expectations(
+    ride: &RideFile,
+    test_run: &TestRun,
+    circuit: &Circuit,
+) -> Result<Vec<String>, String> {
+    let model = validate_model(&ride.model)?;
+    Ok(evaluate_expectations(ride, test_run, &model, circuit)?
         .into_iter()
         .filter(|result| !result.passed)
         .map(|result| result.format())
-        .collect()
+        .collect())
 }
 
 struct ExpectationResult {
@@ -2830,9 +2850,14 @@ impl ExpectationResult {
     }
 }
 
-fn evaluate_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<ExpectationResult> {
+fn evaluate_expectations(
+    ride: &RideFile,
+    test_run: &TestRun,
+    model: &CoasterModel,
+    circuit: &Circuit,
+) -> Result<Vec<ExpectationResult>, String> {
     let Some(expect) = &ride.expect else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut results = Vec::new();
     let sustained = test_run.sustained_force_peaks();
@@ -2889,7 +2914,293 @@ fn evaluate_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<Expectation
             passed: observed >= minimum as usize,
         });
     }
-    results
+    if let Some(expected) = expect.within_comfortable_force_limits {
+        let stats = test_run.statistics;
+        let limits = model.comfortable_force_limits;
+        let within_limits = stats.max_positive_vertical_g <= limits.maximum_vertical_g
+            && stats.max_negative_vertical_g >= limits.minimum_vertical_g
+            && stats.max_lateral_g <= limits.maximum_lateral_g
+            && stats.max_forward_g.abs() <= limits.maximum_longitudinal_g
+            && stats.max_braking_g.abs() <= limits.maximum_longitudinal_g;
+        results.push(ExpectationResult {
+            metric: "comfortable force limits",
+            expected: if expected {
+                "within limits"
+            } else {
+                "outside limits"
+            }
+            .to_owned(),
+            observed: json!(within_limits),
+            observed_text: if within_limits {
+                "within limits"
+            } else {
+                "outside limits"
+            }
+            .to_owned(),
+            passed: expected == within_limits,
+        });
+    }
+    if let Some(minimum) = expect.inversions_at_least {
+        let observed = test_run.statistics.inversions;
+        results.push(ExpectationResult {
+            metric: "inversions",
+            expected: format!("at least {minimum}"),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= minimum as usize,
+        });
+    }
+    if let Some(launches) = expect.launches {
+        let observed = test_run.statistics.launches;
+        results.push(count_expectation(
+            "launches",
+            launches,
+            observed,
+            observed == launches as usize,
+        ));
+    }
+    if let Some(minimum) = expect.biggest_drop_at_least {
+        results.push(minimum_expectation(
+            "biggest drop",
+            minimum,
+            test_run.statistics.biggest_drop,
+        ));
+    }
+    if let Some(minimum) = expect.max_speed_at_least {
+        results.push(minimum_expectation(
+            "maximum speed",
+            minimum,
+            test_run.statistics.max_speed,
+        ));
+    }
+    if let Some(expected) = expect.inverted_seconds {
+        let observed = test_run.statistics.inverted_seconds;
+        results.push(ExpectationResult {
+            metric: "inverted time",
+            expected: format!("{expected:.2}"),
+            observed: json!(observed),
+            observed_text: format!("{observed:.2}"),
+            passed: observed == expected,
+        });
+    }
+    if let Some(features) = &expect.features {
+        results.extend(evaluate_feature_expectations(
+            &ride.steps,
+            features,
+            circuit,
+        )?);
+    }
+    Ok(results)
+}
+
+fn evaluate_feature_expectations(
+    ride_steps: &[RideStep],
+    features: &RideExpectFeatures,
+    circuit: &Circuit,
+) -> Result<Vec<ExpectationResult>, String> {
+    if features
+        .piece_prefixes_at_least
+        .iter()
+        .any(|(prefix, minimum)| prefix.is_empty() || *minimum == 0)
+        || features.piece_prefix_groups_at_least.iter().any(|group| {
+            group.prefixes.is_empty()
+                || group.prefixes.iter().any(String::is_empty)
+                || group.minimum == 0
+        })
+        || features.heartlined_inversions_at_least == Some(0)
+        || features.piece_prefixes_after.iter().any(|expectation| {
+            expectation.prefix.is_empty() || !valid_feature_step(&expectation.after)
+        })
+        || features
+            .ordered_steps
+            .iter()
+            .chain(&features.adjacent_steps)
+            .any(|sequence| sequence.is_empty())
+        || features
+            .ordered_steps
+            .iter()
+            .chain(&features.adjacent_steps)
+            .flatten()
+            .any(|step| !valid_feature_step(step))
+    {
+        return Err("ride expect.features contains an empty prefix or step sequence".into());
+    }
+
+    let mut results = Vec::new();
+    for (prefix, minimum) in &features.piece_prefixes_at_least {
+        let observed = ride_steps
+            .iter()
+            .filter(|step| match step {
+                RideStep::Place(place) => place.place.starts_with(prefix),
+                _ => false,
+            })
+            .count();
+        results.push(ExpectationResult {
+            metric: "ride feature count",
+            expected: format!("at least {minimum} pieces with prefix {prefix:?}"),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= *minimum as usize,
+        });
+    }
+    for group in &features.piece_prefix_groups_at_least {
+        let observed = ride_steps
+            .iter()
+            .filter(|step| match step {
+                RideStep::Place(place) => group
+                    .prefixes
+                    .iter()
+                    .any(|prefix| place.place.starts_with(prefix)),
+                _ => false,
+            })
+            .count();
+        results.push(ExpectationResult {
+            metric: "grouped ride feature count",
+            expected: format!(
+                "at least {} pieces with any prefix {:?}",
+                group.minimum, group.prefixes
+            ),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= group.minimum as usize,
+        });
+    }
+    if let Some(minimum) = features.heartlined_inversions_at_least {
+        let observed = circuit
+            .pieces()
+            .iter()
+            .filter(|piece| {
+                piece.inversion.is_some() && piece.heartlining == Some(Heartlining::Heartlined)
+            })
+            .count();
+        results.push(ExpectationResult {
+            metric: "heartlined inversion pieces",
+            expected: format!("at least {minimum}"),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= minimum as usize,
+        });
+    }
+    for expectation in &features.piece_prefixes_after {
+        let after_index = ride_steps
+            .iter()
+            .position(|step| ride_feature_step_matches(step, &expectation.after));
+        let matching_indices: Vec<_> = ride_steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| match step {
+                RideStep::Place(place) => place.place.starts_with(&expectation.prefix),
+                _ => false,
+            })
+            .map(|(step_index, _)| step_index)
+            .collect();
+        let passed = after_index.is_some_and(|after_index| {
+            !matching_indices.is_empty()
+                && matching_indices
+                    .iter()
+                    .all(|step_index| *step_index > after_index)
+        });
+        results.push(ExpectationResult {
+            metric: "ride feature prefix ordering",
+            expected: format!(
+                "all pieces with prefix {:?} after {}",
+                expectation.prefix,
+                describe_feature_sequence(std::slice::from_ref(&expectation.after))
+            ),
+            observed: json!(passed),
+            observed_text: if passed { "found" } else { "not found" }.to_owned(),
+            passed,
+        });
+    }
+    for sequence in &features.ordered_steps {
+        let passed = contains_ordered_feature_sequence(ride_steps, sequence);
+        results.push(ExpectationResult {
+            metric: "ordered ride feature steps",
+            expected: describe_feature_sequence(sequence),
+            observed: json!(passed),
+            observed_text: if passed { "found" } else { "not found" }.to_owned(),
+            passed,
+        });
+    }
+    for sequence in &features.adjacent_steps {
+        let passed = contains_adjacent_feature_sequence(ride_steps, sequence);
+        results.push(ExpectationResult {
+            metric: "adjacent ride feature steps",
+            expected: describe_feature_sequence(sequence),
+            observed: json!(passed),
+            observed_text: if passed { "found" } else { "not found" }.to_owned(),
+            passed,
+        });
+    }
+    Ok(results)
+}
+
+fn valid_feature_step(step: &RideExpectFeatureStep) -> bool {
+    match step {
+        RideExpectFeatureStep::Place(place) => !place.place.is_empty(),
+        RideExpectFeatureStep::PlacePrefix(place) => !place.place_prefix.is_empty(),
+        RideExpectFeatureStep::Chain(_) => true,
+    }
+}
+
+fn contains_ordered_feature_sequence(
+    ride_steps: &[RideStep],
+    feature_sequence: &[RideExpectFeatureStep],
+) -> bool {
+    let mut ride_step_index = 0;
+    for expected_step in feature_sequence {
+        while ride_step_index < ride_steps.len()
+            && !ride_feature_step_matches(&ride_steps[ride_step_index], expected_step)
+        {
+            ride_step_index += 1;
+        }
+        if ride_step_index == ride_steps.len() {
+            return false;
+        }
+        ride_step_index += 1;
+    }
+    true
+}
+
+fn contains_adjacent_feature_sequence(
+    ride_steps: &[RideStep],
+    feature_sequence: &[RideExpectFeatureStep],
+) -> bool {
+    ride_steps.windows(feature_sequence.len()).any(|window| {
+        window
+            .iter()
+            .zip(feature_sequence)
+            .all(|(ride_step, expected_step)| ride_feature_step_matches(ride_step, expected_step))
+    })
+}
+
+fn ride_feature_step_matches(ride_step: &RideStep, expected_step: &RideExpectFeatureStep) -> bool {
+    match (ride_step, expected_step) {
+        (RideStep::Place(place), RideExpectFeatureStep::Place(expected)) => {
+            place.place == expected.place
+        }
+        (RideStep::Place(place), RideExpectFeatureStep::PlacePrefix(expected)) => {
+            place.place.starts_with(&expected.place_prefix)
+        }
+        (RideStep::Chain(chain), RideExpectFeatureStep::Chain(expected)) => {
+            chain.chain == expected.chain
+        }
+        _ => false,
+    }
+}
+
+fn describe_feature_sequence(feature_sequence: &[RideExpectFeatureStep]) -> String {
+    feature_sequence
+        .iter()
+        .map(|step| match step {
+            RideExpectFeatureStep::Place(place) => format!("place {:?}", place.place),
+            RideExpectFeatureStep::PlacePrefix(place) => {
+                format!("place prefix {:?}", place.place_prefix)
+            }
+            RideExpectFeatureStep::Chain(chain) => format!("chain {}", chain.chain),
+        })
+        .collect::<Vec<_>>()
+        .join(" then ")
 }
 
 fn range_expectation(
@@ -2914,6 +3225,16 @@ fn range_expectation(
         observed,
         observed_text,
         passed,
+    }
+}
+
+fn minimum_expectation(metric: &'static str, minimum: f64, observed: f64) -> ExpectationResult {
+    ExpectationResult {
+        metric,
+        expected: format!("at least {minimum:.2}"),
+        observed: json!(observed),
+        observed_text: format!("{observed:.2}"),
+        passed: observed >= minimum,
     }
 }
 
@@ -3154,12 +3475,45 @@ mod expectation_tests {
     use theme_park_sim::track::ride_file::RideExpect;
 
     #[test]
+    fn piece_prefix_groups_and_after_expectations_preserve_their_quantifiers() {
+        let ride: RideFile =
+            serde_json::from_str(include_str!("../../../content/rides/briar-blitz.ride.json"))
+                .unwrap();
+        let circuit = theme_park_sim::physics::demo_circuit();
+        let features = ride.expect.as_ref().unwrap().features.as_ref().unwrap();
+
+        let results = evaluate_feature_expectations(&ride.steps, features, &circuit).unwrap();
+        assert!(results.iter().all(|result| result.passed));
+        assert!(
+            results
+                .iter()
+                .any(|result| result.metric == "grouped ride feature count")
+        );
+        assert!(
+            results
+                .iter()
+                .any(|result| result.metric == "ride feature prefix ordering")
+        );
+
+        let mut failing_features = features.clone();
+        failing_features.piece_prefixes_after[0].after =
+            serde_json::from_value(serde_json::json!({"place": "BankedTurnStandalone"})).unwrap();
+        let failing_results =
+            evaluate_feature_expectations(&ride.steps, &failing_features, &circuit).unwrap();
+        assert!(
+            failing_results.iter().any(|result| {
+                result.metric == "ride feature prefix ordering" && !result.passed
+            })
+        );
+    }
+
+    #[test]
     fn sustained_expectations_ignore_short_peak_stats_but_check_held_force() {
         let mut ride: RideFile = serde_json::from_str(include_str!(
             "../../../content/rides/horizon-hawk.ride.json"
         ))
         .unwrap();
-        let (base_test_run, _) = test_ride(&ride).unwrap();
+        let (base_test_run, _, _, circuit) = test_ride_with_browser_estimates(&ride).unwrap();
         let base_sustained = base_test_run.sustained_force_peaks();
         let maximum_vertical_g = base_sustained.maximum_vertical_g.unwrap();
         let minimum_vertical_g = base_sustained.minimum_vertical_g.unwrap();
@@ -3188,14 +3542,18 @@ mod expectation_tests {
             ..RideExpect::default()
         });
 
-        assert!(check_expectations(&ride, &test_run).is_empty());
+        assert!(
+            check_expectations(&ride, &test_run, &circuit)
+                .unwrap()
+                .is_empty()
+        );
 
         let expect = ride.expect.as_mut().unwrap();
         expect.sustained_max_vertical_g =
             Some([maximum_vertical_g + 0.1, maximum_vertical_g + 0.2]);
         expect.sustained_min_vertical_g =
             Some([minimum_vertical_g - 0.2, minimum_vertical_g - 0.1]);
-        let failures = check_expectations(&ride, &test_run);
+        let failures = check_expectations(&ride, &test_run, &circuit).unwrap();
         assert_eq!(failures.len(), 2);
         assert!(failures[0].starts_with("expectation maximum vertical g expected"));
         assert!(failures[1].starts_with("expectation sustained minimum vertical g expected"));
