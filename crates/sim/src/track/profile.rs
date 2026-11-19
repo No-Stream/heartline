@@ -2783,6 +2783,16 @@ mod tests {
     }
 
     #[test]
+    fn legacy_hill_solver_reproduces_generated_source_exactly() {
+        let entries = hill_entries_from_generated_designs();
+        assert_eq!(
+            generated_hill_source(&entries),
+            include_str!("hills.generated.rs"),
+            "regenerated hill profiles differ from the frozen source"
+        );
+    }
+
+    #[test]
     fn generalized_solver_reproduces_the_frozen_hills_with_the_legacy_train() {
         for case in HILL_CASES {
             let design = GENERATED_HILL_DESIGNS
