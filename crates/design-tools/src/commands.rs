@@ -1230,8 +1230,12 @@ fn format_state_text(state: &Value) -> String {
         end["offsetToStationEntryMetres"]
             .as_f64()
             .expect("station offset is a number"),
-        to_station["x"].as_f64().expect("station tile offset x is a number"),
-        to_station["y"].as_f64().expect("station tile offset y is a number"),
+        to_station["x"]
+            .as_f64()
+            .expect("station tile offset x is a number"),
+        to_station["y"]
+            .as_f64()
+            .expect("station tile offset y is a number"),
         end["metresAboveStationEntry"]
             .as_f64()
             .expect("station height offset is a number"),
@@ -1604,7 +1608,9 @@ fn render_map(session: &BuilderSession) -> Result<CommandReply, String> {
         }
         text.push('\n');
     }
-    text.push_str("Height profile (piece index, id, end tile, end height and highest point in metres):\n");
+    text.push_str(
+        "Height profile (piece index, id, end tile, end height and highest point in metres):\n",
+    );
     let mut profile = Vec::new();
     for (piece_index, piece) in construction.pieces().iter().enumerate() {
         let exit = piece.exit.position();

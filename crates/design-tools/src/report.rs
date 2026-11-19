@@ -136,7 +136,8 @@ pub fn render_ride_report(
     )
     .unwrap();
     let sustained = test_run.sustained_force_peaks();
-    let held_g = |value: Option<f64>| value.map_or_else(|| "none".to_owned(), |g| format!("{g:.2} g"));
+    let held_g =
+        |value: Option<f64>| value.map_or_else(|| "none".to_owned(), |g| format!("{g:.2} g"));
     writeln!(
         output,
         "  sustained by any car: highest vertical {} held 0.5 s; lowest vertical {} held 0.3 s",

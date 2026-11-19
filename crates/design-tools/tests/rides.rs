@@ -201,5 +201,8 @@ fn state_reads_the_ground_under_an_open_end_far_from_the_origin() {
     )
     .unwrap();
 
-    assert!(reply.contains("height 16.0 m") && reply.contains("Height above ground: 8 steps"), "{reply}");
+    assert!(
+        reply.contains("height 16.0 m") && reply.contains("Height above ground: 8 steps"),
+        "{reply}"
+    );
 }
