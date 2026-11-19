@@ -1,4 +1,4 @@
-use theme_park_sim::physics::{Circuit, PhysicsConfig, Train};
+use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, Train, TIME_STEP};
 use theme_park_sim::track::catalog::unmeasured_catalog;
 use theme_park_sim::track::{hybrid_model, Piece, PieceId};
 
@@ -44,13 +44,20 @@ fn downhill_rest_release_halfway_along_sixty_down_enters_below_twelve_mps() {
         .expect("SixtyDownToLevel connects after SixtyDown");
     assert!(model.allows_piece(&target));
     let target_start = pieces.iter().map(Piece::length).sum::<f64>();
+    let target_end = target_start + target.length();
     state = target.exit;
     pieces.push(target);
-    let exit = piece_template(PieceId::Straight)
-        .at(state)
-        .expect("level exit straight connects");
-    assert!(model.allows_piece(&exit));
-    pieces.push(exit);
+    let exit_straight = piece_template(PieceId::Straight);
+    while pieces.iter().map(Piece::length).sum::<f64>()
+        < target_end + model.train.length_metres + 10.0
+    {
+        let exit = exit_straight
+            .at(state)
+            .expect("level exit straight connects");
+        assert!(model.allows_piece(&exit));
+        state = exit.exit;
+        pieces.push(exit);
+    }
 
     let circuit = Circuit::open(pieces).expect("downhill release circuit is connected");
     let start_distance = target_start - downhill_straight_length / 2.0;
@@ -79,24 +86,59 @@ fn downhill_rest_release_halfway_along_sixty_down_enters_below_twelve_mps() {
         start_distance,
         0.0,
     );
-    let entry_speed = loop {
-        let previous_distance = train.distance();
-        let previous_speed = train.speed();
+    let cars = usize::from(model.train.cars);
+    let mut evaluators: Vec<_> = (0..cars)
+        .map(|_| ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP))
+        .collect();
+    let mut force_passes = vec![true; cars];
+    let mut samples_in_element = vec![0; cars];
+    let mut cleared_element = vec![false; cars];
+    let mut previous_lead = (train.distance(), train.speed());
+    let mut entry_speed = None;
+    for _ in 0..20_000 {
         train.step(&circuit);
-        if train.distance() >= target_start {
-            let fraction =
-                (target_start - previous_distance) / (train.distance() - previous_distance);
-            break previous_speed + fraction * (train.speed() - previous_speed);
+        if entry_speed.is_none() && train.distance() >= target_start {
+            let fraction = (target_start - previous_lead.0) / (train.distance() - previous_lead.0);
+            entry_speed = Some(previous_lead.1 + fraction * (train.speed() - previous_lead.1));
         }
         assert!(
             train.speed() > 0.0,
             "resting hybrid train must roll downhill"
         );
-    };
+        let frames = train.take_readings();
+        assert_eq!(frames.len(), 1);
+        for (car, reading) in frames[0].iter().enumerate() {
+            let evaluated = evaluators[car].update(reading.g);
+            if (target_start..target_end).contains(&reading.distance) {
+                samples_in_element[car] += 1;
+                force_passes[car] &= evaluated.within_limits;
+            }
+            if reading.distance >= target_end {
+                cleared_element[car] = true;
+            }
+        }
+        previous_lead = (train.distance(), train.speed());
+        if cleared_element.iter().all(|cleared| *cleared) {
+            break;
+        }
+    }
 
+    let entry_speed = entry_speed.expect("lead train reaches the target element");
     assert!(entry_speed > 0.0);
     assert!(
         entry_speed < 12.0,
         "halfway downhill rest release entered at {entry_speed:.6} m/s"
+    );
+    assert!(
+        samples_in_element.iter().all(|samples| *samples > 0),
+        "every car must be evaluated inside the target element: {samples_in_element:?}"
+    );
+    assert!(
+        force_passes.iter().all(|passed| *passed),
+        "every car must pass the duration-aware force evaluator inside the target element: {force_passes:?}"
+    );
+    assert!(
+        cleared_element.iter().all(|cleared| *cleared),
+        "every car must clear the target element: {cleared_element:?}"
     );
 }
