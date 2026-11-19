@@ -160,11 +160,6 @@ bench-player-circuits:
 bench-player-force-preview:
 	$(CARGO) run --release -p theme-park-sim-wasm --example player_circuit_force_preview_bench -- --append-only
 
-CIRCUIT ?= Timber Tumbler
-FILE ?= web/e2e/player/circuits.txt
-circuit-report:
-	$(CARGO) run --release -p theme-park-sim --example circuit_report -- --circuit "$(CIRCUIT)" --file "$(FILE)" $(ARGS)
-
 bench-guests: wasm-bindgen
 	$(CARGO) run --release -p theme-park-sim --features threads --example guest_bench
 	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm

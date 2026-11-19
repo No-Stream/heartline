@@ -165,6 +165,20 @@
     ],
     "maxLateralG": 0.6,
     "inversions": 0,
-    "airtimeMomentsAtLeast": 6
+    "launches": 0,
+    "airtimeMomentsAtLeast": 6,
+    "biggestDropAtLeast": 50.0,
+    "maxSpeedAtLeast": 30.0,
+    "withinComfortableForceLimits": true,
+    "features": {
+      "piecePrefixesAtLeast": {
+        "WideLevelToSixtyDown": 1,
+        "FloaterHill24x160": 1,
+        "FloaterHill20x128": 1,
+        "FloaterHill": 3,
+        "GentleUpToLevel": 3,
+        "SpeedTurnLarge": 4
+      }
+    }
   }
 }

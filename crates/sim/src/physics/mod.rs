@@ -1,8 +1,9 @@
 //! Fixed-step train motion along placed track, in metres, seconds and kilograms.
 use crate::state_hash::StateHasher;
+use crate::track::ride_file::{RideFile, RideHeading, RideStep};
 use crate::track::{
-    LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LaunchParameters, Piece, PieceKind,
-    TrackSample, TrainConfiguration, Vec3,
+    Heading, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LaunchParameters, Piece, PieceId,
+    PieceKind, TrackSample, TrackState, TrainConfiguration, Vec3, catalog,
 };
 
 #[cfg(test)]
@@ -145,39 +146,58 @@ pub const DEMO_STATION_ENTRY: crate::track::TrackState = crate::track::TrackStat
     ..crate::track::TrackState::origin()
 };
 
-/// The demo coaster's pieces after its station, in the circuit report's file format.
-pub const DEMO_CIRCUIT_TEXT: &str = include_str!("demo_circuit.txt");
-
-/// The demo coaster in the default park: a station followed by the fixed piece list in `demo_circuit.txt`.
+/// The demo coaster in the default park, replayed from its shared ride file.
 pub fn demo_circuit() -> Circuit {
-    use crate::track::{PieceId, catalog};
-    let section = DEMO_CIRCUIT_TEXT
-        .split("[Demo]")
-        .nth(1)
-        .expect("demo_circuit.txt has a [Demo] section");
-    let mut state = DEMO_STATION_ENTRY;
-    let mut chain = false;
-    let mut pieces = Vec::new();
-    let lines = std::iter::once("Station").chain(
-        section
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#')),
+    const DEMO_RIDE_JSON: &str = include_str!("../../../../content/rides/demo.ride.json");
+
+    let ride: RideFile = serde_json::from_str(DEMO_RIDE_JSON)
+        .expect("content/rides/demo.ride.json is a valid ride file");
+    assert_eq!(ride.name, "Demo", "demo ride file name stays stable");
+    let mut state = TrackState {
+        x: ride.station.x * 2,
+        y: ride.station.y * 2,
+        z: ride.station.z / 2,
+        heading: match ride.station.heading {
+            RideHeading::East => Heading::East,
+            RideHeading::North => Heading::North,
+            RideHeading::West => Heading::West,
+            RideHeading::South => Heading::South,
+        },
+        ..TrackState::origin()
+    };
+    assert_eq!(
+        state, DEMO_STATION_ENTRY,
+        "demo station matches the default park"
     );
-    for line in lines {
-        match line {
-            "+chain" => chain = true,
-            "-chain" => chain = false,
-            name => {
+    let station = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::Station)
+        .and_then(|piece| piece.at(state))
+        .expect("demo station joins its ride file start");
+    state = station.exit;
+    let mut pieces = vec![station];
+    let mut chain = false;
+    let mut closed = false;
+    for step in ride.steps {
+        match step {
+            RideStep::Place(place) => {
                 let mut piece = catalog()
                     .iter()
-                    .filter(|piece| format!("{:?}", piece.id) == name)
+                    .filter(|piece| format!("{:?}", piece.id) == place.place)
                     .find_map(|piece| piece.at(state))
-                    .unwrap_or_else(|| panic!("demo piece {name} is in the catalog and joins"));
+                    .unwrap_or_else(|| {
+                        panic!("demo piece {:?} is in the catalog and joins", place.place)
+                    });
                 if chain {
-                    assert_eq!(piece.kind, PieceKind::Track, "demo chain on {name}");
+                    assert_eq!(
+                        piece.kind,
+                        PieceKind::Track,
+                        "demo chain on {}",
+                        place.place
+                    );
                     piece.kind = PieceKind::Lift;
                 }
+                piece.launch_target_speed = place.launch_speed;
                 assert!(
                     piece.id != PieceId::Station || pieces.is_empty(),
                     "demo has one station"
@@ -185,9 +205,17 @@ pub fn demo_circuit() -> Circuit {
                 state = piece.exit;
                 pieces.push(piece);
             }
+            RideStep::Chain(chain_step) => chain = chain_step.chain,
+            RideStep::Close(close_step) => {
+                assert!(close_step.close, "demo close step must be true");
+                assert!(!closed, "demo closes once");
+                closed = true;
+            }
+            RideStep::BlockSections(_) => {}
         }
     }
     assert!(!chain, "demo chain lift ends before the station");
+    assert!(closed, "demo ride file closes its circuit");
     Circuit::new(pieces).expect("demo circuit closes")
 }
 

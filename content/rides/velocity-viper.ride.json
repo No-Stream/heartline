@@ -144,5 +144,18 @@
     {
       "close": true
     }
-  ]
+  ],
+  "expect": {
+    "excitement": [6.0, 9.0],
+    "withinComfortableForceLimits": true,
+    "launches": 2,
+    "features": {
+      "adjacentSteps": [
+        [
+          { "placePrefix": "Launch" },
+          { "place": "LaunchedTopHat" }
+        ]
+      ]
+    }
+  }
 }

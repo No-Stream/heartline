@@ -191,6 +191,42 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
 }
 
 #[test]
+fn ride_expect_checks_the_compiled_heartlined_inversion_count() {
+    let ride = TempRide::new();
+    let source =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/rides/timber-tumbler.ride.json");
+    let source = fs::read_to_string(source).unwrap();
+    let mut ride_json: serde_json::Value = serde_json::from_str(&source).unwrap();
+    ride_json["expect"]["features"]["heartlinedInversionsAtLeast"] = 2.into();
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
+
+    let output = run_cli(&["check".into(), "--json".into(), ride.path()], "").unwrap();
+    let reports: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let expectations = reports[0]["expectations"].as_array().unwrap();
+    let heartlined_inversions = expectations
+        .iter()
+        .find(|result| result["metric"] == "heartlined inversion pieces")
+        .unwrap();
+    assert!(heartlined_inversions["observed"].as_u64().unwrap() >= 2);
+    assert_eq!(heartlined_inversions["passed"], true);
+
+    ride_json["expect"]["features"]["heartlinedInversionsAtLeast"] = 100.into();
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
+    let failed = run_cli_with_status(&["check".into(), "--json".into(), ride.path()], "");
+    assert_eq!(failed.exit_code, 1);
+    let failed_reports: serde_json::Value = serde_json::from_str(&failed.stdout).unwrap();
+    assert_eq!(
+        failed_reports[0]["expectations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|result| result["metric"] == "heartlined inversion pieces")
+            .unwrap()["passed"],
+        false
+    );
+}
+
+#[test]
 fn agreement_command_prints_the_force_values_for_a_closed_ride() {
     let timber_tumbler = ride_files()
         .into_iter()
@@ -308,6 +344,62 @@ fn check_prints_observed_values_for_passing_and_failing_expectations() {
         ),
         "{text}"
     );
+}
+
+#[test]
+fn check_supports_comfortable_force_and_ride_feature_expectations() {
+    let ride = TempRide::new();
+    let source =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/rides/velocity-viper.ride.json");
+    let source = fs::read_to_string(source).unwrap();
+    let mut ride_json: serde_json::Value = serde_json::from_str(&source).unwrap();
+    ride_json["expect"] = serde_json::json!({
+        "withinComfortableForceLimits": true,
+        "inversionsAtLeast": 0,
+        "launches": 2,
+        "biggestDropAtLeast": 0.0,
+        "maxSpeedAtLeast": 0.0,
+        "features": {
+            "piecePrefixesAtLeast": {"LaunchLong": 2},
+            "piecePrefixGroupsAtLeast": [
+                {"prefixes": ["LaunchLong", "LaunchedTopHat"], "minimum": 3}
+            ],
+            "orderedSteps": [[{"placePrefix": "LaunchLong"}, {"place": "LaunchedTopHat"}]],
+            "adjacentSteps": [[{"place": "Launch"}, {"place": "LaunchedTopHat"}]]
+        }
+    });
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
+
+    let output = run_cli(&["check".into(), "--json".into(), ride.path()], "").unwrap();
+    let reports: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let expectations = reports[0]["expectations"].as_array().unwrap();
+
+    assert_eq!(expectations.len(), 9);
+    assert!(expectations.iter().all(|result| result["passed"] == true));
+    assert_eq!(expectations[0]["metric"], "comfortable force limits");
+    assert_eq!(expectations[1]["metric"], "inversions");
+    assert_eq!(expectations[2]["metric"], "launches");
+    assert_eq!(expectations[3]["metric"], "biggest drop");
+    assert_eq!(expectations[4]["metric"], "maximum speed");
+    assert_eq!(expectations[5]["metric"], "ride feature count");
+    assert_eq!(expectations[6]["metric"], "grouped ride feature count");
+    assert_eq!(expectations[6]["observed"], 3);
+    assert_eq!(expectations[7]["metric"], "ordered ride feature steps");
+    assert_eq!(expectations[8]["metric"], "adjacent ride feature steps");
+
+    ride_json["expect"]["features"]["piecePrefixGroupsAtLeast"][0]["minimum"] = 4.into();
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
+    let failed = run_cli_with_status(&["check".into(), "--json".into(), ride.path()], "");
+    assert_eq!(failed.exit_code, 1);
+    let failed_reports: serde_json::Value = serde_json::from_str(&failed.stdout).unwrap();
+    let grouped_expectation = failed_reports[0]["expectations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["metric"] == "grouped ride feature count")
+        .unwrap();
+    assert_eq!(grouped_expectation["observed"], 3);
+    assert_eq!(grouped_expectation["passed"], false);
 }
 
 #[test]

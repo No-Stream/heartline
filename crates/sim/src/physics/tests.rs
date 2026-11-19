@@ -1418,29 +1418,49 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
 #[test]
 fn demo_circuit_builds_piece_by_piece_in_the_demo_world() {
     let world = crate::demo_world::demo_world();
-    let mut construction = Construction::new(DEMO_STATION_ENTRY, hybrid_model());
+    let ride: RideFile =
+        serde_json::from_str(include_str!("../../../../content/rides/demo.ride.json"))
+            .expect("demo ride file is valid");
+    let station = TrackState {
+        x: ride.station.x * 2,
+        y: ride.station.y * 2,
+        z: ride.station.z / 2,
+        heading: match ride.station.heading {
+            RideHeading::East => Heading::East,
+            RideHeading::North => Heading::North,
+            RideHeading::West => Heading::West,
+            RideHeading::South => Heading::South,
+        },
+        ..TrackState::origin()
+    };
+    assert_eq!(
+        station, DEMO_STATION_ENTRY,
+        "demo ride starts at its park station"
+    );
+    let model = hybrid_model();
+    assert_eq!(
+        ride.model, model.key,
+        "demo ride uses the park coaster model"
+    );
+    let mut construction = Construction::new(station, model);
     construction
         .append(PieceId::Station, &world, &[])
         .expect("demo station validates");
-    let section = DEMO_CIRCUIT_TEXT.split("[Demo]").nth(1).unwrap();
-    for line in section
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        match line {
-            "+chain" => construction.set_chain(true),
-            "-chain" => construction.set_chain(false),
-            name => {
+    for step in ride.steps {
+        match step {
+            RideStep::Chain(chain) => construction.set_chain(chain.chain),
+            RideStep::Place(place) => {
                 let id = catalog()
                     .iter()
-                    .find(|piece| format!("{:?}", piece.id) == name)
-                    .unwrap()
+                    .find(|piece| format!("{:?}", piece.id) == place.place)
+                    .unwrap_or_else(|| panic!("unknown demo piece {:?}", place.place))
                     .id;
                 construction
                     .append(id, &world, &[])
-                    .unwrap_or_else(|error| panic!("demo piece {name}: {error:?}"));
+                    .unwrap_or_else(|error| panic!("demo piece {}: {error:?}", place.place));
             }
+            RideStep::Close(close) => assert!(close.close, "demo closes with true"),
+            RideStep::BlockSections(_) => {}
         }
     }
     construction.close().expect("demo closes at its station");

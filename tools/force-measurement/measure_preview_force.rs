@@ -4,9 +4,12 @@ use std::time::Instant;
 use theme_park_sim::physics::{Circuit, GForces, PhysicsConfig, Train, preview_at_step};
 use theme_park_sim::physics::force_evaluation::ForceEvaluator;
 use theme_park_sim::track::construction::Construction;
+use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::{CoasterModel, Heading, Piece, PieceId, PieceKind, TrackState, catalog, hybrid_model, multi_launch_model, wooden_twister_model};
 use theme_park_sim::world::{Surface, World};
-const CIRCUITS: &str = include_str!("../../../web/e2e/player/circuits.txt");
+const TIMBER_TUMBLER: &str = include_str!("../../../content/rides/timber-tumbler.ride.json");
+const VELOCITY_VIPER: &str = include_str!("../../../content/rides/velocity-viper.ride.json");
+const BRIAR_BLITZ: &str = include_str!("../../../content/rides/briar-blitz.ride.json");
 fn build_player_circuit(name: &str, model: CoasterModel) -> Vec<Piece> {
     let world = World::new(
         512,
@@ -26,30 +29,20 @@ fn build_player_circuit(name: &str, model: CoasterModel) -> Vec<Piece> {
     let mut construction = Construction::new(start, model);
     construction.append(PieceId::Station, &world, &[]).unwrap();
 
-    let header = format!("[{name}]");
-    let mut sections = CIRCUITS.split(&header);
-    sections.next().unwrap();
-    let section = sections
-        .next()
-        .unwrap_or_else(|| panic!("{name} circuit missing"));
-    assert!(sections.next().is_none(), "duplicate {name} circuit");
-    for piece_name in section
-        .lines()
-        .map(str::trim)
-        .take_while(|line| !line.starts_with('['))
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        match piece_name {
-            "+chain" => {
-                construction.set_chain(true);
+    let ride = ride_file(name);
+    for step in &ride.steps {
+        let piece_name = match step {
+            RideStep::Chain(step) => {
+                construction.set_chain(step.chain);
                 continue;
             }
-            "-chain" => {
-                construction.set_chain(false);
+            RideStep::Place(step) => step.place.as_str(),
+            RideStep::Close(step) => {
+                assert!(step.close, "{name} has a false close step");
                 continue;
             }
-            _ => {}
-        }
+            _ => panic!("{name} benchmark does not support this ride step"),
+        };
         let piece = catalog()
             .iter()
             .find(|piece| format!("{:?}", piece.id) == piece_name)
@@ -60,6 +53,16 @@ fn build_player_circuit(name: &str, model: CoasterModel) -> Vec<Piece> {
     }
     construction.close().unwrap();
     construction.pieces().to_vec()
+}
+
+fn ride_file(name: &str) -> RideFile {
+    let json = match name {
+        "Timber Tumbler" => TIMBER_TUMBLER,
+        "Velocity Viper" => VELOCITY_VIPER,
+        "Briar Blitz" => BRIAR_BLITZ,
+        _ => panic!("unknown benchmark ride {name}"),
+    };
+    serde_json::from_str(json).unwrap_or_else(|error| panic!("invalid ride file for {name}: {error}"))
 }
 
 #[derive(Clone, Copy)]

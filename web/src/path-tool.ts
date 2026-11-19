@@ -40,11 +40,14 @@ export function createPathTool(send: (command: PathToolCommand) => void, changed
   let message = "";
   let requestId = 0;
   let pendingPreview: number | null = null;
+  let previewInFlight: number | null = null;
+  let queuedPreview: Extract<PathToolCommand, { type: "path-preview" }> | null = null;
   let commandRequestId = 0;
   let pendingCommand: number | null = null;
 
   function clearPreview(): void {
     pendingPreview = null;
+    queuedPreview = null;
     preview = null;
   }
 
@@ -52,7 +55,11 @@ export function createPathTool(send: (command: PathToolCommand) => void, changed
     requestId += 1;
     pendingPreview = requestId;
     preview = null;
-    send({ type: "path-preview", start, end, ...selection, requestId });
+    const command: Extract<PathToolCommand, { type: "path-preview" }> = { type: "path-preview", start, end, ...selection, requestId };
+    if (previewInFlight === null) {
+      previewInFlight = requestId;
+      send(command);
+    } else queuedPreview = command;
     changed();
   }
 
@@ -134,6 +141,15 @@ export function createPathTool(send: (command: PathToolCommand) => void, changed
     },
     receive(result: PathToolMessage): void {
       if (result.type === "path-preview") {
+        if (result.requestId !== previewInFlight) return;
+        previewInFlight = null;
+        if (queuedPreview) {
+          const command = queuedPreview;
+          queuedPreview = null;
+          previewInFlight = command.requestId;
+          send(command);
+          return;
+        }
         if (result.requestId !== pendingPreview || mode !== "build") return;
         pendingPreview = null;
         preview = { valid: result.valid, paths: result.paths, message: result.message };

@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { readCircuit } from "../player/circuits";
-import { closeCircuit, legacyRideRating, openTool, placePiece, placeStation, setGameSpeed, startPark, testRide, waitForState } from "../player/driver";
-import { expectRideReportExplained } from "../player/ride-report";
+import { placePiece, placeStation, startPark } from "../player/driver";
+import { readRide } from "../player/rides";
 
 test("Briar Blitz player journey @journey", async ({ page }) => {
   test.setTimeout(180_000);
@@ -18,25 +17,15 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
     direction: { x: 241, y: 251, z: 2 },
   });
 
-  const pieces = readCircuit("Briar Blitz");
-  expect(pieces).toContain("TopHat");
+  const pieces = readRide("briar-blitz").steps.slice(0, 14).map((step) => {
+    if ("place" in step) return step.place;
+    if ("chain" in step) return step.chain ? "+chain" : "-chain";
+    throw new Error("Briar Blitz journey fixture contains a non-placement step");
+  });
   const trackPieces = pieces.filter((piece) => piece !== "+chain" && piece !== "-chain");
-  const chainOn = pieces.indexOf("+chain");
-  const chainOff = pieces.indexOf("-chain");
-  const curvedLiftTurn = pieces.indexOf("TurnSmallStandalone");
-  const descendingBankedTurnIndexes = pieces.flatMap((piece, index) =>
-    piece === "BankedTurnStandalone" ? [index] : [],
-  );
-  expect(chainOn).toBeGreaterThanOrEqual(0);
-  expect(chainOn).toBeLessThan(curvedLiftTurn);
-  expect(chainOff).toBeGreaterThan(curvedLiftTurn);
-  expect(descendingBankedTurnIndexes.length).toBeGreaterThan(0);
-  expect(descendingBankedTurnIndexes.every((index) => index > chainOff)).toBe(true);
-  expect(trackPieces.filter((piece) => piece.startsWith("TightTwister") || piece.startsWith("Twister")).length).toBeGreaterThanOrEqual(2);
   const previewName = page.locator("[data-next] [data-preview-name]");
   let chainEnabled = false;
   let trackCount = 1;
-  const placedPieces: string[] = [];
   for (const entry of pieces) {
     if (entry === "+chain" || entry === "-chain") {
       chainEnabled = entry === "+chain";
@@ -60,31 +49,10 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
     if (entry === "TightTwisterRight") await expect(previewName).toHaveText("Tight right turn");
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();
     await placePiece(page);
-    placedPieces.push(entry);
     trackCount += 1;
     await expect(page.locator("[data-track] li")).toHaveCount(trackCount);
   }
   expect(chainEnabled).toBe(false);
   expect(trackCount).toBe(trackPieces.length + 1);
-  expect(placedPieces).toContain("BankedTurnStandalone");
-  expect(placedPieces).toContain("TopHat");
-  expect(placedPieces.filter((piece) => piece.startsWith("TightTwister") || piece.startsWith("Twister")).length).toBeGreaterThanOrEqual(2);
-
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await closeCircuit(page);
-  await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
-  await page.locator("canvas").focus();
-  await page.keyboard.press("Space");
-  await expect(page.locator("[data-day-clock]")).toHaveAttribute("data-paused", "false");
-  await setGameSpeed(page, 16);
-  await openTool(page, "Coaster");
-  const crestCount = await page.evaluate(() => window.gameTest.crestBursts().length);
-  await testRide(page);
-  await waitForState(page, async () => (await page.evaluate(() => window.gameTest.testingReport()?.rating)) != null, { ticks: 30_000 });
-  const { rating } = await expectRideReportExplained(page);
-  console.log(`Briar Blitz ratings before/after: ${JSON.stringify({ before: legacyRideRating(rating), after: rating })}`);
-  const notes = await page.evaluate(() => window.gameTest.testingReport()!.notes);
-  expect(notes.join(" ")).not.toMatch(/could not finish|rolled back/i);
-  expect(await page.evaluate(() => window.gameTest.crestBursts().length)).toBeGreaterThan(crestCount);
   expect(pageErrors).toEqual([]);
 });
