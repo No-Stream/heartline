@@ -236,7 +236,7 @@ export function formatSample(sample: TestingSample, units: Units = "imperial"): 
 }
 
 export function formatConstructionEstimate(estimate: ConstructionForcePreview, units: Units): string {
-  const { limits, samples } = estimate;
+  const { limits, forceEnvelopeSamples: samples } = estimate;
   const axesToCheck = [
     { name: "vertical", value: (sample: TestingSample) => sample.verticalG, excess: (value: number) => Math.max(limits.minimumVerticalG - value, value - limits.maximumVerticalG), limit: (value: number) => `limit ${number(value < limits.minimumVerticalG ? limits.minimumVerticalG : limits.maximumVerticalG)} g` },
     { name: "lateral", value: (sample: TestingSample) => sample.lateralG, excess: (value: number) => Math.abs(value) - limits.maximumLateralG, limit: () => `absolute limit ${number(limits.maximumLateralG)} g` },
@@ -460,7 +460,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
   let inspectedProximityIndex: number | undefined;
   let inspectedScoreLocation: ScoreContributionReport["location"];
   const renderInspection = (): void => {
-    const samples = overlaySamples(report?.samples ?? null, estimate?.samples ?? null);
+    const samples = overlaySamples(report?.samples ?? null, estimate?.forceEnvelopeSamples ?? null);
     if (inspectedSampleIndex !== undefined && samples[inspectedSampleIndex]) {
       inspection.textContent = formatSampleInUnits(samples[inspectedSampleIndex], activeUnits);
       return;
@@ -481,7 +481,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     limitClosenessOption.hidden = limitClosenessOption.disabled = !!report;
     if (report && select.value === "limitCloseness") select.value = "speed";
     const metric = select.value === "off" ? null : select.value as TestingMetric;
-    const samples = overlaySamples(report?.samples ?? null, estimate?.samples ?? null);
+    const samples = overlaySamples(report?.samples ?? null, estimate?.forceEnvelopeSamples ?? null);
     legend.hidden = metric === null || metric === "limitCloseness" || !samples.length;
     bandLegend.hidden = metric !== "limitCloseness" || !samples.length;
     container.querySelector<HTMLElement>("[data-force-warning]")!.hidden = !!report || !estimate || (metric !== "verticalG" && metric !== "lateralG" && metric !== "longitudinalG");
@@ -552,7 +552,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     const estimateText = container.querySelector<HTMLElement>("[data-construction-estimate]")!;
     estimateText.hidden = !estimate || !!report;
     estimateText.textContent = estimate && !report ? formatConstructionEstimate(estimate, activeUnits) : "";
-    select.disabled = !overlaySamples(report?.samples ?? null, estimate?.samples ?? null).length;
+    select.disabled = !overlaySamples(report?.samples ?? null, estimate?.forceEnvelopeSamples ?? null).length;
     renderInspection();
     renderMetric();
   };
@@ -579,7 +579,7 @@ export function createTestingPanel(container: HTMLElement, style: TrackStyle, di
     setUnits(units) { activeUnits = units; renderReport(); },
     setWorld(value) { world = value; renderReport(); },
     inspect(index) {
-      if (overlaySamples(report?.samples ?? null, estimate?.samples ?? null)[index]) {
+      if (overlaySamples(report?.samples ?? null, estimate?.forceEnvelopeSamples ?? null)[index]) {
         inspectedSampleIndex = index;
         inspectedProximityIndex = undefined;
         inspectedScoreLocation = undefined;

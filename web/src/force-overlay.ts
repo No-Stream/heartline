@@ -222,7 +222,7 @@ export function createForceOverlay(container: HTMLElement): {
   let hoverIndex: number | null = null;
   let activeUnits: Units = "imperial";
   const renderHoverText = (): void => {
-    const sample = hoverIndex === null ? undefined : estimate?.samples[hoverIndex];
+    const sample = hoverIndex === null ? undefined : estimate?.forceEnvelopeSamples[hoverIndex];
     if (!sample || !estimate) { hoverReadout.replaceChildren(); return; }
     const band = sampleLimitBand(sample, estimate.limits);
     hoverReadout.dataset.band = band;
@@ -238,14 +238,14 @@ export function createForceOverlay(container: HTMLElement): {
     setEstimate(value, units) {
       estimate = value;
       activeUnits = units;
-      if (hoverIndex !== null && !value?.samples[hoverIndex]) hoverIndex = null;
-      labels = value ? selectForceLabels(value.samples, value.limits).map((label) => {
+      if (hoverIndex !== null && !value?.forceEnvelopeSamples[hoverIndex]) hoverIndex = null;
+      labels = value ? selectForceLabels(value.forceEnvelopeSamples, value.limits).map((label) => {
         const element = document.createElement("div");
         element.className = "force-overlay__label";
         element.dataset.forceLabel = label.kind;
         element.dataset.pastLimit = String(label.pastLimit);
         element.dataset.recent = String(label.recent);
-        element.textContent = forceLabelText(label, value.samples[label.sampleIndex], value.limits, units);
+        element.textContent = forceLabelText(label, value.forceEnvelopeSamples[label.sampleIndex], value.limits, units);
         const dot = document.createElement("div");
         dot.className = "force-overlay__dot";
         dot.dataset.pastLimit = String(label.pastLimit);
@@ -264,7 +264,7 @@ export function createForceOverlay(container: HTMLElement): {
     render(visible, project, viewport, obstacles) {
       container.hidden = !visible || !estimate;
       if (container.hidden || !estimate) return;
-      const samples = estimate.samples;
+      const samples = estimate.forceEnvelopeSamples;
       const trackPoints = samples.map(project);
       for (const entry of labels) {
         if (entry.width === 0) { entry.width = entry.element.offsetWidth; entry.height = entry.element.offsetHeight; }

@@ -733,7 +733,7 @@ function dispatch(action: InputAction): void {
   } else if (action.type === "block-marker-nudge" || action.type === "block-marker-remove") {
     coasterAdapter.key(action);
   } else if (action.type === "hover" && activeTool === "coaster") {
-    const estimateSamples = forceOverlayVisible() ? construction?.constructionForcePreview?.samples ?? [] : [];
+    const estimateSamples = forceOverlayVisible() ? construction?.constructionForcePreview?.forceEnvelopeSamples ?? [] : [];
     const points = estimateSamples.map((sample) => projectWorld(screenCamera(), viewport, sample));
     if (forceOverlay.setHover(action.position ? nearestSampleIndex(points, action.position, FORCE_HOVER_PIXELS * pixelRatio) : null)) renderRevision.invalidate();
   } else if (action.type === "select") {

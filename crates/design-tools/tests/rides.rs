@@ -125,7 +125,7 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
     for report in reports.as_array().unwrap() {
         assert_eq!(
             report["agreementGate"],
-            "enabled; agreement failures exit nonzero"
+            "enabled; finished-track agreement failures exit nonzero"
         );
         assert!(report["expectationFailures"].as_array().unwrap().is_empty());
         has_agreement_failures |= !report["agreement"]["passed"].as_bool().unwrap();
@@ -179,7 +179,9 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
         for failure in agreement["failures"].as_array().unwrap() {
             assert!(matches!(
                 failure["check"].as_str().unwrap(),
-                "FinishedEstimateVsWorstCar" | "PlacementEstimateVsWorstCar"
+                "FinishedEstimateVsFrontCar"
+                    | "FinishedEstimateVsWorstCar"
+                    | "PlacementEstimateVsWorstCar"
             ));
             assert!(failure["metric"].is_string());
             assert!(failure["reason"].is_string());
@@ -212,9 +214,22 @@ fn agreement_command_prints_the_force_values_for_a_closed_ride() {
         "{output}"
     );
     assert!(output.contains("placement[min/max/lat/long g]"), "{output}");
-    assert!(output.contains("finished[min/max/lat/long g]"), "{output}");
-    assert!(output.contains("front[min/max/lat/long g]"), "{output}");
-    assert!(output.contains("worst[min/max/lat/long g]"), "{output}");
+    assert!(
+        output.contains("finished-front[min/max/lat/long g]"),
+        "{output}"
+    );
+    assert!(
+        output.contains("finished-worst[min/max/lat/long g]"),
+        "{output}"
+    );
+    assert!(
+        output.contains("measured-front[min/max/lat/long g]"),
+        "{output}"
+    );
+    assert!(
+        output.contains("measured-worst[min/max/lat/long g]"),
+        "{output}"
+    );
     assert!(output.contains("Agreement:"), "{output}");
 }
 

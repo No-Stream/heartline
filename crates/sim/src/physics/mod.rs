@@ -25,13 +25,14 @@ pub use scoring::{
 };
 mod testing;
 pub use testing::{
-    CarPieceForcePeaks, ForcePeakLocation, ForcePeakLocations, ForcePeakValues, PieceForcePeaks,
-    PreviewForceSample, SustainedForcePeakLocations, SustainedForcePeaks, TestRun, TestRunRecorder,
-    TestSample,
+    CarPieceForcePeakLocations, CarPieceForcePeaks, ForcePeakLocation, ForcePeakLocations,
+    ForcePeakValues, PieceForcePeaks, PreviewForceSample, SustainedForcePeakLocations,
+    SustainedForcePeaks, TestRun, TestRunRecorder, TestSample,
 };
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};
 mod preview;
+pub use preview::virtual_level_runout;
 pub use preview::{PreviewCache, PreviewStatus, TrackPreview, preview_open_track};
 mod block_operation;
 pub use block_operation::BlockOperation;

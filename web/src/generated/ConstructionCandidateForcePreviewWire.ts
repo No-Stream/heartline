@@ -2,6 +2,7 @@
 import type { ConstructionForceLimitsWire } from "./ConstructionForceLimitsWire";
 import type { ConstructionLastPlacedForceWire } from "./ConstructionLastPlacedForceWire";
 import type { ConstructionRatedSpeedWire } from "./ConstructionRatedSpeedWire";
+import type { PieceForcePeaksReport } from "./PieceForcePeaksReport";
 import type { TestingSample } from "./TestingSample";
 
-export type ConstructionCandidateForcePreviewWire = { status: string, outerBank: boolean, entrySpeed: number | null, peaks: ConstructionLastPlacedForceWire | null, samples: Array<TestingSample>, limits: ConstructionForceLimitsWire, ratedSpeed: ConstructionRatedSpeedWire | null, };
+export type ConstructionCandidateForcePreviewWire = { status: string, outerBank: boolean, entrySpeed: number | null, peaks: ConstructionLastPlacedForceWire | null, samples: Array<TestingSample>, forceEnvelopeSamples: Array<TestingSample>, pieceForcePeaks: Array<PieceForcePeaksReport>, limits: ConstructionForceLimitsWire, ratedSpeed: ConstructionRatedSpeedWire | null, };

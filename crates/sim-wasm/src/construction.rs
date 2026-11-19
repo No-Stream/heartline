@@ -485,8 +485,8 @@ fn last_placed_force_wire(
             .iter()
             .any(|sample| sample.force_limit_exceeded[axis])
     };
-    let measured_peaks = force_peaks
-        .expect("nonempty force envelope must have per-piece peak measurements");
+    let measured_peaks =
+        force_peaks.expect("nonempty force envelope must have per-piece peak measurements");
     let minimum_vertical_limit_exceeded = samples
         .iter()
         .any(|sample| sample.force_limit_exceeded[0] && sample.vertical_g < 0.0);

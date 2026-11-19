@@ -37,7 +37,10 @@ use super::*;
 use crate::track::construction::{Construction, track_support_obstacles};
 use crate::track::supports::generate_dense_wooden_lattice;
 use crate::track::wooden_twister_model;
-use crate::track::{CoasterModel, PieceId, TrackState, catalog, hybrid_model};
+use crate::track::{
+    Bank, CoasterModel, Heading, HorizontalCurvature, PieceId, Slope, TrackState,
+    VerticalCurvature, catalog, hybrid_model,
+};
 use crate::world::{Surface, World};
 
 fn construction_test_run_from_test_start(
@@ -403,6 +406,113 @@ fn open_track_preview_accepts_a_short_track_at_the_test_start() {
     );
     assert!(preview.furthest_distance < circuit.pieces()[0].length());
     assert!(preview_open_track(&[], &model, PhysicsConfig::default(),).is_none());
+}
+
+#[test]
+fn virtual_runout_is_level_and_covers_the_full_train_from_any_connector() {
+    let end = TrackState {
+        x: 12,
+        y: -8,
+        z: 4,
+        heading: Heading::NorthWest,
+        slope: Slope::UpGentle,
+        bank: Bank::Left,
+        horizontal_curvature: HorizontalCurvature::Straight,
+        vertical_curvature: VerticalCurvature::Straight,
+    };
+
+    let runout = preview::virtual_level_runout(end, 20.0);
+
+    assert!(!runout.is_empty());
+    assert!(runout.iter().map(Piece::length).sum::<f64>() >= 20.0);
+    assert_eq!(runout[0].entry.position(), end.position());
+    assert_eq!(runout[0].entry.heading, end.heading);
+    assert!(runout.iter().all(|piece| {
+        piece.entry.slope == Slope::Level
+            && piece.exit.slope == Slope::Level
+            && piece.entry.bank == Bank::Level
+            && piece.exit.bank == Bank::Level
+            && piece.entry.horizontal_curvature == HorizontalCurvature::Straight
+            && piece.exit.horizontal_curvature == HorizontalCurvature::Straight
+            && piece.entry.vertical_curvature == VerticalCurvature::Straight
+            && piece.exit.vertical_curvature == VerticalCurvature::Straight
+    }));
+    assert!(runout.windows(2).all(|pair| pair[0].exit == pair[1].entry));
+    assert!(runout.iter().all(|piece| {
+        piece.sample(0.0).tangent.z.abs() < 1e-9
+            && piece.sample(piece.length()).tangent.z.abs() < 1e-9
+    }));
+}
+
+#[test]
+fn runout_preview_cache_matches_fresh_runs_for_sloped_and_banked_open_ends() {
+    let station = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::Station)
+        .unwrap()
+        .clone();
+    let level_to_gentle_up = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::LevelToGentleUp)
+        .unwrap()
+        .at(station.exit)
+        .unwrap();
+    let gentle_up = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::GentleUp)
+        .unwrap()
+        .at(level_to_gentle_up.exit)
+        .unwrap();
+    let bank_left = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::BankLeft)
+        .unwrap()
+        .at(station.exit)
+        .unwrap();
+    let banked_straight_left = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::BankedStraightLeft)
+        .unwrap()
+        .at(bank_left.exit)
+        .unwrap();
+    let tracks = [
+        vec![station.clone(), level_to_gentle_up, gentle_up],
+        vec![station, bank_left, banked_straight_left],
+    ];
+    let model = hybrid_model();
+    let config = PhysicsConfig {
+        lift_speed: 8.0,
+        ..PhysicsConfig::default()
+    };
+
+    for track in tracks {
+        let mut cache = PreviewCache::default();
+        let cached = cache.preview(&track, &model, config).unwrap();
+        let snapshot_count = cache.snapshot_count();
+        let repeated = cache.preview(&track, &model, config).unwrap();
+        let fresh = PreviewCache::default()
+            .preview(&track, &model, config)
+            .unwrap();
+
+        assert!(snapshot_count > 0);
+        assert_eq!(cache.snapshot_count(), snapshot_count);
+        assert_eq!(cached.report, repeated.report);
+        assert_eq!(cached.report, fresh.report);
+        assert_eq!(cached.force_envelope_samples, fresh.force_envelope_samples);
+        assert_eq!(cached.piece_force_peaks, fresh.piece_force_peaks);
+        assert!(
+            cached
+                .force_envelope_samples
+                .iter()
+                .all(|sample| sample.distance < cached.report.statistics.track_length)
+        );
+        assert!(
+            cached
+                .piece_force_peaks
+                .iter()
+                .all(|peak| peak.piece_index < track.len())
+        );
+    }
 }
 
 #[test]
