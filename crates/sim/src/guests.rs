@@ -12,6 +12,7 @@ pub mod groups;
 pub mod knowledge;
 pub mod memories;
 pub mod needs;
+pub mod outcomes;
 pub mod park;
 pub mod pathfinding;
 pub mod storage;
@@ -22,6 +23,7 @@ pub mod walking;
 
 pub use behavior::*;
 pub use details::*;
+pub use outcomes::*;
 pub use storage::*;
 
 #[cfg(test)]

@@ -1,0 +1,127 @@
+{
+  "format": "heartline-ride",
+  "version": 1,
+  "name": "Horizon Hawk",
+  "model": "hyper",
+  "station": {
+    "x": 241,
+    "y": 249,
+    "z": 12,
+    "heading": "north"
+  },
+  "carsPerTrain": 8,
+  "trains": 1,
+  "steps": [
+    {
+      "chain": true
+    },
+    {
+      "place": "LevelToGentleUp"
+    },
+    {
+      "place": "GentleToSteepUp"
+    },
+    {
+      "place": "SteepUp"
+    },
+    {
+      "place": "SteepUp"
+    },
+    {
+      "place": "SteepToGentleUp"
+    },
+    {
+      "place": "GentleUpToLevel"
+    },
+    {
+      "chain": false
+    },
+    {
+      "place": "WideLevelToSixtyDown"
+    },
+    {
+      "place": "WideSixtyDownToLevel"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "FloaterHill24x160"
+    },
+    {
+      "place": "SpeedTurnLarge32Left"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "FloaterHill20x128"
+    },
+    {
+      "place": "FloaterHill20x128"
+    },
+    {
+      "place": "SpeedTurnLarge28Left"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "FloaterHill16x112"
+    },
+    {
+      "place": "FloaterHill12x96"
+    },
+    {
+      "place": "FloaterHill12x96"
+    },
+    {
+      "place": "FloaterHill12x96"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "SpeedTurnLarge20Left"
+    },
+    {
+      "place": "FloaterHill6x64"
+    },
+    {
+      "place": "FloaterHill6x64"
+    },
+    {
+      "place": "FloaterHill6x64"
+    },
+    {
+      "place": "FloaterHill8x64"
+    },
+    {
+      "place": "FloaterHill8x64"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "SpeedTurnLarge16Left"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "TerrainFall"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "close": true
+    }
+  ]
+}

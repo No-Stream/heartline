@@ -24,7 +24,7 @@ export default defineConfig({
   projects: [
     {
       name: "feature",
-      testIgnore: ["**/*.journey.spec.ts", "**/smoothness.spec.ts"],
+      testIgnore: ["**/*.journey.spec.ts", "**/smoothness.spec.ts", "**/*.ride.spec.ts"],
       workers: process.env.THEME_PARK_PLAYWRIGHT_DOCKER === "1" ? 1 : 2,
     },
     {
@@ -32,6 +32,12 @@ export default defineConfig({
       testMatch: "**/*.journey.spec.ts",
       grep: /@journey/,
       // Journeys are long and heavy; two at once on six compute cores pushed the operating journey to its limit.
+      workers: 1,
+      use: { viewport: { width: 1280, height: 720 } },
+    },
+    {
+      name: "rides",
+      testMatch: "**/*.ride.spec.ts",
       workers: 1,
       use: { viewport: { width: 1280, height: 720 } },
     },

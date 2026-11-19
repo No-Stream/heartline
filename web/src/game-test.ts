@@ -1,12 +1,14 @@
 import type { ActiveVoices, OfflineResult, OfflineScript } from "./audio/engine";
 import type { UiSound } from "./audio/mapping";
 import type { TestingReport } from "./coaster-testing";
-import type { ConstructionForcePreview } from "./construction-protocol";
+import type { CandidateForcePreview } from "./candidate-force-readout";
+import type { ConstructionForcePreview, ConstructionPiece, ConstructionState } from "./construction-protocol";
+import type { ConstructionSpeedMatch } from "./construction-speed-match";
 import type { GuestDetail } from "./guest-panel/protocol";
 import type { RideInfo } from "./ride-window/protocol";
 import type { Facility } from "./facilities";
 import type { Camera, WorldPoint } from "./camera";
-import type { Cutaway, Pick, WorldSprite } from "./render/index";
+import type { Cutaway, Pick as WorldPick, WorldSprite } from "./render/index";
 import type { CrestBurst } from "./render/effects";
 import type { ReplaySession } from "./session-replay";
 import type { TrainState } from "./train-states";
@@ -44,6 +46,32 @@ export interface SnapshotArrivalEntry {
   tickCount: number;
 }
 
+export interface ConstructionEstimates {
+  selected: string | null;
+  selectedPiece: ConstructionPiece | null;
+  constructionForcePreview: ConstructionForcePreview | null;
+  candidateForcePreview: CandidateForcePreview | null;
+  speedMatch: ConstructionSpeedMatch | null;
+  hillEstimate: ConstructionPiece["hillEstimate"];
+}
+
+type ConstructionEstimatesState = Pick<
+  ConstructionState,
+  "selected" | "pieces" | "constructionForcePreview" | "candidateForcePreview" | "speedMatch"
+>;
+
+export function readConstructionEstimates(state: ConstructionEstimatesState | undefined): ConstructionEstimates {
+  const selectedPiece = state?.pieces.find(({ id }) => id === state.selected) ?? null;
+  return {
+    selected: state?.selected ?? null,
+    selectedPiece,
+    constructionForcePreview: state?.constructionForcePreview ?? null,
+    candidateForcePreview: state?.candidateForcePreview ?? null,
+    speedMatch: state?.speedMatch ?? null,
+    hillEstimate: selectedPiece?.hillEstimate ?? null,
+  };
+}
+
 export interface GameTest {
   audio: { state(): "locked" | AudioContextState; unlock(): Promise<void>; activeVoices(): ActiveVoices; lastUiEvent(): UiSound | null; renderOffline(script: OfflineScript): Promise<OfflineResult> };
   ready: boolean;
@@ -62,6 +90,7 @@ export interface GameTest {
   /** The latest test report and model of the coaster whose ride window is open. */
   rideInfo(): RideInfo | null;
   testingReport(): TestingReport | null;
+  constructionEstimates(): ConstructionEstimates;
   constructionForcePreview(): ConstructionForcePreview | null;
   constructionTrainPoses(): readonly number[];
   trainStates(): { coaster: readonly TrainState[]; construction: readonly TrainState[] };
@@ -74,9 +103,9 @@ export interface GameTest {
   cutaway(): Cutaway | null;
   setSurface(x: number, y: number, corners: [number, number, number, number]): void;
   project(point: WorldPoint): { x: number; y: number };
-  pick(x: number, y: number): Pick | null;
-  pickRegion(x: number, y: number, width: number, height: number): (Pick | null)[];
-  pickSurface(x: number, y: number): Pick | null;
+  pick(x: number, y: number): WorldPick | null;
+  pickRegion(x: number, y: number, width: number, height: number): (WorldPick | null)[];
+  pickSurface(x: number, y: number): WorldPick | null;
   /** Sets the time of day, from 0 at midnight through 0.5 at noon. */
   setTimeOfDay(phase: number): void;
   timeOfDay(): number;

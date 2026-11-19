@@ -6,11 +6,29 @@ const workerMock = vi.hoisted(() => ({
   tick: vi.fn(),
   setSurface: vi.fn(),
   pieceShapes: vi.fn(() => "[]"),
+  builderStart: vi.fn(),
+  builderSelect: vi.fn(),
+  builderEstimate: vi.fn(),
 }));
 
 vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
   default: workerMock.initialize,
   piece_shapes_json: workerMock.pieceShapes,
+  BuilderSessionBridge: class {
+    invalidate() {}
+    start(_simulation: object, x: number, y: number, z: number, heading: number) {
+      workerMock.builderStart(x, y, z, heading);
+    }
+    select(_simulation: object, piece: string, exact: boolean) {
+      workerMock.builderSelect(piece, exact);
+      return "";
+    }
+    estimates(_simulation: object, complete: boolean) {
+      workerMock.builderEstimate(complete);
+      return JSON.stringify({ constructionForcePreview: null, pieces: [], elements: [], hillOptions: [], speedTurns: [], candidateForcePreview: null, speedMatch: null });
+    }
+    free() {}
+  },
   WasmSimulation: class {
     scenery_json() { return "[]"; }
     facilities_json() { return "[]"; }
@@ -64,6 +82,9 @@ afterEach(() => {
   workerMock.tick.mockReset();
   workerMock.initialize.mockReset();
   workerMock.setSurface.mockReset();
+  workerMock.builderStart.mockReset();
+  workerMock.builderSelect.mockReset();
+  workerMock.builderEstimate.mockReset();
 });
 
 describe("world snapshot transfer", () => {

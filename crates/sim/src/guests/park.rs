@@ -3,6 +3,7 @@
 use crate::executor::{Executor, SequentialExecutor};
 use crate::guests::GuestId;
 use crate::guests::behavior::{BehaviorSimulation, Facility, Movement};
+use crate::guests::outcomes::{GuestDestination, ParkOutcomes};
 use crate::guests::pathfinding::Graph;
 use crate::guests::visits::VisitManager;
 use crate::guests::walking::{WalkControl, WalkingGuest, WalkingSimulation};
@@ -67,6 +68,7 @@ impl ParkGuests {
             self.reachable = Graph::with_entrance(world, entrance);
             self.world_revision = world.revision();
             self.walking.set_entrance(world, entrance);
+            self.record_unreachable_pending_destinations();
         }
     }
 
@@ -108,6 +110,39 @@ impl ParkGuests {
     }
     pub fn behaviors(&self) -> &BehaviorSimulation {
         &self.behaviors
+    }
+    /// Builds a guest and ride report snapshot without adding work to normal ticks.
+    pub fn outcomes(&self, world: &World, facilities: &[Facility]) -> ParkOutcomes {
+        let graph = Graph::with_entrance(world, self.entrance);
+        let mut outcomes = self.behaviors.outcomes().clone();
+        outcomes.refresh_unmet_need_guests(
+            self.walking
+                .traits()
+                .ids()
+                .filter(|&guest_id| self.walking.traits().is_active(guest_id))
+                .map(|guest_id| (guest_id, self.behaviors.guests[guest_id.0 as usize].needs)),
+        );
+        outcomes.refresh_unreachable_destinations(
+            self.walking
+                .traits()
+                .ids()
+                .filter(|&guest_id| self.walking.traits().is_active(guest_id))
+                .map(|guest_id| {
+                    let guest_position = self.walking.guests()[guest_id.0 as usize].path;
+                    let component = guest_position
+                        .and_then(|position| graph.indices.get(&position).copied())
+                        .map(|node| graph.components[node]);
+                    (guest_id, component)
+                }),
+            facilities.iter().map(|facility| {
+                let component = graph
+                    .indices
+                    .get(&facility.place.position)
+                    .map(|&node| graph.components[node]);
+                (facility.place.id, facility.place.position, component)
+            }),
+        );
+        outcomes
     }
     pub fn set_external_rides(&mut self, ids: &[u32]) {
         self.behaviors.set_external_rides(ids);
@@ -268,6 +303,8 @@ impl ParkGuests {
         if self.world_revision != world.revision() {
             self.reachable = Graph::with_entrance(world, self.entrance);
             self.world_revision = world.revision();
+            self.walking.refresh_graph(world);
+            self.record_unreachable_pending_destinations();
         }
         self.walking.refresh_graph(world);
         let facilities = accessible_facilities(&self.reachable, facilities);
@@ -399,6 +436,31 @@ impl ParkGuests {
             .collect();
         self.walking.tick_with_controls(world, executor, &controls);
         VisitChanges { arrived, departed }
+    }
+
+    fn record_unreachable_pending_destinations(&mut self) {
+        let unreachable_destinations: Vec<_> =
+            self.behaviors
+                .pending_destinations()
+                .filter_map(|(guest_id, place)| {
+                    if !self.walking.traits().is_active(guest_id) {
+                        return None;
+                    }
+                    let guest_position = self.walking.guests()[guest_id.0 as usize].path;
+                    let guest_component =
+                        guest_position.and_then(|position| self.walking.path_component(position));
+                    let destination_component = self.walking.path_component(place.position);
+                    (guest_component.is_none() || guest_component != destination_component)
+                        .then_some(GuestDestination {
+                            guest_id,
+                            facility_id: place.id,
+                            position: place.position,
+                        })
+                })
+                .collect();
+        for destination in unreachable_destinations {
+            self.behaviors.record_failed_route(destination);
+        }
     }
 }
 

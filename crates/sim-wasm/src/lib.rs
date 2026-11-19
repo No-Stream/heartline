@@ -1,13 +1,15 @@
 mod blocks;
+pub mod builder_session;
 mod command_errors;
-mod construction;
-mod construction_speed_match;
+pub mod construction;
+pub mod construction_speed_match;
 mod facilities;
 mod guest_benchmark;
 mod guest_report;
 mod guests;
 pub mod layouts;
-mod reports;
+pub mod park_description;
+pub mod reports;
 mod save;
 #[cfg(test)]
 mod save_tests;
@@ -455,6 +457,7 @@ fn path_error_code(error: PathBuildError) -> i32 {
         PathBuildError::QueueConnections => 7,
         PathBuildError::FacilityOccupied => 8,
         PathBuildError::FacilityAccess => 9,
+        PathBuildError::SupportRoute => 13,
     }
 }
 

@@ -92,6 +92,9 @@ pub(crate) fn command_error_message(error: CommandError) -> &'static str {
 pub(crate) fn block_error_message(error: BlockCommandError) -> &'static str {
     match error {
         BlockCommandError::InvalidTrainCount => "",
+        BlockCommandError::RecordedTrainCountExceedsCapacity => {
+            "Recorded train count exceeds the saved block layout capacity."
+        }
         BlockCommandError::InvalidCarsPerTrain => {
             "The car count is outside this model's allowed range."
         }
@@ -108,6 +111,9 @@ pub(crate) fn block_error_message(error: BlockCommandError) -> &'static str {
         }
         BlockCommandError::ClosedCircuitRequiredForEditing => {
             "A closed circuit is required to edit block sections."
+        }
+        BlockCommandError::RecordedLayoutWhileOpen => {
+            "Close the coaster before installing a saved block layout."
         }
         BlockCommandError::NoAutomaticSearch => {
             "There is no automatic block placement search in progress."
@@ -164,6 +170,7 @@ fn path_error_message(error: PathBuildError) -> &'static str {
         }
         PathBuildError::FacilityOccupied => "Path overlaps a facility",
         PathBuildError::FacilityAccess => "Path conflicts with attraction access",
+        PathBuildError::SupportRoute => "Path would block coaster supports",
     }
 }
 

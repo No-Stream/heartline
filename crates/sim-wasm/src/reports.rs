@@ -68,7 +68,7 @@ pub(crate) struct PieceShapeReport {
 
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TestingSample {
+pub struct TestingSample {
     pub distance: f64,
     pub x: f64,
     pub y: f64,

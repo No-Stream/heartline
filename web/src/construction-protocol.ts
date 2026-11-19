@@ -28,7 +28,18 @@ export type ConstructionAction =
   | { readonly type: "construction-set-cars-per-train"; readonly cars: number }
   | { readonly type: "construction-move-block"; readonly index: number; readonly boundaryMetres: number }
   | { readonly type: "construction-remove-block"; readonly index: number }
-  | { readonly type: "construction-add-block"; readonly boundaryMetres: number };
+  | { readonly type: "construction-add-block"; readonly boundaryMetres: number }
+  | {
+      readonly type: "construction-set-block-sections";
+      readonly blockSections: readonly {
+        readonly boundaryMetres: number;
+        readonly brakeStartMetres: number;
+        readonly brakePieceIndices: readonly number[];
+      }[];
+      readonly trainCapacity: number;
+      readonly capacitySearchComplete: boolean;
+      readonly placementSearchComplete: boolean;
+    };
 
 /** A coaster panel choice before the main thread translates it to the bridge's model selection. */
 export type ConstructionPanelAction = { readonly type: "construction-set-model"; readonly model: CoasterModelKey };

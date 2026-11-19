@@ -218,3 +218,12 @@ fn save_uses_new_version_and_rejects_old_version() {
         );
     }
 }
+
+#[test]
+fn invalid_load_returns_a_native_error_without_constructing_js_value() {
+    let error = match WasmSimulation::load_state_native(b"invalid") {
+        Ok(_) => panic!("invalid save unexpectedly loaded"),
+        Err(error) => error,
+    };
+    assert_eq!(error, "Unsupported or invalid park save version");
+}

@@ -14,7 +14,7 @@ import { createFacilityPanel } from "./facility-panel";
 import { applyCameraAction, projectWorld, type Camera, type Viewport, type WorldPoint } from "./camera";
 import { bindInput, bindKeyboard, builderShortcuts, keyHint } from "./input/bindings";
 import type { CameraAction, InputAction, ScreenPoint, UndergroundStyle } from "./input/actions";
-import { constructionRiderPositions, validateBlockAnalysisBudget, type FrameLogEntry, type GameTest, type SnapshotArrivalEntry } from "./game-test";
+import { constructionRiderPositions, readConstructionEstimates, validateBlockAnalysisBudget, type FrameLogEntry, type GameTest, type SnapshotArrivalEntry } from "./game-test";
 import { blockLayoutChanged } from "./block-analysis-progress";
 import { createWorldRenderer, loadAtlas, type Cutaway, type WorldView, type WorldSprite } from "./render/index";
 import { CUTAWAY_RADIUS, cutawayLevelForTrack, insideCutaway } from "./render/cutaway";
@@ -63,6 +63,7 @@ import { soundFrame, type MappingMemory, type UiEvent } from "./audio/mapping";
 import { constructionUiEvents, createUiEventQueue, pathUiEvent, placementUiEvent, terrainUiEvent } from "./audio/ui-events";
 import { createSoundSetting } from "./sound-setting";
 import { parseTrainStates, validateTrainStates } from "./train-states";
+import { bundledParkDescriptionJson } from "./park-bundle";
 import {
   constructionCutawayTarget,
   landscapingCutawayTarget,
@@ -107,6 +108,7 @@ function isParkMutationIntent(action: WorkerAction): boolean {
     case "construction-move-block":
     case "construction-remove-block":
     case "construction-add-block":
+    case "construction-set-block-sections":
       return true;
     default:
       return false;
@@ -394,6 +396,7 @@ const gameTest: GameTest = {
   guestDetail() { return latestGuestDetail; },
   rideInfo() { return latestRideInfo; },
   testingReport() { return construction?.testingReport ?? null; },
+  constructionEstimates() { return readConstructionEstimates(construction); },
   constructionForcePreview() { return construction?.constructionForcePreview ?? null; },
   constructionTrainPoses() { return Array.from(current?.constructionTrainPoses ?? []); },
   trainStates() {
@@ -825,13 +828,20 @@ const params = new URLSearchParams(location.search);
 const seedText = params.get("seed") ?? "2026";
 if (!/^\d+$/.test(seedText) || BigInt(seedText) > 18446744073709551615n) throw new RangeError("Invalid seed");
 const park = params.get("park") ?? "demo";
-if (park !== "new" && park !== "demo") throw new RangeError("Invalid park");
 const guestCount = testAgents === null ? 12 : Number(testAgents);
 if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 500) throw new RangeError("Invalid test guest count");
-sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
+if (park === "new" || park === "demo") {
+  sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
+} else {
+  const descriptionJson = bundledParkDescriptionJson(park);
+  loadedPark = true;
+  sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park: "description", descriptionJson, guestCount, frozen, manualBlockAnalysis });
+}
 worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   const message = event.data;
   if (message.type === "ready") { workerReady = true;
+  } else if (message.type === "initialization-error") {
+    parkSaves.message(`Could not load park: ${message.error}`);
   } else if (message.type === "park-saved" || message.type === "park-loaded") {
     const pending = pendingParkRequests.get(message.requestId);
     if (!pending) throw new Error("Unknown park request");

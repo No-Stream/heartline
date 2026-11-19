@@ -5,7 +5,9 @@ use crate::guests::park::ParkGuests;
 use crate::physics::{
     CarReading, Circuit, ConstructionTestRunRecorder, GForces, PhysicsConfig, Train,
 };
-use crate::track::blocks::{BlockLayout, BlockManualSearch, BlockPlacementSearch, brake_runs};
+use crate::track::blocks::{
+    BlockLayout, BlockManualSearch, BlockPlacementSearch, BlockSectionPlacement, brake_runs,
+};
 use crate::track::construction::Construction;
 use crate::track::{PieceId, TrackState, TrainConfiguration, hybrid_model};
 use crate::world::{Path, PathKind, Position, Surface, World};
@@ -142,6 +144,83 @@ fn test_placement_advance_uses_exact_work_independent_of_throughput() {
             .work_steps_completed(),
         throughput_before
     );
+}
+
+#[test]
+fn recorded_layout_installs_exact_boundaries_without_search() {
+    let mut park = block_test_park();
+    let (circuit, train) = construction_inputs(&park);
+    let runs = brake_runs(&circuit, train.length_metres);
+    let run = runs
+        .first()
+        .expect("test circuit has an eligible brake run");
+    let section = BlockSectionPlacement {
+        boundary_metres: run.boundary_metres,
+        brake_start_metres: run.start_metres,
+        brake_piece_indices: run.piece_indices.to_vec(),
+    };
+
+    expect_command_success(park.construction_install_block_layout(vec![section], 1, false, false));
+
+    let layout = park
+        .block_layout
+        .as_ref()
+        .expect("recorded layout installed");
+    let boundary_index = layout
+        .boundaries()
+        .iter()
+        .position(|boundary| (boundary - run.boundary_metres).abs() < 1e-7)
+        .expect("recorded brake run boundary is installed");
+    assert_eq!(
+        layout.brake_pieces(boundary_index),
+        run.piece_indices.as_ref()
+    );
+    assert_eq!(layout.capacity(), 1);
+    assert!(!layout.capacity_search_complete());
+    assert!(!layout.placement_search_complete());
+    assert!(park.block_layout_is_automatic);
+    assert!(park.block_placement_search.is_none());
+    assert!(park.block_manual_search.is_none());
+    assert!(park.block_placement_cache.is_none());
+}
+
+#[test]
+fn recorded_layout_rejects_invalid_boundaries_and_capacity_metadata() {
+    let mut park = block_test_park();
+    assert!(matches!(
+        park.construction_install_block_layout(
+            vec![BlockSectionPlacement {
+                boundary_metres: f64::NAN,
+                brake_start_metres: f64::NAN,
+                brake_piece_indices: vec![0],
+            }],
+            1,
+            false,
+            false,
+        ),
+        Err(BlockCommandError::Validation(
+            "recorded block sections must have finite, unique, ordered runs"
+        ))
+    ));
+    assert!(park.block_layout.is_none());
+
+    let (circuit, train) = construction_inputs(&park);
+    let runs = brake_runs(&circuit, train.length_metres);
+    let run = runs
+        .first()
+        .expect("test circuit has an eligible brake run");
+    let section = BlockSectionPlacement {
+        boundary_metres: run.boundary_metres,
+        brake_start_metres: run.start_metres,
+        brake_piece_indices: run.piece_indices.to_vec(),
+    };
+    assert!(matches!(
+        park.construction_install_block_layout(vec![section], 2, true, true),
+        Err(BlockCommandError::Validation(
+            "recorded train capacity exceeds the installed block capacity"
+        ))
+    ));
+    assert!(park.block_layout.is_none());
 }
 
 #[test]

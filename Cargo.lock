@@ -221,6 +221,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "theme-park-design-tools"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "theme-park-sim",
+ "theme-park-sim-wasm",
+]
+
+[[package]]
 name = "theme-park-sim"
 version = "0.1.0"
 dependencies = [

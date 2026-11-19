@@ -2219,3 +2219,51 @@ fn hill_estimate_uses_supplied_preview_status() {
         }
     }
 }
+
+#[test]
+fn typed_construction_estimates_match_json_bridge() {
+    let mut simulation = WasmSimulation::new(1, 0, "new".to_owned());
+    simulation.construction_select("model:hyper");
+    simulation.construction_start(20, 20, 1, 0);
+    simulation.construction_select("Straight");
+    assert_eq!(
+        serde_json::to_string(&simulation.construction_force_preview()).unwrap(),
+        simulation.construction_force_preview_json()
+    );
+    assert_eq!(
+        serde_json::to_string(&simulation.construction_candidate_force_preview()).unwrap(),
+        simulation.construction_candidate_force_preview_json()
+    );
+    assert_eq!(
+        serde_json::to_string(&simulation.construction_choices_preview(None, "")).unwrap(),
+        simulation.construction_choices_with_preview(None, "")
+    );
+    assert_eq!(
+        serde_json::to_string(&simulation.construction_elements_typed()).unwrap(),
+        simulation.construction_elements()
+    );
+    assert_eq!(
+        serde_json::to_string(&simulation.construction_speed_match("Loop", Some(5.0))).unwrap(),
+        simulation.construction_speed_match_json("Loop", Some(5.0))
+    );
+}
+
+#[test]
+fn train_count_refusal_exposes_the_bridge_reason() {
+    let mut simulation = WasmSimulation::new(1, 0, "new".to_owned());
+    let error = simulation
+        .construction_set_train_count_result(2)
+        .unwrap_err();
+    assert!(!error.is_empty());
+}
+
+#[test]
+fn launch_speed_refusal_exposes_the_bridge_reason() {
+    let mut simulation = WasmSimulation::new(1, 0, "new".to_owned());
+    assert!(
+        !simulation
+            .construction_set_launch_intensity_result(1, 10.0)
+            .unwrap_err()
+            .is_empty()
+    );
+}
