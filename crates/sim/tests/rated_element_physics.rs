@@ -552,15 +552,15 @@ fn assert_train_crosses_element(
     entry_speed: f64,
     minimum_speed_required: bool,
 ) -> ElementForces {
-    assert_train_scan(
+    let scan = scan_train_element(model, circuit, element_range, cars, entry_speed);
+    assert_train_scan_result(
         model,
-        circuit,
         piece_id,
         "supplied test circuit",
-        element_range,
         cars,
         entry_speed,
         minimum_speed_required,
+        scan,
     )
 }
 
@@ -581,28 +581,6 @@ fn assert_train_crosses_element_after_preroll(
             )
         });
     assert_train_scan_result(model, piece_id, context, cars, entry_speed, false, scan)
-}
-
-fn assert_train_scan(
-    model: &CoasterModel,
-    circuit: &Circuit,
-    piece_id: PieceId,
-    context: &str,
-    element_range: std::ops::Range<f64>,
-    cars: u8,
-    entry_speed: f64,
-    minimum_speed_required: bool,
-) -> ElementForces {
-    let scan = scan_train_element(model, circuit, element_range, cars, entry_speed);
-    assert_train_scan_result(
-        model,
-        piece_id,
-        context,
-        cars,
-        entry_speed,
-        minimum_speed_required,
-        scan,
-    )
 }
 
 fn assert_train_scan_result(
