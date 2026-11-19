@@ -116,15 +116,19 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
 
     let mut arguments = vec!["check".to_owned(), "--json".to_owned()];
     arguments.extend(rides.iter().map(|path| path.display().to_string()));
-    let output = run_cli(&arguments, "").unwrap();
-    let reports: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let output = run_cli_with_status(&arguments, "");
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    let reports: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
 
     assert_eq!(reports.as_array().unwrap().len(), rides.len());
+    let mut has_agreement_failures = false;
     for report in reports.as_array().unwrap() {
         assert_eq!(
             report["agreementGate"],
-            "informational; agreement failures exit zero"
+            "enabled; agreement failures exit nonzero"
         );
+        assert!(report["expectationFailures"].as_array().unwrap().is_empty());
+        has_agreement_failures |= !report["agreement"]["passed"].as_bool().unwrap();
         let rated_speed_margins = report["ratedSpeedMargins"].as_array().unwrap();
         if !rated_speed_margins.is_empty() {
             let physics_configurations: std::collections::BTreeSet<_> = rated_speed_margins
@@ -175,12 +179,13 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
         for failure in agreement["failures"].as_array().unwrap() {
             assert!(matches!(
                 failure["check"].as_str().unwrap(),
-                "FinishedEstimateVsFrontCar" | "PlacementEstimateVsWorstCar"
+                "FinishedEstimateVsWorstCar" | "PlacementEstimateVsWorstCar"
             ));
             assert!(failure["metric"].is_string());
             assert!(failure["reason"].is_string());
         }
     }
+    assert_eq!(output.exit_code, i32::from(has_agreement_failures));
 }
 
 #[test]

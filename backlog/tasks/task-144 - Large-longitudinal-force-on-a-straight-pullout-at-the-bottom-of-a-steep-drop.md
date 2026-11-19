@@ -21,6 +21,8 @@ Owner playtest 2026-11-18: the live builder estimate shows -1.6 g longitudinal (
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+2026-11-19 (dt-estimate, partial): The ignored longitudinal-diag test and its print helper are dropped; they were exploratory and their 0.63 g result is recorded below. The owner's exact geometry remains unavailable, so that observation is not a reproduction. In the corrected same-start open-versus-closed demo comparison, the maximum sampled longitudinal difference is 0.0 g and the earlier 0.4 g bound is restored to 0.3 g. Placement previews still have unresolved differences on final pieces because later track is unknown; see TASK-146.
+
 2026-11-18 diagnosis (branch longitudinal-diag, ignored test diagnose_steep_drop_pullout_longitudinal_forces in crates/sim/src/physics/tests.rs): a catalog 60-degree drop into a level straight pullout at 34 m/s measures 6.17 g vertical, 0.000 g lateral and at most 0.63 g longitudinal at 200 Hz, so the measured path does not produce -1.6 g. Heart-line offset and train coupling contribute real but small longitudinal force. The builder estimate steps at 50 ms and interpolates acceleration when correcting sample forces (physics/preview.rs:111, sim-wasm construction.rs:483), which is the leading suspect for the larger estimated values. Needs the owner's exact track; continue under TASK-146.
 
 Diagnostic branch longitudinal-diag is not merged; merge the ignored test with the TASK-146 fix or drop it then.

@@ -7,7 +7,7 @@ const PLACEMENT_FORCE_TOLERANCE_G: f64 = 0.3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgreementCheck {
-    FinishedEstimateVsFrontCar,
+    FinishedEstimateVsWorstCar,
     PlacementEstimateVsWorstCar,
 }
 
@@ -113,7 +113,7 @@ pub fn evaluate_agreement(inputs: &[AgreementInput]) -> AgreementReport {
             failures: vec![AgreementFailure {
                 piece_index: 0,
                 piece_name: String::new(),
-                check: AgreementCheck::FinishedEstimateVsFrontCar,
+                check: AgreementCheck::FinishedEstimateVsWorstCar,
                 metric: "ride",
                 reason: "ride has no piece measurements".into(),
             }],
@@ -126,7 +126,7 @@ pub fn evaluate_agreement(inputs: &[AgreementInput]) -> AgreementReport {
 
     for input in inputs {
         let failure_start = failures.len();
-        compare_finished_estimate_with_front_car(input, &mut failures);
+        compare_finished_estimate_with_worst_car(input, &mut failures);
         let check_2 = result_since(&failures, failure_start);
 
         let failure_start = failures.len();
@@ -163,7 +163,7 @@ fn result_since(failures: &[AgreementFailure], start: usize) -> CheckResult {
     }
 }
 
-fn compare_finished_estimate_with_front_car(
+fn compare_finished_estimate_with_worst_car(
     input: &AgreementInput,
     failures: &mut Vec<AgreementFailure>,
 ) {
@@ -172,7 +172,7 @@ fn compare_finished_estimate_with_front_car(
             if (estimated - measured).abs() > ENTRY_SPEED_TOLERANCE_METRES_PER_SECOND {
                 failures.push(failure(
                     input,
-                    AgreementCheck::FinishedEstimateVsFrontCar,
+                    AgreementCheck::FinishedEstimateVsWorstCar,
                     "entry speed",
                     format!(
                         "estimate {estimated:.3} m/s differs from front car {measured:.3} m/s by more than {ENTRY_SPEED_TOLERANCE_METRES_PER_SECOND:.1} m/s"
@@ -182,7 +182,7 @@ fn compare_finished_estimate_with_front_car(
         }
         _ => failures.push(failure(
             input,
-            AgreementCheck::FinishedEstimateVsFrontCar,
+            AgreementCheck::FinishedEstimateVsWorstCar,
             "entry speed",
             "estimate or front-car measurement is unavailable".into(),
         )),
@@ -190,9 +190,9 @@ fn compare_finished_estimate_with_front_car(
 
     compare_force_values(
         input,
-        AgreementCheck::FinishedEstimateVsFrontCar,
+        AgreementCheck::FinishedEstimateVsWorstCar,
         input.finished_track_estimate,
-        input.measured_front,
+        input.measured_worst,
         FINISHED_FORCE_TOLERANCE_G,
         false,
         failures,
@@ -372,20 +372,41 @@ mod tests {
     }
 
     #[test]
-    fn finished_track_force_difference_over_point_two_g_fails_check_two() {
-        let placement = force_peaks(-0.9, 3.2);
-        let mut measured_front = placement;
-        measured_front.maximum_vertical_g += 0.3;
+    fn check_two_compares_finished_estimate_with_worst_car() {
+        let measured_front = force_peaks(-0.9, 3.2);
+        let mut measured_worst = measured_front;
+        measured_worst.maximum_vertical_g += 0.3;
         let report = evaluate_agreement(&[agreement_input(
-            placement,
-            placement,
+            measured_worst,
             measured_front,
             measured_front,
+            measured_worst,
         )]);
 
-        assert!(!report.passed);
+        assert_eq!(report.rows[0].check_2, CheckResult::Failed);
+        assert_eq!(report.rows[0].check_3, CheckResult::Passed);
         assert!(report.failures.iter().any(|failure| {
-            failure.check == AgreementCheck::FinishedEstimateVsFrontCar
+            failure.check == AgreementCheck::FinishedEstimateVsWorstCar
+                && failure.metric == "maximum vertical g"
+        }));
+    }
+
+    #[test]
+    fn check_two_does_not_compare_force_peaks_with_front_car() {
+        let measured_worst = force_peaks(-0.9, 3.2);
+        let mut measured_front = measured_worst;
+        measured_front.maximum_vertical_g += 0.3;
+        let report = evaluate_agreement(&[agreement_input(
+            measured_worst,
+            measured_worst,
+            measured_front,
+            measured_worst,
+        )]);
+
+        assert_eq!(report.rows[0].check_2, CheckResult::Passed);
+        assert_eq!(report.rows[0].check_3, CheckResult::Passed);
+        assert!(!report.failures.iter().any(|failure| {
+            failure.check == AgreementCheck::FinishedEstimateVsWorstCar
                 && failure.metric == "maximum vertical g"
         }));
     }

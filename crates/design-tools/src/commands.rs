@@ -126,7 +126,11 @@ pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
 
 /// Runs the command line interface while preserving stdout, stderr, and exit status separately.
 pub fn run_cli_with_status(arguments: &[String], stdin: &str) -> CliOutput {
-    match run_cli_response(arguments, stdin) {
+    cli_output(run_cli_response(arguments, stdin))
+}
+
+fn cli_output(response: Result<CliResponse, String>) -> CliOutput {
+    match response {
         Ok(CliResponse::Success(stdout)) => CliOutput {
             stdout,
             stderr: String::new(),
@@ -2239,17 +2243,6 @@ pub(crate) fn replay_with_estimates(
                 for relative_piece_index in 0..added_piece_count {
                     let piece_index = first_piece_index + relative_piece_index;
                     let piece = &pieces[piece_index];
-                    let piece_end = piece_start + piece.length();
-                    let is_final_piece = piece_index + 1 == pieces.len();
-                    let piece_samples: Vec<_> = candidate
-                        .samples
-                        .iter()
-                        .filter(|sample| {
-                            sample.distance >= piece_start
-                                && (sample.distance < piece_end
-                                    || (is_final_piece && sample.distance <= piece_end))
-                        })
-                        .collect();
                     let entry_speed = if relative_piece_index == 0 {
                         candidate.entry_speed
                     } else {
@@ -2273,17 +2266,16 @@ pub(crate) fn replay_with_estimates(
                     let estimate = if added_piece_count == 1 {
                         ride_piece_estimate(piece_index, &place.place, candidate, note)
                     } else {
-                        ride_piece_estimate_from_samples(
+                        ride_piece_estimate_from_piece_peaks(
                             piece_index,
                             piece_id,
                             entry_speed,
                             candidate,
-                            &piece_samples,
                             note,
                         )
                     };
                     estimates.push(estimate);
-                    piece_start = piece_end;
+                    piece_start += piece.length();
                 }
                 if let Some(selection_snapshot) = selection_snapshot {
                     browser_estimates.push(json!({
@@ -2404,16 +2396,19 @@ fn ride_piece_estimate(
     )
 }
 
-fn ride_piece_estimate_from_samples(
+fn ride_piece_estimate_from_piece_peaks(
     piece_index: usize,
     piece_id: &str,
     entry_speed: Option<f64>,
     candidate: &ConstructionCandidateForcePreviewWire,
-    samples: &[&TestingSample],
     note: Option<String>,
 ) -> RidePieceEstimate {
-    let estimated =
-        ForcePeaks::from_preview_samples(samples.iter().copied()).map(|peaks| ForcePeakValues {
+    let estimated = candidate
+        .piece_force_peaks
+        .iter()
+        .find(|peaks| peaks.piece_index == piece_index)
+        .and_then(|peaks| peaks.worst_car.as_ref())
+        .map(|peaks| ForcePeakValues {
             minimum_vertical_g: peaks.minimum_vertical_g,
             maximum_vertical_g: peaks.maximum_vertical_g,
             maximum_lateral_g: peaks.maximum_lateral_g,
@@ -2530,6 +2525,21 @@ fn finished_track_estimates(
         .estimates()
         .force_preview
         .ok_or_else(|| "finished-track preview is unavailable".to_owned())?;
+    let worst_peaks_by_piece: BTreeMap<_, _> = preview
+        .piece_force_peaks
+        .into_iter()
+        .map(|peaks| {
+            (
+                peaks.piece_index,
+                peaks.worst_car.map(|peaks| ForcePeaks {
+                    minimum_vertical_g: peaks.minimum_vertical_g,
+                    maximum_vertical_g: peaks.maximum_vertical_g,
+                    maximum_lateral_g: peaks.maximum_lateral_g,
+                    maximum_longitudinal_g: peaks.maximum_longitudinal_g,
+                }),
+            )
+        })
+        .collect();
     let construction = session
         .simulation()
         .construction
@@ -2543,18 +2553,7 @@ fn finished_track_estimates(
         distance += piece.length();
     }
     let mut result = BTreeMap::new();
-    let last_piece_index = piece_starts.len().saturating_sub(1);
-    for (piece_index, (start, end, name)) in piece_starts.into_iter().enumerate().skip(1) {
-        let samples: Vec<_> = preview
-            .samples
-            .iter()
-            .filter(|sample| {
-                sample.distance >= start
-                    && (sample.distance < end
-                        || (piece_index == last_piece_index && sample.distance <= end))
-            })
-            .collect();
-        let peaks = ForcePeaks::from_preview_samples(samples.iter().copied());
+    for (piece_index, (start, _end, name)) in piece_starts.into_iter().enumerate().skip(1) {
         let entry_speed = speed_at_distance(&preview.samples, start);
         let measured_name = placement
             .iter()
@@ -2565,12 +2564,7 @@ fn finished_track_estimates(
             (
                 measured_name,
                 entry_speed,
-                peaks.map(|peaks| ForcePeaks {
-                    minimum_vertical_g: peaks.minimum_vertical_g,
-                    maximum_vertical_g: peaks.maximum_vertical_g,
-                    maximum_lateral_g: peaks.maximum_lateral_g,
-                    maximum_longitudinal_g: peaks.maximum_longitudinal_g,
-                }),
+                worst_peaks_by_piece.get(&piece_index).copied().flatten(),
             ),
         );
     }
@@ -2707,8 +2701,8 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         return Err("usage: tools/design check <ride file> ...".into());
     }
     let mut rows = Vec::new();
-    let mut text = String::from("Native agreement failures are informational.\n");
-    let mut has_expectation_failures = false;
+    let mut text = String::new();
+    let mut has_check_failures = false;
     for path in paths {
         let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
         let ride: RideFile = serde_json::from_slice(&bytes)
@@ -2725,10 +2719,10 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
             .filter(|result| !result.passed)
             .map(ExpectationResult::format)
             .collect();
-        has_expectation_failures |= !failures.is_empty();
+        has_check_failures |= check_has_failures(&failures, &agreement);
         writeln!(
             text,
-            "{}: expectations {}; native agreement {} (informational)",
+            "{}: expectations {}; native agreement {}",
             ride.name,
             if failures.is_empty() { "pass" } else { "fail" },
             if agreement.passed { "pass" } else { "fail" }
@@ -2751,7 +2745,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         rows.push(json!({
             "path": path,
             "name": ride.name,
-            "agreementGate": "informational; agreement failures exit zero",
+            "agreementGate": "enabled; agreement failures exit nonzero",
             "ratedSpeedMargins": rated_speed_margins.iter().map(|margin| json!({
                 "pieceIndex": margin.piece_index,
                 "pieceId": margin.piece_id,
@@ -2777,18 +2771,31 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
             "browserEstimates": browser_estimates,
         }));
     }
-    if has_expectation_failures {
-        if json_mode {
-            return serde_json::to_string_pretty(&Value::Array(rows))
-                .map(|value| CliResponse::FailureWithStdout(value + "\n"))
-                .map_err(|error| error.to_string());
-        }
-        return Err(text);
-    }
+    check_response(json_mode, rows, text, has_check_failures)
+}
+
+fn check_has_failures(expectation_failures: &[String], agreement: &AgreementReport) -> bool {
+    !expectation_failures.is_empty() || !agreement.passed
+}
+
+fn check_response(
+    json_mode: bool,
+    rows: Vec<Value>,
+    text: String,
+    has_failures: bool,
+) -> Result<CliResponse, String> {
     if json_mode {
-        return serde_json::to_string_pretty(&Value::Array(rows))
-            .map(|value| CliResponse::Success(value + "\n"))
-            .map_err(|error| error.to_string());
+        let json = serde_json::to_string_pretty(&Value::Array(rows))
+            .map_err(|error| error.to_string())?
+            + "\n";
+        return Ok(if has_failures {
+            CliResponse::FailureWithStdout(json)
+        } else {
+            CliResponse::Success(json)
+        });
+    }
+    if has_failures {
+        return Err(text);
     }
     Ok(CliResponse::Success(text))
 }
@@ -3073,9 +3080,42 @@ mod replay_snapshot_tests {
 
 #[cfg(test)]
 mod agreement_replay_tests {
-    use super::{replay_with_estimates, speed_at_distance};
+    use super::{
+        agreement_json, check_has_failures, check_response, cli_output, replay_with_estimates,
+        speed_at_distance,
+    };
+    use crate::agreement::{AgreementCheck, AgreementFailure, AgreementReport};
     use theme_park_sim::track::ride_file::RideFile;
     use theme_park_sim_wasm::reports::TestingSample;
+
+    #[test]
+    fn agreement_failure_makes_json_check_exit_nonzero_without_expectation_failures() {
+        let agreement = AgreementReport {
+            rows: Vec::new(),
+            failures: vec![AgreementFailure {
+                piece_index: 1,
+                piece_name: "Launch".into(),
+                check: AgreementCheck::PlacementEstimateVsWorstCar,
+                metric: "longitudinal g",
+                reason: "estimate differs from the worst-car measurement".into(),
+            }],
+            passed: false,
+        };
+
+        let has_failures = check_has_failures(&[], &agreement);
+        let response = check_response(
+            true,
+            vec![serde_json::json!({"agreement": agreement_json(&agreement)})],
+            String::new(),
+            has_failures,
+        );
+        let output = cli_output(response);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stderr.is_empty());
+        let reports: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(reports[0]["agreement"]["passed"], false);
+    }
 
     #[test]
     fn entry_speed_is_interpolated_at_the_piece_boundary_without_extrapolation() {
