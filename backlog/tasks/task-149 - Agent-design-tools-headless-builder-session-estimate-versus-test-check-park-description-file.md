@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-18 17:03'
+updated_date: '2026-11-19 00:17'
 labels:
   - tooling
 dependencies: []
@@ -63,3 +64,19 @@ The CLI spends at most 1,000 block-analysis work steps and saves the installed b
 The 70-half-tile release measurement was 4.29 s cold including snapshot write and 0.17 s warm, with identical output. The cold target is under 4 s and remains unmet. Repeated support-render updates during append are a candidate for a separately verified optimization. The command coverage tests, export tests, save/load test and goldens passed in the Rust gate; `check` on Timber Tumbler passed expectations and reported native agreement failure as informational. Park build and report remain scheduled for work items 8 and 9.
 
 The single requested `make test-rust` run passed 948 tests across 22 suites; `make test-web` passed 468 web and 9 art tests. `make check` passed build, generated types (1 test), its Rust subset (228 tests), 468 web tests and 9 art tests, then failed on a missing browser-test recording type. After fixing it, standalone typechecking and the real-worker test passed; the gate was not rerun. `make lint` failed on one collapsible conditional; after fixing it, targeted Clippy for the affected packages and formatting passed, as did standalone typechecking. Its full workspace and threaded Clippy commands were not rerun. No timeouts or retries were added.
+
+## Native agreement table work (2026-11-18)
+
+The native report now prints placement, finished-track, measured front-car and per-axis worst-car force peaks and entry speeds, with individual check 2 and check 3 failure reasons. JSON includes the same values. Check 2 uses the finished preview versus the front car; check 3 uses the placement preview versus the envelope across cars. The station is excluded because it is not a placed piece. Expanded elements are split into physical pieces using the candidate's samples. Piece ranges are half-open except at the final endpoint; finished-preview entry speed is interpolated at the piece boundary without extrapolation. Missing data is reported as a failed comparison. Agreement failures remain informational and `check` says that they exit zero until work item 6.
+
+The full catalog tables and their failure details are in TASK-146 and plan section 9. Release `tools/design check content/rides/*.ride.json` took 33.02 s and exited zero: expectations passed on all rides, agreement passed on Velocity Viper and failed on the other four. All 227 pieces passed check 2; 17 failed check 3. The separate demo-ride comparison remains pending its branch. The three synthetic tests existed at the starting commit; further axis and piece-boundary coverage and catalog integration were added without disabling them.
+
+The requested short straight-and-hill end-to-end fixture remains failing. Two straight-and-hill prefixes could not be closed by finish search (`No nearby connection to the station was found`); a direct four-turn loop with an AirtimeHill substituted for a straight also failed to close (`The track must connect back to its station.`). The test remains enabled in `crates/design-tools/tests/rides.rs`. Stop after the two failed attempts on the finish-search approach; a follow-up should construct a verified closed short ride with a hill from the geometry and then rerun the gates. The existing catalog integration and Timber agreement command exercise the full native path, but do not satisfy the short-fixture requirement.
+
+Verification: `make build` passed. The requested workspace Rust command ran every binary and failed only `design-tools/tests/rides.rs` (2 passed, 1 failed, none ignored); the failing test is the short fixture described above. The other binaries passed, including 680 simulation library tests and 169 wasm library tests. `make lint` passed. `make check` passed generated types (1), its Rust subset (228), web tests (468), art tests (9), and fast browser tests (43). `make test-web` passed 468 web and 9 art tests. No existing test was disabled or deleted. The incomplete work remains uncommitted; the workspace Rust gate must pass before it is ready to land.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-18 lead, using tools/design to build the short agreement fixture (Launch 14 m/s, AirtimeHill, two small turns, finish, close; agreement passes on all 9 pieces). Friction for the agent guide (item 10): every call prints dozens of ts-rs 'failed to parse serde attribute' build warnings before the reply; there is no 'help' ride command (only the plan lists commands); 'finish' brings the track back to the station but a separate 'close' is still needed, and the state after finish says 'No nearby connection to the station was found' while 'can test: true' (same family as TASK-153).
+<!-- SECTION:NOTES:END -->

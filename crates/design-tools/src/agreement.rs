@@ -26,15 +26,18 @@ pub struct ForcePeaks {
 }
 
 impl ForcePeaks {
-    pub fn from_preview_samples(samples: &[TestingSample]) -> Option<Self> {
-        let first_sample = samples.first()?;
+    pub fn from_preview_samples<'a>(
+        samples: impl IntoIterator<Item = &'a TestingSample>,
+    ) -> Option<Self> {
+        let mut samples = samples.into_iter();
+        let first_sample = samples.next()?;
         let mut peaks = Self {
             minimum_vertical_g: first_sample.vertical_g,
             maximum_vertical_g: first_sample.vertical_g,
             maximum_lateral_g: first_sample.lateral_g.abs(),
             maximum_longitudinal_g: first_sample.longitudinal_g.abs(),
         };
-        for sample in &samples[1..] {
+        for sample in samples {
             peaks.minimum_vertical_g = peaks.minimum_vertical_g.min(sample.vertical_g);
             peaks.maximum_vertical_g = peaks.maximum_vertical_g.max(sample.vertical_g);
             peaks.maximum_lateral_g = peaks.maximum_lateral_g.max(sample.lateral_g.abs());
@@ -62,6 +65,7 @@ pub struct AgreementInput {
     pub piece_index: usize,
     pub piece_name: String,
     pub model_name: String,
+    pub placement_entry_speed_estimate: Option<f64>,
     pub entry_speed_estimate: Option<f64>,
     pub entry_speed_measured_front: Option<f64>,
     pub placement_estimate: Option<ForcePeaks>,
@@ -75,6 +79,7 @@ pub struct AgreementInput {
 pub struct AgreementRow {
     pub piece_index: usize,
     pub piece_name: String,
+    pub placement_entry_speed_estimate: Option<f64>,
     pub entry_speed_estimate: Option<f64>,
     pub entry_speed_measured_front: Option<f64>,
     pub placement_estimate: Option<ForcePeaks>,
@@ -131,6 +136,7 @@ pub fn evaluate_agreement(inputs: &[AgreementInput]) -> AgreementReport {
         rows.push(AgreementRow {
             piece_index: input.piece_index,
             piece_name: input.piece_name.clone(),
+            placement_entry_speed_estimate: input.placement_entry_speed_estimate,
             entry_speed_estimate: input.entry_speed_estimate,
             entry_speed_measured_front: input.entry_speed_measured_front,
             placement_estimate: input.placement_estimate,
@@ -338,6 +344,7 @@ mod tests {
             piece_index: 2,
             piece_name: "FloaterHill24x160".into(),
             model_name: "Timber Tumbler".into(),
+            placement_entry_speed_estimate: Some(30.0),
             entry_speed_estimate: Some(30.0),
             entry_speed_measured_front: Some(30.0),
             placement_estimate: Some(placement_estimate),
@@ -399,6 +406,42 @@ mod tests {
             failure.check == AgreementCheck::PlacementEstimateVsWorstCar
                 && failure.metric == "maximum vertical g"
                 && failure.reason.contains("milder")
+        }));
+    }
+
+    #[test]
+    fn check_three_attributes_each_force_axis_independently() {
+        let estimated = ForcePeaks {
+            minimum_vertical_g: -0.8,
+            maximum_vertical_g: 3.0,
+            maximum_lateral_g: 0.2,
+            maximum_longitudinal_g: 0.2,
+        };
+        let measured = ForcePeaks {
+            minimum_vertical_g: -1.3,
+            maximum_vertical_g: 3.6,
+            maximum_lateral_g: 0.9,
+            maximum_longitudinal_g: 1.0,
+        };
+        let report =
+            evaluate_agreement(&[agreement_input(estimated, estimated, estimated, measured)]);
+
+        assert_eq!(report.rows[0].check_3, CheckResult::Failed);
+        assert!(report.failures.iter().any(|failure| {
+            failure.check == AgreementCheck::PlacementEstimateVsWorstCar
+                && failure.metric == "minimum vertical g"
+        }));
+        assert!(report.failures.iter().any(|failure| {
+            failure.check == AgreementCheck::PlacementEstimateVsWorstCar
+                && failure.metric == "maximum vertical g"
+        }));
+        assert!(report.failures.iter().any(|failure| {
+            failure.check == AgreementCheck::PlacementEstimateVsWorstCar
+                && failure.metric == "lateral g"
+        }));
+        assert!(report.failures.iter().any(|failure| {
+            failure.check == AgreementCheck::PlacementEstimateVsWorstCar
+                && failure.metric == "longitudinal g"
         }));
     }
 }

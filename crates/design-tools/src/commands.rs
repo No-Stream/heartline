@@ -19,6 +19,7 @@ use theme_park_sim_wasm::construction::{
     ConstructionCandidateForcePreviewWire, ConstructionForceRatingBandWire,
     ConstructionLastPlacedForceWire,
 };
+use theme_park_sim_wasm::reports::TestingSample;
 
 use crate::agreement::{AgreementInput, AgreementReport, ForcePeaks, evaluate_agreement};
 use crate::report::{ForceRatings, RidePieceEstimate, render_ride_report};
@@ -1532,11 +1533,20 @@ fn replay_with_estimates(
         .map_err(|error| error.to_string())?;
     session.estimates();
     let mut estimates = Vec::new();
-    let mut piece_index = 1;
     for (step_index, step) in ride.steps.iter().enumerate() {
         match step {
             RideStep::Place(place) => {
-                let track_before = construction_track(&session)?.len();
+                let construction_before = session
+                    .simulation()
+                    .construction
+                    .as_ref()
+                    .ok_or_else(|| "there is no active construction".to_owned())?;
+                let first_piece_index = construction_before.pieces().len();
+                let start_distance = construction_before
+                    .pieces()
+                    .iter()
+                    .map(|piece| piece.length())
+                    .sum::<f64>();
                 session
                     .select(&place.place, true)
                     .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
@@ -1547,12 +1557,6 @@ fn replay_with_estimates(
                         step_index + 1
                     )
                 })?;
-                estimates.push(ride_piece_estimate(
-                    piece_index,
-                    &place.place,
-                    candidate,
-                    place.note.clone(),
-                ));
                 session
                     .place()
                     .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
@@ -1573,8 +1577,66 @@ fn replay_with_estimates(
                         .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
                     session.estimates();
                 }
-                let track_after = construction_track(&session)?.len();
-                piece_index += track_after - track_before;
+                let construction_after = session
+                    .simulation()
+                    .construction
+                    .as_ref()
+                    .ok_or_else(|| "there is no active construction".to_owned())?;
+                let track_after = construction_track(&session)?;
+                let pieces = construction_after.pieces();
+                let added_piece_count = pieces
+                    .len()
+                    .checked_sub(first_piece_index)
+                    .expect("a successful placement does not remove existing pieces");
+                let mut piece_start = start_distance;
+                for relative_piece_index in 0..added_piece_count {
+                    let piece_index = first_piece_index + relative_piece_index;
+                    let piece = &pieces[piece_index];
+                    let piece_end = piece_start + piece.length();
+                    let is_final_piece = piece_index + 1 == pieces.len();
+                    let piece_samples: Vec<_> = candidate
+                        .samples
+                        .iter()
+                        .filter(|sample| {
+                            sample.distance >= piece_start
+                                && (sample.distance < piece_end
+                                    || (is_final_piece && sample.distance <= piece_end))
+                        })
+                        .collect();
+                    let entry_speed = if relative_piece_index == 0 {
+                        candidate.entry_speed
+                    } else {
+                        speed_at_distance(&candidate.samples, piece_start)
+                    };
+                    let piece_id = track_after
+                        .get(piece_index)
+                        .and_then(|row| row["label"].as_str())
+                        .ok_or_else(|| {
+                            format!(
+                                "ride step {}: placed piece {piece_index} has no track label",
+                                step_index + 1
+                            )
+                        })?;
+                    let note = if relative_piece_index == 0 {
+                        place.note.clone()
+                    } else {
+                        None
+                    };
+                    let estimate = if added_piece_count == 1 {
+                        ride_piece_estimate(piece_index, &place.place, candidate, note)
+                    } else {
+                        ride_piece_estimate_from_samples(
+                            piece_index,
+                            piece_id,
+                            entry_speed,
+                            candidate,
+                            &piece_samples,
+                            note,
+                        )
+                    };
+                    estimates.push(estimate);
+                    piece_start = piece_end;
+                }
             }
             RideStep::Chain(chain) => {
                 session
@@ -1641,7 +1703,50 @@ fn ride_piece_estimate(
         maximum_lateral_g: peaks.maximum_absolute_lateral_g,
         maximum_longitudinal_g: peaks.maximum_absolute_longitudinal_g,
     });
-    let ratings = candidate.peaks.as_ref().map(|peaks| ForceRatings {
+    ride_piece_estimate_with_peaks(
+        piece_index,
+        piece_id,
+        candidate.entry_speed,
+        candidate,
+        estimated,
+        note,
+    )
+}
+
+fn ride_piece_estimate_from_samples(
+    piece_index: usize,
+    piece_id: &str,
+    entry_speed: Option<f64>,
+    candidate: &ConstructionCandidateForcePreviewWire,
+    samples: &[&TestingSample],
+    note: Option<String>,
+) -> RidePieceEstimate {
+    let estimated =
+        ForcePeaks::from_preview_samples(samples.iter().copied()).map(|peaks| ForcePeakValues {
+            minimum_vertical_g: peaks.minimum_vertical_g,
+            maximum_vertical_g: peaks.maximum_vertical_g,
+            maximum_lateral_g: peaks.maximum_lateral_g,
+            maximum_longitudinal_g: peaks.maximum_longitudinal_g,
+        });
+    ride_piece_estimate_with_peaks(
+        piece_index,
+        piece_id,
+        entry_speed,
+        candidate,
+        estimated,
+        note,
+    )
+}
+
+fn ride_piece_estimate_with_peaks(
+    piece_index: usize,
+    piece_id: &str,
+    entry_speed: Option<f64>,
+    candidate: &ConstructionCandidateForcePreviewWire,
+    estimated: Option<ForcePeakValues>,
+    note: Option<String>,
+) -> RidePieceEstimate {
+    let ratings = estimated.map(|peaks| ForceRatings {
         airtime: classify_rating(
             &candidate.limits.rating_bands.airtime,
             -peaks.minimum_vertical_g,
@@ -1652,17 +1757,17 @@ fn ride_piece_estimate(
         ),
         lateral: classify_rating(
             &candidate.limits.rating_bands.lateral,
-            peaks.maximum_absolute_lateral_g,
+            peaks.maximum_lateral_g,
         ),
         longitudinal: classify_rating(
             &candidate.limits.rating_bands.longitudinal,
-            peaks.maximum_absolute_longitudinal_g,
+            peaks.maximum_longitudinal_g,
         ),
     });
     RidePieceEstimate {
         piece_index,
         piece_id: piece_id.to_owned(),
-        entry_speed: candidate.entry_speed,
+        entry_speed,
         rated_window: candidate
             .rated_speed
             .as_ref()
@@ -1703,6 +1808,7 @@ fn compare_estimates(
             piece_index,
             piece_name,
             model_name: model.name.to_string(),
+            placement_entry_speed_estimate: placement.and_then(|estimate| estimate.entry_speed),
             entry_speed_estimate: finished_entry,
             entry_speed_measured_front: entry_measured,
             placement_estimate: placement
@@ -1746,50 +1852,49 @@ fn finished_track_estimates(
         distance += piece.length();
     }
     let mut result = BTreeMap::new();
+    let last_piece_index = piece_starts.len().saturating_sub(1);
     for (piece_index, (start, end, name)) in piece_starts.into_iter().enumerate().skip(1) {
         let samples: Vec<_> = preview
             .samples
             .iter()
-            .filter(|sample| sample.distance >= start && sample.distance <= end)
-            .collect();
-        let peaks: Option<ForcePeakValues> = samples.iter().fold(None, |peaks, sample| {
-            let current = ForcePeakValues {
-                minimum_vertical_g: sample.vertical_g,
-                maximum_vertical_g: sample.vertical_g,
-                maximum_lateral_g: sample.lateral_g.abs(),
-                maximum_longitudinal_g: sample.longitudinal_g.abs(),
-            };
-            Some(match peaks {
-                None => current,
-                Some(mut peaks) => {
-                    peaks.minimum_vertical_g =
-                        peaks.minimum_vertical_g.min(current.minimum_vertical_g);
-                    peaks.maximum_vertical_g =
-                        peaks.maximum_vertical_g.max(current.maximum_vertical_g);
-                    peaks.maximum_lateral_g =
-                        peaks.maximum_lateral_g.max(current.maximum_lateral_g);
-                    peaks.maximum_longitudinal_g = peaks
-                        .maximum_longitudinal_g
-                        .max(current.maximum_longitudinal_g);
-                    peaks
-                }
+            .filter(|sample| {
+                sample.distance >= start
+                    && (sample.distance < end
+                        || (piece_index == last_piece_index && sample.distance <= end))
             })
-        });
-        let entry_speed = preview
-            .samples
-            .iter()
-            .find(|sample| sample.distance >= start)
-            .map(|sample| sample.speed);
+            .collect();
+        let peaks = ForcePeaks::from_preview_samples(samples.iter().copied());
+        let entry_speed = speed_at_distance(&preview.samples, start);
         let measured_name = placement
             .iter()
             .find(|estimate| estimate.piece_index == piece_index)
             .map_or(name.clone(), |estimate| estimate.piece_id.clone());
         result.insert(
             piece_index,
-            (measured_name, entry_speed, peaks.map(force_peaks)),
+            (
+                measured_name,
+                entry_speed,
+                peaks.map(|peaks| ForcePeaks {
+                    minimum_vertical_g: peaks.minimum_vertical_g,
+                    maximum_vertical_g: peaks.maximum_vertical_g,
+                    maximum_lateral_g: peaks.maximum_lateral_g,
+                    maximum_longitudinal_g: peaks.maximum_longitudinal_g,
+                }),
+            ),
         );
     }
     Ok(result)
+}
+
+fn speed_at_distance(samples: &[TestingSample], distance: f64) -> Option<f64> {
+    let upper_index = samples.partition_point(|sample| sample.distance < distance);
+    let next = samples.get(upper_index)?;
+    if next.distance == distance {
+        return Some(next.speed);
+    }
+    let previous = samples.get(upper_index.checked_sub(1)?)?;
+    let fraction = (distance - previous.distance) / (next.distance - previous.distance);
+    Some(previous.speed + fraction * (next.speed - previous.speed))
 }
 
 fn force_peaks(peaks: ForcePeakValues) -> ForcePeaks {
@@ -1802,12 +1907,24 @@ fn force_peaks(peaks: ForcePeakValues) -> ForcePeaks {
 }
 
 fn format_agreement(report: &AgreementReport) -> String {
-    let mut text = String::from("piece check 2 check 3\n");
+    let mut text = String::from(
+        "piece check2 check3 entry[placement/finished/test m/s] placement[min/max/lat/long g] finished[min/max/lat/long g] front[min/max/lat/long g] worst[min/max/lat/long g]\n",
+    );
     for row in &report.rows {
         writeln!(
             text,
-            "{} {:<24} {:?} {:?}",
-            row.piece_index, row.piece_name, row.check_2, row.check_3
+            "{} {:<24} {:?} {:?} {}/{}/{} {} {} {} {}",
+            row.piece_index,
+            row.piece_name,
+            row.check_2,
+            row.check_3,
+            format_optional(row.placement_entry_speed_estimate),
+            format_optional(row.entry_speed_estimate),
+            format_optional(row.entry_speed_measured_front),
+            format_force_peaks(row.placement_estimate),
+            format_force_peaks(row.finished_track_estimate),
+            format_force_peaks(row.measured_front),
+            format_force_peaks(row.measured_worst)
         )
         .unwrap();
     }
@@ -1836,6 +1953,13 @@ fn agreement_json(report: &AgreementReport) -> Value {
             json!({
                 "pieceIndex": row.piece_index,
                 "pieceName": row.piece_name,
+                "placementEntrySpeedEstimate": row.placement_entry_speed_estimate,
+                "finishedEntrySpeedEstimate": row.entry_speed_estimate,
+                "entrySpeedMeasuredFront": row.entry_speed_measured_front,
+                "placementEstimate": force_peaks_json(row.placement_estimate),
+                "finishedTrackEstimate": force_peaks_json(row.finished_track_estimate),
+                "measuredFront": force_peaks_json(row.measured_front),
+                "measuredWorst": force_peaks_json(row.measured_worst),
                 "check2": format!("{:?}", row.check_2),
                 "check3": format!("{:?}", row.check_3),
             })
@@ -1857,12 +1981,44 @@ fn agreement_json(report: &AgreementReport) -> Value {
     json!({"passed": report.passed, "rows": rows, "failures": failures})
 }
 
+fn format_force_peaks(peaks: Option<ForcePeaks>) -> String {
+    peaks.map_or_else(
+        || "—".to_owned(),
+        |peaks| {
+            format!(
+                "{:.3}/{:.3}/{:.3}/{:.3}",
+                peaks.minimum_vertical_g,
+                peaks.maximum_vertical_g,
+                peaks.maximum_lateral_g,
+                peaks.maximum_longitudinal_g
+            )
+        },
+    )
+}
+
+fn format_optional(value: Option<f64>) -> String {
+    value.map_or_else(|| "—".to_owned(), |value| format!("{value:.3}"))
+}
+
+fn force_peaks_json(peaks: Option<ForcePeaks>) -> Value {
+    peaks.map_or(Value::Null, |peaks| {
+        json!({
+            "minimumVerticalG": peaks.minimum_vertical_g,
+            "maximumVerticalG": peaks.maximum_vertical_g,
+            "maximumLateralG": peaks.maximum_lateral_g,
+            "maximumLongitudinalG": peaks.maximum_longitudinal_g,
+        })
+    })
+}
+
 fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
     if paths.is_empty() {
         return Err("usage: tools/design check <ride file> ...".into());
     }
     let mut rows = Vec::new();
-    let mut text = String::new();
+    let mut text = String::from(
+        "Native agreement failures are informational; this command exits zero for them until work item 6.\n",
+    );
     let mut expectation_failures = Vec::new();
     for path in paths {
         let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
@@ -1885,9 +2041,18 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
         for failure in &failures {
             writeln!(text, "  {failure}").unwrap();
         }
+        for failure in &agreement.failures {
+            writeln!(
+                text,
+                "  piece {} {:?} {}: {}",
+                failure.piece_index, failure.check, failure.metric, failure.reason
+            )
+            .unwrap();
+        }
         rows.push(json!({
             "path": path,
             "name": ride.name,
+            "agreementGate": "informational until work item 6; agreement failures exit zero",
             "expectationFailures": failures,
             "agreement": agreement_json(&agreement),
         }));
@@ -2099,5 +2264,80 @@ mod replay_snapshot_tests {
 
         assert!(loaded.is_none());
         fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod agreement_replay_tests {
+    use super::{replay_with_estimates, speed_at_distance};
+    use theme_park_sim::track::ride_file::RideFile;
+    use theme_park_sim_wasm::reports::TestingSample;
+
+    #[test]
+    fn entry_speed_is_interpolated_at_the_piece_boundary_without_extrapolation() {
+        let samples = [
+            TestingSample {
+                distance: 1.0,
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                speed: 2.0,
+                vertical_g: 1.0,
+                lateral_g: 0.0,
+                longitudinal_g: 0.0,
+                airtime: false,
+            },
+            TestingSample {
+                distance: 3.0,
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                speed: 6.0,
+                vertical_g: 1.0,
+                lateral_g: 0.0,
+                longitudinal_g: 0.0,
+                airtime: false,
+            },
+        ];
+
+        assert_eq!(speed_at_distance(&samples, 2.0), Some(4.0));
+        assert_eq!(speed_at_distance(&samples, 0.0), None);
+        assert_eq!(speed_at_distance(&samples, 4.0), None);
+    }
+
+    #[test]
+    fn placement_estimates_cover_each_physical_piece_in_an_expanded_element() {
+        let ride: RideFile = serde_json::from_str(
+            r#"{
+                "format": "heartline-ride",
+                "version": 1,
+                "name": "Element agreement fixture",
+                "model": "velocity_viper",
+                "station": { "x": 100, "y": 100, "z": 10, "heading": "east" },
+                "carsPerTrain": 6,
+                "trains": 1,
+                "steps": [
+                    { "place": "LaunchLong" },
+                    { "place": "element:small-left-banked-turn" }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let (_, estimates) = replay_with_estimates(&ride).unwrap();
+
+        assert_eq!(estimates.len(), 4);
+        assert_eq!(
+            estimates
+                .iter()
+                .map(|estimate| estimate.piece_index)
+                .collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
+        assert!(
+            estimates
+                .iter()
+                .all(|estimate| estimate.estimated.is_some())
+        );
     }
 }
