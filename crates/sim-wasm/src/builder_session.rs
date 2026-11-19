@@ -1409,6 +1409,157 @@ mod tests {
     }
 
     #[test]
+    fn content_ride_builder_output_traces_match_master() {
+        let mut mismatches = Vec::new();
+        for (ride_name, ride_json, expected_digest) in [
+            (
+                "Briar Blitz",
+                include_str!("../../../content/rides/briar-blitz.ride.json"),
+                0x1d7f71a6343e2eee,
+            ),
+            (
+                "Browser agreement fast circuit",
+                include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
+                0x0719c56f5d7c3448,
+            ),
+            (
+                "Daisy Dash",
+                include_str!("../../../content/rides/daisy-dash.ride.json"),
+                0x3519a795f463d05f,
+            ),
+            (
+                "Horizon Hawk",
+                include_str!("../../../content/rides/horizon-hawk.ride.json"),
+                0x6939fe1daae094e8,
+            ),
+            (
+                "Timber Tumbler",
+                include_str!("../../../content/rides/timber-tumbler.ride.json"),
+                0xdf160c846b3b28b7,
+            ),
+            (
+                "Velocity Viper",
+                include_str!("../../../content/rides/velocity-viper.ride.json"),
+                0xe164c9fd8a72bae1,
+            ),
+        ] {
+            let ride: RideFile = serde_json::from_str(ride_json).unwrap();
+            assert_eq!(ride.name, ride_name);
+            let trace = content_ride_trace(&ride);
+            let actual_digest = trace_digest(&trace);
+            if actual_digest != expected_digest {
+                mismatches.push(format!(
+                    "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({} trace calls)",
+                    trace.len()
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "content ride trace mismatches:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    fn content_ride_trace(ride: &RideFile) -> Trace {
+        let heading = match ride.station.heading {
+            RideHeading::East => 0,
+            RideHeading::North => 1,
+            RideHeading::West => 2,
+            RideHeading::South => 3,
+        };
+        let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        session
+            .start(
+                &ride.model,
+                ride.station.x,
+                ride.station.y,
+                ride.station.z,
+                heading,
+            )
+            .unwrap();
+        session.set_cars_per_train(ride.cars_per_train).unwrap();
+        let mut trace = Vec::new();
+        push_content_ride_snapshot(&session, &mut trace);
+
+        for (step_offset, step) in ride.steps.iter().enumerate() {
+            match step {
+                RideStep::Place(place) => {
+                    let selection = session.select(&place.place, true).unwrap();
+                    trace_call(
+                        &mut trace,
+                        "content:selection_speed_match",
+                        serde_json::to_string(&selection.speed_match).unwrap(),
+                    );
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                    session.append_selected().unwrap();
+                    if let Some(target_speed) = place.launch_speed {
+                        let track: serde_json::Value =
+                            serde_json::from_str(&session.simulation().construction_track())
+                                .unwrap();
+                        let piece_index = track.as_array().unwrap().last().unwrap()["id"]
+                            .as_u64()
+                            .unwrap() as usize;
+                        session.set_launch_speed(piece_index, target_speed).unwrap();
+                    }
+                    push_content_ride_estimates(&mut session, &mut trace, false);
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
+                RideStep::Chain(chain) => {
+                    session.set_chain(chain.chain).unwrap();
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
+                RideStep::Close(close) => {
+                    assert!(close.close);
+                    session.close_track().unwrap();
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
+                RideStep::BlockSections(blocks) => {
+                    session
+                        .install_block_sections(
+                            &blocks.block_sections,
+                            blocks.train_capacity,
+                            blocks.capacity_search_complete,
+                            blocks.placement_search_complete,
+                        )
+                        .unwrap();
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
+                _ => panic!("content ride trace encountered a new step kind"),
+            }
+            trace_call(&mut trace, "content:step_index", step_offset + 1);
+            push_content_ride_snapshot(&session, &mut trace);
+        }
+        trace
+    }
+
+    fn push_content_ride_estimates(
+        session: &mut BuilderSession,
+        trace: &mut Trace,
+        complete: bool,
+    ) {
+        let estimates = session.worker_update(complete);
+        trace_call(
+            trace,
+            if complete {
+                "content:complete_update"
+            } else {
+                "content:partial_update"
+            },
+            estimates.to_worker_json(),
+        );
+    }
+
+    fn push_content_ride_snapshot(session: &BuilderSession, trace: &mut Trace) {
+        trace_call(trace, "content:state_hash", session.state_hash());
+        trace_call(
+            trace,
+            "content:track",
+            session.simulation().construction_track(),
+        );
+    }
+
+    #[test]
     fn worker_bridge_uses_the_same_selection_and_estimate_sequence() {
         let mut native_session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
         let mut worker_simulation = WasmSimulation::new(42, 0, "new".into());
