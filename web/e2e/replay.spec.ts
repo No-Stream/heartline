@@ -147,6 +147,53 @@ test("replays a design tool explicit block layout through the real worker @fast"
   }
 });
 
+test("replays a design tool resolved shaped turn through the real worker @fast", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto(fixtureUrl);
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "design-tool-shaped-session-e2e-"));
+
+  try {
+    const ridePath = join(temporaryDirectory, "shaped-turn.ride.json");
+    const sessionPath = join(temporaryDirectory, "shaped-turn.session.json");
+    execFileSync(resolve("tools/design"), [
+      "ride",
+      ridePath,
+      "new --model velocity_viper --station 100,100,10,east",
+      "place LaunchLong --launch-speed 16",
+      "place turn left feel=banked radius=64",
+      "export",
+      "--session",
+      sessionPath,
+    ], {
+      cwd: resolve("."),
+      encoding: "utf8",
+    });
+
+    const session = parseReplaySession(JSON.parse(await readFile(sessionPath, "utf8")) as unknown);
+    const resolvedAppend = session.commands.find(({ command }) => command.type === "construction-append-resolved");
+    expect(resolvedAppend?.command).toMatchObject({
+      intentJson: expect.any(String),
+      specJson: expect.any(String),
+    });
+    const command = resolvedAppend?.command;
+    if (!command || command.type !== "construction-append-resolved") {
+      throw new Error("design tool session did not export resolved shaped geometry");
+    }
+    expect(JSON.parse(command.intentJson)).toMatchObject({ kind: "turn", hand: "Left" });
+    expect(JSON.parse(command.specJson)).toMatchObject({
+      kind: "turn",
+      radius_m: 64,
+      geometry: { knots: expect.any(Array) },
+    });
+
+    const outcome = await replayWithWorker(page, session);
+    expect(outcome.observation.constructionPieces).toBeGreaterThan(2);
+    expect(outcome.recording.commands).toContainEqual(resolvedAppend);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true });
+  }
+});
+
 async function replaySessionsDirectory(): Promise<{ readonly path: string; readonly session: ReplaySession }[]> {
   const sessionsDirectory = resolve("web/e2e/sessions");
   const names = (await readdir(sessionsDirectory)).filter((name) => name.endsWith(".json")).sort();

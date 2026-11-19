@@ -2,35 +2,10 @@ import { expect, type Page } from "@playwright/test";
 import { metresPerSecondToDisplay } from "../../src/units";
 import type { RideStep } from "./rides";
 
-type HillAttribute = "feel" | "height" | "span" | "twist";
-
-const hillFeelOrder = ["Ejector", "Strong floater", "Floater", "Speed hill", "Zero-g roll", "Stall"];
-const hillTwistOrder = ["Outer bank left", "Upright", "Outer bank right", "Roll left", "Roll right"];
 const previewNames: Record<string, string> = {
   TopHat: "Top hat", TightTwisterLeft: "Tight left turn", TightTwisterRight: "Tight right turn",
   TwisterFanLeft: "Left fan turn", TwisterFanRight: "Right fan turn",
 };
-
-async function stepHill(page: Page, attribute: HillAttribute, target: string): Promise<void> {
-  const value = page.locator(`[data-hill-value="${attribute}"]`);
-  const editor = page.locator("[data-construction] [data-editor]");
-  for (let step = 0; step < 12; step++) {
-    await expect(editor).toHaveAttribute("aria-busy", "false");
-    const current = (await value.textContent())?.trim() ?? "";
-    if (current === target) return;
-    const order = attribute === "feel" ? hillFeelOrder : hillTwistOrder;
-    const currentRank = attribute === "height" || attribute === "span" ? Number.parseFloat(current) : order.indexOf(current);
-    const targetRank = attribute === "height" || attribute === "span" ? Number.parseFloat(target) : order.indexOf(target);
-    if (!Number.isFinite(currentRank) || currentRank < 0 || targetRank < 0) throw new Error(`Cannot select ${attribute} ${target} from ${current}`);
-    const direction = currentRank < targetRank ? 1 : -1;
-    const button = page.locator(`[data-hill-stepper="${attribute}-${direction}"]`);
-    await expect(button, `Cannot select ${attribute} ${target} from ${current}`).toBeEnabled();
-    await button.click();
-    await expect(value).not.toHaveText(current);
-    await expect(editor).toHaveAttribute("aria-busy", "false");
-  }
-  throw new Error(`Could not select hill ${attribute} ${target}`);
-}
 
 async function selectPiece(page: Page, piece: string): Promise<void> {
   const selected = page.locator("[data-construction]");
@@ -58,26 +33,8 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
     await page.locator(`[data-speed-match-variant="${piece}"]`).click();
   } else {
     const direct = page.locator(`[data-piece="${piece}"]`);
-    const hill = /^(WoodenEjector|Ejector|Floater|Family|Speed)Hill(\d+)x(\d+)(OuterLeft|OuterRight)?$/.exec(piece);
-    const roll = /^ZeroGRoll(Fast|Compact)(Left|Right)$/.exec(piece);
-    const stall = /^Stall(Left|Right)$/.exec(piece);
-    // A palette click on a hill is re-sized by the worker for the predicted speed, so hills are sized in the inspector.
-    if (!hill && !roll && !stall) {
-      await expect(direct, `Piece ${piece} is not offered by the palette`).toBeVisible();
-      await direct.click();
-    } else {
-      const hillSection = page.locator("[data-hill]");
-      if (await hillSection.getAttribute("open") === null) await hillSection.locator("summary").click();
-      await expect(hillSection.locator('[data-hill-value="feel"]')).toHaveText(/\S/);
-      const feel = stall ? "Stall" : roll ? "Zero-g roll" : piece === "WoodenEjectorHill8x64" ? "Strong floater"
-        : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" || hill![1] === "Family" ? "Floater" : "Speed hill";
-      await stepHill(page, "feel", feel);
-      const twist = stall ? `Roll ${stall[1].toLowerCase()}` : roll ? `Roll ${roll[2].toLowerCase()}`
-        : hill?.[4] === "OuterLeft" ? "Outer bank left" : hill?.[4] === "OuterRight" ? "Outer bank right" : "Upright";
-      await stepHill(page, "twist", twist);
-      await stepHill(page, "height", `${stall ? 13 : roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
-      await stepHill(page, "span", `${stall ? 104 : roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
-    }
+    await expect(direct, `Piece ${piece} is not offered by the palette`).toBeVisible();
+    await direct.click();
   }
   await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
   await expect(selected).toHaveAttribute("data-selected", piece);

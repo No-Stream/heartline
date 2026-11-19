@@ -346,7 +346,7 @@ test("offers and places a twisted drop directly from a banked track @fast", asyn
   await expect(track.last().locator(".track-chip__name")).toHaveText("Left twisted drop");
 });
 
-test("sizes an airtime hill for the entry speed, steps it, and repeats it into a camelback run @fast", async ({ page }) => {
+test("shows calibrated shaped hill controls and places the resolved hill @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
@@ -373,37 +373,31 @@ test("sizes an airtime hill for the entry speed, steps it, and repeats it into a
     await expect(track).toHaveCount(index + 2);
   }
 
-  const hill = page.locator("[data-hill]");
-  const readout = hill.locator("[data-hill-readout]");
+  const hill = page.locator("[data-shaped-inspector]");
+  const readout = hill.locator("[data-shape-readout]");
   await expect(hill).not.toHaveAttribute("open");
-  await hill.getByText("Airtime hill").click();
-  await expect(selected).toHaveAttribute("data-selected", "EjectorHill8x64");
-  await expect(hill.getByRole("group", { name: "Hill feel" })).toContainText("Ejector");
-  await expect(hill.locator("[data-hill-suggestion]")).toHaveText("Sized for the predicted entry speed.");
-  await expect(readout).toContainText("Entry speed");
-  await expect(readout).toContainText("in range");
-  await expect(readout).toContainText(/(good|great) airtime/);
+  await choices.locator('[data-piece="shape:hill:floater:default:auto"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:hill:floater:default:auto");
+  await expect(hill.getByRole("group", { name: "Shaped element feel" })).toContainText("Floater");
+  await expect(hill.locator('[data-shape-value="strength"]')).toHaveText("−0.5 g");
+  await expect(readout).toContainText("Design speed");
+  await expect(readout).toContainText("Airtime target: −0.5 g");
+  await expect(readout).toContainText("Resolved size:");
   await expect(page.locator("[data-steppers]")).toBeHidden();
   await page.mouse.move(0, 0);
-  await expect(hill).toHaveScreenshot("airtime-hill-inspector.png", { animations: "disabled" });
+  await expect(hill).toHaveScreenshot("shaped-hill-inspector.png", { animations: "disabled" });
 
-  const speedMatchedReadout = await readout.textContent();
-  await hill.getByRole("button", { name: "Taller hill" }).click();
-  await expect(selected).toHaveAttribute("data-selected", "EjectorHill12x64");
-  await expect(readout).not.toHaveText(speedMatchedReadout!);
-  await expect(readout).toContainText("too fast");
-  await expect(hill.locator("[data-hill-suggestion]")).toHaveText("Suggested for this speed: 8 × 64 m.");
-  await hill.getByRole("button", { name: "Use suggested size" }).click();
-  await expect(selected).toHaveAttribute("data-selected", "EjectorHill8x64");
+  await hill.getByRole("button", { name: "Increase hill size" }).click();
+  await expect(selected).toHaveAttribute("data-selected", /shape:hill:floater:default:fixed-/);
+  await expect(hill.locator('[data-shape-value="size"]')).not.toHaveText("Auto");
+  await expect(readout).toContainText("Resolved size:");
+  await hill.getByRole("button", { name: "Use automatic hill size" }).click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:hill:floater:default:auto");
 
   await placePiece.click();
   await expect(track).toHaveCount(7);
-  await expect(selected).toHaveAttribute("data-selected", "EjectorHill8x64");
-  await expect(hill).toHaveAttribute("open");
-  await placePiece.press("Enter");
-  await expect(track).toHaveCount(8);
-  await expect(track.nth(6).locator(".track-chip__name")).toHaveText("Ejector hill 8 × 64 m");
-  await expect(track.nth(7).locator(".track-chip__name")).toHaveText("Ejector hill 8 × 64 m");
+  await expect(track.nth(6).locator(".track-chip__name")).toHaveText("Shaped airtime hill");
+  await expect(track.nth(6).locator("svg .piece-icon")).toBeVisible();
 });
 
 test("turns after a drop default to the bank for the predicted speed, and the bank stepper overrides it @fast", async ({ page }) => {

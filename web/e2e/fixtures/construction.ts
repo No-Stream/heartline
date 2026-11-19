@@ -26,9 +26,41 @@ const line = (length: number, turn: number): PieceShape["points"] => Array.from(
 const shape = (id: string, name: string, kind: string, turn: number, exitSlope = "Level"): PieceShape => ({
   id, name, kind, turn: turn * 2, entrySlope: "Level", exitSlope, entryBank: "Level", exitBank: "Level", points: line(16, turn),
 });
+const hillShape = (): PieceShape => ({
+  id: "EjectorHill8x48", name: "Ejector Hill 8 x 48", kind: "Track", turn: 0,
+  entrySlope: "Level", exitSlope: "Level", entryBank: "Level", exitBank: "Level",
+  points: Array.from({ length: 33 }, (_, index) => {
+    const fraction = index / 32;
+    const slope = (16 / 3) * fraction * (1 - fraction) * (1 - 2 * fraction);
+    const normalizer = Math.hypot(slope, 1);
+    return [48 * fraction, 0, 8 * 16 * fraction ** 2 * (1 - fraction) ** 2, -slope / normalizer, 0, 1 / normalizer] as const;
+  }),
+});
+const bankedTurnShape = (hand: "left" | "right"): PieceShape => {
+  const direction = hand === "left" ? -1 : 1;
+  const radius = 16;
+  const shape = {
+    id: `SpeedTurnLarge16${hand === "left" ? "Left" : "Right"}`,
+    name: `Speed Turn Large 16 ${hand}`,
+    kind: "Track",
+    turn: direction * 2,
+    entrySlope: "Level",
+    exitSlope: "Level",
+    entryBank: "Level",
+    exitBank: hand === "left" ? "Left" : "Right",
+    points: Array.from({ length: 33 }, (_, index) => {
+      const fraction = index / 32;
+      const angle = direction * fraction * Math.PI / 2;
+      const bank = direction * Math.PI / 3 * Math.sin(Math.PI * fraction) ** 2;
+      return [radius * Math.sin(angle), direction * radius * (1 - Math.cos(angle)), 0, Math.sin(bank) * Math.sin(angle), -Math.sin(bank) * Math.cos(angle), Math.cos(bank)] as const;
+    }),
+  } satisfies PieceShape;
+  return shape;
+};
 panel.setShapes([
   shape("Station", "Station", "Station", 0), shape("Straight", "Straight", "Track", 0),
   shape("TurnSmallStandalone", "Standalone small left turn", "Track", 1), shape("LevelToGentleUp", "Begin gentle climb", "Track", 0, "UpGentle"),
+  hillShape(), bankedTurnShape("left"), bankedTurnShape("right"),
 ]);
 const state: ConstructionState = {
   type: "construction-state", complete: true, active: true, chain: false, colors: { track: "coral", supports: "timber", trains: "sage" },
@@ -43,7 +75,7 @@ const state: ConstructionState = {
     { id: 9, label: "Straight", name: "Straight", group: "straight", slope: "Level", kind: "Track", launchTargetSpeed: null, launchMinimumSpeed: null, launchMaximumSpeed: null },
   ], canAppend: true, canClose: false, finishPreview: false, canFinish: false, finishReason: "Build more track to reach a connection.", canTest: false, isOpen: false, coasterPrice: 6, coasterIncome: 0n, stationPositions: [227, 251, 12, 227, 253, 12], message: "Ready to place",
   blockReport: { sections: [], trainCapacity: 0, capacitySearchComplete: null, theoreticalHourlyRiders: null, throughputStatus: "unavailable", placementStatus: "idle", placementSearchComplete: null, reasons: [], notes: [], suggestions: [] },
-  trainCount: 1, minCarsPerTrain: 4, maxCarsPerTrain: 8, constructionForcePreview: null, candidateForcePreview: null, speedMatch: null, speedTurns: [], hillOptions: [], placedRails: new Float32Array(), railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
+  trainCount: 1, minCarsPerTrain: 4, maxCarsPerTrain: 8, constructionForcePreview: null, candidateForcePreview: null, speedMatch: null, speedTurns: [], hillOptions: [], selectedShape: null, placedRails: new Float32Array(), railDistances: new Float32Array(), blockCandidates: new Float64Array(), placedTies: new Float32Array(), placedSupports: new Float32Array(),
   previewRails: new Float32Array(), previewTies: new Float32Array(), previewSupports: new Float32Array(),
 };
 let current = state;

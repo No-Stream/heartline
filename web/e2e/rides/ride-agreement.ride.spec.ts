@@ -3,7 +3,7 @@ import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type TestInfo } from "@playwright/test";
-import { candidateForceReadout, hillReadout } from "../../src/candidate-force-readout";
+import { candidateForceReadout } from "../../src/candidate-force-readout";
 import type { TestingReport } from "../../src/generated/TestingReport";
 import type { CoasterModelKey } from "../../src/generated/coaster-models";
 import { advanceUntilState, placeStation, showBuilderTab, startPark, testRide } from "../player/driver";
@@ -288,22 +288,17 @@ function expectFormattedReadouts(
   },
   estimate: ReturnType<typeof window.gameTest.constructionEstimates>,
 ): void {
-  const selectedHill = estimate.selectedPiece?.hillEstimate ?? null;
-  const candidateIsHidden = !!selectedHill || !estimate.candidateForcePreview;
-  const candidateLines = selectedHill || !estimate.candidateForcePreview
-    ? []
-    : candidateForceReadout(estimate.candidateForcePreview, "metric");
-  const formattedHill = selectedHill ? hillReadout(selectedHill, "metric") : { rows: [], message: "" };
+  const candidateIsHidden = !estimate.candidateForcePreview;
+  const candidateLines = estimate.candidateForcePreview
+    ? candidateForceReadout(estimate.candidateForcePreview, "metric")
+    : [];
   expect(actual).toEqual({
     candidateHidden: candidateIsHidden,
     candidateLines,
-    hillHidden: formattedHill.rows.length === 0,
-    hillRows: formattedHill.rows.map(({ label, value, note }) => ({
-      label,
-      value: note ? `${value} ${note}` : value,
-    })),
-    hillMessageHidden: formattedHill.message === "",
-    hillMessage: formattedHill.message,
+    hillHidden: true,
+    hillRows: [],
+    hillMessageHidden: true,
+    hillMessage: "",
   });
 }
 
