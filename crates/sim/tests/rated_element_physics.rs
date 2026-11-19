@@ -5,6 +5,7 @@ use theme_park_sim::physics::rated_piece::{
     solve_approach_speed, unpowered as rating_physics,
 };
 use theme_park_sim::physics::{Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, Train};
+use theme_park_sim::track::rated_windows::measured_rated_window;
 use theme_park_sim::track::{
     CoasterModel, ForceRating, ForceRatingAxis, HillFeel, Piece, PieceFamily, PieceId, RatedSpeeds,
     TrackState, catalog, coaster_models, hybrid_model, multi_launch_model, rated_speeds,
@@ -267,8 +268,11 @@ fn sixty_degree_windows_hold_with_connected_approaches() {
             .filter(|model| model.allows_piece(piece))
         {
             let rated = rated_window(&model, piece);
+            let measured_from = measured_rated_window(&model, piece)
+                .expect("piece must have a measured window")
+                .measured_from;
             let cars = model.train.cars;
-            for speed in [rated.minimum_entry, rated.maximum_entry] {
+            for speed in [rated.minimum_entry.max(measured_from), rated.maximum_entry] {
                 assert_shared_rating_passes_every_applicable_context(&model, piece, cars, speed);
             }
         }
@@ -1033,7 +1037,10 @@ fn every_model_rated_window_endpoint_passes_with_its_default_train_in_each_appli
                 continue;
             };
             let cars = model.train.cars;
-            for speed in [rated.minimum_entry, rated.maximum_entry] {
+            let measured_from = measured_rated_window(&model, piece)
+                .expect("piece must have a measured window")
+                .measured_from;
+            for speed in [rated.minimum_entry.max(measured_from), rated.maximum_entry] {
                 let rating = rate_piece(&model, cars, piece, speed, rating_physics())
                     .expect("rating must complete");
                 assert!(
@@ -1186,7 +1193,10 @@ fn banked_straights_pass_isolated_ratings_at_both_window_ends() {
                 continue;
             };
             let cars = model.train.cars;
-            for speed in [rated.minimum_entry, rated.maximum_entry] {
+            let measured_from = measured_rated_window(&model, piece)
+                .expect("piece must have a measured window")
+                .measured_from;
+            for speed in [rated.minimum_entry.max(measured_from), rated.maximum_entry] {
                 let rating = rate_piece(&model, cars, piece, speed, rating_physics())
                     .unwrap_or_else(|error| {
                         panic!(
@@ -1355,7 +1365,10 @@ fn banked_straights_and_rollouts_pass_full_train_at_rated_window_ends() {
                         continue;
                     };
                     let cars = model.train.cars;
-                    for speed in [rated.minimum_entry, rated.maximum_entry] {
+                    let measured_from = measured_rated_window(&model, piece)
+                        .expect("piece must have a measured window")
+                        .measured_from;
+                    for speed in [rated.minimum_entry.max(measured_from), rated.maximum_entry] {
                         assert_train_crosses_element_after_preroll(
                             &model,
                             &circuit,

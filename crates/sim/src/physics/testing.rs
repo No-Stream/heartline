@@ -1698,6 +1698,7 @@ fn count_inversion_passages_on_sampled_run(samples: &[TestSample]) -> usize {
 mod tests {
     use super::*;
     use crate::physics::{CarReading, GForces, PhysicsConfig, Term, Train, demo_circuit};
+    use crate::track::catalog::unmeasured_catalog;
     use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
 
     #[test]
@@ -3011,6 +3012,44 @@ mod tests {
                 "The train entered Loop at 2.0 m/s, below its rated speed band of {:.1}–{:.1} m/s.",
                 rated.minimum_entry, rated.maximum_entry
             )
+        );
+    }
+
+    #[test]
+    fn rated_piece_entry_between_energy_minimum_and_measured_from_has_no_slow_note() {
+        let model = hybrid_model();
+        let piece = unmeasured_catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::SixtyDownToLevel)
+            .expect("catalog contains SixtyDownToLevel");
+        let window = crate::track::rated_windows::measured_rated_window(&model, piece)
+            .expect("SixtyDownToLevel has a measured window");
+        assert_eq!(window.minimum_entry, 2.0);
+        assert!((window.measured_from - 12.56).abs() < 0.02);
+        let entry_speed = (window.minimum_entry + window.measured_from) / 2.0;
+
+        let mut recorder = TestRunRecorder::new(20.0);
+        recorder.piece_starts = vec![0.0, 10.0];
+        recorder.rated_pieces = vec![
+            None,
+            Some(RatedPieceSpeedWindow {
+                name: "SixtyDownToLevel",
+                minimum_entry: window.minimum_entry,
+                maximum_entry: window.maximum_entry,
+            }),
+        ];
+        recorder.noted_rated_pieces = vec![false; 2];
+        record(&mut recorder, reading(9.9, entry_speed, 1.0, 0.0, 0.0));
+        record(&mut recorder, reading(10.1, entry_speed, 1.0, 0.0, 0.0));
+
+        let report = recorder.finish(false, false);
+        assert!(
+            report
+                .notes
+                .iter()
+                .all(|note| !note.contains("below its rated speed band")),
+            "notes: {:?}",
+            report.notes
         );
     }
 

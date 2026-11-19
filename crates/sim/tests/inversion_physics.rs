@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use theme_park_sim::physics::rated_piece::{rate_piece, rate_sequence};
 use theme_park_sim::physics::{Circuit, CoasterRun, GRAVITY, PhysicsConfig, Train};
+use theme_park_sim::track::rated_windows::measured_rated_window;
 use theme_park_sim::track::{
     Heading, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models, hybrid_model,
     multi_launch_model, rated_speeds, wooden_twister_model,
@@ -246,7 +247,10 @@ fn assert_rated_piece_endpoints(ids: &[PieceId]) {
         {
             let rated = rated_speeds(model, piece).expect("piece must have a model rated window");
             let cars = model.train.cars;
-            for speed in [rated.minimum_entry, rated.maximum_entry] {
+            let measured_from = measured_rated_window(model, piece)
+                .expect("piece must have a measured window")
+                .measured_from;
+            for speed in [measured_from, rated.maximum_entry] {
                 let rating = rate_piece(model, cars, piece, speed, unpowered())
                     .expect("rating must complete");
                 assert!(

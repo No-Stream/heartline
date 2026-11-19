@@ -62,6 +62,11 @@ struct MeasurementTrack {
     context: &'static str,
 }
 
+struct MeasurementApproach {
+    pieces: Vec<Piece>,
+    end_state: TrackState,
+}
+
 struct ApproachSequence {
     name: &'static str,
     pieces: &'static [PieceId],
@@ -269,14 +274,14 @@ fn connector_key(state: TrackState) -> (u8, u8, u8, u8) {
 fn straight_for(state: TrackState) -> Piece {
     let mut straight = unmeasured_catalog()
         .iter()
-        .find(|p| {
-            p.entry.slope == state.slope
-                && p.exit.slope == state.slope
-                && p.entry.bank == crate::track::Bank::Level
-                && p.exit.bank == crate::track::Bank::Level
-                && same_connector(p.entry, p.exit)
+        .find(|piece| {
+            piece.entry.slope == state.slope
+                && piece.exit.slope == state.slope
+                && piece.entry.bank == crate::track::Bank::Level
+                && piece.exit.bank == crate::track::Bank::Level
+                && same_connector(piece.entry, piece.exit)
                 && matches!(
-                    p.id,
+                    piece.id,
                     PieceId::Straight
                         | PieceId::GentleUp
                         | PieceId::GentleDown
@@ -314,11 +319,11 @@ fn complete_measurement_track(
     cars: u8,
     piece: &Piece,
     speed: f64,
-    pieces: Vec<Piece>,
-    state: TrackState,
+    approach: MeasurementApproach,
     context: &'static str,
 ) -> MeasurementTrack {
-    let (mut pieces, mut state) = ensure_measurement_runway(model, cars, speed, pieces, state);
+    let (mut pieces, mut state) =
+        ensure_measurement_runway(model, cars, speed, approach.pieces, approach.end_state);
     assert!(same_connector(state, piece.entry));
     let element_start = pieces.iter().map(Piece::length).sum();
     let element = piece.at(state).unwrap();
@@ -349,7 +354,6 @@ fn complete_measurement_track(
         context,
     }
 }
-
 fn settling_distance(speed: f64) -> f64 {
     10.0_f64.max(0.5 * speed)
 }
@@ -525,8 +529,10 @@ fn connected_track(model: &CoasterModel, cars: u8, piece: &Piece, speed: f64) ->
         cars,
         piece,
         speed,
-        pieces,
-        state,
+        MeasurementApproach {
+            pieces,
+            end_state: state,
+        },
         "connected model-allowed approach",
     )
 }
@@ -561,8 +567,10 @@ fn entry_straight_track(
         cars,
         piece,
         speed,
-        pieces,
-        state,
+        MeasurementApproach {
+            pieces,
+            end_state: state,
+        },
         "entry-slope straight",
     ))
 }
@@ -617,8 +625,10 @@ fn sequence_track(
         cars,
         piece,
         speed,
-        pieces,
-        state,
+        MeasurementApproach {
+            pieces,
+            end_state: state,
+        },
         sequence.name,
     ))
 }
@@ -676,6 +686,24 @@ pub fn rate_piece(
     target: f64,
     physics: PhysicsConfig,
 ) -> Result<PieceRating, String> {
+    rate_piece_on_contexts(
+        model,
+        cars,
+        piece,
+        target,
+        physics,
+        measurement_tracks(model, cars, piece, target),
+    )
+}
+
+fn rate_piece_on_contexts(
+    model: &CoasterModel,
+    cars: u8,
+    piece: &Piece,
+    target: f64,
+    physics: PhysicsConfig,
+    tracks: Vec<MeasurementTrack>,
+) -> Result<PieceRating, String> {
     assert!(target.is_finite() && target > 0.0);
     assert!(
         physics.rolling_resistance == 0.0
@@ -684,7 +712,7 @@ pub fn rate_piece(
         "rating requires unpowered frictionless physics"
     );
     assert!(model.cars_per_train.contains(&cars));
-    let context_results = measurement_tracks(model, cars, piece, target)
+    let context_results = tracks
         .into_iter()
         .map(|track| rate_piece_on_track(model, cars, piece, target, physics, track))
         .collect::<Result<Vec<_>, _>>()?;
@@ -755,11 +783,6 @@ fn rate_piece_on_track(
     assert!(model.cars_per_train.contains(&cars));
     let config = scaled_train(model, cars);
     let approach_start = track.element_start - settling_distance(target);
-    assert!(
-        approach_start >= config.length_metres,
-        "{} approach does not leave the full train on the measurement track before pre-roll",
-        track.context
-    );
     let initial_speed = match solve_approach_speed_inner(
         &track.circuit,
         &config,
@@ -776,6 +799,11 @@ fn rate_piece_on_track(
             return Err(format!("{}: {error}", track.context));
         }
     };
+    assert!(
+        approach_start >= config.length_metres,
+        "{} approach does not support the full train before its starting position",
+        track.context
+    );
     let mut evaluators =
         vec![ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP); usize::from(cars)];
     let mut train = Train::new(

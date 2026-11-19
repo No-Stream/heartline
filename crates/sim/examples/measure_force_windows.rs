@@ -465,6 +465,7 @@ struct ScannedWindow {
     model_key: &'static str,
     minimum_entry: Option<f64>,
     maximum_entry: Option<f64>,
+    measured_from: Option<f64>,
     minimum_source: Option<RatedWindowSource>,
     maximum_source: Option<RatedWindowSource>,
     unavailable_reason: Option<String>,
@@ -491,9 +492,12 @@ struct ScanFailure {
 }
 
 fn minimum_source(failure: &ScanFailure) -> RatedWindowSource {
-    if failure.kind == FailureKind::ApproachReachability {
-        RatedWindowSource::ApproachMinimum
-    } else if failure.diagnostic.contains("clearance")
+    assert_ne!(
+        failure.kind,
+        FailureKind::ApproachReachability,
+        "approach reachability does not define a rated-window minimum"
+    );
+    if failure.diagnostic.contains("clearance")
         || failure.diagnostic.contains("stalled")
         || failure.diagnostic.contains("did not clear")
     {
@@ -526,6 +530,7 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
                     model_key: model.key,
                     minimum_entry: None,
                     maximum_entry: None,
+                    measured_from: None,
                     minimum_source: None,
                     maximum_source: None,
                     unavailable_reason: Some(format!(
@@ -557,14 +562,42 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
                     .as_ref()
                     .expect("the sample before the first pass must fail")
             };
-            (minimum, minimum_source(boundary_failure))
+            if boundary_failure.kind == FailureKind::ApproachReachability {
+                (old.minimum_entry, RatedWindowSource::EnergyMinimum)
+            } else {
+                (minimum, minimum_source(boundary_failure))
+            }
         }
+    };
+    let measured_from = match minimum_failure.as_ref() {
+        Some(minimum_failure) if minimum_failure.kind == FailureKind::ApproachReachability => {
+            match grid.iter().position(|(_, failure)| {
+                failure
+                    .as_ref()
+                    .is_none_or(|failure| failure.kind != FailureKind::ApproachReachability)
+            }) {
+                Some(first_reachable) => {
+                    let below = if first_reachable == 0 {
+                        old.minimum_entry
+                    } else {
+                        grid[first_reachable - 1].0
+                    };
+                    refine_boundary(below, grid[first_reachable].0, true, |speed| {
+                        failure(template, model, speed)
+                            .is_none_or(|failure| failure.kind != FailureKind::ApproachReachability)
+                    })
+                }
+                None => unreachable!("a rated window requires a reachable measurement speed"),
+            }
+        }
+        _ => old.minimum_entry,
     };
     let mut last_pass = minimum_entry;
     let mut first_failure: Option<(f64, ScanFailure)> = None;
     for (speed, failure) in grid.iter().filter(|(speed, _)| *speed > minimum_entry) {
         match failure {
             None => last_pass = *speed,
+            Some(diagnostic) if diagnostic.kind == FailureKind::ApproachReachability => {}
             Some(diagnostic) => {
                 first_failure = Some((*speed, diagnostic.clone()));
                 break;
@@ -645,9 +678,16 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
             None => (maximum_entry, maximum_source, upper_failure),
         };
 
+    assert!(
+        measured_from <= maximum_entry,
+        "{:?}: measured_from {measured_from} is above maximum {maximum_entry}",
+        template.id
+    );
     let mut acceptance_failures = Vec::new();
     for speed in [minimum_entry, maximum_entry] {
-        if let Some(diagnostic) = failure(template, model, speed) {
+        if let Some(diagnostic) = failure(template, model, speed)
+            .filter(|failure| failure.kind != FailureKind::ApproachReachability)
+        {
             acceptance_failures.push(format!(
                 "{:?}: endpoint {speed} fails: {}",
                 template.id, diagnostic.diagnostic
@@ -702,6 +742,7 @@ fn scan(template: &'static Piece, model: &CoasterModel) -> ScannedWindow {
         model_key: model.key,
         minimum_entry: Some(minimum_entry),
         maximum_entry: Some(maximum_entry),
+        measured_from: Some(measured_from),
         minimum_source: Some(minimum_source),
         maximum_source: Some(maximum_source),
         unavailable_reason: None,
@@ -719,7 +760,7 @@ fn generated_rated_windows_contents(date: &str, windows: &[ScannedWindow]) -> St
         .filter(|window| window.minimum_entry.is_some())
         .map(|window| {
             format!(
-                "    MeasuredRatedWindow {{ model_key: {:?}, id: PieceId::{:?}, entry_slope: Slope::{:?}, exit_slope: Slope::{:?}, minimum_source: RatedWindowSource::{:?}, maximum_source: RatedWindowSource::{:?}, minimum_entry: {:?}, maximum_entry: {:?} }},",
+                "    MeasuredRatedWindow {{ model_key: {:?}, id: PieceId::{:?}, entry_slope: Slope::{:?}, exit_slope: Slope::{:?}, minimum_source: RatedWindowSource::{:?}, maximum_source: RatedWindowSource::{:?}, minimum_entry: {:?}, maximum_entry: {:?}, measured_from: {:?} }},",
                 window.model_key,
                 window.template.id,
                 window.template.entry.slope,
@@ -727,7 +768,8 @@ fn generated_rated_windows_contents(date: &str, windows: &[ScannedWindow]) -> St
                 window.minimum_source.unwrap(),
                 window.maximum_source.unwrap(),
                 window.minimum_entry.unwrap(),
-                window.maximum_entry.unwrap()
+                window.maximum_entry.unwrap(),
+                window.measured_from.unwrap()
             )
         })
         .collect();
@@ -854,9 +896,9 @@ fn main() {
         .collect();
 
     println!(
-        "| Model | Template | Old window (m/s) | New window (m/s) | Minimum | Maximum | Failure just above the maximum | Failure at the old minimum | Passes again at |"
+        "| Model | Template | Old window (m/s) | New window (m/s) | Measured from (m/s) | Minimum | Maximum | Failure just above the maximum | Failure at the old minimum | Passes again at |"
     );
-    println!("| --- | --- | ---: | ---: | --- | --- | --- | --- | ---: |");
+    println!("| --- | --- | ---: | ---: | ---: | --- | --- | --- | --- | ---: |");
     for window in &windows {
         let old = window.template.design_speeds.unwrap();
         let new_window = match (window.minimum_entry, window.maximum_entry) {
@@ -865,7 +907,7 @@ fn main() {
             _ => panic!("scan returned an incomplete rated window"),
         };
         println!(
-            "| `{}` | `{:?}` ({:?} → {:?}) | {:.2}–{:.2} | {} | {:?} | {:?} | {} | {} | {} |",
+            "| `{}` | `{:?}` ({:?} → {:?}) | {:.2}–{:.2} | {} | {} | {:?} | {:?} | {} | {} | {} |",
             window.model_key,
             window.template.id,
             window.template.entry.slope,
@@ -873,6 +915,9 @@ fn main() {
             old.minimum_entry,
             old.maximum_entry,
             new_window,
+            window
+                .measured_from
+                .map_or("—".to_string(), |speed| format!("{speed:.2}")),
             window.minimum_source,
             window.maximum_source,
             window
@@ -971,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_approach_boundary_has_its_own_minimum_source() {
+    fn unreachable_approach_remains_a_diagnostic_failure() {
         let piece = unmeasured_catalog()
             .iter()
             .find(|piece| {
@@ -998,7 +1043,70 @@ mod tests {
         let failure = failure(piece, &model, speed).expect("entry speed is not reachable");
 
         assert_eq!(failure.kind, FailureKind::ApproachReachability);
-        assert_eq!(minimum_source(&failure), RatedWindowSource::ApproachMinimum);
+    }
+
+    #[test]
+    fn hybrid_sixty_down_to_level_uses_energy_minimum_and_records_measured_from() {
+        let template = unmeasured_catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::SixtyDownToLevel)
+            .expect("catalog contains SixtyDownToLevel");
+        let result = scan(template, &hybrid_model());
+
+        assert_eq!(
+            result.minimum_source,
+            Some(RatedWindowSource::EnergyMinimum)
+        );
+        assert!((result.minimum_entry.unwrap() - 2.0).abs() < 0.01);
+        assert!((result.measured_from.unwrap() - 12.56).abs() < 0.02);
+        assert!(
+            result.acceptance_failures.is_empty(),
+            "{:?}",
+            result.acceptance_failures
+        );
+    }
+
+    #[test]
+    fn passing_catalog_minimum_is_the_measured_from_speed() {
+        let template = unmeasured_catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::SixtyUpToLevel)
+            .expect("catalog contains SixtyUpToLevel");
+        let result = scan(template, &hybrid_model());
+
+        assert_eq!(
+            result.minimum_source,
+            Some(RatedWindowSource::EnergyMinimum)
+        );
+        assert_eq!(result.measured_from, result.minimum_entry);
+    }
+
+    #[test]
+    fn reachable_catalog_minimum_is_measured_even_when_clearance_raises_the_rating_minimum() {
+        let model = hybrid_model();
+        let template = unmeasured_catalog()
+            .iter()
+            .find(|piece| {
+                piece.id == PieceId::BankLeft
+                    && piece.entry.slope == Slope::UpGentle
+                    && model.allows_piece(piece)
+            })
+            .expect("hybrid model allows a gentle-up BankLeft");
+        let catalog_minimum = template.design_speeds.unwrap().minimum_entry;
+        let result = scan(template, &model);
+
+        assert_eq!(
+            result.minimum_source,
+            Some(RatedWindowSource::ClearanceMinimum)
+        );
+        assert!(result.minimum_entry.unwrap() > catalog_minimum);
+        assert_eq!(result.measured_from, Some(catalog_minimum));
+        assert_eq!(
+            failure(template, &model, catalog_minimum)
+                .expect("catalog minimum fails clearance")
+                .kind,
+            FailureKind::Other
+        );
     }
 
     #[test]

@@ -11,8 +11,6 @@ pub enum RatedWindowSource {
     ClearanceMinimum,
     /// The edge where some allowed train first fails the duration-aware force evaluator.
     ForceBound,
-    /// The lowest speed where at least one unpowered approach can reach the element entrance.
-    ApproachMinimum,
     /// Forces stay within the limits past this maximum; the catalog keeps it as a design choice.
     DesignCap,
     /// Above this a descending half corkscrew clears faster than its 22 m/s clearing-speed rule.
@@ -33,6 +31,8 @@ pub struct MeasuredRatedWindow {
     pub maximum_source: RatedWindowSource,
     pub minimum_entry: f64,
     pub maximum_entry: f64,
+    /// Lowest approach-reachable entry speed in the scan range; it does not imply a force or clearance pass.
+    pub measured_from: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,7 +120,8 @@ fn lookup_rated_window<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        MeasuredRatedWindow, RatedWindowSource, UnavailableRatedWindow, lookup_rated_window,
+        MEASURED_RATED_WINDOWS, MeasuredRatedWindow, RatedWindowSource, UnavailableRatedWindow,
+        lookup_rated_window,
     };
     use crate::track::{PieceId, Slope};
 
@@ -128,6 +129,20 @@ mod tests {
     const ID: PieceId = PieceId::BankedStraightLeft;
     const ENTRY: Slope = Slope::UpGentle;
     const EXIT: Slope = Slope::UpGentle;
+
+    #[test]
+    fn generated_measured_from_values_do_not_exceed_their_window_maxima() {
+        for window in MEASURED_RATED_WINDOWS {
+            assert!(
+                (0.0..=window.maximum_entry).contains(&window.measured_from),
+                "{} {:?}: measured_from {} is above maximum {}",
+                window.model_key,
+                window.id,
+                window.measured_from,
+                window.maximum_entry
+            );
+        }
+    }
 
     #[test]
     fn explicit_no_window_entry_returns_unavailable() {
@@ -159,6 +174,7 @@ mod tests {
             maximum_source: RatedWindowSource::ForceBound,
             minimum_entry: 20.0,
             maximum_entry: 25.0,
+            measured_from: 20.0,
         }];
         let unavailable = [UnavailableRatedWindow {
             model_key: KEY,

@@ -1,6 +1,6 @@
 # TASK-126 approach-context window changes
 
-Compared with commit 5699631. Speeds are in m/s. Reachability minima arise when the fixed unpowered pre-roll cannot reach lower entry speeds; they are not force violations.
+The initial comparison against commit 5699631 records the approach-context scan before the final minimum-source decision. Its approach-reachability minima are superseded by the final decision below. Speeds are in m/s.
 
 ```text
 Old measured rows: 351; new measured rows: 349
@@ -197,3 +197,54 @@ PROBE wooden_twister RolloutRight DownGentle->DownGentle new_min_minus_0.01 9.36
 PROBE wooden_twister UnbankLeft DownGentle->DownGentle new_min_minus_0.01 9.360 m/s: pass=false, limiting=connected model-allowed approach, failure=Some("no approach context can attain the requested entry speed")
 PROBE wooden_twister UnbankRight DownGentle->DownGentle new_min_minus_0.01 9.360 m/s: pass=false, limiting=connected model-allowed approach, failure=Some("no approach context can attain the requested entry speed")
 ```
+
+## Final minimum decision and measurement coverage
+
+The initial comparison above records the approach-context scan before the minimum-source decision. The final scan keeps approach reachability out of the rated minimum. Each final minimum comes from the catalog energy minimum or a measured force or clearance bound. The table below lists every former `ApproachMinimum` row and every final row whose `measured_from` is more than 1.5 m/s above its rated minimum. A larger measurement gap records scan coverage only; it does not make an entry speed below `measured_from` too slow. The two Daisy Dash UpGentle banked-straight rows remain unavailable because their measured force limit fails.
+
+Final generation: 2026-11-19, from the current branch's approach-context table. Speeds are in m/s.
+
+| Model | Template | Previous window (source minimum/maximum) | Final window (source minimum/maximum) | Measured from | Gap above minimum |
+| --- | --- | --- | --- | ---: | ---: |
+| `hybrid` | `SixtyDownToLevel` (DownSixty → Level) | 12.56–25.16 (ApproachMinimum/ForceBound) | 2.00–25.16 (EnergyMinimum/ForceBound) | 12.56 | 10.56 |
+| `velocity_viper` | `SixtyDownToLevel` (DownSixty → Level) | 12.56–28.48 (ApproachMinimum/ForceBound) | 2.00–28.48 (EnergyMinimum/ForceBound) | 12.56 | 10.56 |
+| `hyper` | `SixtyDownToLevel` (DownSixty → Level) | 12.59–20.62 (ApproachMinimum/ForceBound) | 2.00–20.62 (EnergyMinimum/ForceBound) | 12.59 | 10.59 |
+| `hyper` | `WideSixtyDownToLevel` (DownSixty → Level) | 12.59–26.76 (ApproachMinimum/ForceBound) | 2.00–26.76 (EnergyMinimum/ForceBound) | 12.59 | 10.59 |
+| `hybrid` | `SteepToSixtyDown` (DownSteep → DownSixty) | 10.51–27.94 (ApproachMinimum/ForceBound) | 3.00–27.94 (EnergyMinimum/ForceBound) | 10.51 | 7.51 |
+| `velocity_viper` | `SteepToSixtyDown` (DownSteep → DownSixty) | 10.51–27.94 (ApproachMinimum/ForceBound) | 3.00–27.94 (EnergyMinimum/ForceBound) | 10.51 | 7.51 |
+| `hyper` | `SteepToSixtyDown` (DownSteep → DownSixty) | 11.78–24.66 (ApproachMinimum/ForceBound) | 3.00–24.66 (EnergyMinimum/ForceBound) | 11.78 | 8.78 |
+| `hybrid` | `SixtyToSteepDown` (DownSixty → DownSteep) | 12.56–30.89 (ApproachMinimum/ForceBound) | 2.00–30.89 (EnergyMinimum/ForceBound) | 12.56 | 10.56 |
+| `velocity_viper` | `SixtyToSteepDown` (DownSixty → DownSteep) | 12.56–33.28 (ApproachMinimum/ForceBound) | 2.00–33.28 (EnergyMinimum/ForceBound) | 12.56 | 10.56 |
+| `hyper` | `SixtyToSteepDown` (DownSixty → DownSteep) | 12.59–27.62 (ApproachMinimum/ForceBound) | 2.00–27.62 (EnergyMinimum/ForceBound) | 12.59 | 10.59 |
+| `hybrid` | `BankLeft` (DownGentle → DownGentle) | 5.25–23.43 (ApproachMinimum/ForceBound) | 5.00–23.43 (EnergyMinimum/ForceBound) | 5.25 | 0.25 |
+| `velocity_viper` | `BankLeft` (DownGentle → DownGentle) | 5.25–23.43 (ApproachMinimum/ForceBound) | 5.00–23.43 (EnergyMinimum/ForceBound) | 5.25 | 0.25 |
+| `family_coaster` | `BankLeft` (DownGentle → DownGentle) | 5.41–11.68 (ApproachMinimum/ForceBound) | 5.00–11.68 (EnergyMinimum/ForceBound) | 5.41 | 0.41 |
+| `hybrid` | `UnbankLeft` (DownGentle → DownGentle) | 9.37–24.58 (ApproachMinimum/ForceBound) | 5.00–24.58 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `velocity_viper` | `UnbankLeft` (DownGentle → DownGentle) | 9.37–24.58 (ApproachMinimum/ForceBound) | 5.00–24.58 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `wooden_twister` | `UnbankLeft` (DownGentle → DownGentle) | 9.37–24.32 (ApproachMinimum/ForceBound) | 5.00–24.32 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `family_coaster` | `UnbankLeft` (DownGentle → DownGentle) | 9.37–13.91 (ApproachMinimum/ForceBound) | 5.00–13.91 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `hyper` | `UnbankLeft` (DownGentle → DownGentle) | 9.37–20.17 (ApproachMinimum/ForceBound) | 5.00–20.17 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `hybrid` | `BankRight` (DownGentle → DownGentle) | 5.25–23.43 (ApproachMinimum/ForceBound) | 5.00–23.43 (EnergyMinimum/ForceBound) | 5.25 | 0.25 |
+| `velocity_viper` | `BankRight` (DownGentle → DownGentle) | 5.25–23.43 (ApproachMinimum/ForceBound) | 5.00–23.43 (EnergyMinimum/ForceBound) | 5.25 | 0.25 |
+| `family_coaster` | `BankRight` (DownGentle → DownGentle) | 5.41–11.68 (ApproachMinimum/ForceBound) | 5.00–11.68 (EnergyMinimum/ForceBound) | 5.41 | 0.41 |
+| `hybrid` | `UnbankRight` (DownGentle → DownGentle) | 9.37–24.58 (ApproachMinimum/ForceBound) | 5.00–24.58 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `velocity_viper` | `UnbankRight` (DownGentle → DownGentle) | 9.37–24.58 (ApproachMinimum/ForceBound) | 5.00–24.58 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `wooden_twister` | `UnbankRight` (DownGentle → DownGentle) | 9.37–24.32 (ApproachMinimum/ForceBound) | 5.00–24.32 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `family_coaster` | `UnbankRight` (DownGentle → DownGentle) | 9.37–13.91 (ApproachMinimum/ForceBound) | 5.00–13.91 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `hyper` | `UnbankRight` (DownGentle → DownGentle) | 9.37–20.17 (ApproachMinimum/ForceBound) | 5.00–20.17 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `hybrid` | `BankedStraightLeft` (DownGentle → DownGentle) | 9.32–26.69 (ApproachMinimum/ForceBound) | 5.00–26.69 (EnergyMinimum/ForceBound) | 9.32 | 4.32 |
+| `velocity_viper` | `BankedStraightLeft` (DownGentle → DownGentle) | 9.32–26.69 (ApproachMinimum/ForceBound) | 5.00–26.69 (EnergyMinimum/ForceBound) | 9.32 | 4.32 |
+| `wooden_twister` | `BankedStraightLeft` (DownGentle → DownGentle) | 9.29–26.37 (ApproachMinimum/ForceBound) | 5.00–26.37 (EnergyMinimum/ForceBound) | 9.29 | 4.29 |
+| `family_coaster` | `BankedStraightLeft` (DownGentle → DownGentle) | 9.35–17.16 (ApproachMinimum/ForceBound) | 5.00–17.16 (EnergyMinimum/ForceBound) | 9.35 | 4.35 |
+| `hyper` | `BankedStraightLeft` (DownGentle → DownGentle) | 9.23–22.76 (ApproachMinimum/ForceBound) | 5.00–22.76 (EnergyMinimum/ForceBound) | 9.23 | 4.23 |
+| `hybrid` | `BankedStraightRight` (DownGentle → DownGentle) | 9.32–26.69 (ApproachMinimum/ForceBound) | 5.00–26.69 (EnergyMinimum/ForceBound) | 9.32 | 4.32 |
+| `velocity_viper` | `BankedStraightRight` (DownGentle → DownGentle) | 9.32–26.69 (ApproachMinimum/ForceBound) | 5.00–26.69 (EnergyMinimum/ForceBound) | 9.32 | 4.32 |
+| `wooden_twister` | `BankedStraightRight` (DownGentle → DownGentle) | 9.29–26.37 (ApproachMinimum/ForceBound) | 5.00–26.37 (EnergyMinimum/ForceBound) | 9.29 | 4.29 |
+| `family_coaster` | `BankedStraightRight` (DownGentle → DownGentle) | 9.35–17.16 (ApproachMinimum/ForceBound) | 5.00–17.16 (EnergyMinimum/ForceBound) | 9.35 | 4.35 |
+| `hyper` | `BankedStraightRight` (DownGentle → DownGentle) | 9.23–22.76 (ApproachMinimum/ForceBound) | 5.00–22.76 (EnergyMinimum/ForceBound) | 9.23 | 4.23 |
+| `hybrid` | `RolloutLeft` (DownGentle → DownGentle) | 9.37–52.67 (ApproachMinimum/ForceBound) | 5.00–52.67 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `velocity_viper` | `RolloutLeft` (DownGentle → DownGentle) | 9.37–52.67 (ApproachMinimum/ForceBound) | 5.00–52.67 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `wooden_twister` | `RolloutLeft` (DownGentle → DownGentle) | 9.37–52.54 (ApproachMinimum/ForceBound) | 5.00–52.54 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `hybrid` | `RolloutRight` (DownGentle → DownGentle) | 9.37–52.67 (ApproachMinimum/ForceBound) | 5.00–52.67 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `velocity_viper` | `RolloutRight` (DownGentle → DownGentle) | 9.37–52.67 (ApproachMinimum/ForceBound) | 5.00–52.67 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
+| `wooden_twister` | `RolloutRight` (DownGentle → DownGentle) | 9.37–52.54 (ApproachMinimum/ForceBound) | 5.00–52.54 (EnergyMinimum/ForceBound) | 9.37 | 4.37 |
