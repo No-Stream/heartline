@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-18 17:03'
+updated_date: '2026-11-19 01:46'
 labels:
   - tooling
 dependencies: []
@@ -75,3 +76,9 @@ Browser full-state placement p95 before/after was 168.0/199.6 ms for Timber Tumb
 Verification so far: the workspace Rust command passed 950 tests in 22 suites; `make lint` passed after formatting; `make check` passed generated types (1 test), the Rust subset (228 tests), 467 web tests, 9 art tests and 43 fast browser tests; `make test-web` passed 467 web and 9 art tests; `PLAYWRIGHT_PORT=4791 make e2e-feature` passed 196 tests. The first `make check` failed because two worker test mocks omitted the new bridge export; their fixtures now use boundary doubles, and the complete check passed. The first lint run stopped on Rust formatting; formatting was applied and lint passed. The plan's `rides` browser project is not present on this branch; work item 4 is in a parallel worktree.
 
 `PLAYWRIGHT_PORT=4792 make journeys` passed all 11 tests. Final `make lint` also passed after the worker test fixtures were updated. The browser lock delayed both requested browser gates while other sessions ran.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-18 lead latency recheck for item 5, native construction bench run alternately master/branch twice under load 10-15: placement median Timber 108.0/109.9 master vs 108.4/107.7 branch; Viper 89.6/91.6 vs 89.5/89.9; Briar 84.4/87.1 vs 87.8/84.5 ms. Master's own Viper p95 moved 101.2 -> 117.2 ms between runs, so the earlier +5.9% p95 was noise; no regression. Item 5 accepted.
+<!-- SECTION:NOTES:END -->
