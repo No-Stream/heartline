@@ -5,6 +5,7 @@ pub use super::decisions::{GroupSplit, GuestBehavior, split_for_ride};
 use super::details::{ActivityDetail, ActivityKind, GuestMemoryDetail};
 pub use super::knowledge::{KnownPlace, PlaceKind};
 pub use super::needs::Needs;
+use super::outcomes::{GuestDestination, ParkOutcomes};
 pub use super::thoughts::Thought;
 use crate::guests::{AgeGroup, GuestId, GuestStore};
 use crate::state_hash::StateHasher;
@@ -64,6 +65,9 @@ pub struct BehaviorSimulation {
     scenery_scores: Vec<u8>,
     queue_scenery: Vec<u64>,
     tick: u64,
+    /// Report-only totals are rebuilt by a report and reset after save/load.
+    #[serde(skip)]
+    outcomes: ParkOutcomes,
 }
 
 impl BehaviorSimulation {
@@ -183,6 +187,7 @@ impl BehaviorSimulation {
             scenery_scores: vec![0; guest_count],
             queue_scenery: vec![0; guest_count],
             tick: 0,
+            outcomes: ParkOutcomes::default(),
         }
     }
 
@@ -326,6 +331,8 @@ impl BehaviorSimulation {
                     - f64::from(self.guests[index].needs.nausea)
                     + f64::from(self.scenery_scores[index]))
                 .clamp(-100.0, 100.0) as i8;
+                self.outcomes
+                    .record_ride(facility.place.id, guest, enjoyment);
                 let mut place = facility.place;
                 place.intensity = super::knowledge::guest_rating(intensity);
                 place.nausea = super::knowledge::guest_rating(nausea);
@@ -391,6 +398,30 @@ impl BehaviorSimulation {
 
     pub fn facility_income(&self, place_id: u32) -> u64 {
         self.income.get(&place_id).copied().unwrap_or(0)
+    }
+
+    pub fn outcomes(&self) -> &ParkOutcomes {
+        &self.outcomes
+    }
+
+    pub(crate) fn record_failed_route(&mut self, destination: GuestDestination) {
+        self.outcomes.record_failed_route(destination);
+    }
+
+    pub(crate) fn pending_destinations(&self) -> impl Iterator<Item = (GuestId, KnownPlace)> + '_ {
+        self.activities
+            .iter()
+            .enumerate()
+            .filter_map(|(index, activity)| match activity {
+                Some(Activity::Walking(place_id) | Activity::Waiting(place_id)) => self.guests
+                    [index]
+                    .known_places()
+                    .iter()
+                    .find(|place| place.id == *place_id)
+                    .copied()
+                    .map(|place| (GuestId(index as u32), place)),
+                _ => None,
+            })
     }
 
     pub fn activity_detail(&self, guest: GuestId) -> ActivityDetail {
@@ -631,6 +662,9 @@ impl BehaviorSimulation {
                             guests,
                             id,
                         );
+                        if facility.place.kind == PlaceKind::Ride {
+                            self.outcomes.record_ride(place_id, id, enjoyment);
+                        }
                     }
                     self.activities[index] = by_id[&place_id]
                         .exit_position
@@ -1304,6 +1338,17 @@ mod tests {
         assert!(first.enjoyment > second.enjoyment);
         assert_ne!(first.enjoyment, second.enjoyment);
         assert!(second.nausea > first.nausea);
+        let ride_outcome = &simulation.outcomes().rides[&ride.id];
+        assert_eq!(ride_outcome.rides_taken, 2);
+        assert_eq!(
+            ride_outcome.unique_riders,
+            BTreeSet::from([GuestId(0), GuestId(1)])
+        );
+        assert_eq!(ride_outcome.guest_rating_count, 2);
+        assert_eq!(
+            ride_outcome.guest_rating_total,
+            i64::from(first.enjoyment) + i64::from(second.enjoyment)
+        );
         assert_eq!(
             simulation.activity_detail(GuestId(0)).kind,
             ActivityKind::Walking
@@ -2055,5 +2100,61 @@ mod tests {
         }
         assert!(guests.memory(GuestId(0)).is_empty());
         assert_eq!(simulation.guests[0].rides_completed, 0);
+    }
+
+    #[test]
+    fn old_guest_simulation_payload_defaults_park_outcomes() {
+        #[derive(serde::Serialize)]
+        struct BehaviorSimulationBeforeOutcomes<'a> {
+            guests: &'a [GuestBehavior],
+            activities: &'a [Option<Activity>],
+            queues: &'a BTreeMap<u32, Vec<GuestId>>,
+            income: &'a BTreeMap<u32, u64>,
+            external_rides: &'a BTreeSet<u32>,
+            coaster_riders: &'a BTreeMap<(u32, u64), Vec<GuestId>>,
+            scenery_scores: &'a [u8],
+            queue_scenery: &'a [u64],
+            tick: u64,
+        }
+
+        let original = BehaviorSimulation::new(2);
+        let previous_version = BehaviorSimulationBeforeOutcomes {
+            guests: &original.guests,
+            activities: &original.activities,
+            queues: &original.queues,
+            income: &original.income,
+            external_rides: &original.external_rides,
+            coaster_riders: &original.coaster_riders,
+            scenery_scores: &original.scenery_scores,
+            queue_scenery: &original.queue_scenery,
+            tick: original.tick,
+        };
+        let bytes = postcard::to_allocvec(&previous_version).unwrap();
+
+        let restored: BehaviorSimulation = postcard::from_bytes(&bytes).unwrap();
+
+        assert_eq!(restored.outcomes(), &ParkOutcomes::default());
+    }
+
+    #[test]
+    fn reporting_outcomes_reset_on_save_and_do_not_change_simulation_hash() {
+        let mut simulation = BehaviorSimulation::new(1);
+        let initial_hash = {
+            let mut hash = StateHasher::new();
+            simulation.hash_into(&mut hash);
+            hash.finish()
+        };
+        simulation.outcomes.record_ride(17, GuestId(0), 42);
+        let hash_with_outcomes = {
+            let mut hash = StateHasher::new();
+            simulation.hash_into(&mut hash);
+            hash.finish()
+        };
+
+        let bytes = postcard::to_allocvec(&simulation).unwrap();
+        let restored: BehaviorSimulation = postcard::from_bytes(&bytes).unwrap();
+
+        assert_eq!(hash_with_outcomes, initial_hash);
+        assert_eq!(restored.outcomes(), &ParkOutcomes::default());
     }
 }

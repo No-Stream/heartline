@@ -1,0 +1,1 @@
+NO REPORT GOLDEN: Horizon Hawk station supports overlap the path tiles at (240,251,10) and (241,251,10).

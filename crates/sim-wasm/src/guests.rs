@@ -6,6 +6,10 @@ impl WasmSimulation {
         self.park.tick();
     }
 
+    pub fn park_outcomes_json(&self) -> String {
+        serde_json::to_string(&self.park_outcomes()).expect("park outcomes serialize")
+    }
+
     /// Samples: piece index, position, lateral, up, cumulative distance. Positions and
     /// distance are in tiles (four metres); Z is up and vectors are unit length.
     pub fn coaster_geometry(&self) -> Vec<f32> {
@@ -160,5 +164,17 @@ impl WasmSimulation {
                 ]
             })
             .collect()
+    }
+}
+
+impl WasmSimulation {
+    pub fn park_outcomes(&self) -> theme_park_sim::guests::ParkOutcomes {
+        let mut facilities = self.facilities.guest_facilities(&self.world);
+        if self.coaster_open {
+            if let Some(coaster) = self.coaster_facility {
+                facilities.push(coaster);
+            }
+        }
+        self.simulation.outcomes(&self.world, &facilities)
     }
 }

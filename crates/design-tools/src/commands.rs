@@ -117,16 +117,27 @@ pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
             run_ride(Path::new(&arguments[1]), commands, json_mode)
         }
         "check" => run_check(&arguments[1..], json_mode),
-        "park" => run_park(&arguments[1..]),
+        "park" => run_park(&arguments[1..], json_mode),
         _ => Err(help_text().to_owned()),
     }
 }
 
 fn help_text() -> &'static str {
-    "usage: tools/design ride <file> [command ...]\n       tools/design check <ride file> ...\n       tools/design park build <park file> --save <path>\n"
+    "usage: tools/design ride <file> [command ...]\n       tools/design check <ride file> ...\n       tools/design park build <park file> --save <path>\n       tools/design park report <park file> [--guests 2000] [--minutes 20] [--seed 42]\n"
 }
 
-fn run_park(arguments: &[String]) -> Result<String, String> {
+fn run_park(arguments: &[String], json_mode: bool) -> Result<String, String> {
+    match arguments.first().map(String::as_str) {
+        Some("build") => run_park_build(arguments),
+        Some("report") => crate::park_report::run_park_report(arguments, json_mode),
+        Some(command) => Err(format!(
+            "unknown park command {command:?}; usage: tools/design park build <park file> --save <path> or tools/design park report <park file> [--guests 2000] [--minutes 20] [--seed 42]"
+        )),
+        None => Err("usage: tools/design park build <park file> --save <path> or tools/design park report <park file> [--guests 2000] [--minutes 20] [--seed 42]".into()),
+    }
+}
+
+fn run_park_build(arguments: &[String]) -> Result<String, String> {
     let Some(command) = arguments.first() else {
         return Err("usage: tools/design park build <park file> --save <path>".into());
     };
@@ -173,7 +184,10 @@ fn run_park(arguments: &[String]) -> Result<String, String> {
     Ok(format!("Saved park to {}\n", save_path.display()))
 }
 
-fn inline_park_ride_files(park_path: &Path, park_source: &str) -> Result<String, String> {
+pub(crate) fn inline_park_ride_files(
+    park_path: &Path,
+    park_source: &str,
+) -> Result<String, String> {
     let mut park: Value = serde_json::from_str(park_source)
         .map_err(|error| format!("parse park description {}: {error}", park_path.display()))?;
     let coasters = park
@@ -211,7 +225,10 @@ fn inline_park_ride_files(park_path: &Path, park_source: &str) -> Result<String,
     serde_json::to_string(&park).map_err(|error| format!("serialize park description: {error}"))
 }
 
-fn resolve_park_ride_path(coaster_index: usize, ride_reference: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_park_ride_path(
+    coaster_index: usize,
+    ride_reference: &str,
+) -> Result<PathBuf, String> {
     let reference_path = Path::new(ride_reference);
     let is_portable_ride_reference = ride_reference.starts_with("content/rides/")
         && ride_reference.ends_with(".ride.json")
@@ -720,7 +737,7 @@ fn snapshot_checksum(bytes: &[u8]) -> u64 {
     })
 }
 
-fn validate_model(model: &str) -> Result<CoasterModel, String> {
+pub(crate) fn validate_model(model: &str) -> Result<CoasterModel, String> {
     coaster_models()
         .into_iter()
         .find(|candidate| candidate.key == model)
@@ -1608,7 +1625,7 @@ fn test_ride(ride: &RideFile) -> Result<(TestRun, Vec<RidePieceEstimate>), Strin
     Ok((test_run, estimates))
 }
 
-fn replay_with_estimates(
+pub(crate) fn replay_with_estimates(
     ride: &RideFile,
 ) -> Result<(BuilderSession, Vec<RidePieceEstimate>), String> {
     let simulation = WasmSimulation::new(42, 0, "new".into());
@@ -1776,7 +1793,7 @@ fn ride_piece_estimate(
     }
 }
 
-fn compare_estimates(
+pub(crate) fn compare_estimates(
     ride: &RideFile,
     test_run: &TestRun,
     estimates: &[RidePieceEstimate],
@@ -1930,7 +1947,7 @@ fn format_agreement(report: &AgreementReport) -> String {
     text
 }
 
-fn agreement_json(report: &AgreementReport) -> Value {
+pub(crate) fn agreement_json(report: &AgreementReport) -> Value {
     let rows: Vec<_> = report
         .rows
         .iter()
@@ -2009,7 +2026,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
     Ok(text)
 }
 
-fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<String> {
+pub(crate) fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<String> {
     let Some(expect) = &ride.expect else {
         return Vec::new();
     };

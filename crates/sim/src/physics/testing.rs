@@ -67,6 +67,13 @@ pub struct TestRun {
     rating_notes: Vec<String>,
 }
 
+/// Highest and lowest vertical g held over the report's minimum durations by any car.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SustainedForcePeaks {
+    pub maximum_vertical_g: Option<f64>,
+    pub minimum_vertical_g: Option<f64>,
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct RatingInput {
     samples: Vec<TestSample>,
@@ -369,6 +376,26 @@ impl TestRun {
                 worst_car,
             })
             .collect()
+    }
+
+    /// Returns the strongest vertical g that any car sustained for at least 0.5 s and the
+    /// strongest negative vertical g any car sustained for at least 0.3 s.
+    pub fn sustained_force_peaks(&self) -> SustainedForcePeaks {
+        let mut result = SustainedForcePeaks::default();
+        for input in &self.rating_inputs {
+            for segment in sustained_sample_segments(input) {
+                let peaks = sustained_peaks_in_segment(
+                    &segment.samples,
+                    input.circuit_length,
+                    segment.closed_cycle,
+                );
+                result.maximum_vertical_g =
+                    max_option(result.maximum_vertical_g, peaks.maximum_vertical_g);
+                result.minimum_vertical_g =
+                    min_option(result.minimum_vertical_g, peaks.minimum_vertical_g);
+            }
+        }
+        result
     }
 
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
@@ -707,6 +734,207 @@ fn force_peaks_by_piece<'a>(
             .or_insert_with(|| ForcePeakValues::from_sample(sample));
     }
     peaks_by_piece
+}
+
+struct SustainedSampleSegment {
+    samples: Vec<TestSample>,
+    closed_cycle: bool,
+}
+
+fn sustained_sample_segments(input: &RatingInput) -> Vec<SustainedSampleSegment> {
+    if input.samples.is_empty() || input.visited_ranges.is_empty() {
+        return Vec::new();
+    }
+
+    let ranges: Vec<_> = input
+        .visited_ranges
+        .iter()
+        .map(|(start, end)| {
+            let mut samples: Vec<_> = input
+                .samples
+                .iter()
+                .copied()
+                .filter(|sample| sample.distance >= *start && sample.distance <= *end)
+                .collect();
+            samples.sort_by(|first, second| first.distance.total_cmp(&second.distance));
+            (*start, *end, samples)
+        })
+        .filter(|(_, _, samples)| !samples.is_empty())
+        .collect();
+    if ranges.is_empty() {
+        return Vec::new();
+    }
+
+    let circuit_length = input.circuit_length;
+    let start_range = ranges.iter().position(|(start, _, _)| *start <= 1e-6);
+    let end_range = ranges
+        .iter()
+        .position(|(_, end, _)| *end >= circuit_length - 1e-6);
+    let crosses_seam = matches!((start_range, end_range), (Some(start), Some(end)) if start != end);
+    let visited_distance: f64 = ranges.iter().map(|(start, end, _)| end - start).sum();
+    let full_lap_observed = input.completed && visited_distance >= circuit_length - 1e-6;
+
+    if crosses_seam {
+        let start_index = start_range.expect("seam crossing has a start range");
+        let end_index = end_range.expect("seam crossing has an end range");
+        let mut samples = ranges[end_index].2.clone();
+        samples.extend(ranges[start_index].2.iter().copied());
+        let mut result = vec![SustainedSampleSegment {
+            samples,
+            closed_cycle: full_lap_observed,
+        }];
+        result.extend(
+            ranges
+                .into_iter()
+                .enumerate()
+                .filter(|(index, _)| *index != start_index && *index != end_index)
+                .map(|(_, (_, _, samples))| SustainedSampleSegment {
+                    samples,
+                    closed_cycle: false,
+                }),
+        );
+        return result;
+    }
+
+    ranges
+        .into_iter()
+        .map(|(start, end, samples)| SustainedSampleSegment {
+            samples,
+            closed_cycle: full_lap_observed && start <= 1e-6 && end >= circuit_length - 1e-6,
+        })
+        .collect()
+}
+
+fn sustained_peaks_in_segment(
+    samples: &[TestSample],
+    circuit_length: f64,
+    closed_cycle: bool,
+) -> SustainedForcePeaks {
+    if samples.len() < 2 {
+        return SustainedForcePeaks::default();
+    }
+
+    let mut result = SustainedForcePeaks::default();
+    for start_index in 0..samples.len() {
+        let maximum_steps = if closed_cycle {
+            samples.len() - 1
+        } else {
+            samples.len() - start_index - 1
+        };
+
+        let start = samples[start_index];
+        if start.vertical_g > 0.0 {
+            let mut elapsed_seconds = 0.0;
+            let mut minimum_vertical_g = start.vertical_g;
+            for step in 1..=maximum_steps {
+                let previous_index = (start_index + step - 1) % samples.len();
+                let current_index = (start_index + step) % samples.len();
+                let previous = samples[previous_index];
+                let current = samples[current_index];
+                let Some(interval_seconds) =
+                    sample_interval_seconds(previous, current, circuit_length)
+                else {
+                    break;
+                };
+                let positive_fraction = if current.vertical_g > 0.0 {
+                    1.0
+                } else {
+                    previous.vertical_g / (previous.vertical_g - current.vertical_g)
+                };
+                let available_seconds = interval_seconds * positive_fraction;
+                let seconds_needed = 0.5 - elapsed_seconds;
+                if available_seconds >= seconds_needed {
+                    let fraction = seconds_needed / interval_seconds;
+                    let endpoint_vertical_g = interpolate_vertical_g(previous, current, fraction);
+                    result.maximum_vertical_g = max_option(
+                        result.maximum_vertical_g,
+                        Some(minimum_vertical_g.min(endpoint_vertical_g)),
+                    );
+                    break;
+                }
+                if current.vertical_g <= 0.0 {
+                    break;
+                }
+                elapsed_seconds += interval_seconds;
+                minimum_vertical_g = minimum_vertical_g.min(current.vertical_g);
+            }
+        }
+
+        if start.vertical_g >= 0.0 {
+            continue;
+        }
+        let mut elapsed_seconds = 0.0;
+        let mut maximum_vertical_g = start.vertical_g;
+
+        for step in 1..=maximum_steps {
+            let previous_index = (start_index + step - 1) % samples.len();
+            let current_index = (start_index + step) % samples.len();
+            let previous = samples[previous_index];
+            let current = samples[current_index];
+            let Some(interval_seconds) = sample_interval_seconds(previous, current, circuit_length)
+            else {
+                break;
+            };
+            let negative_fraction = if current.vertical_g < 0.0 {
+                1.0
+            } else {
+                previous.vertical_g / (previous.vertical_g - current.vertical_g)
+            };
+            let available_seconds = interval_seconds * negative_fraction;
+            let seconds_needed = 0.3 - elapsed_seconds;
+            if available_seconds >= seconds_needed {
+                let fraction = seconds_needed / interval_seconds;
+                let endpoint_vertical_g = interpolate_vertical_g(previous, current, fraction);
+                result.minimum_vertical_g = min_option(
+                    result.minimum_vertical_g,
+                    Some(maximum_vertical_g.max(endpoint_vertical_g)),
+                );
+                break;
+            }
+            if current.vertical_g >= 0.0 {
+                break;
+            }
+            elapsed_seconds += interval_seconds;
+            maximum_vertical_g = maximum_vertical_g.max(current.vertical_g);
+        }
+    }
+    result
+}
+
+fn sample_interval_seconds(
+    previous: TestSample,
+    current: TestSample,
+    circuit_length: f64,
+) -> Option<f64> {
+    let distance = if current.distance >= previous.distance {
+        current.distance - previous.distance
+    } else {
+        circuit_length - previous.distance + current.distance
+    };
+    let average_speed = (previous.speed + current.speed) / 2.0;
+    (distance > 0.0 && average_speed > 0.0).then_some(distance / average_speed)
+}
+
+fn interpolate_vertical_g(previous: TestSample, current: TestSample, fraction: f64) -> f64 {
+    previous.vertical_g + (current.vertical_g - previous.vertical_g) * fraction
+}
+
+fn max_option(current: Option<f64>, candidate: Option<f64>) -> Option<f64> {
+    match (current, candidate) {
+        (Some(current), Some(candidate)) => Some(current.max(candidate)),
+        (Some(current), None) => Some(current),
+        (None, Some(candidate)) => Some(candidate),
+        (None, None) => None,
+    }
+}
+
+fn min_option(current: Option<f64>, candidate: Option<f64>) -> Option<f64> {
+    match (current, candidate) {
+        (Some(current), Some(candidate)) => Some(current.min(candidate)),
+        (Some(current), None) => Some(current),
+        (None, Some(candidate)) => Some(candidate),
+        (None, None) => None,
+    }
 }
 
 impl ForcePeakValues {
@@ -1787,6 +2015,67 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sustained_force_peaks_use_each_car_and_ignore_short_peaks() {
+        let mut first_car = report_for_samples(vec![
+            sample_at(0.0, 10.0, 3.1),
+            sample_at(1.0, 10.0, 3.1),
+            sample_at(2.0, 10.0, 3.1),
+            sample_at(3.0, 10.0, 3.1),
+            sample_at(4.0, 10.0, 3.1),
+            sample_at(5.0, 10.0, 3.1),
+            sample_at(6.0, 10.0, 4.2),
+        ]);
+        first_car.rating_inputs[0].visited_ranges = vec![(0.0, 6.0)];
+        let mut second_car = report_for_samples(vec![
+            sample_at(0.0, 10.0, 3.3),
+            sample_at(1.0, 10.0, 3.3),
+            sample_at(2.0, 10.0, 3.3),
+            sample_at(3.0, 10.0, 3.3),
+            sample_at(4.0, 10.0, 3.3),
+            sample_at(5.0, 10.0, 3.3),
+        ]);
+        second_car.rating_inputs[0].visited_ranges = vec![(0.0, 5.0)];
+        first_car
+            .rating_inputs
+            .push(second_car.rating_inputs[0].clone());
+
+        let peaks = first_car.sustained_force_peaks();
+
+        assert_eq!(peaks.maximum_vertical_g, Some(3.3));
+    }
+
+    #[test]
+    fn sustained_force_peaks_respect_partial_lap_gaps_and_observed_seams() {
+        let mut report = report_for_samples(vec![
+            sample_at(0.0, 10.0, -1.0),
+            sample_at(1.0, 10.0, -1.0),
+            sample_at(2.0, 10.0, -1.0),
+            sample_at(8.0, 10.0, -1.0),
+            sample_at(9.0, 10.0, -1.0),
+        ]);
+        report.rating_inputs[0].visited_ranges = vec![(0.0, 2.0), (8.0, 10.0)];
+
+        let peaks = report.sustained_force_peaks();
+
+        assert_eq!(peaks.minimum_vertical_g, Some(-1.0));
+    }
+
+    #[test]
+    fn sustained_force_peaks_include_the_seam_only_for_a_completed_lap() {
+        let mut report = report_for_samples(
+            (0..10)
+                .map(|distance| sample_at(f64::from(distance), 10.0, 3.4))
+                .collect(),
+        );
+        report.rating_inputs[0].visited_ranges = vec![(0.0, 10.0)];
+        report.rating_inputs[0].circuit_length = 10.0;
+
+        let peaks = report.sustained_force_peaks();
+
+        assert_eq!(peaks.maximum_vertical_g, Some(3.4));
+    }
+
     fn report_for_samples(samples: Vec<TestSample>) -> TestRun {
         let rating_input = RatingInput {
             samples: samples.clone(),
@@ -1820,6 +2109,21 @@ mod tests {
             visited_ranges: Vec::new(),
             rating_inputs: vec![rating_input],
             rating_notes: Vec::new(),
+        }
+    }
+
+    fn sample_at(distance: f64, speed: f64, vertical_g: f64) -> TestSample {
+        TestSample {
+            distance,
+            speed,
+            vertical_g,
+            lateral_g: 0.0,
+            longitudinal_g: 0.0,
+            airtime: vertical_g < 0.0,
+            height_m: 0.0,
+            inverted: false,
+            roll: 0.0,
+            piece_index: 0,
         }
     }
 
