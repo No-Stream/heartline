@@ -246,6 +246,7 @@ fn failure_name(failure: &CellFailure) -> &'static str {
         CellFailure::OfflineSolver(_) => "offline_solver",
         CellFailure::PieceConstruction(_) => "piece_construction",
         CellFailure::TurnRadiusOutOfRange { .. } => "turn_radius",
+        CellFailure::MinimumRadiusMiss { .. } => "minimum_radius",
         CellFailure::PreviewUnavailable => "preview_unavailable",
         CellFailure::PreviewDidNotReachEnd(_) => "preview_did_not_reach_end",
         CellFailure::WrongCarCount { .. } => "wrong_car_count",
