@@ -187,3 +187,16 @@ Rebuild with intents, fit-to-target closing, trim brakes with a set speed, top h
 - crates/sim/src/track/construction/mod.rs
 - crates/sim/src/physics/rated_piece.rs
 - crates/sim-wasm/src/construction.rs
+
+## 8. Decisions (2026-11-19)
+
+Owner:
+1. Hill feels by default: floater -0.5 g, strong floater -0.9 g (the default hyper camelback), ejector -1.2 g on steel and -0.8 g on wood, sustained airtime. Strength stays adjustable per hill.
+3. Peak force steps on steel: 3.5, 3.8, 4.0, 4.2 and 4.5 g. 4.5 g is a brief peak under the existing duration rule (limit plus 0.5 g for 0.2 s); sustained limits do not change.
+4. Brakes: owner's words: "if we are aiming for realism, midcourse brake runs tend to be a bit of a downside at least if they subtract substantial speed so we might actually want a small penalty here. Not something brutal, but a mild penalty when a midcourse brake run takes out a ton of energy." So: a mild excitement penalty that grows with the share of energy removed by mid-course brakes (none for light trims, small for heavy ones), shown in the score breakdown. Showcase rides additionally keep the test cap of at most one mid-course brake run.
+7. Loop top feel is a setting next to the bottom force: pressed-in (1.5 g), neutral (1.0 g, the default) or floaty (about 0.3 g).
+
+Lead (technical defaults, reported to the owner):
+2. The 2026-11-18 ejector rule moves from a window edge to a feel band in stage 2: a classic hill ridden past its feel gets an amber note naming the consequence, not a red refusal.
+5. Refit: reshape silently when the footprint does not change; ask when it would.
+6. "Strong laterals" defaults to 0.6 g (the owner's comfort cap), adjustable up to the model limit.
