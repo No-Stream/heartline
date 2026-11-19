@@ -58,3 +58,35 @@ fn report_shows_entry_margin_checks_and_attributes_force_peaks_to_piece_and_car(
         "{report}"
     );
 }
+
+#[test]
+fn report_shows_mid_course_brakes_and_their_share_of_lift_energy() {
+    let ride = TempRide::new();
+    ride.write();
+
+    let report = run_cli(&["ride".into(), ride.path().into(), "report".into()], "").unwrap();
+
+    let brake_line = report
+        .lines()
+        .find(|line| line.starts_with("Mid-course brake runs:"))
+        .expect("ride report includes its mid-course brake energy summary");
+    assert!(
+        brake_line.contains("Mid-course brake runs: 2"),
+        "{brake_line}"
+    );
+    assert!(
+        brake_line.contains("estimated lift energy removed by trims from lead-car samples:"),
+        "{brake_line}"
+    );
+    let trim_energy_share = brake_line
+        .split_once("from lead-car samples: ")
+        .expect("summary names the lift-energy share")
+        .1
+        .split_whitespace()
+        .next()
+        .expect("summary includes a percentage")
+        .trim_end_matches('%')
+        .parse::<f64>()
+        .expect("summary reports a numeric percentage");
+    assert!(trim_energy_share > 0.0, "{brake_line}");
+}

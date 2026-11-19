@@ -22,6 +22,7 @@ use theme_park_sim_wasm::construction::{
 use theme_park_sim_wasm::reports::TestingSample;
 
 use crate::agreement::{AgreementInput, AgreementReport, ForcePeaks, evaluate_agreement};
+use crate::brake_report::mid_course_brake_energy_report;
 use crate::report::{
     ForceRatings, RidePieceEstimate, rated_speed_margin_report, render_ride_report_with_margins,
 };
@@ -1159,7 +1160,7 @@ fn execute_command(
             Ok(reply_state("Circuit closed.\n".to_owned(), state, true))
         }
         RideCommand::Test => {
-            let (test_run, estimates, rated_margins) = test_ride_with_margins(ride)?;
+            let (test_run, estimates, rated_margins, _circuit) = test_ride_with_margins(ride)?;
             let report = render_ride_report_with_margins(
                 ride,
                 &test_run,
@@ -1174,14 +1175,19 @@ fn execute_command(
             })
         }
         RideCommand::Report(include_samples) => {
-            let (test_run, estimates, rated_margins) = test_ride_with_margins(ride)?;
-            let report = render_ride_report_with_margins(
+            let (test_run, estimates, rated_margins, circuit) = test_ride_with_margins(ride)?;
+            let mut report = render_ride_report_with_margins(
                 ride,
                 &test_run,
                 &estimates,
                 &rated_margins,
                 include_samples,
             )?;
+            report.push_str(&mid_course_brake_energy_report(
+                &circuit,
+                &test_run,
+                ride.cars_per_train,
+            ));
             Ok(CommandReply {
                 text: report.clone(),
                 json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "text": report}),
@@ -2088,7 +2094,7 @@ fn test_ride(ride: &RideFile) -> Result<(TestRun, Vec<RidePieceEstimate>), Strin
 
 fn test_ride_with_margins(
     ride: &RideFile,
-) -> Result<(TestRun, Vec<RidePieceEstimate>, String), String> {
+) -> Result<(TestRun, Vec<RidePieceEstimate>, String, theme_park_sim::physics::Circuit), String> {
     let (mut session, estimates, _) = replay_with_estimates(ride, false)?;
     let (circuit, _) = session
         .simulation()
@@ -2100,7 +2106,7 @@ fn test_ride_with_margins(
         .ok_or_else(|| format!("unknown coaster model {:?}", ride.model))?;
     let rated_margins = rated_speed_margin_report(&circuit, &model)?;
     let test_run = finish_test_run(&mut session)?;
-    Ok((test_run, estimates, rated_margins))
+    Ok((test_run, estimates, rated_margins, circuit))
 }
 
 fn test_ride_with_browser_estimates(
