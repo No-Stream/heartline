@@ -8,6 +8,7 @@ mod guest_benchmark;
 mod guest_report;
 mod guests;
 pub mod layouts;
+pub mod park_description;
 pub mod reports;
 mod save;
 #[cfg(test)]

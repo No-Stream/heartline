@@ -63,6 +63,7 @@ import { soundFrame, type MappingMemory, type UiEvent } from "./audio/mapping";
 import { constructionUiEvents, createUiEventQueue, pathUiEvent, placementUiEvent, terrainUiEvent } from "./audio/ui-events";
 import { createSoundSetting } from "./sound-setting";
 import { parseTrainStates, validateTrainStates } from "./train-states";
+import { bundledParkDescriptionJson } from "./park-bundle";
 import {
   constructionCutawayTarget,
   landscapingCutawayTarget,
@@ -825,13 +826,20 @@ const params = new URLSearchParams(location.search);
 const seedText = params.get("seed") ?? "2026";
 if (!/^\d+$/.test(seedText) || BigInt(seedText) > 18446744073709551615n) throw new RangeError("Invalid seed");
 const park = params.get("park") ?? "demo";
-if (park !== "new" && park !== "demo") throw new RangeError("Invalid park");
 const guestCount = testAgents === null ? 12 : Number(testAgents);
 if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 500) throw new RangeError("Invalid test guest count");
-sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
+if (park === "new" || park === "demo") {
+  sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park, guestCount, frozen, manualBlockAnalysis });
+} else {
+  const descriptionJson = bundledParkDescriptionJson(park);
+  loadedPark = true;
+  sendWorkerAction(worker, { type: "init", seed: BigInt(seedText), park: "description", descriptionJson, guestCount, frozen, manualBlockAnalysis });
+}
 worker.addEventListener("message", (event: MessageEvent<WorkerMessage>) => {
   const message = event.data;
   if (message.type === "ready") { workerReady = true;
+  } else if (message.type === "initialization-error") {
+    parkSaves.message(`Could not load park: ${message.error}`);
   } else if (message.type === "park-saved" || message.type === "park-loaded") {
     const pending = pendingParkRequests.get(message.requestId);
     if (!pending) throw new Error("Unknown park request");

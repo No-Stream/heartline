@@ -8,6 +8,7 @@ import type { ReplaySession } from "../session-replay";
 const wasmMock = vi.hoisted(() => ({
   initialize: vi.fn(),
   construct: vi.fn(),
+  fromParkDescription: vi.fn(),
   tick: vi.fn(),
   pieceShapes: vi.fn(() => "[]"),
   pathPreview: vi.fn(),
@@ -51,6 +52,10 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     carsPerTrain = 6;
     colors = JSON.stringify({ track: "coral", supports: "timber", trains: "sage" });
     constructor(seed: bigint, guestCount: number, park: string) { wasmMock.construct(seed, guestCount, park); }
+    static from_park_description(seed: bigint, guestCount: number, json: string) {
+      wasmMock.fromParkDescription(seed, guestCount, json);
+      return new this(seed, guestCount, "new");
+    }
     static load_state(_bytes: Uint8Array) { return new this(0n, 0, "demo"); }
     free() {}
     scenery_json() { return "[]"; }
@@ -155,6 +160,7 @@ afterEach(() => {
   wasmMock.tick.mockReset();
   wasmMock.initialize.mockReset();
   wasmMock.construct.mockReset();
+  wasmMock.fromParkDescription.mockReset();
   wasmMock.pathPreview.mockReset();
   wasmMock.pathBuild.mockReset();
   wasmMock.pathRemove.mockReset();
@@ -747,4 +753,32 @@ it("initializes the requested park and scales live ticks", async () => {
   await Promise.resolve();
   await vi.advanceTimersByTimeAsync(100);
   expect(wasmMock.tick.mock.calls.length).toBeGreaterThanOrEqual(8);
+});
+
+it("publishes the bridge error when a park description fails to initialize", async () => {
+  wasmMock.initialize.mockResolvedValue(undefined);
+  wasmMock.fromParkDescription.mockImplementation(() => {
+    throw new Error("paths[2] segment 0: Path is blocked");
+  });
+  const postMessage = vi.fn();
+  let onMessage!: (event: MessageEvent) => void;
+  vi.stubGlobal("self", { postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
+  await import("../worker");
+
+  onMessage({ data: {
+    type: "init",
+    seed: 2026n,
+    park: "description",
+    descriptionJson: "{}",
+    guestCount: 12,
+    frozen: true,
+    manualBlockAnalysis: false,
+  } } as MessageEvent);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(postMessage.mock.calls.map(([message]) => message)).toContainEqual({
+    type: "initialization-error",
+    error: "paths[2] segment 0: Path is blocked",
+  });
 });

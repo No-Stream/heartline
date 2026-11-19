@@ -117,15 +117,117 @@ pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
             run_ride(Path::new(&arguments[1]), commands, json_mode)
         }
         "check" => run_check(&arguments[1..], json_mode),
-        "park" => Err(
-            "park build/report require the park description implementation (work items 8–9)".into(),
-        ),
+        "park" => run_park(&arguments[1..]),
         _ => Err(help_text().to_owned()),
     }
 }
 
 fn help_text() -> &'static str {
-    "usage: tools/design ride <file> [command ...]\n       tools/design check <ride file> ...\n       tools/design park build|report <park file> (available after work items 8–9)\n"
+    "usage: tools/design ride <file> [command ...]\n       tools/design check <ride file> ...\n       tools/design park build <park file> --save <path>\n"
+}
+
+fn run_park(arguments: &[String]) -> Result<String, String> {
+    let Some(command) = arguments.first() else {
+        return Err("usage: tools/design park build <park file> --save <path>".into());
+    };
+    if command != "build" {
+        return Err(format!(
+            "unknown park command {command:?}; usage: tools/design park build <park file> --save <path>"
+        ));
+    }
+    if arguments.len() < 2 {
+        return Err("usage: tools/design park build <park file> --save <path>".into());
+    }
+
+    let park_path = Path::new(&arguments[1]);
+    let mut save_path = None;
+    let mut index = 2;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--save" if save_path.is_none() => {
+                index += 1;
+                save_path = Some(PathBuf::from(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "--save requires a path".to_owned())?,
+                ));
+            }
+            flag => return Err(format!("unknown or repeated park build option {flag:?}")),
+        }
+        index += 1;
+    }
+    let save_path = save_path.ok_or_else(|| {
+        "park build requires --save <path>: tools/design park build <park file> --save <path>"
+            .to_owned()
+    })?;
+
+    let park_source = fs::read_to_string(park_path)
+        .map_err(|error| format!("read park description {}: {error}", park_path.display()))?;
+    let runtime_description = inline_park_ride_files(park_path, &park_source)?;
+    let simulation = WasmSimulation::from_park_description(42, 0, &runtime_description)
+        .map_err(|error| error.to_string())?;
+    let save_bytes = simulation.save_state_native()?;
+    fs::write(&save_path, save_bytes)
+        .map_err(|error| format!("write park save {}: {error}", save_path.display()))?;
+
+    Ok(format!("Saved park to {}\n", save_path.display()))
+}
+
+fn inline_park_ride_files(park_path: &Path, park_source: &str) -> Result<String, String> {
+    let mut park: Value = serde_json::from_str(park_source)
+        .map_err(|error| format!("parse park description {}: {error}", park_path.display()))?;
+    let coasters = park
+        .get_mut("coasters")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "park description field `coasters` must be an array".to_owned())?;
+    if coasters.len() > 1 {
+        return Err("this build supports one player coaster per park".into());
+    }
+
+    for (coaster_index, coaster) in coasters.iter_mut().enumerate() {
+        let ride_reference = coaster.get("ride").and_then(Value::as_str).ok_or_else(|| {
+            format!("park coaster {coaster_index} field `ride` must be a ride file path")
+        })?;
+        let ride_path = resolve_park_ride_path(coaster_index, ride_reference)?;
+        let ride_source = fs::read_to_string(&ride_path).map_err(|error| {
+            format!(
+                "park coaster {coaster_index} ride {ride_reference:?}: read {}: {error}",
+                ride_path.display()
+            )
+        })?;
+        let ride: RideFile = serde_json::from_str(&ride_source).map_err(|error| {
+            format!(
+                "park coaster {coaster_index} ride {ride_reference:?}: parse {}: {error}",
+                ride_path.display()
+            )
+        })?;
+        coaster["ride"] = serde_json::to_value(ride).map_err(|error| {
+            format!(
+                "park coaster {coaster_index} ride {ride_reference:?}: serialize ride file: {error}"
+            )
+        })?;
+    }
+
+    serde_json::to_string(&park).map_err(|error| format!("serialize park description: {error}"))
+}
+
+fn resolve_park_ride_path(coaster_index: usize, ride_reference: &str) -> Result<PathBuf, String> {
+    let reference_path = Path::new(ride_reference);
+    let is_portable_ride_reference = ride_reference.starts_with("content/rides/")
+        && ride_reference.ends_with(".ride.json")
+        && reference_path.components().count() == 3
+        && reference_path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)));
+    if !is_portable_ride_reference {
+        return Err(format!(
+            "park coaster {coaster_index} ride path {ride_reference:?} must use content/rides/<name>.ride.json"
+        ));
+    }
+
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(reference_path))
 }
 
 fn parse_commands(arguments: &[String]) -> Result<Vec<RideCommand>, String> {
