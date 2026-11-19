@@ -6,7 +6,7 @@ import { expect, test, type TestInfo } from "@playwright/test";
 import { candidateForceReadout, hillReadout } from "../../src/candidate-force-readout";
 import type { TestingReport } from "../../src/generated/TestingReport";
 import type { CoasterModelKey } from "../../src/generated/coaster-models";
-import { placeStation, showBuilderTab, startPark, testRide, waitForState } from "../player/driver";
+import { advanceUntilState, placeStation, showBuilderTab, startPark, testRide } from "../player/driver";
 import { placeCircuit } from "../player/place-circuit";
 import { expectRideReportExplained } from "../player/ride-report";
 import { readRide, type RideFile } from "../player/rides";
@@ -39,7 +39,7 @@ for (const { stem, ride } of rides) {
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
 
-    await startPark(page, { park: "new", seed: 149, speed: 1 });
+    await startPark(page, { park: "new", seed: 149, speed: 1, testMode: true });
     await placeStation(page, {
       model: ride.model as CoasterModelKey,
       height: ride.station.z - newParkSurfaceHeight,
@@ -83,11 +83,11 @@ for (const { stem, ride } of rides) {
           return {
             estimate: window.gameTest.constructionEstimates(),
             readouts: {
-              candidateHidden: candidatePanel.hidden,
+              candidateHidden: Boolean(candidatePanel.hidden),
               candidateLines: Array.from(candidatePanel.querySelectorAll("p"), (paragraph) => textOf(paragraph).trim()),
-              hillHidden: hillPanel.hidden,
+              hillHidden: Boolean(hillPanel.hidden),
               hillRows,
-              hillMessageHidden: hillMessage.hidden,
+              hillMessageHidden: Boolean(hillMessage.hidden),
               hillMessage: textOf(hillMessage).trim(),
             },
           };
@@ -116,7 +116,7 @@ for (const { stem, ride } of rides) {
     await showBuilderTab(page, "Build");
     await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
     await testRide(page);
-    await waitForState(page, async () => !!(await page.evaluate(() => window.gameTest.testingReport())), { ticks: 40_000 });
+    await advanceUntilState(page, async () => !!(await page.evaluate(() => window.gameTest.testingReport())), { ticks: 40_000 });
 
     const report = await expectRideReportExplained(page);
     expectRideTargets(ride, report);

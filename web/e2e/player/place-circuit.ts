@@ -60,22 +60,23 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
     const direct = page.locator(`[data-piece="${piece}"]`);
     const hill = /^(WoodenEjector|Ejector|Floater|Family|Speed)Hill(\d+)x(\d+)(OuterLeft|OuterRight)?$/.exec(piece);
     const roll = /^ZeroGRoll(Fast|Compact)(Left|Right)$/.exec(piece);
+    const stall = /^Stall(Left|Right)$/.exec(piece);
     // A palette click on a hill is re-sized by the worker for the predicted speed, so hills are sized in the inspector.
-    if (!hill && !roll) {
+    if (!hill && !roll && !stall) {
       await expect(direct, `Piece ${piece} is not offered by the palette`).toBeVisible();
       await direct.click();
     } else {
       const hillSection = page.locator("[data-hill]");
       if (await hillSection.getAttribute("open") === null) await hillSection.locator("summary").click();
       await expect(hillSection.locator('[data-hill-value="feel"]')).toHaveText(/\S/);
-      const feel = roll ? "Zero-g roll" : piece === "WoodenEjectorHill8x64" ? "Strong floater"
+      const feel = stall ? "Stall" : roll ? "Zero-g roll" : piece === "WoodenEjectorHill8x64" ? "Strong floater"
         : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" || hill![1] === "Family" ? "Floater" : "Speed hill";
       await stepHill(page, "feel", feel);
-      const twist = hill?.[4] === "OuterLeft" ? "Outer bank left"
-        : hill?.[4] === "OuterRight" ? "Outer bank right" : "Upright";
-      await stepHill(page, "twist", roll ? `Roll ${roll[2].toLowerCase()}` : twist);
-      await stepHill(page, "height", `${roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
-      await stepHill(page, "span", `${roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
+      const twist = stall ? `Roll ${stall[1].toLowerCase()}` : roll ? `Roll ${roll[2].toLowerCase()}`
+        : hill?.[4] === "OuterLeft" ? "Outer bank left" : hill?.[4] === "OuterRight" ? "Outer bank right" : "Upright";
+      await stepHill(page, "twist", twist);
+      await stepHill(page, "height", `${stall ? 13 : roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
+      await stepHill(page, "span", `${stall ? 104 : roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
     }
   }
   await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
