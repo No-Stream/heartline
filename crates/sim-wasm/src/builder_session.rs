@@ -1367,6 +1367,48 @@ mod tests {
     }
 
     #[test]
+    fn content_ride_builder_hashes_match_master() {
+        for (ride_name, ride_json, expected_hash) in [
+            (
+                "Briar Blitz",
+                include_str!("../../../content/rides/briar-blitz.ride.json"),
+                0x9566e10f3ebf29b0,
+            ),
+            (
+                "Browser agreement fast circuit",
+                include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
+                0x3085ff1b874c26d7,
+            ),
+            (
+                "Daisy Dash",
+                include_str!("../../../content/rides/daisy-dash.ride.json"),
+                0xd7c7960cb1c46f50,
+            ),
+            (
+                "Horizon Hawk",
+                include_str!("../../../content/rides/horizon-hawk.ride.json"),
+                0x9aa309c9573f71c3,
+            ),
+            (
+                "Timber Tumbler",
+                include_str!("../../../content/rides/timber-tumbler.ride.json"),
+                0xc6d856a79f89e7f1,
+            ),
+            (
+                "Velocity Viper",
+                include_str!("../../../content/rides/velocity-viper.ride.json"),
+                0x5bedae3ca8d6ae35,
+            ),
+        ] {
+            let ride: RideFile = serde_json::from_str(ride_json).unwrap();
+            assert_eq!(ride.name, ride_name);
+            let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+            session.replay_ride(&ride).unwrap();
+            assert_eq!(session.state_hash(), expected_hash, "{ride_name}");
+        }
+    }
+
+    #[test]
     fn worker_bridge_uses_the_same_selection_and_estimate_sequence() {
         let mut native_session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
         let mut worker_simulation = WasmSimulation::new(42, 0, "new".into());
