@@ -95,8 +95,8 @@ Straight                        2.0 —                — 1.0 (weak) / 1.0 (wea
 Placed Straight
 Estimate: 2.0 m/s entry, v+ 1.00 g, v- 1.00 g, lateral 0.00 g, longitudinal 0.01 g
 Pieces: 1
-Open end: (108.0, 100.0, 2.5) m, heading East, slope Level, bank Level
-Height above ground: -3 steps; offset to station entry: 8.0 m
+Open end: tile (108.0, 100.0), height 10.0 m, heading East, slope Level, bank Level
+Height above ground: 2 steps; offset to station entry: 32.0 m (x -8.0, y +0.0 tiles, height +0.0 m)
 Chain: false; predicted end speed: 1.6 m/s (reachedEnd)
 Can close: false; can finish: false (Checking for a connection to the station.); can test: false
 "#;
@@ -181,7 +181,7 @@ fn new_creates_a_ride_and_state_reports_the_open_end() {
 
     assert_eq!(
         reply,
-        "Pieces: 0\nOpen end: (104.0, 100.0, 2.5) m, heading East, slope Level, bank Level\nHeight above ground: -3 steps; offset to station entry: 4.0 m\nChain: false; predicted end speed: 2.0 m/s (reachedEnd)\nCan close: false; can finish: false (Checking for a connection to the station.); can test: false\n"
+        "Pieces: 0\nOpen end: tile (104.0, 100.0), height 10.0 m, heading East, slope Level, bank Level\nHeight above ground: 2 steps; offset to station entry: 16.0 m (x -4.0, y +0.0 tiles, height +0.0 m)\nChain: false; predicted end speed: 2.0 m/s (reachedEnd)\nCan close: false; can finish: false (Checking for a connection to the station.); can test: false\n"
     );
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&ride.0).unwrap()).unwrap();

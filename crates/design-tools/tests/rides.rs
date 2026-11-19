@@ -171,3 +171,35 @@ fn agreement_command_prints_the_force_values_for_a_closed_ride() {
     assert!(output.contains("worst[min/max/lat/long g]"), "{output}");
     assert!(output.contains("Agreement:"), "{output}");
 }
+
+#[test]
+fn map_draws_every_closed_catalog_ride() {
+    for path in ride_files() {
+        let ride = TempRide::new();
+        fs::copy(&path, &ride.0).unwrap();
+
+        let map = run_cli(&["ride".into(), ride.path(), "map".into()], "")
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+
+        assert!(map.contains("Footprint (each cell"), "{}", path.display());
+    }
+}
+
+#[test]
+fn state_reads_the_ground_under_an_open_end_far_from_the_origin() {
+    let ride = TempRide::new();
+    let reply = run_cli(
+        &[
+            "ride".into(),
+            ride.path(),
+            "new --model hyper --station 241,249,12,north".into(),
+            "chain on".into(),
+            "place LevelToGentleUp".into(),
+            "state".into(),
+        ],
+        "",
+    )
+    .unwrap();
+
+    assert!(reply.contains("height 16.0 m") && reply.contains("Height above ground: 8 steps"), "{reply}");
+}

@@ -89,6 +89,7 @@ const COMMAND_NAMES: &[&str] = &[
     "export",
 ];
 
+const METRES_PER_TILE: f64 = 4.0;
 const REPLAY_SNAPSHOT_MAGIC: &[u8] = b"TPRS";
 const REPLAY_SNAPSHOT_VERSION: u8 = 1;
 const AUTO_BLOCKS_WORK_BUDGET: u32 = 1_000;
@@ -1159,11 +1160,11 @@ fn state_value_with_estimates(
     let offset_to_station = ((end_position.x - start_position.x).powi(2)
         + (end_position.y - start_position.y).powi(2)
         + (end_position.z - start_position.z).powi(2))
-    .sqrt()
-        / 4.0;
+    .sqrt();
     let ground_height = simulation
         .world
-        .surface(end.x as u16, end.y as u16)
+        // Track states count half tiles and two-step heights; the world counts tiles and steps.
+        .surface((end.x / 2) as u16, (end.y / 2) as u16)
         .corners
         .iter()
         .copied()
@@ -1179,11 +1180,17 @@ fn state_value_with_estimates(
         "pieceCount": construction.pieces().len().saturating_sub(1),
         "track": track,
         "openEnd": {
-            "positionMetres": {"x": end_position.x / 4.0, "y": end_position.y / 4.0, "z": end_position.z / 4.0},
+            "positionMetres": {"x": end_position.x, "y": end_position.y, "z": end_position.z},
+            "tile": {"x": end_position.x / METRES_PER_TILE, "y": end_position.y / METRES_PER_TILE},
+            "tilesToStationEntry": {
+                "x": (start_position.x - end_position.x) / METRES_PER_TILE,
+                "y": (start_position.y - end_position.y) / METRES_PER_TILE,
+            },
+            "metresAboveStationEntry": end_position.z - start_position.z,
             "heading": format!("{:?}", end.heading),
             "slope": format!("{:?}", end.slope),
             "bank": format!("{:?}", end.bank),
-            "heightAboveGroundSteps": end.z - i32::from(ground_height),
+            "heightAboveGroundSteps": end.z * 2 - i32::from(ground_height),
             "offsetToStationEntryMetres": offset_to_station,
         },
         "chain": construction.chain(),
@@ -1199,17 +1206,19 @@ fn state_value_with_estimates(
 fn format_state_text(state: &Value) -> String {
     let end = &state["openEnd"];
     let position = &end["positionMetres"];
+    let tile = &end["tile"];
+    let to_station = &end["tilesToStationEntry"];
     let finish_reason = state["finishReason"]
         .as_str()
         .expect("finish reason is a string");
     format!(
-        "Pieces: {}\nOpen end: ({:.1}, {:.1}, {:.1}) m, heading {}, slope {}, bank {}\nHeight above ground: {} steps; offset to station entry: {:.1} m\nChain: {}; predicted end speed: {} m/s ({})\nCan close: {}; can finish: {}{}; can test: {}\n",
+        "Pieces: {}\nOpen end: tile ({:.1}, {:.1}), height {:.1} m, heading {}, slope {}, bank {}\nHeight above ground: {} steps; offset to station entry: {:.1} m (x {:+.1}, y {:+.1} tiles, height {:+.1} m)\nChain: {}; predicted end speed: {} m/s ({})\nCan close: {}; can finish: {}{}; can test: {}\n",
         state["pieceCount"]
             .as_u64()
             .expect("piece count is an unsigned integer"),
-        position["x"].as_f64().expect("open end x is a number"),
-        position["y"].as_f64().expect("open end y is a number"),
-        position["z"].as_f64().expect("open end z is a number"),
+        tile["x"].as_f64().expect("open end tile x is a number"),
+        tile["y"].as_f64().expect("open end tile y is a number"),
+        position["z"].as_f64().expect("open end height is a number"),
         end["heading"]
             .as_str()
             .expect("open end heading is a string"),
@@ -1221,6 +1230,11 @@ fn format_state_text(state: &Value) -> String {
         end["offsetToStationEntryMetres"]
             .as_f64()
             .expect("station offset is a number"),
+        to_station["x"].as_f64().expect("station tile offset x is a number"),
+        to_station["y"].as_f64().expect("station tile offset y is a number"),
+        end["metresAboveStationEntry"]
+            .as_f64()
+            .expect("station height offset is a number"),
         state["chain"].as_bool().expect("chain state is a boolean"),
         optional_number(state["predictedEndSpeed"].as_f64()),
         state["previewStatus"].as_str().unwrap_or("unavailable"),
@@ -1546,59 +1560,74 @@ fn render_map(session: &BuilderSession) -> Result<CommandReply, String> {
         .ok_or_else(|| "there is no active construction".to_owned())?;
     let mut samples = Vec::new();
     for (piece_index, piece) in construction.pieces().iter().enumerate() {
-        let sample_count = (piece.length() / 8.0).ceil().max(1.0) as usize;
+        let sample_count = (piece.length() / 4.0).ceil().max(1.0) as usize;
         for sample_index in 0..=sample_count {
-            let position = piece
-                .sample(piece.length() * sample_index as f64 / sample_count as f64)
-                .position
-                / 4.0;
+            // The product can round a hair past the piece length, which `sample` refuses.
+            let distance =
+                (piece.length() * sample_index as f64 / sample_count as f64).min(piece.length());
+            let position = piece.sample(distance).position;
             samples.push((piece_index, position.x, position.y, position.z));
         }
     }
     if samples.is_empty() {
         return Err("construction has no track samples".into());
     }
-    let scale = 4.0;
-    let min_x = samples
-        .iter()
-        .map(|sample| sample.1.floor() as i32)
-        .min()
-        .unwrap();
-    let max_x = samples
-        .iter()
-        .map(|sample| sample.1.floor() as i32)
-        .max()
-        .unwrap();
-    let min_y = samples
-        .iter()
-        .map(|sample| sample.2.floor() as i32)
-        .min()
-        .unwrap();
-    let max_y = samples
-        .iter()
-        .map(|sample| sample.2.floor() as i32)
-        .max()
-        .unwrap();
+    let tiles_per_cell = 2.0;
+    let scale = tiles_per_cell * METRES_PER_TILE;
+    let cell = |metres: f64| (metres / scale).floor() as i32;
+    let min_x = samples.iter().map(|sample| cell(sample.1)).min().unwrap();
+    let max_x = samples.iter().map(|sample| cell(sample.1)).max().unwrap();
+    let min_y = samples.iter().map(|sample| cell(sample.2)).min().unwrap();
+    let max_y = samples.iter().map(|sample| cell(sample.2)).max().unwrap();
     let mut cells = BTreeMap::new();
-    for (piece_index, x, y, _) in &samples {
+    // The station is drawn last so the track around it cannot hide it.
+    for (piece_index, x, y, _) in samples
+        .iter()
+        .filter(|sample| sample.0 != 0)
+        .chain(samples.iter().filter(|sample| sample.0 == 0))
+    {
         cells.insert(
-            ((*x / scale).floor() as i32, (*y / scale).floor() as i32),
+            (cell(*x), cell(*y)),
             if *piece_index == 0 { 'S' } else { '#' },
         );
     }
-    let mut text = String::from("Footprint (each cell is about 4 m; S is the station):\n");
-    for y in (min_y / scale as i32..=max_y / scale as i32).rev() {
-        for x in min_x / scale as i32..=max_x / scale as i32 {
+    let mut text = format!(
+        "Footprint (each cell is {tiles_per_cell} tiles, {scale} m; S is the station; north is up, x grows to the right; x {:.0} to {:.0}, y {:.0} to {:.0} tiles):\n",
+        f64::from(min_x) * tiles_per_cell,
+        f64::from(max_x + 1) * tiles_per_cell,
+        f64::from(min_y) * tiles_per_cell,
+        f64::from(max_y + 1) * tiles_per_cell,
+    );
+    for y in (min_y..=max_y).rev() {
+        for x in min_x..=max_x {
             text.push(*cells.get(&(x, y)).unwrap_or(&'.'));
         }
         text.push('\n');
     }
-    text.push_str("Height profile (piece index, end height in metres):\n");
+    text.push_str("Height profile (piece index, id, end tile, end height and highest point in metres):\n");
     let mut profile = Vec::new();
     for (piece_index, piece) in construction.pieces().iter().enumerate() {
-        let height = piece.exit.position().z / 4.0;
-        writeln!(text, "{piece_index:>3} {height:>7.1}").unwrap();
-        profile.push(json!({"pieceIndex": piece_index, "heightMetres": height}));
+        let exit = piece.exit.position();
+        let highest = samples
+            .iter()
+            .filter(|sample| sample.0 == piece_index)
+            .map(|sample| sample.3)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let (tile_x, tile_y) = (exit.x / METRES_PER_TILE, exit.y / METRES_PER_TILE);
+        writeln!(
+            text,
+            "{piece_index:>3} {:<28} ({tile_x:>6.1}, {tile_y:>6.1}) {:>6.1} {highest:>6.1}",
+            format!("{:?}", piece.id),
+            exit.z
+        )
+        .unwrap();
+        profile.push(json!({
+            "pieceIndex": piece_index,
+            "id": format!("{:?}", piece.id),
+            "endTile": {"x": tile_x, "y": tile_y},
+            "heightMetres": exit.z,
+            "highestMetres": highest,
+        }));
     }
     let footprint: Vec<_> = text
         .lines()
