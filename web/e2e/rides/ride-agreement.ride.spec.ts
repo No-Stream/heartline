@@ -37,7 +37,7 @@ for (const { stem, ride } of rides) {
     test.setTimeout(360_000);
     const nativeCheck = runNativeCheck(stem);
     const pageErrors: string[] = [];
-    page.on("pageerror", (error) => pageErrors.push(error.message));
+    page.on("pageerror", (error) => pageErrors.push(`${error.message}\n${error.stack ?? "(no stack)"}`));
 
     await startPark(page, { park: "new", seed: 149, speed: 1, testMode: true });
     await placeStation(page, {
