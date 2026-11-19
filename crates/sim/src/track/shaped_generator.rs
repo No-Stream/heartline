@@ -73,6 +73,10 @@ pub enum CellFailure {
     TurnRadiusOutOfRange {
         radius_m: f64,
     },
+    MinimumRadiusMiss {
+        minimum_m: f64,
+        observed_m: f64,
+    },
     PreviewUnavailable,
     PreviewDidNotReachEnd(PreviewStatus),
     WrongCarCount {
@@ -394,6 +398,14 @@ pub fn search_hill_candidates_for_model(
                 continue;
             }
         };
+        if let Some(failure) = minimum_radius_failure(&model, &piece) {
+            attempts.push(CandidateSearchAttempt {
+                spec: Some(spec),
+                failure: Some(failure),
+                measurements: Vec::new(),
+            });
+            continue;
+        }
         let measurements = verify_candidate(&model, &piece, entry_speed_mps);
         let failure = measurements.iter().find_map(|measurement| {
             measurement_failure(
@@ -472,6 +484,18 @@ fn generate_cell(model: &CoasterModel, element: GridElement, speed_mps: f64) -> 
             };
         }
     };
+    if let Some(failure) = minimum_radius_failure(model, &piece) {
+        return GeneratedGridCell {
+            model_key: model.key,
+            cars: model.train.cars,
+            element,
+            entry_speed_mps: speed_mps,
+            outcome: GridCellOutcome::Unresolved {
+                failure,
+                measurements: Vec::new(),
+            },
+        };
+    }
     if let GeneratedSpec::Turn { bank_degrees, .. } = spec
         && bank_degrees > model.shaped_element_rules().maximum_bank_degrees
     {
@@ -506,6 +530,14 @@ fn generate_cell(model: &CoasterModel, element: GridElement, speed_mps: f64) -> 
             None => GridCellOutcome::Solved { spec, measurements },
         },
     }
+}
+
+fn minimum_radius_failure(model: &CoasterModel, piece: &Piece) -> Option<CellFailure> {
+    let observed_m = piece.maximum_curvature().recip();
+    (observed_m < model.minimum_radius_metres).then_some(CellFailure::MinimumRadiusMiss {
+        minimum_m: model.minimum_radius_metres,
+        observed_m,
+    })
 }
 
 fn generate_hill_candidate(
@@ -980,6 +1012,36 @@ mod tests {
         let four_cars = model_for_train_length(&hyper, 4);
         assert_eq!(four_cars.train.cars, 4);
         assert!((four_cars.train.length_metres - 4.0 * one_car_length).abs() < 1e-12);
+    }
+
+    #[test]
+    fn hybrid_low_speed_candidate_below_minimum_radius_is_rejected() {
+        let hybrid = coaster_models()
+            .into_iter()
+            .find(|model| model.key == "hybrid")
+            .expect("hybrid model exists");
+        let model = model_for_train_length(&hybrid, 4);
+        let (_, piece) = super::generate_hill_candidate(&model, -0.9, 14.0)
+            .expect("the diagnostic candidate can be constructed");
+        assert!(matches!(
+            super::minimum_radius_failure(&model, &piece),
+            Some(super::CellFailure::MinimumRadiusMiss { .. })
+        ));
+        let cell = super::generate_cell(
+            &model,
+            GridElement::Hill {
+                feel: HillFeel::StrongFloater,
+                strength_g: -0.9,
+            },
+            14.0,
+        );
+        assert!(matches!(
+            cell.outcome,
+            GridCellOutcome::Unresolved {
+                failure: super::CellFailure::MinimumRadiusMiss { .. },
+                ..
+            }
+        ));
     }
 
     #[test]
