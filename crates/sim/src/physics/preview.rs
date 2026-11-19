@@ -298,17 +298,17 @@ impl PreviewCache {
         self.closed = closed;
         let max_steps = (PREVIEW_MAX_SECONDS / TIME_STEP) as usize;
         for step in start_step..max_steps {
-            let previous_train = train.clone();
-            let previous_distance = previous_train.distance();
-            let previous_speed = previous_train.speed();
+            let previous_train = candidate_piece_index.is_none().then(|| train.clone());
+            let previous_distance = train.distance();
+            let previous_speed = train.speed();
             train.step_preview_all_cars(&circuit, TIME_STEP);
             let boundary = circuit
                 .starts
                 .partition_point(|start| *start <= train.distance());
             let previous_boundary = circuit
                 .starts
-                .partition_point(|start| *start <= previous_train.distance());
-            let crossed_end = previous_train.distance() < length && train.distance() >= length;
+                .partition_point(|start| *start <= previous_distance);
+            let crossed_end = previous_distance < length && train.distance() >= length;
             let snapshot_boundary = if crossed_end {
                 pieces.len()
             } else {
@@ -323,7 +323,7 @@ impl PreviewCache {
             {
                 self.snapshots.push(Snapshot {
                     boundary: snapshot_boundary,
-                    train: previous_train,
+                    train: previous_train.expect("track preview retains snapshot state"),
                     recorder: recorder
                         .as_ref()
                         .expect("track previews retain a recorder")
