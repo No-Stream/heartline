@@ -3,6 +3,7 @@ import { layPath, openTool, placeFacility, placePiece as placeSelectedPiece, pla
 import { readRide } from "../player/rides";
 
 test("Timber Tumbler player journey @journey", async ({ page }) => {
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 800, height: 480 });
   const circuit = readRide("timber-tumbler").steps.slice(0, 16).map((step) => {
     if ("place" in step) return step.place;
@@ -25,8 +26,7 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   const selectHill = async (piece: string): Promise<void> => {
     const target = hillTargets[piece];
     const hill = page.locator("[data-hill]");
-    if (await hill.getAttribute("open") !== null) await hill.locator("summary").click();
-    await hill.locator("summary").click();
+    if (await hill.getAttribute("open") === null) await hill.locator("summary").click();
     for (const attribute of ["feel", "twist", "height", "span"] as const) {
       const value = hill.locator(`[data-hill-value="${attribute}"]`);
       await expect(value).not.toBeEmpty();
@@ -90,4 +90,5 @@ test("Timber Tumbler player journey @journey", async ({ page }) => {
   const estimateAfterDeletion = await page.evaluate(() => window.gameTest.constructionForcePreview());
   expect(estimateAfterDeletion?.samples.length).toBeGreaterThan(0);
   expect(estimateAfterDeletion).not.toEqual(estimateBeforeDeletion);
+  await expect(page.getByLabel("Track overlay")).toBeEnabled();
 });

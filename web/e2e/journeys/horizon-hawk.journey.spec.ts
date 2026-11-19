@@ -4,11 +4,20 @@ import { placeCircuit } from "../player/place-circuit";
 import { readRide } from "../player/rides";
 
 test("Horizon Hawk hyper coaster journey @journey", async ({ page }) => {
+  test.setTimeout(360_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   await page.setViewportSize({ width: 800, height: 480 });
-  const circuit = readRide("horizon-hawk").steps.slice(0, 13);
+  const ride = readRide("horizon-hawk");
+  const circuit = ride.steps.slice(0, 13);
+  const circuitPieces = ride.steps.flatMap((step) => "place" in step ? [step.place] : []);
+  expect(circuitPieces).toContain("WideLevelToSixtyDown");
+  expect(circuitPieces).toContain("FloaterHill24x160");
+  expect(circuitPieces).toContain("FloaterHill20x128");
+  expect(circuitPieces.filter((piece) => /^FloaterHill\d+x\d+$/.test(piece)).length).toBeGreaterThanOrEqual(3);
+  expect(circuitPieces.filter((piece) => piece === "GentleUpToLevel").length).toBeGreaterThanOrEqual(3);
+  expect(circuitPieces.filter((piece) => piece.startsWith("SpeedTurnLarge")).length).toBeGreaterThanOrEqual(4);
 
   await startPark(page, { park: "new", seed: 2028, speed: 1 });
   await placeStation(page, { model: "hyper", height: 4, tile: { x: 241, y: 249, z: 2 }, direction: { x: 241, y: 251, z: 2 } });

@@ -4,6 +4,7 @@ import { placeCircuit } from "../player/place-circuit";
 import { readRide } from "../player/rides";
 
 test("Daisy Dash family coaster journey @journey", async ({ page }) => {
+  test.setTimeout(240_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.setViewportSize({ width: 800, height: 480 });

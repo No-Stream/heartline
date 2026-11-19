@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { candidateForceReadout, hillReadout } from "../../src/candidate-force-readout";
 import type { TestingReport } from "../../src/generated/TestingReport";
 import type { CoasterModelKey } from "../../src/generated/coaster-models";
+import { parseReplaySession } from "../../src/session-replay";
 import { advanceUntilState, clickCanvas, openTool, placeStation, selectUnits, setGameSpeed, showBuilderTab, startPark, testRide } from "../player/driver";
 import { placeCircuit } from "../player/place-circuit";
 import { expectRideReportExplained } from "../player/ride-report";
@@ -58,7 +60,10 @@ for (const { stem, ride } of rides) {
 
     const expectedByStep = new Map(nativeCheck.browserEstimates.map((estimate) => [estimate.stepIndex, estimate]));
     let estimateComparisons = 0;
-    await placeCircuit(page, ride.steps, {
+    const placementSteps = stem === "velocity-viper"
+      ? ride.steps.filter((step) => !("close" in step))
+      : ride.steps;
+    await placeCircuit(page, placementSteps, {
       carsPerTrain: ride.carsPerTrain,
       onEstimate: async (phase, step, stepNumber) => {
         if (!("place" in step)) throw new Error(`Estimate callback for non-placement step ${stepNumber}`);
@@ -123,16 +128,43 @@ for (const { stem, ride } of rides) {
     expect(estimateComparisons).toBe(nativeCheck.browserEstimates.length * 2);
 
     await showBuilderTab(page, "Build");
-    await expect(page.getByRole("button", { name: "Test coaster" })).toBeEnabled();
+    const closeCircuitButton = page.getByRole("button", { name: "Close circuit" });
+    const testCoasterButton = page.getByRole("button", { name: "Test coaster" });
+    if (stem === "velocity-viper") {
+      await expect(closeCircuitButton).toBeEnabled();
+      await expect(testCoasterButton).toBeDisabled();
+      await page.locator("canvas").focus();
+      await page.keyboard.press("c");
+      await expect(closeCircuitButton).toBeDisabled();
+      await expect(testCoasterButton).toBeEnabled();
+    } else {
+      await expect(closeCircuitButton).toBeDisabled();
+      await expect(testCoasterButton).toBeEnabled();
+    }
     const crestBurstsBeforeTest = stem === "briar-blitz" || stem === "velocity-viper"
       ? await page.evaluate(() => window.gameTest.crestBursts().length)
       : null;
     if (stem === "velocity-viper") await setGameSpeed(page, 16);
-    await testRide(page);
+    if (stem === "velocity-viper") {
+      await openTool(page, "Coaster");
+      await page.locator("canvas").focus();
+      await page.keyboard.press("t");
+    } else {
+      await testRide(page);
+    }
     await advanceUntilState(page, async () => !!(await page.evaluate(() => window.gameTest.testingReport())), { ticks: 40_000 });
 
     const report = await expectRideReportExplained(page);
     expectRideTargets(ride, report);
+    if (stem === "horizon-hawk") {
+      expect(report.statistics.launches).toBe(0);
+      expect(report.statistics.maxNegativeVerticalG).toBeGreaterThanOrEqual(-1.3);
+    }
+    if (stem === "daisy-dash") {
+      expect(report.statistics.maxPositiveVerticalG).toBeLessThanOrEqual(3);
+      expect(report.statistics.maxNegativeVerticalG).toBeGreaterThanOrEqual(-0.6);
+      expect(report.statistics.maxLateralG).toBeLessThanOrEqual(1);
+    }
     expect(report.notes.join(" ")).not.toMatch(/could not finish|rolled back|rated speed band/i);
     await expect(page.getByRole("region", { name: "Coaster construction" }).getByRole("status"))
       .toHaveText("Train completed a lap.");
@@ -173,6 +205,21 @@ for (const { stem, ride } of rides) {
       await clickCanvas(page, overlayPick);
       await expect(page.locator("[data-inspection]")).toContainText("Vertical:");
       expectNoPageErrors(pageErrors, "after Timber overlay inspection");
+
+      if (process.env.RECORD_JOURNEY_SESSIONS === "1") {
+        await expect(page.getByRole("button", { name: "Close circuit" })).toBeDisabled();
+        await openTool(page, "Watch");
+        const downloadPromise = page.waitForEvent("download");
+        await page.getByRole("button", { name: "Export session", exact: true }).click();
+        const download = await downloadPromise;
+        expect(download.suggestedFilename()).toMatch(/^session-.*\.json$/);
+        const recordingPath = await download.path();
+        if (!recordingPath) throw new Error("The exported Timber journey session is unavailable");
+        const session = parseReplaySession(JSON.parse(await readFile(recordingPath, "utf8")) as unknown);
+        const sessionPath = fileURLToPath(new URL("../sessions/timber-tumbler-built.json", import.meta.url));
+        await writeFile(sessionPath, `${JSON.stringify({ ...session, expect: { constructionClosed: true } }, null, 2)}\n`);
+        await openTool(page, "Coaster");
+      }
     }
     if (stem === "velocity-viper") await expectLaunchReport(page, report);
     await reportCheckResults(testInfo, ride, nativeCheck, report);
@@ -243,10 +290,7 @@ async function expectVelocityViperTestingPanelScreenshot(page: Page): Promise<vo
   });
   const panelHeight = await testingPanel.evaluate((element) => Math.ceil(element.getBoundingClientRect().height));
   await page.setViewportSize({ width: 1280, height: Math.max(720, panelHeight + 100) });
-  const snapshotPath = process.env.THEME_PARK_PLAYWRIGHT_DOCKER === "1"
-    ? ["..", "..", "..", "journeys", "velocity-viper.journey.spec.ts-snapshots", "coaster-testing-panel.png"]
-    : ["..", "..", "journeys", "velocity-viper.journey.spec.ts-snapshots", "coaster-testing-panel.png"];
-  await expect(testingPanel).toHaveScreenshot(snapshotPath, { animations: "disabled" });
+  await expect(testingPanel).toHaveScreenshot("coaster-testing-panel.png", { animations: "disabled" });
   await page.setViewportSize({ width: 1280, height: 720 });
 }
 

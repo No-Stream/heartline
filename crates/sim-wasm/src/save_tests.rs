@@ -1,5 +1,5 @@
 use crate::WasmSimulation;
-use theme_park_sim::track::ride_file::{RideFile, RideHeading, RideStep};
+use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::{HillFeel, PieceFamily, PieceId};
 
 fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId> {
@@ -8,12 +8,7 @@ fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId
     ))
     .expect("Timber Tumbler ride file is valid");
     simulation.construction_select(&format!("model:{}", ride.model));
-    simulation.construction_start(
-        ride.station.x * 2,
-        ride.station.y * 2,
-        ride.station.z / 2,
-        heading_for_worker(ride.station.heading),
-    );
+    simulation.construction_start(200, 200, 40, 2);
 
     for step in &ride.steps {
         match step {
@@ -70,15 +65,6 @@ fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId
     simulation.construction_close();
     assert!(simulation.construction_message().is_empty());
     hill_piece_ids
-}
-
-fn heading_for_worker(heading: RideHeading) -> u8 {
-    match heading {
-        RideHeading::East => 0,
-        RideHeading::North => 2,
-        RideHeading::West => 4,
-        RideHeading::South => 6,
-    }
 }
 
 #[test]
