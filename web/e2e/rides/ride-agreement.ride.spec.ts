@@ -1,16 +1,15 @@
-import { execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type TestInfo } from "@playwright/test";
 import { candidateForceReadout, hillReadout } from "../../src/candidate-force-readout";
 import type { TestingReport } from "../../src/generated/TestingReport";
 import type { CoasterModelKey } from "../../src/generated/coaster-models";
-import { advanceUntilState, placeStation, showBuilderTab, startPark, testRide } from "../player/driver";
+import { advanceUntilState, flattenTerrainTiles, placeStation, showBuilderTab, startPark, testRide } from "../player/driver";
 import { placeCircuit } from "../player/place-circuit";
 import { expectRideReportExplained } from "../player/ride-report";
 import { readRide, type RideFile } from "../player/rides";
+import { runDesignJson } from "./design-json";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const ridesDirectory = resolve(repositoryRoot, "content/rides");
@@ -31,6 +30,7 @@ if (requestedRide && selectedRideStems.length === 0) {
 const rides = selectedRideStems.map((stem) => ({ stem, ride: readRide(stem) }));
 
 const newParkSurfaceHeight = 8;
+const minimumStationHeight = 4;
 const browserAgreementFastRide = "browser-agreement-fast";
 
 for (const { stem, ride } of rides) {
@@ -41,10 +41,15 @@ for (const { stem, ride } of rides) {
     page.on("pageerror", (error) => pageErrors.push(`${error.message}\n${error.stack ?? "(no stack)"}`));
 
     await startPark(page, { park: "new", seed: 149, speed: 1, testMode: true });
+    const stationHeight = Math.max(minimumStationHeight, ride.station.z - newParkSurfaceHeight);
+    const stationSurfaceHeight = ride.station.z - stationHeight;
+    if (stationSurfaceHeight !== newParkSurfaceHeight) {
+      await flattenTerrainTiles(page, [{ x: ride.station.x, y: ride.station.y, height: stationSurfaceHeight }]);
+    }
     await placeStation(page, {
       model: ride.model as CoasterModelKey,
-      height: ride.station.z - newParkSurfaceHeight,
-      tile: { x: ride.station.x, y: ride.station.y, z: 2 },
+      height: stationHeight,
+      tile: { x: ride.station.x, y: ride.station.y, z: stationSurfaceHeight / 4 },
       direction: stationDirection(ride.station.x, ride.station.y, ride.station.heading),
     });
 
@@ -222,36 +227,19 @@ function stationDirection(x: number, y: number, heading: RideFile["station"]["he
 
 function runNativeCheck(stem: string): NativeRideCheckWithSamples {
   const ridePath = resolve(ridesDirectory, `${stem}.ride.json`);
-  const result = runDesignJson<NativeRideCheck[]>([
+  const result = runDesignJson<NativeRideCheck[]>(resolve(repositoryRoot, "tools/design"), [
     "check",
     "--json",
     ridePath,
-  ])[0];
+  ], repositoryRoot)[0];
   if (!result) throw new Error(`Native design check omitted ${stem}`);
-  const rideTest = runDesignJson<NativeRideTest>(["ride", ridePath, "test", "--json"]);
+  const rideTest = runDesignJson<NativeRideTest>(
+    resolve(repositoryRoot, "tools/design"),
+    ["ride", ridePath, "test", "--json"],
+    repositoryRoot,
+  );
   if (!rideTest.testRun) throw new Error(`Native test report omitted ${stem}`);
   return { ...result, reportSamples: rideTest.testRun.samples };
-}
-
-function runDesignJson<T>(arguments_: readonly string[]): T {
-  const temporaryDirectory = mkdtempSync(join(tmpdir(), "ride-agreement-"));
-  const outputPath = join(temporaryDirectory, "design-output.json");
-  writeFileSync(outputPath, "");
-  try {
-    const outputDescriptor = openSync(outputPath, "w");
-    try {
-      execFileSync(resolve(repositoryRoot, "tools/design"), [...arguments_], {
-        cwd: repositoryRoot,
-        stdio: ["ignore", outputDescriptor, "inherit"],
-      });
-    } finally {
-      closeSync(outputDescriptor);
-    }
-    return JSON.parse(readFileSync(outputPath, "utf8")) as T;
-  } finally {
-    unlinkSync(outputPath);
-    rmdirSync(temporaryDirectory);
-  }
 }
 
 function firstMismatch(expected: unknown, actual: unknown, path: string): string | null {

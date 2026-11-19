@@ -4,10 +4,7 @@ use super::{
     TIME_STEP, TestRun, TestRunRecorder, Train,
 };
 use crate::state_hash::StateHasher;
-use crate::track::{
-    Bank, CoasterModel, HorizontalCurvature, Piece, PieceId, PieceKind, Slope, TrackState,
-    VerticalCurvature, catalog,
-};
+use crate::track::{CoasterModel, Piece, PieceKind, TrackState};
 
 const PREVIEW_MAX_SECONDS: f64 = 1000.0;
 
@@ -85,7 +82,7 @@ impl PreviewCache {
         let source_piece_count = source_circuit.pieces.len();
         let mut simulation_pieces = source_circuit.pieces.clone();
         if !closed {
-            simulation_pieces.extend(virtual_level_runout(
+            simulation_pieces.extend(virtual_tangent_runout(
                 pieces.last().unwrap().exit,
                 configuration.length_metres,
             ));
@@ -328,32 +325,10 @@ fn circuit_from_pieces(pieces: Vec<Piece>, open: bool) -> Circuit {
     }
 }
 
-/// Builds a horizontal, unbanked extension from the open connector's position and heading.
-/// The first segment resets slope and bank at the connector to model unknown track as level.
-pub fn virtual_level_runout(end: TrackState, minimum_length: f64) -> Vec<Piece> {
+/// Builds a straight extension that continues the open connector's tangent and bank.
+pub fn virtual_tangent_runout(end: TrackState, minimum_length: f64) -> Vec<Piece> {
     assert!(minimum_length.is_finite() && minimum_length > 0.0);
-    let straight = catalog()
-        .iter()
-        .find(|piece| piece.id == PieceId::Straight)
-        .expect("catalog has a straight piece");
-    let mut entry = TrackState {
-        slope: Slope::Level,
-        bank: Bank::Level,
-        horizontal_curvature: HorizontalCurvature::Straight,
-        vertical_curvature: VerticalCurvature::Straight,
-        ..end
-    };
-    let mut runout = Vec::new();
-    let mut length = 0.0;
-    while length < minimum_length {
-        let piece = straight
-            .at(entry)
-            .expect("level straight can be placed at its level connector");
-        length += piece.length();
-        entry = piece.exit;
-        runout.push(piece);
-    }
-    runout
+    vec![Piece::virtual_tangent_runout(end, minimum_length)]
 }
 
 /// Simulate a train from the station across placed track and a virtual run-out.

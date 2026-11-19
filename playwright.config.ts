@@ -24,6 +24,7 @@ export default defineConfig({
   projects: [
     {
       name: "feature",
+      testMatch: "**/*.spec.ts",
       testIgnore: ["**/*.journey.spec.ts", "**/smoothness.spec.ts", "**/*.ride.spec.ts"],
       workers: process.env.THEME_PARK_PLAYWRIGHT_DOCKER === "1" ? 1 : 2,
     },

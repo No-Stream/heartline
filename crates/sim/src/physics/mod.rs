@@ -32,7 +32,7 @@ pub use testing::{
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};
 mod preview;
-pub use preview::virtual_level_runout;
+pub use preview::virtual_tangent_runout;
 pub use preview::{PreviewCache, PreviewStatus, TrackPreview, preview_open_track};
 mod block_operation;
 pub use block_operation::BlockOperation;

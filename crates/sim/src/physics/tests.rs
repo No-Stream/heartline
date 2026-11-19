@@ -409,39 +409,76 @@ fn open_track_preview_accepts_a_short_track_at_the_test_start() {
 }
 
 #[test]
-fn virtual_runout_is_level_and_covers_the_full_train_from_any_connector() {
-    let end = TrackState {
-        x: 12,
-        y: -8,
-        z: 4,
-        heading: Heading::NorthWest,
-        slope: Slope::UpGentle,
-        bank: Bank::Left,
-        horizontal_curvature: HorizontalCurvature::Straight,
-        vertical_curvature: VerticalCurvature::Straight,
-    };
+fn virtual_runout_preserves_endpoint_pitch_and_bank_until_the_train_clears() {
+    let headings = [
+        Heading::East,
+        Heading::NorthEast,
+        Heading::North,
+        Heading::NorthWest,
+        Heading::West,
+        Heading::SouthWest,
+        Heading::South,
+        Heading::SouthEast,
+    ];
+    let slopes = [
+        Slope::DownSteep,
+        Slope::DownSixty,
+        Slope::DownModerate,
+        Slope::DownGentle,
+        Slope::Level,
+        Slope::UpGentle,
+        Slope::UpModerate,
+        Slope::UpSteep,
+        Slope::UpSixty,
+    ];
+    let banks = [Bank::Right, Bank::Level, Bank::Left, Bank::Inverted];
 
-    let runout = preview::virtual_level_runout(end, 20.0);
+    for heading in headings {
+        for slope in slopes {
+            for bank in banks {
+                let end = TrackState {
+                    x: 12,
+                    y: -8,
+                    z: 4,
+                    heading,
+                    slope,
+                    bank,
+                    horizontal_curvature: HorizontalCurvature::LeftSmall,
+                    vertical_curvature: VerticalCurvature::Down,
+                };
+                let runout = preview::virtual_tangent_runout(end, 20.0);
 
-    assert!(!runout.is_empty());
-    assert!(runout.iter().map(Piece::length).sum::<f64>() >= 20.0);
-    assert_eq!(runout[0].entry.position(), end.position());
-    assert_eq!(runout[0].entry.heading, end.heading);
-    assert!(runout.iter().all(|piece| {
-        piece.entry.slope == Slope::Level
-            && piece.exit.slope == Slope::Level
-            && piece.entry.bank == Bank::Level
-            && piece.exit.bank == Bank::Level
-            && piece.entry.horizontal_curvature == HorizontalCurvature::Straight
-            && piece.exit.horizontal_curvature == HorizontalCurvature::Straight
-            && piece.entry.vertical_curvature == VerticalCurvature::Straight
-            && piece.exit.vertical_curvature == VerticalCurvature::Straight
-    }));
-    assert!(runout.windows(2).all(|pair| pair[0].exit == pair[1].entry));
-    assert!(runout.iter().all(|piece| {
-        piece.sample(0.0).tangent.z.abs() < 1e-9
-            && piece.sample(piece.length()).tangent.z.abs() < 1e-9
-    }));
+                assert_eq!(runout.len(), 1);
+                let piece = &runout[0];
+                assert!(piece.length() >= 20.0);
+                assert_eq!(piece.entry.position(), end.position());
+                assert_eq!(piece.entry.heading, end.heading);
+                assert_eq!(piece.entry.slope, end.slope);
+                assert_eq!(piece.exit.slope, end.slope);
+                assert_eq!(piece.entry.bank, end.bank);
+                assert_eq!(piece.exit.bank, end.bank);
+                assert_eq!(
+                    piece.entry.horizontal_curvature,
+                    HorizontalCurvature::Straight
+                );
+                assert_eq!(
+                    piece.exit.horizontal_curvature,
+                    HorizontalCurvature::Straight
+                );
+                assert_eq!(piece.entry.vertical_curvature, VerticalCurvature::Straight);
+                assert_eq!(piece.exit.vertical_curvature, VerticalCurvature::Straight);
+
+                for distance in [0.0, piece.length() / 2.0, piece.length()] {
+                    let sample = piece.sample(distance);
+                    let expected_position = end.position() + end.tangent() * distance;
+                    assert!((sample.position - expected_position).length() < 1e-9);
+                    assert!((sample.tangent - end.tangent()).length() < 1e-9);
+                    assert!(sample.curvature < 1e-12);
+                    assert!((sample.roll - bank.radians()).abs() < 1e-9);
+                }
+            }
+        }
+    }
 }
 
 #[test]

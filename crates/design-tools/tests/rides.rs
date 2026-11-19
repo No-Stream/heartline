@@ -234,6 +234,45 @@ fn agreement_command_prints_the_force_values_for_a_closed_ride() {
 }
 
 #[test]
+fn timber_tumbler_steepening_descent_placement_matches_the_closed_run() {
+    let timber_tumbler = ride_files()
+        .into_iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == "timber-tumbler.ride.json")
+        })
+        .unwrap();
+    let output = run_cli(
+        &[
+            "ride".into(),
+            timber_tumbler.display().to_string(),
+            "agreement".into(),
+            "--json".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    let report: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let piece = report["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["pieceName"] == "GentleToSteepDown")
+        .unwrap();
+    let placement_longitudinal = piece["placementEstimate"]["maximumLongitudinalG"]
+        .as_f64()
+        .unwrap();
+    let measured_longitudinal = piece["measuredWorst"]["maximumLongitudinalG"]
+        .as_f64()
+        .unwrap();
+
+    assert!(
+        (placement_longitudinal - measured_longitudinal).abs() <= 0.3,
+        "Timber Tumbler GentleToSteepDown placement estimate {placement_longitudinal:.3} g differs from its closed-run measurement {measured_longitudinal:.3} g"
+    );
+}
+
+#[test]
 fn check_prints_observed_values_for_passing_and_failing_expectations() {
     let ride = TempRide::new();
     write_expectation_failure_ride(

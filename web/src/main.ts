@@ -1,4 +1,5 @@
 import { createParkSaves } from "./park-saves";
+import { canvasBackingSizeForBounds } from "./canvas-sizing";
 import { landscapingTileFromPick, sceneryTileFromPick, entityIdFromPick, facilityIdFromPick, blockBoundaryIndexFromPick, facilityTileFromPicks, stationTileFromSurfacePick } from "./world-picking";
 import { createStationTool } from "./station-tool";
 import { createFacilityTool } from "./facility-tool";
@@ -304,14 +305,13 @@ dayClock.setPaused(gamePause.isPaused());
 /** Size the canvas backing store to its displayed size in device pixels, so the park is drawn sharp at any pixel ratio. */
 function fitCanvas(keepCorner = true): void {
   const bounds = gameCanvas.getBoundingClientRect();
-  const width = Math.round(bounds.width * devicePixelRatio);
-  const height = Math.round(bounds.height * devicePixelRatio);
-  if (width === gameCanvas.width && height === gameCanvas.height) return;
+  const size = canvasBackingSizeForBounds(bounds, devicePixelRatio);
+  if (!size || (size.width === gameCanvas.width && size.height === gameCanvas.height)) return;
   const previous = cssViewport();
-  gameCanvas.width = width;
-  gameCanvas.height = height;
-  viewport = { width, height };
-  pixelRatio = width / bounds.width;
+  gameCanvas.width = size.width;
+  gameCanvas.height = size.height;
+  viewport = { width: size.width, height: size.height };
+  pixelRatio = size.pixelRatio;
   // Keep the top-left corner of the park still, so opening a tool covers the right of the view instead of sliding it.
   if (keepCorner) camera = applyCameraAction(camera, cssViewport(), { type: "pan", dx: (previous.width - bounds.width) / 2, dy: (previous.height - bounds.height) / 2 });
   renderRevision.invalidate();
