@@ -2031,6 +2031,7 @@ pub(crate) fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<Str
         return Vec::new();
     };
     let mut failures = Vec::new();
+    let sustained = test_run.sustained_force_peaks();
     if let Some([minimum, maximum]) = expect.excitement {
         if !(minimum..=maximum).contains(&test_run.excitement) {
             failures.push(format!(
@@ -2040,18 +2041,22 @@ pub(crate) fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<Str
         }
     }
     if let Some([minimum, maximum]) = expect.sustained_max_vertical_g {
-        let observed = test_run.statistics.max_positive_vertical_g;
-        if !(minimum..=maximum).contains(&observed) {
+        let observed = sustained.maximum_vertical_g;
+        if observed.is_none_or(|value| !(minimum..=maximum).contains(&value)) {
+            let observed =
+                observed.map_or_else(|| "not measured".to_owned(), |value| format!("{value:.2}"));
             failures.push(format!(
-                "maximum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed:.2}"
+                "maximum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed}"
             ));
         }
     }
     if let Some([minimum, maximum]) = expect.sustained_min_vertical_g {
-        let observed = test_run.statistics.max_negative_vertical_g;
-        if !(minimum..=maximum).contains(&observed) {
+        let observed = sustained.minimum_vertical_g;
+        if observed.is_none_or(|value| !(minimum..=maximum).contains(&value)) {
+            let observed =
+                observed.map_or_else(|| "not measured".to_owned(), |value| format!("{value:.2}"));
             failures.push(format!(
-                "minimum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed:.2}"
+                "minimum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed}"
             ));
         }
     }
@@ -2218,5 +2223,114 @@ mod replay_snapshot_tests {
 
         assert!(loaded.is_none());
         fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod expectation_tests {
+    use super::*;
+    use theme_park_sim::track::ride_file::RideExpect;
+
+    #[test]
+    fn sustained_expectations_ignore_short_peak_stats_but_check_held_force() {
+        let mut ride: RideFile = serde_json::from_str(include_str!(
+            "../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .unwrap();
+        let (base_test_run, _) = test_ride(&ride).unwrap();
+        let base_sustained = base_test_run.sustained_force_peaks();
+        let maximum_vertical_g = base_sustained.maximum_vertical_g.unwrap();
+        let minimum_vertical_g = base_sustained.minimum_vertical_g.unwrap();
+        let brief_positive_peak = maximum_vertical_g + 0.5;
+        let brief_negative_peak = minimum_vertical_g - 0.5;
+        let test_run = with_brief_per_car_peaks(
+            &base_test_run,
+            maximum_vertical_g + 0.01,
+            minimum_vertical_g - 0.01,
+            brief_positive_peak,
+            brief_negative_peak,
+        );
+        let sustained_after_brief_peaks = test_run.sustained_force_peaks();
+        assert_eq!(
+            sustained_after_brief_peaks.maximum_vertical_g,
+            base_sustained.maximum_vertical_g
+        );
+        assert_eq!(
+            sustained_after_brief_peaks.minimum_vertical_g,
+            base_sustained.minimum_vertical_g
+        );
+
+        ride.expect = Some(RideExpect {
+            sustained_max_vertical_g: Some([maximum_vertical_g - 0.01, maximum_vertical_g + 0.01]),
+            sustained_min_vertical_g: Some([minimum_vertical_g - 0.01, minimum_vertical_g + 0.01]),
+            ..RideExpect::default()
+        });
+
+        assert!(check_expectations(&ride, &test_run).is_empty());
+
+        let expect = ride.expect.as_mut().unwrap();
+        expect.sustained_max_vertical_g =
+            Some([maximum_vertical_g + 0.1, maximum_vertical_g + 0.2]);
+        expect.sustained_min_vertical_g =
+            Some([minimum_vertical_g - 0.2, minimum_vertical_g - 0.1]);
+        let failures = check_expectations(&ride, &test_run);
+        assert_eq!(failures.len(), 2);
+        assert!(failures[0].starts_with("maximum vertical g expected"));
+        assert!(failures[1].starts_with("minimum vertical g expected"));
+    }
+
+    fn with_brief_per_car_peaks(
+        test_run: &TestRun,
+        maximum_target: f64,
+        minimum_target: f64,
+        brief_positive_peak: f64,
+        brief_negative_peak: f64,
+    ) -> TestRun {
+        let mut test_run_value = serde_json::to_value(test_run).unwrap();
+        let per_car_samples = test_run_value["rating_inputs"][0]["samples"]
+            .as_array_mut()
+            .unwrap();
+        let positive_sample_index = brief_sample_index(per_car_samples, maximum_target, true);
+        let negative_sample_index = brief_sample_index(per_car_samples, minimum_target, false);
+        assert_ne!(positive_sample_index, negative_sample_index);
+        per_car_samples[positive_sample_index]["vertical_g"] = json!(brief_positive_peak);
+        per_car_samples[negative_sample_index]["vertical_g"] = json!(brief_negative_peak);
+        test_run_value["statistics"]["max_positive_vertical_g"] = json!(brief_positive_peak);
+        test_run_value["statistics"]["max_negative_vertical_g"] = json!(brief_negative_peak);
+
+        serde_json::from_value(test_run_value).unwrap()
+    }
+
+    fn brief_sample_index(samples: &[Value], target: f64, positive: bool) -> usize {
+        (1..samples.len() - 1)
+            .find(|&sample_index| {
+                let previous = &samples[sample_index - 1];
+                let sample = &samples[sample_index];
+                let next = &samples[sample_index + 1];
+                let vertical_g = sample["vertical_g"].as_f64().unwrap();
+                let previous_vertical_g = previous["vertical_g"].as_f64().unwrap();
+                let next_vertical_g = next["vertical_g"].as_f64().unwrap();
+                let neighbor_force_clearance = if positive {
+                    previous_vertical_g < target && next_vertical_g < target
+                } else {
+                    previous_vertical_g > target && next_vertical_g > target
+                };
+                let local_duration_seconds = (next["distance"].as_f64().unwrap()
+                    - previous["distance"].as_f64().unwrap())
+                    / ((previous["speed"].as_f64().unwrap()
+                        + 2.0 * sample["speed"].as_f64().unwrap()
+                        + next["speed"].as_f64().unwrap())
+                        / 4.0);
+                neighbor_force_clearance
+                    && local_duration_seconds < 0.3
+                    && if positive {
+                        vertical_g > 0.0
+                    } else {
+                        vertical_g < 0.0
+                    }
+            })
+            .expect(
+                "Horizon Hawk per-car samples must contain a short positive and negative interval",
+            )
     }
 }

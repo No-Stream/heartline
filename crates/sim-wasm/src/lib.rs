@@ -457,6 +457,7 @@ fn path_error_code(error: PathBuildError) -> i32 {
         PathBuildError::QueueConnections => 7,
         PathBuildError::FacilityOccupied => 8,
         PathBuildError::FacilityAccess => 9,
+        PathBuildError::SupportRoute => 13,
     }
 }
 

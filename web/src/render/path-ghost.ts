@@ -19,6 +19,7 @@ export function pathRefusal(code: number): string | null {
     "Unknown path kind",
     "Path route needs six coordinates",
     "Path coordinates are outside the supported range",
+    "Path would block coaster supports",
   ];
   if (!Number.isInteger(code) || code < 0 || code >= reasons.length) throw new Error("Invalid path preview refusal");
   return reasons[code];

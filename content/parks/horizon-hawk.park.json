@@ -17,7 +17,11 @@
       { "command": "flatten", "parameters": [241, 251, 1, 0, 0, 10, 0, 0] },
       { "command": "flatten", "parameters": [242, 251, 1, 0, 0, 10, 0, 0] },
       { "command": "flatten", "parameters": [243, 251, 1, 0, 0, 10, 0, 0] },
-      { "command": "flatten", "parameters": [244, 251, 1, 0, 0, 10, 0, 0] }
+      { "command": "flatten", "parameters": [244, 251, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [239, 252, 1, 0, 0, 9, 0, 0] },
+      { "command": "flatten", "parameters": [244, 252, 1, 0, 0, 9, 0, 0] },
+      { "command": "flatten", "parameters": [239, 253, 1, 0, 0, 8, 0, 0] },
+      { "command": "flatten", "parameters": [244, 253, 1, 0, 0, 8, 0, 0] }
     ]
   },
   "entrance": { "x": 218, "y": 246, "height": 8, "rotation": 2 },
@@ -30,7 +34,7 @@
     {
       "kind": "normal",
       "style": 0,
-      "route": [[239, 250, 10], [239, 251, 10], [244, 251, 10], [244, 250, 10]]
+      "route": [[239, 250, 10], [239, 260, 8], [244, 260, 8], [244, 250, 10]]
     },
     {
       "kind": "queue",

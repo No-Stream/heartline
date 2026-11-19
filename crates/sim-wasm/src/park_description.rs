@@ -474,6 +474,76 @@ mod tests {
     }
 
     #[test]
+    fn station_path_keeps_a_tested_coaster_testable() {
+        let mut description: Value = serde_json::from_str(include_str!(
+            "../../../content/parks/horizon-hawk.park.json"
+        ))
+        .unwrap();
+        description["coasters"][0]["ride"] = serde_json::from_str(include_str!(
+            "../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .unwrap();
+        description["coasters"][0]["open"] = json!(false);
+        flatten_original_station_crossing(&mut description);
+        description["paths"] = json!([description["paths"][0].clone()]);
+        let mut simulation = WasmSimulation::from_park_description(
+            17,
+            0,
+            &serde_json::to_string(&description).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(simulation.ride_test("player"), "");
+        let preview = simulation.path_preview(vec![239, 251, 10, 244, 251, 10], "normal", 0);
+        assert!(preview.chunks_exact(9).all(|tile| tile[6] == 13));
+        assert!(!simulation.path_build(vec![239, 251, 10, 244, 251, 10], "normal", 0));
+        assert_eq!(
+            simulation.path_message(),
+            "Path would block coaster supports"
+        );
+        assert_eq!(simulation.ride_test("player"), "");
+    }
+
+    #[test]
+    fn park_description_reports_a_path_that_blocks_coaster_supports() {
+        let mut description: Value = serde_json::from_str(include_str!(
+            "../../../content/parks/horizon-hawk.park.json"
+        ))
+        .unwrap();
+        description["coasters"][0]["ride"] = serde_json::from_str(include_str!(
+            "../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .unwrap();
+        flatten_original_station_crossing(&mut description);
+        description["paths"][1]["route"] = json!([[239, 250, 10], [239, 251, 10], [244, 251, 10]]);
+
+        let error = WasmSimulation::from_park_description(
+            17,
+            0,
+            &serde_json::to_string(&description).unwrap(),
+        )
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("paths[1] segment 1"), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("Path would block coaster supports"),
+            "{error}"
+        );
+    }
+
+    fn flatten_original_station_crossing(description: &mut Value) {
+        let edits = description["terrain"]["edits"].as_array_mut().unwrap();
+        for x in 239..=244 {
+            edits.push(json!({
+                "command": "flatten",
+                "parameters": [x, 251, 1, 0, 0, 10, 0, 0]
+            }));
+        }
+    }
+
+    #[test]
     fn existing_ride_description_opens_with_guest_paths_and_facility_prices() {
         let mut description: Value = serde_json::from_str(include_str!(
             "../../../content/parks/horizon-hawk.park.json"
