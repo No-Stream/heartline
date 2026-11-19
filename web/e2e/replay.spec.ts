@@ -179,6 +179,9 @@ test("replays a design tool resolved shaped turn through the real worker @fast",
     if (!command || command.type !== "construction-append-resolved") {
       throw new Error("design tool session did not export resolved shaped geometry");
     }
+    if (typeof command.intentJson !== "string" || typeof command.specJson !== "string") {
+      throw new Error("resolved shaped geometry must contain JSON strings");
+    }
     expect(JSON.parse(command.intentJson)).toMatchObject({ kind: "turn", hand: "Left" });
     expect(JSON.parse(command.specJson)).toMatchObject({
       kind: "turn",

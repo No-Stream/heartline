@@ -12,6 +12,10 @@ crate-type = ["cdylib", "rlib"]
 threads = ["theme-park-sim/threads"]
 shaped-benchmark = []
 
+[[example]]
+name = "shaped_solver_bench"
+required-features = ["shaped-benchmark"]
+
 [dependencies]
 theme-park-sim = { path = "../sim" }
 wasm-bindgen.workspace = true
