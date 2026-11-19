@@ -200,3 +200,11 @@ Lead (technical defaults, reported to the owner):
 2. The 2026-11-18 ejector rule moves from a window edge to a feel band in stage 2: a classic hill ridden past its feel gets an amber note naming the consequence, not a red refusal.
 5. Refit: reshape silently when the footprint does not change; ask when it would.
 6. "Strong laterals" defaults to 0.6 g (the owner's comfort cap), adjustable up to the model limit.
+
+## 9. Correction after the first solver runs (2026-11-19, lead)
+
+The feel defaults in section 8 were chosen without checking them against each model's force limits, and the stage 1 property "every car at least 0.25 g inside limits" then contradicts them on several models. The limits (minimum vertical g) are: wooden twister -1.0, hybrid -1.5, Velocity Viper -1.5, family coaster -0.6, hyper -1.3. An ejector at -1.2 g sustained cannot fit 0.25 g inside the hyper's -1.3 g limit, a wooden ejector at -0.8 g leaves at most 0.2 g, and a family floater at -0.5 g leaves at most 0.1 g, before the rear car's deeper peak is counted.
+
+Rule from now on: the limits and the 0.25 g margin stay exactly as they are, and a feel's target is capped per model. Each feel's sustained target is the section 8 default, made shallower where needed so the worst car's filtered peak stays at least 0.25 g inside the model's limit. The solver aims for the capped target and the property test checks delivery within 0.1 g of the capped target. The builder and the design tool say when a feel is capped ("ejector capped at -0.95 g on this model"). Grid points where no shape passes after a bounded search are recorded as infeasible with the measured best case, and the lead reviews that table before it is accepted.
+
+The classic digest change came from enabling serde_json's `float_roundtrip` feature in three crates, which changes how ride-file floats parse by one unit in the last place. Shaped elements must not depend on it; the feature is removed so classic parsing stays as on master.
