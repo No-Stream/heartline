@@ -126,9 +126,20 @@ async function setLaunchSpeed(page: Page, launchSpeed: number): Promise<void> {
   if (units !== "imperial" && units !== "metric") throw new Error(`Unknown speed units: ${units}`);
   const launchTarget = page.locator("[data-launch-list] li input").last();
   await expect(launchTarget, "Placed launch piece has no target speed control").toBeVisible();
-  await launchTarget.fill(String(metresPerSecondToDisplay(launchSpeed, units)));
+  const exactMinimumAttribute = await launchTarget.getAttribute("data-minimum-display-speed");
+  const exactMaximumAttribute = await launchTarget.getAttribute("data-maximum-display-speed");
+  if (exactMinimumAttribute === null || exactMaximumAttribute === null) throw new Error("Launch target is missing its exact speed bounds");
+  const exactMinimum = Number(exactMinimumAttribute);
+  const exactMaximum = Number(exactMaximumAttribute);
+  if (!Number.isFinite(exactMinimum) || !Number.isFinite(exactMaximum)) throw new Error("Launch target has invalid exact speed bounds");
+  const displaySpeed = metresPerSecondToDisplay(launchSpeed, units);
+  if (displaySpeed < exactMinimum || displaySpeed > exactMaximum) {
+    throw new RangeError(`Ride launch speed ${launchSpeed} m/s is outside the builder bounds ${exactMinimum}–${exactMaximum} ${units}`);
+  }
+  await launchTarget.fill(String(displaySpeed));
   await launchTarget.press("Tab");
   await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
+  await expect(launchTarget).toHaveAttribute("data-launch-target-speed", String(launchSpeed));
 }
 
 /** Place exact ride steps with visible builder controls, waiting for every worker-confirmed change. */
