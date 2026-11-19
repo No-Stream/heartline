@@ -4,7 +4,7 @@ title: Evaluate rider forces with ASTM-style filtering and duration limits
 status: In Progress
 assignee: []
 created_date: '2026-11-05 16:09'
-updated_date: '2026-11-07 01:33'
+updated_date: '2026-11-19 06:47'
 labels:
   - physics
   - research
@@ -135,4 +135,5 @@ Follow-up on the concurrent focused test: corrected its `unmeasured_catalog` imp
 
 2026-11-19 concurrent proposal (unverified, not an owner decision): remove `ApproachMinimum`, retain catalog minima absent a measured force or clearance bound, and put a lowest-passing `measured_from` field in generated windows. This proposal does not satisfy the owner's requested report-only lowest-producible-entry field: passing depends on forces and clearance as well as reachability, and the field must not be part of the window. The catalog's 2 m/s hybrid `SixtyDownToLevel` minimum is also not proven to be an energy bound by the initialized downhill traces above. The proposal and its comparison report require reconciliation and validation; the requested regeneration has not been accepted.
 
+2026-11-19 lead: the 'concurrent proposal' entries above were the same Codex job's own edits (it lost track of them and was cancelled). Decision, implemented in 7e6415f: window minimums come only from energy, forces or clearance; ApproachMinimum is removed; each window records measured_from, the lowest entry speed the generator measured, which is informational and never a limit or a too-slow label. Endpoint tests check max(minimum, measured_from) and the maximum. The diagnostic test downhill_rest_release.rs was deleted because it pinned the test rig's behaviour. Remaining: Horizon Hawk misses its 1.5 m/s FloaterHill24x160 margin (32.90 vs 34.22 m/s); to be redesigned with tools/design after master is merged in.
 <!-- SECTION:NOTES:END -->
