@@ -170,6 +170,7 @@ fn path_error_message(error: PathBuildError) -> &'static str {
         }
         PathBuildError::FacilityOccupied => "Path overlaps a facility",
         PathBuildError::FacilityAccess => "Path conflicts with attraction access",
+        PathBuildError::SupportRoute => "Path would block coaster supports",
     }
 }
 

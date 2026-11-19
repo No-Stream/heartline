@@ -2,12 +2,14 @@ CARGO := $(HOME)/.cargo/bin/cargo
 CARGO_HOME ?= $(HOME)/.cargo
 WASM_BINDGEN := $(CARGO_HOME)/bin/wasm-bindgen
 WASM_BINDGEN_VERSION := 0.2.105
+PARK ?= content/parks/horizon-hawk.park.json
 
 # Every recipe line runs inside the project's shared memory and CPU budget; see tools/run-in-budget.sh.
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
 .PHONY: install build check test test-rust test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ride-agreement ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits generate-report-types check-report-types generate-profiles design-tools test-design-tools
+.PHONY: park-report
 
 install:
 	npm ci
@@ -26,6 +28,9 @@ check-report-types:
 
 design-tools:
 	$(CARGO) build --release -p theme-park-design-tools
+
+park-report: design-tools
+	target/release/heartline-design park report "$(PARK)"
 
 test-design-tools:
 	$(CARGO) test -p theme-park-design-tools

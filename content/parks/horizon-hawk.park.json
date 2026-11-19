@@ -1,0 +1,59 @@
+{
+  "format": "heartline-park",
+  "version": 1,
+  "name": "Horizon Hawk Park",
+  "terrain": {
+    "preset": "flat",
+    "edits": [
+      { "command": "flatten", "parameters": [238, 250, 1, 0, 0, 9, 0, 0] },
+      { "command": "flatten", "parameters": [239, 250, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [240, 250, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [241, 250, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [242, 250, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [243, 250, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [244, 250, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [239, 251, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [240, 251, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [241, 251, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [242, 251, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [243, 251, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [244, 251, 1, 0, 0, 10, 0, 0] },
+      { "command": "flatten", "parameters": [239, 252, 1, 0, 0, 9, 0, 0] },
+      { "command": "flatten", "parameters": [244, 252, 1, 0, 0, 9, 0, 0] },
+      { "command": "flatten", "parameters": [239, 253, 1, 0, 0, 8, 0, 0] },
+      { "command": "flatten", "parameters": [244, 253, 1, 0, 0, 8, 0, 0] }
+    ]
+  },
+  "entrance": { "x": 218, "y": 246, "height": 8, "rotation": 2 },
+  "paths": [
+    {
+      "kind": "normal",
+      "style": 0,
+      "route": [[218, 250, 8], [239, 250, 10]]
+    },
+    {
+      "kind": "normal",
+      "style": 0,
+      "route": [[239, 250, 10], [239, 260, 8], [244, 260, 8], [244, 250, 10]]
+    },
+    {
+      "kind": "queue",
+      "style": 0,
+      "route": [[244, 250, 10], [243, 250, 10]]
+    }
+  ],
+  "facilities": [
+    { "kind": "food_stall", "x": 220, "y": 248, "height": 8, "rotation": 2, "price": 4 }
+  ],
+  "scenery": [
+    { "kind": "bench", "x": 225, "y": 252, "rotation": 0, "quarter": 0 }
+  ],
+  "coasters": [
+    {
+      "ride": "content/rides/horizon-hawk.ride.json",
+      "station": { "x": 241, "y": 249, "z": 10, "heading": "north" },
+      "open": true,
+      "price": 6
+    }
+  ]
+}

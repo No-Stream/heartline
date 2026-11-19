@@ -44,6 +44,8 @@ describe("path preview", () => {
   });
 
   test("reports the first preview refusal without reading mutable simulation state", () => {
+    expect(pathPreviewMessage(Int32Array.of(1, 2, 4, 0, 0, 0, 13, 0, 0)))
+      .toBe("Path would block coaster supports");
     expect(pathPreviewMessage(Int32Array.of(1, 2, 4, 1, 0, 0, 0, 1, 0, 2, 2, 4, 0, 0, 0, 9, 0, 0)))
       .toBe("Path conflicts with attraction access");
     expect(pathPreviewMessage(Int32Array.of(1, 2, 4, 1, 0, 0, 0, 1, 0, 2, 2, 4, 0, 0, 0, 4, 0, 0)))

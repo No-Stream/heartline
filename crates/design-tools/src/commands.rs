@@ -118,15 +118,134 @@ pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
             run_ride(Path::new(&arguments[1]), commands, json_mode)
         }
         "check" => run_check(&arguments[1..], json_mode),
-        "park" => Err(
-            "park build/report require the park description implementation (work items 8–9)".into(),
-        ),
+        "park" => run_park(&arguments[1..], json_mode),
         _ => Err(help_text().to_owned()),
     }
 }
 
 fn help_text() -> &'static str {
-    "usage: tools/design ride <file> [command ...]\n       tools/design check <ride file> ...\n       tools/design park build|report <park file> (available after work items 8–9)\n"
+    "usage: tools/design ride <file> [command ...]\n       tools/design check <ride file> ...\n       tools/design park build <park file> --save <path>\n       tools/design park report <park file> [--guests 2000] [--minutes 20] [--seed 42]\n"
+}
+
+fn run_park(arguments: &[String], json_mode: bool) -> Result<String, String> {
+    match arguments.first().map(String::as_str) {
+        Some("build") => run_park_build(arguments),
+        Some("report") => crate::park_report::run_park_report(arguments, json_mode),
+        Some(command) => Err(format!(
+            "unknown park command {command:?}; usage: tools/design park build <park file> --save <path> or tools/design park report <park file> [--guests 2000] [--minutes 20] [--seed 42]"
+        )),
+        None => Err("usage: tools/design park build <park file> --save <path> or tools/design park report <park file> [--guests 2000] [--minutes 20] [--seed 42]".into()),
+    }
+}
+
+fn run_park_build(arguments: &[String]) -> Result<String, String> {
+    let Some(command) = arguments.first() else {
+        return Err("usage: tools/design park build <park file> --save <path>".into());
+    };
+    if command != "build" {
+        return Err(format!(
+            "unknown park command {command:?}; usage: tools/design park build <park file> --save <path>"
+        ));
+    }
+    if arguments.len() < 2 {
+        return Err("usage: tools/design park build <park file> --save <path>".into());
+    }
+
+    let park_path = Path::new(&arguments[1]);
+    let mut save_path = None;
+    let mut index = 2;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--save" if save_path.is_none() => {
+                index += 1;
+                save_path = Some(PathBuf::from(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "--save requires a path".to_owned())?,
+                ));
+            }
+            flag => return Err(format!("unknown or repeated park build option {flag:?}")),
+        }
+        index += 1;
+    }
+    let save_path = save_path.ok_or_else(|| {
+        "park build requires --save <path>: tools/design park build <park file> --save <path>"
+            .to_owned()
+    })?;
+
+    let park_source = fs::read_to_string(park_path)
+        .map_err(|error| format!("read park description {}: {error}", park_path.display()))?;
+    let runtime_description = inline_park_ride_files(park_path, &park_source)?;
+    let simulation = WasmSimulation::from_park_description(42, 0, &runtime_description)
+        .map_err(|error| error.to_string())?;
+    let save_bytes = simulation.save_state_native()?;
+    fs::write(&save_path, save_bytes)
+        .map_err(|error| format!("write park save {}: {error}", save_path.display()))?;
+
+    Ok(format!("Saved park to {}\n", save_path.display()))
+}
+
+pub(crate) fn inline_park_ride_files(
+    park_path: &Path,
+    park_source: &str,
+) -> Result<String, String> {
+    let mut park: Value = serde_json::from_str(park_source)
+        .map_err(|error| format!("parse park description {}: {error}", park_path.display()))?;
+    let coasters = park
+        .get_mut("coasters")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "park description field `coasters` must be an array".to_owned())?;
+    if coasters.len() > 1 {
+        return Err("this build supports one player coaster per park".into());
+    }
+
+    for (coaster_index, coaster) in coasters.iter_mut().enumerate() {
+        let ride_reference = coaster.get("ride").and_then(Value::as_str).ok_or_else(|| {
+            format!("park coaster {coaster_index} field `ride` must be a ride file path")
+        })?;
+        let ride_path = resolve_park_ride_path(coaster_index, ride_reference)?;
+        let ride_source = fs::read_to_string(&ride_path).map_err(|error| {
+            format!(
+                "park coaster {coaster_index} ride {ride_reference:?}: read {}: {error}",
+                ride_path.display()
+            )
+        })?;
+        let ride: RideFile = serde_json::from_str(&ride_source).map_err(|error| {
+            format!(
+                "park coaster {coaster_index} ride {ride_reference:?}: parse {}: {error}",
+                ride_path.display()
+            )
+        })?;
+        coaster["ride"] = serde_json::to_value(ride).map_err(|error| {
+            format!(
+                "park coaster {coaster_index} ride {ride_reference:?}: serialize ride file: {error}"
+            )
+        })?;
+    }
+
+    serde_json::to_string(&park).map_err(|error| format!("serialize park description: {error}"))
+}
+
+pub(crate) fn resolve_park_ride_path(
+    coaster_index: usize,
+    ride_reference: &str,
+) -> Result<PathBuf, String> {
+    let reference_path = Path::new(ride_reference);
+    let is_portable_ride_reference = ride_reference.starts_with("content/rides/")
+        && ride_reference.ends_with(".ride.json")
+        && reference_path.components().count() == 3
+        && reference_path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)));
+    if !is_portable_ride_reference {
+        return Err(format!(
+            "park coaster {coaster_index} ride path {ride_reference:?} must use content/rides/<name>.ride.json"
+        ));
+    }
+
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(reference_path))
 }
 
 fn parse_commands(arguments: &[String]) -> Result<Vec<RideCommand>, String> {
@@ -619,7 +738,7 @@ fn snapshot_checksum(bytes: &[u8]) -> u64 {
     })
 }
 
-fn validate_model(model: &str) -> Result<CoasterModel, String> {
+pub(crate) fn validate_model(model: &str) -> Result<CoasterModel, String> {
     coaster_models()
         .into_iter()
         .find(|candidate| candidate.key == model)
@@ -1518,7 +1637,7 @@ fn finish_test_run(session: &mut BuilderSession) -> Result<TestRun, String> {
         .ok_or_else(|| "ride test completed without a native report".to_owned())
 }
 
-fn replay_with_estimates(
+pub(crate) fn replay_with_estimates(
     ride: &RideFile,
     include_browser_estimates: bool,
 ) -> Result<(BuilderSession, Vec<RidePieceEstimate>, Vec<Value>), String> {
@@ -1835,7 +1954,7 @@ fn ride_piece_estimate_with_peaks(
     }
 }
 
-fn compare_estimates(
+pub(crate) fn compare_estimates(
     ride: &RideFile,
     test_run: &TestRun,
     estimates: &[RidePieceEstimate],
@@ -2001,7 +2120,7 @@ fn format_agreement(report: &AgreementReport) -> String {
     text
 }
 
-fn agreement_json(report: &AgreementReport) -> Value {
+pub(crate) fn agreement_json(report: &AgreementReport) -> Value {
     let rows: Vec<_> = report
         .rows
         .iter()
@@ -2130,11 +2249,12 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
     Ok(text)
 }
 
-fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<String> {
+pub(crate) fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<String> {
     let Some(expect) = &ride.expect else {
         return Vec::new();
     };
     let mut failures = Vec::new();
+    let sustained = test_run.sustained_force_peaks();
     if let Some([minimum, maximum]) = expect.excitement {
         if !(minimum..=maximum).contains(&test_run.excitement) {
             failures.push(format!(
@@ -2144,18 +2264,22 @@ fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<String> {
         }
     }
     if let Some([minimum, maximum]) = expect.sustained_max_vertical_g {
-        let observed = test_run.statistics.max_positive_vertical_g;
-        if !(minimum..=maximum).contains(&observed) {
+        let observed = sustained.maximum_vertical_g;
+        if observed.is_none_or(|value| !(minimum..=maximum).contains(&value)) {
+            let observed =
+                observed.map_or_else(|| "not measured".to_owned(), |value| format!("{value:.2}"));
             failures.push(format!(
-                "maximum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed:.2}"
+                "maximum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed}"
             ));
         }
     }
     if let Some([minimum, maximum]) = expect.sustained_min_vertical_g {
-        let observed = test_run.statistics.max_negative_vertical_g;
-        if !(minimum..=maximum).contains(&observed) {
+        let observed = sustained.minimum_vertical_g;
+        if observed.is_none_or(|value| !(minimum..=maximum).contains(&value)) {
+            let observed =
+                observed.map_or_else(|| "not measured".to_owned(), |value| format!("{value:.2}"));
             failures.push(format!(
-                "minimum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed:.2}"
+                "minimum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed}"
             ));
         }
     }
@@ -2397,5 +2521,114 @@ mod agreement_replay_tests {
                 .iter()
                 .all(|estimate| estimate.estimated.is_some())
         );
+    }
+}
+
+#[cfg(test)]
+mod expectation_tests {
+    use super::*;
+    use theme_park_sim::track::ride_file::RideExpect;
+
+    #[test]
+    fn sustained_expectations_ignore_short_peak_stats_but_check_held_force() {
+        let mut ride: RideFile = serde_json::from_str(include_str!(
+            "../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .unwrap();
+        let (base_test_run, _) = test_ride(&ride).unwrap();
+        let base_sustained = base_test_run.sustained_force_peaks();
+        let maximum_vertical_g = base_sustained.maximum_vertical_g.unwrap();
+        let minimum_vertical_g = base_sustained.minimum_vertical_g.unwrap();
+        let brief_positive_peak = maximum_vertical_g + 0.5;
+        let brief_negative_peak = minimum_vertical_g - 0.5;
+        let test_run = with_brief_per_car_peaks(
+            &base_test_run,
+            maximum_vertical_g + 0.01,
+            minimum_vertical_g - 0.01,
+            brief_positive_peak,
+            brief_negative_peak,
+        );
+        let sustained_after_brief_peaks = test_run.sustained_force_peaks();
+        assert_eq!(
+            sustained_after_brief_peaks.maximum_vertical_g,
+            base_sustained.maximum_vertical_g
+        );
+        assert_eq!(
+            sustained_after_brief_peaks.minimum_vertical_g,
+            base_sustained.minimum_vertical_g
+        );
+
+        ride.expect = Some(RideExpect {
+            sustained_max_vertical_g: Some([maximum_vertical_g - 0.01, maximum_vertical_g + 0.01]),
+            sustained_min_vertical_g: Some([minimum_vertical_g - 0.01, minimum_vertical_g + 0.01]),
+            ..RideExpect::default()
+        });
+
+        assert!(check_expectations(&ride, &test_run).is_empty());
+
+        let expect = ride.expect.as_mut().unwrap();
+        expect.sustained_max_vertical_g =
+            Some([maximum_vertical_g + 0.1, maximum_vertical_g + 0.2]);
+        expect.sustained_min_vertical_g =
+            Some([minimum_vertical_g - 0.2, minimum_vertical_g - 0.1]);
+        let failures = check_expectations(&ride, &test_run);
+        assert_eq!(failures.len(), 2);
+        assert!(failures[0].starts_with("maximum vertical g expected"));
+        assert!(failures[1].starts_with("minimum vertical g expected"));
+    }
+
+    fn with_brief_per_car_peaks(
+        test_run: &TestRun,
+        maximum_target: f64,
+        minimum_target: f64,
+        brief_positive_peak: f64,
+        brief_negative_peak: f64,
+    ) -> TestRun {
+        let mut test_run_value = serde_json::to_value(test_run).unwrap();
+        let per_car_samples = test_run_value["rating_inputs"][0]["samples"]
+            .as_array_mut()
+            .unwrap();
+        let positive_sample_index = brief_sample_index(per_car_samples, maximum_target, true);
+        let negative_sample_index = brief_sample_index(per_car_samples, minimum_target, false);
+        assert_ne!(positive_sample_index, negative_sample_index);
+        per_car_samples[positive_sample_index]["vertical_g"] = json!(brief_positive_peak);
+        per_car_samples[negative_sample_index]["vertical_g"] = json!(brief_negative_peak);
+        test_run_value["statistics"]["max_positive_vertical_g"] = json!(brief_positive_peak);
+        test_run_value["statistics"]["max_negative_vertical_g"] = json!(brief_negative_peak);
+
+        serde_json::from_value(test_run_value).unwrap()
+    }
+
+    fn brief_sample_index(samples: &[Value], target: f64, positive: bool) -> usize {
+        (1..samples.len() - 1)
+            .find(|&sample_index| {
+                let previous = &samples[sample_index - 1];
+                let sample = &samples[sample_index];
+                let next = &samples[sample_index + 1];
+                let vertical_g = sample["vertical_g"].as_f64().unwrap();
+                let previous_vertical_g = previous["vertical_g"].as_f64().unwrap();
+                let next_vertical_g = next["vertical_g"].as_f64().unwrap();
+                let neighbor_force_clearance = if positive {
+                    previous_vertical_g < target && next_vertical_g < target
+                } else {
+                    previous_vertical_g > target && next_vertical_g > target
+                };
+                let local_duration_seconds = (next["distance"].as_f64().unwrap()
+                    - previous["distance"].as_f64().unwrap())
+                    / ((previous["speed"].as_f64().unwrap()
+                        + 2.0 * sample["speed"].as_f64().unwrap()
+                        + next["speed"].as_f64().unwrap())
+                        / 4.0);
+                neighbor_force_clearance
+                    && local_duration_seconds < 0.3
+                    && if positive {
+                        vertical_g > 0.0
+                    } else {
+                        vertical_g < 0.0
+                    }
+            })
+            .expect(
+                "Horizon Hawk per-car samples must contain a short positive and negative interval",
+            )
     }
 }

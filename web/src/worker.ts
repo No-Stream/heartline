@@ -35,7 +35,7 @@ const workerScope = self as unknown as {
 let outputScope: { postMessage(message: WorkerMessage, transfer?: Transferable[]): void } = workerScope;
 let simulation: WasmSimulation;
 let builderSession: BuilderSessionBridge;
-let recorder: SessionRecorder;
+let recorder: SessionRecorder | undefined;
 let sessionRecordingAvailable = true;
 let clock = createSimulationClock(tickRate, 4);
 let lastWakeup: number;
@@ -49,11 +49,28 @@ let lastGuestDetailSentAt = 0;
 let lastFacilityRevenue = "";
 let lastFacilitiesJson = "";
 let blockAnalysisScheduled = false;
+let initializationError: string | undefined;
+
+function recordSessionCommand<Command extends { type: string }>(command: Command): void {
+  if (!sessionRecordingAvailable) return;
+  if (!recorder) throw new Error("Session recorder is unavailable for this park");
+  recorder.recordCommand(Number(simulation.tick_count()), command);
+}
+
+function sessionRecorder(): SessionRecorder {
+  if (!sessionRecordingAvailable || !recorder) throw new Error("Session recording is unavailable for this park");
+  return recorder;
+}
+
+function publishInitializationError(error: unknown): void {
+  initializationError = error instanceof Error ? error.message : String(error);
+  sendWorkerMessage(outputScope, { type: "initialization-error", error: initializationError });
+}
 
 function tickSimulation(): void {
   simulation.tick();
   const tick = Number(simulation.tick_count());
-  if (sessionRecordingAvailable && tick % 300 === 0) recorder.recordCheckpoint(tick, simulation.state_hash());
+  if (sessionRecordingAvailable && tick % 300 === 0) sessionRecorder().recordCheckpoint(tick, simulation.state_hash());
 }
 
 function scheduleBlockAnalysis(): void {
@@ -67,7 +84,7 @@ function scheduleBlockAnalysis(): void {
 }
 
 function advanceBlockAnalysis(budget: number): boolean {
-  if (sessionRecordingAvailable) recorder.recordCommand(Number(simulation.tick_count()), { type: "test-advance-block-analysis", budget });
+  recordSessionCommand({ type: "test-advance-block-analysis", budget });
   const complete = simulation.construction_advance_block_analysis(budget);
   sendBlockAnalysisProgress();
   return complete;
@@ -283,27 +300,38 @@ workerScope.addEventListener("message", (event) => {
     testMode = action.frozen;
     simulationPaused = action.frozen;
     initialized = init().then(() => {
-      simulation = new WasmSimulation(action.seed, action.guestCount, action.park);
-      builderSession = new BuilderSessionBridge();
-      recorder = new SessionRecorder({ seed: action.seed.toString(), park: action.park, guestCount: action.guestCount });
-      sendWorld();
-      sendFacilities();
-      sendScenery();
-      sendWorkerMessage(outputScope, { type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
-      sendWorkerMessage(outputScope, { type: "ready" });
-      lastWakeup = performance.now();
-      wake(true);
-    });
+      try {
+        if (action.park === "description") {
+          simulation = WasmSimulation.from_park_description(action.seed, action.guestCount, action.descriptionJson);
+          sessionRecordingAvailable = false;
+        } else {
+          simulation = new WasmSimulation(action.seed, action.guestCount, action.park);
+          recorder = new SessionRecorder({ seed: action.seed.toString(), park: action.park, guestCount: action.guestCount });
+          sessionRecordingAvailable = true;
+        }
+        builderSession = new BuilderSessionBridge();
+        sendWorld();
+        sendFacilities();
+        sendScenery();
+        sendWorkerMessage(outputScope, { type: "piece-shapes", shapes: JSON.parse(piece_shapes_json()) as PieceShape[] });
+        sendWorkerMessage(outputScope, { type: "ready" });
+        lastWakeup = performance.now();
+        wake(true);
+      } catch (error) {
+        publishInitializationError(error);
+      }
+    }, publishInitializationError);
     return;
   }
   if (!initialized) throw new Error("Worker must be initialized first");
   void initialized.then(() => {
+    if (initializationError !== undefined) return;
     if (action.type === "construction-input-barrier") {
       sendWorkerMessage(outputScope, { type: "construction-input-barrier" });
       return;
     }
     if (action.type === "export-session") {
-      if (sessionRecordingAvailable) sendWorkerMessage(outputScope, { type: "session-export", requestId: action.requestId, recording: recorder.snapshot(Number(simulation.tick_count())) });
+      if (sessionRecordingAvailable) sendWorkerMessage(outputScope, { type: "session-export", requestId: action.requestId, recording: sessionRecorder().snapshot(Number(simulation.tick_count())) });
       else sendWorkerMessage(outputScope, { type: "session-export", requestId: action.requestId, error: "Session export is unavailable after loading a park." });
       return;
     }
@@ -396,9 +424,7 @@ workerScope.addEventListener("message", (event) => {
       simulation.construction_finish_invalidate();
       scheduleFinishSearch();
     }
-    if (sessionRecordingAvailable && !["test-resume", "test-advance", "test-advance-block-analysis", "test-advance-block-placement", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "ride-info-request", "ride-info-close", "construction-delete-mode"].includes(action.type)) {
-      recorder.recordCommand(Number(simulation.tick_count()), action);
-    }
+    if (!["test-resume", "test-advance", "test-advance-block-analysis", "test-advance-block-placement", "path-preview", "facility-access-preview", "guest-detail-request", "guest-detail-close", "ride-info-request", "ride-info-close", "construction-delete-mode"].includes(action.type)) recordSessionCommand(action);
     if (action.type === "test-resume") {
       if (!simulationPaused || !manualBlockAnalysis) throw new Error("Test resume requires a frozen worker with manual block analysis");
       simulationPaused = false;
@@ -433,7 +459,7 @@ workerScope.addEventListener("message", (event) => {
     if (action.type === "test-advance-block-placement") {
       if (!testMode || !manualBlockAnalysis) throw new Error("Test block placement advancement is disabled");
       validateBlockAnalysisBudget(action.budget);
-      recorder.recordCommand(Number(simulation.tick_count()), action);
+      recordSessionCommand(action);
       simulation.construction_advance_block_placement_for_test(action.budget);
       sendBlockAnalysisProgress();
       sendWorkerMessage(workerScope, { type: "test-block-analysis-advanced" });

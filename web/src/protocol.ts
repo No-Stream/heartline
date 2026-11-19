@@ -15,6 +15,7 @@ export type { PathPosition };
 export type PathAction = PathToolCommand;
 export type WorkerAction =
   | { type: "init"; seed: bigint; park: "new" | "demo"; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
+  | { type: "init"; seed: bigint; park: "description"; descriptionJson: string; guestCount: number; frozen: boolean; manualBlockAnalysis: boolean }
   | { type: "construction-input-barrier" }
   | { type: "export-session"; requestId: number }
   | { type: "save-park"; requestId: number }
@@ -39,6 +40,7 @@ export type WorkerMessage =
   | { type: "session-export"; requestId: number; recording?: WorkerRecording; error?: string }
   | { type: "park-saved"; requestId: number; bytes?: Uint8Array; tickCount?: number; error?: string }
   | { type: "park-loaded"; requestId: number; error?: string }
+  | { type: "initialization-error"; error: string }
   | { type: "park-restoring" }
   | CoasterWorldMessage | ConstructionState | ConstructionFinishStatus | BlockAnalysisProgress | ({ type: "snapshot"; sentAt: number } & CoasterSnapshot)
   | { type: "ready" } | { type: "test-advanced" } | { type: "test-block-analysis-advanced" } | { type: "test-resumed" } | { type: "construction-finish-ready" }

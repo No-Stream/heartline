@@ -8,6 +8,7 @@ mod guest_benchmark;
 mod guest_report;
 mod guests;
 pub mod layouts;
+pub mod park_description;
 pub mod reports;
 mod save;
 #[cfg(test)]
@@ -456,6 +457,7 @@ fn path_error_code(error: PathBuildError) -> i32 {
         PathBuildError::QueueConnections => 7,
         PathBuildError::FacilityOccupied => 8,
         PathBuildError::FacilityAccess => 9,
+        PathBuildError::SupportRoute => 13,
     }
 }
 

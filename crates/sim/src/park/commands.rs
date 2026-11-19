@@ -152,6 +152,10 @@ impl Park {
                 for tile in &mut preview {
                     tile.refusal = Some(PathBuildError::FacilityAccess);
                 }
+            } else if self.support_route_worsened(&proposed) {
+                for tile in &mut preview {
+                    tile.refusal = Some(PathBuildError::SupportRoute);
+                }
             }
         }
         Ok(preview)
@@ -228,7 +232,7 @@ impl Park {
         candidate
             .place_scenery(scenery)
             .map_err(ParkCommandError::Scenery)?;
-        if self.support_route_worsened_by_scenery(&candidate) {
+        if self.support_route_worsened(&candidate) {
             return Err(ParkCommandError::ScenerySupportRoute);
         }
         self.world
@@ -530,7 +534,7 @@ impl Park {
         Ok(())
     }
 
-    fn support_route_worsened_by_scenery(&self, candidate: &World) -> bool {
+    fn support_route_worsened(&self, candidate: &World) -> bool {
         if self.demo_coaster.as_ref().is_some_and(|coaster| {
             circuit_support_route(&coaster.circuit, &self.world, &coaster.train_configuration)
                 .is_ok()

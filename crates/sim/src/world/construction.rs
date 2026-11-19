@@ -27,6 +27,7 @@ pub enum PathBuildError {
     QueueConnections,
     FacilityOccupied,
     FacilityAccess,
+    SupportRoute,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
