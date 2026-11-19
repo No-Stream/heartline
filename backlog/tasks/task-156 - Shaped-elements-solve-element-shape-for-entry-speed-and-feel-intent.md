@@ -73,3 +73,17 @@ A diagnostic regression for the representative hybrid profile measured a maximum
 The existing classic digest guard covers three journey circuits, not all six content ride files. Its baseline stopped at Velocity Viper: 6285497058910432715 observed versus 4021016973799524293 recorded. An unverified edit in `curves.rs` aligns the radius helper's floating-point operation order with the legacy integrator; its digest rerun was stopped before a result. No full content-ride digest comparison was completed.
 
 The existing calibration generator remains exploratory, hill-only and test-only; no table was generated or integrated. Commit f0fe76e avoids a per-tick train clone in candidate preview mode. The candidate/full-preview parity test passed 1/1 before and after the edit. A focused 28 m/s hyper turn benchmark measured Node/WASM full-solve p95 of 58.23 ms cold (15 samples) and 54.44 ms warm (30 samples); one calibration measured 55.69 ms cold and 38.35 ms warm, with 8 cars. Native full-solve cold p95 was 45.97 ms. The source was being edited concurrently during the benchmark, so these numbers do not establish final-source performance or isolate the optimization's effect. The requested workspace, lint and check gates were not run in this follow-up after the stop condition.
+
+## Generalized offline hill diagnostic, 2026-11-19
+
+A bounded diagnostic compared the generalized fixed-point profile with its one-pass reconstruction in the real `PreviewCache::preview_candidate` simulator. It used 35-degree flanks, the model's default hill-pull target, no taper, minimum and maximum allowed train lengths, 14 and 36 m/s entry speeds, and all three hill feels: 12 cases per model and 60 per profile phase. Every preview reached the end. The fixed-point profile's offline force calculation matched its crest target within 0.000001 g, but the actual train previews did not; these results show that the analytical force fit does not transfer to the simulator's measured train forces.
+
+| Model | Fixed-point cases outside limits | Fixed-point worst sustained target error (g) | Fixed-point minimum force headroom (g) | Fixed-point maximum longitudinal (g) | One-pass cases outside limits | One-pass worst sustained target error (g) | One-pass minimum force headroom (g) | One-pass maximum longitudinal (g) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Family coaster | 10 | 0.770 | -2.936 | 3.017 | 11 | 1.735 | -7.979 | 5.801 |
+| Hybrid | 4 | 1.254 | -1.761 | 2.584 | 7 | 1.544 | -9.682 | 7.070 |
+| Hyper | 6 | 0.952 | -1.920 | 2.676 | 7 | 1.598 | -8.450 | 6.466 |
+| Velocity Viper | 4 | 0.830 | -1.812 | 2.783 | 6 | 1.677 | -7.454 | 6.082 |
+| Wooden twister | 6 | 0.727 | -1.564 | 2.194 | 8 | 1.667 | -6.597 | 5.164 |
+
+For each model, the worst one-pass sustained-target case was a 14 m/s floater. The paired fixed-point and one-pass sustained minima (g) were: family coaster, -1.003 / -2.235; hybrid, -0.996 / -2.044; hyper, -1.139 / -2.098; Velocity Viper, -1.027 / -2.177; wooden twister, -1.071 / -2.167. Each target was -0.5 g. These samples are a fixed seed, not an offline parameter search; they do not establish that other flank or taper parameters cannot pass. They do establish that the current representative fixed-point profiles and the one-pass reconstruction fail the actual-train force criteria, so a generated table must be validated against the simulator before it is treated as feasible.

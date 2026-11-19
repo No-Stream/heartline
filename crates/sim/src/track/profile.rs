@@ -4,6 +4,10 @@ use crate::state_hash::StateHasher;
 use crate::track::curves::{HEART_HEIGHT_METRES, RatedSpeeds};
 const HEART_HEIGHT: f64 = HEART_HEIGHT_METRES;
 
+#[cfg(test)]
+#[path = "profile_preview_diagnostic.rs"]
+mod profile_preview_diagnostic;
+
 const GRAVITY: f64 = 9.81;
 
 #[derive(Clone, Copy, Debug)]
