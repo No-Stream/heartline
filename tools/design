@@ -3,5 +3,11 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(dirname "$script_dir")"
-make -C "$repo_root" design-tools >/dev/null
+build_log="$repo_root/target/design-tools-build.log"
+mkdir -p "$repo_root/target"
+if ! make -C "$repo_root" design-tools >"$build_log" 2>&1; then
+  cat "$build_log" >&2
+  echo "tools/design: building the design tool failed; full log in $build_log" >&2
+  exit 1
+fi
 exec "$repo_root/target/release/heartline-design" "$@"
