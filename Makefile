@@ -8,7 +8,7 @@ PARK ?= content/parks/horizon-hawk.park.json
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements generate-report-types check-report-types generate-profiles bench-player-force-preview generate-rated-windows ride-agreement design-tools test-design-tools park-report
+.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements generate-report-types check-report-types generate-profiles generate-shaped-elements generate-rated-windows ride-agreement design-tools test-design-tools park-report
 
 install:
 	npm ci
@@ -36,6 +36,11 @@ test-design-tools:
 
 generate-profiles:
 	UPDATE_SOLVED_PROFILES=1 $(CARGO) test -p theme-park-sim --lib track::profile::tests::solved_profiles_are_current
+
+SHAPED_ELEMENTS_TABLE ?= crates/sim/src/track/shaped/generated_grid.rs
+
+generate-shaped-elements:
+	$(CARGO) run --release -p theme-park-sim --example generate_shaped_elements -- --output $(SHAPED_ELEMENTS_TABLE)
 
 generate-rated-windows:
 	UPDATE_RATED_WINDOWS=1 $(CARGO) run --release -p theme-park-sim --example measure_force_windows

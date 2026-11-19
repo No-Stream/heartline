@@ -963,7 +963,10 @@ fn solve_turn(
     })
 }
 
-fn piece_from_spec(entry: TrackState, spec: &ElementSpec) -> Result<Piece, SolveRefusal> {
+pub(super) fn piece_from_spec(
+    entry: TrackState,
+    spec: &ElementSpec,
+) -> Result<Piece, SolveRefusal> {
     let id = match spec {
         ElementSpec::Hill { .. } => PieceId::ShapedHill,
         ElementSpec::Turn { hand, .. } => match hand {

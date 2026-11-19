@@ -9,6 +9,7 @@ pub mod curves;
 pub mod models;
 pub mod ride_file;
 pub mod shaped;
+pub mod shaped_generator;
 pub mod supports;
 #[cfg(test)]
 mod vertical_top_hat;
