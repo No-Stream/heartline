@@ -113,7 +113,7 @@ mod tests {
         ElementIntent, ElementSpec, HillSizeHint, ResolvedTurnGeometry, SpeedTurnKnot, TurnSizeHint,
     };
     use crate::track::{Hand, HillFeel};
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     const VALID_RIDE: &str = r#"
     {
@@ -193,14 +193,14 @@ mod tests {
 
     #[test]
     fn ride_file_rejects_unknown_format_and_heading_values() {
-        assert!(
-            serde_json::from_str::<RideFile>(&VALID_RIDE.replace("heartline-ride", "unknown-ride"))
-                .is_err()
-        );
-        assert!(
-            serde_json::from_str::<RideFile>(&VALID_RIDE.replace("\"north\"", "\"northwest-ish\""))
-                .is_err()
-        );
+        assert!(serde_json::from_str::<RideFile>(
+            &VALID_RIDE.replace("heartline-ride", "unknown-ride")
+        )
+        .is_err());
+        assert!(serde_json::from_str::<RideFile>(
+            &VALID_RIDE.replace("\"north\"", "\"northwest-ish\"")
+        )
+        .is_err());
     }
 
     #[test]
@@ -208,6 +208,84 @@ mod tests {
         let mut ride: Value = serde_json::from_str(VALID_RIDE).unwrap();
         ride["steps"][5] = json!({"autoBlocks": true});
         assert!(serde_json::from_value::<RideFile>(ride).is_err());
+    }
+
+    #[test]
+    fn ride_file_shapes_store_numbers_at_six_decimal_precision() {
+        let mut ride: RideFile = serde_json::from_str(VALID_RIDE).unwrap();
+        ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: ElementIntent::Hill {
+                feel: HillFeel::Floater,
+                strength_g: Some(-0.512345678),
+                size: HillSizeHint::Height(36.123456789),
+            },
+            spec: serde_json::from_value(json!({
+                "kind": "hill",
+                "design_speed_mps": 34.123456789,
+                "cars": 8,
+                "target_g": -0.512345678,
+                "delivered_g": -0.498765432,
+                "height_m": 36.123456789,
+                "span_m": 64.987654321,
+                "profile": {
+                    "points": [
+                        {"distance": 0.123456789, "x": 0.234567891, "z": 0.345678912, "angle": 0.456789123, "heart_curvature": 0.567891234, "curvature": 0.678912345},
+                        {"distance": 2.123456789, "x": 2.234567891, "z": 0.345678912, "angle": 0.456789123, "heart_curvature": 0.567891234, "curvature": 0.678912345}
+                    ],
+                    "cached_minimum_entry": 0.789123456,
+                    "cached_minimum_radius": 1.891234567
+                }
+            }))
+            .unwrap(),
+        }));
+        ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: ElementIntent::Turn {
+                hand: Hand::Left,
+                size: TurnSizeHint::Radius(64.123456789),
+            },
+            spec: ElementSpec::Turn {
+                design_speed_mps: 28.123456789,
+                cars: 8,
+                hand: Hand::Left,
+                vertical_g: 3.123456789,
+                lateral_g: 0.012345678,
+                radius_m: 64.123456789,
+                bank_degrees: 65.123456789,
+                geometry: ResolvedTurnGeometry {
+                    peak_bank: 1.123456789,
+                    length: 100.123456789,
+                    knots: vec![
+                        SpeedTurnKnot {
+                            x: 0.123456789,
+                            y: 0.234567891,
+                            heading: 0.345678912,
+                        },
+                        SpeedTurnKnot {
+                            x: 64.123456789,
+                            y: 64.234567891,
+                            heading: 1.456789123,
+                        },
+                    ],
+                },
+            },
+        }));
+
+        let serialized = serde_json::to_string(&ride).unwrap();
+        let encoded: Value = serde_json::from_str(&serialized).unwrap();
+        for step_index in [6, 7] {
+            assert_six_decimal_precision(&encoded["steps"][step_index]["spec"]);
+        }
+
+        let decoded: RideFile = serde_json::from_str(&serialized).unwrap();
+        let decoded_again: Value = serde_json::to_value(decoded).unwrap();
+        assert_eq!(
+            decoded_again["steps"][6]["spec"],
+            encoded["steps"][6]["spec"]
+        );
+        assert_eq!(
+            decoded_again["steps"][7]["spec"],
+            encoded["steps"][7]["spec"]
+        );
     }
 
     #[test]
@@ -279,5 +357,29 @@ mod tests {
             serde_json::from_value::<RideFile>(encoded).unwrap(),
             shaped_ride
         );
+    }
+
+    fn assert_six_decimal_precision(value: &Value) {
+        match value {
+            Value::Number(number) => {
+                let value = number.as_f64().expect("ride spec numbers are finite");
+                let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
+                assert!(
+                    (value - rounded).abs() <= 1e-9,
+                    "ride spec number {value} has more than six decimal places"
+                );
+            }
+            Value::Array(values) => {
+                for value in values {
+                    assert_six_decimal_precision(value);
+                }
+            }
+            Value::Object(values) => {
+                for value in values.values() {
+                    assert_six_decimal_precision(value);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::String(_) => {}
+        }
     }
 }

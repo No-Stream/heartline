@@ -17,7 +17,7 @@ rayon = { version = "=1.11.0", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 [dev-dependencies]
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = "1"
 
 [[example]]
 name = "tick_bench"
