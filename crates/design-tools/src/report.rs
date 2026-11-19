@@ -2,8 +2,11 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use theme_park_sim::physics::{Contribution, ForcePeakValues, TestRun};
+use theme_park_sim::physics::{
+    Contribution, ForcePeakLocation, ForcePeakValues, PhysicsConfig, TestRun, Train,
+};
 use theme_park_sim::track::ride_file::{RideFile, RideStep};
+use theme_park_sim::track::{CoasterModel, PieceKind, rated_speed_margin, rated_speeds};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ForceRatings {
@@ -25,10 +28,231 @@ pub struct RidePieceEstimate {
     pub notes: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RatedPieceEntryMargin {
+    pub piece_index: usize,
+    pub piece_id: String,
+    pub car_index: Option<usize>,
+    pub entry_speed: Option<f64>,
+    pub window: (f64, f64),
+    pub rule_margin: Option<f64>,
+    pub unavailable_reason: Option<String>,
+    pub construction_test: bool,
+}
+
+/// Simulates both physics configurations used by the design-margin integration tests.
+pub(crate) fn rated_speed_margins(
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &CoasterModel,
+) -> Result<Vec<RatedPieceEntryMargin>, String> {
+    let mut margins = Vec::new();
+    let rated_pieces: Vec<_> = circuit
+        .pieces()
+        .iter()
+        .enumerate()
+        .filter_map(|(piece_index, piece)| {
+            rated_speeds(model, piece).map(|window| (piece_index, piece, window))
+        })
+        .collect();
+    if rated_pieces.is_empty() {
+        return Ok(margins);
+    }
+    for (construction_test, lift_speed, initial_speed) in [
+        (false, PhysicsConfig::default().lift_speed, 0.0),
+        (true, 5.0, 2.0),
+    ] {
+        let start = if construction_test {
+            0.0
+        } else {
+            circuit.pieces()[0].length() / 2.0
+        };
+        let mut train = Train::new(
+            circuit,
+            &model.train,
+            PhysicsConfig {
+                lift_speed,
+                ..PhysicsConfig::default()
+            },
+            start,
+            initial_speed,
+        );
+        let mut entries = vec![vec![None; usize::from(model.train.cars)]; circuit.pieces().len()];
+        let mut completion_problem = None;
+        for _ in 0..60_000 {
+            train.step(circuit);
+            for frame in train.take_readings() {
+                for (car_index, reading) in frame.iter().enumerate() {
+                    let car_distance = train.distance()
+                        - car_index as f64 * model.train.length_metres
+                            / f64::from(model.train.cars);
+                    if car_distance >= 0.0 {
+                        entries[reading.piece_index][car_index].get_or_insert(reading.speed);
+                    }
+                }
+            }
+            if !train.notes().is_empty() {
+                completion_problem = Some(format!("train recovered: {:?}", train.notes()));
+                break;
+            }
+            if train.distance() >= circuit.length() + start {
+                break;
+            }
+        }
+        if completion_problem.is_none() && train.distance() < circuit.length() + start {
+            completion_problem = Some("train did not complete a lap within 60,000 steps".into());
+        }
+
+        for &(piece_index, piece, window) in &rated_pieces {
+            let fed_by_lift = circuit.pieces()
+                [(piece_index + circuit.pieces().len() - 1) % circuit.pieces().len()]
+            .kind
+                == PieceKind::Lift;
+            let checked_cars = if fed_by_lift {
+                1
+            } else {
+                entries[piece_index].len()
+            };
+            let mut worst: Option<(usize, f64, f64)> = None;
+            let mut missing_cars = Vec::new();
+            for (car_index, entry_speed) in
+                entries[piece_index].iter().take(checked_cars).enumerate()
+            {
+                let Some(entry_speed) = *entry_speed else {
+                    missing_cars.push(car_index);
+                    continue;
+                };
+                let rule_margin = rated_speed_margin(window, entry_speed);
+                if worst.is_none_or(|(_, _, current_margin): (usize, f64, f64)| {
+                    rule_margin < current_margin
+                }) {
+                    worst = Some((car_index, entry_speed, rule_margin));
+                }
+            }
+            let unavailable_reason = if missing_cars.is_empty() {
+                None
+            } else {
+                let missing_cars = missing_cars
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Some(format!(
+                    "{}; entry sample missing for car(s) {missing_cars}",
+                    completion_problem
+                        .as_deref()
+                        .unwrap_or("train stopped before all cars entered this piece")
+                ))
+            };
+            let (car_index, entry_speed, rule_margin) = worst.map_or(
+                (None, None, None),
+                |(car_index, entry_speed, rule_margin)| {
+                    (Some(car_index), Some(entry_speed), Some(rule_margin))
+                },
+            );
+            margins.push(RatedPieceEntryMargin {
+                piece_index,
+                piece_id: format!("{:?}", piece.id),
+                car_index,
+                entry_speed,
+                window: (window.minimum_entry, window.maximum_entry),
+                rule_margin,
+                unavailable_reason,
+                construction_test,
+            });
+        }
+    }
+    Ok(margins)
+}
+
+pub(crate) fn rated_speed_margin_report(
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &CoasterModel,
+) -> Result<String, String> {
+    let margins = rated_speed_margins(circuit, model)?;
+    Ok(format_rated_speed_margins(&margins))
+}
+
+pub(crate) fn format_rated_speed_margins(margins: &[RatedPieceEntryMargin]) -> String {
+    let mut output = String::new();
+    for construction_test in [false, true] {
+        let lift_speed = if construction_test {
+            5.0
+        } else {
+            PhysicsConfig::default().lift_speed
+        };
+        let initial_speed = if construction_test { 2.0 } else { 0.0 };
+        writeln!(
+            output,
+            "Rated entry-speed margin ({}, lift {:.1} m/s, initial speed {:.1} m/s):",
+            if construction_test {
+                "construction-test physics"
+            } else {
+                "default physics"
+            },
+            lift_speed,
+            initial_speed
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "# piece car entry_m/s window_m/s rule_margin_m/s status"
+        )
+        .unwrap();
+        for margin in margins
+            .iter()
+            .filter(|margin| margin.construction_test == construction_test)
+        {
+            writeln!(
+                output,
+                "{:>3} {} car {} {} {:.2} to {:.2} {} {}",
+                margin.piece_index,
+                margin.piece_id,
+                margin
+                    .car_index
+                    .map_or_else(|| "—".to_owned(), |car| car.to_string()),
+                format_optional(margin.entry_speed),
+                margin.window.0,
+                margin.window.1,
+                format_signed(margin.rule_margin),
+                rated_margin_status(margin),
+            )
+            .unwrap();
+        }
+        writeln!(output, "Rule margin is positive when the rated-window rule passes. Windows at least 3 m/s wide require 1.50 m/s from both edges; narrower windows require entry within 0.30 m/s of the centre. Lift-fed crests check the front car only.").unwrap();
+    }
+    output
+}
+
+fn rated_margin_status(margin: &RatedPieceEntryMargin) -> String {
+    if let Some(reason) = &margin.unavailable_reason {
+        return format!("UNAVAILABLE: {reason}");
+    }
+    margin.rule_margin.map_or_else(
+        || "UNAVAILABLE: entry samples missing".to_owned(),
+        |rule_margin| {
+            if rule_margin >= 0.0 {
+                "PASS".to_owned()
+            } else {
+                "FAIL".to_owned()
+            }
+        },
+    )
+}
+
 pub fn render_ride_report(
     ride: &RideFile,
     test_run: &TestRun,
     estimates: &[RidePieceEstimate],
+    include_samples: bool,
+) -> Result<String, String> {
+    render_ride_report_with_margins(ride, test_run, estimates, "", include_samples)
+}
+
+pub fn render_ride_report_with_margins(
+    ride: &RideFile,
+    test_run: &TestRun,
+    estimates: &[RidePieceEstimate],
+    rated_speed_margins: &str,
     include_samples: bool,
 ) -> Result<String, String> {
     let mut estimates_by_piece = BTreeMap::new();
@@ -59,15 +283,36 @@ pub fn render_ride_report(
         .iter()
         .filter(|step| matches!(step, RideStep::Place(_)))
         .count();
-    let mut piece_indices: BTreeMap<usize, ()> = (0..=placed_piece_count)
+    let mut piece_indices: BTreeMap<usize, ()> = (1..=placed_piece_count)
         .map(|piece_index| (piece_index, ()))
         .collect();
     piece_indices.extend(
         estimates_by_piece
             .keys()
+            .filter(|piece_index| **piece_index > 0)
             .map(|piece_index| (*piece_index, ())),
     );
-    piece_indices.extend(peaks_by_piece.keys().map(|piece_index| (*piece_index, ())));
+    piece_indices.extend(
+        peaks_by_piece
+            .keys()
+            .filter(|piece_index| **piece_index > 0)
+            .map(|piece_index| (*piece_index, ())),
+    );
+    let mut piece_names: BTreeMap<usize, String> = estimates_by_piece
+        .iter()
+        .filter(|(piece_index, _)| **piece_index > 0)
+        .map(|(piece_index, estimate)| (*piece_index, estimate.piece_id.clone()))
+        .collect();
+    piece_names.insert(0, "Station".to_owned());
+    let mut piece_index = 0;
+    for step in &ride.steps {
+        if let RideStep::Place(place) = step {
+            piece_index += 1;
+            piece_names
+                .entry(piece_index)
+                .or_insert_with(|| place.place.clone());
+        }
+    }
 
     let mut output = String::new();
     writeln!(output, "Ride: {} ({})", ride.name, ride.model).unwrap();
@@ -102,14 +347,20 @@ pub fn render_ride_report(
         test_run.statistics.max_speed
     )
     .unwrap();
+    let peak_locations = test_run.force_peak_locations();
     writeln!(
         output,
-        "  vertical {:.2}/{:.2} g; lateral {:.2} g; forward {:.2} g; braking {:.2} g",
+        "  peak forces: vertical +{:.2} g at {}; vertical {:.2} g at {}; lateral {:.2} g at {}; forward {:.2} g at {}; braking {:.2} g at {}",
         test_run.statistics.max_positive_vertical_g,
+        format_force_location(peak_locations.maximum_positive_vertical_g, &piece_names),
         test_run.statistics.max_negative_vertical_g,
+        format_force_location(peak_locations.maximum_negative_vertical_g, &piece_names),
         test_run.statistics.max_lateral_g,
+        format_force_location(peak_locations.maximum_lateral_g, &piece_names),
         test_run.statistics.max_forward_g,
-        test_run.statistics.max_braking_g
+        format_force_location(peak_locations.maximum_forward_g, &piece_names),
+        test_run.statistics.max_braking_g,
+        format_force_location(peak_locations.maximum_braking_g, &piece_names)
     )
     .unwrap();
     writeln!(
@@ -136,34 +387,34 @@ pub fn render_ride_report(
     )
     .unwrap();
     let sustained = test_run.sustained_force_peaks();
-    let held_g =
-        |value: Option<f64>| value.map_or_else(|| "none".to_owned(), |g| format!("{g:.2} g"));
+    let sustained_locations = test_run.sustained_force_peak_locations();
     writeln!(
         output,
         "  sustained by any car: highest vertical {} held 0.5 s; lowest vertical {} held 0.3 s",
-        held_g(sustained.maximum_vertical_g),
-        held_g(sustained.minimum_vertical_g)
+        format_sustained_force(
+            sustained.maximum_vertical_g,
+            sustained_locations.maximum_vertical_g,
+            &piece_names
+        ),
+        format_sustained_force(
+            sustained.minimum_vertical_g,
+            sustained_locations.minimum_vertical_g,
+            &piece_names
+        )
     )
     .unwrap();
     writeln!(
         output,
-        "# piece entry_m/s window_m/s margin_m/s est_v+/-_g front_v+/-_g worst_v+/-_g worst_lat_g worst_long_g ratings status notes"
+        "# piece entry_m/s window_m/s margin_m/s estimate_front_car_0_v+/-_g ratings status notes"
     )
     .unwrap();
 
-    for piece_index in piece_indices.keys().copied() {
-        let estimate = estimates_by_piece.get(&piece_index).copied();
-        let peaks = peaks_by_piece.get(&piece_index);
-        let piece_id = estimate.map_or_else(
-            || {
-                if piece_index == 0 {
-                    "Station".to_owned()
-                } else {
-                    format!("piece-{piece_index}")
-                }
-            },
-            |estimate| estimate.piece_id.clone(),
-        );
+    for piece_index in piece_indices.keys() {
+        let estimate = estimates_by_piece.get(piece_index).copied();
+        let piece_id = piece_names
+            .get(piece_index)
+            .cloned()
+            .unwrap_or_else(|| format!("piece-{piece_index}"));
         let entry_speed = estimate.and_then(|estimate| estimate.entry_speed);
         let rated_window = estimate.and_then(|estimate| estimate.rated_window);
         let margin = match (entry_speed, rated_window) {
@@ -171,8 +422,6 @@ pub fn render_ride_report(
             _ => None,
         };
         let estimated = estimate.and_then(|estimate| estimate.estimated);
-        let front_car = peaks.and_then(|peaks| peaks.front_car);
-        let worst_car = peaks.and_then(|peaks| peaks.worst_car);
         let ratings = estimate.map_or_else(String::new, |estimate| {
             estimate
                 .ratings
@@ -186,19 +435,51 @@ pub fn render_ride_report(
         });
         let status = estimate.map_or("—", |estimate| estimate.preview_status.as_str());
         let notes = estimate.map_or_else(String::new, |estimate| estimate.notes.join("; "));
+        let notes_suffix = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" {notes}")
+        };
         writeln!(
             output,
-            "{piece_index:>3} {piece_id:<24} {entry_speed:>9} {rated_window:>13} {margin:>8} {estimated:>11} {front_car:>11} {worst_car:>11} {lateral:>9} {longitudinal:>10} {ratings} {status} {notes}",
+            "{piece_index:>3} {piece_id:<24} {entry_speed:>9} {rated_window:>13} {margin:>8} {estimated:>20} {ratings} {status}{notes_suffix}",
             entry_speed = format_optional(entry_speed),
             rated_window = format_window(rated_window),
             margin = format_signed(margin),
-            estimated = format_vertical_peaks(estimated),
-            front_car = format_vertical_peaks(front_car),
-            worst_car = format_vertical_peaks(worst_car),
-            lateral = format_optional(worst_car.map(|peaks| peaks.maximum_lateral_g)),
-            longitudinal = format_optional(worst_car.map(|peaks| peaks.maximum_longitudinal_g)),
+            estimated = format_estimated_peaks(estimated),
         )
         .unwrap();
+    }
+
+    writeln!(
+        output,
+        "Measured force peaks by piece and car (one-metre samples):"
+    )
+    .unwrap();
+    writeln!(output, "# piece car vertical+/-_g lateral_g longitudinal_g").unwrap();
+    for peaks in test_run.car_piece_force_peaks() {
+        if peaks.piece_index == 0 {
+            continue;
+        }
+        let piece_id = piece_names
+            .get(&peaks.piece_index)
+            .cloned()
+            .unwrap_or_else(|| format!("piece-{}", peaks.piece_index));
+        writeln!(
+            output,
+            "{:>3} {:<24} car {:>2} {:>12} {:>9} {:>14}",
+            peaks.piece_index,
+            piece_id,
+            peaks.car_index,
+            format_vertical_peaks(Some(peaks.peaks)),
+            format_optional(Some(peaks.peaks.maximum_lateral_g)),
+            format_optional(Some(peaks.peaks.maximum_longitudinal_g))
+        )
+        .unwrap();
+    }
+
+    if !rated_speed_margins.is_empty() {
+        output.push_str(rated_speed_margins);
     }
 
     if !test_run.notes.is_empty() {
@@ -237,6 +518,41 @@ fn format_optional(value: Option<f64>) -> String {
     value.map_or_else(|| "—".to_owned(), |value| format!("{value:.2}"))
 }
 
+fn format_force_location(
+    location: Option<ForcePeakLocation>,
+    piece_names: &BTreeMap<usize, String>,
+) -> String {
+    location.map_or_else(
+        || "location unavailable".to_owned(),
+        |location| {
+            let piece_id = piece_names
+                .get(&location.piece_index)
+                .cloned()
+                .unwrap_or_else(|| format!("piece-{}", location.piece_index));
+            format!(
+                "{piece_id} (piece {}, car {})",
+                location.piece_index, location.car_index
+            )
+        },
+    )
+}
+
+fn format_sustained_force(
+    value: Option<f64>,
+    location: Option<ForcePeakLocation>,
+    piece_names: &BTreeMap<usize, String>,
+) -> String {
+    value.map_or_else(
+        || "none".to_owned(),
+        |g| {
+            format!(
+                "{g:.2} g at {}",
+                format_force_location(location, piece_names)
+            )
+        },
+    )
+}
+
 fn write_contributions(output: &mut String, category: &str, contributions: &[Contribution]) {
     writeln!(output, "  {category}:").unwrap();
     if contributions.is_empty() {
@@ -244,7 +560,33 @@ fn write_contributions(output: &mut String, category: &str, contributions: &[Con
         return;
     }
     for contribution in contributions {
-        writeln!(output, "    {}", contribution.describe()).unwrap();
+        let mut description = contribution.describe();
+        let force_details = if contribution.force_details.is_empty() {
+            contribution.force_detail.iter().collect::<Vec<_>>()
+        } else {
+            contribution.force_details.iter().collect::<Vec<_>>()
+        };
+        if !force_details.is_empty() {
+            description.push_str("; ");
+            description.push_str(
+                &force_details
+                    .iter()
+                    .map(|detail| {
+                        format!(
+                            "{} {:.2} {} at {} (piece {}, car {})",
+                            detail.axis,
+                            detail.measured_value,
+                            detail.unit,
+                            detail.location.piece_name,
+                            detail.location.piece_index,
+                            detail.car_index.unwrap_or(0)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
+        writeln!(output, "    {description}").unwrap();
     }
 }
 
@@ -255,7 +597,22 @@ fn format_signed(value: Option<f64>) -> String {
 fn format_window(window: Option<(f64, f64)>) -> String {
     window.map_or_else(
         || "—".to_owned(),
-        |(minimum, maximum)| format!("{minimum:.2}-{maximum:.2}"),
+        |(minimum, maximum)| format!("{minimum:.2} to {maximum:.2}"),
+    )
+}
+
+fn format_estimated_peaks(peaks: Option<ForcePeakValues>) -> String {
+    peaks.map_or_else(
+        || "—".to_owned(),
+        |peaks| {
+            format!(
+                "car 0 v+/- {:.2}/{:.2} g lat {:.2} g long {:.2} g",
+                peaks.maximum_vertical_g,
+                peaks.minimum_vertical_g,
+                peaks.maximum_lateral_g,
+                peaks.maximum_longitudinal_g
+            )
+        },
     )
 }
 
@@ -282,7 +639,7 @@ mod tests {
     };
 
     #[test]
-    fn report_table_includes_estimates_front_car_and_worst_car_peaks() {
+    fn report_table_includes_estimates_and_measured_piece_car_peaks() {
         let ride = ride_file();
         let test_run = test_run();
         let estimate = RidePieceEstimate {
@@ -306,20 +663,37 @@ mod tests {
         assert!(report.contains("Ride: Golden test (hyper)"));
         let table_row = report
             .lines()
-            .find(|line| line.contains("FloaterHill24x160"))
+            .find(|line| line.starts_with("  1 FloaterHill24x160 "))
             .unwrap();
         for expected_value in [
             "33.10",
-            "27.00-34.50",
+            "27.00 to 34.50",
             "+1.40",
-            "3.60/-0.90",
-            "2.50/2.50",
-            "0.20",
-            "0.40",
+            "car 0 v+/- 3.60/-0.90 g lat 0.10 g long 0.40 g",
             "airtime:great vertical:great lateral:fine longitudinal:fine",
             "reachedEnd first drop",
         ] {
             assert!(table_row.contains(expected_value), "{table_row}");
+        }
+
+        let measured_peak_row = report
+            .lines()
+            .find(|line| line.starts_with("  1 FloaterHill24x160 ") && line.contains("car  0"))
+            .unwrap();
+        for expected_value in ["2.50/2.50", "0.20", "0.40"] {
+            assert!(
+                measured_peak_row.contains(expected_value),
+                "{measured_peak_row}"
+            );
+        }
+        for expected_value in [
+            "vertical +2.50 g at FloaterHill24x160 (piece 1, car 0)",
+            "vertical 0.00 g at FloaterHill24x160 (piece 1, car 0)",
+            "lateral 0.20 g at FloaterHill24x160 (piece 1, car 0)",
+            "forward 0.40 g at FloaterHill24x160 (piece 1, car 0)",
+            "braking 0.00 g at FloaterHill24x160 (piece 1, car 0)",
+        ] {
+            assert!(report.contains(expected_value), "{expected_value}");
         }
     }
 

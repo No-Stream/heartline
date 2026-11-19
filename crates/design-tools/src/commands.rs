@@ -12,7 +12,7 @@ use theme_park_sim::track::ride_file::{
     RideBlockSectionsStep, RideChainStep, RideCloseStep, RideFile, RideFileFormat, RideHeading,
     RidePlaceStep, RideStation, RideStep,
 };
-use theme_park_sim::track::{CoasterModel, coaster_models};
+use theme_park_sim::track::{CoasterModel, Heading as TrackHeading, coaster_models};
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
 use theme_park_sim_wasm::construction::{
@@ -22,13 +22,29 @@ use theme_park_sim_wasm::construction::{
 use theme_park_sim_wasm::reports::TestingSample;
 
 use crate::agreement::{AgreementInput, AgreementReport, ForcePeaks, evaluate_agreement};
-use crate::report::{ForceRatings, RidePieceEstimate, render_ride_report};
+use crate::report::{
+    ForceRatings, RidePieceEstimate, rated_speed_margin_report, render_ride_report_with_margins,
+};
 
 #[derive(Debug)]
 struct CommandReply {
     text: String,
     json: Value,
     changed_ride: bool,
+}
+
+#[derive(Debug)]
+enum CliResponse {
+    Success(String),
+    FailureWithStdout(String),
+}
+
+#[derive(Debug)]
+/// Captured command output, including the process exit code.
+pub struct CliOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
 }
 
 #[derive(Debug)]
@@ -41,6 +57,7 @@ enum RideCommand {
     State,
     Choices(Option<String>),
     Estimate(Vec<String>),
+    Probe(String),
     Place {
         id: String,
         matched: bool,
@@ -72,6 +89,7 @@ const COMMAND_NAMES: &[&str] = &[
     "state",
     "choices",
     "estimate",
+    "probe",
     "place",
     "chain",
     "launch-speed",
@@ -94,8 +112,40 @@ const REPLAY_SNAPSHOT_MAGIC: &[u8] = b"TPRS";
 const REPLAY_SNAPSHOT_VERSION: u8 = 1;
 const AUTO_BLOCKS_WORK_BUDGET: u32 = 1_000;
 
-/// Runs the command line interface and returns exactly what the binary prints to standard output.
+/// Runs the command line interface and returns command output or its error text.
 pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
+    let output = run_cli_with_status(arguments, stdin);
+    if output.exit_code == 0 {
+        Ok(output.stdout)
+    } else if !output.stdout.is_empty() {
+        Err(output.stdout)
+    } else {
+        Err(output.stderr)
+    }
+}
+
+/// Runs the command line interface while preserving stdout, stderr, and exit status separately.
+pub fn run_cli_with_status(arguments: &[String], stdin: &str) -> CliOutput {
+    match run_cli_response(arguments, stdin) {
+        Ok(CliResponse::Success(stdout)) => CliOutput {
+            stdout,
+            stderr: String::new(),
+            exit_code: 0,
+        },
+        Ok(CliResponse::FailureWithStdout(stdout)) => CliOutput {
+            stdout,
+            stderr: String::new(),
+            exit_code: 1,
+        },
+        Err(stderr) => CliOutput {
+            stdout: String::new(),
+            stderr,
+            exit_code: 1,
+        },
+    }
+}
+
+fn run_cli_response(arguments: &[String], stdin: &str) -> Result<CliResponse, String> {
     let json_mode = arguments.iter().any(|argument| argument == "--json");
     let arguments: Vec<_> = arguments
         .iter()
@@ -107,6 +157,7 @@ pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
     }
 
     match arguments[0].as_str() {
+        "help" => Ok(CliResponse::Success(help_text().to_owned())),
         "ride" => {
             if arguments.len() < 2 {
                 return Err("usage: tools/design ride <file> [command ...]".into());
@@ -116,16 +167,48 @@ pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
                 command_tokens.extend(stdin.lines().map(str::to_owned));
             }
             let commands = parse_commands(&command_tokens)?;
-            run_ride(Path::new(&arguments[1]), commands, json_mode)
+            run_ride(Path::new(&arguments[1]), commands, json_mode).map(CliResponse::Success)
         }
         "check" => run_check(&arguments[1..], json_mode),
-        "park" => run_park(&arguments[1..], json_mode),
+        "park" => run_park(&arguments[1..], json_mode).map(CliResponse::Success),
         _ => Err(help_text().to_owned()),
     }
 }
 
 fn help_text() -> &'static str {
-    "usage: tools/design ride <file> [command ...]\n       tools/design check <ride file> ...\n       tools/design park build <park file> --save <path>\n       tools/design park report <park file> [--guests 2000] [--minutes 20] [--seed 42]\n"
+    "usage: tools/design <command> ...
+Top-level commands:
+  help                                      list commands and choice groups
+  ride <file> [command ...]                 create or edit a ride file
+  check <ride file> ...                     check ride estimates against expectations
+  park build <park file> --save <path>      build and save a park
+  park report <park file> [options]          simulate and report on a park
+
+Ride commands:
+  new --model <key> --station x,y,z,heading start a ride
+  state                                     show the open end and construction status
+  choices [group]                           list offered pieces and their rated windows
+  estimate <id> ...                         estimate one or more exact pieces
+  probe <id>                                preview a piece without placing it
+  place <id> [options]                      place a piece
+  chain on|off                              toggle a lift chain
+  launch-speed <piece> <m/s>                set a launch speed
+  cars <count>                              set cars per train
+  trains <count>                            set the train count
+  auto-blocks                               find automatic block sections
+  undo [count]                              undo placements
+  truncate <steps>                          keep the first ride steps
+  finish                                    search for a way back to the station
+  close                                     close the circuit at the station
+  test                                      run a ride test
+  report [--samples]                        print a ride test report
+  agreement                                 compare estimates with measured forces
+  map                                       draw the ride footprint
+  export --save <path>|--session <path>     export a save or replay session
+
+Choice groups: bank, element, hill, inversion, slope, special, straight, turn.
+Hill sizes and speed-turn variants are listed by choices with their rated windows.
+"
 }
 
 fn run_park(arguments: &[String], json_mode: bool) -> Result<String, String> {
@@ -318,6 +401,7 @@ fn parse_command(command: &str, parameters: &[String]) -> Result<RideCommand, St
         "state" if parameters.is_empty() => Ok(RideCommand::State),
         "choices" if parameters.len() <= 1 => Ok(RideCommand::Choices(parameters.first().cloned())),
         "estimate" if !parameters.is_empty() => Ok(RideCommand::Estimate(parameters.to_vec())),
+        "probe" if parameters.len() == 1 => Ok(RideCommand::Probe(parameters[0].clone())),
         "place" => parse_place(parameters),
         "chain" if parameters.len() == 1 => match parameters[0].as_str() {
             "on" => Ok(RideCommand::Chain(true)),
@@ -756,6 +840,7 @@ fn execute_command(
         RideCommand::State => render_state(session),
         RideCommand::Choices(group) => render_choices(session, group.as_deref()),
         RideCommand::Estimate(ids) => render_estimates(session, &ids),
+        RideCommand::Probe(id) => render_probe(session, &id),
         RideCommand::Place {
             id,
             matched,
@@ -766,13 +851,35 @@ fn execute_command(
                 .select(&id, !matched)
                 .map_err(|error| error.to_string())?;
             let estimates = session.estimates();
+            if let Some(choice) = estimates
+                .choices
+                .iter()
+                .find(|choice| choice.id == selection.selected_id)
+                && !choice.refusal.is_empty()
+            {
+                return Err(format!(
+                    "{} is not offered at this end: {}",
+                    selection.selected_id, choice.refusal
+                ));
+            }
             let candidate = estimates.candidate_preview.as_ref().ok_or_else(|| {
-                format!(
-                    "candidate preview is unavailable for {}",
-                    selection.selected_id
+                candidate_preview_unavailable(
+                    &selection.selected_id,
+                    &estimates.choices,
+                    session.simulation(),
                 )
             })?;
-            let placement_json = candidate_value(&selection.selected_id, candidate, None);
+            let geometry = candidate_geometry_value(session);
+            let mut placement_json =
+                candidate_value(&selection.selected_id, candidate, None, geometry);
+            if let Some(choice) = estimates
+                .choices
+                .iter()
+                .find(|choice| choice.id == selection.selected_id)
+            {
+                placement_json["refusal"] = json!(choice.refusal);
+                placement_json["wouldTunnel"] = json!(choice.would_tunnel);
+            }
             let _placed_estimates = session.place().map_err(|error| error.to_string())?;
             let track = construction_track(session)?;
             let piece_id = track
@@ -1052,8 +1159,14 @@ fn execute_command(
             Ok(reply_state("Circuit closed.\n".to_owned(), state, true))
         }
         RideCommand::Test => {
-            let (test_run, estimates) = test_ride(ride)?;
-            let report = render_ride_report(ride, &test_run, &estimates, false)?;
+            let (test_run, estimates, rated_margins) = test_ride_with_margins(ride)?;
+            let report = render_ride_report_with_margins(
+                ride,
+                &test_run,
+                &estimates,
+                &rated_margins,
+                false,
+            )?;
             Ok(CommandReply {
                 text: report.clone(),
                 json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "text": report}),
@@ -1061,8 +1174,14 @@ fn execute_command(
             })
         }
         RideCommand::Report(include_samples) => {
-            let (test_run, estimates) = test_ride(ride)?;
-            let report = render_ride_report(ride, &test_run, &estimates, include_samples)?;
+            let (test_run, estimates, rated_margins) = test_ride_with_margins(ride)?;
+            let report = render_ride_report_with_margins(
+                ride,
+                &test_run,
+                &estimates,
+                &rated_margins,
+                include_samples,
+            )?;
             Ok(CommandReply {
                 text: report.clone(),
                 json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "text": report}),
@@ -1161,6 +1280,8 @@ fn state_value_with_estimates(
         + (end_position.y - start_position.y).powi(2)
         + (end_position.z - start_position.z).powi(2))
     .sqrt();
+    let offset_to_station_tiles = offset_to_station / METRES_PER_TILE;
+    let heading_mismatch_degrees = heading_mismatch_degrees(end.heading, start.heading);
     let ground_height = simulation
         .world
         // Track states count half tiles and two-step heights; the world counts tiles and steps.
@@ -1187,7 +1308,9 @@ fn state_value_with_estimates(
                 "y": (start_position.y - end_position.y) / METRES_PER_TILE,
             },
             "metresAboveStationEntry": end_position.z - start_position.z,
+            "offsetToStationEntryTiles": offset_to_station_tiles,
             "heading": format!("{:?}", end.heading),
+            "headingMismatchDegrees": heading_mismatch_degrees,
             "slope": format!("{:?}", end.slope),
             "bank": format!("{:?}", end.bank),
             "heightAboveGroundSteps": end.z * 2 - i32::from(ground_height),
@@ -1212,7 +1335,7 @@ fn format_state_text(state: &Value) -> String {
         .as_str()
         .expect("finish reason is a string");
     format!(
-        "Pieces: {}\nOpen end: tile ({:.1}, {:.1}), height {:.1} m, heading {}, slope {}, bank {}\nHeight above ground: {} steps; offset to station entry: {:.1} m (x {:+.1}, y {:+.1} tiles, height {:+.1} m)\nChain: {}; predicted end speed: {} m/s ({})\nCan close: {}; can finish: {}{}; can test: {}\n",
+        "Pieces: {}\nOpen end: tile ({:.1}, {:.1}), height {:.1} m, heading {}, slope {}, bank {}\nHeight above ground: {} steps; offset to station entry: {:.1} m (x {:+.1}, y {:+.1} tiles, height {:+.1} m)\nClosure approach: remaining offset: {:.1} tiles ({:.1} m); heading mismatch: {:.0} degrees\nChain: {}; predicted end speed: {} m/s ({})\nCan close: {}; can finish: {}{}; can test: {}\n",
         state["pieceCount"]
             .as_u64()
             .expect("piece count is an unsigned integer"),
@@ -1239,6 +1362,15 @@ fn format_state_text(state: &Value) -> String {
         end["metresAboveStationEntry"]
             .as_f64()
             .expect("station height offset is a number"),
+        end["offsetToStationEntryTiles"]
+            .as_f64()
+            .expect("station offset in tiles is a number"),
+        end["offsetToStationEntryMetres"]
+            .as_f64()
+            .expect("station offset is a number"),
+        end["headingMismatchDegrees"]
+            .as_f64()
+            .expect("heading mismatch is a number"),
         state["chain"].as_bool().expect("chain state is a boolean"),
         optional_number(state["predictedEndSpeed"].as_f64()),
         state["previewStatus"].as_str().unwrap_or("unavailable"),
@@ -1259,6 +1391,23 @@ fn format_state_text(state: &Value) -> String {
     )
 }
 
+fn heading_mismatch_degrees(end: TrackHeading, station: TrackHeading) -> f64 {
+    let heading_index = |heading| -> i32 {
+        match heading {
+            TrackHeading::East => 0,
+            TrackHeading::NorthEast => 1,
+            TrackHeading::North => 2,
+            TrackHeading::NorthWest => 3,
+            TrackHeading::West => 4,
+            TrackHeading::SouthWest => 5,
+            TrackHeading::South => 6,
+            TrackHeading::SouthEast => 7,
+        }
+    };
+    let difference = (heading_index(end) - heading_index(station)).abs();
+    f64::from(difference.min(8 - difference)) * 45.0
+}
+
 fn construction_track(session: &BuilderSession) -> Result<Vec<Value>, String> {
     serde_json::from_str(&session.simulation().construction_track())
         .map_err(|error| format!("parse construction track: {error}"))
@@ -1273,60 +1422,141 @@ fn render_choices(
     let end_speed = base.end_speed;
     let choices = base.choices;
     let elements = base.elements;
+    let hill_options: Vec<Value> = serde_json::from_str(&base.hill_options_json)
+        .map_err(|error| format!("parse hill options: {error}"))?;
+    let speed_turns: Vec<Value> = serde_json::from_str(&base.speed_turns_json)
+        .map_err(|error| format!("parse speed turns: {error}"))?;
     let mut rows = Vec::new();
     for choice in choices {
-        if group.is_some_and(|group| group != choice.group) {
+        if hill_options.iter().any(|hill| hill["id"] == choice.id)
+            || group.is_some_and(|group| group != choice.group)
+        {
             continue;
         }
-        let recommended = session
-            .simulation()
-            .construction_speed_match(choice.id, end_speed)
-            .and_then(|result| result.recommended_id.map(|id| id == choice.id))
-            .unwrap_or(false);
-        let preview = candidate_for(session, choice.id, true)?;
-        let hill = choice.hill_estimate.as_ref().map(|estimate| json!({
-            "entrySpeed": estimate.entry_speed,
-            "ratedWindow": estimate.rated_speed.as_ref().map(|window| [window.minimum_entry, window.maximum_entry]),
-            "minimumVerticalG": estimate.minimum_vertical_g,
-            "maximumVerticalG": estimate.maximum_vertical_g,
-            "maximumLateralG": estimate.maximum_absolute_lateral_g,
-            "source": estimate.source,
-        }));
+        let preview = candidate_for(session, choice.id)?;
+        let refusal = if choice.refusal.is_empty() {
+            preview
+                .get("previewUnavailableReason")
+                .cloned()
+                .unwrap_or_else(|| preview["refusal"].clone())
+        } else {
+            json!(choice.refusal)
+        };
         rows.push(json!({
             "id": choice.id,
             "name": choice.label,
             "group": choice.group,
-            "refusal": choice.refusal,
+            "refusal": refusal,
             "wouldTunnel": choice.would_tunnel,
-            "ratedWindow": preview["ratedWindow"],
+            "ratedWindow": candidate_window(session, &preview, choice.id),
             "entrySpeedMargin": preview["margin"],
-            "speedMatchedRecommendation": recommended,
-            "hillPrediction": hill,
+            "speedMatchedRecommendation": speed_match_recommends(session, choice.id, end_speed),
+            "hillPrediction": preview["hillPrediction"],
+            "endTile": preview["endTile"],
+            "endHeight": preview["endHeight"],
+            "length": preview["length"],
+        }));
+    }
+    for hill in hill_options {
+        if group.is_some_and(|group| group != "hill")
+            || rows.iter().any(|row| row["id"] == hill["id"])
+        {
+            continue;
+        }
+        let id = hill["id"].as_str().expect("hill id is a string");
+        let preview = candidate_for(session, id)?;
+        let mut rated_window = candidate_window(session, &preview, id);
+        if rated_window.is_null() {
+            rated_window = hill["ratedSpeed"]
+                .as_object()
+                .map(|window| json!([window["minimumEntry"], window["maximumEntry"]]))
+                .unwrap_or(Value::Null);
+        }
+        rows.push(json!({
+            "id": id,
+            "name": format!(
+                "{} hill {}x{} m ({})",
+                hill["feel"].as_str().expect("hill feel is a string"),
+                hill["height"].as_u64().expect("hill height is an integer"),
+                hill["span"].as_u64().expect("hill span is an integer"),
+                hill["twist"].as_str().expect("hill twist is a string"),
+            ),
+            "group": "hill",
+            "refusal": preview.get("previewUnavailableReason").cloned().unwrap_or_else(|| preview["refusal"].clone()),
+            "wouldTunnel": preview["wouldTunnel"],
+            "ratedWindow": rated_window,
+            "entrySpeedMargin": preview["margin"],
+            "speedMatchedRecommendation": speed_match_recommends(session, id, end_speed),
+            "hillPrediction": preview["hillPrediction"],
+            "endTile": preview["endTile"],
+            "endHeight": preview["endHeight"],
+            "length": preview["length"],
+        }));
+    }
+    for turn in speed_turns {
+        if group.is_some_and(|group| group != "turn")
+            || rows.iter().any(|row| row["id"] == turn["id"])
+        {
+            continue;
+        }
+        let id = turn["id"].as_str().expect("speed turn id is a string");
+        let preview = candidate_for(session, id)?;
+        rows.push(json!({
+            "id": id,
+            "name": format!(
+                "{} speed turn {:.0} m/s",
+                turn["hand"].as_str().expect("speed turn hand is a string"),
+                turn["designSpeed"].as_f64().expect("speed turn design speed is a number"),
+            ),
+            "group": "turn",
+            "refusal": preview.get("previewUnavailableReason").cloned().unwrap_or_else(|| preview["refusal"].clone()),
+            "wouldTunnel": preview["wouldTunnel"],
+            "ratedWindow": candidate_window(session, &preview, id),
+            "entrySpeedMargin": preview["margin"],
+            "speedMatchedRecommendation": speed_match_recommends(session, id, end_speed),
+            "hillPrediction": Value::Null,
+            "endTile": preview["endTile"],
+            "endHeight": preview["endHeight"],
+            "length": preview["length"],
         }));
     }
     for element in elements {
         if group.is_some_and(|group| group != "element") {
             continue;
         }
+        let preview = candidate_for(session, &element.id)?;
+        let refusal = preview
+            .get("previewUnavailableReason")
+            .cloned()
+            .unwrap_or_else(|| {
+                if element.would_tunnel {
+                    json!("would tunnel")
+                } else {
+                    json!("")
+                }
+            });
         rows.push(json!({
             "id": element.id,
             "name": element.name,
             "group": "element",
-            "refusal": if element.would_tunnel { "would tunnel" } else { "" },
+            "refusal": refusal,
             "wouldTunnel": element.would_tunnel,
             "ratedWindow": null,
             "entrySpeedMargin": null,
             "speedMatchedRecommendation": false,
+            "endTile": preview["endTile"],
+            "endHeight": preview["endHeight"],
+            "length": preview["length"],
         }));
     }
     restore_selection(session, &current_selection)?;
     let mut text = String::from(
-        "id                         name                         group       refusal                 tunnel window     margin matched\n",
+        "id                         name                         group       refusal                 tunnel window     margin matched end tile        height m length m\n",
     );
     for row in &rows {
         writeln!(
             text,
-            "{:<26} {:<28} {:<11} {:<23} {:<6} {:<12} {:>6} {}",
+            "{:<26} {:<28} {:<11} {:<23} {:<6} {:<12} {:>6} {:<7} {:<15} {:>8} {:>8}",
             row["id"].as_str().expect("choice id is a string"),
             row["name"].as_str().expect("choice name is a string"),
             row["group"].as_str().expect("choice group is a string"),
@@ -1351,6 +1581,13 @@ fn render_choices(
             } else {
                 "no"
             },
+            format_end_tile(&row["endTile"]),
+            row["endHeight"]
+                .as_f64()
+                .map_or_else(|| "—".to_owned(), |value| format!("{value:.1}")),
+            row["length"]
+                .as_f64()
+                .map_or_else(|| "—".to_owned(), |value| format!("{value:.1}")),
         )
         .unwrap();
     }
@@ -1365,11 +1602,11 @@ fn render_estimates(session: &mut BuilderSession, ids: &[String]) -> Result<Comm
     let current_selection = session.simulation().construction_selected();
     let mut rows = Vec::with_capacity(ids.len());
     for id in ids {
-        rows.push(candidate_for(session, id, false)?);
+        rows.push(candidate_for(session, id)?);
     }
     restore_selection(session, &current_selection)?;
     let mut text = String::from(
-        "piece                      entry m/s window      margin  vertical g (rating)                       lateral g (rating)   long g (rating) status\n",
+        "piece                      entry m/s window      margin  candidate preview vertical g (rating)     lateral g (rating)   long g (rating) status\n",
     );
     for row in &rows {
         let peaks = &row["peaks"];
@@ -1410,8 +1647,18 @@ fn render_estimates(session: &mut BuilderSession, ids: &[String]) -> Result<Comm
         .unwrap();
         if let Some(hill) = row.get("hillPrediction") {
             if !hill.is_null() {
-                writeln!(text, "  hill prediction: {hill}").unwrap();
+                writeln!(
+                    text,
+                    "  hill inspector prediction (closed-form): entry {} m/s, vertical {} to {} g",
+                    optional_number(hill["entrySpeed"].as_f64()),
+                    optional_number(hill["minimumVerticalG"].as_f64()),
+                    optional_number(hill["maximumVerticalG"].as_f64()),
+                )
+                .unwrap();
             }
+        }
+        if let Some(reason) = row["previewUnavailableReason"].as_str() {
+            writeln!(text, "  {reason}").unwrap();
         }
     }
     Ok(CommandReply {
@@ -1421,17 +1668,52 @@ fn render_estimates(session: &mut BuilderSession, ids: &[String]) -> Result<Comm
     })
 }
 
-fn candidate_for(session: &mut BuilderSession, id: &str, exact: bool) -> Result<Value, String> {
+fn render_probe(session: &mut BuilderSession, id: &str) -> Result<CommandReply, String> {
+    let current_selection = session.simulation().construction_selected();
+    let candidate = candidate_for(session, id)?;
+    restore_selection(session, &current_selection)?;
+    let refusal = candidate["refusal"]
+        .as_str()
+        .expect("candidate refusal is a string");
+    if candidate["status"] == "unavailable" || !refusal.is_empty() {
+        if candidate["status"] != "unavailable" {
+            return Err(format!("{} is not offered at this end: {refusal}", id));
+        }
+        return Err(candidate["previewUnavailableReason"]
+            .as_str()
+            .expect("unavailable candidate has a reason")
+            .to_owned());
+    }
+
+    let peaks = &candidate["peaks"];
+    let text = format!(
+        "Probe {}\nEntry speed: {} m/s\nForces: {}\nEnd tile: {}; height {} m; length {} m\n",
+        candidate["id"].as_str().expect("candidate id is a string"),
+        optional_number(candidate["entrySpeed"].as_f64()),
+        format_peaks_value(peaks),
+        format_end_tile(&candidate["endTile"]),
+        optional_number(candidate["endHeight"].as_f64()),
+        optional_number(candidate["length"].as_f64()),
+    );
+    Ok(CommandReply {
+        text,
+        json: candidate,
+        changed_ride: false,
+    })
+}
+
+fn candidate_for(session: &mut BuilderSession, id: &str) -> Result<Value, String> {
     let selection = session
-        .select(id, exact)
+        .select(id, true)
         .map_err(|error| error.to_string())?;
     let estimates = session.estimates();
-    let candidate = estimates.candidate_preview.as_ref().ok_or_else(|| {
-        format!(
-            "candidate preview is unavailable for {}",
-            selection.selected_id
-        )
-    })?;
+    let Some(candidate) = estimates.candidate_preview.as_ref() else {
+        return Ok(unavailable_candidate_value(
+            &selection.selected_id,
+            &estimates.choices,
+            session.simulation(),
+        ));
+    };
     let hill = estimates
         .choices
         .iter()
@@ -1444,12 +1726,135 @@ fn candidate_for(session: &mut BuilderSession, id: &str, exact: bool) -> Result<
             "maximumVerticalG": estimate.maximum_vertical_g,
             "maximumLateralG": estimate.maximum_absolute_lateral_g,
             "source": estimate.source,
+            "method": "closed-form hill inspector prediction",
         }));
-    let mut value = candidate_value(&selection.selected_id, candidate, hill);
+    let geometry = candidate_geometry_value(session);
+    let mut value = candidate_value(&selection.selected_id, candidate, hill, geometry);
+    let choice = estimates
+        .choices
+        .iter()
+        .find(|choice| choice.id == selection.selected_id);
+    value["refusal"] = json!(choice.map_or("", |choice| choice.refusal.as_str()));
+    value["wouldTunnel"] = json!(choice.is_some_and(|choice| choice.would_tunnel));
     if selection.selected_id != id {
         value["requestedId"] = json!(id);
     }
     Ok(value)
+}
+
+fn unavailable_candidate_value(
+    id: &str,
+    choices: &[theme_park_sim_wasm::construction::ConstructionPieceWire],
+    simulation: &WasmSimulation,
+) -> Value {
+    let choice = choices.iter().find(|choice| choice.id == id);
+    let reason = candidate_preview_unavailable(id, choices, simulation);
+    let geometry = simulation.construction_candidate_geometry();
+    let hill = choice.and_then(|choice| {
+        choice.hill_estimate.as_ref().map(|estimate| {
+            json!({
+                "entrySpeed": estimate.entry_speed,
+                "ratedWindow": estimate.rated_speed.as_ref().map(|window| [window.minimum_entry, window.maximum_entry]),
+                "minimumVerticalG": estimate.minimum_vertical_g,
+                "maximumVerticalG": estimate.maximum_vertical_g,
+                "maximumLateralG": estimate.maximum_absolute_lateral_g,
+                "source": estimate.source,
+                "method": "closed-form hill inspector prediction",
+            })
+        })
+    });
+    json!({
+        "id": id,
+        "entrySpeed": null,
+        "ratedWindow": choice.and_then(|choice| choice.hill_estimate.as_ref())
+            .and_then(|estimate| estimate.rated_speed.as_ref())
+            .map(|window| json!([window.minimum_entry, window.maximum_entry]))
+            .or_else(|| rated_window_for_id(simulation, id).map(|window| json!(window))),
+        "margin": null,
+        "peaks": null,
+        "ratings": null,
+        "status": "unavailable",
+        "samples": [],
+        "hillPrediction": hill,
+        "refusal": choice.map_or("", |choice| choice.refusal.as_str()),
+        "wouldTunnel": choice.is_some_and(|choice| choice.would_tunnel),
+        "previewUnavailableReason": reason,
+        "endTile": geometry.as_ref().map(|geometry| json!({"x": geometry.end_tile_x, "y": geometry.end_tile_y})),
+        "endHeight": geometry.as_ref().map(|geometry| geometry.end_height),
+        "length": geometry.map(|geometry| geometry.length),
+    })
+}
+
+fn candidate_preview_unavailable(
+    id: &str,
+    choices: &[theme_park_sim_wasm::construction::ConstructionPieceWire],
+    simulation: &WasmSimulation,
+) -> String {
+    let preview_reason = simulation.construction_preview_reason();
+    if let Some(choice) = choices.iter().find(|choice| choice.id == id) {
+        if !choice.refusal.is_empty() {
+            return format!("{id} is not offered at this end: {}", choice.refusal);
+        }
+        if !preview_reason.is_empty() {
+            return format!("candidate preview is unavailable for {id}: {preview_reason}");
+        }
+        let Some(construction) = simulation.construction.as_ref() else {
+            return format!(
+                "candidate preview is unavailable for {id}: there is no active construction"
+            );
+        };
+        if construction.pieces().is_empty() {
+            return format!(
+                "candidate preview is unavailable for {id}: the construction has no track"
+            );
+        }
+        return format!(
+            "candidate preview is unavailable for {id}: the builder did not produce force samples"
+        );
+    }
+    if preview_reason.is_empty() {
+        format!("{id} is not offered at this end")
+    } else {
+        format!("{id} is not offered at this end: {preview_reason}")
+    }
+}
+
+fn candidate_geometry_value(session: &BuilderSession) -> Option<Value> {
+    let geometry = session.simulation().construction_candidate_geometry()?;
+    Some(json!({
+        "endTile": {"x": geometry.end_tile_x, "y": geometry.end_tile_y},
+        "endHeight": geometry.end_height,
+        "length": geometry.length,
+    }))
+}
+
+fn rated_window_for_id(simulation: &WasmSimulation, id: &str) -> Option<[f64; 2]> {
+    let construction = simulation.construction.as_ref()?;
+    let model = construction.model();
+    let piece = theme_park_sim::track::catalog()
+        .iter()
+        .find(|piece| format!("{:?}", piece.id) == id)?;
+    if !model.allows_piece(piece) {
+        return None;
+    }
+    let window = theme_park_sim::track::rated_speeds(model, piece)?;
+    Some([window.minimum_entry, window.maximum_entry])
+}
+
+fn candidate_window(session: &BuilderSession, preview: &Value, id: &str) -> Value {
+    preview["ratedWindow"]
+        .as_array()
+        .map(|_| preview["ratedWindow"].clone())
+        .or_else(|| rated_window_for_id(session.simulation(), id).map(|window| json!(window)))
+        .unwrap_or(Value::Null)
+}
+
+fn speed_match_recommends(session: &BuilderSession, id: &str, end_speed: Option<f64>) -> bool {
+    session
+        .simulation()
+        .construction_speed_match(id, end_speed)
+        .and_then(|result| result.recommended_id.map(|recommended| recommended == id))
+        .unwrap_or(false)
 }
 
 fn optional_rating<'a>(ratings: &'a Value, key: &str) -> &'a str {
@@ -1460,6 +1865,7 @@ fn candidate_value(
     id: &str,
     candidate: &ConstructionCandidateForcePreviewWire,
     hill: Option<Value>,
+    geometry: Option<Value>,
 ) -> Value {
     let peaks = candidate.peaks.as_ref().map(|peaks| {
         json!({
@@ -1495,6 +1901,12 @@ fn candidate_value(
         "ratings": ratings,
         "status": candidate.status,
         "samples": candidate.samples,
+        "forceEstimateMethod": "open-track candidate simulation",
+        "refusal": "",
+        "wouldTunnel": false,
+        "endTile": geometry.as_ref().map(|geometry| geometry["endTile"].clone()),
+        "endHeight": geometry.as_ref().and_then(|geometry| geometry["endHeight"].as_f64()),
+        "length": geometry.as_ref().and_then(|geometry| geometry["length"].as_f64()),
     });
     if let Some(hill) = hill {
         value["hillPrediction"] = hill;
@@ -1538,6 +1950,26 @@ fn format_window(value: &Value) -> String {
                     .expect("rated window maximum is a number")
             )
         },
+    )
+}
+
+fn format_end_tile(value: &Value) -> String {
+    let (Some(x), Some(y)) = (value["x"].as_f64(), value["y"].as_f64()) else {
+        return "—".to_owned();
+    };
+    format!("({x:.1}, {y:.1})")
+}
+
+fn format_peaks_value(peaks: &Value) -> String {
+    if peaks.is_null() {
+        return "preview unavailable".to_owned();
+    }
+    format!(
+        "v+ {} g, v- {} g, lateral {} g, longitudinal {} g",
+        optional_number(peaks["maximumVerticalG"].as_f64()),
+        optional_number(peaks["minimumVerticalG"].as_f64()),
+        optional_number(peaks["maximumLateralG"].as_f64()),
+        optional_number(peaks["maximumLongitudinalG"].as_f64()),
     )
 }
 
@@ -1654,12 +2086,41 @@ fn test_ride(ride: &RideFile) -> Result<(TestRun, Vec<RidePieceEstimate>), Strin
     finish_test_run(&mut session).map(|test_run| (test_run, estimates))
 }
 
+fn test_ride_with_margins(
+    ride: &RideFile,
+) -> Result<(TestRun, Vec<RidePieceEstimate>, String), String> {
+    let (mut session, estimates, _) = replay_with_estimates(ride, false)?;
+    let (circuit, _) = session
+        .simulation()
+        .construction_circuit_and_train()
+        .ok_or_else(|| "rated entry margins require a closed circuit".to_owned())?;
+    let model = coaster_models()
+        .into_iter()
+        .find(|model| model.key == ride.model)
+        .ok_or_else(|| format!("unknown coaster model {:?}", ride.model))?;
+    let rated_margins = rated_speed_margin_report(&circuit, &model)?;
+    let test_run = finish_test_run(&mut session)?;
+    Ok((test_run, estimates, rated_margins))
+}
+
 fn test_ride_with_browser_estimates(
     ride: &RideFile,
-) -> Result<(TestRun, Vec<RidePieceEstimate>, Vec<Value>), String> {
+) -> Result<
+    (
+        TestRun,
+        Vec<RidePieceEstimate>,
+        Vec<Value>,
+        theme_park_sim::physics::Circuit,
+    ),
+    String,
+> {
     let (mut session, estimates, browser_estimates) = replay_with_estimates(ride, true)?;
     let test_run = finish_test_run(&mut session)?;
-    Ok((test_run, estimates, browser_estimates))
+    let (circuit, _) = session
+        .simulation()
+        .construction_circuit_and_train()
+        .ok_or_else(|| "ride test completed without a construction circuit".to_owned())?;
+    Ok((test_run, estimates, browser_estimates, circuit))
 }
 
 fn finish_test_run(session: &mut BuilderSession) -> Result<TestRun, String> {
@@ -1670,6 +2131,18 @@ fn finish_test_run(session: &mut BuilderSession) -> Result<TestRun, String> {
         .as_ref()
         .cloned()
         .ok_or_else(|| "ride test completed without a native report".to_owned())
+}
+
+fn format_replay_step_error(step_index: usize, message: impl std::fmt::Display) -> String {
+    format!("ride step {step_index}: {message}")
+}
+
+fn format_replay_piece_error(
+    step_index: usize,
+    piece_index: usize,
+    message: impl std::fmt::Display,
+) -> String {
+    format!("ride step {step_index} (piece {piece_index}): {message}")
 }
 
 pub(crate) fn replay_with_estimates(
@@ -1714,22 +2187,23 @@ pub(crate) fn replay_with_estimates(
                     .iter()
                     .map(|piece| piece.length())
                     .sum::<f64>();
-                session
-                    .select(&place.place, true)
-                    .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
+                session.select(&place.place, true).map_err(|error| {
+                    format_replay_piece_error(step_index + 1, first_piece_index, error)
+                })?;
                 let placement = session.estimates();
                 let candidate = placement.candidate_preview.as_ref().ok_or_else(|| {
-                    format!(
-                        "ride step {}: candidate preview unavailable",
-                        step_index + 1
+                    format_replay_piece_error(
+                        step_index + 1,
+                        first_piece_index,
+                        "candidate preview unavailable",
                     )
                 })?;
                 let selection_snapshot = include_browser_estimates
                     .then(|| builder_estimates_snapshot(&session, &placement))
                     .transpose()?;
-                let mut placement_estimates = session
-                    .place()
-                    .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
+                let mut placement_estimates = session.place().map_err(|error| {
+                    format_replay_piece_error(step_index + 1, first_piece_index, error)
+                })?;
                 if let Some(speed) = place.launch_speed {
                     let track = construction_track(&session)?;
                     let bridge_id = track
@@ -1737,14 +2211,17 @@ pub(crate) fn replay_with_estimates(
                         .and_then(|piece| piece["id"].as_u64())
                         .map(|id| id as usize)
                         .ok_or_else(|| {
-                            format!(
-                                "ride step {}: launch has no bridge piece id",
-                                step_index + 1
+                            format_replay_piece_error(
+                                step_index + 1,
+                                first_piece_index,
+                                "launch has no bridge piece id",
                             )
                         })?;
                     session
                         .set_launch_speed(bridge_id, speed)
-                        .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
+                        .map_err(|error| {
+                            format_replay_piece_error(step_index + 1, first_piece_index, error)
+                        })?;
                     placement_estimates = session.estimates();
                 }
                 let construction_after = session
@@ -1782,9 +2259,10 @@ pub(crate) fn replay_with_estimates(
                         .get(piece_index)
                         .and_then(|row| row["label"].as_str())
                         .ok_or_else(|| {
-                            format!(
-                                "ride step {}: placed piece {piece_index} has no track label",
-                                step_index + 1
+                            format_replay_piece_error(
+                                step_index + 1,
+                                piece_index,
+                                format!("placed piece {piece_index} has no track label"),
                             )
                         })?;
                     let note = if relative_piece_index == 0 {
@@ -1809,7 +2287,7 @@ pub(crate) fn replay_with_estimates(
                 }
                 if let Some(selection_snapshot) = selection_snapshot {
                     browser_estimates.push(json!({
-                        "stepIndex": step_index,
+                        "stepIndex": step_index + 1,
                         "pieceIndex": first_piece_index,
                         "pieceCount": added_piece_count,
                         "pieceId": place.place,
@@ -1821,16 +2299,19 @@ pub(crate) fn replay_with_estimates(
             RideStep::Chain(chain) => {
                 session
                     .set_chain(chain.chain)
-                    .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
+                    .map_err(|error| format_replay_step_error(step_index + 1, error))?;
                 session.estimates();
             }
             RideStep::Close(close) => {
                 if !close.close {
-                    return Err(format!("ride step {}: close must be true", step_index + 1));
+                    return Err(format_replay_step_error(
+                        step_index + 1,
+                        "close must be true",
+                    ));
                 }
                 session
                     .close()
-                    .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
+                    .map_err(|error| format_replay_step_error(step_index + 1, error))?;
             }
             RideStep::BlockSections(blocks) => {
                 session
@@ -1840,7 +2321,7 @@ pub(crate) fn replay_with_estimates(
                         blocks.capacity_search_complete,
                         blocks.placement_search_complete,
                     )
-                    .map_err(|error| format!("ride step {}: {error}", step_index + 1))?;
+                    .map_err(|error| format_replay_step_error(step_index + 1, error))?;
             }
         }
     }
@@ -2221,26 +2702,30 @@ fn force_peaks_json(peaks: Option<ForcePeaks>) -> Value {
     })
 }
 
-fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
+fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
     if paths.is_empty() {
         return Err("usage: tools/design check <ride file> ...".into());
     }
     let mut rows = Vec::new();
-    let mut text = String::from(
-        "Native agreement failures are informational; this command exits zero for them until work item 6.\n",
-    );
-    let mut expectation_failures = Vec::new();
+    let mut text = String::from("Native agreement failures are informational.\n");
+    let mut has_expectation_failures = false;
     for path in paths {
         let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
         let ride: RideFile = serde_json::from_slice(&bytes)
             .map_err(|error| format!("parse ride {path}: {error}"))?;
-        let (test_run, estimates, browser_estimates) =
+        let model = validate_model(&ride.model)?;
+        let (test_run, estimates, browser_estimates, circuit) =
             test_ride_with_browser_estimates(&ride).map_err(|error| format!("{path}: {error}"))?;
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
-        let failures = check_expectations(&ride, &test_run);
-        for failure in &failures {
-            expectation_failures.push(format!("{path}: {failure}"));
-        }
+        let rated_speed_margins = crate::report::rated_speed_margins(&circuit, &model)
+            .map_err(|error| format!("{path}: {error}"))?;
+        let expectation_results = evaluate_expectations(&ride, &test_run);
+        let failures: Vec<_> = expectation_results
+            .iter()
+            .filter(|result| !result.passed)
+            .map(ExpectationResult::format)
+            .collect();
+        has_expectation_failures |= !failures.is_empty();
         writeln!(
             text,
             "{}: expectations {}; native agreement {} (informational)",
@@ -2249,8 +2734,11 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
             if agreement.passed { "pass" } else { "fail" }
         )
         .unwrap();
-        for failure in &failures {
-            writeln!(text, "  {failure}").unwrap();
+        text.push_str(&crate::report::format_rated_speed_margins(
+            &rated_speed_margins,
+        ));
+        for result in &expectation_results {
+            writeln!(text, "  {}", result.format()).unwrap();
         }
         for failure in &agreement.failures {
             writeln!(
@@ -2263,86 +2751,185 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<String, String> {
         rows.push(json!({
             "path": path,
             "name": ride.name,
-            "agreementGate": "informational until work item 6; agreement failures exit zero",
+            "agreementGate": "informational; agreement failures exit zero",
+            "ratedSpeedMargins": rated_speed_margins.iter().map(|margin| json!({
+                "pieceIndex": margin.piece_index,
+                "pieceId": margin.piece_id,
+                "carIndex": margin.car_index,
+                "entrySpeed": margin.entry_speed,
+                "ratedWindow": [margin.window.0, margin.window.1],
+                "ruleMargin": margin.rule_margin,
+                "status": if margin.unavailable_reason.is_some() {
+                    "UNAVAILABLE"
+                } else {
+                    match margin.rule_margin {
+                        Some(rule_margin) if rule_margin >= 0.0 => "PASS",
+                        Some(_) => "FAIL",
+                        None => "UNAVAILABLE",
+                    }
+                },
+                "unavailableReason": margin.unavailable_reason,
+                "physicsConfiguration": if margin.construction_test { "construction-test" } else { "default" },
+            })).collect::<Vec<_>>(),
+            "expectations": expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
             "expectationFailures": failures,
             "agreement": agreement_json(&agreement),
             "browserEstimates": browser_estimates,
         }));
     }
-    if !expectation_failures.is_empty() {
-        return Err(format!(
-            "{}\nExpectation checks failed:\n{}",
-            text,
-            expectation_failures.join("\n")
-        ));
+    if has_expectation_failures {
+        if json_mode {
+            return serde_json::to_string_pretty(&Value::Array(rows))
+                .map(|value| CliResponse::FailureWithStdout(value + "\n"))
+                .map_err(|error| error.to_string());
+        }
+        return Err(text);
     }
     if json_mode {
         return serde_json::to_string_pretty(&Value::Array(rows))
-            .map(|value| value + "\n")
+            .map(|value| CliResponse::Success(value + "\n"))
             .map_err(|error| error.to_string());
     }
-    Ok(text)
+    Ok(CliResponse::Success(text))
 }
 
 pub(crate) fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<String> {
+    evaluate_expectations(ride, test_run)
+        .into_iter()
+        .filter(|result| !result.passed)
+        .map(|result| result.format())
+        .collect()
+}
+
+struct ExpectationResult {
+    metric: &'static str,
+    expected: String,
+    observed: Value,
+    observed_text: String,
+    passed: bool,
+}
+
+impl ExpectationResult {
+    fn format(&self) -> String {
+        format!(
+            "expectation {} expected {}, observed {} ({})",
+            self.metric,
+            self.expected,
+            self.observed_text,
+            if self.passed { "pass" } else { "fail" }
+        )
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "metric": self.metric,
+            "expected": self.expected,
+            "observed": self.observed,
+            "passed": self.passed,
+        })
+    }
+}
+
+fn evaluate_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<ExpectationResult> {
     let Some(expect) = &ride.expect else {
         return Vec::new();
     };
-    let mut failures = Vec::new();
+    let mut results = Vec::new();
     let sustained = test_run.sustained_force_peaks();
     if let Some([minimum, maximum]) = expect.excitement {
-        if !(minimum..=maximum).contains(&test_run.excitement) {
-            failures.push(format!(
-                "excitement expected {minimum:.2}-{maximum:.2}, observed {:.2}",
-                test_run.excitement
-            ));
-        }
+        results.push(range_expectation(
+            "excitement",
+            minimum,
+            maximum,
+            Some(test_run.excitement),
+        ));
     }
     if let Some([minimum, maximum]) = expect.sustained_max_vertical_g {
-        let observed = sustained.maximum_vertical_g;
-        if observed.is_none_or(|value| !(minimum..=maximum).contains(&value)) {
-            let observed =
-                observed.map_or_else(|| "not measured".to_owned(), |value| format!("{value:.2}"));
-            failures.push(format!(
-                "maximum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed}"
-            ));
-        }
+        results.push(range_expectation(
+            "maximum vertical g",
+            minimum,
+            maximum,
+            sustained.maximum_vertical_g,
+        ));
     }
     if let Some([minimum, maximum]) = expect.sustained_min_vertical_g {
-        let observed = sustained.minimum_vertical_g;
-        if observed.is_none_or(|value| !(minimum..=maximum).contains(&value)) {
-            let observed =
-                observed.map_or_else(|| "not measured".to_owned(), |value| format!("{value:.2}"));
-            failures.push(format!(
-                "minimum vertical g expected {minimum:.2}-{maximum:.2}, observed {observed}"
-            ));
-        }
+        results.push(range_expectation(
+            "sustained minimum vertical g",
+            minimum,
+            maximum,
+            sustained.minimum_vertical_g,
+        ));
     }
     if let Some(maximum) = expect.max_lateral_g {
-        if test_run.statistics.max_lateral_g > maximum {
-            failures.push(format!(
-                "maximum lateral g expected at most {maximum:.2}, observed {:.2}",
-                test_run.statistics.max_lateral_g
-            ));
-        }
+        let observed = test_run.statistics.max_lateral_g;
+        results.push(ExpectationResult {
+            metric: "maximum lateral g",
+            expected: format!("at most {maximum:.2}"),
+            observed: json!(observed),
+            observed_text: format!("{observed:.2}"),
+            passed: observed <= maximum,
+        });
     }
     if let Some(inversions) = expect.inversions {
-        if test_run.statistics.inversions != inversions as usize {
-            failures.push(format!(
-                "inversions expected {inversions}, observed {}",
-                test_run.statistics.inversions
-            ));
-        }
+        let observed = test_run.statistics.inversions;
+        results.push(count_expectation(
+            "inversions",
+            inversions,
+            observed,
+            observed == inversions as usize,
+        ));
     }
     if let Some(minimum) = expect.airtime_moments_at_least {
-        if test_run.statistics.airtime_moments < minimum as usize {
-            failures.push(format!(
-                "airtime moments expected at least {minimum}, observed {}",
-                test_run.statistics.airtime_moments
-            ));
-        }
+        let observed = test_run.statistics.airtime_moments;
+        results.push(ExpectationResult {
+            metric: "airtime moments",
+            expected: format!("at least {minimum}"),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= minimum as usize,
+        });
     }
-    failures
+    results
+}
+
+fn range_expectation(
+    metric: &'static str,
+    minimum: f64,
+    maximum: f64,
+    observed: Option<f64>,
+) -> ExpectationResult {
+    let (observed, observed_text, passed) = observed.map_or_else(
+        || (Value::Null, "not measured".to_owned(), false),
+        |value| {
+            (
+                json!(value),
+                format!("{value:.2}"),
+                (minimum..=maximum).contains(&value),
+            )
+        },
+    );
+    ExpectationResult {
+        metric,
+        expected: format!("{minimum:.2} to {maximum:.2}"),
+        observed,
+        observed_text,
+        passed,
+    }
+}
+
+fn count_expectation(
+    metric: &'static str,
+    expected: u32,
+    observed: usize,
+    passed: bool,
+) -> ExpectationResult {
+    ExpectationResult {
+        metric,
+        expected: expected.to_string(),
+        observed: json!(observed),
+        observed_text: observed.to_string(),
+        passed,
+    }
 }
 
 fn export_session(ride: &RideFile, session: &BuilderSession) -> Result<Value, String> {
@@ -2610,8 +3197,8 @@ mod expectation_tests {
             Some([minimum_vertical_g - 0.2, minimum_vertical_g - 0.1]);
         let failures = check_expectations(&ride, &test_run);
         assert_eq!(failures.len(), 2);
-        assert!(failures[0].starts_with("maximum vertical g expected"));
-        assert!(failures[1].starts_with("minimum vertical g expected"));
+        assert!(failures[0].starts_with("expectation maximum vertical g expected"));
+        assert!(failures[1].starts_with("expectation sustained minimum vertical g expected"));
     }
 
     fn with_brief_per_car_peaks(

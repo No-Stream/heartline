@@ -25,7 +25,8 @@ pub use scoring::{
 };
 mod testing;
 pub use testing::{
-    ForcePeakValues, PieceForcePeaks, SustainedForcePeaks, TestRun, TestRunRecorder, TestSample,
+    CarPieceForcePeaks, ForcePeakLocation, ForcePeakLocations, ForcePeakValues, PieceForcePeaks,
+    SustainedForcePeakLocations, SustainedForcePeaks, TestRun, TestRunRecorder, TestSample,
 };
 mod coaster_run;
 pub use coaster_run::{CoasterOutcome, CoasterRun};

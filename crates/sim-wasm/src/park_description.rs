@@ -197,6 +197,16 @@ impl WasmSimulation {
 
         let mut coaster_should_open = false;
         for (index, coaster) in coasters.into_iter().enumerate() {
+            if coaster.ride.station.z != coaster.station.z {
+                return Err(entry_error(
+                    "coasters",
+                    index,
+                    format!(
+                        "station height mismatch: ride file is {}, park description is {}",
+                        coaster.ride.station.z, coaster.station.z
+                    ),
+                ));
+            }
             let mut ride = coaster.ride;
             ride.station = coaster.station;
             let mut session = BuilderSession::new(simulation);

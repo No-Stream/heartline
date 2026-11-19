@@ -137,10 +137,19 @@ impl Default for BuilderSessionBridge {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuilderSessionError {
-    Bridge { action: String, message: String },
-    BridgeRefusedWithoutMessage { action: String },
+    Bridge {
+        action: String,
+        message: String,
+    },
+    BridgeRefusedWithoutMessage {
+        action: String,
+    },
     InvalidRide(String),
-    RideStep { step_index: usize, message: String },
+    RideStep {
+        step_index: usize,
+        piece_index: Option<usize>,
+        message: String,
+    },
 }
 
 impl Display for BuilderSessionError {
@@ -153,9 +162,17 @@ impl Display for BuilderSessionError {
             Self::InvalidRide(message) => formatter.write_str(message),
             Self::RideStep {
                 step_index,
+                piece_index,
                 message,
             } => {
-                write!(formatter, "ride step {step_index}: {message}")
+                if let Some(piece_index) = piece_index {
+                    write!(
+                        formatter,
+                        "ride step {step_index} (piece {piece_index}): {message}"
+                    )
+                } else {
+                    write!(formatter, "ride step {step_index}: {message}")
+                }
             }
         }
     }
@@ -638,18 +655,25 @@ impl BuilderSession {
             ride.station.z,
             heading,
         )
-        .map_err(|error| invalid_ride_step(1, error))?;
+        .map_err(|error| invalid_ride_step(1, None, error))?;
         self.set_cars_per_train(ride.cars_per_train)
-            .map_err(|error| invalid_ride_step(1, error))?;
+            .map_err(|error| invalid_ride_step(1, None, error))?;
 
         for (step_offset, step) in ride.steps.iter().enumerate() {
             let step_index = step_offset + 1;
             match step {
                 RideStep::Place(place) => {
+                    let piece_index = self
+                        .simulation
+                        .construction
+                        .as_ref()
+                        .expect("ride replay has active construction")
+                        .pieces()
+                        .len();
                     self.select(&place.place, true)
-                        .map_err(|error| invalid_ride_step(step_index, error))?;
+                        .map_err(|error| invalid_ride_step(step_index, Some(piece_index), error))?;
                     self.append_selected()
-                        .map_err(|error| invalid_ride_step(step_index, error))?;
+                        .map_err(|error| invalid_ride_step(step_index, Some(piece_index), error))?;
                     if let Some(target_speed) = place.launch_speed {
                         let track: serde_json::Value =
                             serde_json::from_str(&self.simulation.construction_track())
@@ -661,25 +685,29 @@ impl BuilderSession {
                             .map(|id| id as usize)
                             .ok_or_else(|| BuilderSessionError::RideStep {
                                 step_index,
+                                piece_index: Some(piece_index),
                                 message: "placed launch has no bridge piece id".into(),
                             })?;
                         self.set_launch_speed(piece_index, target_speed)
-                            .map_err(|error| invalid_ride_step(step_index, error))?;
+                            .map_err(|error| {
+                                invalid_ride_step(step_index, Some(piece_index), error)
+                            })?;
                     }
                 }
                 RideStep::Chain(chain) => {
                     self.set_chain(chain.chain)
-                        .map_err(|error| invalid_ride_step(step_index, error))?;
+                        .map_err(|error| invalid_ride_step(step_index, None, error))?;
                 }
                 RideStep::Close(close) => {
                     if !close.close {
                         return Err(BuilderSessionError::RideStep {
                             step_index,
+                            piece_index: None,
                             message: "close must be true".into(),
                         });
                     }
                     self.close_track()
-                        .map_err(|error| invalid_ride_step(step_index, error))?;
+                        .map_err(|error| invalid_ride_step(step_index, None, error))?;
                 }
                 RideStep::BlockSections(blocks) => {
                     self.install_block_sections(
@@ -688,7 +716,7 @@ impl BuilderSession {
                         blocks.capacity_search_complete,
                         blocks.placement_search_complete,
                     )
-                    .map_err(|error| invalid_ride_step(step_index, error))?;
+                    .map_err(|error| invalid_ride_step(step_index, None, error))?;
                 }
             }
         }
@@ -711,7 +739,7 @@ impl BuilderSession {
             && self.simulation.construction_train_count() != usize::from(ride.trains)
         {
             self.set_train_count(usize::from(ride.trains))
-                .map_err(|error| invalid_ride_step(ride.steps.len() + 1, error))?;
+                .map_err(|error| invalid_ride_step(ride.steps.len() + 1, None, error))?;
         }
         Ok(self.estimates())
     }
@@ -775,9 +803,14 @@ fn snapshot_checksum(bytes: &[u8]) -> u64 {
     })
 }
 
-fn invalid_ride_step(step_index: usize, error: BuilderSessionError) -> BuilderSessionError {
+fn invalid_ride_step(
+    step_index: usize,
+    piece_index: Option<usize>,
+    error: BuilderSessionError,
+) -> BuilderSessionError {
     BuilderSessionError::RideStep {
         step_index,
+        piece_index,
         message: error.to_string(),
     }
 }

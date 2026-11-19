@@ -79,24 +79,25 @@ fn choices_estimates_and_placement_have_stable_text_replies() {
     )
     .unwrap();
 
-    let expected = r#"id                         name                         group       refusal                 tunnel window     margin matched
-Straight                   Straight                     straight                            no     —                 — no
-OffsetLeft                 Left half-tile offset        straight                            no     —                 — no
-HalfTileStraight           Half-tile straight           straight                            no     —                 — no
-OneTileStraight            One-tile straight            straight                            no     —                 — no
-FullOffsetLeft             Left full-tile offset        straight                            no     —                 — no
-ShortOffsetLeft            Left short half-tile offset  straight                            no     —                 — no
-AirtimeHill                Small airtime hill           straight                            no     —                 — no
-OffsetRight                Right half-tile offset       straight                            no     —                 — no
-FullOffsetRight            Right full-tile offset       straight                            no     —                 — no
-ShortOffsetRight           Right short half-tile offset straight                            no     —                 — no
-piece                      entry m/s window      margin  vertical g (rating)                       lateral g (rating)   long g (rating) status
+    let expected = r#"id                         name                         group       refusal                 tunnel window     margin matched end tile        height m length m
+Straight                   Straight                     straight                            no     —                 — no      (108.0, 100.0)      10.0     16.0
+OffsetLeft                 Left half-tile offset        straight                            no     —                 — no      (110.0, 100.5)      10.0     24.1
+HalfTileStraight           Half-tile straight           straight                            no     —                 — no      (104.5, 100.0)      10.0      2.0
+OneTileStraight            One-tile straight            straight                            no     —                 — no      (105.0, 100.0)      10.0      4.0
+FullOffsetLeft             Left full-tile offset        straight                            no     —                 — no      (110.0, 101.0)      10.0     24.5
+ShortOffsetLeft            Left short half-tile offset  straight                            no     —                 — no      (107.0, 100.5)      10.0     12.3
+AirtimeHill                Small airtime hill           straight                            no     —                 — no      (112.0, 100.0)      10.0     32.7
+OffsetRight                Right half-tile offset       straight                            no     —                 — no      (110.0, 99.5)       10.0     24.1
+FullOffsetRight            Right full-tile offset       straight                            no     —                 — no      (110.0, 99.0)       10.0     24.5
+ShortOffsetRight           Right short half-tile offset straight                            no     —                 — no      (107.0, 99.5)       10.0     12.3
+piece                      entry m/s window      margin  candidate preview vertical g (rating)     lateral g (rating)   long g (rating) status
 Straight                        2.0 —                — 1.0 (weak) / 1.0 (weak)                    0.0 (fine)         0.0 (fine)         reachedEnd
 Placed Straight
 Estimate: 2.0 m/s entry, v+ 1.00 g, v- 1.00 g, lateral 0.00 g, longitudinal 0.01 g
 Pieces: 1
 Open end: tile (108.0, 100.0), height 10.0 m, heading East, slope Level, bank Level
 Height above ground: 2 steps; offset to station entry: 32.0 m (x -8.0, y +0.0 tiles, height +0.0 m)
+Closure approach: remaining offset: 8.0 tiles (32.0 m); heading mismatch: 0 degrees
 Chain: false; predicted end speed: 1.6 m/s (reachedEnd)
 Can close: false; can finish: false (Checking for a connection to the station.); can test: false
 "#;
@@ -126,6 +127,176 @@ fn refused_placement_keeps_the_ride_file_unchanged() {
     assert!(error.contains("Unknown piece"), "{error}");
     assert!(error.contains("offered ids"), "{error}");
     assert_eq!(fs::read(&ride.0).unwrap(), before);
+}
+
+#[test]
+fn estimate_uses_the_exact_requested_piece_after_a_high_speed_launch() {
+    let ride = TempFile::new("exact-estimate.ride.json");
+    ride.write(OPEN_RIDE);
+
+    let reply = run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "--json".into(),
+            "place LaunchLong --launch-speed 30".into(),
+            "estimate Loop".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    let replies: serde_json::Value = serde_json::from_str(&reply).unwrap();
+
+    assert_eq!(replies[1][0]["id"], "Loop");
+    assert!(replies[1][0].get("requestedId").is_none());
+}
+
+#[test]
+fn hill_estimate_labels_the_open_track_estimate_and_closed_form_prediction() {
+    let ride = TempFile::new("hill-estimate.ride.json");
+    ride.write(OPEN_RIDE);
+
+    let json_reply = run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "--json".into(),
+            "place LaunchLong --launch-speed 30".into(),
+            "estimate EjectorHill8x48".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    let estimates: serde_json::Value = serde_json::from_str(&json_reply).unwrap();
+    let estimate = &estimates[1][0];
+    assert_eq!(
+        estimate["forceEstimateMethod"],
+        "open-track candidate simulation"
+    );
+    assert_eq!(
+        estimate["hillPrediction"]["method"],
+        "closed-form hill inspector prediction"
+    );
+    assert!(
+        estimate["peaks"]["minimumVerticalG"].as_f64().is_some(),
+        "{estimate}"
+    );
+    assert!(
+        estimate["hillPrediction"]["minimumVerticalG"]
+            .as_f64()
+            .is_some(),
+        "{estimate}"
+    );
+
+    let text_reply = run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "estimate EjectorHill8x48".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    assert!(
+        text_reply.contains("candidate preview vertical g"),
+        "{text_reply}"
+    );
+    assert!(
+        text_reply.contains("hill inspector prediction (closed-form)"),
+        "{text_reply}"
+    );
+}
+
+#[test]
+fn choices_include_every_model_hill_and_speed_turn_variant_with_rated_windows() {
+    let ride = TempFile::new("all-choices.ride.json");
+    ride.write(OPEN_RIDE);
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    simulation.construction_select("model:hybrid");
+    simulation.construction_start(200, 200, 20, 0);
+    let hill_options: serde_json::Value =
+        serde_json::from_str(&simulation.construction_hill_options()).unwrap();
+    let speed_turns: serde_json::Value =
+        serde_json::from_str(&simulation.construction_speed_turns()).unwrap();
+
+    let reply = run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "--json".into(),
+            "choices".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    let rows: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    let rows = rows.as_array().unwrap();
+
+    for variant in hill_options
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(speed_turns.as_array().unwrap())
+    {
+        let id = variant["id"].as_str().unwrap();
+        let row = rows
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap_or_else(|| panic!("choices omitted offered variant {id}"));
+        assert!(row["ratedWindow"].as_array().is_some(), "{id}: {row}");
+        assert_eq!(row["ratedWindow"].as_array().unwrap().len(), 2, "{id}");
+        assert!(row["endTile"]["x"].as_f64().is_some(), "{id}: {row}");
+        assert!(row["endTile"]["y"].as_f64().is_some(), "{id}: {row}");
+        assert!(row["endHeight"].as_f64().is_some(), "{id}: {row}");
+        assert!(row["length"].as_f64().is_some(), "{id}: {row}");
+    }
+}
+
+#[test]
+fn probe_reports_candidate_geometry_and_does_not_change_the_ride_file() {
+    let ride = TempFile::new("probe.ride.json");
+    ride.write(OPEN_RIDE);
+    let before = fs::read(&ride.0).unwrap();
+
+    let reply = run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "--json".into(),
+            "probe Straight".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    let probe: serde_json::Value = serde_json::from_str(&reply).unwrap();
+
+    assert_eq!(probe["id"], "Straight");
+    assert!(probe["entrySpeed"].as_f64().is_some());
+    assert!(probe["peaks"].is_object());
+    assert!(probe["endTile"]["x"].as_f64().is_some());
+    assert!(probe["endTile"]["y"].as_f64().is_some());
+    assert!(probe["endHeight"].as_f64().is_some());
+    assert!(probe["length"].as_f64().is_some());
+    assert_eq!(probe["endTile"]["x"], 108.0);
+    assert_eq!(probe["endTile"]["y"], 100.0);
+    assert_eq!(probe["endHeight"], 10.0);
+    assert_eq!(probe["length"], 16.0);
+    assert_eq!(fs::read(&ride.0).unwrap(), before);
+}
+
+#[test]
+fn known_piece_disallowed_by_the_model_reports_the_refusal_reason() {
+    let ride = TempFile::new("unoffered.ride.json");
+    ride.write(&OPEN_RIDE.replace("\"hybrid\"", "\"wooden_twister\""));
+
+    let error = run_cli(
+        &["ride".into(), ride.path().into(), "probe Loop".into()],
+        "",
+    )
+    .unwrap_err();
+
+    assert!(error.contains("not offered at this end"), "{error}");
+    assert!(error.contains("cannot use this piece"), "{error}");
 }
 
 #[test]
@@ -181,7 +352,7 @@ fn new_creates_a_ride_and_state_reports_the_open_end() {
 
     assert_eq!(
         reply,
-        "Pieces: 0\nOpen end: tile (104.0, 100.0), height 10.0 m, heading East, slope Level, bank Level\nHeight above ground: 2 steps; offset to station entry: 16.0 m (x -4.0, y +0.0 tiles, height +0.0 m)\nChain: false; predicted end speed: 2.0 m/s (reachedEnd)\nCan close: false; can finish: false (Checking for a connection to the station.); can test: false\n"
+        "Pieces: 0\nOpen end: tile (104.0, 100.0), height 10.0 m, heading East, slope Level, bank Level\nHeight above ground: 2 steps; offset to station entry: 16.0 m (x -4.0, y +0.0 tiles, height +0.0 m)\nClosure approach: remaining offset: 4.0 tiles (16.0 m); heading mismatch: 0 degrees\nChain: false; predicted end speed: 2.0 m/s (reachedEnd)\nCan close: false; can finish: false (Checking for a connection to the station.); can test: false\n"
     );
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&ride.0).unwrap()).unwrap();

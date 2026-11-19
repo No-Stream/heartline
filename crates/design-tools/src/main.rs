@@ -8,11 +8,10 @@ fn main() {
             .read_to_string(&mut stdin)
             .expect("read standard input");
     }
-    match theme_park_design_tools::run_cli(&arguments, &stdin) {
-        Ok(output) => print!("{output}"),
-        Err(error) => {
-            eprintln!("{error}");
-            std::process::exit(1);
-        }
+    let output = theme_park_design_tools::run_cli_with_status(&arguments, &stdin);
+    print!("{}", output.stdout);
+    eprint!("{}", output.stderr);
+    if output.exit_code != 0 {
+        std::process::exit(output.exit_code);
     }
 }

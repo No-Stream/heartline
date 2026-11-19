@@ -86,7 +86,8 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
 export interface PlaceCircuitOptions {
   readonly keyboard?: boolean;
   readonly carsPerTrain?: number;
-  readonly onEstimate?: (phase: "selected" | "placed", step: RideStep, index: number) => Promise<void>;
+  /** The step number is one-based and counts every ride-file step, including chain and close steps. */
+  readonly onEstimate?: (phase: "selected" | "placed", step: RideStep, stepNumber: number) => Promise<void>;
 }
 
 function asRideStep(step: string | RideStep): RideStep {
@@ -193,7 +194,7 @@ export async function placeCircuit(
       await selectPiece(page, piece);
     }
     await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
-    await options.onEstimate?.("selected", step, index);
+    await options.onEstimate?.("selected", step, index + 1);
     if (chainEnabled && piece === "TurnSmallStandalone") {
       await expect(page.locator("[data-next] [data-preview-name]")).toHaveText("Climbing small left turn");
     }
@@ -216,7 +217,7 @@ export async function placeCircuit(
     }
     await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
     if (step.launchSpeed !== undefined) await setLaunchSpeed(page, step.launchSpeed);
-    await options.onEstimate?.("placed", step, index);
+    await options.onEstimate?.("placed", step, index + 1);
   }
   await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
 }

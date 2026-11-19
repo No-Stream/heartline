@@ -508,7 +508,7 @@ fn check_json_exposes_worker_estimates_and_raw_agreement_values() {
     let checks: serde_json::Value = serde_json::from_str(&reply).unwrap();
     let browser_estimates = checks[0]["browserEstimates"].as_array().unwrap();
     assert_eq!(browser_estimates.len(), 5);
-    assert_eq!(browser_estimates[0]["stepIndex"], 0);
+    assert_eq!(browser_estimates[0]["stepIndex"], 1);
     for stage in ["selection", "placement"] {
         let snapshot = &browser_estimates[0][stage];
         assert_eq!(snapshot["selected"], "TurnSmallStandalone");
