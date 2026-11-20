@@ -872,6 +872,8 @@ mod tests {
         RideStation, RideStep,
     };
 
+    const CIRCUITS: &str = include_str!("classic-circuit-digest-fixtures.txt");
+
     #[test]
     fn start_uses_the_workers_coordinate_scaling() {
         let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
@@ -1367,6 +1369,23 @@ mod tests {
         }
     }
 
+    fn circuit_lines(ride_name: &str) -> Vec<String> {
+        let header = format!("[{ride_name}]");
+        let mut sections = CIRCUITS.split(&header);
+        sections
+            .next()
+            .expect("classic circuit fixture has a preamble");
+        sections
+            .next()
+            .unwrap_or_else(|| panic!("{ride_name} classic circuit is missing"))
+            .lines()
+            .map(str::trim)
+            .take_while(|line| !line.starts_with('['))
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(str::to_owned)
+            .collect()
+    }
+
     #[test]
     fn content_ride_builder_hashes_match_master() {
         for (ride_name, ride_json, expected_hash) in [
@@ -1649,6 +1668,7 @@ mod tests {
                 RideStep::Chain(chain) => {
                     Some(if chain.chain { "+chain" } else { "-chain" }.into())
                 }
+                RideStep::Shape(_) => panic!("classic ride command fixture contains a shaped step"),
                 RideStep::Close(_) | RideStep::BlockSections(_) => None,
             })
             .collect()

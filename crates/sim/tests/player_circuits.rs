@@ -38,6 +38,7 @@ fn player_circuits_close() {
                     }
                     count += 1;
                 }
+                RideStep::Shape(_) => panic!("{name} player fixture contains only catalog pieces"),
                 RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
                 RideStep::BlockSections(_) => {}
             }
@@ -126,6 +127,7 @@ fn build_player_circuit(
                     .append(id, &world, &[])
                     .unwrap_or_else(|error| panic!("{}: {error:?}", place.place));
             }
+            RideStep::Shape(_) => panic!("{name} player fixture contains only catalog pieces"),
             RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
             RideStep::BlockSections(_) => {}
         }

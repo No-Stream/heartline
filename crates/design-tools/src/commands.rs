@@ -9,9 +9,8 @@ use serde_json::{Value, json};
 use theme_park_sim::physics::{CarPieceForcePeakLocations, Circuit, ForcePeakValues, TestRun};
 use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::ride_file::{
-    RideBlockSectionsStep, RideChainStep, RideCloseStep, RideExpectFeatureStep,
-    RideExpectFeatures, RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideShapeStep,
-    RideStation, RideStep,
+    RideBlockSectionsStep, RideChainStep, RideCloseStep, RideExpectFeatureStep, RideExpectFeatures,
+    RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideShapeStep, RideStation, RideStep,
 };
 use theme_park_sim::track::shaped::{ElementIntent, ElementSpec, HillSizeHint, TurnSizeHint};
 use theme_park_sim::track::{

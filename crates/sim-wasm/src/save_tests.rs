@@ -29,6 +29,12 @@ fn append_timber_tumbler_fixture(simulation: &mut WasmSimulation) -> Vec<PieceId
                     simulation.construction_message()
                 );
             }
+            RideStep::Shape(shape) => {
+                let intent_json = serde_json::to_string(&shape.intent).unwrap();
+                let spec_json = serde_json::to_string(&shape.spec).unwrap();
+                let message = simulation.construction_append_resolved(&intent_json, &spec_json);
+                assert!(message.is_empty(), "{}", message);
+            }
             RideStep::Close(close) => assert!(close.close),
             RideStep::BlockSections(_) => {}
         }

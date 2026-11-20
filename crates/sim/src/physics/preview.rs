@@ -72,6 +72,7 @@ struct PreviewCompletion {
     car_recorders: Option<Vec<TestRunRecorder>>,
     candidate_recorders: Option<Vec<CandidateCarRecorder>>,
     circuit_length: f64,
+    piece_count: usize,
     completed: bool,
     rolled_back: bool,
 }
@@ -196,22 +197,26 @@ impl PreviewCache {
         let configuration = &model.train;
         let limits = model.comfortable_force_limits;
         let model_key = model.name;
-        let station = pieces
+        let _station = pieces
             .iter()
             .position(|piece| piece.kind == PieceKind::Station)?;
         assert!(pieces.windows(2).all(|pair| pair[0].exit == pair[1].entry));
         let closed = pieces.last().unwrap().exit == pieces[0].entry;
-        let mut starts = Vec::with_capacity(pieces.len());
-        let mut length = 0.0;
-        for piece in pieces {
-            starts.push(length);
-            length += piece.length();
+        let source_circuit = circuit_from_pieces(pieces.to_vec(), !closed);
+        let source_length = source_circuit.length;
+        let source_piece_count = source_circuit.pieces.len();
+        let mut simulation_pieces = source_circuit.pieces.clone();
+        if !closed {
+            simulation_pieces.extend(virtual_tangent_runout(
+                pieces.last().unwrap().exit,
+                configuration.length_metres,
+            ));
         }
-        let circuit = Circuit {
-            pieces: pieces.to_vec(),
-            starts,
-            length,
-            open: !closed,
+        let circuit = circuit_from_pieces(simulation_pieces, !closed);
+        let preview_end_distance = if closed {
+            source_length
+        } else {
+            source_length + configuration.length_metres
         };
         if let Some(candidate_piece_index) = candidate_piece_index {
             assert!(candidate_piece_index < circuit.pieces().len());
@@ -252,20 +257,22 @@ impl PreviewCache {
             start_step,
         ) = if let Some(snapshot) = saved {
             let mut train = snapshot.train.clone();
-            train.controls.resize(pieces.len(), None);
+            train.controls.resize(circuit.pieces.len(), None);
             let recorder = if candidate_piece_index.is_none() {
                 let mut recorder = snapshot.recorder.clone();
-                recorder.rebind_preview_circuit(&circuit, model);
+                recorder.rebind_preview_circuit(&source_circuit, model);
                 Some(recorder)
             } else {
                 None
             };
             let mut flags = snapshot.flags.clone();
-            flags.resize(length.ceil() as usize, false);
+            let mut force_peak_recorder = snapshot.force_peak_recorder.clone();
+            force_peak_recorder.rebind_circuit(&circuit);
+            flags.resize(source_length.ceil() as usize, false);
             (
                 train,
                 recorder,
-                snapshot.force_peak_recorder.clone(),
+                force_peak_recorder,
                 snapshot.evaluators.clone(),
                 flags,
                 snapshot.previous_flags.clone(),
@@ -274,15 +281,14 @@ impl PreviewCache {
                 snapshot.steps,
             )
         } else {
-            let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
             (
-                Train::new(&circuit, configuration, config, station_distance, 0.0),
+                Train::new(&circuit, configuration, config, 0.0, 2.0),
                 candidate_piece_index
                     .is_none()
-                    .then(|| TestRunRecorder::for_circuit_with_model(&circuit, model)),
+                    .then(|| TestRunRecorder::for_circuit_with_model(&source_circuit, model)),
                 PreviewForcePeakRecorder::new(&circuit, configuration.cars),
                 vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)],
-                vec![false; length.ceil() as usize],
+                vec![false; source_length.ceil() as usize],
                 vec![None; usize::from(configuration.cars)],
                 vec![None; usize::from(configuration.cars)],
                 0,
@@ -293,7 +299,8 @@ impl PreviewCache {
             evaluators
                 .iter()
                 .map(|evaluator| {
-                    let mut recorder = TestRunRecorder::for_circuit_with_model(&circuit, model);
+                    let mut recorder =
+                        TestRunRecorder::for_circuit_with_model(&source_circuit, model);
                     recorder.set_force_evaluator(evaluator.clone());
                     recorder
                 })
@@ -308,6 +315,7 @@ impl PreviewCache {
         self.parameters = parameters;
         self.closed = closed;
         let max_steps = (PREVIEW_MAX_SECONDS / TIME_STEP) as usize;
+        let mut end_speed_mps = None;
         for step in start_step..max_steps {
             let previous_train = candidate_piece_index.is_none().then(|| train.clone());
             let previous_distance = train.distance();
@@ -323,9 +331,18 @@ impl PreviewCache {
             let previous_boundary = circuit
                 .starts
                 .partition_point(|start| *start <= previous_distance);
-            let crossed_end = previous_distance < length && train.distance() >= length;
+            let crossed_end = previous_distance < source_length && train.distance() >= source_length;
+            if crossed_end {
+                end_speed_mps = Some(interpolate_speed_at_distance(
+                    previous_distance,
+                    train.distance(),
+                    previous_speed,
+                    train.speed(),
+                    source_length,
+                ));
+            }
             let snapshot_boundary = if crossed_end {
-                pieces.len()
+                source_piece_count
             } else {
                 boundary.saturating_sub(1)
             };
@@ -352,7 +369,7 @@ impl PreviewCache {
                     steps: step,
                 });
             }
-            let mut readings = if let Some(candidate_piece_index) = candidate_piece_index {
+            let readings = if let Some(candidate_piece_index) = candidate_piece_index {
                 #[cfg(test)]
                 let mean_train_slope_z = mean_train_slope_z(&circuit, &candidate_readings);
                 for (car_index, reading) in candidate_readings.iter().copied().enumerate() {
@@ -429,32 +446,35 @@ impl PreviewCache {
                 }
                 readings
             };
-            let reached_end = train.distance() >= length;
-            if reached_end && circuit.open && !readings.is_empty() {
-                readings[0][0].distance = length - 1e-6;
-            }
-            if !reached_end || circuit.open {
+            if !readings.is_empty() {
                 if let Some(car_recorders) = &mut car_recorders {
                     for (car_index, recorder) in car_recorders.iter_mut().enumerate() {
-                        recorder.record_train_car(&readings, car_index, model_key);
+                        let car_readings: Vec<_> = readings
+                            .iter()
+                            .filter(|frame| {
+                                closed || frame[car_index].distance < source_length
+                            })
+                            .cloned()
+                            .collect();
+                        recorder.record_train_car(&car_readings, car_index, model_key);
                     }
                 }
                 if candidate_piece_index.is_none() {
-                    let front: Vec<_> = readings.iter().map(|frame| vec![frame[0]]).collect();
+                    let front: Vec<_> = readings
+                        .iter()
+                        .filter(|frame| closed || frame[0].distance < source_length)
+                        .map(|frame| vec![frame[0]])
+                        .collect();
                     recorder
                         .as_mut()
                         .expect("track previews retain a recorder")
                         .record(&front, model_key);
                 }
             }
-            if reached_end {
-                let end_speed_mps = Some(interpolate_speed_at_distance(
-                    previous_distance,
-                    train.distance(),
-                    previous_speed,
-                    train.speed(),
-                    length,
-                ));
+            let reached_candidate_end = candidate_piece_index.is_some()
+                && train.distance() >= source_length;
+            let reached_preview_end = train.distance() >= preview_end_distance;
+            if reached_candidate_end || reached_preview_end {
                 return Some(preview_output(PreviewCompletion {
                     status: PreviewStatus::ReachedEnd,
                     end_speed_mps,
@@ -463,7 +483,8 @@ impl PreviewCache {
                     force_peak_recorder,
                     car_recorders,
                     candidate_recorders,
-                    circuit_length: length,
+                    circuit_length: source_length,
+                    piece_count: source_piece_count,
                     completed: true,
                     rolled_back: false,
                 }));
@@ -482,7 +503,8 @@ impl PreviewCache {
                     force_peak_recorder,
                     car_recorders,
                     candidate_recorders,
-                    circuit_length: length,
+                    circuit_length: source_length,
+                    piece_count: source_piece_count,
                     completed: false,
                     rolled_back: true,
                 }));
@@ -496,7 +518,8 @@ impl PreviewCache {
             force_peak_recorder,
             car_recorders,
             candidate_recorders,
-            circuit_length: length,
+            circuit_length: source_length,
+            piece_count: source_piece_count,
             completed: false,
             rolled_back: false,
         }))
@@ -547,8 +570,18 @@ fn preview_output(completion: PreviewCompletion) -> PreviewOutput {
             completion.completed,
             completion.rolled_back,
         );
-        let force_envelope_samples = completion.force_peak_recorder.force_envelope_samples();
-        let piece_force_peaks = completion.force_peak_recorder.piece_force_peaks(&report);
+        let force_envelope_samples = completion
+            .force_peak_recorder
+            .force_envelope_samples()
+            .into_iter()
+            .filter(|sample| sample.distance < completion.circuit_length)
+            .collect();
+        let piece_force_peaks = completion
+            .force_peak_recorder
+            .piece_force_peaks(&report)
+            .into_iter()
+            .filter(|peaks| peaks.piece_index < completion.piece_count)
+            .collect();
         PreviewOutput::Track(Box::new(TrackPreview {
             report,
             force_envelope_samples,
@@ -755,15 +788,30 @@ fn interpolate_speed_at_distance(
     (previous_speed + fraction * (current_speed - previous_speed)).abs()
 }
 
+fn circuit_from_pieces(pieces: Vec<Piece>, open: bool) -> Circuit {
+    let mut starts = Vec::with_capacity(pieces.len());
+    let mut length = 0.0;
+    for piece in &pieces {
+        starts.push(length);
+        length += piece.length();
+    }
+    Circuit {
+        pieces,
+        starts,
+        length,
+        open,
+    }
+}
+
 /// Builds a straight extension that continues the open connector's tangent and bank.
 pub fn virtual_tangent_runout(end: TrackState, minimum_length: f64) -> Vec<Piece> {
     assert!(minimum_length.is_finite() && minimum_length > 0.0);
     vec![Piece::virtual_tangent_runout(end, minimum_length)]
 }
 
-/// Simulate a train from the station to the end of the placed track.
-/// Samples beyond a stall are omitted. A completed report means the front car
-/// reached the end, rather than that the ride completed a circuit.
+/// Simulate a train across placed track and a virtual run-out.
+/// Reports include only placed track. An open-track preview completes after the
+/// full train clears the placed track; a closed preview completes after one lap.
 pub fn preview_open_track(
     pieces: &[Piece],
     model: &CoasterModel,
@@ -783,7 +831,7 @@ pub(super) fn preview_at_step(
     assert_eq!(time_step, TIME_STEP);
     let configuration = &model.train;
     let model_key = model.name;
-    let station = pieces
+    let _station = pieces
         .iter()
         .position(|piece| piece.kind == PieceKind::Station)?;
     assert!(pieces.windows(2).all(|pair| pair[0].exit == pair[1].entry));
@@ -800,8 +848,7 @@ pub(super) fn preview_at_step(
         length,
         open: !closed,
     };
-    let station_distance = circuit.starts[station] + circuit.pieces[station].length() / 2.0;
-    let mut train = Train::new(&circuit, configuration, config, station_distance, 0.0);
+    let mut train = Train::new(&circuit, configuration, config, 0.0, 2.0);
     let mut recorder = TestRunRecorder::for_circuit_with_model(&circuit, model);
     recorder.set_time_step(time_step);
     let mut stationary_steps = 0;

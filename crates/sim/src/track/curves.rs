@@ -437,7 +437,9 @@ pub(crate) enum Shape {
     ResolvedBank {
         spec: Arc<crate::track::shaped::ElementSpec>,
     },
-    VirtualStraight { length: f64 },
+    VirtualStraight {
+        length: f64,
+    },
 }
 impl Shape {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {

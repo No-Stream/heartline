@@ -1459,6 +1459,7 @@ fn demo_circuit_builds_piece_by_piece_in_the_demo_world() {
                     .append(id, &world, &[])
                     .unwrap_or_else(|error| panic!("demo piece {}: {error:?}", place.place));
             }
+            RideStep::Shape(_) => panic!("demo ride uses catalog pieces without shape steps"),
             RideStep::Close(close) => assert!(close.close, "demo closes with true"),
             RideStep::BlockSections(_) => {}
         }
