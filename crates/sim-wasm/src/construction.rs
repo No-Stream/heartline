@@ -1939,7 +1939,7 @@ impl WasmSimulation {
                 .ok_or_else(|| "Construction is inactive".to_string())?;
             let piece = construction
                 .piece_from_resolved_spec(spec)
-                .map_err(|refusal| solve_refusal_message(refusal))?;
+                .map_err(solve_refusal_message)?;
             let first_id = construction.next_piece_id();
             let tunnel_plans = construction
                 .tunnel_plans_for_geometry(std::slice::from_ref(&piece), &self.park.world)
