@@ -231,3 +231,19 @@ One hill-strength midpoint also failed: hybrid, five cars, floater strength -0.1
 The isolated fast feature run passed 44 of 45 tests. The remaining inspector test selected the shaped hill but displayed an em dash instead of `-0.5 g`; the runtime result had no solved spec, consistent with a table refusal, but the exact selected speed and typed refusal were not captured. No UI change was made. A separate `make check` attempt included 25 failures from Vitest discovering a temporary checkout under `target/runtime-trace-baseline`; that checkout was removed with `git worktree remove --force`. The next check attempt stopped at `check-report-types` while waiting for the shared Cargo build lock. The saved `make lint` log failed on excessive float precision and unused imports in generated table source plus `needless_option_as_deref` in concurrent physics edits; fixes were in progress, with no passing full lint result recorded. A focused Cargo output-trace test passed after the serialization fix, but no final full workspace, `make lint`, or `make check` success is established here.
 
 The untracked `shaped_json_exact_roundtrip` test currently expects arbitrary f64 values to survive ride-file JSON exactly. That conflicts with the fixed-decimal ride-file canonicalization required by task 1; the test was left unchanged and its failure remains visible. The runtime property matrix must be rerun only after the turn midpoint behavior is corrected, while preserving the 0.25 g headroom and 0.1 g delivery requirements. Node/WASM cold placement latency has no final-source result in this runtime handoff.
+
+## Cold Node/WASM placement benchmark (2026-11-19)
+
+`make bench-shaped-elements-cold` built the release WASM artifact successfully, then exited with status 2 because its 50 ms p95 target failed. The run covered 60 cases: the default floater hill and fully banked turn for all 30 allowed model/train-length combinations, at 30.25 m/s, between generated 0.5 m/s grid points. Each case ran in 30 fresh Node processes; module loading and prefix preparation were outside the timer, and the timer covered one production `try_solve` call with a fresh process and solve cache.
+
+Thirty-two cases solved and supplied 960 timed samples. Twenty-eight returned typed `InfeasibleTarget` refusals, which were recorded separately and excluded from successful-solve timings; this accounts for 840 refusal runs. Across successful samples, median/p95/maximum were 39.607/73.277/86.668 ms. The worst per-case p95 was 82.806 ms for the 10-car family-coaster fully banked turn (median 79.273 ms, maximum 86.668 ms). Twelve successful cases exceeded 50 ms p95: family-coaster turns with 5–10 cars, family-coaster floater hills with 9 cars, the 8-car hyper floater hill, and wooden-twister floater hills with 9–12 cars.
+
+| Model | Floater hill solved/refused | Fully banked turn solved/refused | Highest successful case p95 (ms) |
+|---|---:|---:|---:|
+| Family coaster | 4/3 | 7/0 | 82.806 |
+| Hybrid | 3/2 | 0/5 | 39.136 |
+| Hyper | 5/0 | 0/5 | 50.156 |
+| Velocity Viper | 4/0 | 0/4 | 39.711 |
+| Wooden twister | 9/0 | 0/9 | 76.660 |
+
+The run log is `target/shaped-elements-cold-bench.log`. It used the generated 46,845-row, 56,631,209-byte table and runtime commit `3d3c2e8`; the shared worktree also contained uncommitted physics preview changes when the WASM artifact was built. The performance target was not met, and this measurement does not establish latency for a later clean, committed source snapshot.

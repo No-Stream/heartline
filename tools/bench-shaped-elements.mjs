@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const COLD_RUNS = 15;
+const COLD_WASM_RUNS = 30;
 const KINDS = [
   { kind: 'hyper-strong-floater-hill', requestedSpeed: 34 },
   { kind: 'hyper-fully-banked-turn', requestedSpeed: 28 },
@@ -13,6 +14,10 @@ const scriptPath = fileURLToPath(import.meta.url);
 
 if (process.argv[2] === '--wasm-single') {
   runWasmSingle(process.argv[3], process.argv[4]);
+} else if (process.argv[2] === '--wasm-try-single') {
+  runWasmTrySingle(process.argv[3], process.argv[4]);
+} else if (process.argv[2] === '--cold-wasm') {
+  runColdWasmSuite(process.argv[3]);
 } else if (process.argv[2] === '--wasm-calibration-single') {
   runWasmCalibrationSingle(process.argv[3], process.argv[4]);
 } else if (process.argv[2] === '--wasm-preview-modes') {
@@ -34,6 +39,110 @@ function runWasmSingle(modulePath, kind) {
   const elapsedMs = performance.now() - startedAt;
   const result = JSON.parse(benchmark.result_json());
   process.stdout.write(`${JSON.stringify({ ...result, elapsed_ms: elapsedMs })}\n`);
+}
+
+function runWasmTrySingle(modulePath, kind) {
+  const resolvedModulePath = path.resolve(modulePath);
+  const requireFromModule = createRequire(resolvedModulePath);
+  const wasm = requireFromModule(resolvedModulePath);
+  const benchmark = new wasm.ShapedSolveBenchmark(kind);
+  benchmark.prepare();
+  const startedAt = performance.now();
+  benchmark.try_solve();
+  const elapsedMs = performance.now() - startedAt;
+  const result = JSON.parse(benchmark.result_json());
+  process.stdout.write(`${JSON.stringify({ ...result, elapsed_ms: elapsedMs })}\n`);
+}
+
+function runColdWasmSuite(wasmModulePath) {
+  const resolvedModulePath = path.resolve(wasmModulePath);
+  const requireFromModule = createRequire(resolvedModulePath);
+  const wasm = requireFromModule(resolvedModulePath);
+  const cases = JSON.parse(wasm.shaped_benchmark_cases_json());
+  const successfulCases = [];
+  const refusedCases = [];
+  const allSuccessfulSamples = [];
+
+  for (const benchmarkCase of cases) {
+    const samples = Array.from({ length: COLD_WASM_RUNS }, () => {
+      const output = runProcess(process.execPath, [
+        scriptPath,
+        '--wasm-try-single',
+        resolvedModulePath,
+        benchmarkCase.id,
+      ]);
+      return JSON.parse(output);
+    });
+    validateTrySamples(benchmarkCase, samples);
+    const first = samples[0];
+    if (first.status === 'refused') {
+      refusedCases.push({
+        id: benchmarkCase.id,
+        model: benchmarkCase.model,
+        cars: benchmarkCase.cars,
+        element: benchmarkCase.element,
+        refusal: first.refusal,
+      });
+    } else {
+      const timing = summarize(samples);
+      successfulCases.push({
+        id: benchmarkCase.id,
+        model: benchmarkCase.model,
+        cars: benchmarkCase.cars,
+        element: benchmarkCase.element,
+        cold_node_wasm: timing,
+      });
+      allSuccessfulSamples.push(...samples);
+    }
+  }
+
+  if (successfulCases.length === 0) {
+    throw new Error('No shaped benchmark case solved successfully');
+  }
+  const worstCaseP95Ms = Math.max(...successfulCases.map((item) => item.cold_node_wasm.p95_ms));
+  const report = {
+    mode: 'cold-node-wasm',
+    samples_per_case: COLD_WASM_RUNS,
+    target_p95_ms: 50,
+    all_successful_samples: summarize(allSuccessfulSamples),
+    worst_case_cold_p95_ms: worstCaseP95Ms,
+    within_target: worstCaseP95Ms <= 50,
+    successful_cases: successfulCases,
+    refused_cases: refusedCases,
+  };
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  if (!report.within_target) {
+    throw new Error(`Cold Node/WASM solve p95 ${worstCaseP95Ms.toFixed(2)} ms exceeded 50 ms`);
+  }
+}
+
+function validateTrySamples(benchmarkCase, samples) {
+  if (samples.length !== COLD_WASM_RUNS) {
+    throw new Error(`${benchmarkCase.id} produced ${samples.length} samples`);
+  }
+  const first = samples[0];
+  for (const sample of samples) {
+    if (sample.kind !== benchmarkCase.id
+      || sample.model !== benchmarkCase.model
+      || sample.cars !== benchmarkCase.cars) {
+      throw new Error(`Unexpected benchmark case: ${JSON.stringify(sample)}`);
+    }
+    if (sample.status !== 'solved' && sample.status !== 'refused') {
+      throw new Error(`Unexpected solve status: ${JSON.stringify(sample)}`);
+    }
+    if (sample.requested_entry_speed_mps !== benchmarkCase.requested_speed_mps
+      || Math.abs(sample.observed_entry_speed_mps - benchmarkCase.requested_speed_mps) > 0.01) {
+      throw new Error(`Observed entry speed missed target: ${JSON.stringify(sample)}`);
+    }
+    if (!Number.isFinite(sample.elapsed_ms) || sample.elapsed_ms <= 0) {
+      throw new Error(`Invalid timing sample: ${JSON.stringify(sample)}`);
+    }
+    if (sample.status !== first.status
+      || sample.refusal !== first.refusal
+      || sample.spec_hash !== first.spec_hash) {
+      throw new Error(`${benchmarkCase.id} changed solve outcome between samples`);
+    }
+  }
 }
 
 function runWasmCalibrationSingle(modulePath, kind) {
