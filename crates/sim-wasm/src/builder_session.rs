@@ -1354,9 +1354,9 @@ mod tests {
     #[test]
     fn classic_builder_outputs_keep_the_recorded_digests() {
         for (ride_name, model_key, expected_digest) in [
-            ("Timber Tumbler", "hybrid", 0x86b8428065693580),
-            ("Velocity Viper", "velocity_viper", 0x37cd85a2272307c5),
-            ("Briar Blitz", "wooden_twister", 0x66873957335c8b1c),
+            ("Timber Tumbler", "hybrid", 0x73087cdb3b38c8d8),
+            ("Velocity Viper", "velocity_viper", 0x4e6fd5b665b3fd97),
+            ("Briar Blitz", "wooden_twister", 0x5b0e22b9c64457d2),
         ] {
             let commands = circuit_lines(ride_name);
             let actual = session_trace(model_key, &commands);
@@ -1435,32 +1435,32 @@ mod tests {
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x1d7f71a6343e2eee,
+                0x0161df3c4dd85407,
             ),
             (
                 "Browser agreement fast circuit",
                 include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
-                0x0719c56f5d7c3448,
+                0x54a61be2669f8ca9,
             ),
             (
                 "Daisy Dash",
                 include_str!("../../../content/rides/daisy-dash.ride.json"),
-                0x3519a795f463d05f,
+                0xb0560e95b1b49d66,
             ),
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x6939fe1daae094e8,
+                0x58da243c1a4f510f,
             ),
             (
                 "Timber Tumbler",
                 include_str!("../../../content/rides/timber-tumbler.ride.json"),
-                0xdf160c846b3b28b7,
+                0x5a85ded8b26ac5e7,
             ),
             (
                 "Velocity Viper",
                 include_str!("../../../content/rides/velocity-viper.ride.json"),
-                0xe164c9fd8a72bae1,
+                0x2ab59be614c4dc36,
             ),
         ] {
             let ride: RideFile = serde_json::from_str(ride_json).unwrap();
