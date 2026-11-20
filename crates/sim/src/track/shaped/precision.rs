@@ -1,6 +1,7 @@
 use super::ElementSpec;
 
 const ELEMENT_SPEC_DECIMAL_SCALE: f64 = 1_000_000.0;
+pub(super) const ELEMENT_SPEC_HALF_DECIMAL_STEP: f64 = 0.5 / ELEMENT_SPEC_DECIMAL_SCALE;
 
 pub(super) fn round_element_value(value: f64) -> f64 {
     (value * ELEMENT_SPEC_DECIMAL_SCALE).round() / ELEMENT_SPEC_DECIMAL_SCALE

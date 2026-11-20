@@ -13,7 +13,7 @@ use crate::track::profile::{
     solve_shaped_hill_offline_profile,
 };
 pub(crate) use crate::track::shaped::precision::canonicalize_element_spec;
-use crate::track::shaped::precision::round_element_value;
+use crate::track::shaped::precision::{ELEMENT_SPEC_HALF_DECIMAL_STEP, round_element_value};
 use crate::track::supports::SupportObstacle;
 use crate::track::{
     Bank, CoasterModel, Hand, Heading, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind,
@@ -993,6 +993,12 @@ fn hill_profile_for_energy_height(
         .fold(f64::NEG_INFINITY, f64::max);
     Ok((profile, height_m, span_m))
 }
+/// Hill height and span are stored at six decimals while the profile keeps nine, so a stored value matches
+/// when it lies within half a six-decimal step of the profile value, plus slack for JSON parsing.
+fn stored_value_matches(profile_value: f64, stored_value: f64) -> bool {
+    (profile_value - stored_value).abs() <= ELEMENT_SPEC_HALF_DECIMAL_STEP + 1e-9
+}
+
 #[cfg(test)]
 pub(crate) fn synthesize_hill_profile(
     design_speed_mps: f64,
@@ -1661,9 +1667,9 @@ fn intent_matches_spec(
             target_matches
                 && size_matches
                 && profile_is_valid
-                && (expected_span - *span_m).abs() <= 1e-8
+                && stored_value_matches(expected_span, *span_m)
                 && profile.endpoint()[1].abs() <= 0.01
-                && (resolved_height - *height_m).abs() <= 1e-8
+                && stored_value_matches(resolved_height, *height_m)
                 && target_g.is_finite()
                 && *target_g <= 0.0
                 && delivered_g.is_finite()
