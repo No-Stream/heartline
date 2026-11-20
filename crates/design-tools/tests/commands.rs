@@ -33,6 +33,30 @@ impl Drop for TempFile {
     }
 }
 
+fn assert_six_decimal_precision(value: &serde_json::Value) {
+    match value {
+        serde_json::Value::Number(number) => {
+            let value = number.as_f64().expect("ride spec numbers are finite");
+            let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
+            assert!(
+                (value - rounded).abs() <= 1e-9,
+                "ride spec number {value} has more than six decimal places"
+            );
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                assert_six_decimal_precision(value);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values() {
+                assert_six_decimal_precision(value);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::String(_) => {}
+    }
+}
+
 const OPEN_RIDE: &str = r#"{
   "format": "heartline-ride",
   "version": 1,
@@ -345,6 +369,174 @@ fn choices_include_every_model_hill_and_speed_turn_variant_with_rated_windows() 
         assert!(row["endHeight"].as_f64().is_some(), "{id}: {row}");
         assert!(row["length"].as_f64().is_some(), "{id}: {row}");
     }
+}
+
+#[test]
+fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
+    let ride = TempFile::new("shaped-placement.ride.json");
+    let session = TempFile::new("shaped-placement.session.json");
+
+    run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "new --model hyper --station 241,249,10,north --cars 4".into(),
+            "chain on".into(),
+            "place LevelToGentleUp".into(),
+            "place GentleToSteepUp".into(),
+            "place SteepUp".into(),
+            "place SteepUp".into(),
+            "place SteepToGentleUp".into(),
+            "place GentleUpToLevel".into(),
+            "chain off".into(),
+            "place WideLevelToSixtyDown".into(),
+            "place WideSixtyDownToLevel".into(),
+            "place turn left feel=banked radius=64".into(),
+        ],
+        "",
+    )
+    .unwrap();
+
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
+    let shaped_turn = saved["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["intent"]["kind"] == "turn")
+        .unwrap();
+    assert_eq!(shaped_turn["intent"]["kind"], "turn");
+    assert_eq!(shaped_turn["intent"]["hand"], "Left");
+    assert_eq!(shaped_turn["spec"]["kind"], "turn");
+    assert!(shaped_turn["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
+    assert!(shaped_turn["spec"]["geometry"]["knots"].is_array());
+    assert_six_decimal_precision(&shaped_turn["spec"]);
+
+    let replay = run_cli(&["ride".into(), ride.path().into(), "state".into()], "").unwrap();
+    assert!(replay.contains("Pieces: 9"), "{replay}");
+
+    run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "export".into(),
+            "--session".into(),
+            session.path().into(),
+        ],
+        "",
+    )
+    .unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_slice(&fs::read(&session.0).unwrap()).unwrap();
+    let resolved_append = exported["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["command"]["type"] == "construction-append-resolved")
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(
+            resolved_append["command"]["intentJson"].as_str().unwrap()
+        )
+        .unwrap(),
+        shaped_turn["intent"]
+    );
+    let exported_spec: serde_json::Value =
+        serde_json::from_str(resolved_append["command"]["specJson"].as_str().unwrap()).unwrap();
+    let saved_spec = &shaped_turn["spec"];
+    for field in [
+        "kind",
+        "design_speed_mps",
+        "cars",
+        "hand",
+        "vertical_g",
+        "lateral_g",
+        "radius_m",
+        "bank_degrees",
+    ] {
+        assert_eq!(
+            exported_spec[field], saved_spec[field],
+            "spec field {field}"
+        );
+    }
+    assert_eq!(
+        exported_spec["geometry"]["length"],
+        saved_spec["geometry"]["length"]
+    );
+    assert_eq!(
+        exported_spec["geometry"]["peak_bank"],
+        saved_spec["geometry"]["peak_bank"]
+    );
+    assert_eq!(
+        exported_spec["geometry"]["knots"].as_array().unwrap().len(),
+        saved_spec["geometry"]["knots"].as_array().unwrap().len()
+    );
+    for (knot_index, (exported, saved)) in exported_spec["geometry"]["knots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(saved_spec["geometry"]["knots"].as_array().unwrap())
+        .enumerate()
+    {
+        assert_eq!(exported, saved, "resolved geometry knot {knot_index}");
+    }
+}
+
+#[test]
+fn shaped_hill_and_fully_banked_turn_place_on_a_hyper_and_replay() {
+    let ride = TempFile::new("shaped-hyper.ride.json");
+
+    let placement_output = run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "new --model hyper --station 241,249,10,north --cars 4".into(),
+            "chain on".into(),
+            "place LevelToGentleUp".into(),
+            "place GentleToSteepUp".into(),
+            "place SteepUp".into(),
+            "place SteepUp".into(),
+            "place SteepToGentleUp".into(),
+            "place GentleUpToLevel".into(),
+            "chain off".into(),
+            "place WideLevelToSixtyDown".into(),
+            "place WideSixtyDownToLevel".into(),
+            "place hill feel=floater".into(),
+            "place turn left feel=banked".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    assert!(
+        placement_output.contains("Shaped hill: floater"),
+        "{placement_output}"
+    );
+    assert!(
+        placement_output.contains("fully banked turn"),
+        "{placement_output}"
+    );
+
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
+    assert_eq!(saved["model"], "hyper");
+    let shape_steps: Vec<_> = saved["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|step| step.get("intent").is_some())
+        .collect();
+    assert_eq!(shape_steps.len(), 2);
+    assert_eq!(shape_steps[0]["intent"]["kind"], "hill");
+    assert_eq!(shape_steps[0]["intent"]["feel"], "Floater");
+    assert_eq!(shape_steps[0]["spec"]["kind"], "hill");
+    assert!(shape_steps[0]["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
+    assert!(shape_steps[0]["spec"]["profile"]["points"].is_array());
+    assert_eq!(shape_steps[1]["intent"]["kind"], "turn");
+    assert_eq!(shape_steps[1]["intent"]["hand"], "Left");
+    assert_eq!(shape_steps[1]["spec"]["kind"], "turn");
+    assert!(shape_steps[1]["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
+    assert!(shape_steps[1]["spec"]["geometry"]["knots"].is_array());
+
+    let replay = run_cli(&["ride".into(), ride.path().into(), "state".into()], "").unwrap();
+    assert!(replay.contains("Pieces: 10"), "{replay}");
 }
 
 #[test]

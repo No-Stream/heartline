@@ -156,9 +156,9 @@ fn select_speed_matched_variant_with_windows(
 }
 
 #[derive(Clone)]
-struct PieceValidation {
+pub(crate) struct PieceValidation {
     supports: Vec<Arc<Vec<Support>>>,
-    tunnel_plan: TunnelPlan,
+    pub(crate) tunnel_plan: TunnelPlan,
     track_obstacles: Vec<SupportObstacle>,
 }
 
@@ -183,6 +183,13 @@ struct ChoicesCache {
     obstacles: Vec<SupportObstacle>,
     choices: Vec<PieceChoice>,
     available_choices: Vec<AvailableChoice>,
+}
+
+pub(crate) struct ShapedSolveCacheEntry {
+    pub(crate) cache_key: u64,
+    pub(crate) provisional: bool,
+    pub(crate) result:
+        Result<crate::track::shaped::SolvedElement, crate::track::shaped::SolveRefusal>,
 }
 
 #[derive(Clone)]
@@ -228,6 +235,8 @@ pub struct Construction {
     element_choices_cache: RefCell<Option<elements::ElementChoicesCache>>,
     #[serde(skip)]
     force_preview_cache: RefCell<crate::physics::PreviewCache>,
+    #[serde(skip)]
+    pub(crate) shaped_solve_cache: RefCell<Option<ShapedSolveCacheEntry>>,
     /// `state_hash` of the current editable state; every mutation of a hashed field clears it.
     #[serde(skip)]
     state_hash_memo: Cell<Option<u64>>,
@@ -259,6 +268,7 @@ impl Construction {
             choices_cache: RefCell::new(None),
             element_choices_cache: RefCell::new(None),
             force_preview_cache: RefCell::new(crate::physics::PreviewCache::default()),
+            shaped_solve_cache: RefCell::new(None),
             state_hash_memo: Cell::new(None),
             #[cfg(test)]
             support_cache_misses: Cell::new(0),
@@ -278,6 +288,11 @@ impl Construction {
         self.force_preview_cache
             .borrow_mut()
             .preview(pieces, &self.model, config)
+    }
+    pub(crate) fn force_preview_cache_mut(
+        &self,
+    ) -> std::cell::RefMut<'_, crate::physics::PreviewCache> {
+        self.force_preview_cache.borrow_mut()
     }
     pub fn end(&self) -> TrackState {
         self.pieces.last().map_or(self.start, |piece| piece.exit)
@@ -693,6 +708,27 @@ impl Construction {
             .collect()
     }
 
+    pub fn validate_shaped_piece(
+        &self,
+        piece: &Piece,
+        world: &World,
+        obstacles: &[SupportObstacle],
+    ) -> Result<TunnelPlan, ConstructionError> {
+        if self.closed {
+            return Err(ConstructionError::Closed);
+        }
+        if piece.entry != self.end() {
+            return Err(ConstructionError::Unavailable);
+        }
+        if !self.model.allows_piece(piece)
+            || piece.maximum_curvature() > 1.0 / self.model.minimum_radius_metres
+        {
+            return Err(ConstructionError::ModelForbidden);
+        }
+        self.validate_piece(piece, world, obstacles)
+            .map(|validation| validation.tunnel_plan)
+    }
+
     fn placeable(&self, template: &Piece) -> Result<Piece, ConstructionError> {
         if self.closed {
             return Err(ConstructionError::Closed);
@@ -812,7 +848,7 @@ impl Construction {
         speed
     }
 
-    fn validate_piece(
+    pub(crate) fn validate_piece(
         &self,
         piece: &Piece,
         world: &World,
@@ -1122,7 +1158,7 @@ impl Construction {
         Ok(would_tunnel)
     }
 
-    fn append_validated_piece(&mut self, piece: Piece, validation: PieceValidation) {
+    pub(crate) fn append_validated_piece(&mut self, piece: Piece, validation: PieceValidation) {
         if self.disconnected.is_empty() {
             let cache = self
                 .validation_cache

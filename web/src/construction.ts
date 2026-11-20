@@ -1,14 +1,15 @@
 import { carsPerTrainControl } from "./cars-per-train";
 import { constructionEndSpeed, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
 import { configureLaunchSpeedInput } from "./construction-launch-speed";
-import { candidateForceReadout, hillReadout } from "./candidate-force-readout";
+import { candidateForceReadout, hillReadout, shapedElementReadout } from "./candidate-force-readout";
 import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
 import { coasterModelOptionsMarkup } from "./coaster-model-options";
 import { COASTER_MODELS } from "./generated/coaster-models";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
-import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
-import type { BlockReport, ConstructionElement, ConstructionHillOption, ConstructionPiece, ConstructionState, PieceShape } from "./construction-protocol";
+import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, shapedPaletteChoices, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
+import { shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements";
+import type { BlockReport, ConstructionElement, ConstructionHillOption, ConstructionPiece, ConstructionShapedElement, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
 import { iconViews, pieceIconSvg } from "./piece-icons";
@@ -49,9 +50,9 @@ const hillSteppers: readonly { attribute: HillAttribute; label: string; previous
   { attribute: "span", label: "Length", previous: "Shorter hill", next: "Longer hill" },
   { attribute: "twist", label: "Twist", previous: "Twist left", next: "Twist right" },
 ];
-/** The feel of the first hill the player opens: the strongest airtime, as a camelback should give by default. */
 const defaultHillFeel = "ejector";
 const hillSummaryHint = "Sized for the train's speed";
+const hillFeels = ["floater", "strongFloater", "ejector"] as const;
 /** Building comes first; colours and running the ride are settings the player visits when they want them. */
 const builderTabs = [
   { id: "build", label: "Build" },
@@ -126,10 +127,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
             </div>`).join("")}
           </div>
         </section>
-        <details class="tool-panel__section builder__hill" data-hill>
-          <summary><span class="builder__hill-title">Airtime hill</span><span class="builder__hill-current" data-hill-current>${hillSummaryHint}</span></summary>
+        <details class="tool-panel__section builder__hill" data-hill data-shaped-inspector>
+          <summary><span class="builder__hill-title" data-hill-title>Airtime hill</span><span class="builder__hill-current" data-hill-current data-shape-current>${hillSummaryHint}</span></summary>
           <div class="builder__hill-body">
-            <div class="builder__hill-steppers">${hillSteppers.map(({ attribute, label, previous, next }) => `
+            <div class="builder__hill-steppers" data-hill-steppers>${hillSteppers.map(({ attribute, label, previous, next }) => `
               <div class="stepper" role="group" aria-label="Hill ${label.toLowerCase()}">
                 <span class="tool-panel__label">${label}</span>
                 <button type="button" data-hill-stepper="${attribute}--1" aria-label="${previous}">−</button>
@@ -137,10 +138,42 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
                 <button type="button" data-hill-stepper="${attribute}-1" aria-label="${next}">+</button>
               </div>`).join("")}
             </div>
-            <p class="builder__hill-suggestion"><span data-hill-suggestion></span> <button type="button" class="tool-panel__action tool-panel__action--quiet" data-hill-suggested hidden>Use suggested size</button></p>
+            <p class="builder__hill-suggestion" data-hill-suggestion-row><span data-hill-suggestion></span> <button type="button" class="tool-panel__action tool-panel__action--quiet" data-hill-suggested hidden>Use suggested size</button></p>
             <dl class="builder__hill-readout" data-hill-readout aria-live="polite" aria-label="Predicted ride on this hill"></dl>
             <p class="builder__hill-message" data-hill-message hidden></p>
-            <p class="tool-panel__hint">Place it with ${hint("place")}. The hill stays chosen, so pressing ${hint("place")} again adds another for a camelback run.</p>
+            <p class="tool-panel__hint" data-hill-hint>Place it with ${hint("place")}. The hill stays chosen, so pressing ${hint("place")} again adds another for a camelback run.</p>
+            <div class="builder__hill-steppers builder__shape-controls" data-shape-controls hidden>
+              <div class="stepper" role="group" aria-label="Shaped element feel" data-shape-control="feel">
+                <span class="tool-panel__label">Feel</span>
+                <button type="button" data-shape-stepper="feel--1" aria-label="Previous shaped feel">−</button>
+                <span class="stepper__value" data-shape-value="feel"></span>
+                <button type="button" data-shape-stepper="feel-1" aria-label="Next shaped feel">+</button>
+              </div>
+              <div class="stepper" role="group" aria-label="Hill strength" data-shape-control="strength">
+                <span class="tool-panel__label">Strength</span>
+                <button type="button" data-shape-stepper="strength--1" aria-label="Reduce airtime strength">−</button>
+                <span class="stepper__value" data-shape-value="strength"></span>
+                <button type="button" data-shape-stepper="strength-1" aria-label="Increase airtime strength">+</button>
+                <span class="stepper__unit">g</span>
+              </div>
+              <div class="stepper" role="group" aria-label="Hill size" data-shape-control="size">
+                <span class="tool-panel__label">Size</span>
+                <button type="button" data-shape-stepper="size--1" aria-label="Reduce hill size">−</button>
+                <span class="stepper__value" data-shape-value="size"></span>
+                <button type="button" data-shape-stepper="size-1" aria-label="Increase hill size">+</button>
+                <button type="button" data-shape-auto="size" aria-label="Use automatic hill size">Auto</button>
+              </div>
+              <div class="stepper" role="group" aria-label="Turn radius" data-shape-control="radius">
+                <span class="tool-panel__label">Radius</span>
+                <button type="button" data-shape-stepper="radius--1" aria-label="Reduce turn radius">−</button>
+                <span class="stepper__value" data-shape-value="radius"></span>
+                <button type="button" data-shape-stepper="radius-1" aria-label="Increase turn radius">+</button>
+                <button type="button" data-shape-auto="radius" aria-label="Use automatic turn radius">Auto</button>
+              </div>
+            </div>
+            <p class="builder__hill-suggestion" data-shape-message hidden></p>
+            <div class="builder__hill-readout builder__shape-readout" data-shape-readout aria-live="polite" aria-label="Calibrated shaped element" hidden></div>
+            <p class="tool-panel__hint" data-shape-hint hidden>Place it with ${hint("place")} to add another shaped element.</p>
           </div>
         </details>
         <div class="tool-panel__section builder__chain" data-chain-section>
@@ -337,6 +370,12 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const hillReadoutList = element("[data-hill-readout]");
   const hillMessage = element("[data-hill-message]");
   const hillSuggested = element<HTMLButtonElement>("[data-hill-suggested]");
+  const hillSteppersElement = element("[data-hill-steppers]");
+  const hillSuggestion = element("[data-hill-suggestion]");
+  const hillSuggestionRow = element("[data-hill-suggestion-row]");
+  const shapeControls = element("[data-shape-controls]");
+  const shapeReadoutElement = element("[data-shape-readout]");
+  const shapeMessage = element("[data-shape-message]");
   const tabList = element("[data-builder-tabs]");
   const tabs = builderTabs.map(({ id }) => ({ id, tab: element<HTMLButtonElement>(`[data-builder-tab="${id}"]`), panel: element(`[data-builder-tabpanel="${id}"]`) }));
   let shapes = new Map<string, PieceShape>();
@@ -357,14 +396,18 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   let closed = false;
   let units: Units = "imperial";
   let hillChosenBefore = false;
-  let hillWasSelected = false;
+  let inspectorSelection: "classic" | "shaped" | null = null;
 
   const shapeOf = (id: string, slope?: string): PieceShape => {
     const shape = (slope && shapes.get(`${id}\0${slope}`)) ?? shapes.get(id);
     if (!shape) throw new Error(`Missing shape for piece ${id}`);
     return shape;
   };
-  const select = (piece: string | undefined): void => { if (piece) dispatch({ type: "construction-select", piece }); };
+  const select = (piece: string | undefined, exact = false): void => {
+    if (!piece) return;
+    if (exact) dispatch({ type: "construction-select", piece, exact: true });
+    else dispatch({ type: "construction-select", piece });
+  };
   const stepSelection = (attribute: PieceStep, step: -1 | 1): void => {
     if (!state) return;
     const pieces = attribute === "piece" ? state.pieces : speedTurnPalette(state.pieces, state.speedTurns);
@@ -372,6 +415,78 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (action) dispatch(action);
   };
   const speedTurnOf = (id: string) => state?.speedTurns.find((turn) => turn.id === id);
+  const shapeSelection = (shape: ConstructionShapedElement): ShapedElementSelection => {
+    if (shape.kind === "hill") {
+      if (shape.feel !== "floater" && shape.feel !== "strongFloater" && shape.feel !== "ejector") {
+        throw new Error(`Unknown shaped hill feel ${shape.feel}`);
+      }
+      return {
+        kind: "hill",
+        feel: shape.feel as ShapedHillFeel,
+        strengthG: shape.strengthG,
+        size: shape.fixedSize === null ? { kind: "auto" } : { kind: "height", heightMetres: shape.fixedSize },
+      };
+    }
+    if (shape.hand !== "left" && shape.hand !== "right") throw new Error(`Unknown shaped turn hand ${shape.hand}`);
+    return {
+      kind: "turn",
+      hand: shape.hand,
+      feel: "fullyBanked",
+      size: shape.fixedSize === null ? { kind: "auto" } : { kind: "radius", radiusMetres: shape.fixedSize },
+    };
+  };
+  const shapedPaletteId = (shape: ConstructionShapedElement): string => {
+    if (shape.kind === "hill") {
+      const feel = shape.feel;
+      if (feel !== "floater" && feel !== "strongFloater" && feel !== "ejector") {
+        throw new Error(`Unknown shaped hill feel ${feel}`);
+      }
+      return shapeSelectionId({ kind: "hill", feel, strengthG: null, size: { kind: "auto" } });
+    }
+    if (shape.hand !== "left" && shape.hand !== "right") throw new Error(`Unknown shaped turn hand ${shape.hand}`);
+    return shapeSelectionId({ kind: "turn", hand: shape.hand, feel: "fullyBanked", size: { kind: "auto" } });
+  };
+  const selectShape = (selection: ShapedElementSelection): void => {
+    dispatch({ type: "construction-select", piece: shapeSelectionId(selection), exact: true });
+  };
+  const stepShape = (attribute: "feel" | "strength" | "size" | "radius", step: -1 | 1): void => {
+    const shape = state?.selectedShape;
+    if (!shape) return;
+    const selection = shapeSelection(shape);
+    if (attribute === "feel" && selection.kind === "hill") {
+      const index = hillFeels.indexOf(selection.feel);
+      const next = hillFeels[Math.max(0, Math.min(hillFeels.length - 1, index + step))];
+      if (next !== selection.feel) selectShape({ ...selection, feel: next });
+      return;
+    }
+    if (attribute === "strength" && selection.kind === "hill") {
+      const currentStrength = selection.strengthG ?? shape.spec?.targetG;
+      if (currentStrength === null || currentStrength === undefined) return;
+      const strengthG = Math.round((currentStrength - step * 0.1) * 10) / 10;
+      selectShape({ ...selection, strengthG });
+      return;
+    }
+    if (attribute === "size" && selection.kind === "hill") {
+      const currentHeight = selection.size.kind === "height" ? selection.size.heightMetres : shape.spec?.heightM;
+      if (currentHeight === null || currentHeight === undefined) return;
+      const heightMetres = Math.max(2, Math.round(currentHeight / 2) * 2 + step * 2);
+      selectShape({ ...selection, size: { kind: "height", heightMetres } });
+      return;
+    }
+    if (attribute === "radius" && selection.kind === "turn") {
+      const currentRadius = selection.size.kind === "radius" ? selection.size.radiusMetres : shape.spec?.radiusM;
+      if (currentRadius === null || currentRadius === undefined) return;
+      const radiusMetres = Math.max(2, Math.round(currentRadius / 2) * 2 + step * 2);
+      selectShape({ ...selection, size: { kind: "radius", radiusMetres } });
+    }
+  };
+  const setShapeAutoSize = (): void => {
+    const shape = state?.selectedShape;
+    if (!shape) return;
+    const selection = shapeSelection(shape);
+    if (selection.kind === "hill") selectShape({ ...selection, size: { kind: "auto" } });
+    else selectShape({ ...selection, size: { kind: "auto" } });
+  };
   const renderFinishStatus = (current: ConstructionState): void => {
     finish.classList.toggle("tool-panel__action--primary", current.canFinish && !current.canClose);
     append.classList.toggle("tool-panel__action--primary", !current.canClose && !current.canFinish);
@@ -479,12 +594,6 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
     element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => dispatch({ type: "piece-step", attribute, step }));
   }
-  element("[data-speed-match-variants]").addEventListener("click", (event) => {
-    const button = (event.target as Element).closest<HTMLButtonElement>("[data-speed-match-variant]");
-    if (button) {
-      dispatch({ type: "construction-select", piece: button.dataset.speedMatchVariant!, exact: true });
-    }
-  });
   for (const { attribute } of hillSteppers) for (const step of [-1, 1] as const) {
     element(`[data-hill-stepper="${attribute}-${step}"]`).addEventListener("click", () => {
       const action = state && steppedHillSelection(state.hillOptions, state.selected, attribute, step);
@@ -492,16 +601,32 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     });
   }
   hillSection.addEventListener("toggle", () => {
-    if (!hillSection.open || !state || state.hillOptions.some(({ id }) => id === state!.selected)) return;
-    const piece = hillToOpen(state.hillOptions, state.pieces, hillChosenBefore ? null : defaultHillFeel);
-    if (piece) dispatch({ type: "construction-select", piece });
+    if (!hillSection.open || !state || state.selectedShape || state.hillOptions.some(({ id }) => id === state!.selected)) return;
+    select(hillToOpen(state.hillOptions, state.pieces, hillChosenBefore ? null : defaultHillFeel));
   });
   hillSuggested.addEventListener("click", () => {
-    if (hillSuggested.dataset.piece) dispatch({ type: "construction-select", piece: hillSuggested.dataset.piece, exact: true });
+    if (hillSuggested.dataset.piece) select(hillSuggested.dataset.piece, true);
   });
+  element("[data-speed-match-variants]").addEventListener("click", (event) => {
+    const button = (event.target as Element).closest<HTMLButtonElement>("[data-speed-match-variant]");
+    if (button) {
+      dispatch({ type: "construction-select", piece: button.dataset.speedMatchVariant!, exact: true });
+    }
+  });
+  for (const attribute of ["feel", "strength", "size", "radius"] as const) {
+    for (const step of [-1, 1] as const) {
+      element(`[data-shape-stepper="${attribute}-${step}"]`).addEventListener("click", () => stepShape(attribute, step));
+    }
+  }
+  for (const button of container.querySelectorAll<HTMLButtonElement>("[data-shape-auto]")) {
+    button.addEventListener("click", setShapeAutoSize);
+  }
   palette.addEventListener("click", (event) => {
     const tile = (event.target as Element).closest<HTMLElement>("[data-piece]");
-    if (tile) select(tile.dataset.piece);
+    if (tile) {
+      const fixedHill = state?.hillOptions.some(({ id }) => id === tile.dataset.piece) ?? false;
+      select(tile.dataset.piece, fixedHill);
+    }
   });
   elements.addEventListener("click", (event) => {
     const tile = (event.target as Element).closest<HTMLElement>("[data-track-choice]");
@@ -517,11 +642,32 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const step = ({ ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 } as Record<string, -1 | 1 | undefined>)[event.key];
     if (!step || !state) return;
     event.preventDefault();
+    const current = state;
+    if (current.selectedShape) {
+      const shapedChoices = shapedPaletteChoices();
+      const index = shapedChoices.findIndex(({ id }) => id === shapedPaletteId(current.selectedShape!));
+      const nextIndex = Math.max(0, Math.min(shapedChoices.length - 1, index + step));
+      if (index >= 0 && nextIndex !== index) select(shapedChoices[nextIndex].id);
+      return;
+    }
+    const classicHillIndex = current.hillOptions.findIndex(({ id }) => id === tile?.dataset.piece);
+    if (classicHillIndex >= 0) {
+      const nextIndex = Math.max(0, Math.min(current.hillOptions.length - 1, classicHillIndex + step));
+      if (nextIndex !== classicHillIndex) select(current.hillOptions[nextIndex].id, true);
+      return;
+    }
     dispatch({ type: "piece-step", attribute: "piece", step });
   });
 
-  function renderPalette(pieces: readonly ConstructionPiece[]): void {
-    palette.replaceChildren(...groupedPieces(pieces).map(({ group, pieces: members }) => {
+  function renderPalette(pieces: readonly ConstructionPiece[], hillOptions: readonly ConstructionHillOption[]): void {
+    const classic = document.createElement("section");
+    classic.className = "builder__palette-family";
+    classic.setAttribute("aria-label", "Classic pieces");
+    const classicHeading = document.createElement("h3");
+    classicHeading.textContent = "Classic";
+    const hillOptionIds = new Set(hillOptions.map(({ id }) => id));
+    const classicPieces = pieces.filter(({ id }) => !hillOptionIds.has(id));
+    classic.append(classicHeading, ...groupedPieces(classicPieces).map(({ group, pieces: members }) => {
       const row = document.createElement("div");
       row.className = "builder__group";
       row.style.setProperty("--plate", groupPlates[group]);
@@ -546,6 +692,64 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       }));
       return row;
     }));
+    if (hillOptions.length > 0) {
+      const row = document.createElement("div");
+      row.className = "builder__group";
+      row.style.setProperty("--plate", groupPlates.slope);
+      row.innerHTML = '<h3>Classic hill families</h3><div class="builder__tiles"></div>';
+      row.lastElementChild!.append(...hillOptions.map((option) => {
+        const shape = shapeOf(option.id);
+        const name = hillLabel(option, units);
+        const tile = document.createElement("button");
+        tile.type = "button";
+        tile.className = "piece-tile piece-tile--classic-hill";
+        tile.dataset.piece = option.id;
+        tile.setAttribute("role", "radio");
+        tile.setAttribute("aria-label", name);
+        const tipId = `piece-tip-${option.id}`;
+        tile.setAttribute("aria-describedby", tipId);
+        tile.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}<span class="piece-tile__tip" role="tooltip" id="${tipId}"><strong></strong><span></span></span>`;
+        tile.querySelector("strong")!.textContent = name;
+        tile.querySelector(".piece-tile__tip span")!.textContent = option.ratedSpeed
+          ? `Rated for ${formatSpeed(option.ratedSpeed.minimumEntry, units, 0)}–${formatSpeed(option.ratedSpeed.maximumEntry, units, 0)} entry speed.`
+          : "Classic fixed-size airtime hill.";
+        return tile;
+      }));
+      classic.append(row);
+    }
+
+    const shaped = document.createElement("section");
+    shaped.className = "builder__palette-family";
+    shaped.setAttribute("aria-label", "Shaped elements");
+    const shapedHeading = document.createElement("h3");
+    shapedHeading.textContent = "Shaped";
+    shaped.append(shapedHeading, ...(["hill", "turn"] as const).map((group) => {
+      const row = document.createElement("div");
+      row.className = "builder__group";
+      row.style.setProperty("--plate", group === "hill" ? groupPlates.slope : groupPlates.turn);
+      row.innerHTML = `<h3>${group === "hill" ? "Airtime hills" : "Banked turns"}</h3><div class="builder__tiles"></div>`;
+      const members = shapedPaletteChoices().filter((choice) => choice.group === group);
+      row.lastElementChild!.append(...members.map((choice) => {
+        const representativeId = choice.group === "hill"
+          ? "EjectorHill8x48"
+          : choice.id.includes(":left:") ? "SpeedTurnLarge16Left" : "SpeedTurnLarge16Right";
+        const shape = shapeOf(representativeId);
+        const tile = document.createElement("button");
+        tile.type = "button";
+        tile.className = "piece-tile piece-tile--shaped";
+        tile.dataset.piece = choice.id;
+        tile.setAttribute("role", "radio");
+        tile.setAttribute("aria-label", choice.label);
+        const tipId = `piece-tip-${choice.id}`;
+        tile.setAttribute("aria-describedby", tipId);
+        tile.innerHTML = `${pieceIconSvg(shape, iconViews(shape)[0], 46, 34)}<span class="piece-tile__tip" role="tooltip" id="${tipId}"><strong></strong><span></span></span>`;
+        tile.querySelector("strong")!.textContent = choice.label;
+        tile.querySelector(".piece-tile__tip span")!.textContent = "Sized for the train's speed at this point.";
+        return tile;
+      }));
+      return row;
+    }));
+    palette.replaceChildren(classic, shaped);
   }
 
   function renderElements(choices: readonly ConstructionElement[], pieces: readonly ConstructionPiece[]): void {
@@ -617,16 +821,26 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   }
 
   function renderSelection(current: ConstructionState, focusInPalette: boolean): void {
+    const selectedShape = current.selectedShape;
+    const selectedHill = current.hillOptions.find(({ id }) => id === current.selected);
+    const selectedShapedPaletteId = selectedShape ? shapedPaletteId(selectedShape) : null;
     for (const tile of elements.querySelectorAll<HTMLElement>("[data-track-choice]")) tile.setAttribute("aria-pressed", String(tile.dataset.trackChoice === current.selected));
     for (const tile of palette.querySelectorAll<HTMLElement>("[data-piece]")) {
-      const checked = tile.dataset.piece === current.selected;
+      const checked = tile.dataset.piece === current.selected || tile.dataset.piece === selectedShapedPaletteId;
       tile.setAttribute("aria-checked", String(checked));
       tile.tabIndex = checked ? 0 : -1;
       if (checked && focusInPalette) tile.focus();
+      if (tile.dataset.piece?.startsWith("shape:")) {
+        const refused = !!selectedShape && selectedShape.selection === current.selected && selectedShape.refusal !== null;
+        tile.classList.toggle("piece-tile--refused", refused);
+        const reason = selectedShape && selectedShape.selection === current.selected && selectedShape.refusal !== null
+          ? shapedElementReadout(selectedShape, units)[0]
+          : "Sized for the train's speed at this point.";
+        tile.querySelector(".piece-tile__tip span")!.textContent = reason;
+      }
     }
-    const selectedHill = current.hillOptions.find(({ id }) => id === current.selected);
     const speedMatch = element("[data-speed-match]");
-    speedMatch.hidden = !current.speedMatch || !!selectedHill;
+    speedMatch.hidden = !current.speedMatch || !!selectedHill || !!selectedShape;
     const selectedSpeedTurn = current.selected ? speedTurnOf(current.selected) : undefined;
     element("[data-speed-match-message]").textContent = !current.speedMatch ? ""
       : selectedSpeedTurn ? speedTurnMessage(current.speedMatch, current.selected, current.speedTurns, units)
@@ -646,7 +860,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       return button;
     }));
     const selected = current.pieces.find(({ id }) => id === current.selected);
-    const forcePreview = selectedHill ? null : current.candidateForcePreview;
+    const forcePreview = selectedHill || selectedShape ? null : current.candidateForcePreview;
     const candidateForce = element("[data-candidate-force-preview]");
     candidateForce.hidden = !forcePreview;
     candidateForce.replaceChildren(...(forcePreview ? candidateForceReadout(forcePreview, units) : []).map((line) => {
@@ -656,7 +870,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }));
     const selectedElement = current.elements.find(({ id }) => id === current.selected);
     const preview = element("[data-preview]");
-    preview.hidden = !selected && !selectedElement;
+    preview.hidden = !selected && !selectedElement && !selectedShape?.pieceShape;
     if (selected) {
       const shape = shapeOf(selected.id, selected.slope);
       preview.style.setProperty("--plate", groupPlates[selected.group]);
@@ -671,8 +885,16 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element("[data-preview-name]").textContent = selectedElement.name;
       element("[data-preview-group]").textContent = "Track element";
     }
-    element("[data-steppers]").hidden = !!selectedHill;
-    renderHill(current, selectedHill, selected?.hillEstimate ?? null);
+    if (selectedShape?.pieceShape) {
+      const shape = selectedShape.pieceShape;
+      preview.style.setProperty("--plate", "var(--teal)");
+      element("[data-preview-icons]").innerHTML = iconViews(shape).map((view) => pieceIconSvg(shape, view, 70, 52)).join("");
+      element("[data-preview-name]").textContent = shapedElementName(selectedShape);
+      element("[data-preview-group]").textContent = "Shaped";
+    }
+    element("[data-steppers]").hidden = !!selectedHill || !!selectedShape;
+    renderHill(current, selectedHill, selected?.hillEstimate ?? null, selectedShape);
+    renderShapedElement(current, selectedShape);
     const stepPalette = speedTurnPalette(current.pieces, current.speedTurns);
     for (const { attribute } of steppers) {
       const options = stepperOptions(stepPalette, shapes, current.selected, attribute);
@@ -689,13 +911,38 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }
   }
 
-  function renderHill(current: ConstructionState, selectedHill: ConstructionHillOption | undefined, estimate: ConstructionPiece["hillEstimate"]): void {
-    // Choosing a hill anywhere opens its section, and choosing any other piece folds it away.
-    if (!!selectedHill !== hillWasSelected) hillSection.open = !!selectedHill;
-    hillWasSelected = !!selectedHill;
+  function shapedElementName(shape: ConstructionShapedElement): string {
+    if (shape.kind === "hill") {
+      const feelLabels: Readonly<Record<ShapedHillFeel, string>> = {
+        floater: "Floater", strongFloater: "Strong floater", ejector: "Ejector",
+      };
+      const feel = shape.feel;
+      if (feel !== "floater" && feel !== "strongFloater" && feel !== "ejector") {
+        throw new Error(`Unknown shaped hill feel ${feel}`);
+      }
+      return `${feelLabels[feel]} hill`;
+    }
+    return `Fully banked ${shape.hand} turn`;
+  }
+
+  function renderHill(
+    current: ConstructionState,
+    selectedHill: ConstructionHillOption | undefined,
+    estimate: ConstructionPiece["hillEstimate"],
+    selectedShape: ConstructionShapedElement | null,
+  ): void {
+    const selectedMode = selectedHill ? "classic" : selectedShape ? "shaped" : null;
+    if (selectedMode !== inspectorSelection) hillSection.open = selectedMode !== null;
+    inspectorSelection = selectedMode;
+    hillSection.hidden = closed || current.canClose || (!selectedShape && current.hillOptions.length === 0);
+    const title = element("[data-hill-title]");
+    title.textContent = selectedShape ? "Shaped element" : "Airtime hill";
     if (selectedHill) hillChosenBefore = true;
-    hillSection.hidden = closed || current.canClose || current.hillOptions.length === 0;
-    element("[data-hill-current]").textContent = selectedHill ? hillLabel(selectedHill, units) : hillSummaryHint;
+    const classicControls = [hillSteppersElement, hillSuggestionRow, hillReadoutList, hillMessage, element("[data-hill-hint]")];
+    for (const control of classicControls) control.hidden = !!selectedShape;
+    element("[data-shape-hint]").hidden = !selectedShape;
+    element("[data-hill-current]").textContent = selectedHill ? hillLabel(selectedHill, units)
+      : selectedShape ? shapedElementName(selectedShape) : hillSummaryHint;
     for (const { attribute } of hillSteppers) {
       const options = hillStepperOptions(current.hillOptions, current.selected, attribute, units);
       const value = element(`[data-hill-value="${attribute}"]`);
@@ -712,11 +959,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const match = selectedHill ? current.speedMatch : null;
     const suggested = current.hillOptions.find(({ id }) => id === match?.recommendedId);
     const suggestedSize = suggested ? formatHillSize(suggested.height, suggested.span, units) : "";
-    element("[data-hill-suggestion]").textContent = !match || match.entrySpeed === null ? ""
+    hillSuggestion.textContent = !match || match.entrySpeed === null ? ""
       : !suggested ? "No size of this hill fits here."
         : match.fits === false ? `No size fits the predicted entry speed; ${suggestedSize} is the closest.`
           : suggested.id === current.selected ? "Sized for the predicted entry speed." : `Suggested for this speed: ${suggestedSize}.`;
-    hillSuggested.hidden = !suggested || suggested.id === current.selected;
+    hillSuggested.hidden = !suggested || suggested.id === current.selected || !!selectedShape;
     hillSuggested.dataset.piece = suggested?.id ?? "";
     const readout = estimate ? hillReadout(estimate, units) : { rows: [], message: "" };
     hillReadoutList.replaceChildren(...readout.rows.map(({ label, value, note, tone }) => {
@@ -737,16 +984,80 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       row.append(term, amount);
       return row;
     }));
-    hillReadoutList.hidden = readout.rows.length === 0;
+    hillReadoutList.hidden = readout.rows.length === 0 || !!selectedShape;
     hillMessage.textContent = readout.message;
-    hillMessage.hidden = readout.message === "";
+    hillMessage.hidden = readout.message === "" || !!selectedShape;
+  }
+
+  function renderShapedElement(current: ConstructionState, shape: ConstructionShapedElement | null): void {
+    const feelControl = element<HTMLElement>('[data-shape-control="feel"]');
+    const strengthControl = element<HTMLElement>('[data-shape-control="strength"]');
+    const sizeControl = element<HTMLElement>('[data-shape-control="size"]');
+    const radiusControl = element<HTMLElement>('[data-shape-control="radius"]');
+    shapeControls.hidden = !shape;
+    for (const control of [feelControl, strengthControl, sizeControl, radiusControl]) control.hidden = !shape;
+    if (!shape) {
+      shapeReadoutElement.replaceChildren();
+      shapeReadoutElement.hidden = true;
+      shapeMessage.textContent = "";
+      shapeMessage.hidden = true;
+      return;
+    }
+
+    const selection = shapeSelection(shape);
+    const shapeLabel = shapedElementName(shape);
+    element("[data-shape-current]").textContent = shape.spec
+      ? `${shapeLabel} · ${formatSpeed(shape.spec.designSpeedMps, units, 0)}`
+      : shapeLabel;
+    strengthControl.hidden = shape.kind !== "hill";
+    sizeControl.hidden = shape.kind !== "hill";
+    radiusControl.hidden = shape.kind !== "turn";
+    const setValue = (attribute: "feel" | "strength" | "size" | "radius", text: string): void => {
+      const value = element(`[data-shape-value="${attribute}"]`);
+      if (value.textContent === text) return;
+      value.textContent = text;
+      value.classList.remove("stepper__value--changed");
+      void value.offsetWidth;
+      value.classList.add("stepper__value--changed");
+    };
+    const feel = selection.kind === "hill"
+      ? ({ floater: "Floater", strongFloater: "Strong floater", ejector: "Ejector" } as const)[selection.feel]
+      : "Fully banked";
+    setValue("feel", feel);
+    const strength = selection.kind === "hill" ? selection.strengthG ?? shape.spec?.targetG : null;
+    setValue("strength", strength === null || strength === undefined ? "—" : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(strength).replace("-", "−")} g`);
+    const fixedSizeLabel = shape.fixedSize === null ? "Auto" : formatLength(shape.fixedSize, units);
+    setValue("size", shape.kind === "hill" ? fixedSizeLabel : "");
+    setValue("radius", shape.kind === "turn" ? fixedSizeLabel : "");
+    for (const attribute of ["feel", "strength", "size", "radius"] as const) {
+      for (const step of [-1, 1] as const) {
+        const button = element<HTMLButtonElement>(`[data-shape-stepper="${attribute}-${step}"]`);
+        button.disabled = !current.complete || (attribute === "feel" && shape.kind === "turn")
+          || (attribute === "strength" && (shape.kind !== "hill" || strength === null || strength === undefined))
+          || ((attribute === "size" || attribute === "radius") && !shape.spec);
+      }
+    }
+    for (const button of container.querySelectorAll<HTMLButtonElement>("[data-shape-auto]")) {
+      button.hidden = shape.fixedSize === null;
+      button.disabled = !current.complete || shape.fixedSize === null;
+    }
+
+    const readout = shapedElementReadout(shape, units);
+    shapeMessage.textContent = "";
+    shapeMessage.hidden = true;
+    shapeReadoutElement.replaceChildren(...readout.map((line) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = line;
+      return paragraph;
+    }));
+    shapeReadoutElement.hidden = readout.length === 0;
   }
 
   function renderLaunchPositions(current: ConstructionState): void {
     let distance = 0;
     const positions: { piece: number; distance: number; id: number; launchTargetSpeed: number | null; launchMinimumSpeed: number | null; launchMaximumSpeed: number | null }[] = [];
-    current.track.forEach(({ label, slope, id, launchTargetSpeed, launchMinimumSpeed, launchMaximumSpeed }, index) => {
-      const shape = shapeOf(label, slope);
+    current.track.forEach(({ label, slope, id, launchTargetSpeed, launchMinimumSpeed, launchMaximumSpeed, pieceShape }, index) => {
+      const shape = pieceShape ?? shapeOf(label, slope);
       const length = sampledLength(shape);
       if (shape.kind === "Launch") positions.push({ piece: index + 1, distance: distance + length / 2, id, launchTargetSpeed, launchMinimumSpeed, launchMaximumSpeed });
       distance += length;
@@ -782,8 +1093,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   }
 
   function renderTrack(current: ConstructionState, grew: boolean): void {
-    track.replaceChildren(...current.track.map(({ id, label, name, group, slope, kind }, index) => {
-      const shape = shapeOf(label, slope);
+    track.replaceChildren(...current.track.map(({ id, label, name, group, slope, kind, pieceShape }, index) => {
+      const shape = pieceShape ?? shapeOf(label, slope);
       const chipName = displayName(label, { label: name, group, slope });
       const item = document.createElement("li");
       item.className = `track-chip${grew && index === current.track.length - 1 ? " track-chip--new" : ""}`;
@@ -949,7 +1260,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element(".builder__station-height .stepper__unit").textContent = unitLabel(units);
       element("[data-block-add-label]").textContent = `New boundary (${unitLabel(units)})`;
       setHeight(dispatchedHeight);
-      if (state) { renderPalette(state.pieces); renderTrack(state, false); renderSelection(state, false); renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
+      if (state) { renderPalette(state.pieces, state.hillOptions); renderTrack(state, false); renderSelection(state, false); renderLaunchPositions(state); renderBlockPanel(state); renderStationAccess(state); }
     },
     setUndergroundCutawayMode(mode) { undergroundCutaway.value = mode; },
     setHeightMarkers(trackHeight, stationHeightText) {
@@ -1024,8 +1335,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       finishConfirmation.hidden = closed || !next.finishPreview;
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");
       const focusInPalette = palette.contains(document.activeElement);
-      const nextPaletteKey = next.pieces.map(({ id, refusal }) => `${id}:${refusal}`).join("|");
-      if (nextPaletteKey !== paletteKey) { paletteKey = nextPaletteKey; renderPalette(next.pieces); }
+      const nextPaletteKey = JSON.stringify([next.pieces.map(({ id, refusal }) => `${id}:${refusal}`), next.hillOptions.map(({ id }) => id)]);
+      if (nextPaletteKey !== paletteKey) { paletteKey = nextPaletteKey; renderPalette(next.pieces, next.hillOptions); }
       const nextElementsKey = JSON.stringify([next.elements, next.pieces]);
       if (nextElementsKey !== elementsKey) { elementsKey = nextElementsKey; renderElements(next.elements, next.pieces); }
       renderSelection(next, focusInPalette);

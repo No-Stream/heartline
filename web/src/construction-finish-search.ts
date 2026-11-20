@@ -7,6 +7,7 @@ export function shouldInvalidateConstructionFinishSearch(action: WorkerAction): 
     case "construction-set-chain":
     case "construction-set-cars-per-train":
     case "construction-append":
+    case "construction-append-resolved":
     case "construction-undo":
     case "construction-delete":
     case "construction-close":

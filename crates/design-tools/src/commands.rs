@@ -10,14 +10,17 @@ use theme_park_sim::physics::{CarPieceForcePeakLocations, Circuit, ForcePeakValu
 use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::ride_file::{
     RideBlockSectionsStep, RideChainStep, RideCloseStep, RideExpectFeatureStep, RideExpectFeatures,
-    RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideStation, RideStep,
+    RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideShapeStep, RideStation, RideStep,
 };
-use theme_park_sim::track::{CoasterModel, Heading as TrackHeading, Heartlining, coaster_models};
+use theme_park_sim::track::shaped::{ElementIntent, ElementSpec, HillSizeHint, TurnSizeHint};
+use theme_park_sim::track::{
+    CoasterModel, Hand, Heading as TrackHeading, Heartlining, HillFeel, PieceId, coaster_models,
+};
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
 use theme_park_sim_wasm::construction::{
     ConstructionCandidateForcePreviewWire, ConstructionForceRatingBandWire,
-    ConstructionLastPlacedForceWire,
+    ConstructionLastPlacedForceWire, ConstructionShapedElementWire,
 };
 use theme_park_sim_wasm::reports::TestingSample;
 
@@ -25,8 +28,10 @@ use crate::agreement::{
     AgreementInput, AgreementReport, ForcePeaks, PlacementFailureClassification,
     PlacementPeakContext, PlacementPeakContexts, evaluate_agreement,
 };
+use crate::brake_report::mid_course_brake_energy_report;
 use crate::report::{
-    ForceRatings, RidePieceEstimate, rated_speed_margin_report, render_ride_report_with_margins,
+    ForceRatings, RidePieceEstimate, ShapedElementReportRow, rated_speed_margin_report,
+    render_ride_report_with_margins, render_shaped_elements_table, shaped_element_entry_speeds,
 };
 
 #[derive(Debug)]
@@ -66,6 +71,7 @@ enum RideCommand {
         matched: bool,
         launch_speed: Option<f64>,
         note: Option<String>,
+        shape_intent: Option<ElementIntent>,
     },
     Chain(bool),
     LaunchSpeed {
@@ -91,6 +97,7 @@ const COMMAND_NAMES: &[&str] = &[
     "new",
     "state",
     "choices",
+    "options",
     "estimate",
     "probe",
     "place",
@@ -195,9 +202,12 @@ Ride commands:
   new --model <key> --station x,y,z,heading start a ride
   state                                     show the open end and construction status
   choices [group]                           list offered pieces and their rated windows
+  options shapes                            list feasible shaped elements at the open end
   estimate <id> ...                         estimate one or more exact pieces
   probe <id>                                preview a piece without placing it
   place <id> [options]                      place a piece
+  place hill feel=<floater|strong-floater|ejector> [g=<target>] [height=<metres>]
+  place turn <left|right> feel=banked [radius=<metres>]
   chain on|off                              toggle a lift chain
   launch-speed <piece> <m/s>                set a launch speed
   cars <count>                              set cars per train
@@ -213,8 +223,8 @@ Ride commands:
   map                                       draw the ride footprint
   export --save <path>|--session <path>     export a save or replay session
 
-Choice groups: bank, element, hill, inversion, slope, special, straight, turn.
-Hill sizes and speed-turn variants are listed by choices with their rated windows.
+Choice groups: bank, element, hill, inversion, shapes, slope, special, straight, turn.
+Classic hill sizes and speed-turn variants are listed by choices with their rated windows.
 "
 }
 
@@ -407,6 +417,9 @@ fn parse_command(command: &str, parameters: &[String]) -> Result<RideCommand, St
         }
         "state" if parameters.is_empty() => Ok(RideCommand::State),
         "choices" if parameters.len() <= 1 => Ok(RideCommand::Choices(parameters.first().cloned())),
+        "options" if parameters == ["shapes"] => {
+            Ok(RideCommand::Choices(Some("shapes".to_owned())))
+        }
         "estimate" if !parameters.is_empty() => Ok(RideCommand::Estimate(parameters.to_vec())),
         "probe" if parameters.len() == 1 => Ok(RideCommand::Probe(parameters[0].clone())),
         "place" => parse_place(parameters),
@@ -457,6 +470,9 @@ fn parse_place(parameters: &[String]) -> Result<RideCommand, String> {
     let Some(id) = parameters.first() else {
         return Err("place requires a piece id".into());
     };
+    if id == "hill" || id == "turn" {
+        return parse_shaped_place(id, &parameters[1..]);
+    }
     let (mut matched, mut launch_speed, mut note) = (false, None, None);
     let mut index = 1;
     while index < parameters.len() {
@@ -492,7 +508,159 @@ fn parse_place(parameters: &[String]) -> Result<RideCommand, String> {
         matched,
         launch_speed,
         note,
+        shape_intent: None,
     })
+}
+
+fn parse_shaped_place(kind: &str, parameters: &[String]) -> Result<RideCommand, String> {
+    let (id, intent) = match kind {
+        "hill" => {
+            let (mut feel, mut strength_g, mut height) = (None, None, None);
+            for parameter in parameters {
+                let (name, value) = parameter
+                    .split_once('=')
+                    .ok_or_else(|| format!("hill option must use name=value: {parameter:?}"))?;
+                match name {
+                    "feel" if feel.is_none() => {
+                        feel = Some(match value {
+                            "floater" => ("floater", HillFeel::Floater),
+                            "strong-floater" => ("strongFloater", HillFeel::StrongFloater),
+                            "ejector" => ("ejector", HillFeel::Ejector),
+                            _ => return Err(format!("unknown hill feel {value:?}")),
+                        });
+                    }
+                    "g" if strength_g.is_none() => {
+                        let value = parse_number::<f64>(value, "hill strength")?;
+                        if !value.is_finite() || value >= 0.0 {
+                            return Err("hill strength must be a finite negative g value".into());
+                        }
+                        strength_g = Some(value);
+                    }
+                    "height" if height.is_none() => {
+                        let value = parse_number::<f64>(value, "hill height")?;
+                        if !value.is_finite() || value <= 0.0 {
+                            return Err("hill height must be a finite positive value".into());
+                        }
+                        height = Some(value);
+                    }
+                    "feel" | "g" | "height" => {
+                        return Err(format!("duplicate hill option {name:?}"));
+                    }
+                    _ => return Err(format!("unknown hill option {name:?}")),
+                }
+            }
+            let (feel_wire, feel) =
+                feel.ok_or("place hill requires feel=<floater|strong-floater|ejector>")?;
+            let strength =
+                strength_g.map_or_else(|| "default".to_owned(), |value| value.to_string());
+            let size = height.map_or_else(|| "auto".to_owned(), |value| format!("fixed-{}", value));
+            (
+                format!("shape:hill:{feel_wire}:{strength}:{size}"),
+                ElementIntent::Hill {
+                    feel,
+                    strength_g,
+                    size: height.map_or(HillSizeHint::Auto, HillSizeHint::Height),
+                },
+            )
+        }
+        "turn" => {
+            let Some(hand) = parameters.first().map(String::as_str) else {
+                return Err("place turn requires left or right".into());
+            };
+            if !matches!(hand, "left" | "right") {
+                return Err(format!("unknown turn hand {hand:?}"));
+            }
+            let (mut feel, mut radius) = (None, None);
+            for parameter in &parameters[1..] {
+                let (name, value) = parameter
+                    .split_once('=')
+                    .ok_or_else(|| format!("turn option must use name=value: {parameter:?}"))?;
+                match name {
+                    "feel" if feel.is_none() => {
+                        if value != "banked" {
+                            return Err(format!("unknown turn feel {value:?}"));
+                        }
+                        feel = Some(value);
+                    }
+                    "radius" if radius.is_none() => {
+                        let value = parse_number::<f64>(value, "turn radius")?;
+                        if !value.is_finite() || value <= 0.0 {
+                            return Err("turn radius must be a finite positive value".into());
+                        }
+                        radius = Some(value);
+                    }
+                    "feel" | "radius" => {
+                        return Err(format!("duplicate turn option {name:?}"));
+                    }
+                    _ => return Err(format!("unknown turn option {name:?}")),
+                }
+            }
+            if feel != Some("banked") {
+                return Err("place turn requires feel=banked".into());
+            }
+            let size = radius.map_or_else(|| "auto".to_owned(), |value| format!("fixed-{}", value));
+            let hand = if hand == "left" {
+                Hand::Left
+            } else {
+                Hand::Right
+            };
+            let hand_wire = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            (
+                format!("shape:turn:{hand_wire}:fullyBanked:{size}"),
+                ElementIntent::Turn {
+                    hand,
+                    size: radius.map_or(TurnSizeHint::Auto, TurnSizeHint::Radius),
+                },
+            )
+        }
+        _ => unreachable!("only shaped hill and turn kinds are parsed"),
+    };
+    Ok(RideCommand::Place {
+        id,
+        matched: false,
+        launch_speed: None,
+        note: None,
+        shape_intent: Some(intent),
+    })
+}
+
+fn shape_selection_id(intent: &ElementIntent) -> Result<String, String> {
+    let selection = match intent {
+        ElementIntent::Hill {
+            feel,
+            strength_g,
+            size,
+        } => {
+            let feel = match feel {
+                HillFeel::Floater => "floater",
+                HillFeel::StrongFloater => "strongFloater",
+                HillFeel::Ejector => "ejector",
+                feel => return Err(format!("unsupported shaped hill feel {feel:?}")),
+            };
+            let strength =
+                strength_g.map_or_else(|| "default".to_owned(), |value| value.to_string());
+            let size = match size {
+                HillSizeHint::Auto => "auto".to_owned(),
+                HillSizeHint::Height(height_m) => format!("fixed-{height_m}"),
+            };
+            format!("shape:hill:{feel}:{strength}:{size}")
+        }
+        ElementIntent::Turn { hand, size } => {
+            let hand = match hand {
+                Hand::Left => "left",
+                Hand::Right => "right",
+            };
+            let size = match size {
+                TurnSizeHint::Auto => "auto".to_owned(),
+                TurnSizeHint::Radius(radius_m) => format!("fixed-{radius_m}"),
+            };
+            format!("shape:turn:{hand}:fullyBanked:{size}")
+        }
+    };
+    Ok(selection)
 }
 
 fn parse_station(value: &str) -> Result<RideStation, String> {
@@ -853,10 +1021,17 @@ fn execute_command(
             matched,
             launch_speed,
             note,
+            shape_intent,
         } => {
             let selection = session
                 .select(&id, !matched)
                 .map_err(|error| error.to_string())?;
+            if shape_intent.is_some() && selection.selected_id != id {
+                return Err(format!(
+                    "shaped selection {id:?} resolved to unexpected selection {:?}",
+                    selection.selected_id
+                ));
+            }
             if matched {
                 let speed_match = selection
                     .speed_match
@@ -873,6 +1048,16 @@ fn execute_command(
                 }
             }
             let estimates = session.estimates();
+            if let Some(refusal) = estimates
+                .selected_shape
+                .as_ref()
+                .and_then(|shape| shape.refusal.as_ref())
+            {
+                return Err(format!(
+                    "shaped selection refused: {}",
+                    serde_json::to_string(refusal).expect("shape refusal serializes")
+                ));
+            }
             if let Some(choice) = estimates
                 .choices
                 .iter()
@@ -884,16 +1069,50 @@ fn execute_command(
                     selection.selected_id, choice.refusal
                 ));
             }
-            let candidate = estimates.candidate_preview.as_ref().ok_or_else(|| {
-                candidate_preview_unavailable(
-                    &selection.selected_id,
-                    &estimates.choices,
-                    session.simulation(),
-                )
-            })?;
             let geometry = candidate_geometry_value(session);
-            let mut placement_json =
-                candidate_value(&selection.selected_id, candidate, None, geometry);
+            let (mut placement_json, estimate_text) = if shape_intent.is_some() {
+                let shape = estimates
+                    .selected_shape
+                    .as_ref()
+                    .ok_or_else(|| format!("shaped selection {id} has no shape estimate"))?;
+                let shape_value = serde_json::to_value(shape)
+                    .map_err(|error| format!("serialize shaped selection {id}: {error}"))?;
+                let entry_speed = shape
+                    .spec
+                    .as_ref()
+                    .expect("a non-refused shaped selection has a resolved spec")
+                    .design_speed_mps;
+                (
+                    shaped_candidate_value(&selection.selected_id, shape, geometry),
+                    format!(
+                        "{entry_speed:.1} m/s entry, {}",
+                        format_shape_details(&shape_value).trim()
+                    ),
+                )
+            } else {
+                let candidate = estimates.candidate_preview.as_ref().ok_or_else(|| {
+                    candidate_preview_unavailable(
+                        &selection.selected_id,
+                        &estimates.choices,
+                        session.simulation(),
+                    )
+                })?;
+                (
+                    candidate_value(&selection.selected_id, candidate, None, geometry),
+                    format!(
+                        "{} m/s entry, {}",
+                        optional_number(candidate.entry_speed),
+                        format_peaks(candidate.peaks.as_ref())
+                    ),
+                )
+            };
+            placement_json["shape"] = estimates
+                .selected_shape
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|error| format!("serialize shaped selection {id}: {error}"))?
+                .unwrap_or(Value::Null);
             if let Some(choice) = estimates
                 .choices
                 .iter()
@@ -903,6 +1122,22 @@ fn execute_command(
                 placement_json["wouldTunnel"] = json!(choice.would_tunnel);
             }
             let _placed_estimates = session.place().map_err(|error| error.to_string())?;
+            let resolved_shape_spec = if shape_intent.is_some() {
+                Some(
+                    session
+                        .simulation()
+                        .construction
+                        .as_ref()
+                        .and_then(|construction| construction.pieces().last())
+                        .and_then(|piece| piece.element_spec())
+                        .cloned()
+                        .ok_or_else(|| {
+                            format!("placed shaped selection {id} has no resolved element spec")
+                        })?,
+                )
+            } else {
+                None
+            };
             let track = construction_track(session)?;
             let piece_id = track
                 .last()
@@ -915,19 +1150,25 @@ fn execute_command(
                     .map_err(|error| error.to_string())?;
                 session.estimates();
             }
-            let saved_id = if selection.selected_id.starts_with("element:") {
-                selection.selected_id
+            let saved_id =
+                if shape_intent.is_some() || selection.selected_id.starts_with("element:") {
+                    selection.selected_id
+                } else {
+                    track.last().unwrap()["label"]
+                        .as_str()
+                        .expect("track label is a string")
+                        .to_owned()
+                };
+            if let (Some(intent), Some(spec)) = (shape_intent, resolved_shape_spec) {
+                ride.steps
+                    .push(RideStep::Shape(RideShapeStep { intent, spec }));
             } else {
-                track.last().unwrap()["label"]
-                    .as_str()
-                    .expect("track label is a string")
-                    .to_owned()
-            };
-            ride.steps.push(RideStep::Place(RidePlaceStep {
-                place: saved_id.clone(),
-                launch_speed,
-                note: note.clone(),
-            }));
+                ride.steps.push(RideStep::Place(RidePlaceStep {
+                    place: saved_id.clone(),
+                    launch_speed,
+                    note: note.clone(),
+                }));
+            }
             let state = state_value(session)?;
             let mut text = format!(
                 "Placed {saved_id}{}\n",
@@ -937,13 +1178,7 @@ fn execute_command(
                     String::new()
                 }
             );
-            writeln!(
-                text,
-                "Estimate: {} m/s entry, {}",
-                optional_number(candidate.entry_speed),
-                format_peaks(candidate.peaks.as_ref())
-            )
-            .unwrap();
+            writeln!(text, "Estimate: {estimate_text}").unwrap();
             text.push_str(&format_state_text(&state));
             Ok(CommandReply {
                 text,
@@ -1121,7 +1356,7 @@ fn execute_command(
                 let place_index = ride
                     .steps
                     .iter()
-                    .rposition(|step| matches!(step, RideStep::Place(_)))
+                    .rposition(|step| matches!(step, RideStep::Place(_) | RideStep::Shape(_)))
                     .ok_or_else(|| {
                         "undo removed a bridge piece with no matching ride step".to_owned()
                     })?;
@@ -1181,32 +1416,45 @@ fn execute_command(
             Ok(reply_state("Circuit closed.\n".to_owned(), state, true))
         }
         RideCommand::Test => {
-            let (test_run, estimates, rated_margins) = test_ride_with_margins(ride)?;
-            let report = render_ride_report_with_margins(
+            let (test_run, estimates, rated_margins, circuit) = test_ride_with_margins(ride)?;
+            let mut report = render_ride_report_with_margins(
                 ride,
                 &test_run,
                 &estimates,
                 &rated_margins,
                 false,
             )?;
+            let shaped_elements = shaped_element_report_rows(ride, &circuit)?;
+            if !shaped_elements.is_empty() {
+                report.push_str(&render_shaped_elements_table(&shaped_elements));
+            }
             Ok(CommandReply {
                 text: report.clone(),
-                json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "text": report}),
+                json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "shapedElements": shaped_elements, "text": report}),
                 changed_ride: false,
             })
         }
         RideCommand::Report(include_samples) => {
-            let (test_run, estimates, rated_margins) = test_ride_with_margins(ride)?;
-            let report = render_ride_report_with_margins(
+            let (test_run, estimates, rated_margins, circuit) = test_ride_with_margins(ride)?;
+            let mut report = render_ride_report_with_margins(
                 ride,
                 &test_run,
                 &estimates,
                 &rated_margins,
                 include_samples,
             )?;
+            let shaped_elements = shaped_element_report_rows(ride, &circuit)?;
+            if !shaped_elements.is_empty() {
+                report.push_str(&render_shaped_elements_table(&shaped_elements));
+            }
+            report.push_str(&mid_course_brake_energy_report(
+                &circuit,
+                &test_run,
+                ride.cars_per_train,
+            ));
             Ok(CommandReply {
                 text: report.clone(),
-                json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "text": report}),
+                json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "shapedElements": shaped_elements, "text": report}),
                 changed_ride: false,
             })
         }
@@ -1439,6 +1687,9 @@ fn render_choices(
     session: &mut BuilderSession,
     group: Option<&str>,
 ) -> Result<CommandReply, String> {
+    if group == Some("shapes") {
+        return render_shaped_choices(session);
+    }
     let current_selection = session.simulation().construction_selected();
     let base = session.estimates();
     let end_speed = base.end_speed;
@@ -1571,6 +1822,13 @@ fn render_choices(
             "length": preview["length"],
         }));
     }
+    if group.is_none() {
+        let shaped_rows = render_shaped_choices(session)?.json;
+        let Value::Array(shaped_rows) = shaped_rows else {
+            return Err("shaped choice renderer did not return an array".into());
+        };
+        rows.extend(shaped_rows);
+    }
     restore_selection(session, &current_selection)?;
     let mut text = String::from(
         "id                         name                         group       refusal                 tunnel window     margin matched end tile        height m length m\n",
@@ -1582,7 +1840,7 @@ fn render_choices(
             row["id"].as_str().expect("choice id is a string"),
             row["name"].as_str().expect("choice name is a string"),
             row["group"].as_str().expect("choice group is a string"),
-            row["refusal"].as_str().expect("choice refusal is a string"),
+            format_choice_refusal(&row["refusal"]),
             if row["wouldTunnel"]
                 .as_bool()
                 .expect("choice tunnel flag is a boolean")
@@ -1610,6 +1868,137 @@ fn render_choices(
             row["length"]
                 .as_f64()
                 .map_or_else(|| "—".to_owned(), |value| format!("{value:.1}")),
+        )
+        .unwrap();
+    }
+    Ok(CommandReply {
+        text,
+        json: Value::Array(rows),
+        changed_ride: false,
+    })
+}
+
+fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, String> {
+    const SHAPED_SELECTIONS: [(&str, &str); 5] = [
+        ("floater hill", "shape:hill:floater:default:auto"),
+        (
+            "strong floater hill",
+            "shape:hill:strongFloater:default:auto",
+        ),
+        ("ejector hill", "shape:hill:ejector:default:auto"),
+        ("left fully banked turn", "shape:turn:left:fullyBanked:auto"),
+        (
+            "right fully banked turn",
+            "shape:turn:right:fullyBanked:auto",
+        ),
+    ];
+    let current_selection = session.simulation().construction_selected();
+    let (model_key, vertical_limits, lateral_limit, rules) = {
+        let construction = session
+            .simulation()
+            .construction
+            .as_ref()
+            .ok_or_else(|| "there is no active construction".to_owned())?;
+        let model = construction.model();
+        (
+            model.key,
+            (
+                model.comfortable_force_limits.minimum_vertical_g,
+                model.comfortable_force_limits.maximum_vertical_g,
+            ),
+            model.comfortable_force_limits.maximum_lateral_g,
+            model.shaped_element_rules(),
+        )
+    };
+    let mut rows = Vec::with_capacity(SHAPED_SELECTIONS.len());
+    for (name, id) in SHAPED_SELECTIONS {
+        let preview = candidate_for(session, id)?;
+        let shape = preview
+            .get("shape")
+            .filter(|shape| !shape.is_null())
+            .ok_or_else(|| format!("builder did not return shaped selection {id}"))?;
+        let refusal = shape
+            .get("refusal")
+            .filter(|refusal| !refusal.is_null())
+            .cloned()
+            .or_else(|| preview.get("previewUnavailableReason").cloned())
+            .unwrap_or_else(|| json!(""));
+        rows.push(json!({
+            "id": id,
+            "name": name,
+            "group": "shapes",
+            "modelLimits": {
+                "verticalG": [vertical_limits.0, vertical_limits.1],
+                "lateralG": lateral_limit,
+                "floaterG": rules.default_floater_g,
+                "strongFloaterG": rules.default_strong_floater_g,
+                "steelEjectorG": rules.steel_ejector_g,
+                "woodenEjectorG": rules.wooden_ejector_g,
+                "turnRadiusM": [rules.minimum_turn_radius_m, rules.maximum_turn_radius_m],
+                "maximumBankDegrees": rules.maximum_bank_degrees,
+            },
+            "refusal": refusal,
+            "wouldTunnel": preview["wouldTunnel"],
+            "ratedWindow": null,
+            "entrySpeedMargin": null,
+            "speedMatchedRecommendation": false,
+            "entrySpeed": preview["entrySpeed"],
+            "peaks": preview["peaks"],
+            "status": preview["status"],
+            "shape": shape,
+            "endTile": preview["endTile"],
+            "endHeight": preview["endHeight"],
+            "length": preview["length"],
+        }));
+    }
+    restore_selection(session, &current_selection)?;
+    let mut text = format!(
+        "Model {model_key} limits: vertical {:+.2} to {:+.2} g, lateral up to {:.2} g; default hill targets floater {:+.2} g, strong floater {:+.2} g, ejector steel {:+.2} g or wood {:+.2} g; turn radius {:.1} to {:.1} m, bank up to {:.1} degrees.\n",
+        vertical_limits.0,
+        vertical_limits.1,
+        lateral_limit,
+        rules.default_floater_g,
+        rules.default_strong_floater_g,
+        rules.steel_ejector_g,
+        rules.wooden_ejector_g,
+        rules.minimum_turn_radius_m,
+        rules.maximum_turn_radius_m,
+        rules.maximum_bank_degrees,
+    );
+    text.push_str(
+        "id                                   name                     design m/s delivered g size                 refusal\n",
+    );
+    for row in &rows {
+        let shape = &row["shape"];
+        let spec = &shape["spec"];
+        let design_speed = optional_number(spec["designSpeedMps"].as_f64());
+        let delivered = optional_number(
+            spec["deliveredG"]
+                .as_f64()
+                .or_else(|| spec["lateralG"].as_f64()),
+        );
+        let size = match shape["kind"].as_str().unwrap_or("") {
+            "hill" => format!(
+                "{}x{} m",
+                optional_number(spec["heightM"].as_f64()),
+                optional_number(spec["spanM"].as_f64()),
+            ),
+            "turn" => format!("radius {} m", optional_number(spec["radiusM"].as_f64())),
+            _ => "—".to_owned(),
+        };
+        writeln!(
+            text,
+            "{:<36} {:<24} {:>10} {:>11} {:<20} {}",
+            row["id"].as_str().expect("shape id is a string"),
+            row["name"].as_str().expect("shape name is a string"),
+            design_speed,
+            delivered,
+            size,
+            if row["refusal"].is_string() {
+                row["refusal"].as_str().unwrap().to_owned()
+            } else {
+                serde_json::to_string(&row["refusal"]).expect("typed refusal serializes")
+            }
         )
         .unwrap();
     }
@@ -1697,7 +2086,8 @@ fn render_probe(session: &mut BuilderSession, id: &str) -> Result<CommandReply, 
     let refusal = candidate["refusal"]
         .as_str()
         .expect("candidate refusal is a string");
-    if candidate["status"] == "unavailable" || !refusal.is_empty() {
+    let is_shaped = !candidate["shape"].is_null();
+    if (candidate["status"] == "unavailable" || !refusal.is_empty()) && !is_shaped {
         if candidate["status"] != "unavailable" {
             return Err(format!("{} is not offered at this end: {refusal}", id));
         }
@@ -1708,7 +2098,7 @@ fn render_probe(session: &mut BuilderSession, id: &str) -> Result<CommandReply, 
     }
 
     let peaks = &candidate["peaks"];
-    let text = format!(
+    let mut text = format!(
         "Probe {}\nEntry speed: {} m/s\nForces: {}\nEnd tile: {}; height {} m; length {} m\n",
         candidate["id"].as_str().expect("candidate id is a string"),
         optional_number(candidate["entrySpeed"].as_f64()),
@@ -1717,6 +2107,9 @@ fn render_probe(session: &mut BuilderSession, id: &str) -> Result<CommandReply, 
         optional_number(candidate["endHeight"].as_f64()),
         optional_number(candidate["length"].as_f64()),
     );
+    if let Some(shape) = candidate.get("shape").filter(|shape| !shape.is_null()) {
+        text.push_str(&format_shape_details(shape));
+    }
     Ok(CommandReply {
         text,
         json: candidate,
@@ -1729,12 +2122,32 @@ fn candidate_for(session: &mut BuilderSession, id: &str) -> Result<Value, String
         .select(id, true)
         .map_err(|error| error.to_string())?;
     let estimates = session.estimates();
+    let shape_value = estimates
+        .selected_shape
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| format!("serialize shaped selection {id}: {error}"))?
+        .unwrap_or(Value::Null);
+    if let Some(shape) = estimates
+        .selected_shape
+        .as_ref()
+        .filter(|shape| shape.spec.is_some())
+    {
+        return Ok(shaped_candidate_value(
+            &selection.selected_id,
+            shape,
+            candidate_geometry_value(session),
+        ));
+    }
     let Some(candidate) = estimates.candidate_preview.as_ref() else {
-        return Ok(unavailable_candidate_value(
+        let mut value = unavailable_candidate_value(
             &selection.selected_id,
             &estimates.choices,
             session.simulation(),
-        ));
+        );
+        value["shape"] = shape_value;
+        return Ok(value);
     };
     let hill = estimates
         .choices
@@ -1758,10 +2171,59 @@ fn candidate_for(session: &mut BuilderSession, id: &str) -> Result<Value, String
         .find(|choice| choice.id == selection.selected_id);
     value["refusal"] = json!(choice.map_or("", |choice| choice.refusal.as_str()));
     value["wouldTunnel"] = json!(choice.is_some_and(|choice| choice.would_tunnel));
+    value["shape"] = shape_value;
     if selection.selected_id != id {
         value["requestedId"] = json!(id);
     }
     Ok(value)
+}
+
+fn format_shape_details(value: &Value) -> String {
+    let Some(spec) = value.get("spec").filter(|spec| !spec.is_null()) else {
+        let refusal = value
+            .get("refusal")
+            .filter(|refusal| !refusal.is_null())
+            .expect("a shaped selection without a spec has a typed refusal");
+        return format!(
+            "Shape refusal: {}\n",
+            serde_json::to_string(refusal).expect("shape refusal JSON serializes")
+        );
+    };
+    match value["kind"].as_str().expect("shape kind is a string") {
+        "hill" => format!(
+            "Shaped hill: {} at {:.1} m/s for {} cars; target {} g, delivered {} g; height {} m, span {} m\n",
+            value["feel"].as_str().expect("shaped hill has a feel"),
+            spec["designSpeedMps"]
+                .as_f64()
+                .expect("design speed is a number"),
+            spec["cars"].as_u64().expect("car count is an integer"),
+            optional_number(spec["targetG"].as_f64()),
+            optional_number(spec["deliveredG"].as_f64()),
+            optional_number(spec["heightM"].as_f64()),
+            optional_number(spec["spanM"].as_f64()),
+        ),
+        "turn" => format!(
+            "Shaped {} fully banked turn: {:.1} m/s for {} cars; delivered vertical {} g and lateral {} g; radius {} m, bank {} degrees\n",
+            value["hand"].as_str().expect("shaped turn has a hand"),
+            spec["designSpeedMps"]
+                .as_f64()
+                .expect("design speed is a number"),
+            spec["cars"].as_u64().expect("car count is an integer"),
+            optional_number(spec["verticalG"].as_f64()),
+            optional_number(spec["lateralG"].as_f64()),
+            optional_number(spec["radiusM"].as_f64()),
+            optional_number(spec["bankDegrees"].as_f64()),
+        ),
+        kind => panic!("unknown shaped element kind {kind:?}"),
+    }
+}
+
+fn format_choice_refusal(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(reason) => reason.clone(),
+        _ => serde_json::to_string(value).expect("typed choice refusal serializes"),
+    }
 }
 
 fn unavailable_candidate_value(
@@ -1934,6 +2396,34 @@ fn candidate_value(
         value["hillPrediction"] = hill;
     }
     value
+}
+
+fn shaped_candidate_value(
+    id: &str,
+    shape: &ConstructionShapedElementWire,
+    geometry: Option<Value>,
+) -> Value {
+    let spec = shape
+        .spec
+        .as_ref()
+        .expect("a solved shaped candidate has a resolved spec");
+    json!({
+        "id": id,
+        "entrySpeed": spec.design_speed_mps,
+        "ratedWindow": null,
+        "margin": null,
+        "peaks": null,
+        "ratings": null,
+        "status": "reachedEnd",
+        "samples": [],
+        "forceEstimateMethod": "train-aware shaped-element calibration",
+        "refusal": "",
+        "wouldTunnel": false,
+        "endTile": geometry.as_ref().map(|geometry| geometry["endTile"].clone()),
+        "endHeight": geometry.as_ref().and_then(|geometry| geometry["endHeight"].as_f64()),
+        "length": geometry.as_ref().and_then(|geometry| geometry["length"].as_f64()),
+        "shape": shape,
+    })
 }
 
 fn classify_rating(bands: &[ConstructionForceRatingBandWire], value: f64) -> String {
@@ -2110,7 +2600,15 @@ fn test_ride(ride: &RideFile) -> Result<(TestRun, Vec<RidePieceEstimate>), Strin
 
 fn test_ride_with_margins(
     ride: &RideFile,
-) -> Result<(TestRun, Vec<RidePieceEstimate>, String), String> {
+) -> Result<
+    (
+        TestRun,
+        Vec<RidePieceEstimate>,
+        String,
+        theme_park_sim::physics::Circuit,
+    ),
+    String,
+> {
     let (mut session, estimates, _) = replay_with_estimates(ride, false)?;
     let (circuit, _) = session
         .simulation()
@@ -2122,7 +2620,140 @@ fn test_ride_with_margins(
         .ok_or_else(|| format!("unknown coaster model {:?}", ride.model))?;
     let rated_margins = rated_speed_margin_report(&circuit, &model)?;
     let test_run = finish_test_run(&mut session)?;
-    Ok((test_run, estimates, rated_margins))
+    Ok((test_run, estimates, rated_margins, circuit))
+}
+
+fn shaped_element_report_rows(
+    ride: &RideFile,
+    circuit: &theme_park_sim::physics::Circuit,
+) -> Result<Vec<ShapedElementReportRow>, String> {
+    let shape_steps: Vec<&RideShapeStep> = ride
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            RideStep::Shape(shape) => Some(shape),
+            _ => None,
+        })
+        .collect();
+    if shape_steps.is_empty() {
+        return Ok(Vec::new());
+    }
+    let shaped_piece_indices: Vec<usize> = circuit
+        .pieces()
+        .iter()
+        .enumerate()
+        .filter_map(|(piece_index, piece)| {
+            matches!(
+                piece.id,
+                PieceId::ShapedHill | PieceId::ShapedTurnLeft | PieceId::ShapedTurnRight
+            )
+            .then_some(piece_index)
+        })
+        .collect();
+    if shaped_piece_indices.len() != shape_steps.len() {
+        return Err(format!(
+            "ride has {} shape steps but the constructed circuit has {} shaped pieces",
+            shape_steps.len(),
+            shaped_piece_indices.len()
+        ));
+    }
+    let model = validate_model(&ride.model)?;
+    let entries = shaped_element_entry_speeds(circuit, &model, &shaped_piece_indices)?;
+    shape_steps
+        .into_iter()
+        .zip(shaped_piece_indices)
+        .map(|(shape_step, piece_index)| {
+            let (design_speed_mps, element, intent, delivered, headroom, size) =
+                match (&shape_step.intent, &shape_step.spec) {
+                    (
+                        ElementIntent::Hill { feel, .. },
+                        ElementSpec::Hill {
+                            design_speed_mps,
+                            target_g,
+                            delivered_g,
+                            height_m,
+                            span_m,
+                            ..
+                        },
+                    ) => {
+                        let feel_name = match feel {
+                            HillFeel::Floater => "floater",
+                            HillFeel::StrongFloater => "strong floater",
+                            HillFeel::Ejector => "ejector",
+                            feel => {
+                                return Err(format!(
+                                    "unsupported shaped hill feel {feel:?} at piece {piece_index}"
+                                ));
+                            }
+                        };
+                        (
+                            *design_speed_mps,
+                            format!("{feel_name} hill"),
+                            format!("sustained airtime target {target_g:.2} g"),
+                            format!("{delivered_g:.2} g"),
+                            format!(
+                                "{:.2} g vertical",
+                                delivered_g - model.comfortable_force_limits.minimum_vertical_g
+                            ),
+                            format!("height {height_m:.1} m, span {span_m:.1} m"),
+                        )
+                    }
+                    (
+                        ElementIntent::Turn { hand, .. },
+                        ElementSpec::Turn {
+                            design_speed_mps,
+                            hand: spec_hand,
+                            vertical_g,
+                            lateral_g,
+                            radius_m,
+                            bank_degrees,
+                            ..
+                        },
+                    ) => {
+                        if hand != spec_hand {
+                            return Err(format!(
+                                "ride turn intent hand does not match its resolved spec at piece {piece_index}"
+                            ));
+                        }
+                        let hand_name = match hand {
+                            Hand::Left => "left",
+                            Hand::Right => "right",
+                        };
+                        (
+                            *design_speed_mps,
+                            format!("{hand_name} fully banked turn"),
+                            format!(
+                                "fully banked, vertical target {vertical_g:.2} g, lateral target 0.00 g"
+                            ),
+                            format!("vertical {vertical_g:.2} g, lateral {lateral_g:.2} g"),
+                            format!(
+                                "{:.2} g vertical, {:.2} g lateral",
+                                model.comfortable_force_limits.maximum_vertical_g - vertical_g,
+                                model.comfortable_force_limits.maximum_lateral_g - lateral_g.abs()
+                            ),
+                            format!("radius {radius_m:.1} m, bank {bank_degrees:.1} degrees"),
+                        )
+                    }
+                    _ => {
+                        return Err(format!(
+                            "ride shape step for circuit piece {piece_index} has mismatched intent and spec kinds"
+                        ));
+                    }
+                };
+            let (default_entry_speed_mps, construction_entry_speed_mps) = entries[&piece_index];
+            Ok(ShapedElementReportRow {
+                piece_index,
+                element,
+                design_speed_mps,
+                default_entry_speed_mps,
+                construction_entry_speed_mps,
+                intent,
+                delivered,
+                headroom,
+                size,
+            })
+        })
+        .collect()
 }
 
 fn test_ride_with_browser_estimates(
@@ -2303,6 +2934,103 @@ pub(crate) fn replay_with_estimates(
                         "pieceId": place.place,
                         "selection": selection_snapshot,
                         "placement": builder_estimates_snapshot(&session, &placement_estimates)?,
+                    }));
+                }
+            }
+            RideStep::Shape(shape) => {
+                let construction_before = session
+                    .simulation()
+                    .construction
+                    .as_ref()
+                    .ok_or_else(|| "there is no active construction".to_owned())?;
+                let piece_index = construction_before.pieces().len();
+                let start_distance = construction_before
+                    .pieces()
+                    .iter()
+                    .map(|piece| piece.length())
+                    .sum::<f64>();
+                let selection_id = shape_selection_id(&shape.intent).map_err(|error| {
+                    format_replay_piece_error(step_index + 1, piece_index, error)
+                })?;
+                session.select(&selection_id, true).map_err(|error| {
+                    format_replay_piece_error(step_index + 1, piece_index, error)
+                })?;
+                let selection_estimates = session.estimates();
+                let selection_snapshot = include_browser_estimates
+                    .then(|| builder_estimates_snapshot(&session, &selection_estimates))
+                    .transpose()?;
+                let placement = session
+                    .append_resolved(&shape.intent, &shape.spec)
+                    .map_err(|error| {
+                        format_replay_piece_error(step_index + 1, piece_index, error)
+                    })?;
+                let construction_after = session
+                    .simulation()
+                    .construction
+                    .as_ref()
+                    .ok_or_else(|| "there is no active construction".to_owned())?;
+                if construction_after.pieces().len() != piece_index + 1 {
+                    return Err(format_replay_piece_error(
+                        step_index + 1,
+                        piece_index,
+                        "a shaped ride step must add exactly one piece",
+                    ));
+                }
+                let track_after = construction_track(&session)?;
+                let piece_id = track_after
+                    .get(piece_index)
+                    .and_then(|row| row["label"].as_str())
+                    .ok_or_else(|| {
+                        format_replay_piece_error(
+                            step_index + 1,
+                            piece_index,
+                            "placed shaped piece has no track label",
+                        )
+                    })?;
+                let force_preview = placement.force_preview.as_ref().ok_or_else(|| {
+                    format_replay_piece_error(
+                        step_index + 1,
+                        piece_index,
+                        "resolved shaped piece has no construction force preview",
+                    )
+                })?;
+                let end_distance =
+                    start_distance + construction_after.pieces()[piece_index].length();
+                let piece_samples: Vec<_> = force_preview
+                    .samples
+                    .iter()
+                    .filter(|sample| {
+                        sample.distance >= start_distance && sample.distance <= end_distance
+                    })
+                    .collect();
+                let entry_speed = speed_at_distance(&force_preview.samples, start_distance);
+                let measured =
+                    ForcePeaks::from_preview_samples(piece_samples.iter().copied()).map(|peaks| {
+                        ForcePeakValues {
+                            minimum_vertical_g: peaks.minimum_vertical_g,
+                            maximum_vertical_g: peaks.maximum_vertical_g,
+                            maximum_lateral_g: peaks.maximum_lateral_g,
+                            maximum_longitudinal_g: peaks.maximum_longitudinal_g,
+                        }
+                    });
+                estimates.push(RidePieceEstimate {
+                    piece_index,
+                    piece_id: piece_id.to_owned(),
+                    entry_speed,
+                    rated_window: None,
+                    estimated: measured,
+                    ratings: None,
+                    preview_status: force_preview.status.to_owned(),
+                    notes: vec!["resolved shaped geometry".to_owned()],
+                });
+                if let Some(selection_snapshot) = selection_snapshot {
+                    browser_estimates.push(json!({
+                        "stepIndex": step_index + 1,
+                        "pieceIndex": piece_index,
+                        "pieceCount": 1,
+                        "pieceId": selection_id,
+                        "selection": selection_snapshot,
+                        "placement": builder_estimates_snapshot(&session, &placement)?,
                     }));
                 }
             }
@@ -3485,7 +4213,7 @@ fn export_session(ride: &RideFile, session: &BuilderSession) -> Result<Value, St
     let expected_placement_count = ride
         .steps
         .iter()
-        .filter(|step| matches!(step, RideStep::Place(_)))
+        .filter(|step| matches!(step, RideStep::Place(_) | RideStep::Shape(_)))
         .count();
     if session.placed_piece_bridge_ids().len() != expected_placement_count {
         return Err(format!(
@@ -3514,6 +4242,26 @@ fn export_session(ride: &RideFile, session: &BuilderSession) -> Result<Value, St
                         .ok_or_else(|| format!("ride step {step_index} has no bridge piece id"))?;
                     commands.push(json!({"tick": 0, "command": {"type": "construction-set-launch-intensity", "id": id, "targetSpeed": target_speed}}));
                 }
+            }
+            RideStep::Shape(shape) => {
+                let bridge_ids = &session.placed_piece_bridge_ids()[placement_index];
+                placement_index += 1;
+                if bridge_ids.is_empty() {
+                    return Err(format!("ride step {step_index} has no bridge piece id"));
+                }
+                let intent_json = serde_json::to_string(&shape.intent).map_err(|error| {
+                    format!("serialize shaped intent for ride step {step_index}: {error}")
+                })?;
+                let spec_json = serde_json::to_string(&shape.spec).map_err(|error| {
+                    format!(
+                        "serialize resolved shaped geometry for ride step {step_index}: {error}"
+                    )
+                })?;
+                commands.push(json!({"tick": 0, "command": {
+                    "type": "construction-append-resolved",
+                    "intentJson": intent_json,
+                    "specJson": spec_json,
+                }}));
             }
             RideStep::Chain(chain) => {
                 commands.push(json!({"tick": 0, "command": {"type": "construction-set-chain", "enabled": chain.chain}}));
@@ -3975,5 +4723,88 @@ mod expectation_tests {
             .expect(
                 "Horizon Hawk per-car samples must contain a short positive and negative interval",
             )
+    }
+}
+
+#[cfg(test)]
+mod shaped_command_parser_tests {
+    use super::{RideCommand, parse_commands, render_choices, render_probe};
+    use theme_park_sim_wasm::WasmSimulation;
+    use theme_park_sim_wasm::builder_session::BuilderSession;
+
+    #[test]
+    fn parses_hill_turn_and_shape_options_commands() {
+        let commands = parse_commands(&[
+            "place hill feel=floater g=-1.0 height=36".to_owned(),
+            "place turn left feel=banked radius=64".to_owned(),
+            "options shapes".to_owned(),
+        ])
+        .expect("shaped design-tool commands should parse");
+
+        assert_eq!(commands.len(), 3);
+        let RideCommand::Place { id: hill, .. } = &commands[0] else {
+            panic!("first command should select a shaped hill");
+        };
+        assert_eq!(hill, "shape:hill:floater:-1:fixed-36");
+        let RideCommand::Place { id: turn, .. } = &commands[1] else {
+            panic!("second command should select a shaped turn");
+        };
+        assert_eq!(turn, "shape:turn:left:fullyBanked:fixed-64");
+        assert!(matches!(
+            &commands[2],
+            RideCommand::Choices(Some(group)) if group == "shapes"
+        ));
+    }
+
+    #[test]
+    fn shaped_commands_reject_unknown_or_duplicate_parameters() {
+        for command in [
+            "place hill feel=launch g=-1.0",
+            "place hill feel=floater feel=ejector",
+            "place turn left feel=banked radius=-1",
+            "options hills",
+        ] {
+            assert!(parse_commands(&[command.to_owned()]).is_err(), "{command}");
+        }
+    }
+
+    #[test]
+    fn cli_strong_floater_uses_the_builder_hill_feel_token() {
+        let commands = parse_commands(&["place hill feel=strong-floater".to_owned()])
+            .expect("strong floater command should parse");
+        let RideCommand::Place { id, .. } = &commands[0] else {
+            panic!("command should select a shaped hill");
+        };
+        assert_eq!(id, "shape:hill:strongFloater:default:auto");
+    }
+
+    #[test]
+    fn shape_choices_report_feasibility_and_model_ranges_at_the_open_end() {
+        let simulation = WasmSimulation::new(42, 0, "new".into());
+        let mut session = BuilderSession::new(simulation);
+        session.start("hyper", 100, 100, 10, 0).unwrap();
+        session.estimates();
+
+        let reply = render_choices(&mut session, Some("shapes")).unwrap();
+        let rows = reply.json.as_array().unwrap();
+
+        assert_eq!(rows.len(), 5);
+        assert!(rows.iter().all(|row| row["group"] == "shapes"));
+        assert!(rows.iter().all(|row| !row["shape"].is_null()));
+        assert!(reply.text.contains("turn radius"));
+        assert!(reply.text.contains("bank up to"));
+    }
+
+    #[test]
+    fn probe_reports_a_shaped_candidate_or_its_typed_refusal() {
+        let simulation = WasmSimulation::new(42, 0, "new".into());
+        let mut session = BuilderSession::new(simulation);
+        session.start("hyper", 100, 100, 10, 0).unwrap();
+        session.estimates();
+
+        let reply = render_probe(&mut session, "shape:hill:floater:default:auto").unwrap();
+
+        assert!(!reply.json["shape"].is_null());
+        assert!(reply.text.contains("Shaped hill") || reply.text.contains("Shape refusal"));
     }
 }

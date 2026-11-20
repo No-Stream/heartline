@@ -2085,5 +2085,25 @@ fn build_catalog() -> Vec<Piece> {
         })
         .collect();
     pieces.extend(sloped_turns);
+
+    let straight = pieces
+        .iter()
+        .find(|piece| piece.id == Straight)
+        .expect("catalog includes straight track")
+        .clone();
+    for (id, name) in [
+        (ShapedHill, "Shaped airtime hill"),
+        (ShapedTurnLeft, "Shaped banked turn left"),
+        (ShapedTurnRight, "Shaped banked turn right"),
+    ] {
+        let mut piece = straight.clone();
+        piece.id = id;
+        piece.name = name;
+        piece.design_speeds = None;
+        piece.family = None;
+        piece.clear_arc_table();
+        pieces.push(piece);
+    }
+
     pieces
 }

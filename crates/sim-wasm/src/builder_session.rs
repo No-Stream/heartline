@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::coaster_models;
 use theme_park_sim::track::ride_file::{RideFile, RideFileFormat, RideHeading, RideStep};
+use theme_park_sim::track::shaped::{ElementIntent, ElementSpec};
 
 use crate::WasmSimulation;
 use crate::construction::{
     ConstructionCandidateForcePreviewWire, ConstructionElementWire, ConstructionForcePreviewWire,
-    ConstructionPieceWire,
+    ConstructionPieceWire, ConstructionShapedElementWire,
 };
 use crate::construction_speed_match::ConstructionSpeedMatchWire;
 use wasm_bindgen::prelude::*;
@@ -36,6 +37,7 @@ pub struct BuilderEstimates {
     pub hill_options_json: String,
     pub speed_turns_json: String,
     pub candidate_preview: Option<ConstructionCandidateForcePreviewWire>,
+    pub selected_shape: Option<ConstructionShapedElementWire>,
     pub speed_match: Option<ConstructionSpeedMatchWire>,
 }
 
@@ -67,6 +69,8 @@ struct BuilderWorkerEstimates<'a> {
     hill_options: serde_json::Value,
     speed_turns: serde_json::Value,
     candidate_force_preview: &'a Option<ConstructionCandidateForcePreviewWire>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_shape: &'a Option<ConstructionShapedElementWire>,
     speed_match: &'a Option<ConstructionSpeedMatchWire>,
 }
 
@@ -81,6 +85,7 @@ impl BuilderEstimates {
             speed_turns: serde_json::from_str(&self.speed_turns_json)
                 .expect("speed turns are valid JSON"),
             candidate_force_preview: &self.candidate_preview,
+            selected_shape: &self.selected_shape,
             speed_match: &self.speed_match,
         };
         serde_json::to_string(&wire).expect("builder worker estimates serialize")
@@ -247,6 +252,7 @@ fn worker_update(
     } else {
         None
     };
+    let selected_shape = simulation.construction_selected_shape_wire(complete);
     let selected = simulation.construction_selected();
     let speed_match = if complete {
         simulation.construction_speed_match(&selected, *end_speed_cache)
@@ -262,6 +268,7 @@ fn worker_update(
         hill_options_json,
         speed_turns_json,
         candidate_preview,
+        selected_shape,
         speed_match,
     }
 }
@@ -419,6 +426,32 @@ impl BuilderSession {
             }
         }
         Ok(())
+    }
+
+    pub fn append_resolved(
+        &mut self,
+        intent: &ElementIntent,
+        spec: &ElementSpec,
+    ) -> Result<BuilderEstimates, BuilderSessionError> {
+        self.end_speed_cache = None;
+        let previous_piece_count = self
+            .simulation
+            .construction
+            .as_ref()
+            .map(|construction| construction.piece_ids().len());
+        self.simulation
+            .construction_append_resolved_typed(intent, spec)
+            .map_err(|message| self.bridge_error("place saved shaped element", message))?;
+        if let (Some(previous_piece_count), Some(construction)) =
+            (previous_piece_count, self.simulation.construction.as_ref())
+        {
+            if let Some(piece_ids) = construction.piece_ids().get(previous_piece_count..) {
+                if !piece_ids.is_empty() {
+                    self.placed_piece_bridge_ids.push(piece_ids.to_vec());
+                }
+            }
+        }
+        Ok(self.estimates())
     }
 
     pub fn set_chain(&mut self, enabled: bool) -> Result<(), BuilderSessionError> {
@@ -694,6 +727,17 @@ impl BuilderSession {
                             })?;
                     }
                 }
+                RideStep::Shape(shape) => {
+                    let piece_index = self
+                        .simulation
+                        .construction
+                        .as_ref()
+                        .expect("ride replay has active construction")
+                        .pieces()
+                        .len();
+                    self.append_resolved(&shape.intent, &shape.spec)
+                        .map_err(|error| invalid_ride_step(step_index, Some(piece_index), error))?;
+                }
                 RideStep::Chain(chain) => {
                     self.set_chain(chain.chain)
                         .map_err(|error| invalid_ride_step(step_index, None, error))?;
@@ -827,6 +871,8 @@ mod tests {
         RideBlockSectionsStep, RideCloseStep, RideFile, RideFileFormat, RideHeading, RidePlaceStep,
         RideStation, RideStep,
     };
+
+    const CIRCUITS: &str = include_str!("classic-circuit-digest-fixtures.txt");
 
     #[test]
     fn start_uses_the_workers_coordinate_scaling() {
@@ -1040,6 +1086,10 @@ mod tests {
                         session.set_launch_speed(piece_id, target_speed).unwrap();
                         session.estimates();
                     }
+                }
+                RideStep::Shape(shape) => {
+                    session.append_resolved(&shape.intent, &shape.spec).unwrap();
+                    session.estimates();
                 }
                 RideStep::Chain(chain) => {
                     session.set_chain(chain.chain).unwrap();
@@ -1302,6 +1352,234 @@ mod tests {
     }
 
     #[test]
+    fn classic_builder_outputs_keep_the_recorded_digests() {
+        for (ride_name, model_key, expected_digest) in [
+            ("Timber Tumbler", "hybrid", 0x73087cdb3b38c8d8),
+            ("Velocity Viper", "velocity_viper", 0x4e6fd5b665b3fd97),
+            ("Briar Blitz", "wooden_twister", 0x5b0e22b9c64457d2),
+        ] {
+            let commands = circuit_lines(ride_name);
+            let actual = session_trace(model_key, &commands);
+            assert_eq!(
+                trace_digest(&actual),
+                expected_digest,
+                "{ride_name}: {}",
+                first_trace_difference(&benchmark_trace(ride_name, model_key, &commands), &actual)
+            );
+        }
+    }
+
+    fn circuit_lines(ride_name: &str) -> Vec<String> {
+        let header = format!("[{ride_name}]");
+        let mut sections = CIRCUITS.split(&header);
+        sections
+            .next()
+            .expect("classic circuit fixture has a preamble");
+        sections
+            .next()
+            .unwrap_or_else(|| panic!("{ride_name} classic circuit is missing"))
+            .lines()
+            .map(str::trim)
+            .take_while(|line| !line.starts_with('['))
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn content_ride_builder_hashes_match_master() {
+        for (ride_name, ride_json, expected_hash) in [
+            (
+                "Briar Blitz",
+                include_str!("../../../content/rides/briar-blitz.ride.json"),
+                0x9566e10f3ebf29b0,
+            ),
+            (
+                "Browser agreement fast circuit",
+                include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
+                0x3085ff1b874c26d7,
+            ),
+            (
+                "Daisy Dash",
+                include_str!("../../../content/rides/daisy-dash.ride.json"),
+                0xd7c7960cb1c46f50,
+            ),
+            (
+                "Horizon Hawk",
+                include_str!("../../../content/rides/horizon-hawk.ride.json"),
+                0x2c88d291751f3c4f,
+            ),
+            (
+                "Timber Tumbler",
+                include_str!("../../../content/rides/timber-tumbler.ride.json"),
+                0xc6d856a79f89e7f1,
+            ),
+            (
+                "Velocity Viper",
+                include_str!("../../../content/rides/velocity-viper.ride.json"),
+                0x5bedae3ca8d6ae35,
+            ),
+        ] {
+            let ride: RideFile = serde_json::from_str(ride_json).unwrap();
+            assert_eq!(ride.name, ride_name);
+            let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+            session.replay_ride(&ride).unwrap();
+            assert_eq!(session.state_hash(), expected_hash, "{ride_name}");
+        }
+    }
+
+    #[test]
+    fn content_ride_builder_output_traces_match_master() {
+        let mut mismatches = Vec::new();
+        for (ride_name, ride_json, expected_digest) in [
+            (
+                "Briar Blitz",
+                include_str!("../../../content/rides/briar-blitz.ride.json"),
+                0x0161df3c4dd85407,
+            ),
+            (
+                "Browser agreement fast circuit",
+                include_str!("../../../content/rides/browser-agreement-fast.ride.json"),
+                0x54a61be2669f8ca9,
+            ),
+            (
+                "Daisy Dash",
+                include_str!("../../../content/rides/daisy-dash.ride.json"),
+                0xb0560e95b1b49d66,
+            ),
+            (
+                "Horizon Hawk",
+                include_str!("../../../content/rides/horizon-hawk.ride.json"),
+                0xa8cb26b5cb347452,
+            ),
+            (
+                "Timber Tumbler",
+                include_str!("../../../content/rides/timber-tumbler.ride.json"),
+                0x5a85ded8b26ac5e7,
+            ),
+            (
+                "Velocity Viper",
+                include_str!("../../../content/rides/velocity-viper.ride.json"),
+                0x2ab59be614c4dc36,
+            ),
+        ] {
+            let ride: RideFile = serde_json::from_str(ride_json).unwrap();
+            assert_eq!(ride.name, ride_name);
+            let trace = content_ride_trace(&ride);
+            let actual_digest = trace_digest(&trace);
+            if actual_digest != expected_digest {
+                mismatches.push(format!(
+                    "{ride_name}: expected {expected_digest:016x}, got {actual_digest:016x} ({} trace calls)",
+                    trace.len()
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "content ride trace mismatches:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    fn content_ride_trace(ride: &RideFile) -> Trace {
+        let heading = match ride.station.heading {
+            RideHeading::East => 0,
+            RideHeading::North => 1,
+            RideHeading::West => 2,
+            RideHeading::South => 3,
+        };
+        let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        session
+            .start(
+                &ride.model,
+                ride.station.x,
+                ride.station.y,
+                ride.station.z,
+                heading,
+            )
+            .unwrap();
+        session.set_cars_per_train(ride.cars_per_train).unwrap();
+        let mut trace = Vec::new();
+        push_content_ride_snapshot(&session, &mut trace);
+
+        for (step_offset, step) in ride.steps.iter().enumerate() {
+            match step {
+                RideStep::Place(place) => {
+                    let selection = session.select(&place.place, true).unwrap();
+                    trace_call(
+                        &mut trace,
+                        "content:selection_speed_match",
+                        serde_json::to_string(&selection.speed_match).unwrap(),
+                    );
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                    session.append_selected().unwrap();
+                    if let Some(target_speed) = place.launch_speed {
+                        let track: serde_json::Value =
+                            serde_json::from_str(&session.simulation().construction_track())
+                                .unwrap();
+                        let piece_index = track.as_array().unwrap().last().unwrap()["id"]
+                            .as_u64()
+                            .unwrap() as usize;
+                        session.set_launch_speed(piece_index, target_speed).unwrap();
+                    }
+                    push_content_ride_estimates(&mut session, &mut trace, false);
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
+                RideStep::Chain(chain) => {
+                    session.set_chain(chain.chain).unwrap();
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
+                RideStep::Close(close) => {
+                    assert!(close.close);
+                    session.close_track().unwrap();
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
+                RideStep::BlockSections(blocks) => {
+                    session
+                        .install_block_sections(
+                            &blocks.block_sections,
+                            blocks.train_capacity,
+                            blocks.capacity_search_complete,
+                            blocks.placement_search_complete,
+                        )
+                        .unwrap();
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
+                _ => panic!("content ride trace encountered a new step kind"),
+            }
+            trace_call(&mut trace, "content:step_index", step_offset + 1);
+            push_content_ride_snapshot(&session, &mut trace);
+        }
+        trace
+    }
+
+    fn push_content_ride_estimates(
+        session: &mut BuilderSession,
+        trace: &mut Trace,
+        complete: bool,
+    ) {
+        let estimates = session.worker_update(complete);
+        trace_call(
+            trace,
+            if complete {
+                "content:complete_update"
+            } else {
+                "content:partial_update"
+            },
+            estimates.to_worker_json(),
+        );
+    }
+
+    fn push_content_ride_snapshot(session: &BuilderSession, trace: &mut Trace) {
+        trace_call(trace, "content:state_hash", session.state_hash());
+        trace_call(
+            trace,
+            "content:track",
+            session.simulation().construction_track(),
+        );
+    }
+
+    #[test]
     fn worker_bridge_uses_the_same_selection_and_estimate_sequence() {
         let mut native_session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
         let mut worker_simulation = WasmSimulation::new(42, 0, "new".into());
@@ -1390,6 +1668,7 @@ mod tests {
                 RideStep::Chain(chain) => {
                     Some(if chain.chain { "+chain" } else { "-chain" }.into())
                 }
+                RideStep::Shape(_) => panic!("classic ride command fixture contains a shaped step"),
                 RideStep::Close(_) | RideStep::BlockSections(_) => None,
             })
             .collect()

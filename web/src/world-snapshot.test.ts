@@ -25,7 +25,7 @@ vi.mock("./wasm/theme_park_sim_wasm.js", () => ({
     }
     estimates(_simulation: object, complete: boolean) {
       workerMock.builderEstimate(complete);
-      return JSON.stringify({ constructionForcePreview: null, pieces: [], elements: [], hillOptions: [], speedTurns: [], candidateForcePreview: null, speedMatch: null });
+      return JSON.stringify({ constructionForcePreview: null, pieces: [], elements: [], hillOptions: [], speedTurns: [], candidateForcePreview: null, selectedShape: null, speedMatch: null });
     }
     free() {}
   },

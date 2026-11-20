@@ -11,6 +11,7 @@ export type ConstructionAction =
   | { readonly type: "construction-set-chain"; readonly enabled: boolean }
   | { readonly type: "construction-set-launch-intensity"; readonly id: number; readonly targetSpeed: number }
   | { readonly type: "construction-append" }
+  | { readonly type: "construction-append-resolved"; readonly intentJson: string; readonly specJson: string }
   | { readonly type: "construction-undo" }
   | { readonly type: "construction-delete"; readonly id: number }
   | { readonly type: "construction-delete-mode"; readonly enabled: boolean }
@@ -54,8 +55,10 @@ export type { ConstructionElementWire as ConstructionElement } from "./generated
 export type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
 export type { ConstructionHillOptionWire as ConstructionHillOption } from "./generated/ConstructionHillOptionWire";
 export type { ConstructionSpeedTurnWire as ConstructionSpeedTurn } from "./generated/ConstructionSpeedTurnWire";
+export type { ConstructionShapedElementWire as ConstructionShapedElement } from "./generated/ConstructionShapedElementWire";
 import type { ConstructionHillOptionWire as ConstructionHillOption } from "./generated/ConstructionHillOptionWire";
 import type { ConstructionSpeedTurnWire as ConstructionSpeedTurn } from "./generated/ConstructionSpeedTurnWire";
+import type { ConstructionShapedElementWire as ConstructionShapedElement } from "./generated/ConstructionShapedElementWire";
 import type { ConstructionPieceWire as ConstructionPiece } from "./generated/ConstructionPieceWire";
 import type { ConstructionElementWire as ConstructionElement } from "./generated/ConstructionElementWire";
 import type { ConstructionTrackWire as ConstructionTrack } from "./generated/ConstructionTrackWire";
@@ -107,6 +110,7 @@ export interface ConstructionState {
   readonly speedMatch: ConstructionSpeedMatch | null;
   /** The model's speed-matched turns; the palette lists only the selected one. */
   readonly speedTurns: readonly ConstructionSpeedTurn[];
+  readonly selectedShape: ConstructionShapedElement | null;
   readonly placedRails: Float32Array;
   readonly railDistances: Float32Array;
   readonly blockCandidates: Float64Array;

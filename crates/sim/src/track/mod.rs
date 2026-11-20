@@ -8,6 +8,7 @@ pub mod construction;
 pub mod curves;
 pub mod models;
 pub mod ride_file;
+pub mod shaped;
 pub mod supports;
 #[cfg(test)]
 mod vertical_top_hat;
@@ -35,7 +36,7 @@ pub mod blocks;
 pub mod clearance;
 pub mod proximity;
 
-mod profile;
+pub mod profile;
 pub mod rated_windows;
 pub use rated_windows::{rated_speed_margin, rated_speeds};
 mod roll;

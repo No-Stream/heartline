@@ -48,6 +48,7 @@ fn player_circuit(name: &str, model: CoasterModel) -> Circuit {
                     .append(id, &world, &[])
                     .unwrap_or_else(|error| panic!("{}: {error:?}", place.place));
             }
+            RideStep::Shape(_) => panic!("{name} statistic fixture contains only catalog pieces"),
             RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
             RideStep::BlockSections(_) => {}
         }

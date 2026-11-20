@@ -279,7 +279,8 @@ impl CoasterModel {
     }
 
     pub fn allows_piece(&self, piece: &Piece) -> bool {
-        self.allowed_pieces.contains(&piece.id)
+        (self.allowed_pieces.contains(&piece.id)
+            || is_resolved_shaped_piece(piece, self.shaped_element_rules()))
             && (piece.entry.heading == piece.exit.heading
                 || piece.entry.slope == Slope::Level
                 || self.sloped_turn_slopes.contains(&piece.entry.slope))
@@ -312,6 +313,54 @@ impl CoasterModel {
             .filter_map(|piece| piece.at(end))
             .filter(|piece| piece.maximum_curvature() <= 1.0 / self.minimum_radius_metres)
             .collect()
+    }
+}
+
+fn is_resolved_shaped_piece(
+    piece: &Piece,
+    rules: crate::track::shaped::ShapedElementRules,
+) -> bool {
+    use crate::track::shaped::ElementSpec;
+
+    match (&piece.id, &piece.shape) {
+        (PieceId::ShapedHill, Shape::ShapedProfile { spec }) if rules.allow_airtime_hills => {
+            matches!(spec.as_ref(), ElementSpec::Hill { .. })
+        }
+        (PieceId::ShapedTurnLeft, Shape::ResolvedBank { spec })
+            if rules.allow_fully_banked_turns =>
+        {
+            matches!(
+                spec.as_ref(),
+                ElementSpec::Turn {
+                    hand: super::Hand::Left,
+                    lateral_g,
+                    radius_m,
+                    bank_degrees,
+                    ..
+                } if lateral_g.abs() <= 0.15
+                    && *radius_m >= rules.minimum_turn_radius_m
+                    && *radius_m <= rules.maximum_turn_radius_m
+                    && *bank_degrees <= rules.maximum_bank_degrees
+            )
+        }
+        (PieceId::ShapedTurnRight, Shape::ResolvedBank { spec })
+            if rules.allow_fully_banked_turns =>
+        {
+            matches!(
+                spec.as_ref(),
+                ElementSpec::Turn {
+                    hand: super::Hand::Right,
+                    lateral_g,
+                    radius_m,
+                    bank_degrees,
+                    ..
+                } if lateral_g.abs() <= 0.15
+                    && *radius_m >= rules.minimum_turn_radius_m
+                    && *radius_m <= rules.maximum_turn_radius_m
+                    && *bank_degrees <= rules.maximum_bank_degrees
+            )
+        }
+        _ => false,
     }
 }
 
@@ -1391,6 +1440,52 @@ mod tests {
             assert_eq!(restored.cars_per_train, model.cars_per_train);
             assert_eq!(restored.ui_description, model.ui_description);
             assert_eq!(postcard::to_allocvec(&restored).unwrap(), legacy_bytes);
+        }
+    }
+
+    #[test]
+    fn shaped_templates_do_not_change_classic_model_choices() {
+        let shaped_ids = [
+            PieceId::ShapedHill,
+            PieceId::ShapedTurnLeft,
+            PieceId::ShapedTurnRight,
+        ];
+        let templates = catalog();
+        assert!(
+            shaped_ids
+                .iter()
+                .all(|id| templates.iter().any(|piece| piece.id == *id)),
+            "the solver has generic catalog templates for shaped piece identities"
+        );
+        for id in shaped_ids {
+            let template = templates
+                .iter()
+                .find(|piece| piece.id == id)
+                .expect("shaped template exists");
+            let bytes = postcard::to_allocvec(template)
+                .expect("shaped template name is registered catalog text");
+            let restored: Piece = postcard::from_bytes(&bytes).expect("template deserializes");
+            assert_eq!(restored.name, template.name);
+        }
+
+        for model in coaster_models() {
+            assert!(
+                shaped_ids
+                    .iter()
+                    .all(|id| !model.allowed_pieces.contains(id)),
+                "{} stores shaped identities in its classic allow-list",
+                model.key
+            );
+            let available_ids: Vec<_> = model
+                .available_pieces(TrackState::origin())
+                .into_iter()
+                .map(|piece| piece.id)
+                .collect();
+            assert!(
+                shaped_ids.iter().all(|id| !available_ids.contains(id)),
+                "{} exposes generic shaped templates as classic choices",
+                model.key
+            );
         }
     }
 }

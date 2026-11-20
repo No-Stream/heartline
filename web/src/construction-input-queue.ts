@@ -40,7 +40,9 @@ export function createConstructionInputQueue(
     },
     complete(currentTrackLength: number, active: boolean): void {
       if (!inFlight) return;
-      const refused = !inFlight.cancelled && inFlight.action.type === "construction-append" && currentTrackLength <= inFlight.trackLength;
+      const refused = !inFlight.cancelled
+        && (inFlight.action.type === "construction-append" || inFlight.action.type === "construction-append-resolved")
+        && currentTrackLength <= inFlight.trackLength;
       inFlight = undefined;
       trackLength = currentTrackLength;
       if (!active || refused) {

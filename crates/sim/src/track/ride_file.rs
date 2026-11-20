@@ -1,4 +1,5 @@
 use crate::track::blocks::BlockSectionPlacement;
+use crate::track::shaped::{ElementIntent, ElementSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -45,9 +46,17 @@ pub struct RideStation {
 #[serde(untagged)]
 pub enum RideStep {
     Place(RidePlaceStep),
+    Shape(RideShapeStep),
     Chain(RideChainStep),
     Close(RideCloseStep),
     BlockSections(RideBlockSectionsStep),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RideShapeStep {
+    pub intent: ElementIntent,
+    pub spec: ElementSpec,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -173,8 +182,12 @@ pub struct RideExpectChainFeatureStep {
 mod tests {
     use super::{
         RideExpectChainFeatureStep, RideExpectFeatureStep, RideFile, RideFileFormat, RideHeading,
-        RideStep,
+        RideShapeStep, RideStep,
     };
+    use crate::track::shaped::{
+        ElementIntent, ElementSpec, HillSizeHint, ResolvedTurnGeometry, SpeedTurnKnot, TurnSizeHint,
+    };
+    use crate::track::{Hand, HillFeel};
     use serde_json::{Value, json};
 
     const VALID_RIDE: &str = r#"
@@ -313,5 +326,194 @@ mod tests {
         let mut ride: Value = serde_json::from_str(VALID_RIDE).unwrap();
         ride["steps"][5] = json!({"autoBlocks": true});
         assert!(serde_json::from_value::<RideFile>(ride).is_err());
+    }
+
+    #[test]
+    fn ride_file_shapes_store_numbers_at_fixed_decimal_precision() {
+        let mut ride: RideFile = serde_json::from_str(VALID_RIDE).unwrap();
+        ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: ElementIntent::Hill {
+                feel: HillFeel::Floater,
+                strength_g: Some(-0.512345678),
+                size: HillSizeHint::Height(36.123456789),
+            },
+            spec: serde_json::from_value(json!({
+                "kind": "hill",
+                "design_speed_mps": 34.123456789,
+                "cars": 8,
+                "target_g": -0.512345678,
+                "delivered_g": -0.498765432,
+                "height_m": 36.123456789,
+                "span_m": 64.987654321,
+                "profile": {
+                    "points": [
+                        {"distance": 0.123456789, "x": 0.234567891, "z": 0.345678912, "angle": 0.456789123, "heart_curvature": 0.567891234, "curvature": 0.678912345},
+                        {"distance": 2.123456789, "x": 2.234567891, "z": 0.345678912, "angle": 0.456789123, "heart_curvature": 0.567891234, "curvature": 0.678912345}
+                    ],
+                    "cached_minimum_entry": 0.789123456,
+                    "cached_minimum_radius": 1.891234567
+                }
+            }))
+            .unwrap(),
+        }));
+        ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: ElementIntent::Turn {
+                hand: Hand::Left,
+                size: TurnSizeHint::Radius(64.123456789),
+            },
+            spec: ElementSpec::Turn {
+                design_speed_mps: 28.123456789,
+                cars: 8,
+                hand: Hand::Left,
+                vertical_g: 3.123456789,
+                lateral_g: 0.012345678,
+                radius_m: 64.123456789,
+                bank_degrees: 65.123456789,
+                geometry: ResolvedTurnGeometry {
+                    peak_bank: 1.123456789,
+                    length: 100.123456789,
+                    knots: vec![
+                        SpeedTurnKnot {
+                            x: 0.123456789,
+                            y: 0.234567891,
+                            heading: 0.345678912,
+                        },
+                        SpeedTurnKnot {
+                            x: 64.123456789,
+                            y: 64.234567891,
+                            heading: 1.456789123,
+                        },
+                    ],
+                },
+            },
+        }));
+
+        let serialized = serde_json::to_string(&ride).unwrap();
+        let encoded: Value = serde_json::from_str(&serialized).unwrap();
+        let hill_spec = &encoded["steps"][6]["spec"];
+        for field in [
+            "design_speed_mps",
+            "target_g",
+            "delivered_g",
+            "height_m",
+            "span_m",
+        ] {
+            assert_decimal_precision(&hill_spec[field], 1_000_000.0);
+        }
+        assert_decimal_precision(&hill_spec["profile"], 1_000_000_000.0);
+        assert!(
+            (hill_spec["profile"]["points"][0]["angle"].as_f64().unwrap() - 0.456_789_123).abs()
+                < 1e-9,
+            "profile coordinates retain the measured nine-decimal precision"
+        );
+        assert_decimal_precision(&encoded["steps"][7]["spec"], 1_000_000.0);
+
+        let decoded: RideFile = serde_json::from_str(&serialized).unwrap();
+        let decoded_again: Value = serde_json::to_value(decoded).unwrap();
+        assert_eq!(
+            decoded_again["steps"][6]["spec"],
+            encoded["steps"][6]["spec"]
+        );
+        assert_eq!(
+            decoded_again["steps"][7]["spec"],
+            encoded["steps"][7]["spec"]
+        );
+    }
+
+    #[test]
+    fn shaped_ride_step_round_trips_intent_and_resolved_geometry() {
+        let ride: RideFile = serde_json::from_str(VALID_RIDE).unwrap();
+        let mut shaped_ride = ride;
+        shaped_ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: ElementIntent::Hill {
+                feel: HillFeel::Floater,
+                strength_g: Some(-0.5),
+                size: HillSizeHint::Height(36.0),
+            },
+            spec: serde_json::from_value(json!({
+                "kind": "hill",
+                "design_speed_mps": 34.0,
+                "cars": 8,
+                "target_g": -0.5,
+                "delivered_g": -0.48,
+                "height_m": 36.0,
+                "span_m": 64.0,
+                "profile": {
+                    "points": [
+                        {"distance": 0.0, "x": 0.0, "z": 0.0, "angle": 0.0, "heart_curvature": 0.0, "curvature": 0.0},
+                        {"distance": 2.0, "x": 2.0, "z": 0.0, "angle": 0.0, "heart_curvature": 0.0, "curvature": 0.0}
+                    ],
+                    "cached_minimum_entry": null,
+                    "cached_minimum_radius": null
+                }
+            }))
+            .unwrap(),
+        }));
+        shaped_ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: ElementIntent::Turn {
+                hand: Hand::Left,
+                size: TurnSizeHint::Radius(64.0),
+            },
+            spec: ElementSpec::Turn {
+                design_speed_mps: 28.0,
+                cars: 8,
+                hand: Hand::Left,
+                vertical_g: 3.0,
+                lateral_g: 0.0,
+                radius_m: 64.0,
+                bank_degrees: 65.0,
+                geometry: ResolvedTurnGeometry {
+                    peak_bank: 65.0_f64.to_radians(),
+                    length: 100.0,
+                    knots: vec![
+                        SpeedTurnKnot {
+                            x: 0.0,
+                            y: 0.0,
+                            heading: 0.0,
+                        },
+                        SpeedTurnKnot {
+                            x: 64.0,
+                            y: 64.0,
+                            heading: 90.0_f64.to_radians(),
+                        },
+                    ],
+                },
+            },
+        }));
+
+        let encoded = serde_json::to_value(&shaped_ride).unwrap();
+        assert!(encoded["steps"][6]["intent"].is_object());
+        assert!(encoded["steps"][6]["spec"].to_string().contains("profile"));
+        assert!(encoded["steps"][7]["spec"].to_string().contains("knots"));
+        let restored = serde_json::from_value::<RideFile>(encoded.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            encoded,
+            "human-readable shaped specs retain their canonical JSON values"
+        );
+    }
+
+    fn assert_decimal_precision(value: &Value, decimal_scale: f64) {
+        match value {
+            Value::Number(number) => {
+                let value = number.as_f64().expect("ride spec numbers are finite");
+                let rounded = (value * decimal_scale).round() / decimal_scale;
+                assert!(
+                    (value - rounded).abs() <= 1e-9,
+                    "ride spec number {value} is not at decimal scale {decimal_scale}"
+                );
+            }
+            Value::Array(values) => {
+                for value in values {
+                    assert_decimal_precision(value, decimal_scale);
+                }
+            }
+            Value::Object(values) => {
+                for value in values.values() {
+                    assert_decimal_precision(value, decimal_scale);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::String(_) => {}
+        }
     }
 }

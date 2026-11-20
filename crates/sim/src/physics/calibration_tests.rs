@@ -543,6 +543,7 @@ fn build_player_circuit(name: &str, ride: &RideFile) -> (CoasterModel, super::Ci
             RideStep::Place(place) => construction
                 .append(piece_id_for_name(&place.place), &world, &[])
                 .unwrap_or_else(|error| panic!("{name} cannot place {}: {error:?}", place.place)),
+            RideStep::Shape(_) => panic!("{name} rated fixture contains only catalog pieces"),
             RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
             RideStep::BlockSections(_) => {}
         }

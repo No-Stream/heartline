@@ -9,6 +9,7 @@ describe("construction finish search triggers", () => {
       { type: "construction-set-chain", enabled: true },
       { type: "construction-set-cars-per-train", cars: 4 },
       { type: "construction-append" },
+      { type: "construction-append-resolved", intentJson: "{}", specJson: "{}" },
       { type: "construction-undo" },
       { type: "construction-delete", id: 0 },
       { type: "construction-close" },
