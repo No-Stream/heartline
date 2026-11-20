@@ -346,13 +346,13 @@ test("offers and places a twisted drop directly from a banked track @fast", asyn
   await expect(track.last().locator(".track-chip__name")).toHaveText("Left twisted drop");
 });
 
-test("shows calibrated shaped hill controls and places the resolved hill @fast", async ({ page }) => {
+test("shows and places a shaped floater hill and fully banked turn on a hyper coaster @fast", async ({ page }) => {
   await page.goto("/?test=1");
   await expect.poll(() => page.evaluate(() => window.gameTest?.ready), { timeout: 30_000 }).toBe(true);
   await openTool(page, "Coaster");
   await selectUnits(page, "metric");
   await page.evaluate(() => window.gameTest.setCamera({ centerX: 50, centerY: 50, zoom: 1, rotation: 0 }));
-  await page.locator(".builder select[data-model]").selectOption("model:hybrid");
+  await page.locator(".builder select[data-model]").selectOption("model:hyper");
   await page.getByLabel("Station height above ground (metres)").fill("72");
   await page.getByLabel("Station height above ground (metres)").press("Tab");
   await page.getByRole("button", { name: "Place station" }).click();
@@ -398,6 +398,18 @@ test("shows calibrated shaped hill controls and places the resolved hill @fast",
   await expect(track).toHaveCount(7);
   await expect(track.nth(6).locator(".track-chip__name")).toHaveText("Shaped airtime hill");
   await expect(track.nth(6).locator("svg .piece-icon")).toBeVisible();
+
+  await choices.locator('[data-piece="shape:turn:left:fullyBanked:auto"]').click();
+  await expect(selected).toHaveAttribute("data-selected", "shape:turn:left:fullyBanked:auto");
+  await expect(hill.getByRole("group", { name: "Shaped element feel" })).toContainText("Fully banked");
+  await expect(readout).toContainText("Design speed");
+  await expect(readout).toContainText("Resolved size:");
+  await expect(readout).toContainText("Lateral force at design speed:");
+
+  await placePiece.click();
+  await expect(track).toHaveCount(8);
+  await expect(track.nth(7).locator(".track-chip__name")).toHaveText("Fully banked left turn");
+  await expect(track.nth(7).locator("svg .piece-icon")).toBeVisible();
 });
 
 test("turns after a drop default to the bank for the predicted speed, and the bank stepper overrides it @fast", async ({ page }) => {

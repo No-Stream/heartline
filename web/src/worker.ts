@@ -186,7 +186,7 @@ function sendConstruction(complete = true): void {
     speedTurns: estimates.speedTurns,
     selectedShape: estimates.selectedShape,
     selected: selected || null, track,
-    canAppend: simulation.construction_finish_preview_active() || elements.some((element) => element.id === selected) || (!!selectedChoice && !selectedChoice.refusal), canClose: simulation.construction_can_close(),
+    canAppend: simulation.construction_finish_preview_active() || simulation.construction_can_append(), canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
     canFinish: simulation.construction_can_finish(), finishReason: simulation.construction_finish_reason(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as TestingReport | null,

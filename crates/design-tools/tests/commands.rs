@@ -466,6 +466,64 @@ fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
 }
 
 #[test]
+fn shaped_hill_and_fully_banked_turn_place_on_a_hyper_and_replay() {
+    let ride = TempFile::new("shaped-hyper.ride.json");
+
+    let placement_output = run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "new --model hyper --station 241,249,10,north --cars 4".into(),
+            "chain on".into(),
+            "place LevelToGentleUp".into(),
+            "place GentleToSteepUp".into(),
+            "place SteepUp".into(),
+            "place SteepUp".into(),
+            "place SteepToGentleUp".into(),
+            "place GentleUpToLevel".into(),
+            "chain off".into(),
+            "place WideLevelToSixtyDown".into(),
+            "place WideSixtyDownToLevel".into(),
+            "place hill feel=floater".into(),
+            "place turn left feel=banked".into(),
+        ],
+        "",
+    )
+    .unwrap();
+    assert!(
+        placement_output.contains("Shaped hill: floater"),
+        "{placement_output}"
+    );
+    assert!(
+        placement_output.contains("fully banked turn"),
+        "{placement_output}"
+    );
+
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
+    assert_eq!(saved["model"], "hyper");
+    let shape_steps: Vec<_> = saved["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|step| step.get("intent").is_some())
+        .collect();
+    assert_eq!(shape_steps.len(), 2);
+    assert_eq!(shape_steps[0]["intent"]["kind"], "hill");
+    assert_eq!(shape_steps[0]["intent"]["feel"], "Floater");
+    assert_eq!(shape_steps[0]["spec"]["kind"], "hill");
+    assert!(shape_steps[0]["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
+    assert!(shape_steps[0]["spec"]["profile"]["points"].is_array());
+    assert_eq!(shape_steps[1]["intent"]["kind"], "turn");
+    assert_eq!(shape_steps[1]["intent"]["hand"], "Left");
+    assert_eq!(shape_steps[1]["spec"]["kind"], "turn");
+    assert!(shape_steps[1]["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
+    assert!(shape_steps[1]["spec"]["geometry"]["knots"].is_array());
+
+    let replay = run_cli(&["ride".into(), ride.path().into(), "state".into()], "").unwrap();
+    assert!(replay.contains("Pieces: 10"), "{replay}");
+}
+
+#[test]
 fn probe_reports_candidate_geometry_and_does_not_change_the_ride_file() {
     let ride = TempFile::new("probe.ride.json");
     ride.write(OPEN_RIDE);

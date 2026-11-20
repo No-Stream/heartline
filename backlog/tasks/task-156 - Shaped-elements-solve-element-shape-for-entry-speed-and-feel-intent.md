@@ -313,3 +313,20 @@ Only `coaster_models_use_peak_rider_force_limits` changed its expected hyper lim
 Updated generated artifacts: `crates/sim/src/track/rated_windows.generated.rs` for the two force-bounded windows and regeneration date, and `web/src/generated/modelForceLimits.ts` for Horizon Hawk's limit and derived airtime rating bands. The park-report golden did not change, and no screenshots needed re-recording.
 
 Verification: workspace tests passed (1,058 passed, 3 filtered); `make lint`, `make check` (237 Rust, 484 web, 9 art, 44 browser tests), `make ride-agreement` (7 browser tests), `PLAYWRIGHT_PORT=4771 make e2e-feature` (198 tests), and `PLAYWRIGHT_PORT=4772 make journeys` (11 tests) passed. The all-rides agreement run reported one Velocity Viper downstream-track check-3 issue, with zero estimate errors; its test passed.
+
+## Post-hyper-limit merge and WASM size stop (2026-11-20)
+
+Merged master `99412ca` as `17d4f0e`. The post-merge shaped suite initially passed 8/9: the cap regression requested -1.2 g, above the new -1.25 g margin floor, so its expected cap no longer occurred. The request was changed to -1.5 g; the focused test selected -1.20 g, delivered -1.19 g in four previews, and the full shaped integration target passed 9/9. The 0.25 g margin was unchanged.
+
+The standard post-bindgen branch artifact was 3,972,622 bytes versus 3,608,984 bytes on master (+363,638). Exact section bytes are:
+
+| Section | Master | Shaped | Delta |
+| --- | ---: | ---: | ---: |
+| Code | 2,292,773 | 2,565,623 | +272,850 |
+| Data | 512,820 | 536,204 | +23,384 |
+| Names | 792,490 | 859,350 | +66,860 |
+| Other | 10,901 | 11,445 | +544 |
+
+Attempt 1 enabled release LTO and one codegen unit on both revisions. Master was 2,995,956 bytes and shaped was 3,319,102 bytes, a +323,146-byte delta. The master archive's `make build` completed compilation and wasm-bindgen but its npm build failed because the archive had no Git metadata; the WASM artifact was produced. Attempt 2 removed the wasm-bindgen debug name section. The branch artifact was 3,113,268 bytes, but comparing both revisions without their name sections yields +296,778 bytes under standard settings and +262,034 bytes with LTO. Both exceed the 150 KB budget. Name stripping would also remove Rust function names from WASM stack traces. Neither experiment was retained; stop after two failed size attempts. No generated table or calibration shards were found in the source. Named function bodies in the standard shaped artifact included 119,957 bytes under `track::shaped`, 172,362 under `track::curves`, 45,523 under `track::profile`, 145,972 under `physics::testing`, and 22,397 under `physics::preview`; these totals include pre-existing code and are not exclusive feature deltas.
+
+The wiring audit found that the worker did not include shaped selections in `canAppend`; it now queries the simulation's append capability. Design-tool shaped placement also requested a classic candidate preview and failed; it now uses the shaped calibration. A hyper hill-and-turn placement and ride-file replay integration test passed 1/1. The existing browser feature test was extended to cover a hyper floater and fully banked turn; its focused run was interrupted before a result at the size stop, and no screenshot was updated. The release build passed with name stripping during the experiment, but that build setting was subsequently removed. The cold benchmark has no result: its detached launch produced no log or running tmux server. The requested full workspace, lint, check, ride-agreement, feature and journeys gates were not run after this stop. The worker and browser changes remain unverified by a completed browser run.

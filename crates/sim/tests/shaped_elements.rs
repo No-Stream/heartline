@@ -2,10 +2,10 @@ use theme_park_sim::physics::{
     Circuit, ConstructionTestRunRecorder, PhysicsConfig, PreviewCache, PreviewStatus, TestRun,
     TrackPreview, Train,
 };
+use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::ride_file::{
     RideFile, RideFileFormat, RideHeading, RideShapeStep, RideStation, RideStep,
 };
-use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, ShapedConstructionError, SolveContext, SolveRefusal,
     TurnSizeHint, solve, solve_confirm, solve_preview,

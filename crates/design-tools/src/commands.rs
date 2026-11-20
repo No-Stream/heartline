@@ -20,7 +20,7 @@ use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
 use theme_park_sim_wasm::construction::{
     ConstructionCandidateForcePreviewWire, ConstructionForceRatingBandWire,
-    ConstructionLastPlacedForceWire,
+    ConstructionLastPlacedForceWire, ConstructionShapedElementWire,
 };
 use theme_park_sim_wasm::reports::TestingSample;
 
@@ -1069,20 +1069,43 @@ fn execute_command(
                     selection.selected_id, choice.refusal
                 ));
             }
-            let candidate = estimates.candidate_preview.as_ref().ok_or_else(|| {
-                if shape_intent.is_some() {
-                    format!("candidate force preview is unavailable for shaped selection {id}")
-                } else {
+            let geometry = candidate_geometry_value(session);
+            let (mut placement_json, estimate_text) = if shape_intent.is_some() {
+                let shape = estimates
+                    .selected_shape
+                    .as_ref()
+                    .ok_or_else(|| format!("shaped selection {id} has no shape estimate"))?;
+                let shape_value = serde_json::to_value(shape)
+                    .map_err(|error| format!("serialize shaped selection {id}: {error}"))?;
+                let entry_speed = shape
+                    .spec
+                    .as_ref()
+                    .expect("a non-refused shaped selection has a resolved spec")
+                    .design_speed_mps;
+                (
+                    shaped_candidate_value(&selection.selected_id, shape, geometry),
+                    format!(
+                        "{entry_speed:.1} m/s entry, {}",
+                        format_shape_details(&shape_value).trim()
+                    ),
+                )
+            } else {
+                let candidate = estimates.candidate_preview.as_ref().ok_or_else(|| {
                     candidate_preview_unavailable(
                         &selection.selected_id,
                         &estimates.choices,
                         session.simulation(),
                     )
-                }
-            })?;
-            let geometry = candidate_geometry_value(session);
-            let mut placement_json =
-                candidate_value(&selection.selected_id, candidate, None, geometry);
+                })?;
+                (
+                    candidate_value(&selection.selected_id, candidate, None, geometry),
+                    format!(
+                        "{} m/s entry, {}",
+                        optional_number(candidate.entry_speed),
+                        format_peaks(candidate.peaks.as_ref())
+                    ),
+                )
+            };
             placement_json["shape"] = estimates
                 .selected_shape
                 .as_ref()
@@ -1155,13 +1178,7 @@ fn execute_command(
                     String::new()
                 }
             );
-            writeln!(
-                text,
-                "Estimate: {} m/s entry, {}",
-                optional_number(candidate.entry_speed),
-                format_peaks(candidate.peaks.as_ref())
-            )
-            .unwrap();
+            writeln!(text, "Estimate: {estimate_text}").unwrap();
             text.push_str(&format_state_text(&state));
             Ok(CommandReply {
                 text,
@@ -2112,6 +2129,17 @@ fn candidate_for(session: &mut BuilderSession, id: &str) -> Result<Value, String
         .transpose()
         .map_err(|error| format!("serialize shaped selection {id}: {error}"))?
         .unwrap_or(Value::Null);
+    if let Some(shape) = estimates
+        .selected_shape
+        .as_ref()
+        .filter(|shape| shape.spec.is_some())
+    {
+        return Ok(shaped_candidate_value(
+            &selection.selected_id,
+            shape,
+            candidate_geometry_value(session),
+        ));
+    }
     let Some(candidate) = estimates.candidate_preview.as_ref() else {
         let mut value = unavailable_candidate_value(
             &selection.selected_id,
@@ -2368,6 +2396,34 @@ fn candidate_value(
         value["hillPrediction"] = hill;
     }
     value
+}
+
+fn shaped_candidate_value(
+    id: &str,
+    shape: &ConstructionShapedElementWire,
+    geometry: Option<Value>,
+) -> Value {
+    let spec = shape
+        .spec
+        .as_ref()
+        .expect("a solved shaped candidate has a resolved spec");
+    json!({
+        "id": id,
+        "entrySpeed": spec.design_speed_mps,
+        "ratedWindow": null,
+        "margin": null,
+        "peaks": null,
+        "ratings": null,
+        "status": "reachedEnd",
+        "samples": [],
+        "forceEstimateMethod": "train-aware shaped-element calibration",
+        "refusal": "",
+        "wouldTunnel": false,
+        "endTile": geometry.as_ref().map(|geometry| geometry["endTile"].clone()),
+        "endHeight": geometry.as_ref().and_then(|geometry| geometry["endHeight"].as_f64()),
+        "length": geometry.as_ref().and_then(|geometry| geometry["length"].as_f64()),
+        "shape": shape,
+    })
 }
 
 fn classify_rating(bands: &[ConstructionForceRatingBandWire], value: f64) -> String {
