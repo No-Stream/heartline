@@ -215,7 +215,7 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
     "maximumLongitudinalG": 1.5
   },
   "Horizon Hawk": {
-    "minimumVerticalG": -1.3,
+    "minimumVerticalG": -1.5,
     "maximumVerticalG": 4.0,
     "ratingBands": {
       "airtime": [
@@ -231,12 +231,12 @@ export const MODEL_FORCE_LIMITS: Readonly<Record<"Briar Blitz" | "Daisy Dash" | 
         },
         {
           "rating": "great",
-          "upTo": 1.3,
+          "upTo": 1.5,
           "inclusive": true
         },
         {
           "rating": "too much",
-          "upTo": 1.6900000000000002,
+          "upTo": 1.9500000000000002,
           "inclusive": true
         },
         {
