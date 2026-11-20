@@ -82,6 +82,7 @@ pub struct ConstructionShapeSpecWire {
     rename_all_fields = "camelCase"
 )]
 pub enum ConstructionShapeRefusalWire {
+    TableUnavailable,
     Stall {
         entry_speed_mps: f64,
         height_m: f64,
@@ -90,9 +91,22 @@ pub enum ConstructionShapeRefusalWire {
         target_g: f64,
         available_headroom_g: f64,
     },
+    UnmeasuredTarget {
+        target_g: f64,
+    },
+    BelowVerifiedSpeed {
+        entry_speed_mps: f64,
+        minimum_speed_mps: f64,
+    },
+    AboveVerifiedSpeed {
+        entry_speed_mps: f64,
+        maximum_speed_mps: f64,
+    },
     PreviewTimedOut,
     InvalidContext,
     UnsupportedConnector,
+    UnsupportedSizeOverride,
+    InvalidGeometry,
 }
 
 #[derive(Serialize, TS)]
@@ -300,6 +314,7 @@ fn shaped_spec_wire(spec: &ElementSpec) -> ConstructionShapeSpecWire {
 
 fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
     match refusal {
+        SolveRefusal::TableUnavailable => ConstructionShapeRefusalWire::TableUnavailable,
         SolveRefusal::Stall {
             entry_speed_mps,
             height_m,
@@ -314,22 +329,67 @@ fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
             target_g,
             available_headroom_g,
         },
+        SolveRefusal::UnmeasuredTarget { target_g } => {
+            ConstructionShapeRefusalWire::UnmeasuredTarget { target_g }
+        }
+        SolveRefusal::BelowVerifiedSpeed {
+            entry_speed_mps,
+            minimum_speed_mps,
+        } => ConstructionShapeRefusalWire::BelowVerifiedSpeed {
+            entry_speed_mps,
+            minimum_speed_mps,
+        },
+        SolveRefusal::AboveVerifiedSpeed {
+            entry_speed_mps,
+            maximum_speed_mps,
+        } => ConstructionShapeRefusalWire::AboveVerifiedSpeed {
+            entry_speed_mps,
+            maximum_speed_mps,
+        },
         SolveRefusal::PreviewTimedOut => ConstructionShapeRefusalWire::PreviewTimedOut,
         SolveRefusal::InvalidContext => ConstructionShapeRefusalWire::InvalidContext,
         SolveRefusal::UnsupportedConnector => ConstructionShapeRefusalWire::UnsupportedConnector,
+        SolveRefusal::UnsupportedSizeOverride => {
+            ConstructionShapeRefusalWire::UnsupportedSizeOverride
+        }
+        SolveRefusal::InvalidGeometry => ConstructionShapeRefusalWire::InvalidGeometry,
     }
 }
 
 fn solve_refusal_message(refusal: SolveRefusal) -> String {
     match refusal {
+        SolveRefusal::TableUnavailable => {
+            "The generated shaped-element table has no row for this model, train length, and selection.".into()
+        }
         SolveRefusal::Stall { height_m, .. } => format!("Hill stalls at {height_m:.1} m."),
         SolveRefusal::InfeasibleTarget { target_g, .. } => {
             format!("The force target {target_g:.2} g is not feasible for this model.")
         }
+        SolveRefusal::UnmeasuredTarget { target_g } => {
+            format!("The force target {target_g:.2} g has no measured best case.")
+        }
+        SolveRefusal::BelowVerifiedSpeed {
+            entry_speed_mps,
+            minimum_speed_mps,
+        } => format!(
+            "Entry speed {entry_speed_mps:.1} m/s is below the verified {minimum_speed_mps:.1} m/s table range."
+        ),
+        SolveRefusal::AboveVerifiedSpeed {
+            entry_speed_mps,
+            maximum_speed_mps,
+        } => format!(
+            "Entry speed {entry_speed_mps:.1} m/s is above the verified {maximum_speed_mps:.1} m/s table range."
+        ),
         SolveRefusal::PreviewTimedOut => "The train preview timed out.".into(),
         SolveRefusal::InvalidContext => "The train cannot reach this element entry.".into(),
         SolveRefusal::UnsupportedConnector => {
             "Shaped elements need a level, straight entry connector.".into()
+        }
+        SolveRefusal::UnsupportedSizeOverride => {
+            "This size override is not covered by the verified shaped-element table.".into()
+        }
+        SolveRefusal::InvalidGeometry => {
+            "The shaped element geometry cannot be integrated for this entry speed.".into()
         }
     }
 }

@@ -69,6 +69,7 @@ struct BuilderWorkerEstimates<'a> {
     hill_options: serde_json::Value,
     speed_turns: serde_json::Value,
     candidate_force_preview: &'a Option<ConstructionCandidateForcePreviewWire>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     selected_shape: &'a Option<ConstructionShapedElementWire>,
     speed_match: &'a Option<ConstructionSpeedMatchWire>,
 }

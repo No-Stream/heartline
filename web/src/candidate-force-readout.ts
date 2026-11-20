@@ -20,16 +20,28 @@ function formatCalibratedForce(force: number): string {
 function shapeRefusalMessage(shape: ConstructionShapedElementWire, units: Units): string[] {
   if (!shape.refusal) return [];
   switch (shape.refusal.kind) {
+    case "tableUnavailable":
+      return ["No generated shaped-element row covers this model, train length, and selection."];
     case "stall":
       return [`Would stall at ${formatSpeed(shape.refusal.entrySpeedMps, units, 0)}; tallest feasible hill is ${formatLength(shape.refusal.heightM, units)}.`];
     case "infeasibleTarget":
       return [`Target ${formatCalibratedForce(shape.refusal.targetG)} g exceeds available headroom of ${formatCalibratedForce(shape.refusal.availableHeadroomG)} g.`];
+    case "unmeasuredTarget":
+      return [`No measured best case is available for the ${formatCalibratedForce(shape.refusal.targetG)} g target.`];
+    case "belowVerifiedSpeed":
+      return [`Entry speed is below the verified ${formatSpeed(shape.refusal.minimumSpeedMps, units, 1)} table range.`];
+    case "aboveVerifiedSpeed":
+      return [`Entry speed is above the verified ${formatSpeed(shape.refusal.maximumSpeedMps, units, 1)} table range.`];
     case "previewTimedOut":
       return ["The train preview timed out before this shape could be calibrated."];
     case "invalidContext":
       return ["The train cannot reach this element's entry connector."];
     case "unsupportedConnector":
       return ["Shaped elements need a level, straight entry connector."];
+    case "unsupportedSizeOverride":
+      return ["This size override is not covered by the verified shaped-element table."];
+    case "invalidGeometry":
+      return ["The shaped element geometry could not be integrated at this entry speed."];
   }
 }
 

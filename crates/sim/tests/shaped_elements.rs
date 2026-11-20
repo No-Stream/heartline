@@ -4,12 +4,15 @@ use theme_park_sim::physics::{
     TrackPreview, Train,
 };
 use theme_park_sim::track::shaped::{
-    ElementIntent, ElementSpec, HillSizeHint, SolveContext, SolveRefusal, TurnSizeHint, solve,
+    ElementIntent, ElementSpec, FeelCapNote, HillSizeHint, SolveContext, SolveRefusal,
+    TurnSizeHint, solve,
+};
+use theme_park_sim::track::shaped_generator::{
+    CellRefusal, GENERATED_SHAPED_ELEMENT_GRID, GeneratedSpec, GeneratedTableOutcome, GridElement,
 };
 use theme_park_sim::track::{
-    Bank, CoasterModel, Hand, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind, Slope,
-    TrackState, TrainConfiguration, VerticalCurvature, catalog, coaster_models, hybrid_model,
-    hyper_model, wooden_twister_model,
+    Bank, CoasterModel, Hand, Heading, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind,
+    Slope, TrackState, TrainConfiguration, VerticalCurvature, catalog, coaster_models, hyper_model,
 };
 
 fn model_with_train_length(base_model: &CoasterModel, cars: u8) -> CoasterModel {
@@ -227,7 +230,131 @@ fn simulate_shape_at_controlled_speed_under_construction_test_physics(
 }
 
 fn safe_airtime_target(model: &CoasterModel) -> f64 {
-    model.comfortable_force_limits.minimum_vertical_g + 0.35
+    model.comfortable_force_limits.minimum_vertical_g + 0.4
+}
+
+fn requested_hill_strengths(model: &CoasterModel) -> Vec<f64> {
+    let first_tenth =
+        ((model.comfortable_force_limits.minimum_vertical_g + 0.15) * 10.0).ceil() as i16;
+    let mut strengths = (first_tenth..=0)
+        .rev()
+        .map(|tenths| f64::from(tenths) / 10.0)
+        .collect::<Vec<_>>();
+    let rules = model.shaped_element_rules();
+    for feel in [
+        HillFeel::Floater,
+        HillFeel::StrongFloater,
+        HillFeel::Ejector,
+    ] {
+        let default_target = match feel {
+            HillFeel::Floater => rules.default_floater_g,
+            HillFeel::StrongFloater => rules.default_strong_floater_g,
+            HillFeel::Ejector if model.track_material == theme_park_sim::track::Material::Wood => {
+                rules.wooden_ejector_g
+            }
+            HillFeel::Ejector => rules.steel_ejector_g,
+            _ => unreachable!(),
+        };
+        if !strengths.contains(&default_target) {
+            strengths.push(default_target);
+        }
+    }
+    strengths.sort_by(f64::total_cmp);
+    strengths.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
+    strengths
+}
+
+fn generated_hill_outcome(
+    model: &CoasterModel,
+    cars: u8,
+    feel: HillFeel,
+    strength_g: f64,
+    speed_mps: f64,
+) -> &'static GeneratedTableOutcome {
+    GENERATED_SHAPED_ELEMENT_GRID
+        .binary_search_by(|row| {
+            row.model_key
+                .cmp(model.key)
+                .then_with(|| row.cars.cmp(&cars))
+                .then_with(|| match row.element {
+                    GridElement::Hill {
+                        feel: row_feel,
+                        strength_g: row_strength,
+                    } => {
+                        hill_feel_order(row_feel)
+                            .cmp(&hill_feel_order(feel))
+                            .then_with(|| row_strength.total_cmp(&strength_g))
+                    }
+                    GridElement::FullyBankedTurn => std::cmp::Ordering::Greater,
+                })
+                .then_with(|| row.entry_speed_mps.total_cmp(&speed_mps))
+        })
+        .ok()
+        .map(|index| &GENERATED_SHAPED_ELEMENT_GRID[index].outcome)
+        .unwrap_or_else(|| {
+            panic!(
+                "generated hill table is missing {} {cars} cars {feel:?} at {strength_g:.1} g and {speed_mps:.2} m/s",
+                model.key
+            )
+        })
+}
+
+fn generated_turn_outcome(
+    model: &CoasterModel,
+    cars: u8,
+    speed_mps: f64,
+) -> &'static GeneratedTableOutcome {
+    GENERATED_SHAPED_ELEMENT_GRID
+        .binary_search_by(|row| {
+            row.model_key
+                .cmp(model.key)
+                .then_with(|| row.cars.cmp(&cars))
+                .then_with(|| match row.element {
+                    GridElement::Hill { .. } => std::cmp::Ordering::Less,
+                    GridElement::FullyBankedTurn => row.entry_speed_mps.total_cmp(&speed_mps),
+                })
+        })
+        .ok()
+        .map(|index| &GENERATED_SHAPED_ELEMENT_GRID[index].outcome)
+        .unwrap_or_else(|| {
+            panic!(
+                "generated turn table is missing {} {cars} cars at {speed_mps:.2} m/s",
+                model.key
+            )
+        })
+}
+
+fn generated_row_is_solved(outcome: &GeneratedTableOutcome) -> bool {
+    matches!(outcome, GeneratedTableOutcome::Solved(_))
+}
+
+fn measured_table_row_is_solved(outcome: &GeneratedTableOutcome) -> bool {
+    match outcome {
+        GeneratedTableOutcome::Solved(_) => true,
+        GeneratedTableOutcome::Infeasible {
+            best_measurements, ..
+        } => {
+            assert_eq!(
+                best_measurements.len(),
+                6,
+                "infeasible table rows retain all six measured physics/speed cases"
+            );
+            false
+        }
+        GeneratedTableOutcome::Refused(CellRefusal::InvalidGeometry { .. }) => false,
+        GeneratedTableOutcome::Refused(refusal) => panic!(
+            "in-range hill/turn grid cell was refused without a measured best case: {refusal:?}"
+        ),
+    }
+}
+
+fn hill_feel_order(feel: HillFeel) -> u8 {
+    match feel {
+        HillFeel::Floater => 0,
+        HillFeel::StrongFloater => 1,
+        HillFeel::Ejector => 2,
+        _ => unreachable!("the property matrix covers supported hill feels only"),
+    }
 }
 
 fn assert_grid_connector(state: TrackState) {
@@ -346,6 +473,56 @@ fn assert_all_car_force_headroom(
     }
 }
 
+fn assert_all_car_force_limits(
+    report: &TestRun,
+    piece_index: usize,
+    model: &CoasterModel,
+    description: &str,
+) {
+    let per_car_peaks: Vec<_> = report
+        .car_piece_force_peaks()
+        .into_iter()
+        .filter(|peaks| peaks.piece_index == piece_index)
+        .collect();
+    assert_eq!(
+        per_car_peaks.len(),
+        usize::from(model.train.cars),
+        "{description}: missing per-car forces"
+    );
+    let limits = model.comfortable_force_limits;
+    for car in per_car_peaks {
+        let peaks = car.peaks;
+        assert!(
+            peaks.minimum_vertical_g >= limits.minimum_vertical_g,
+            "{description}, car {}: minimum vertical force {:.3} g exceeds the limit {:.3} g",
+            car.car_index,
+            peaks.minimum_vertical_g,
+            limits.minimum_vertical_g
+        );
+        assert!(
+            peaks.maximum_vertical_g <= limits.maximum_vertical_g,
+            "{description}, car {}: maximum vertical force {:.3} g exceeds the limit {:.3} g",
+            car.car_index,
+            peaks.maximum_vertical_g,
+            limits.maximum_vertical_g
+        );
+        assert!(
+            peaks.maximum_lateral_g <= limits.maximum_lateral_g,
+            "{description}, car {}: lateral force {:.3} g exceeds the limit {:.3} g",
+            car.car_index,
+            peaks.maximum_lateral_g,
+            limits.maximum_lateral_g
+        );
+        assert!(
+            peaks.maximum_longitudinal_g <= limits.maximum_longitudinal_g,
+            "{description}, car {}: longitudinal force {:.3} g exceeds the limit {:.3} g",
+            car.car_index,
+            peaks.maximum_longitudinal_g,
+            limits.maximum_longitudinal_g
+        );
+    }
+}
+
 fn assert_model_minimum_radius(piece: &Piece, model: &CoasterModel, description: &str) {
     let minimum_radius_m = piece.maximum_curvature().recip();
     assert!(
@@ -362,8 +539,17 @@ fn assert_hill_intent(
     target_g: f64,
     description: &str,
 ) {
-    let sustained: Vec<_> = preview
-        .report
+    assert_hill_delivery(&preview.report, piece_index, model, target_g, description);
+}
+
+fn assert_hill_delivery(
+    report: &TestRun,
+    piece_index: usize,
+    model: &CoasterModel,
+    target_g: f64,
+    description: &str,
+) {
+    let sustained: Vec<_> = report
         .car_piece_sustained_force_peaks()
         .into_iter()
         .filter(|peaks| peaks.piece_index == piece_index)
@@ -418,89 +604,121 @@ fn every_model_train_length_and_integer_entry_speed_solves_hills_and_turns() {
                     strength_g: Some(target_g),
                     size: HillSizeHint::Auto,
                 };
-                let (solved_model, prefix, hill) =
-                    solve_with_prefix(hill_intent, &base_model, cars, speed_mps).unwrap_or_else(
-                        |refusal| {
-                            panic!(
-                                "{} {cars} cars hill at {speed_mps} m/s refused: {refusal:?}",
-                                base_model.key
-                            )
-                        },
-                    );
-                let ElementSpec::Hill {
-                    design_speed_mps,
-                    cars: solved_cars,
-                    target_g: resolved_target_g,
-                    height_m,
-                    span_m,
-                    ..
-                } = hill.spec
-                else {
-                    panic!("hill intent resolved to a turn")
-                };
-                assert_eq!(solved_cars, cars);
-                assert!((design_speed_mps - speed_mps).abs() <= 0.01);
-                assert!((resolved_target_g - target_g).abs() <= 0.01);
-                assert!(height_m > 0.0 && span_m > 0.0);
-                assert_eq!(hill.piece.entry, prefix.last().unwrap().exit);
-                assert_grid_connector(hill.piece.exit);
-                assert!(solved_model.allows_piece(&hill.piece));
-                assert_model_minimum_radius(&hill.piece, &solved_model, "shaped hill");
-                let candidate_index = prefix.len();
-                let design_preview = simulate_shape(
-                    &prefix,
-                    &solved_model,
-                    &hill.piece,
+                let hill_cell = generated_hill_outcome(
+                    &base_model,
+                    cars,
+                    HillFeel::Floater,
+                    target_g,
                     speed_mps,
-                    PhysicsConfig::default(),
                 );
-                assert_all_car_force_headroom(
-                    &design_preview.report,
-                    candidate_index,
-                    &solved_model,
-                    "hill under default physics",
-                );
-                let construction_test_report =
-                    simulate_shape_at_controlled_speed_under_construction_test_physics(
+                if !generated_row_is_solved(hill_cell) {
+                    let refusal = solve_with_prefix(hill_intent, &base_model, cars, speed_mps);
+                    assert!(table_failure_has_typed_refusal(&refusal), "{refusal:?}");
+                } else {
+                    let (solved_model, prefix, hill) =
+                        solve_with_prefix(hill_intent, &base_model, cars, speed_mps)
+                            .unwrap_or_else(|refusal| {
+                                panic!(
+                                    "{} {cars} cars hill at {speed_mps} m/s refused: {refusal:?}",
+                                    base_model.key
+                                )
+                            });
+                    let hill_cap_note = hill.cap_note;
+                    let ElementSpec::Hill {
+                        design_speed_mps,
+                        cars: solved_cars,
+                        target_g: resolved_target_g,
+                        delivered_g,
+                        height_m,
+                        span_m,
+                        ..
+                    } = hill.spec
+                    else {
+                        panic!("hill intent resolved to a turn")
+                    };
+                    assert_eq!(solved_cars, cars);
+                    assert!((design_speed_mps - speed_mps).abs() <= 0.01);
+                    assert!(
+                        (delivered_g - resolved_target_g).abs() <= 0.1,
+                        "delivered target {delivered_g:.3} g differs from capped target {resolved_target_g:.3} g"
+                    );
+                    if (resolved_target_g - target_g).abs() > 1e-9 {
+                        let note: FeelCapNote = hill_cap_note
+                            .expect("a shallower capped target exposes a typed cap note");
+                        assert_eq!(note.feel, HillFeel::Floater);
+                        assert!((note.requested_target_g - target_g).abs() < 1e-9);
+                        assert!((note.capped_target_g - resolved_target_g).abs() < 1e-9);
+                        assert!((note.delivered_g - delivered_g).abs() < 1e-9);
+                    } else {
+                        assert!(hill_cap_note.is_none());
+                    }
+                    assert!(height_m > 0.0 && span_m > 0.0);
+                    assert_eq!(hill.piece.entry, prefix.last().unwrap().exit);
+                    assert_grid_connector(hill.piece.exit);
+                    assert!(solved_model.allows_piece(&hill.piece));
+                    assert_model_minimum_radius(&hill.piece, &solved_model, "shaped hill");
+                    let candidate_index = prefix.len();
+                    let design_preview = simulate_shape(
                         &prefix,
                         &solved_model,
                         &hill.piece,
                         speed_mps,
+                        PhysicsConfig::default(),
                     );
-                assert_all_car_force_headroom(
-                    &construction_test_report,
-                    candidate_index,
-                    &solved_model,
-                    "hill under construction-test physics",
-                );
-                assert_hill_intent(
-                    &design_preview,
-                    candidate_index,
-                    &solved_model,
-                    target_g,
-                    &format!("{} {cars} cars hill at {speed_mps} m/s", base_model.key),
-                );
-                assert_force_tolerance(
-                    &hill.piece,
-                    &solved_model,
-                    speed_mps,
-                    true,
-                    "hill at design speed",
-                );
-                for offset_mps in [-0.5, 0.5] {
+                    assert_all_car_force_headroom(
+                        &design_preview.report,
+                        candidate_index,
+                        &solved_model,
+                        "hill under default physics",
+                    );
+                    let construction_test_report =
+                        simulate_shape_at_controlled_speed_under_construction_test_physics(
+                            &prefix,
+                            &solved_model,
+                            &hill.piece,
+                            speed_mps,
+                        );
+                    assert_all_car_force_headroom(
+                        &construction_test_report,
+                        candidate_index,
+                        &solved_model,
+                        "hill under construction-test physics",
+                    );
+                    assert_hill_intent(
+                        &design_preview,
+                        candidate_index,
+                        &solved_model,
+                        resolved_target_g,
+                        &format!("{} {cars} cars hill at {speed_mps} m/s", base_model.key),
+                    );
                     assert_force_tolerance(
                         &hill.piece,
                         &solved_model,
-                        speed_mps + offset_mps,
-                        false,
-                        "hill within speed tolerance",
+                        speed_mps,
+                        true,
+                        "hill at design speed",
                     );
+                    for offset_mps in [-0.5, 0.5] {
+                        assert_force_tolerance(
+                            &hill.piece,
+                            &solved_model,
+                            speed_mps + offset_mps,
+                            false,
+                            "hill within speed tolerance",
+                        );
+                    }
                 }
 
                 let turn_intent = ElementIntent::Turn {
                     hand: Hand::Left,
                     size: TurnSizeHint::Auto,
                 };
+                let turn_cell = generated_turn_outcome(&base_model, cars, speed_mps);
+                if !generated_row_is_solved(turn_cell) {
+                    let refusal = solve_with_prefix(turn_intent, &base_model, cars, speed_mps);
+                    assert!(table_failure_has_typed_refusal(&refusal), "{refusal:?}");
+                    continue;
+                }
                 let (turn_model, turn_prefix, turn) =
                     solve_with_prefix(turn_intent, &base_model, cars, speed_mps).unwrap_or_else(
                         |refusal| {
@@ -589,6 +807,502 @@ fn every_model_train_length_and_integer_entry_speed_solves_hills_and_turns() {
     }
 }
 
+fn generated_hill_feasible_at_speed(
+    model: &CoasterModel,
+    cars: u8,
+    feel: HillFeel,
+    target_g: f64,
+    speed_mps: f64,
+) -> bool {
+    let half_speed = speed_mps * 2.0;
+    let nearest_half_speed = half_speed.round();
+    if (half_speed - nearest_half_speed).abs() < 1e-9 {
+        return measured_table_row_is_solved(generated_hill_outcome(
+            model,
+            cars,
+            feel,
+            target_g,
+            nearest_half_speed / 2.0,
+        ));
+    }
+    let lower_half_speed = half_speed.floor();
+    let lower_speed_mps = lower_half_speed / 2.0;
+    let upper_speed_mps = (lower_half_speed + 1.0) / 2.0;
+    measured_table_row_is_solved(generated_hill_outcome(
+        model,
+        cars,
+        feel,
+        target_g,
+        lower_speed_mps,
+    )) && measured_table_row_is_solved(generated_hill_outcome(
+        model,
+        cars,
+        feel,
+        target_g,
+        upper_speed_mps,
+    ))
+}
+
+fn generated_turn_feasible_at_speed(model: &CoasterModel, cars: u8, speed_mps: f64) -> bool {
+    let half_speed = speed_mps * 2.0;
+    let nearest_half_speed = half_speed.round();
+    if (half_speed - nearest_half_speed).abs() < 1e-9 {
+        return measured_table_row_is_solved(generated_turn_outcome(
+            model,
+            cars,
+            nearest_half_speed / 2.0,
+        ));
+    }
+    let lower_half_speed = half_speed.floor();
+    measured_table_row_is_solved(generated_turn_outcome(model, cars, lower_half_speed / 2.0))
+        && measured_table_row_is_solved(generated_turn_outcome(
+            model,
+            cars,
+            (lower_half_speed + 1.0) / 2.0,
+        ))
+}
+
+fn assert_hill_scenarios(
+    prefix: &[Piece],
+    model: &CoasterModel,
+    piece: &Piece,
+    design_speed_mps: f64,
+    requested_target_g: f64,
+) {
+    let piece_index = prefix.len();
+    for offset_mps in [-0.5, 0.0, 0.5] {
+        let entry_speed_mps = design_speed_mps + offset_mps;
+        let runtime_preview = simulate_shape(
+            prefix,
+            model,
+            piece,
+            entry_speed_mps,
+            PhysicsConfig::default(),
+        );
+        let construction_report =
+            simulate_shape_at_controlled_speed_under_construction_test_physics(
+                prefix,
+                model,
+                piece,
+                entry_speed_mps,
+            );
+        assert_all_car_force_headroom(
+            &runtime_preview.report,
+            piece_index,
+            model,
+            "hill under runtime-preview physics across the speed margin",
+        );
+        assert_all_car_force_headroom(
+            &construction_report,
+            piece_index,
+            model,
+            "hill under construction-test physics across the speed margin",
+        );
+        if offset_mps == 0.0 {
+            assert_hill_intent(
+                &runtime_preview,
+                piece_index,
+                model,
+                requested_target_g,
+                "hill under runtime-preview physics at design speed",
+            );
+            assert_hill_delivery(
+                &construction_report,
+                piece_index,
+                model,
+                requested_target_g,
+                "hill under construction-test physics at design speed",
+            );
+        }
+    }
+}
+
+fn assert_turn_scenarios(
+    prefix: &[Piece],
+    model: &CoasterModel,
+    piece: &Piece,
+    design_speed_mps: f64,
+) {
+    let piece_index = prefix.len();
+    for offset_mps in [-0.5, 0.0, 0.5] {
+        let entry_speed_mps = design_speed_mps + offset_mps;
+        let runtime_preview = simulate_shape(
+            prefix,
+            model,
+            piece,
+            entry_speed_mps,
+            PhysicsConfig::default(),
+        );
+        let construction_report =
+            simulate_shape_at_controlled_speed_under_construction_test_physics(
+                prefix,
+                model,
+                piece,
+                entry_speed_mps,
+            );
+        if offset_mps == 0.0 {
+            assert_all_car_force_headroom(
+                &runtime_preview.report,
+                piece_index,
+                model,
+                "turn under runtime-preview physics at design speed",
+            );
+            assert_all_car_force_headroom(
+                &construction_report,
+                piece_index,
+                model,
+                "turn under construction-test physics at design speed",
+            );
+            for (description, report) in [
+                ("runtime preview", &runtime_preview.report),
+                ("construction test", &construction_report),
+            ] {
+                let observed_lateral = report
+                    .car_piece_force_peaks()
+                    .into_iter()
+                    .filter(|peaks| peaks.piece_index == piece_index)
+                    .map(|peaks| peaks.peaks.maximum_lateral_g)
+                    .fold(0.0, f64::max);
+                assert!(
+                    observed_lateral <= 0.1,
+                    "{} {}-car turn at {design_speed_mps:.2} m/s with radius {:.2} m has lateral {observed_lateral:.3} g under {description} physics",
+                    model.key,
+                    model.train.cars,
+                    piece.maximum_curvature().recip()
+                );
+            }
+        } else {
+            assert_all_car_force_limits(
+                &runtime_preview.report,
+                piece_index,
+                model,
+                "turn under runtime-preview physics around design speed",
+            );
+            assert_all_car_force_limits(
+                &construction_report,
+                piece_index,
+                model,
+                "turn under construction-test physics around design speed",
+            );
+        }
+    }
+}
+
+#[test]
+fn every_feasible_hill_grid_point_and_speed_midpoint_meets_properties() {
+    for base_model in coaster_models() {
+        for cars in base_model.cars_per_train.clone() {
+            let model = model_with_train_length(&base_model, cars);
+            for feel in [
+                HillFeel::Floater,
+                HillFeel::StrongFloater,
+                HillFeel::Ejector,
+            ] {
+                for requested_target_g in requested_hill_strengths(&model) {
+                    for half_speed in 28..=72 {
+                        let speed_mps = f64::from(half_speed) / 2.0;
+                        check_hill_grid_point(
+                            &base_model,
+                            cars,
+                            feel,
+                            requested_target_g,
+                            speed_mps,
+                        );
+                        if half_speed < 72 {
+                            check_hill_grid_point(
+                                &base_model,
+                                cars,
+                                feel,
+                                requested_target_g,
+                                speed_mps + 0.25,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn check_hill_grid_point(
+    base_model: &CoasterModel,
+    cars: u8,
+    feel: HillFeel,
+    requested_target_g: f64,
+    speed_mps: f64,
+) {
+    let expected_feasible =
+        generated_hill_feasible_at_speed(base_model, cars, feel, requested_target_g, speed_mps);
+    let intent = ElementIntent::Hill {
+        feel,
+        strength_g: Some(requested_target_g),
+        size: HillSizeHint::Auto,
+    };
+    let result = solve_with_prefix(intent, base_model, cars, speed_mps);
+    if !expected_feasible {
+        assert!(
+            table_failure_has_typed_refusal(&result),
+            "{} {cars} cars {feel:?} at {speed_mps:.2} m/s should return a typed refusal for infeasible table rows, got {result:?}",
+            base_model.key
+        );
+        return;
+    }
+    let (model, prefix, solved) = result.unwrap_or_else(|refusal| {
+        panic!(
+            "{} {cars} cars {feel:?} at {speed_mps:.2} m/s failed despite feasible table brackets: {refusal:?}",
+            base_model.key
+        )
+    });
+    assert_eq!(solved.calibration_runs, 1);
+    let ElementSpec::Hill {
+        target_g,
+        delivered_g,
+        height_m,
+        span_m,
+        ..
+    } = &solved.spec
+    else {
+        panic!("hill intent resolved to a turn")
+    };
+    assert_eq!(solved.spec.cars(), cars);
+    assert!((solved.spec.design_speed_mps() - speed_mps).abs() < 1e-6);
+    assert!(height_m.is_finite() && *height_m > 0.0);
+    assert!(span_m.is_finite() && *span_m > 0.0);
+    if (speed_mps * 2.0 - (speed_mps * 2.0).round()).abs() < 1e-9 {
+        let GeneratedTableOutcome::Solved(GeneratedSpec::Hill {
+            height_m: table_height_m,
+            span_m: table_span_m,
+            ..
+        }) = generated_hill_outcome(base_model, cars, feel, requested_target_g, speed_mps)
+        else {
+            panic!("feasible exact hill row has no solved generated specification")
+        };
+        assert!(
+            (*height_m - table_height_m).abs() <= 0.01,
+            "runtime hill height {height_m:.4} m differs from generated height {table_height_m:.4} m"
+        );
+        assert!(
+            (*span_m - table_span_m).abs() <= 0.01,
+            "runtime hill span {span_m:.4} m differs from generated span {table_span_m:.4} m"
+        );
+    }
+    if (*target_g - requested_target_g).abs() > 1e-9 {
+        let note = solved
+            .cap_note
+            .expect("a capped target exposes a typed feel-cap note");
+        assert_eq!(note.feel, feel);
+        assert!((note.requested_target_g - requested_target_g).abs() < 1e-9);
+        assert!((note.capped_target_g - *target_g).abs() < 1e-9);
+        assert!((note.delivered_g - *delivered_g).abs() < 1e-9);
+    } else {
+        assert!(solved.cap_note.is_none());
+    }
+    assert!((*delivered_g - *target_g).abs() <= 0.1);
+    assert_grid_connector(solved.piece.exit);
+    assert!(model.allows_piece(&solved.piece));
+    assert_model_minimum_radius(&solved.piece, &model, "shaped hill");
+    assert_hill_scenarios(&prefix, &model, &solved.piece, speed_mps, *target_g);
+}
+
+#[test]
+fn every_feasible_turn_grid_point_and_speed_midpoint_meets_properties() {
+    for base_model in coaster_models() {
+        for cars in base_model.cars_per_train.clone() {
+            for half_speed in 28..=72 {
+                let speed_mps = f64::from(half_speed) / 2.0;
+                check_turn_grid_point(&base_model, cars, speed_mps);
+                if half_speed < 72 {
+                    check_turn_grid_point(&base_model, cars, speed_mps + 0.25);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn every_feasible_strength_midpoint_interpolates_between_measured_rows() {
+    let entry_speed_mps = 28.25;
+    for base_model in coaster_models() {
+        for cars in base_model.cars_per_train.clone() {
+            let model = model_with_train_length(&base_model, cars);
+            let strengths = requested_hill_strengths(&model);
+            for feel in [
+                HillFeel::Floater,
+                HillFeel::StrongFloater,
+                HillFeel::Ejector,
+            ] {
+                for strength_pair in strengths.windows(2) {
+                    let [lower_strength_g, upper_strength_g] = strength_pair else {
+                        unreachable!("strength window always contains a pair")
+                    };
+                    let requested_strength_g = (*lower_strength_g + *upper_strength_g) / 2.0;
+                    let expected_feasible = generated_hill_feasible_at_speed(
+                        &base_model,
+                        cars,
+                        feel,
+                        *lower_strength_g,
+                        entry_speed_mps,
+                    ) && generated_hill_feasible_at_speed(
+                        &base_model,
+                        cars,
+                        feel,
+                        *upper_strength_g,
+                        entry_speed_mps,
+                    );
+                    let result = solve_with_prefix(
+                        ElementIntent::Hill {
+                            feel,
+                            strength_g: Some(requested_strength_g),
+                            size: HillSizeHint::Auto,
+                        },
+                        &base_model,
+                        cars,
+                        entry_speed_mps,
+                    );
+                    if !expected_feasible {
+                        assert!(
+                            table_failure_has_typed_refusal(&result),
+                            "{} {cars} cars {feel:?} at {requested_strength_g:.3} g and {entry_speed_mps:.2} m/s should refuse because a measured neighbor is infeasible, got {result:?}",
+                            base_model.key
+                        );
+                        continue;
+                    }
+
+                    let (solved_model, prefix, solved) = result.unwrap_or_else(|refusal| {
+                        panic!(
+                            "{} {cars} cars {feel:?} midpoint {requested_strength_g:.3} g at {entry_speed_mps:.2} m/s failed despite feasible measured neighbors: {refusal:?}",
+                            base_model.key
+                        )
+                    });
+                    assert_eq!(solved.calibration_runs, 1);
+                    let ElementSpec::Hill {
+                        target_g,
+                        delivered_g,
+                        ..
+                    } = &solved.spec
+                    else {
+                        panic!("hill intent resolved to a turn")
+                    };
+                    assert_eq!(solved.spec.cars(), cars);
+                    assert!((solved.spec.design_speed_mps() - entry_speed_mps).abs() < 1e-6);
+                    assert!((delivered_g - target_g).abs() <= 0.1);
+                    match solved.cap_note {
+                        Some(note) => {
+                            assert_eq!(note.feel, feel);
+                            assert!((note.requested_target_g - requested_strength_g).abs() < 1e-12);
+                            assert!((note.capped_target_g - target_g).abs() < 1e-12);
+                            assert!((note.delivered_g - delivered_g).abs() < 1e-12);
+                        }
+                        None => assert!((target_g - requested_strength_g).abs() < 1e-12),
+                    }
+                    assert_grid_connector(solved.piece.exit);
+                    assert!(solved_model.allows_piece(&solved.piece));
+                    assert_model_minimum_radius(&solved.piece, &solved_model, "interpolated hill");
+                    assert_hill_scenarios(
+                        &prefix,
+                        &solved_model,
+                        &solved.piece,
+                        entry_speed_mps,
+                        *target_g,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn check_turn_grid_point(base_model: &CoasterModel, cars: u8, speed_mps: f64) {
+    let expected_feasible = generated_turn_feasible_at_speed(base_model, cars, speed_mps);
+    let intent = ElementIntent::Turn {
+        hand: Hand::Left,
+        size: TurnSizeHint::Auto,
+    };
+    let result = solve_with_prefix(intent, base_model, cars, speed_mps);
+    if !expected_feasible {
+        assert!(
+            table_failure_has_typed_refusal(&result),
+            "{} {cars} cars turn at {speed_mps:.2} m/s should return a typed refusal for infeasible table rows, got {result:?}",
+            base_model.key
+        );
+        return;
+    }
+    let (model, prefix, solved) = result.unwrap_or_else(|refusal| {
+        panic!(
+            "{} {cars} cars turn at {speed_mps:.2} m/s failed despite feasible table brackets: {refusal:?}",
+            base_model.key
+        )
+    });
+    assert_eq!(solved.calibration_runs, 1);
+    let ElementSpec::Turn {
+        lateral_g,
+        radius_m,
+        bank_degrees,
+        ..
+    } = &solved.spec
+    else {
+        panic!("turn intent resolved to a hill")
+    };
+    assert_eq!(solved.spec.cars(), cars);
+    assert!((solved.spec.design_speed_mps() - speed_mps).abs() < 1e-6);
+    assert!(lateral_g.abs() <= 0.1);
+    assert!(*radius_m > 0.0);
+    assert!(*bank_degrees <= 75.0);
+    assert_grid_connector(solved.piece.exit);
+    assert!(model.allows_piece(&solved.piece));
+    assert_model_minimum_radius(&solved.piece, &model, "shaped turn");
+    let table_radius_m = if (speed_mps * 2.0 - (speed_mps * 2.0).round()).abs() < 1e-9 {
+        match generated_turn_outcome(base_model, cars, speed_mps) {
+            GeneratedTableOutcome::Solved(GeneratedSpec::Turn { radius_m, .. }) => *radius_m,
+            _ => panic!("feasible exact turn row has no solved generated specification"),
+        }
+    } else {
+        let lower_half_speed = (speed_mps * 2.0).floor();
+        let lower_radius_m = match generated_turn_outcome(base_model, cars, lower_half_speed / 2.0)
+        {
+            GeneratedTableOutcome::Solved(GeneratedSpec::Turn { radius_m, .. }) => *radius_m,
+            _ => panic!("feasible lower turn bracket has no solved specification"),
+        };
+        let upper_radius_m =
+            match generated_turn_outcome(base_model, cars, (lower_half_speed + 1.0) / 2.0) {
+                GeneratedTableOutcome::Solved(GeneratedSpec::Turn { radius_m, .. }) => *radius_m,
+                _ => panic!("feasible upper turn bracket has no solved specification"),
+            };
+        let fraction = speed_mps * 2.0 - lower_half_speed;
+        lower_radius_m + (upper_radius_m - lower_radius_m) * fraction
+    };
+    let radius_step_m = match prefix.last().unwrap().exit.heading {
+        Heading::East | Heading::North | Heading::West | Heading::South => 2.0,
+        Heading::NorthEast | Heading::NorthWest | Heading::SouthWest | Heading::SouthEast => {
+            2.0 * std::f64::consts::SQRT_2
+        }
+    };
+    let snapped_table_radius_m = (table_radius_m / radius_step_m).ceil() * radius_step_m;
+    assert!(
+        (*radius_m - snapped_table_radius_m).abs() <= 1e-6,
+        "runtime turn radius {radius_m:.4} m differs from snapped generated radius {snapped_table_radius_m:.4} m"
+    );
+    assert_turn_scenarios(&prefix, &model, &solved.piece, speed_mps);
+}
+
+fn table_failure_has_typed_refusal(
+    result: &Result<
+        (
+            CoasterModel,
+            Vec<Piece>,
+            theme_park_sim::track::shaped::SolvedElement,
+        ),
+        SolveRefusal,
+    >,
+) -> bool {
+    matches!(
+        result,
+        Err(SolveRefusal::InfeasibleTarget { .. }
+            | SolveRefusal::UnmeasuredTarget { .. }
+            | SolveRefusal::InvalidGeometry
+            | SolveRefusal::Stall { .. })
+    )
+}
+
 #[test]
 fn repeated_solve_has_the_same_hash_and_save_round_trip() {
     let model = hyper_model();
@@ -618,9 +1332,26 @@ fn repeated_solve_has_the_same_hash_and_save_round_trip() {
 fn auto_sizing_grows_hill_height_and_turn_radius_with_entry_speed() {
     let model = hyper_model();
     let target_g = safe_airtime_target(&model);
+    let feasible_speeds: Vec<_> = (28..=72)
+        .map(|half_speed| f64::from(half_speed) / 2.0)
+        .filter(|speed_mps| {
+            generated_hill_feasible_at_speed(
+                &model,
+                model.train.cars,
+                HillFeel::Floater,
+                target_g,
+                *speed_mps,
+            ) && generated_turn_feasible_at_speed(&model, model.train.cars, *speed_mps)
+        })
+        .collect();
+    assert!(
+        feasible_speeds.len() >= 2,
+        "hyper model has fewer than two speeds where both auto-sized intents are feasible: {feasible_speeds:?}"
+    );
+    let speed_points = [feasible_speeds[0], *feasible_speeds.last().unwrap()];
     let mut hill_heights = Vec::new();
     let mut turn_radii = Vec::new();
-    for speed_mps in [18.0, 28.0] {
+    for speed_mps in speed_points {
         let hill = solve_with_prefix(
             ElementIntent::Hill {
                 feel: HillFeel::Floater,
@@ -646,7 +1377,9 @@ fn auto_sizing_grows_hill_height_and_turn_radius_with_entry_speed() {
             model.train.cars,
             speed_mps,
         )
-        .expect("hyper fully banked turn is feasible");
+        .unwrap_or_else(|refusal| {
+            panic!("hyper fully banked turn at {speed_mps:.2} m/s was table-feasible but refused: {refusal:?}")
+        });
         let ElementSpec::Turn { radius_m, .. } = turn.2.spec else {
             panic!("turn intent resolved to a hill")
         };
@@ -660,26 +1393,44 @@ fn auto_sizing_grows_hill_height_and_turn_radius_with_entry_speed() {
 }
 
 #[test]
-fn infeasible_force_and_stall_targets_have_typed_refusals() {
+fn extreme_hill_strength_is_capped_and_unsupported_sizes_have_typed_refusals() {
     let family = coaster_models()
         .into_iter()
         .find(|model| model.key == "family_coaster")
         .expect("family coaster model exists");
-    let infeasible = solve_with_prefix(
+    let capped = solve_with_prefix(
         ElementIntent::Hill {
             feel: HillFeel::Floater,
-            strength_g: None,
+            strength_g: Some(-4.0),
             size: HillSizeHint::Auto,
         },
         &family,
         family.train.cars,
         28.0,
-    );
-    assert!(matches!(
-        infeasible,
-        Err(SolveRefusal::InfeasibleTarget { .. })
-    ));
+    )
+    .expect("below-floor hill strengths use the lowest measured target");
+    let ElementSpec::Hill {
+        target_g,
+        delivered_g,
+        ..
+    } = capped.2.spec
+    else {
+        panic!("hill intent resolved to a turn")
+    };
+    assert!(target_g > -4.0);
+    assert!((delivered_g - target_g).abs() <= 0.1);
+    let cap_note = capped
+        .2
+        .cap_note
+        .expect("below-floor request exposes its measured cap");
+    assert_eq!(cap_note.feel, HillFeel::Floater);
+    assert_eq!(cap_note.requested_target_g, -4.0);
+    assert_eq!(cap_note.capped_target_g, target_g);
+    assert_eq!(cap_note.delivered_g, delivered_g);
+}
 
+#[test]
+fn fixed_height_overrides_return_typed_refusals_without_table_fallback() {
     let hyper = hyper_model();
     let stall = solve_with_prefix(
         ElementIntent::Hill {
@@ -692,114 +1443,164 @@ fn infeasible_force_and_stall_targets_have_typed_refusals() {
         14.0,
     );
     assert!(matches!(stall, Err(SolveRefusal::Stall { .. })));
+
+    let unsupported_size = solve_with_prefix(
+        ElementIntent::Hill {
+            feel: HillFeel::Floater,
+            strength_g: Some(safe_airtime_target(&hyper)),
+            size: HillSizeHint::Height(20.0),
+        },
+        &hyper,
+        hyper.train.cars,
+        28.0,
+    );
+    assert!(matches!(
+        unsupported_size,
+        Err(SolveRefusal::UnsupportedSizeOverride)
+    ));
 }
 
 #[test]
-fn feel_defaults_match_the_plan_and_refuse_when_the_margin_is_infeasible() {
-    for model in coaster_models() {
-        let floater = solve_with_prefix(
-            ElementIntent::Hill {
-                feel: HillFeel::Floater,
-                strength_g: None,
-                size: HillSizeHint::Auto,
-            },
-            &model,
-            model.train.cars,
-            28.0,
-        );
-        match floater {
-            Ok((_, _, solved)) => {
-                let ElementSpec::Hill { target_g, .. } = solved.spec else {
-                    panic!("floater intent resolved to a turn")
-                };
-                assert_eq!(target_g, -0.5, "{} floater default", model.key);
-            }
-            Err(SolveRefusal::InfeasibleTarget { .. }) => {
-                assert_eq!(model.key, "family_coaster");
-            }
-            Err(refusal) => panic!("{} floater default refused: {refusal:?}", model.key),
-        }
-    }
-
-    let hyper = hyper_model();
-    for (feel, expected_g) in [(HillFeel::Floater, -0.5), (HillFeel::StrongFloater, -0.9)] {
-        let solved = solve_with_prefix(
-            ElementIntent::Hill {
-                feel,
-                strength_g: None,
-                size: HillSizeHint::Auto,
-            },
-            &hyper,
-            hyper.train.cars,
-            28.0,
-        )
-        .expect("hyper hill feel default is feasible");
-        let ElementSpec::Hill { target_g, .. } = solved.2.spec else {
-            panic!("hill intent resolved to a turn")
-        };
-        assert_eq!(target_g, expected_g);
-    }
-
-    let steel = hybrid_model();
-    let steel_ejector = solve_with_prefix(
+fn unsupported_speeds_refuse_and_radius_override_uses_table_backed_solve() {
+    let velocity_viper = coaster_models()
+        .into_iter()
+        .find(|model| model.key == "velocity_viper")
+        .expect("Velocity Viper model exists");
+    let below_range = solve_with_prefix(
         ElementIntent::Hill {
-            feel: HillFeel::Ejector,
-            strength_g: None,
+            feel: HillFeel::Floater,
+            strength_g: Some(-0.5),
             size: HillSizeHint::Auto,
         },
-        &steel,
-        steel.train.cars,
-        28.0,
-    )
-    .expect("steel ejector default has a feasible margin on the hybrid model");
-    let ElementSpec::Hill { target_g, .. } = steel_ejector.2.spec else {
-        panic!("hill intent resolved to a turn")
-    };
-    assert_eq!(target_g, -1.2);
+        &velocity_viper,
+        velocity_viper.train.cars,
+        13.5,
+    );
+    assert!(matches!(
+        below_range,
+        Err(SolveRefusal::BelowVerifiedSpeed {
+            minimum_speed_mps: 14.0,
+            ..
+        })
+    ));
 
-    let refusal = solve_with_prefix(
+    let above_range = solve_with_prefix(
+        ElementIntent::Turn {
+            hand: Hand::Left,
+            size: TurnSizeHint::Auto,
+        },
+        &velocity_viper,
+        velocity_viper.train.cars,
+        36.5,
+    );
+    assert!(matches!(
+        above_range,
+        Err(SolveRefusal::AboveVerifiedSpeed {
+            maximum_speed_mps: 36.0,
+            ..
+        })
+    ));
+
+    let radius_override = solve_with_prefix(
+        ElementIntent::Turn {
+            hand: Hand::Left,
+            size: TurnSizeHint::Radius(64.0),
+        },
+        &velocity_viper,
+        velocity_viper.train.cars,
+        15.8,
+    );
+    let (model, prefix, solved) =
+        radius_override.expect("a finite radius override uses the table-backed turn solve");
+    assert_eq!(solved.calibration_runs, 1);
+    let ElementSpec::Turn { radius_m, .. } = solved.spec else {
+        panic!("turn intent resolved to a hill")
+    };
+    assert!((radius_m - 64.0).abs() < 1e-6);
+    assert_grid_connector(solved.piece.exit);
+    assert_turn_scenarios(&prefix, &model, &solved.piece, 15.8);
+}
+
+#[test]
+fn unsupported_hill_feels_return_table_unavailable() {
+    let hyper = hyper_model();
+    let result = solve_with_prefix(
         ElementIntent::Hill {
-            feel: HillFeel::Ejector,
+            feel: HillFeel::Speed,
             strength_g: None,
             size: HillSizeHint::Auto,
         },
         &hyper,
         hyper.train.cars,
         28.0,
-    )
-    .expect_err("hyper ejector default cannot meet the target and retain 0.25 g headroom");
-    assert!(matches!(
-        refusal,
-        SolveRefusal::InfeasibleTarget { target_g, .. } if (target_g + 1.2).abs() < 1e-9
-    ));
-
-    let wood = wooden_twister_model();
-    let wood_ejector = solve_with_prefix(
-        ElementIntent::Hill {
-            feel: HillFeel::Ejector,
-            strength_g: None,
-            size: HillSizeHint::Auto,
-        },
-        &wood,
-        wood.train.cars,
-        28.0,
-    )
-    .expect("wood ejector default can be eased within 0.1 g to preserve the margin");
-    let ElementSpec::Hill {
-        target_g,
-        delivered_g,
-        ..
-    } = wood_ejector.2.spec
-    else {
-        panic!("hill intent resolved to a turn")
-    };
-    assert_eq!(target_g, -0.8);
-    assert!((delivered_g - target_g).abs() <= 0.1);
-    assert_force_tolerance(
-        &wood_ejector.2.piece,
-        &wood_ejector.0,
-        28.0,
-        true,
-        "wood ejector default at design speed",
     );
+    assert_eq!(result.unwrap_err(), SolveRefusal::TableUnavailable);
+}
+
+#[test]
+fn feel_defaults_match_requested_targets_or_refuse() {
+    for base_model in coaster_models() {
+        for cars in base_model.cars_per_train.clone() {
+            let model = model_with_train_length(&base_model, cars);
+            let rules = model.shaped_element_rules();
+            for (feel, requested_target_g) in [
+                (HillFeel::Floater, rules.default_floater_g),
+                (HillFeel::StrongFloater, rules.default_strong_floater_g),
+                (
+                    HillFeel::Ejector,
+                    if model.track_material == theme_park_sim::track::Material::Wood {
+                        rules.wooden_ejector_g
+                    } else {
+                        rules.steel_ejector_g
+                    },
+                ),
+            ] {
+                let row_outcome =
+                    generated_hill_outcome(&base_model, cars, feel, requested_target_g, 28.0);
+                let result = solve_with_prefix(
+                    ElementIntent::Hill {
+                        feel,
+                        strength_g: None,
+                        size: HillSizeHint::Auto,
+                    },
+                    &base_model,
+                    cars,
+                    28.0,
+                );
+                match (generated_row_is_solved(row_outcome), result) {
+                    (true, Ok((_, _, solved))) => {
+                        let ElementSpec::Hill {
+                            target_g,
+                            delivered_g,
+                            ..
+                        } = solved.spec
+                        else {
+                            panic!("hill intent resolved to a turn")
+                        };
+                        assert!(
+                            (delivered_g - target_g).abs() <= 0.1,
+                            "{} {feel:?} delivered {delivered_g:.3} g for capped target {target_g:.3} g",
+                            model.key
+                        );
+                        if (requested_target_g - target_g).abs() > 1e-9 {
+                            let note: FeelCapNote = solved
+                                .cap_note
+                                .expect("capped feel default returns a typed note");
+                            assert_eq!(note.feel, feel);
+                            assert!((note.requested_target_g - requested_target_g).abs() < 1e-9);
+                            assert!((note.capped_target_g - target_g).abs() < 1e-9);
+                            assert!((note.delivered_g - delivered_g).abs() < 1e-9);
+                        } else {
+                            assert!(solved.cap_note.is_none());
+                        }
+                    }
+                    (false, refusal) if table_failure_has_typed_refusal(&refusal) => {}
+                    (expected_solved, actual) => panic!(
+                        "{} {feel:?} table solved={expected_solved}, runtime result={actual:?}",
+                        model.key
+                    ),
+                }
+            }
+        }
+    }
 }
