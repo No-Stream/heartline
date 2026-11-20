@@ -33,6 +33,30 @@ impl Drop for TempFile {
     }
 }
 
+fn assert_six_decimal_precision(value: &serde_json::Value) {
+    match value {
+        serde_json::Value::Number(number) => {
+            let value = number.as_f64().expect("ride spec numbers are finite");
+            let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
+            assert!(
+                (value - rounded).abs() <= 1e-9,
+                "ride spec number {value} has more than six decimal places"
+            );
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                assert_six_decimal_precision(value);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values() {
+                assert_six_decimal_precision(value);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::String(_) => {}
+    }
+}
+
 const OPEN_RIDE: &str = r#"{
   "format": "heartline-ride",
   "version": 1,
@@ -274,6 +298,7 @@ fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
     assert_eq!(saved["steps"][1]["intent"]["hand"], "Left");
     assert_eq!(saved["steps"][1]["spec"]["kind"], "turn");
     assert!(saved["steps"][1]["spec"]["geometry"]["knots"].is_array());
+    assert_six_decimal_precision(&saved["steps"][1]["spec"]);
 
     let replay = run_cli(&["ride".into(), ride.path().into(), "state".into()], "").unwrap();
     assert!(replay.contains("Pieces: 2"), "{replay}");
