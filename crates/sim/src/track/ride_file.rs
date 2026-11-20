@@ -369,7 +369,7 @@ mod tests {
         assert!(encoded["steps"][7]["spec"].to_string().contains("knots"));
         let restored = serde_json::from_value::<RideFile>(encoded.clone()).unwrap();
         assert_eq!(
-            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(&restored).unwrap(),
             encoded,
             "human-readable shaped specs retain their canonical JSON values"
         );
