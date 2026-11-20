@@ -176,4 +176,44 @@ The current generator measures each model's actual train at every 0.5 m/s speed 
 
 The bounded hill search makes at most three candidate schedules (the initial crest plus at most two corrections). Its candidate ranking score includes force-headroom shortfall and design-speed delivery error; it does not include minimum-radius deficit. When the selected attempt fails minimum radius, the stored best attempt is therefore not claimed to be the closest-to-passing radius candidate. Each infeasible table row still stores the selected spec, typed failure, attempt count and all six measurements for that attempt. These bounded-search infeasible rows describe the tested search outcomes and do not prove that no other shape can pass.
 
-Generation is running as disjoint model/train shards inside `tools/run-in-budget.sh` under the `shaped-elements-shards` tmux session. The main progress log is `target/shaped-elements-shards-generation-2.log`; per-train checkpoints and full cell measurements are under `target/shaped-elements-shards-run-20261119b/`. Hyper 4–8-car shards and Velocity Viper 6-car are being generated ahead of the main ordered runner into separate checkpoint paths, then installed under the canonical shard names only after each shard completes. The merged generated grid, final row and byte counts, generation time, cap summary and infeasible speed ranges will be added after merge and compile validation.
+The full table completed in the `shaped-elements-shards` tmux session through `tools/run-in-budget.sh`. The merge contains 30 unique model/train shards and 46,845 rows in `crates/sim/src/track/shaped/generated_grid.rs` (56,631,209 bytes). The main log is `target/shaped-elements-shards-generation-2.log`; full shard outputs and measurements are in `target/shaped-elements-shards-run-20261119b/`. Generation took about 73 minutes wall-clock; the 30 shards sum to 17,791.374 seconds of worker time. The table has 32,273 solved rows and 14,572 bounded-search infeasible rows, with no unresolved rows or typed refusals.
+
+For each default feel, the following are all distinct capped `target_g` values measured across the model's allowed train lengths and 0.5 m/s speed cells. Values can vary by speed; they are not one global cap per model. The cap anchor spacing is 0.1 g.
+
+| Model | Ejector default cap targets (g) | Floater default cap targets (g) | Strong floater default cap targets (g) |
+|---|---|---|---|
+| Family coaster | -0.40, -0.30, -0.20, -0.10, 0.00 | -0.40, -0.30, -0.20, -0.10, 0.00 | -0.40, -0.30, -0.20, -0.10, 0.00 |
+| Hybrid | -1.20, -1.00, -0.90, -0.80, -0.70, -0.60, -0.50, -0.40, -0.30, -0.20 | -0.50, -0.40, -0.30, -0.20, 0.00 | -0.90, -0.80, -0.70, -0.60, -0.50, -0.40, -0.30, -0.20 |
+| Hyper | -0.90, -0.80, -0.70, -0.60, -0.50, -0.40, -0.30, -0.20 | -0.50, -0.40, -0.30 | -0.90, -0.80, -0.70, -0.60, -0.50, -0.40, -0.30, -0.20 |
+| Velocity Viper | -1.20, -1.00, -0.90, -0.80, -0.70, -0.60, -0.50, -0.40, -0.30, -0.20 | -0.50, -0.40, -0.20 | -0.90, -0.80, -0.70, -0.60, -0.50, -0.40, -0.30, -0.20 |
+| Wooden twister | -0.80, -0.60, -0.50, -0.40, -0.30, -0.20, -0.10 | -0.50, -0.40, -0.30, -0.20, -0.10 | -0.60, -0.50, -0.40, -0.30, -0.20, -0.10 |
+
+Infeasible region summaries below aggregate all train lengths, hill strengths and turns for each model. The speed ranges are 0.5 m/s grid points. The cause names are the best recorded typed failure among the bounded attempts; they explain why the tested search did not pass, and do not establish that no other shape could pass.
+
+| Model | Recorded failure | Infeasible speed ranges (m/s) |
+|---|---|---|
+| Family coaster | AirtimeIntentMiss | 15–36 |
+| Family coaster | ForceHeadroomMiss | 15; 16–25.5; 34.5–36 |
+| Family coaster | MinimumRadiusMiss | 14–17 |
+| Family coaster | MissingSustainedAirtime | 17–18.5; 19.5–24; 27.5–36 |
+| Family coaster | TurnLateralMiss | 15.5–25.5; 26.5; 28.5; 33.5; 35.5 |
+| Hybrid | AirtimeIntentMiss | 14–36 |
+| Hybrid | ForceHeadroomMiss | 14–17 |
+| Hybrid | MinimumRadiusMiss | 14–18 |
+| Hybrid | MissingSustainedAirtime | 14–14.5; 15.5; 17–18; 19.5; 20.5–26; 30.5–36 |
+| Hybrid | TurnLateralMiss | 18.5–36 |
+| Hyper | AirtimeIntentMiss | 15–36 |
+| Hyper | ForceHeadroomMiss | 16–17 |
+| Hyper | MinimumRadiusMiss | 14–20 |
+| Hyper | MissingSustainedAirtime | 16.5; 17.5; 18.5–24; 26; 29.5–36 |
+| Hyper | TurnLateralMiss | 19.5–36 |
+| Velocity Viper | AirtimeIntentMiss | 14–36 |
+| Velocity Viper | ForceHeadroomMiss | 14–15 |
+| Velocity Viper | MinimumRadiusMiss | 14–19 |
+| Velocity Viper | MissingSustainedAirtime | 14–14.5; 15.5; 17–18; 19.5; 21.5–22.5; 23.5–24; 26.5–36 |
+| Velocity Viper | TurnLateralMiss | 19.5–36 |
+| Wooden twister | AirtimeIntentMiss | 15–36 |
+| Wooden twister | ForceHeadroomMiss | 15.5–18.5 |
+| Wooden twister | MinimumRadiusMiss | 14–19 |
+| Wooden twister | MissingSustainedAirtime | 17–24.5; 27.5–36 |
+| Wooden twister | TurnLateralMiss | 19.5–36 |

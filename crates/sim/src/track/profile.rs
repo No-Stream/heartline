@@ -9,6 +9,7 @@ const HEART_HEIGHT: f64 = HEART_HEIGHT_METRES;
 mod profile_preview_diagnostic;
 
 const GRAVITY: f64 = 9.81;
+pub(crate) const SHAPED_HILL_TAPER_ANGLE: f64 = 0.18;
 
 #[derive(Clone, Copy, Debug)]
 enum ProfileTrain {
@@ -33,7 +34,14 @@ pub struct OfflineHillSpec {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OfflineSolveError {
-    NonPositiveSpeedSquared { height_metres: f64 },
+    NonPositiveSpeedSquared {
+        height_metres: f64,
+    },
+    InvalidCurvature {
+        angle_radians: f64,
+        curvature_per_metre: f64,
+        height_metres: f64,
+    },
     DidNotConverge,
 }
 
@@ -199,6 +207,7 @@ impl ProfileSpec {
             name: "airtime hill",
         }
     }
+    #[cfg(test)]
     pub(crate) fn hill_with_taper(
         design_speed: f64,
         pull_force: f64,
@@ -261,6 +270,20 @@ pub struct SolvedProfile {
 }
 
 impl SolvedProfile {
+    pub(crate) fn round_to_nine_decimal_places(&mut self) {
+        let round = |value: f64| (value * 1_000_000_000.0).round() / 1_000_000_000.0;
+        for point in &mut self.points {
+            point.distance = round(point.distance);
+            point.x = round(point.x);
+            point.z = round(point.z);
+            point.angle = round(point.angle);
+            point.heart_curvature = round(point.heart_curvature);
+            point.curvature = round(point.curvature);
+        }
+        self.cached_minimum_entry = None;
+        self.cached_minimum_radius = None;
+    }
+
     pub(crate) fn resolved_points(&self) -> Vec<[f64; 6]> {
         self.points
             .iter()
@@ -593,12 +616,20 @@ fn profile_curvature_from_derivatives(tangent: [f64; 2], second: [f64; 2]) -> f6
     (tangent[0] * second[1] - tangent[1] * second[0]) / tangent[0].hypot(tangent[1]).powi(3)
 }
 
+#[cfg(test)]
 pub(crate) fn integrate_checked(
     spec: &ProfileSpec,
     previous: Option<&SolvedProfile>,
     steps: usize,
 ) -> Result<SolvedProfile, f64> {
     integrate_checked_with_train(spec, previous, steps, ProfileTrain::Legacy18MetreEnvelope)
+        .map_err(|failure| match failure {
+            OfflineSolveError::NonPositiveSpeedSquared { height_metres }
+            | OfflineSolveError::InvalidCurvature { height_metres, .. } => height_metres,
+            OfflineSolveError::DidNotConverge => {
+                unreachable!("single profile integration does not iterate")
+            }
+        })
 }
 
 fn integrate_checked_with_train(
@@ -606,7 +637,7 @@ fn integrate_checked_with_train(
     previous: Option<&SolvedProfile>,
     steps: usize,
     train: ProfileTrain,
-) -> Result<SolvedProfile, f64> {
+) -> Result<SolvedProfile, OfflineSolveError> {
     let mut points = vec![Point {
         distance: 0.0,
         x: 0.0,
@@ -693,13 +724,24 @@ fn integrate_checked_with_train(
                                 )
                             },
                         );
-                        return Err(height_m);
+                        return Err(OfflineSolveError::NonPositiveSpeedSquared {
+                            height_metres: height_m,
+                        });
                     }
                     let curvature =
                         GRAVITY * (schedule.force(midpoint_angle) - midpoint_angle.cos()) * taper
                             / speed_squared;
                     let heart_distance = angle_step / curvature;
-                    assert!(heart_distance.is_finite() && heart_distance > 0.0);
+                    if !curvature.is_finite()
+                        || !heart_distance.is_finite()
+                        || heart_distance <= 0.0
+                    {
+                        return Err(OfflineSolveError::InvalidCurvature {
+                            angle_radians: midpoint_angle,
+                            curvature_per_metre: curvature,
+                            height_metres: heart_z - HEART_HEIGHT * midpoint_angle.cos(),
+                        });
+                    }
                     heart_x += heart_distance * midpoint_angle.cos();
                     heart_z += heart_distance * midpoint_angle.sin();
                     distance += heart_distance * (1.0 + HEART_HEIGHT * curvature);
@@ -739,7 +781,9 @@ fn integrate_checked_with_train(
                                     train,
                                 )
                             });
-                        return Err(height_m);
+                        return Err(OfflineSolveError::NonPositiveSpeedSquared {
+                            height_metres: height_m,
+                        });
                     }
                     let heart_curvature =
                         GRAVITY * (schedule.force(angle) - angle.cos()) * end_taper
@@ -940,12 +984,9 @@ fn solve_with_profile_train(
     train: ProfileTrain,
     steps: usize,
 ) -> Result<(SolvedProfile, u8), OfflineSolveError> {
-    let mut profile = integrate_checked_with_train(spec, None, steps, train)
-        .map_err(|height_metres| OfflineSolveError::NonPositiveSpeedSquared { height_metres })?;
+    let mut profile = integrate_checked_with_train(spec, None, steps, train)?;
     for iteration in 1..=12 {
-        let next = integrate_checked_with_train(spec, Some(&profile), steps, train).map_err(
-            |height_metres| OfflineSolveError::NonPositiveSpeedSquared { height_metres },
-        )?;
+        let next = integrate_checked_with_train(spec, Some(&profile), steps, train)?;
         let before = profile.points.last().unwrap();
         let after = next.points.last().unwrap();
         let movement = (before.x - after.x).hypot(before.z - after.z);
@@ -1074,6 +1115,28 @@ fn offline_hill_spec(spec: OfflineHillSpec) -> ProfileSpec {
     profile_spec
 }
 
+pub(crate) fn integrate_shaped_hill_once_profile(
+    spec: OfflineHillSpec,
+    train: OfflineTrain,
+    steps: usize,
+    connector_grid_scale: f64,
+    connector_grid_span_metres: f64,
+) -> Result<(SolvedProfile, f64, f64), OfflineSolveError> {
+    assert!(steps > 0);
+    assert!(connector_grid_scale.is_finite() && connector_grid_scale > 0.0);
+    assert!(connector_grid_span_metres.is_finite() && connector_grid_span_metres > 0.0);
+    let train = profile_train(train);
+    let spec = offline_hill_spec(spec);
+    let half = integrate_checked_with_train(&spec, None, steps, train)?;
+    let mut profile = reflect_hill(&half);
+    let endpoint_x = profile.endpoint()[0];
+    let span_metres = (endpoint_x * connector_grid_scale / connector_grid_span_metres).ceil()
+        * connector_grid_span_metres;
+    let connector_insert_metres = span_metres / connector_grid_scale - endpoint_x;
+    profile.append_level_straight(connector_insert_metres);
+    Ok((profile, span_metres, connector_insert_metres))
+}
+
 pub fn solve_hill_offline(
     spec: OfflineHillSpec,
     train: OfflineTrain,
@@ -1124,8 +1187,7 @@ pub(crate) fn integrate_hill_offline_once_profile(
     assert!(steps > 0);
     let train = profile_train(train);
     let spec = offline_hill_spec(spec);
-    let half = integrate_checked_with_train(&spec, None, steps, train)
-        .map_err(|height_metres| OfflineSolveError::NonPositiveSpeedSquared { height_metres })?;
+    let half = integrate_checked_with_train(&spec, None, steps, train)?;
     let mut profile = reflect_hill(&half);
     let connector_insert_metres = snap_hill_profile_to_grid(&mut profile);
     Ok((profile, 1, connector_insert_metres))
@@ -2877,6 +2939,26 @@ mod tests {
         let point = &profile.points[1024];
         let expected = GRAVITY * (4.2 - point.angle.cos()) / 30.0_f64.powi(2);
         assert!((point.heart_curvature / expected - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn offline_hill_reports_nonpositive_curvature_as_a_typed_failure() {
+        let flank_angle_radians = 30.0_f64.to_radians();
+        let spec = OfflineHillSpec {
+            entry_speed_mps: 20.0,
+            pull_g: (flank_angle_radians * 0.5).cos(),
+            crest_g: -0.5,
+            flank_angle_radians,
+            taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
+        };
+
+        assert!(matches!(
+            integrate_hill_offline_once_profile(spec, OfflineTrain::Legacy18MetreEnvelope, 1,),
+            Err(OfflineSolveError::InvalidCurvature {
+                curvature_per_metre: 0.0,
+                ..
+            })
+        ));
     }
 
     #[test]

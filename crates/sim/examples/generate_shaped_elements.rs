@@ -5,7 +5,8 @@ use std::time::Instant;
 use theme_park_sim::track::shaped_generator::{
     CandidateSearchAttempt, CellFailure, GENERATED_SHAPED_ELEMENT_GRID, GeneratedGridCell,
     GeneratedSpec, GeneratedTableOutcome, GridCellOutcome, GridElement, PhysicsVariant,
-    generate_cell_for_model, generate_grid, render_generated_table, report_summary,
+    generate_cell_for_model, generate_grid, generate_grid_for_model_train, merge_generated_shards,
+    render_generated_shard, render_generated_table, report_summary,
     search_hill_candidates_for_model,
 };
 use theme_park_sim::track::{CoasterModel, HillFeel, coaster_models};
@@ -14,6 +15,24 @@ fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && arguments[0] == "--caps-summary" {
         print_caps_summary();
+        return;
+    }
+    if arguments.len() == 1 && arguments[0] == "--infeasible-summary" {
+        print_infeasible_summary();
+        return;
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--shard")
+    {
+        run_shard(&arguments[1..]);
+        return;
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--merge")
+    {
+        run_merge(&arguments[1..]);
         return;
     }
     if arguments
@@ -58,6 +77,54 @@ fn main() {
         output_path.display(),
         started.elapsed().as_secs_f64()
     );
+}
+
+fn run_shard(arguments: &[String]) {
+    let [model_key, cars, output_path] = arguments else {
+        usage();
+    };
+    let cars = cars.parse::<u8>().unwrap_or_else(|error| {
+        panic!("invalid car count {cars}: {error}");
+    });
+    let base_model = coaster_models()
+        .into_iter()
+        .find(|model| model.key == model_key)
+        .unwrap_or_else(|| panic!("unknown model key {model_key}"));
+    let started = Instant::now();
+    let report = generate_grid_for_model_train(&base_model, cars);
+    eprintln!("{}", report_summary(&report));
+    for diagnostic in summarize_unresolved(&report.cells) {
+        eprintln!("{diagnostic}");
+    }
+    let source = render_generated_shard(&base_model, cars, &report)
+        .unwrap_or_else(|error| panic!("could not render shard: {error}"));
+    std::fs::write(output_path, source)
+        .unwrap_or_else(|error| panic!("could not write {output_path}: {error}"));
+    eprintln!(
+        "wrote {output_path} in {:.3}s",
+        started.elapsed().as_secs_f64()
+    );
+}
+
+fn run_merge(arguments: &[String]) {
+    let [output_path, shard_paths @ ..] = arguments else {
+        usage();
+    };
+    if shard_paths.is_empty() {
+        usage();
+    }
+    let sources = shard_paths
+        .iter()
+        .map(|path| {
+            std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("could not read shard {path}: {error}"))
+        })
+        .collect::<Vec<_>>();
+    let source = merge_generated_shards(&sources, &coaster_models())
+        .unwrap_or_else(|error| panic!("could not merge shaped-element shards: {error}"));
+    std::fs::write(output_path, source)
+        .unwrap_or_else(|error| panic!("could not write {output_path}: {error}"));
+    eprintln!("merged {} shards into {output_path}", shard_paths.len());
 }
 
 fn print_caps_summary() {
@@ -139,6 +206,98 @@ fn print_caps_summary() {
             }
         }
     }
+}
+
+fn print_infeasible_summary() {
+    let infeasible_cells = GENERATED_SHAPED_ELEMENT_GRID
+        .iter()
+        .filter_map(|cell| match &cell.outcome {
+            GeneratedTableOutcome::Infeasible {
+                failure,
+                best_spec,
+                attempts,
+                best_measurements,
+            } => Some(GeneratedGridCell {
+                model_key: cell.model_key,
+                cars: cell.cars,
+                element: cell.element,
+                entry_speed_mps: cell.entry_speed_mps,
+                outcome: GridCellOutcome::Infeasible {
+                    failure: *failure,
+                    best_spec: *best_spec,
+                    attempts: *attempts,
+                    best_measurements: best_measurements.to_vec(),
+                },
+            }),
+            GeneratedTableOutcome::Solved(_) | GeneratedTableOutcome::Refused(_) => None,
+        })
+        .collect::<Vec<_>>();
+    for summary in summarize_infeasible(&infeasible_cells) {
+        println!("{summary}");
+    }
+    for summary in summarize_invalid_geometry_refusals() {
+        println!("{summary}");
+    }
+}
+
+fn summarize_invalid_geometry_refusals() -> Vec<String> {
+    let mut by_region = BTreeMap::<(String, u8, String, &'static str), Vec<(f64, u8)>>::new();
+    for cell in GENERATED_SHAPED_ELEMENT_GRID {
+        let GeneratedTableOutcome::Refused(
+            theme_park_sim::track::shaped_generator::CellRefusal::InvalidGeometry {
+                failure,
+                attempts,
+            },
+        ) = &cell.outcome
+        else {
+            continue;
+        };
+        let element = match cell.element {
+            GridElement::Hill { feel, strength_g } => {
+                format!("{feel:?} requested {strength_g:.1} g")
+            }
+            GridElement::FullyBankedTurn => "fully banked turn".to_owned(),
+        };
+        by_region
+            .entry((
+                cell.model_key.to_owned(),
+                cell.cars,
+                element,
+                failure_name(failure),
+            ))
+            .or_default()
+            .push((cell.entry_speed_mps, *attempts));
+    }
+
+    by_region
+        .into_iter()
+        .flat_map(|((model_key, cars, element, cause), mut rows)| {
+            rows.sort_by(|left, right| left.0.total_cmp(&right.0));
+            let mut summaries = Vec::new();
+            let mut range_start = 0;
+            while range_start < rows.len() {
+                let mut range_end = range_start + 1;
+                while range_end < rows.len()
+                    && (rows[range_end].0 - rows[range_end - 1].0 - 0.5).abs() < 1e-9
+                {
+                    range_end += 1;
+                }
+                let range = &rows[range_start..range_end];
+                let maximum_attempts = range
+                    .iter()
+                    .map(|(_, attempts)| *attempts)
+                    .max()
+                    .expect("a refusal range contains at least one row");
+                summaries.push(format!(
+                    "{model_key} train {cars} {element}: {:.1} to {:.1} m/s ({cause}, no measurable geometry after at most {maximum_attempts} attempts)",
+                    range[0].0,
+                    range[range.len() - 1].0,
+                ));
+                range_start = range_end;
+            }
+            summaries
+        })
+        .collect()
 }
 
 fn sort_unique_g_values(values: &mut Vec<f64>) {
@@ -383,9 +542,9 @@ fn summarize_infeasible(cells: &[GeneratedGridCell]) -> Vec<String> {
                         infeasible_score(left).total_cmp(&infeasible_score(right))
                     })
                     .expect("an infeasible speed range has at least one row");
-                let (best_target_g, delivered_g, headroom_g) = infeasible_measurements(best);
+                let best_measurement = infeasible_best_measurement(best);
                 summaries.push(format!(
-                    "{model_key} train {cars} {element}: {:.1} to {:.1} m/s ({cause}); best measured target {best_target_g:.3} g, delivery {delivered_g:.3} g, headroom {headroom_g:.3} g",
+                    "{model_key} train {cars} {element}: {:.1} to {:.1} m/s ({cause}); {best_measurement}",
                     range[0].entry_speed_mps,
                     range[range.len() - 1].entry_speed_mps,
                 ));
@@ -425,7 +584,7 @@ fn infeasible_score(cell: &GeneratedGridCell) -> f64 {
     }
 }
 
-fn infeasible_measurements(cell: &GeneratedGridCell) -> (f64, f64, f64) {
+fn infeasible_best_measurement(cell: &GeneratedGridCell) -> String {
     let GridCellOutcome::Infeasible {
         best_spec,
         best_measurements,
@@ -434,28 +593,45 @@ fn infeasible_measurements(cell: &GeneratedGridCell) -> (f64, f64, f64) {
     else {
         unreachable!("infeasible summary receives only infeasible rows")
     };
-    let target_g = match best_spec {
-        theme_park_sim::track::shaped_generator::GeneratedSpec::Hill { target_g, .. } => *target_g,
-        theme_park_sim::track::shaped_generator::GeneratedSpec::Turn { vertical_g, .. } => {
-            *vertical_g
-        }
-    };
-    let delivered_g = best_measurements
-        .iter()
-        .filter(|measurement| (measurement.entry_speed_mps - cell.entry_speed_mps).abs() < 0.01)
-        .filter_map(|measurement| {
-            measurement
-                .worst_sustained_minimum_vertical_g
-                .or(measurement.maximum_lateral_g)
-        })
-        .reduce(f64::min)
-        .unwrap_or(f64::NAN);
     let headroom_g = best_measurements
         .iter()
         .filter_map(|measurement| measurement.minimum_force_headroom_g)
         .reduce(f64::min)
         .unwrap_or(f64::NAN);
-    (target_g, delivered_g, headroom_g)
+    let design_delivery_g = best_measurements
+        .iter()
+        .filter(|measurement| (measurement.entry_speed_mps - cell.entry_speed_mps).abs() < 0.01)
+        .filter_map(|measurement| measurement.worst_sustained_minimum_vertical_g)
+        .reduce(f64::min);
+    match best_spec {
+        GeneratedSpec::Hill { target_g, .. } => match design_delivery_g {
+            Some(delivered_g) => format!(
+                "best measured hill target {target_g:.3} g, delivery {delivered_g:.3} g, headroom {headroom_g:.3} g"
+            ),
+            None => format!(
+                "best measured hill target {target_g:.3} g, no design delivery, headroom {headroom_g:.3} g"
+            ),
+        },
+        GeneratedSpec::Turn {
+            vertical_g,
+            bank_degrees,
+            radius_m,
+            ..
+        } => {
+            let lateral_g = best_measurements
+                .iter()
+                .filter_map(|measurement| measurement.maximum_lateral_g)
+                .reduce(f64::max);
+            match lateral_g {
+                Some(lateral_g) => format!(
+                    "best measured turn bank {bank_degrees:.2} degrees, radius {radius_m:.1} m, design vertical {vertical_g:.3} g, lateral {lateral_g:.3} g, headroom {headroom_g:.3} g"
+                ),
+                None => format!(
+                    "best measured turn bank {bank_degrees:.2} degrees, radius {radius_m:.1} m, design vertical {vertical_g:.3} g, no lateral measurement, headroom {headroom_g:.3} g"
+                ),
+            }
+        }
+    }
 }
 
 fn failure_name(failure: &CellFailure) -> &'static str {
@@ -478,7 +654,7 @@ fn failure_name(failure: &CellFailure) -> &'static str {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: generate_shaped_elements [--output PATH] | --sample MODEL_KEY CARS floater|strong-floater|ejector|turn SPEED_MPS | --search-sample MODEL_KEY CARS floater|strong-floater|ejector SPEED_MPS"
+        "usage: generate_shaped_elements [--output PATH] | --shard MODEL_KEY CARS OUTPUT_PATH | --merge OUTPUT_PATH SHARD_PATH... | --caps-summary | --infeasible-summary | --sample MODEL_KEY CARS floater|strong-floater|ejector|turn SPEED_MPS | --search-sample MODEL_KEY CARS floater|strong-floater|ejector SPEED_MPS"
     );
     std::process::exit(2)
 }
