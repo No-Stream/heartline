@@ -35,7 +35,9 @@ fn main() {
     let mut elapsed = Vec::with_capacity(MEASURED_RUNS);
     for _ in 0..MEASURED_RUNS {
         let mut cache = PreviewCache::default();
-        let prefix_preview = cache.preview(&prefix, &model, config).expect("station prefix");
+        let prefix_preview = cache
+            .preview(&prefix, &model, config)
+            .expect("station prefix");
         assert_eq!(prefix_preview.status, PreviewStatus::ReachedEnd);
 
         let started_at = Instant::now();
@@ -51,13 +53,7 @@ fn main() {
             preview
                 .cars
                 .iter()
-                .map(|car| {
-                    (
-                        car.car_index,
-                        car.peaks,
-                        car.sustained_minimum_vertical_g,
-                    )
-                })
+                .map(|car| (car.car_index, car.peaks, car.sustained_minimum_vertical_g))
                 .collect(),
         );
         assert_eq!(observed, expected);
@@ -148,7 +144,9 @@ fn measure_once(
     config: PhysicsConfig,
 ) -> PreviewSummary {
     let mut cache = PreviewCache::default();
-    let prefix_preview = cache.preview(prefix, model, config).expect("station prefix");
+    let prefix_preview = cache
+        .preview(prefix, model, config)
+        .expect("station prefix");
     assert_eq!(prefix_preview.status, PreviewStatus::ReachedEnd);
     let preview = cache
         .preview_candidate(candidate_track, model, config, candidate_index)
@@ -160,13 +158,7 @@ fn measure_once(
         preview
             .cars
             .iter()
-            .map(|car| {
-                (
-                    car.car_index,
-                    car.peaks,
-                    car.sustained_minimum_vertical_g,
-                )
-            })
+            .map(|car| (car.car_index, car.peaks, car.sustained_minimum_vertical_g))
             .collect(),
     )
 }

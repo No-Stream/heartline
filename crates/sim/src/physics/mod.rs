@@ -474,6 +474,21 @@ impl Train {
     fn step_preview_all_cars(&mut self, circuit: &Circuit, time_step: f64) {
         self.step_block_brake_impl(circuit, &[], false, self.cars, time_step);
     }
+    fn step_preview_candidate(
+        &mut self,
+        circuit: &Circuit,
+        time_step: f64,
+        reusable_readings: &mut Vec<CarReading>,
+    ) {
+        self.step_block_brake_impl_with_reusable_readings(
+            circuit,
+            &[],
+            false,
+            self.cars,
+            time_step,
+            Some(reusable_readings),
+        );
+    }
     fn step_block_brake_impl(
         &mut self,
         circuit: &Circuit,
@@ -482,6 +497,27 @@ impl Train {
         reading_count: usize,
         time_step: f64,
     ) {
+        self.step_block_brake_impl_with_reusable_readings(
+            circuit,
+            brake_pieces,
+            hold,
+            reading_count,
+            time_step,
+            None,
+        );
+    }
+    fn step_block_brake_impl_with_reusable_readings(
+        &mut self,
+        circuit: &Circuit,
+        brake_pieces: &[usize],
+        hold: bool,
+        reading_count: usize,
+        time_step: f64,
+        mut reusable_readings: Option<&mut Vec<CarReading>>,
+    ) {
+        if let Some(reusable_readings) = &mut reusable_readings {
+            (**reusable_readings).clear();
+        }
         if self.recovered {
             return;
         }
@@ -625,35 +661,12 @@ impl Train {
             self.rolled_back = true;
         }
         if reading_count > 0 {
-            self.readings.push(
-                (0..reading_count)
-                    .map(|car| {
-                        let distance = self.distance - car as f64 * self.spacing;
-                        let (index, local) = circuit.locate(distance);
-                        let track_sample = circuit.pieces[index].sample(local);
-                        let g = rider_g(
-                            &circuit.pieces[index],
-                            local,
-                            self.speed,
-                            self.last_acceleration,
-                        );
-                        CarReading {
-                            distance: if circuit.open {
-                                distance.clamp(0.0, circuit.length)
-                            } else {
-                                distance.rem_euclid(circuit.length)
-                            },
-                            speed: self.speed.abs(),
-                            g,
-                            airtime: g.vertical < 0.0,
-                            height_m: track_sample.position.z,
-                            inverted: track_sample.up.z < 0.0,
-                            roll: track_sample.roll,
-                            piece_index: index,
-                        }
-                    })
-                    .collect(),
-            );
+            let readings = self.preview_car_readings(circuit, reading_count);
+            if let Some(reusable_readings) = &mut reusable_readings {
+                (**reusable_readings).extend(readings);
+            } else {
+                self.readings.push(readings.collect());
+            }
         }
         let stopped_on_slope =
             previous_speed > 0.0 && self.speed == 0.0 && downhill.abs() > 1e-9 && !brake_can_hold;
@@ -673,6 +686,38 @@ impl Train {
             self.recovered = true;
             self.notes.push(Note::RecoveredAfterRollback);
         }
+    }
+
+    fn preview_car_readings<'a>(
+        &'a self,
+        circuit: &'a Circuit,
+        reading_count: usize,
+    ) -> impl Iterator<Item = CarReading> + 'a {
+        (0..reading_count).map(move |car| {
+            let distance = self.distance - car as f64 * self.spacing;
+            let (index, local) = circuit.locate(distance);
+            let track_sample = circuit.pieces[index].sample(local);
+            let g = rider_g(
+                &circuit.pieces[index],
+                local,
+                self.speed,
+                self.last_acceleration,
+            );
+            CarReading {
+                distance: if circuit.open {
+                    distance.clamp(0.0, circuit.length)
+                } else {
+                    distance.rem_euclid(circuit.length)
+                },
+                speed: self.speed.abs(),
+                g,
+                airtime: g.vertical < 0.0,
+                height_m: track_sample.position.z,
+                inverted: track_sample.up.z < 0.0,
+                roll: track_sample.roll,
+                piece_index: index,
+            }
+        })
     }
     pub fn state_hash(&self) -> u64 {
         let mut hash = 0xcbf29ce484222325_u64;

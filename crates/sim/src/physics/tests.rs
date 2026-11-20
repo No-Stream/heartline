@@ -2144,6 +2144,49 @@ fn candidate_preview_matches_full_train_piece_force_summaries() {
 }
 
 #[test]
+fn candidate_preview_step_reuses_flat_reading_buffer_without_changing_car_readings() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let station_index = circuit
+        .pieces()
+        .iter()
+        .position(|piece| piece.kind == PieceKind::Station)
+        .unwrap();
+    let station_distance =
+        circuit.starts[station_index] + circuit.pieces()[station_index].length() / 2.0;
+    let initial_train = Train::new(
+        &circuit,
+        &model.train,
+        PhysicsConfig::default(),
+        station_distance,
+        0.0,
+    );
+    let mut reusable_train = initial_train.clone();
+    let mut reference_train = initial_train;
+    let mut reusable_readings = Vec::new();
+    let mut reusable_capacity = None;
+
+    for _ in 0..64 {
+        reusable_train.step_preview_candidate(&circuit, TIME_STEP, &mut reusable_readings);
+        reference_train.step_preview_all_cars(&circuit, TIME_STEP);
+
+        let reference_frames = reference_train.take_readings();
+        assert_eq!(reference_frames.len(), 1);
+        assert_eq!(reusable_readings, reference_frames[0]);
+        assert!(reusable_train.readings().is_empty());
+        assert_eq!(reusable_readings.len(), usize::from(model.train.cars));
+
+        let capacity = reusable_readings.capacity();
+        assert!(capacity >= usize::from(model.train.cars));
+        if let Some(reusable_capacity) = reusable_capacity {
+            assert_eq!(capacity, reusable_capacity);
+        } else {
+            reusable_capacity = Some(capacity);
+        }
+    }
+}
+
+#[test]
 fn incremental_preview_matches_fresh_when_a_step_crosses_multiple_metres() {
     let circuit = demo_circuit();
     let model = hybrid_model();

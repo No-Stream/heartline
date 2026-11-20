@@ -113,7 +113,7 @@ mod tests {
         ElementIntent, ElementSpec, HillSizeHint, ResolvedTurnGeometry, SpeedTurnKnot, TurnSizeHint,
     };
     use crate::track::{Hand, HillFeel};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     const VALID_RIDE: &str = r#"
     {
@@ -193,14 +193,14 @@ mod tests {
 
     #[test]
     fn ride_file_rejects_unknown_format_and_heading_values() {
-        assert!(serde_json::from_str::<RideFile>(
-            &VALID_RIDE.replace("heartline-ride", "unknown-ride")
-        )
-        .is_err());
-        assert!(serde_json::from_str::<RideFile>(
-            &VALID_RIDE.replace("\"north\"", "\"northwest-ish\"")
-        )
-        .is_err());
+        assert!(
+            serde_json::from_str::<RideFile>(&VALID_RIDE.replace("heartline-ride", "unknown-ride"))
+                .is_err()
+        );
+        assert!(
+            serde_json::from_str::<RideFile>(&VALID_RIDE.replace("\"north\"", "\"northwest-ish\""))
+                .is_err()
+        );
     }
 
     #[test]

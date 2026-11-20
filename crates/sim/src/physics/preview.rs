@@ -293,6 +293,9 @@ impl PreviewCache {
         });
         let mut candidate_recorders = candidate_piece_index
             .map(|_| vec![CandidateCarRecorder::default(); usize::from(configuration.cars)]);
+        let mut candidate_readings = Vec::with_capacity(
+            candidate_piece_index.map_or(0, |_| usize::from(configuration.cars)),
+        );
         self.piece_hashes = hashes;
         self.parameters = parameters;
         self.closed = closed;
@@ -301,7 +304,11 @@ impl PreviewCache {
             let previous_train = candidate_piece_index.is_none().then(|| train.clone());
             let previous_distance = train.distance();
             let previous_speed = train.speed();
-            train.step_preview_all_cars(&circuit, TIME_STEP);
+            if candidate_piece_index.is_some() {
+                train.step_preview_candidate(&circuit, TIME_STEP, &mut candidate_readings);
+            } else {
+                train.step_preview_all_cars(&circuit, TIME_STEP);
+            }
             let boundary = circuit
                 .starts
                 .partition_point(|start| *start <= train.distance());
@@ -336,49 +343,75 @@ impl PreviewCache {
                     steps: step,
                 });
             }
-            let mut readings = train.take_readings();
-            for frame in &mut readings {
+            let mut readings = if let Some(candidate_piece_index) = candidate_piece_index {
                 #[cfg(test)]
-                let mean_train_slope_z = candidate_recorders
-                    .as_ref()
-                    .map(|_| mean_train_slope_z(&circuit, frame));
-                for (car_index, (reading, evaluator)) in
-                    frame.iter_mut().zip(&mut evaluators).enumerate()
-                {
-                    let evaluated = evaluator.update(reading.g);
-                    let exceeded = !evaluated.within_limits;
-                    if let Some(candidate_recorders) = &mut candidate_recorders {
-                        let mut filtered_reading = *reading;
-                        filtered_reading.g = evaluated.filtered;
-                        filtered_reading.airtime = evaluated.filtered.vertical < 0.0;
-                        candidate_recorders[car_index].record(
+                let mean_train_slope_z = mean_train_slope_z(&circuit, &candidate_readings);
+                for (car_index, reading) in candidate_readings.iter().copied().enumerate() {
+                    let evaluated = evaluators[car_index].update(reading.g);
+                    let mut filtered_reading = reading;
+                    filtered_reading.g = evaluated.filtered;
+                    filtered_reading.airtime = evaluated.filtered.vertical < 0.0;
+                    candidate_recorders
+                        .as_mut()
+                        .expect("candidate recorder has a target piece")[car_index]
+                        .record(
                             filtered_reading,
-                            candidate_piece_index.expect("candidate recorder has a target piece"),
+                            candidate_piece_index,
                             &circuit,
                             evaluated.within_limits,
                             #[cfg(test)]
-                            mean_train_slope_z
-                                .expect("candidate previews collect train slope diagnostics"),
+                            mean_train_slope_z,
                         );
-                    } else if let Some((previous_distance, previous_exceeded)) =
-                        previous_flags[car_index]
+                }
+                Vec::new()
+            } else {
+                let mut readings = train.take_readings();
+                for frame in &mut readings {
+                    #[cfg(test)]
+                    let mean_train_slope_z = candidate_recorders
+                        .as_ref()
+                        .map(|_| mean_train_slope_z(&circuit, frame));
+                    for (car_index, (reading, evaluator)) in
+                        frame.iter_mut().zip(&mut evaluators).enumerate()
                     {
-                        if reading.distance >= previous_distance {
-                            let first = (previous_distance.ceil() as usize)
-                                .max(furthest_flag_metres[car_index].map_or(0, |metre| metre + 1));
-                            let last = (reading.distance.floor() as usize)
-                                .min(flags.len().saturating_sub(1));
-                            if first <= last {
-                                for flag in &mut flags[first..=last] {
-                                    *flag |= previous_exceeded || exceeded;
+                        let evaluated = evaluator.update(reading.g);
+                        let exceeded = !evaluated.within_limits;
+                        if let Some(candidate_recorders) = &mut candidate_recorders {
+                            let mut filtered_reading = *reading;
+                            filtered_reading.g = evaluated.filtered;
+                            filtered_reading.airtime = evaluated.filtered.vertical < 0.0;
+                            candidate_recorders[car_index].record(
+                                filtered_reading,
+                                candidate_piece_index
+                                    .expect("candidate recorder has a target piece"),
+                                &circuit,
+                                evaluated.within_limits,
+                                #[cfg(test)]
+                                mean_train_slope_z
+                                    .expect("candidate previews collect train slope diagnostics"),
+                            );
+                        } else if let Some((previous_distance, previous_exceeded)) =
+                            previous_flags[car_index]
+                        {
+                            if reading.distance >= previous_distance {
+                                let first = (previous_distance.ceil() as usize).max(
+                                    furthest_flag_metres[car_index].map_or(0, |metre| metre + 1),
+                                );
+                                let last = (reading.distance.floor() as usize)
+                                    .min(flags.len().saturating_sub(1));
+                                if first <= last {
+                                    for flag in &mut flags[first..=last] {
+                                        *flag |= previous_exceeded || exceeded;
+                                    }
+                                    furthest_flag_metres[car_index] = Some(last);
                                 }
-                                furthest_flag_metres[car_index] = Some(last);
                             }
+                            previous_flags[car_index] = Some((reading.distance, exceeded));
                         }
-                        previous_flags[car_index] = Some((reading.distance, exceeded));
                     }
                 }
-            }
+                readings
+            };
             let reached_end = train.distance() >= length;
             if reached_end && circuit.open && !readings.is_empty() {
                 readings[0][0].distance = length - 1e-6;
