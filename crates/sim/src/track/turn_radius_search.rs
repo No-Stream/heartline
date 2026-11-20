@@ -272,7 +272,7 @@ fn candidate_pieces(
     train: &crate::track::TrainConfiguration,
 ) -> Vec<Piece> {
     let straight = catalog()
-        .into_iter()
+        .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .expect("catalog has straight track");
     let mut pieces = prefix.to_vec();

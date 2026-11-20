@@ -8,6 +8,8 @@ use theme_park_sim::physics::{
 use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::{CoasterModel, PieceKind, rated_speed_margin, rated_speeds};
 
+pub(crate) type ShapedElementEntrySpeeds = BTreeMap<usize, (Option<f64>, Option<f64>)>;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ForceRatings {
     pub airtime: String,
@@ -83,7 +85,7 @@ pub(crate) fn shaped_element_entry_speeds(
     circuit: &theme_park_sim::physics::Circuit,
     model: &CoasterModel,
     piece_indices: &[usize],
-) -> Result<BTreeMap<usize, (Option<f64>, Option<f64>)>, String> {
+) -> Result<ShapedElementEntrySpeeds, String> {
     for &piece_index in piece_indices {
         if piece_index >= circuit.pieces().len() {
             return Err(format!(
