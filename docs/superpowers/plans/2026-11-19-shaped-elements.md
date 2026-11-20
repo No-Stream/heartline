@@ -221,4 +221,4 @@ Revised stage 1:
 - Hill sizing: pullout about 3.0 g, height 30 to 40 percent of the entry energy height, chosen by a bounded sweep.
 - Turn bank capped where the radius would go below the model minimum.
 - Acceptance: hill worst-car sustained airtime within 0.10 g of the capped target at design speed (0.15 g under the other physics configuration); strong-floater cap never shallower than -0.75 g from 24 to 36 m/s; every car 0.25 g inside limits at design speed and inside limits at ±0.5 m/s in both configurations; turn lateral at most 0.15 g at design speed and 0.25 g at ±0.5 m/s, bank at most 75 degrees; exit on grid; height and radius non-decreasing with speed; typed refusals; deterministic; save round trip; commit p95 at most 250 ms in Node/WASM; WASM within 150 KB of master; classic digests unchanged.
-- Open owner question: the hyper's -1.3 g limit with the 0.25 g margin caps sustained airtime near -0.95 g; the owner's target is about -1 g.
+- Owner decision (2026-11-20): raise the hyper minimum vertical limit from -1.3 g to -1.5 g, like the other steel models, so strong floaters can reach about -1 g with the margin. Done on branch hyper-limit.

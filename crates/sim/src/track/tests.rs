@@ -1994,7 +1994,7 @@ fn coaster_models_use_peak_rider_force_limits() {
         ("Timber Tumbler", -1.5, 4.5, 1.5, 1.5),
         ("Velocity Viper", -1.5, 5.0, 1.5, 1.5),
         ("Daisy Dash", -0.6, 3.0, 1.0, 1.5),
-        ("Horizon Hawk", -1.3, 4.0, 1.2, 1.5),
+        ("Horizon Hawk", -1.5, 4.0, 1.2, 1.5),
     ];
     let models = coaster_models();
     assert_eq!(models.len(), expected_limits.len());
