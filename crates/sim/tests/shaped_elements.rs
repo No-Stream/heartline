@@ -796,7 +796,7 @@ fn force_margin_caps_strong_floater_in_five_hundredths_of_a_g() {
     let (_, _, solved) = solve_with_prefix(
         ElementIntent::Hill {
             feel: HillFeel::StrongFloater,
-            strength_g: Some(-1.2),
+            strength_g: Some(-1.5),
             size: HillSizeHint::Auto,
         },
         &model,
@@ -811,7 +811,7 @@ fn force_margin_caps_strong_floater_in_five_hundredths_of_a_g() {
         "strong-floater cap requested={:.2} g capped={:.2} g delivered={:.2} g previews={}",
         cap.requested_target_g, cap.capped_target_g, cap.delivered_g, solved.calibration_runs
     );
-    assert_eq!(cap.requested_target_g, -1.2);
+    assert_eq!(cap.requested_target_g, -1.5);
     let model_headroom_floor_g = model.comfortable_force_limits.minimum_vertical_g + 0.25;
     assert!(cap.capped_target_g >= model_headroom_floor_g);
     assert!(cap.capped_target_g <= -0.75);
