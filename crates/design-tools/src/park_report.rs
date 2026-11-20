@@ -102,9 +102,12 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
             .as_ref()
             .cloned()
             .ok_or_else(|| "park coaster test completed without a native report".to_owned())?;
+        let (circuit, _) = simulation
+            .construction_circuit_and_train()
+            .ok_or_else(|| "park coaster test completed without a circuit".to_owned())?;
         let (_, estimates, _) = replay_with_estimates(&ride, false)?;
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
-        let expectation_failures = check_expectations(&ride, &test_run);
+        let expectation_failures = check_expectations(&ride, &test_run, &circuit)?;
         if !simulation.construction_is_open() && !simulation.construction_set_open(true) {
             return Err(format!(
                 "park coaster {} could not open: {}",

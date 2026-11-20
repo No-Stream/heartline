@@ -6,15 +6,16 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use theme_park_sim::physics::{ForcePeakValues, TestRun};
+use theme_park_sim::physics::{CarPieceForcePeakLocations, Circuit, ForcePeakValues, TestRun};
 use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::ride_file::{
-    RideBlockSectionsStep, RideChainStep, RideCloseStep, RideFile, RideFileFormat, RideHeading,
-    RidePlaceStep, RideShapeStep, RideStation, RideStep,
+    RideBlockSectionsStep, RideChainStep, RideCloseStep, RideExpectFeatureStep,
+    RideExpectFeatures, RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideShapeStep,
+    RideStation, RideStep,
 };
 use theme_park_sim::track::shaped::{ElementIntent, ElementSpec, HillSizeHint, TurnSizeHint};
 use theme_park_sim::track::{
-    CoasterModel, Hand, Heading as TrackHeading, HillFeel, PieceId, coaster_models,
+    CoasterModel, Hand, Heading as TrackHeading, Heartlining, HillFeel, PieceId, coaster_models,
 };
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
@@ -24,7 +25,10 @@ use theme_park_sim_wasm::construction::{
 };
 use theme_park_sim_wasm::reports::TestingSample;
 
-use crate::agreement::{AgreementInput, AgreementReport, ForcePeaks, evaluate_agreement};
+use crate::agreement::{
+    AgreementInput, AgreementReport, ForcePeaks, PlacementFailureClassification,
+    PlacementPeakContext, PlacementPeakContexts, evaluate_agreement,
+};
 use crate::brake_report::mid_course_brake_energy_report;
 use crate::report::{
     ForceRatings, RidePieceEstimate, ShapedElementReportRow, rated_speed_margin_report,
@@ -133,7 +137,11 @@ pub fn run_cli(arguments: &[String], stdin: &str) -> Result<String, String> {
 
 /// Runs the command line interface while preserving stdout, stderr, and exit status separately.
 pub fn run_cli_with_status(arguments: &[String], stdin: &str) -> CliOutput {
-    match run_cli_response(arguments, stdin) {
+    cli_output(run_cli_response(arguments, stdin))
+}
+
+fn cli_output(response: Result<CliResponse, String>) -> CliOutput {
+    match response {
         Ok(CliResponse::Success(stdout)) => CliOutput {
             stdout,
             stderr: String::new(),
@@ -1024,6 +1032,21 @@ fn execute_command(
                     "shaped selection {id:?} resolved to unexpected selection {:?}",
                     selection.selected_id
                 ));
+            }
+            if matched {
+                let speed_match = selection
+                    .speed_match
+                    .as_ref()
+                    .ok_or_else(|| format!("{id} has no speed-matched variants"))?;
+                if speed_match.fits != Some(true) {
+                    let entry_speed = speed_match.entry_speed.map_or_else(
+                        || "the current end speed".to_owned(),
+                        |speed| format!("{speed:.2} m/s"),
+                    );
+                    return Err(format!(
+                        "no speed-matched variant for {id} fits at {entry_speed}"
+                    ));
+                }
             }
             let estimates = session.estimates();
             if let Some(refusal) = estimates
@@ -2814,17 +2837,6 @@ pub(crate) fn replay_with_estimates(
                 for relative_piece_index in 0..added_piece_count {
                     let piece_index = first_piece_index + relative_piece_index;
                     let piece = &pieces[piece_index];
-                    let piece_end = piece_start + piece.length();
-                    let is_final_piece = piece_index + 1 == pieces.len();
-                    let piece_samples: Vec<_> = candidate
-                        .samples
-                        .iter()
-                        .filter(|sample| {
-                            sample.distance >= piece_start
-                                && (sample.distance < piece_end
-                                    || (is_final_piece && sample.distance <= piece_end))
-                        })
-                        .collect();
                     let entry_speed = if relative_piece_index == 0 {
                         candidate.entry_speed
                     } else {
@@ -2848,17 +2860,16 @@ pub(crate) fn replay_with_estimates(
                     let estimate = if added_piece_count == 1 {
                         ride_piece_estimate(piece_index, &place.place, candidate, note)
                     } else {
-                        ride_piece_estimate_from_samples(
+                        ride_piece_estimate_from_piece_peaks(
                             piece_index,
                             piece_id,
                             entry_speed,
                             candidate,
-                            &piece_samples,
                             note,
                         )
                     };
                     estimates.push(estimate);
-                    piece_start = piece_end;
+                    piece_start += piece.length();
                 }
                 if let Some(selection_snapshot) = selection_snapshot {
                     browser_estimates.push(json!({
@@ -3076,16 +3087,19 @@ fn ride_piece_estimate(
     )
 }
 
-fn ride_piece_estimate_from_samples(
+fn ride_piece_estimate_from_piece_peaks(
     piece_index: usize,
     piece_id: &str,
     entry_speed: Option<f64>,
     candidate: &ConstructionCandidateForcePreviewWire,
-    samples: &[&TestingSample],
     note: Option<String>,
 ) -> RidePieceEstimate {
-    let estimated =
-        ForcePeaks::from_preview_samples(samples.iter().copied()).map(|peaks| ForcePeakValues {
+    let estimated = candidate
+        .piece_force_peaks
+        .iter()
+        .find(|peaks| peaks.piece_index == piece_index)
+        .and_then(|peaks| peaks.worst_car.as_ref())
+        .map(|peaks| ForcePeakValues {
             minimum_vertical_g: peaks.minimum_vertical_g,
             maximum_vertical_g: peaks.maximum_vertical_g,
             maximum_lateral_g: peaks.maximum_lateral_g,
@@ -3157,11 +3171,27 @@ pub(crate) fn compare_estimates(
         .iter()
         .map(|estimate| (estimate.piece_index, estimate))
         .collect();
-    let finished_track = finished_track_estimates(ride, estimates)?;
+    let FinishedTrackEstimates {
+        by_piece: finished_track,
+        piece_starts,
+        circuit_length,
+    } = finished_track_estimates(ride, estimates)?;
+    let car_peak_locations = test_run.car_piece_force_peak_locations();
+    let train_spacing = model.train.length_metres / f64::from(ride.cars_per_train);
+    let peak_context_resolver = PlacementPeakContextResolver::new(
+        &car_peak_locations,
+        train_spacing,
+        usize::from(ride.cars_per_train),
+        &piece_starts,
+        circuit_length,
+    );
     let mut inputs = Vec::new();
-    for (piece_index, (piece_name, finished_entry, finished_peak)) in finished_track {
+    for (piece_index, finished_piece) in finished_track {
         let placement = estimate_by_piece.get(&piece_index).copied();
         let measured_peaks = measured.get(&piece_index);
+        let measured_worst = measured_peaks
+            .and_then(|peaks| peaks.worst_car)
+            .map(force_peaks);
         let entry_measured = test_run
             .samples
             .iter()
@@ -3169,29 +3199,39 @@ pub(crate) fn compare_estimates(
             .map(|sample| sample.speed);
         inputs.push(AgreementInput {
             piece_index,
-            piece_name,
+            piece_name: finished_piece.piece_name,
             model_name: model.name.to_string(),
             placement_entry_speed_estimate: placement.and_then(|estimate| estimate.entry_speed),
-            entry_speed_estimate: finished_entry,
+            entry_speed_estimate: finished_piece.entry_speed,
             entry_speed_measured_front: entry_measured,
             placement_estimate: placement
                 .and_then(|estimate| estimate.estimated)
                 .map(force_peaks),
-            finished_track_estimate: finished_peak,
+            finished_track_estimate: finished_piece.front_car,
+            finished_track_worst_car_estimate: finished_piece.worst_car,
             measured_front: measured_peaks
                 .and_then(|peaks| peaks.front_car)
                 .map(force_peaks),
-            measured_worst: measured_peaks
-                .and_then(|peaks| peaks.worst_car)
-                .map(force_peaks),
+            measured_worst,
+            placement_peak_contexts: peak_context_resolver.for_piece(piece_index, measured_worst),
             limits: model.comfortable_force_limits,
         });
     }
     Ok(evaluate_agreement(&inputs))
 }
 
-type FinishedTrackEstimate = (String, Option<f64>, Option<ForcePeaks>);
-type FinishedTrackEstimates = BTreeMap<usize, FinishedTrackEstimate>;
+struct FinishedTrackEstimate {
+    piece_name: String,
+    entry_speed: Option<f64>,
+    front_car: Option<ForcePeaks>,
+    worst_car: Option<ForcePeaks>,
+}
+
+struct FinishedTrackEstimates {
+    by_piece: BTreeMap<usize, FinishedTrackEstimate>,
+    piece_starts: Vec<f64>,
+    circuit_length: f64,
+}
 
 fn finished_track_estimates(
     ride: &RideFile,
@@ -3202,6 +3242,29 @@ fn finished_track_estimates(
         .estimates()
         .force_preview
         .ok_or_else(|| "finished-track preview is unavailable".to_owned())?;
+    let force_peaks_by_piece: BTreeMap<_, _> = preview
+        .piece_force_peaks
+        .into_iter()
+        .map(|peaks| {
+            (
+                peaks.piece_index,
+                (
+                    peaks.front_car.map(|peaks| ForcePeaks {
+                        minimum_vertical_g: peaks.minimum_vertical_g,
+                        maximum_vertical_g: peaks.maximum_vertical_g,
+                        maximum_lateral_g: peaks.maximum_lateral_g,
+                        maximum_longitudinal_g: peaks.maximum_longitudinal_g,
+                    }),
+                    peaks.worst_car.map(|peaks| ForcePeaks {
+                        minimum_vertical_g: peaks.minimum_vertical_g,
+                        maximum_vertical_g: peaks.maximum_vertical_g,
+                        maximum_lateral_g: peaks.maximum_lateral_g,
+                        maximum_longitudinal_g: peaks.maximum_longitudinal_g,
+                    }),
+                ),
+            )
+        })
+        .collect();
     let construction = session
         .simulation()
         .construction
@@ -3211,42 +3274,160 @@ fn finished_track_estimates(
     let mut piece_starts = Vec::with_capacity(pieces.len());
     let mut distance = 0.0;
     for piece in pieces {
-        piece_starts.push((distance, distance + piece.length(), piece.name.to_owned()));
+        piece_starts.push((distance, piece.name.to_owned()));
         distance += piece.length();
     }
-    let mut result = BTreeMap::new();
-    let last_piece_index = piece_starts.len().saturating_sub(1);
-    for (piece_index, (start, end, name)) in piece_starts.into_iter().enumerate().skip(1) {
-        let samples: Vec<_> = preview
-            .samples
-            .iter()
-            .filter(|sample| {
-                sample.distance >= start
-                    && (sample.distance < end
-                        || (piece_index == last_piece_index && sample.distance <= end))
-            })
-            .collect();
-        let peaks = ForcePeaks::from_preview_samples(samples.iter().copied());
-        let entry_speed = speed_at_distance(&preview.samples, start);
+    let mut by_piece = BTreeMap::new();
+    for (piece_index, (start, name)) in piece_starts.iter().enumerate().skip(1) {
+        let entry_speed = speed_at_distance(&preview.samples, *start);
         let measured_name = placement
             .iter()
             .find(|estimate| estimate.piece_index == piece_index)
             .map_or(name.clone(), |estimate| estimate.piece_id.clone());
-        result.insert(
+        let (front_car, worst_car) = force_peaks_by_piece
+            .get(&piece_index)
+            .copied()
+            .unwrap_or((None, None));
+        by_piece.insert(
             piece_index,
-            (
-                measured_name,
+            FinishedTrackEstimate {
+                piece_name: measured_name,
                 entry_speed,
-                peaks.map(|peaks| ForcePeaks {
-                    minimum_vertical_g: peaks.minimum_vertical_g,
-                    maximum_vertical_g: peaks.maximum_vertical_g,
-                    maximum_lateral_g: peaks.maximum_lateral_g,
-                    maximum_longitudinal_g: peaks.maximum_longitudinal_g,
-                }),
-            ),
+                front_car,
+                worst_car,
+            },
         );
     }
-    Ok(result)
+    Ok(FinishedTrackEstimates {
+        by_piece,
+        piece_starts: piece_starts.into_iter().map(|(start, _)| start).collect(),
+        circuit_length: distance,
+    })
+}
+
+#[derive(Clone, Copy)]
+enum ForcePeakMetric {
+    MinimumVerticalG,
+    MaximumVerticalG,
+    MaximumLateralG,
+    MaximumLongitudinalG,
+}
+
+struct PlacementPeakContextResolver<'a> {
+    car_peak_locations: &'a [CarPieceForcePeakLocations],
+    train_spacing: f64,
+    car_count: usize,
+    piece_starts: &'a [f64],
+    circuit_length: f64,
+}
+
+impl<'a> PlacementPeakContextResolver<'a> {
+    fn new(
+        car_peak_locations: &'a [CarPieceForcePeakLocations],
+        train_spacing: f64,
+        car_count: usize,
+        piece_starts: &'a [f64],
+        circuit_length: f64,
+    ) -> Self {
+        Self {
+            car_peak_locations,
+            train_spacing,
+            car_count,
+            piece_starts,
+            circuit_length,
+        }
+    }
+
+    fn for_piece(
+        &self,
+        piece_index: usize,
+        measured_worst: Option<ForcePeaks>,
+    ) -> PlacementPeakContexts {
+        let Some(measured_worst) = measured_worst else {
+            return PlacementPeakContexts::default();
+        };
+        PlacementPeakContexts {
+            minimum_vertical_g: self.peak_context(
+                piece_index,
+                measured_worst.minimum_vertical_g,
+                ForcePeakMetric::MinimumVerticalG,
+            ),
+            maximum_vertical_g: self.peak_context(
+                piece_index,
+                measured_worst.maximum_vertical_g,
+                ForcePeakMetric::MaximumVerticalG,
+            ),
+            maximum_lateral_g: self.peak_context(
+                piece_index,
+                measured_worst.maximum_lateral_g,
+                ForcePeakMetric::MaximumLateralG,
+            ),
+            maximum_longitudinal_g: self.peak_context(
+                piece_index,
+                measured_worst.maximum_longitudinal_g,
+                ForcePeakMetric::MaximumLongitudinalG,
+            ),
+        }
+    }
+
+    fn peak_context(
+        &self,
+        piece_index: usize,
+        measured_value: f64,
+        metric: ForcePeakMetric,
+    ) -> Option<PlacementPeakContext> {
+        let mut context = None;
+        for car_peaks in self
+            .car_peak_locations
+            .iter()
+            .filter(|peaks| peaks.piece_index == piece_index)
+        {
+            let (peak_value, locations) = match metric {
+                ForcePeakMetric::MinimumVerticalG => (
+                    car_peaks.peaks.minimum_vertical_g,
+                    car_peaks.minimum_vertical_g.as_slice(),
+                ),
+                ForcePeakMetric::MaximumVerticalG => (
+                    car_peaks.peaks.maximum_vertical_g,
+                    car_peaks.maximum_vertical_g.as_slice(),
+                ),
+                ForcePeakMetric::MaximumLateralG => (
+                    car_peaks.peaks.maximum_lateral_g,
+                    car_peaks.maximum_lateral_g.as_slice(),
+                ),
+                ForcePeakMetric::MaximumLongitudinalG => (
+                    car_peaks.peaks.maximum_longitudinal_g,
+                    car_peaks.maximum_longitudinal_g.as_slice(),
+                ),
+            };
+            if peak_value != measured_value {
+                continue;
+            }
+            for location in locations {
+                let mut peak_context = PlacementPeakContext {
+                    peak_car_index: location.car_index,
+                    later_car_index: None,
+                    later_piece_index: None,
+                };
+                for car_index in 0..self.car_count {
+                    let car_distance = (location.distance_m
+                        + (location.car_index as f64 - car_index as f64) * self.train_spacing)
+                        .rem_euclid(self.circuit_length);
+                    let car_piece_index = self
+                        .piece_starts
+                        .partition_point(|piece_start| *piece_start <= car_distance)
+                        .saturating_sub(1);
+                    if car_piece_index > piece_index {
+                        peak_context.later_car_index = Some(car_index);
+                        peak_context.later_piece_index = Some(car_piece_index);
+                        return Some(peak_context);
+                    }
+                }
+                context.get_or_insert(peak_context);
+            }
+        }
+        context
+    }
 }
 
 fn speed_at_distance(samples: &[TestingSample], distance: f64) -> Option<f64> {
@@ -3271,12 +3452,12 @@ fn force_peaks(peaks: ForcePeakValues) -> ForcePeaks {
 
 fn format_agreement(report: &AgreementReport) -> String {
     let mut text = String::from(
-        "piece check2 check3 entry[placement/finished/test m/s] placement[min/max/lat/long g] finished[min/max/lat/long g] front[min/max/lat/long g] worst[min/max/lat/long g]\n",
+        "piece check2 check3 entry[placement/finished/test m/s] placement[min/max/lat/long g] finished-front[min/max/lat/long g] finished-worst[min/max/lat/long g] measured-front[min/max/lat/long g] measured-worst[min/max/lat/long g]\n",
     );
     for row in &report.rows {
         writeln!(
             text,
-            "{} {:<24} {:?} {:?} {}/{}/{} {} {} {} {}",
+            "{} {:<24} {:?} {:?} {}/{}/{} {} {} {} {} {}",
             row.piece_index,
             row.piece_name,
             row.check_2,
@@ -3286,6 +3467,7 @@ fn format_agreement(report: &AgreementReport) -> String {
             format_optional(row.entry_speed_measured_front),
             format_force_peaks(row.placement_estimate),
             format_force_peaks(row.finished_track_estimate),
+            format_force_peaks(row.finished_track_worst_car_estimate),
             format_force_peaks(row.measured_front),
             format_force_peaks(row.measured_worst)
         )
@@ -3294,8 +3476,23 @@ fn format_agreement(report: &AgreementReport) -> String {
     for failure in &report.failures {
         writeln!(
             text,
-            "{} {:?}: {} ({})",
-            failure.piece_index, failure.check, failure.metric, failure.reason
+            "{} {:?}: {} ({}){}{}",
+            failure.piece_index,
+            failure.check,
+            failure.metric,
+            failure.reason,
+            failure
+                .classification
+                .map_or_else(String::new, |classification| {
+                    format!(
+                        " [{}]",
+                        placement_failure_classification_name(classification)
+                    )
+                }),
+            failure
+                .cause
+                .as_ref()
+                .map_or_else(String::new, |cause| format!("; cause: {cause}"))
         )
         .unwrap();
     }
@@ -3321,6 +3518,7 @@ pub(crate) fn agreement_json(report: &AgreementReport) -> Value {
                 "entrySpeedMeasuredFront": row.entry_speed_measured_front,
                 "placementEstimate": force_peaks_json(row.placement_estimate),
                 "finishedTrackEstimate": force_peaks_json(row.finished_track_estimate),
+                "finishedTrackWorstCarEstimate": force_peaks_json(row.finished_track_worst_car_estimate),
                 "measuredFront": force_peaks_json(row.measured_front),
                 "measuredWorst": force_peaks_json(row.measured_worst),
                 "check2": format!("{:?}", row.check_2),
@@ -3338,10 +3536,43 @@ pub(crate) fn agreement_json(report: &AgreementReport) -> Value {
                 "check": format!("{:?}", failure.check),
                 "metric": failure.metric,
                 "reason": failure.reason,
+                "classification": failure.classification.map(placement_failure_classification_name),
+                "cause": failure.cause,
             })
         })
         .collect();
-    json!({"passed": report.passed, "rows": rows, "failures": failures})
+    let downstream_track_failures = report
+        .failures
+        .iter()
+        .filter(|failure| {
+            failure.classification == Some(PlacementFailureClassification::DownstreamTrack)
+        })
+        .count();
+    let estimate_error_failures = report
+        .failures
+        .iter()
+        .filter(|failure| {
+            failure.classification == Some(PlacementFailureClassification::EstimateError)
+        })
+        .count();
+    json!({
+        "passed": report.passed,
+        "placementFailureCounts": {
+            "downstreamTrack": downstream_track_failures,
+            "estimateError": estimate_error_failures,
+        },
+        "rows": rows,
+        "failures": failures,
+    })
+}
+
+fn placement_failure_classification_name(
+    classification: PlacementFailureClassification,
+) -> &'static str {
+    match classification {
+        PlacementFailureClassification::DownstreamTrack => "downstream track",
+        PlacementFailureClassification::EstimateError => "estimate error",
+    }
 }
 
 fn format_force_peaks(peaks: Option<ForcePeaks>) -> String {
@@ -3379,8 +3610,8 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         return Err("usage: tools/design check <ride file> ...".into());
     }
     let mut rows = Vec::new();
-    let mut text = String::from("Native agreement failures are informational.\n");
-    let mut has_expectation_failures = false;
+    let mut text = String::new();
+    let mut has_check_failures = false;
     for path in paths {
         let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
         let ride: RideFile = serde_json::from_slice(&bytes)
@@ -3391,16 +3622,16 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
         let rated_speed_margins = crate::report::rated_speed_margins(&circuit, &model)
             .map_err(|error| format!("{path}: {error}"))?;
-        let expectation_results = evaluate_expectations(&ride, &test_run);
+        let expectation_results = evaluate_expectations(&ride, &test_run, &model, &circuit)?;
         let failures: Vec<_> = expectation_results
             .iter()
             .filter(|result| !result.passed)
             .map(ExpectationResult::format)
             .collect();
-        has_expectation_failures |= !failures.is_empty();
+        has_check_failures |= check_has_failures(&failures, &agreement);
         writeln!(
             text,
-            "{}: expectations {}; native agreement {} (informational)",
+            "{}: expectations {}; native agreement {}",
             ride.name,
             if failures.is_empty() { "pass" } else { "fail" },
             if agreement.passed { "pass" } else { "fail" }
@@ -3423,7 +3654,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         rows.push(json!({
             "path": path,
             "name": ride.name,
-            "agreementGate": "informational; agreement failures exit zero",
+            "agreementGate": "enabled; finished-track agreement failures exit nonzero",
             "ratedSpeedMargins": rated_speed_margins.iter().map(|margin| json!({
                 "pieceIndex": margin.piece_index,
                 "pieceId": margin.piece_id,
@@ -3449,28 +3680,46 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
             "browserEstimates": browser_estimates,
         }));
     }
-    if has_expectation_failures {
-        if json_mode {
-            return serde_json::to_string_pretty(&Value::Array(rows))
-                .map(|value| CliResponse::FailureWithStdout(value + "\n"))
-                .map_err(|error| error.to_string());
-        }
-        return Err(text);
-    }
+    check_response(json_mode, rows, text, has_check_failures)
+}
+
+fn check_has_failures(expectation_failures: &[String], agreement: &AgreementReport) -> bool {
+    !expectation_failures.is_empty() || !agreement.passed
+}
+
+fn check_response(
+    json_mode: bool,
+    rows: Vec<Value>,
+    text: String,
+    has_failures: bool,
+) -> Result<CliResponse, String> {
     if json_mode {
-        return serde_json::to_string_pretty(&Value::Array(rows))
-            .map(|value| CliResponse::Success(value + "\n"))
-            .map_err(|error| error.to_string());
+        let json = serde_json::to_string_pretty(&Value::Array(rows))
+            .map_err(|error| error.to_string())?
+            + "\n";
+        return Ok(if has_failures {
+            CliResponse::FailureWithStdout(json)
+        } else {
+            CliResponse::Success(json)
+        });
+    }
+    if has_failures {
+        return Err(text);
     }
     Ok(CliResponse::Success(text))
 }
 
-pub(crate) fn check_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<String> {
-    evaluate_expectations(ride, test_run)
+pub(crate) fn check_expectations(
+    ride: &RideFile,
+    test_run: &TestRun,
+    circuit: &Circuit,
+) -> Result<Vec<String>, String> {
+    let model = validate_model(&ride.model)?;
+    Ok(evaluate_expectations(ride, test_run, &model, circuit)?
         .into_iter()
         .filter(|result| !result.passed)
         .map(|result| result.format())
-        .collect()
+        .collect())
 }
 
 struct ExpectationResult {
@@ -3502,9 +3751,14 @@ impl ExpectationResult {
     }
 }
 
-fn evaluate_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<ExpectationResult> {
+fn evaluate_expectations(
+    ride: &RideFile,
+    test_run: &TestRun,
+    model: &CoasterModel,
+    circuit: &Circuit,
+) -> Result<Vec<ExpectationResult>, String> {
     let Some(expect) = &ride.expect else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut results = Vec::new();
     let sustained = test_run.sustained_force_peaks();
@@ -3561,7 +3815,293 @@ fn evaluate_expectations(ride: &RideFile, test_run: &TestRun) -> Vec<Expectation
             passed: observed >= minimum as usize,
         });
     }
-    results
+    if let Some(expected) = expect.within_comfortable_force_limits {
+        let stats = test_run.statistics;
+        let limits = model.comfortable_force_limits;
+        let within_limits = stats.max_positive_vertical_g <= limits.maximum_vertical_g
+            && stats.max_negative_vertical_g >= limits.minimum_vertical_g
+            && stats.max_lateral_g <= limits.maximum_lateral_g
+            && stats.max_forward_g.abs() <= limits.maximum_longitudinal_g
+            && stats.max_braking_g.abs() <= limits.maximum_longitudinal_g;
+        results.push(ExpectationResult {
+            metric: "comfortable force limits",
+            expected: if expected {
+                "within limits"
+            } else {
+                "outside limits"
+            }
+            .to_owned(),
+            observed: json!(within_limits),
+            observed_text: if within_limits {
+                "within limits"
+            } else {
+                "outside limits"
+            }
+            .to_owned(),
+            passed: expected == within_limits,
+        });
+    }
+    if let Some(minimum) = expect.inversions_at_least {
+        let observed = test_run.statistics.inversions;
+        results.push(ExpectationResult {
+            metric: "inversions",
+            expected: format!("at least {minimum}"),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= minimum as usize,
+        });
+    }
+    if let Some(launches) = expect.launches {
+        let observed = test_run.statistics.launches;
+        results.push(count_expectation(
+            "launches",
+            launches,
+            observed,
+            observed == launches as usize,
+        ));
+    }
+    if let Some(minimum) = expect.biggest_drop_at_least {
+        results.push(minimum_expectation(
+            "biggest drop",
+            minimum,
+            test_run.statistics.biggest_drop,
+        ));
+    }
+    if let Some(minimum) = expect.max_speed_at_least {
+        results.push(minimum_expectation(
+            "maximum speed",
+            minimum,
+            test_run.statistics.max_speed,
+        ));
+    }
+    if let Some(expected) = expect.inverted_seconds {
+        let observed = test_run.statistics.inverted_seconds;
+        results.push(ExpectationResult {
+            metric: "inverted time",
+            expected: format!("{expected:.2}"),
+            observed: json!(observed),
+            observed_text: format!("{observed:.2}"),
+            passed: observed == expected,
+        });
+    }
+    if let Some(features) = &expect.features {
+        results.extend(evaluate_feature_expectations(
+            &ride.steps,
+            features,
+            circuit,
+        )?);
+    }
+    Ok(results)
+}
+
+fn evaluate_feature_expectations(
+    ride_steps: &[RideStep],
+    features: &RideExpectFeatures,
+    circuit: &Circuit,
+) -> Result<Vec<ExpectationResult>, String> {
+    if features
+        .piece_prefixes_at_least
+        .iter()
+        .any(|(prefix, minimum)| prefix.is_empty() || *minimum == 0)
+        || features.piece_prefix_groups_at_least.iter().any(|group| {
+            group.prefixes.is_empty()
+                || group.prefixes.iter().any(String::is_empty)
+                || group.minimum == 0
+        })
+        || features.heartlined_inversions_at_least == Some(0)
+        || features.piece_prefixes_after.iter().any(|expectation| {
+            expectation.prefix.is_empty() || !valid_feature_step(&expectation.after)
+        })
+        || features
+            .ordered_steps
+            .iter()
+            .chain(&features.adjacent_steps)
+            .any(|sequence| sequence.is_empty())
+        || features
+            .ordered_steps
+            .iter()
+            .chain(&features.adjacent_steps)
+            .flatten()
+            .any(|step| !valid_feature_step(step))
+    {
+        return Err("ride expect.features contains an empty prefix or step sequence".into());
+    }
+
+    let mut results = Vec::new();
+    for (prefix, minimum) in &features.piece_prefixes_at_least {
+        let observed = ride_steps
+            .iter()
+            .filter(|step| match step {
+                RideStep::Place(place) => place.place.starts_with(prefix),
+                _ => false,
+            })
+            .count();
+        results.push(ExpectationResult {
+            metric: "ride feature count",
+            expected: format!("at least {minimum} pieces with prefix {prefix:?}"),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= *minimum as usize,
+        });
+    }
+    for group in &features.piece_prefix_groups_at_least {
+        let observed = ride_steps
+            .iter()
+            .filter(|step| match step {
+                RideStep::Place(place) => group
+                    .prefixes
+                    .iter()
+                    .any(|prefix| place.place.starts_with(prefix)),
+                _ => false,
+            })
+            .count();
+        results.push(ExpectationResult {
+            metric: "grouped ride feature count",
+            expected: format!(
+                "at least {} pieces with any prefix {:?}",
+                group.minimum, group.prefixes
+            ),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= group.minimum as usize,
+        });
+    }
+    if let Some(minimum) = features.heartlined_inversions_at_least {
+        let observed = circuit
+            .pieces()
+            .iter()
+            .filter(|piece| {
+                piece.inversion.is_some() && piece.heartlining == Some(Heartlining::Heartlined)
+            })
+            .count();
+        results.push(ExpectationResult {
+            metric: "heartlined inversion pieces",
+            expected: format!("at least {minimum}"),
+            observed: json!(observed),
+            observed_text: observed.to_string(),
+            passed: observed >= minimum as usize,
+        });
+    }
+    for expectation in &features.piece_prefixes_after {
+        let after_index = ride_steps
+            .iter()
+            .position(|step| ride_feature_step_matches(step, &expectation.after));
+        let matching_indices: Vec<_> = ride_steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| match step {
+                RideStep::Place(place) => place.place.starts_with(&expectation.prefix),
+                _ => false,
+            })
+            .map(|(step_index, _)| step_index)
+            .collect();
+        let passed = after_index.is_some_and(|after_index| {
+            !matching_indices.is_empty()
+                && matching_indices
+                    .iter()
+                    .all(|step_index| *step_index > after_index)
+        });
+        results.push(ExpectationResult {
+            metric: "ride feature prefix ordering",
+            expected: format!(
+                "all pieces with prefix {:?} after {}",
+                expectation.prefix,
+                describe_feature_sequence(std::slice::from_ref(&expectation.after))
+            ),
+            observed: json!(passed),
+            observed_text: if passed { "found" } else { "not found" }.to_owned(),
+            passed,
+        });
+    }
+    for sequence in &features.ordered_steps {
+        let passed = contains_ordered_feature_sequence(ride_steps, sequence);
+        results.push(ExpectationResult {
+            metric: "ordered ride feature steps",
+            expected: describe_feature_sequence(sequence),
+            observed: json!(passed),
+            observed_text: if passed { "found" } else { "not found" }.to_owned(),
+            passed,
+        });
+    }
+    for sequence in &features.adjacent_steps {
+        let passed = contains_adjacent_feature_sequence(ride_steps, sequence);
+        results.push(ExpectationResult {
+            metric: "adjacent ride feature steps",
+            expected: describe_feature_sequence(sequence),
+            observed: json!(passed),
+            observed_text: if passed { "found" } else { "not found" }.to_owned(),
+            passed,
+        });
+    }
+    Ok(results)
+}
+
+fn valid_feature_step(step: &RideExpectFeatureStep) -> bool {
+    match step {
+        RideExpectFeatureStep::Place(place) => !place.place.is_empty(),
+        RideExpectFeatureStep::PlacePrefix(place) => !place.place_prefix.is_empty(),
+        RideExpectFeatureStep::Chain(_) => true,
+    }
+}
+
+fn contains_ordered_feature_sequence(
+    ride_steps: &[RideStep],
+    feature_sequence: &[RideExpectFeatureStep],
+) -> bool {
+    let mut ride_step_index = 0;
+    for expected_step in feature_sequence {
+        while ride_step_index < ride_steps.len()
+            && !ride_feature_step_matches(&ride_steps[ride_step_index], expected_step)
+        {
+            ride_step_index += 1;
+        }
+        if ride_step_index == ride_steps.len() {
+            return false;
+        }
+        ride_step_index += 1;
+    }
+    true
+}
+
+fn contains_adjacent_feature_sequence(
+    ride_steps: &[RideStep],
+    feature_sequence: &[RideExpectFeatureStep],
+) -> bool {
+    ride_steps.windows(feature_sequence.len()).any(|window| {
+        window
+            .iter()
+            .zip(feature_sequence)
+            .all(|(ride_step, expected_step)| ride_feature_step_matches(ride_step, expected_step))
+    })
+}
+
+fn ride_feature_step_matches(ride_step: &RideStep, expected_step: &RideExpectFeatureStep) -> bool {
+    match (ride_step, expected_step) {
+        (RideStep::Place(place), RideExpectFeatureStep::Place(expected)) => {
+            place.place == expected.place
+        }
+        (RideStep::Place(place), RideExpectFeatureStep::PlacePrefix(expected)) => {
+            place.place.starts_with(&expected.place_prefix)
+        }
+        (RideStep::Chain(chain), RideExpectFeatureStep::Chain(expected)) => {
+            chain.chain == expected.chain
+        }
+        _ => false,
+    }
+}
+
+fn describe_feature_sequence(feature_sequence: &[RideExpectFeatureStep]) -> String {
+    feature_sequence
+        .iter()
+        .map(|step| match step {
+            RideExpectFeatureStep::Place(place) => format!("place {:?}", place.place),
+            RideExpectFeatureStep::PlacePrefix(place) => {
+                format!("place prefix {:?}", place.place_prefix)
+            }
+            RideExpectFeatureStep::Chain(chain) => format!("chain {}", chain.chain),
+        })
+        .collect::<Vec<_>>()
+        .join(" then ")
 }
 
 fn range_expectation(
@@ -3586,6 +4126,16 @@ fn range_expectation(
         observed,
         observed_text,
         passed,
+    }
+}
+
+fn minimum_expectation(metric: &'static str, minimum: f64, observed: f64) -> ExpectationResult {
+    ExpectationResult {
+        metric,
+        expected: format!("at least {minimum:.2}"),
+        observed: json!(observed),
+        observed_text: format!("{observed:.2}"),
+        passed: observed >= minimum,
     }
 }
 
@@ -3765,9 +4315,62 @@ mod replay_snapshot_tests {
 
 #[cfg(test)]
 mod agreement_replay_tests {
-    use super::{replay_with_estimates, speed_at_distance};
+    use super::{
+        agreement_json, check_has_failures, check_response, cli_output, replay_with_estimates,
+        speed_at_distance,
+    };
+    use crate::agreement::{AgreementCheck, AgreementFailure, AgreementReport};
     use theme_park_sim::track::ride_file::RideFile;
     use theme_park_sim_wasm::reports::TestingSample;
+
+    #[test]
+    fn placement_agreement_failure_is_reported_without_failing_json_check() {
+        let agreement = AgreementReport {
+            rows: Vec::new(),
+            failures: vec![AgreementFailure {
+                piece_index: 1,
+                piece_name: "Launch".into(),
+                check: AgreementCheck::PlacementEstimateVsWorstCar,
+                metric: "longitudinal g",
+                reason: "estimate differs from the worst-car measurement".into(),
+                classification: Some(
+                    crate::agreement::PlacementFailureClassification::EstimateError,
+                ),
+                cause: Some("no later piece was occupied at the peak".into()),
+            }],
+            passed: true,
+        };
+
+        let has_failures = check_has_failures(&[], &agreement);
+        let response = check_response(
+            true,
+            vec![serde_json::json!({"agreement": agreement_json(&agreement)})],
+            String::new(),
+            has_failures,
+        );
+        let output = cli_output(response);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stderr.is_empty());
+        let reports: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(reports[0]["agreement"]["passed"], true);
+        assert_eq!(
+            reports[0]["agreement"]["failures"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            reports[0]["agreement"]["placementFailureCounts"]["estimateError"],
+            1
+        );
+        assert_eq!(
+            reports[0]["agreement"]["failures"][0]["classification"],
+            "estimate error"
+        );
+        assert!(reports[0]["agreement"]["failures"][0]["cause"].is_string());
+    }
 
     #[test]
     fn entry_speed_is_interpolated_at_the_piece_boundary_without_extrapolation() {
@@ -3841,9 +4444,124 @@ mod agreement_replay_tests {
 }
 
 #[cfg(test)]
+mod placement_peak_context_tests {
+    use super::PlacementPeakContextResolver;
+    use crate::agreement::ForcePeaks;
+    use theme_park_sim::physics::{CarPieceForcePeakLocations, ForcePeakLocation, ForcePeakValues};
+
+    fn car_peak_locations(
+        piece_index: usize,
+        car_index: usize,
+        distance_m: f64,
+    ) -> CarPieceForcePeakLocations {
+        let location = ForcePeakLocation {
+            piece_index,
+            distance_m,
+            car_index,
+        };
+        CarPieceForcePeakLocations {
+            piece_index,
+            car_index,
+            peaks: ForcePeakValues {
+                minimum_vertical_g: -1.0,
+                maximum_vertical_g: 3.0,
+                maximum_lateral_g: 0.5,
+                maximum_longitudinal_g: 0.8,
+            },
+            minimum_vertical_g: vec![location],
+            maximum_vertical_g: vec![location],
+            maximum_lateral_g: vec![location],
+            maximum_longitudinal_g: vec![location],
+        }
+    }
+
+    #[test]
+    fn peak_context_uses_train_spacing_and_wraps_closed_track_positions() {
+        let measured = ForcePeaks {
+            minimum_vertical_g: -1.0,
+            maximum_vertical_g: 3.0,
+            maximum_lateral_g: 0.5,
+            maximum_longitudinal_g: 0.8,
+        };
+        let piece_starts = [0.0, 10.0, 20.0, 30.0];
+        let downstream_peak_locations = [car_peak_locations(1, 2, 18.0)];
+        let downstream = PlacementPeakContextResolver::new(
+            &downstream_peak_locations,
+            2.0,
+            3,
+            &piece_starts,
+            40.0,
+        )
+        .for_piece(1, Some(measured));
+        assert_eq!(
+            downstream.maximum_longitudinal_g.unwrap().later_piece_index,
+            Some(2)
+        );
+
+        let wrapped_peak_locations = [car_peak_locations(1, 3, 18.0)];
+        let wrapped =
+            PlacementPeakContextResolver::new(&wrapped_peak_locations, 8.0, 4, &piece_starts, 40.0)
+                .for_piece(1, Some(measured));
+        let wrapped_context = wrapped.maximum_longitudinal_g.unwrap();
+        assert_eq!(wrapped_context.later_piece_index, Some(3));
+        assert_eq!(wrapped_context.later_car_index, Some(1));
+
+        let no_later_peak_locations = [car_peak_locations(2, 0, 25.0)];
+        let no_later_piece = PlacementPeakContextResolver::new(
+            &no_later_peak_locations,
+            4.0,
+            2,
+            &piece_starts,
+            40.0,
+        )
+        .for_piece(2, Some(measured));
+        assert_eq!(
+            no_later_piece
+                .maximum_longitudinal_g
+                .unwrap()
+                .later_piece_index,
+            None
+        );
+    }
+}
+
+#[cfg(test)]
 mod expectation_tests {
     use super::*;
     use theme_park_sim::track::ride_file::RideExpect;
+
+    #[test]
+    fn piece_prefix_groups_and_after_expectations_preserve_their_quantifiers() {
+        let ride: RideFile =
+            serde_json::from_str(include_str!("../../../content/rides/briar-blitz.ride.json"))
+                .unwrap();
+        let circuit = theme_park_sim::physics::demo_circuit();
+        let features = ride.expect.as_ref().unwrap().features.as_ref().unwrap();
+
+        let results = evaluate_feature_expectations(&ride.steps, features, &circuit).unwrap();
+        assert!(results.iter().all(|result| result.passed));
+        assert!(
+            results
+                .iter()
+                .any(|result| result.metric == "grouped ride feature count")
+        );
+        assert!(
+            results
+                .iter()
+                .any(|result| result.metric == "ride feature prefix ordering")
+        );
+
+        let mut failing_features = features.clone();
+        failing_features.piece_prefixes_after[0].after =
+            serde_json::from_value(serde_json::json!({"place": "BankedTurnStandalone"})).unwrap();
+        let failing_results =
+            evaluate_feature_expectations(&ride.steps, &failing_features, &circuit).unwrap();
+        assert!(
+            failing_results.iter().any(|result| {
+                result.metric == "ride feature prefix ordering" && !result.passed
+            })
+        );
+    }
 
     #[test]
     fn sustained_expectations_ignore_short_peak_stats_but_check_held_force() {
@@ -3851,7 +4569,7 @@ mod expectation_tests {
             "../../../content/rides/horizon-hawk.ride.json"
         ))
         .unwrap();
-        let (base_test_run, _) = test_ride(&ride).unwrap();
+        let (base_test_run, _, _, circuit) = test_ride_with_browser_estimates(&ride).unwrap();
         let base_sustained = base_test_run.sustained_force_peaks();
         let maximum_vertical_g = base_sustained.maximum_vertical_g.unwrap();
         let minimum_vertical_g = base_sustained.minimum_vertical_g.unwrap();
@@ -3880,14 +4598,18 @@ mod expectation_tests {
             ..RideExpect::default()
         });
 
-        assert!(check_expectations(&ride, &test_run).is_empty());
+        assert!(
+            check_expectations(&ride, &test_run, &circuit)
+                .unwrap()
+                .is_empty()
+        );
 
         let expect = ride.expect.as_mut().unwrap();
         expect.sustained_max_vertical_g =
             Some([maximum_vertical_g + 0.1, maximum_vertical_g + 0.2]);
         expect.sustained_min_vertical_g =
             Some([minimum_vertical_g - 0.2, minimum_vertical_g - 0.1]);
-        let failures = check_expectations(&ride, &test_run);
+        let failures = check_expectations(&ride, &test_run, &circuit).unwrap();
         assert_eq!(failures.len(), 2);
         assert!(failures[0].starts_with("expectation maximum vertical g expected"));
         assert!(failures[1].starts_with("expectation sustained minimum vertical g expected"));

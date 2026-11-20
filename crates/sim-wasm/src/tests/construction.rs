@@ -221,7 +221,7 @@ fn construction_force_preview_reports_launch_capability_and_estimated_force() {
     assert_eq!(launch["maximumSpeed"], track[1]["launchMaximumSpeed"]);
     assert!(launch["peakLongitudinalG"].as_f64().unwrap() > 0.0);
     let launch_start = simulation.construction.as_ref().unwrap().pieces()[0].length();
-    let peak = preview["samples"]
+    let peak = preview["forceEnvelopeSamples"]
         .as_array()
         .unwrap()
         .iter()
@@ -394,6 +394,15 @@ fn headless_player_ride_test_matches_the_animated_builder_test() {
     let animated_report: Value =
         serde_json::from_str(&animated.construction_test_report_json()).unwrap();
     assert!(finite_ratings(&animated_report));
+    let piece_force_peaks = animated_report["pieceForcePeaks"].as_array().unwrap();
+    assert!(!piece_force_peaks.is_empty());
+    assert_eq!(
+        piece_force_peaks.len(),
+        animated.park.construction.as_ref().unwrap().pieces().len()
+    );
+    assert_eq!(piece_force_peaks[0]["pieceIndex"], 0);
+    assert!(piece_force_peaks[0]["frontCar"].is_object());
+    assert!(piece_force_peaks[0]["worstCar"].is_object());
     assert_eq!(ride_info(&headless, "player")["report"], animated_report);
 }
 

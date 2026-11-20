@@ -54,7 +54,7 @@ Statistics:
   2 TurnSmallStandalone           1.17             —        — car 0 v+/- 1.00/1.00 g lat 0.01 g long 0.01 g airtime:weak vertical:weak lateral:fine longitudinal:fine stalled
   3 Straight                         —             —        —                    —  stalled
   4 TurnSmallStandalone              —             —        —                    —  stalled
-  5 TurnSmallStandalone              —             —        —                    —  stalled
+  5 TurnSmallStandalone              —             —        — car 0 v+/- 1.00/1.00 g lat 0.03 g long 0.00 g airtime:weak vertical:weak lateral:fine longitudinal:fine stalled
 Measured force peaks by piece and car (one-metre samples):
 # piece car vertical+/-_g lateral_g longitudinal_g
   1 TurnSmallStandalone      car  0    1.00/1.00      0.03           0.01

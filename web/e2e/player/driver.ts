@@ -153,6 +153,14 @@ export async function flattenTerrainTiles(page: Page, tiles: readonly { x: numbe
         message: `flatten terrain tile (${tile.x}, ${tile.y}) to height ${tile.height}`,
       }).toBeGreaterThan(previousUpdates);
       await expect(status).toHaveText("Terrain updated");
+      const [updatedPoint] = await targetTiles(page, [{ ...tile, z: (tile.height - 1) / 4 }], "terrain");
+      const updatedTerrain = await page.evaluate((position) => window.gameTest.pickSurface(position.x, position.y), updatedPoint);
+      expect(updatedTerrain, `terrain tile (${tile.x}, ${tile.y}) height`).toMatchObject({
+        kind: "terrain",
+        x: tile.x,
+        y: tile.y,
+        height: tile.height,
+      });
     }
   } finally {
     await status.evaluate((element) => {

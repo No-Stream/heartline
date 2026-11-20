@@ -872,8 +872,6 @@ mod tests {
         RideStation, RideStep,
     };
 
-    const CIRCUITS: &str = include_str!("../../../web/e2e/player/circuits.txt");
-
     #[test]
     fn start_uses_the_workers_coordinate_scaling() {
         let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
@@ -1337,7 +1335,9 @@ mod tests {
             ("Velocity Viper", "velocity_viper"),
             ("Briar Blitz", "wooden_twister"),
         ] {
-            let commands = circuit_lines(ride_name);
+            let ride = fixture_ride_file(ride_name);
+            assert_eq!(ride.model, model_key, "{ride_name} ride model");
+            let commands = ride_commands(&ride);
             let expected = benchmark_trace(ride_name, model_key, &commands);
             let actual = session_trace(model_key, &commands);
             assert_eq!(
@@ -1628,21 +1628,33 @@ mod tests {
         assert_eq!(worker_simulation.construction_message(), "Unknown piece");
     }
 
-    fn circuit_lines(ride_name: &str) -> Vec<&'static str> {
-        let header = format!("[{ride_name}]");
-        let mut sections = CIRCUITS.split(&header);
-        sections.next().expect("circuits file has a preamble");
-        sections
-            .next()
-            .unwrap_or_else(|| panic!("{ride_name} circuit missing"))
-            .lines()
-            .map(str::trim)
-            .take_while(|line| !line.starts_with('['))
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    fn fixture_ride_file(ride_name: &str) -> RideFile {
+        let source = match ride_name {
+            "Timber Tumbler" => include_str!("../../../content/rides/timber-tumbler.ride.json"),
+            "Velocity Viper" => include_str!("../../../content/rides/velocity-viper.ride.json"),
+            "Briar Blitz" => include_str!("../../../content/rides/briar-blitz.ride.json"),
+            _ => panic!("unknown journey fixture {ride_name}"),
+        };
+        let ride: RideFile = serde_json::from_str(source)
+            .unwrap_or_else(|error| panic!("{ride_name} ride file is invalid: {error}"));
+        assert_eq!(ride.name, ride_name);
+        ride
+    }
+
+    fn ride_commands(ride: &RideFile) -> Vec<String> {
+        ride.steps
+            .iter()
+            .filter_map(|step| match step {
+                RideStep::Place(place) => Some(place.place.clone()),
+                RideStep::Chain(chain) => {
+                    Some(if chain.chain { "+chain" } else { "-chain" }.into())
+                }
+                RideStep::Close(_) | RideStep::BlockSections(_) => None,
+            })
             .collect()
     }
 
-    fn benchmark_trace(ride_name: &str, model_key: &str, commands: &[&str]) -> Trace {
+    fn benchmark_trace(ride_name: &str, model_key: &str, commands: &[String]) -> Trace {
         let mut simulation = WasmSimulation::new(42, 0, "new".into());
         let mut trace = Vec::new();
         simulation.construction_select(&format!("model:{model_key}"));
@@ -1652,9 +1664,9 @@ mod tests {
 
         let mut piece_count = 1;
         for command in commands {
-            match *command {
+            match command.as_str() {
                 "+chain" | "-chain" => {
-                    simulation.construction_set_chain(*command == "+chain");
+                    simulation.construction_set_chain(command == "+chain");
                     end_speed = None;
                     benchmark_update(&mut simulation, true, &mut end_speed, &mut trace);
                     continue;
@@ -1703,16 +1715,16 @@ mod tests {
         trace
     }
 
-    fn session_trace(model_key: &str, commands: &[&str]) -> Trace {
+    fn session_trace(model_key: &str, commands: &[String]) -> Trace {
         let mut session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
         let mut trace = Vec::new();
         session.start(model_key, 241, 249, 12, 1).unwrap();
         session_update(&mut session, true, &mut trace);
 
         for command in commands {
-            match *command {
+            match command.as_str() {
                 "+chain" | "-chain" => {
-                    session.set_chain(*command == "+chain").unwrap();
+                    session.set_chain(command == "+chain").unwrap();
                     session_update(&mut session, true, &mut trace);
                     continue;
                 }

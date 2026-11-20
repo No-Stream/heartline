@@ -19,10 +19,26 @@ describe("path tool", () => {
     tool.handle({ type: "drag-move", tile: last });
     expect(commands).toEqual([
       { type: "path-preview", start: firstPosition(), end: firstPosition(), kind: "queue", style: 2, requestId: 1 },
-      { type: "path-preview", start: firstPosition(), end: lastPosition(), kind: "queue", style: 2, requestId: 2 },
     ]);
     tool.handle({ type: "drag-end", tile: last });
     expect(commands.at(-1)).toEqual({ type: "path-build", start: firstPosition(), end: lastPosition(), kind: "queue", style: 2, requestId: 1 });
+  });
+
+  it("coalesces outstanding previews and sends a build without waiting for them", () => {
+    const { tool, commands } = setup();
+    tool.build({ kind: "normal", style: 0 });
+    tool.handle({ type: "drag-start", tile: first });
+    tool.handle({ type: "drag-move", tile: first });
+    tool.handle({ type: "drag-move", tile: last });
+    expect(commands).toHaveLength(1);
+    tool.receive({ type: "path-preview", requestId: 1, valid: true, paths: new Int32Array(), message: "old" });
+    expect(tool.state().preview).toBeNull();
+    expect(commands.at(-1)).toEqual({ type: "path-preview", start: firstPosition(), end: lastPosition(), kind: "normal", style: 0, requestId: 3 });
+    tool.handle({ type: "drag-move", tile: first });
+    tool.handle({ type: "drag-end", tile: last });
+    expect(commands.at(-1)).toEqual({ type: "path-build", start: firstPosition(), end: lastPosition(), kind: "normal", style: 0, requestId: 1 });
+    tool.receive({ type: "path-preview", requestId: 3, valid: true, paths: new Int32Array(), message: "old" });
+    expect(commands).toHaveLength(3);
   });
 
   it("places a single tile and removes only a selected path", () => {

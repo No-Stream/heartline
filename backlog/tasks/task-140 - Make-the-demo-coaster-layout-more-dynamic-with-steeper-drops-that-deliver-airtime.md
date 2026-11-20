@@ -23,7 +23,7 @@ Owner playtest 2026-11-18: the demo coaster layout should be more dynamic and re
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-11-18 (branch demo-ride): new demo layout in crates/sim/src/physics/demo_circuit.txt, still the Timber Tumbler (hybrid steel box track on wood, rated as steel); the registry gave no reason to switch.
+2026-11-18 (branch demo-ride): new demo layout (now in content/rides/demo.ride.json), still the Timber Tumbler (hybrid steel box track on wood, rated as steel); the registry gave no reason to switch.
 
 Layout: 45-degree chain lift to 60 m; a 32 m drop at 45 degrees to 28 m (5 m above the ground) at 89 km/h; Ejector hill 16 x 96 m; large banked turn rated 76-97 km/h; stall; large banked turn; fast zero-g roll; Ejector hill 8 x 64 m; a trim brake; a smaller banked turn rated 61-83 km/h; brake run; the old return path to the station (two straights shorter, because the return leg now runs 32 m further west to make room for the trim brake).
 

@@ -14,10 +14,13 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
+use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::BuilderSession;
 
-const CIRCUITS: &str = include_str!("../../../web/e2e/player/circuits.txt");
+const TIMBER_TUMBLER: &str = include_str!("../../../content/rides/timber-tumbler.ride.json");
+const VELOCITY_VIPER: &str = include_str!("../../../content/rides/velocity-viper.ride.json");
+const BRIAR_BLITZ: &str = include_str!("../../../content/rides/briar-blitz.ride.json");
 
 #[derive(Default)]
 struct Timings {
@@ -99,19 +102,15 @@ fn main() {
     }
 }
 
-fn circuit_lines(name: &str) -> Vec<&'static str> {
-    let header = format!("[{name}]");
-    let mut sections = CIRCUITS.split(&header);
-    sections.next().unwrap();
-    let section = sections
-        .next()
-        .unwrap_or_else(|| panic!("{name} circuit missing"));
-    section
-        .lines()
-        .map(str::trim)
-        .take_while(|line| !line.starts_with('['))
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .collect()
+fn ride_file(name: &str) -> RideFile {
+    let json = match name {
+        "Timber Tumbler" => TIMBER_TUMBLER,
+        "Velocity Viper" => VELOCITY_VIPER,
+        "Briar Blitz" => BRIAR_BLITZ,
+        _ => panic!("unknown benchmark ride {name}"),
+    };
+    serde_json::from_str(json)
+        .unwrap_or_else(|error| panic!("invalid ride file for {name}: {error}"))
 }
 
 fn build_with_worker_updates(model_id: &str, name: &str, digest: bool) -> Timings {
@@ -128,57 +127,62 @@ fn build_with_worker_updates(model_id: &str, name: &str, digest: bool) -> Timing
     });
     send_session_construction(&mut session, &mut timings, true);
     let mut piece_count = 1;
-    for piece_name in circuit_lines(name) {
-        match piece_name {
-            "+chain" | "-chain" => {
+    let ride = ride_file(name);
+    for step in &ride.steps {
+        match step {
+            RideStep::Chain(step) => {
                 timings.measure("session: set_chain", || {
-                    session.set_chain(piece_name == "+chain").unwrap();
+                    session.set_chain(step.chain).unwrap();
                 });
                 send_session_construction(&mut session, &mut timings, true);
                 continue;
             }
-            _ => {}
-        }
-        let selection_started_at = Instant::now();
-        let selection = timings.measure("session: select", || {
-            session.select(piece_name, true).unwrap()
-        });
-        timings.record_with("select: speed match", || {
-            serde_json::to_string(&selection.speed_match).unwrap()
-        });
-        timings.record("select: construction_select", &());
-        send_session_construction(&mut session, &mut timings, true);
-        timings
-            .selection_updates
-            .push(selection_started_at.elapsed());
+            RideStep::Place(step) => {
+                let piece_name = step.place.as_str();
+                let selection_started_at = Instant::now();
+                let selection = timings.measure("session: select", || {
+                    session.select(piece_name, true).unwrap()
+                });
+                timings.record_with("select: speed match", || {
+                    serde_json::to_string(&selection.speed_match).unwrap()
+                });
+                timings.record("select: construction_select", &());
+                send_session_construction(&mut session, &mut timings, true);
+                timings
+                    .selection_updates
+                    .push(selection_started_at.elapsed());
 
-        let placement_started_at = Instant::now();
-        timings.measure("session: append_selected", || {
-            session.append_selected().unwrap();
-        });
-        timings.record("append: finish invalidate", &());
-        timings.record("append: construction_append", &());
-        if !session
-            .simulation()
-            .construction_selected()
-            .starts_with("element:")
-        {
-            send_session_construction(&mut session, &mut timings, false);
+                let placement_started_at = Instant::now();
+                timings.measure("session: append_selected", || {
+                    session.append_selected().unwrap();
+                });
+                timings.record("append: finish invalidate", &());
+                timings.record("append: construction_append", &());
+                if !session
+                    .simulation()
+                    .construction_selected()
+                    .starts_with("element:")
+                {
+                    send_session_construction(&mut session, &mut timings, false);
+                }
+                send_world(session.simulation(), &mut timings);
+                send_session_construction(&mut session, &mut timings, true);
+                timings
+                    .placement_updates
+                    .push(placement_started_at.elapsed());
+                piece_count += 1;
+                let track: serde_json::Value =
+                    serde_json::from_str(&session.simulation().construction_track()).unwrap();
+                assert_eq!(
+                    track.as_array().unwrap().len(),
+                    piece_count,
+                    "{name}: {piece_name} was not placed: {}",
+                    session.simulation().construction_message()
+                );
+            }
+            RideStep::Close(step) => assert!(step.close, "{name} has a false close step"),
+            _ => panic!("{name} benchmark does not support this ride step"),
         }
-        send_world(session.simulation(), &mut timings);
-        send_session_construction(&mut session, &mut timings, true);
-        timings
-            .placement_updates
-            .push(placement_started_at.elapsed());
-        piece_count += 1;
-        let track: serde_json::Value =
-            serde_json::from_str(&session.simulation().construction_track()).unwrap();
-        assert_eq!(
-            track.as_array().unwrap().len(),
-            piece_count,
-            "{name}: {piece_name} was not placed: {}",
-            session.simulation().construction_message()
-        );
     }
     if timings.digest.is_some() {
         for _ in 0..3 {

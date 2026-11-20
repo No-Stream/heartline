@@ -38,6 +38,27 @@ export interface RideBlockSectionsStep {
 
 export type RideStep = RidePlaceStep | RideChainStep | RideCloseStep | RideBlockSectionsStep;
 
+export type RideFeatureStep = { readonly place: string } | { readonly placePrefix: string } | { readonly chain: boolean };
+
+export interface RideFeatureExpect {
+  readonly piecePrefixesAtLeast?: Readonly<Record<string, number>>;
+  readonly piecePrefixGroupsAtLeast?: readonly RidePiecePrefixGroup[];
+  readonly heartlinedInversionsAtLeast?: number;
+  readonly piecePrefixesAfter?: readonly RidePiecePrefixAfter[];
+  readonly orderedSteps?: readonly (readonly RideFeatureStep[])[];
+  readonly adjacentSteps?: readonly (readonly RideFeatureStep[])[];
+}
+
+export interface RidePiecePrefixGroup {
+  readonly prefixes: readonly string[];
+  readonly minimum: number;
+}
+
+export interface RidePiecePrefixAfter {
+  readonly prefix: string;
+  readonly after: RideFeatureStep;
+}
+
 export interface RideExpect {
   readonly excitement?: readonly [number, number];
   readonly sustainedMaxVerticalG?: readonly [number, number];
@@ -45,6 +66,13 @@ export interface RideExpect {
   readonly maxLateralG?: number;
   readonly inversions?: number;
   readonly airtimeMomentsAtLeast?: number;
+  readonly withinComfortableForceLimits?: boolean;
+  readonly inversionsAtLeast?: number;
+  readonly launches?: number;
+  readonly biggestDropAtLeast?: number;
+  readonly maxSpeedAtLeast?: number;
+  readonly invertedSeconds?: number;
+  readonly features?: RideFeatureExpect;
 }
 
 export interface RideFile {

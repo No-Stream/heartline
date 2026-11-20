@@ -24,6 +24,7 @@ export default defineConfig({
   projects: [
     {
       name: "feature",
+      testMatch: "**/*.spec.ts",
       testIgnore: ["**/*.journey.spec.ts", "**/smoothness.spec.ts", "**/*.ride.spec.ts"],
       workers: process.env.THEME_PARK_PLAYWRIGHT_DOCKER === "1" ? 1 : 2,
     },
@@ -39,6 +40,7 @@ export default defineConfig({
       name: "rides",
       testMatch: "**/*.ride.spec.ts",
       workers: 1,
+      snapshotPathTemplate: "{testDir}/journeys/velocity-viper.journey.spec.ts-snapshots/{arg}{-platform}{ext}",
       use: { viewport: { width: 1280, height: 720 } },
     },
     {

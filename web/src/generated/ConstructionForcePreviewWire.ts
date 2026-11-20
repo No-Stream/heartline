@@ -2,6 +2,7 @@
 import type { ConstructionForceLimitsWire } from "./ConstructionForceLimitsWire";
 import type { ConstructionLastPlacedForceWire } from "./ConstructionLastPlacedForceWire";
 import type { ConstructionLaunchEstimateWire } from "./ConstructionLaunchEstimateWire";
+import type { PieceForcePeaksReport } from "./PieceForcePeaksReport";
 import type { TestingSample } from "./TestingSample";
 
-export type ConstructionForcePreviewWire = { samples: Array<TestingSample>, completed: boolean, status: string, lastPlaced: ConstructionLastPlacedForceWire | null, launches: Array<ConstructionLaunchEstimateWire>, limits: ConstructionForceLimitsWire, };
+export type ConstructionForcePreviewWire = { samples: Array<TestingSample>, forceEnvelopeSamples: Array<TestingSample>, pieceForcePeaks: Array<PieceForcePeaksReport>, completed: boolean, status: string, lastPlaced: ConstructionLastPlacedForceWire | null, launches: Array<ConstructionLaunchEstimateWire>, limits: ConstructionForceLimitsWire, };

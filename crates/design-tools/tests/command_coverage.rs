@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use theme_park_design_tools::run_cli;
+use theme_park_design_tools::{run_cli, run_cli_with_status};
 
 static NEXT_TEMP_FILE: AtomicUsize = AtomicUsize::new(0);
 
@@ -504,11 +504,58 @@ fn check_json_exposes_worker_estimates_and_raw_agreement_values() {
     )
     .unwrap();
 
-    let reply = run_cli(&["check".into(), ride.path().into(), "--json".into()], "").unwrap();
-    let checks: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    let output = run_cli_with_status(&["check".into(), ride.path().into(), "--json".into()], "");
+    assert_eq!(
+        output.exit_code, 1,
+        "stdout: {}\nstderr: {}",
+        output.stdout, output.stderr
+    );
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    let checks: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(
+        checks[0]["agreementGate"],
+        "enabled; finished-track agreement failures exit nonzero"
+    );
+    assert!(
+        checks[0]["expectationFailures"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(checks[0]["agreement"]["passed"], false);
+    let agreement = &checks[0]["agreement"];
+    assert!(
+        agreement["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| {
+                failure["check"] == "FinishedEstimateVsFrontCar"
+                    && failure["reason"].as_str().unwrap().contains("unavailable")
+            })
+    );
     let browser_estimates = checks[0]["browserEstimates"].as_array().unwrap();
     assert_eq!(browser_estimates.len(), 5);
     assert_eq!(browser_estimates[0]["stepIndex"], 1);
+    assert_eq!(
+        browser_estimates.last().unwrap()["selection"]["candidateForcePreview"]["status"],
+        "stalled"
+    );
+    let estimate_error_failures = agreement["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|failure| {
+            failure["check"] == "PlacementEstimateVsWorstCar"
+                && failure["classification"] == "estimate error"
+        })
+        .collect::<Vec<_>>();
+    assert!(!estimate_error_failures.is_empty());
+    assert!(estimate_error_failures.iter().all(|failure| {
+        failure["cause"]
+            .as_str()
+            .is_some_and(|cause| !cause.is_empty())
+    }));
     for stage in ["selection", "placement"] {
         let snapshot = &browser_estimates[0][stage];
         assert_eq!(snapshot["selected"], "TurnSmallStandalone");

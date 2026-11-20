@@ -33,6 +33,19 @@ pub struct TestSample {
     pub piece_index: usize,
 }
 
+/// Per-metre force envelope across the cars in a construction preview.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PreviewForceSample {
+    pub distance: f64,
+    pub speed: f64,
+    pub minimum_vertical_g: f64,
+    pub maximum_vertical_g: f64,
+    pub lateral_g: f64,
+    pub longitudinal_g: f64,
+    pub force_limit_exceeded: [bool; 3],
+    pub piece_index: usize,
+}
+
 /// Force peaks for one piece, with lateral and longitudinal values reported as magnitudes.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ForcePeakValues {
@@ -71,6 +84,18 @@ pub struct CarPieceSustainedForcePeaks {
 pub(crate) struct CandidateForcePeakSummary {
     pub(crate) force: ForcePeakValues,
     pub(crate) sustained: SustainedForcePeaks,
+}
+
+/// Filtered force peaks and every sampled location attaining them for one car and piece.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CarPieceForcePeakLocations {
+    pub piece_index: usize,
+    pub car_index: usize,
+    pub peaks: ForcePeakValues,
+    pub minimum_vertical_g: Vec<ForcePeakLocation>,
+    pub maximum_vertical_g: Vec<ForcePeakLocation>,
+    pub maximum_lateral_g: Vec<ForcePeakLocation>,
+    pub maximum_longitudinal_g: Vec<ForcePeakLocation>,
 }
 
 /// Circuit location of a force peak, using zero-based car and piece indices.
@@ -509,6 +534,29 @@ impl TestRun {
             .collect()
     }
 
+    /// Returns the per-car sample locations that produced each piece force peak.
+    pub fn car_piece_force_peak_locations(&self) -> Vec<CarPieceForcePeakLocations> {
+        let mut locations_by_car_piece = BTreeMap::new();
+        for (car_index, input) in self.rating_inputs.iter().enumerate() {
+            for sample in &input.samples {
+                let location = ForcePeakLocation {
+                    piece_index: sample.piece_index,
+                    distance_m: sample.distance,
+                    car_index,
+                };
+                locations_by_car_piece
+                    .entry((car_index, sample.piece_index))
+                    .and_modify(|peaks: &mut CarPieceForcePeakLocations| {
+                        peaks.include_sample(sample, location);
+                    })
+                    .or_insert_with(|| {
+                        CarPieceForcePeakLocations::from_sample(sample, location, car_index)
+                    });
+            }
+        }
+        locations_by_car_piece.into_values().collect()
+    }
+
     /// Returns the exact recorded locations of each run-wide force peak.
     pub fn force_peak_locations(&self) -> ForcePeakLocations {
         let mut result = ForcePeakLocations::default();
@@ -941,6 +989,56 @@ impl TestRun {
             self.rating_notes.push(format!("The peak sideways force was {:.1} g. Sideways force exceeded the {:.1} g reporting threshold for {:.1} s total during this car's ride. More banking or wider turns can improve comfort.", statistics.max_lateral_g, STRONG_LATERAL_G_THRESHOLD, statistics.strong_lateral_g_seconds));
         }
         self.notes.extend(self.rating_notes.iter().cloned());
+    }
+}
+
+impl CarPieceForcePeakLocations {
+    fn from_sample(sample: &TestSample, location: ForcePeakLocation, car_index: usize) -> Self {
+        Self {
+            piece_index: sample.piece_index,
+            car_index,
+            peaks: ForcePeakValues::from_sample(sample),
+            minimum_vertical_g: vec![location],
+            maximum_vertical_g: vec![location],
+            maximum_lateral_g: vec![location],
+            maximum_longitudinal_g: vec![location],
+        }
+    }
+
+    fn include_sample(&mut self, sample: &TestSample, location: ForcePeakLocation) {
+        let include_or_replace = |locations: &mut Vec<ForcePeakLocation>, replace: bool| {
+            if replace {
+                locations.clear();
+                locations.push(location);
+            } else {
+                locations.push(location);
+            }
+        };
+
+        if sample.vertical_g < self.peaks.minimum_vertical_g {
+            self.peaks.minimum_vertical_g = sample.vertical_g;
+            include_or_replace(&mut self.minimum_vertical_g, true);
+        } else if sample.vertical_g == self.peaks.minimum_vertical_g {
+            include_or_replace(&mut self.minimum_vertical_g, false);
+        }
+        if sample.vertical_g > self.peaks.maximum_vertical_g {
+            self.peaks.maximum_vertical_g = sample.vertical_g;
+            include_or_replace(&mut self.maximum_vertical_g, true);
+        } else if sample.vertical_g == self.peaks.maximum_vertical_g {
+            include_or_replace(&mut self.maximum_vertical_g, false);
+        }
+        if sample.lateral_g.abs() > self.peaks.maximum_lateral_g {
+            self.peaks.maximum_lateral_g = sample.lateral_g.abs();
+            include_or_replace(&mut self.maximum_lateral_g, true);
+        } else if sample.lateral_g.abs() == self.peaks.maximum_lateral_g {
+            include_or_replace(&mut self.maximum_lateral_g, false);
+        }
+        if sample.longitudinal_g.abs() > self.peaks.maximum_longitudinal_g {
+            self.peaks.maximum_longitudinal_g = sample.longitudinal_g.abs();
+            include_or_replace(&mut self.maximum_longitudinal_g, true);
+        } else if sample.longitudinal_g.abs() == self.peaks.maximum_longitudinal_g {
+            include_or_replace(&mut self.maximum_longitudinal_g, false);
+        }
     }
 }
 
@@ -2157,6 +2255,256 @@ fn next_sample_after(distance: f64, circuit_length: f64) -> f64 {
     }
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct ForceSampleProgress {
+    last_reading: Option<CarReading>,
+    last_wrapped_distance: f64,
+    last_unwrapped_distance: f64,
+    next_sample_distance: f64,
+    sampled_metres: Vec<bool>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(super) struct PreviewForcePeakRecorder {
+    circuit_length: f64,
+    open: bool,
+    piece_starts: Vec<f64>,
+    car_progress: Vec<ForceSampleProgress>,
+    samples: Vec<Option<PreviewForceSample>>,
+    metre_violations: Vec<[bool; 3]>,
+}
+
+impl PreviewForcePeakRecorder {
+    pub(super) fn new(circuit: &Circuit, car_count: u8) -> Self {
+        let metre_count = circuit.length.ceil() as usize;
+        Self {
+            circuit_length: circuit.length,
+            open: circuit.open,
+            piece_starts: circuit.starts.clone(),
+            car_progress: (0..car_count)
+                .map(|_| ForceSampleProgress {
+                    last_reading: None,
+                    last_wrapped_distance: 0.0,
+                    last_unwrapped_distance: 0.0,
+                    next_sample_distance: 0.0,
+                    sampled_metres: vec![false; metre_count],
+                })
+                .collect(),
+            samples: vec![None; metre_count],
+            metre_violations: vec![[false; 3]; metre_count],
+        }
+    }
+
+    pub(super) fn rebind_circuit(&mut self, circuit: &Circuit) {
+        let previous_length = self.circuit_length;
+        self.circuit_length = circuit.length;
+        self.open = circuit.open;
+        self.piece_starts.clone_from(&circuit.starts);
+        self.samples
+            .resize(self.circuit_length.ceil() as usize, None);
+        self.metre_violations
+            .resize(self.circuit_length.ceil() as usize, [false; 3]);
+        for progress in &mut self.car_progress {
+            if progress.last_unwrapped_distance >= previous_length - 1e-9
+                && circuit.length > previous_length
+            {
+                progress.next_sample_distance = progress.last_unwrapped_distance.ceil();
+            }
+            progress
+                .sampled_metres
+                .resize(self.circuit_length.ceil() as usize, false);
+        }
+    }
+
+    pub(super) fn record(
+        &mut self,
+        car_index: usize,
+        reading: CarReading,
+        axis_within_limits: [bool; 3],
+    ) {
+        let wrapped_distance = if self.open {
+            reading.distance.clamp(0.0, self.circuit_length)
+        } else {
+            reading.distance.rem_euclid(self.circuit_length)
+        };
+        let metre = (wrapped_distance.floor() as usize).min(self.metre_violations.len() - 1);
+        for (axis, within_limits) in axis_within_limits.into_iter().enumerate() {
+            if !within_limits {
+                self.metre_violations[metre][axis] = true;
+            }
+        }
+
+        let circuit_length = self.circuit_length;
+        let mut samples_to_include = Vec::new();
+        let progress = &mut self.car_progress[car_index];
+        if let Some(previous_reading) = progress.last_reading {
+            let mut delta = wrapped_distance - progress.last_wrapped_distance;
+            if !self.open {
+                if delta < -circuit_length / 2.0 {
+                    delta += circuit_length;
+                } else if delta > circuit_length / 2.0 {
+                    delta -= circuit_length;
+                }
+            }
+            let unwrapped_distance = progress.last_unwrapped_distance + delta;
+            if delta > 0.0 {
+                while progress.next_sample_distance <= unwrapped_distance + 1e-9 {
+                    let fraction = ((progress.next_sample_distance
+                        - progress.last_unwrapped_distance)
+                        / delta)
+                        .clamp(0.0, 1.0);
+                    let distance = if self.open {
+                        progress.next_sample_distance.min(circuit_length)
+                    } else {
+                        progress.next_sample_distance.rem_euclid(circuit_length)
+                    };
+                    let sample_index = if self.open {
+                        (distance.round() as usize).min(progress.sampled_metres.len() - 1)
+                    } else {
+                        distance.round() as usize % progress.sampled_metres.len()
+                    };
+                    if !progress.sampled_metres[sample_index] {
+                        progress.sampled_metres[sample_index] = true;
+                        samples_to_include.push((
+                            distance,
+                            interpolate_reading(previous_reading, reading, fraction),
+                        ));
+                    }
+                    progress.next_sample_distance =
+                        if self.open && progress.next_sample_distance >= circuit_length - 1e-9 {
+                            f64::INFINITY
+                        } else {
+                            next_sample_after(progress.next_sample_distance, circuit_length)
+                        };
+                }
+            }
+            progress.last_wrapped_distance = wrapped_distance;
+            progress.last_unwrapped_distance = unwrapped_distance;
+        } else {
+            progress.next_sample_distance =
+                next_sample_at_or_after(wrapped_distance, circuit_length);
+            if (progress.next_sample_distance - wrapped_distance).abs() < 1e-9 {
+                let sample_index = if self.open {
+                    (wrapped_distance.round() as usize).min(progress.sampled_metres.len() - 1)
+                } else {
+                    wrapped_distance.round() as usize % progress.sampled_metres.len()
+                };
+                if !progress.sampled_metres[sample_index] {
+                    progress.sampled_metres[sample_index] = true;
+                    samples_to_include.push((wrapped_distance, reading));
+                }
+                progress.next_sample_distance =
+                    if self.open && progress.next_sample_distance >= circuit_length - 1e-9 {
+                        f64::INFINITY
+                    } else {
+                        next_sample_after(progress.next_sample_distance, circuit_length)
+                    };
+            }
+            progress.last_wrapped_distance = wrapped_distance;
+            progress.last_unwrapped_distance = wrapped_distance;
+        }
+        progress.last_reading = Some(reading);
+
+        for (distance, sampled_reading) in samples_to_include {
+            let piece_index = self
+                .piece_starts
+                .partition_point(|start| *start <= distance)
+                - 1;
+            let sample_index = if self.open {
+                (distance.round() as usize).min(self.samples.len() - 1)
+            } else {
+                distance.round() as usize % self.samples.len()
+            };
+            let sample = PreviewForceSample {
+                distance,
+                speed: sampled_reading.speed,
+                minimum_vertical_g: sampled_reading.g.vertical,
+                maximum_vertical_g: sampled_reading.g.vertical,
+                lateral_g: sampled_reading.g.lateral,
+                longitudinal_g: sampled_reading.g.longitudinal,
+                force_limit_exceeded: self.metre_violations[sample_index],
+                piece_index,
+            };
+            match &mut self.samples[sample_index] {
+                Some(existing) => merge_preview_force_sample(existing, sample),
+                slot @ None => *slot = Some(sample),
+            }
+        }
+    }
+
+    pub(super) fn force_envelope_samples(&self) -> Vec<PreviewForceSample> {
+        self.samples
+            .iter()
+            .enumerate()
+            .filter_map(|(metre, sample)| {
+                sample.map(|sample| PreviewForceSample {
+                    force_limit_exceeded: self.metre_violations[metre],
+                    ..sample
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn piece_force_peaks(&self, report: &TestRun) -> Vec<super::PieceForcePeaks> {
+        let front_car = report.piece_force_peaks();
+        let mut worst_by_piece = vec![None; self.piece_starts.len()];
+        for sample in self.samples.iter().flatten() {
+            let candidate = ForcePeakValues {
+                minimum_vertical_g: sample.minimum_vertical_g,
+                maximum_vertical_g: sample.maximum_vertical_g,
+                maximum_lateral_g: sample.lateral_g.abs(),
+                maximum_longitudinal_g: sample.longitudinal_g.abs(),
+            };
+            let slot = &mut worst_by_piece[sample.piece_index];
+            *slot = Some(slot.map_or(candidate, |current| merge_force_peaks(current, candidate)));
+        }
+        (0..self.piece_starts.len())
+            .filter_map(|piece_index| {
+                let front = front_car
+                    .iter()
+                    .find(|peaks| peaks.piece_index == piece_index)
+                    .and_then(|peaks| peaks.front_car);
+                let worst = worst_by_piece[piece_index];
+                (front.is_some() || worst.is_some()).then_some(super::PieceForcePeaks {
+                    piece_index,
+                    front_car: front,
+                    worst_car: worst,
+                })
+            })
+            .collect()
+    }
+}
+
+fn merge_preview_force_sample(existing: &mut PreviewForceSample, sample: PreviewForceSample) {
+    existing.minimum_vertical_g = existing.minimum_vertical_g.min(sample.minimum_vertical_g);
+    existing.maximum_vertical_g = existing.maximum_vertical_g.max(sample.maximum_vertical_g);
+    if sample.lateral_g.abs() > existing.lateral_g.abs() {
+        existing.lateral_g = sample.lateral_g;
+    }
+    if sample.longitudinal_g.abs() > existing.longitudinal_g.abs() {
+        existing.longitudinal_g = sample.longitudinal_g;
+    }
+    existing.speed = existing.speed.max(sample.speed);
+    for (exceeded, other_exceeded) in existing
+        .force_limit_exceeded
+        .iter_mut()
+        .zip(sample.force_limit_exceeded)
+    {
+        *exceeded |= other_exceeded;
+    }
+}
+
+fn merge_force_peaks(current: ForcePeakValues, candidate: ForcePeakValues) -> ForcePeakValues {
+    ForcePeakValues {
+        minimum_vertical_g: current.minimum_vertical_g.min(candidate.minimum_vertical_g),
+        maximum_vertical_g: current.maximum_vertical_g.max(candidate.maximum_vertical_g),
+        maximum_lateral_g: current.maximum_lateral_g.max(candidate.maximum_lateral_g),
+        maximum_longitudinal_g: current
+            .maximum_longitudinal_g
+            .max(candidate.maximum_longitudinal_g),
+    }
+}
+
 fn interpolate_reading(first: CarReading, second: CarReading, fraction: f64) -> CarReading {
     let interpolate = |first: f64, second: f64| first + (second - first) * fraction;
     let vertical = interpolate(first.g.vertical, second.g.vertical);
@@ -2388,7 +2736,9 @@ fn count_inversion_passages_on_sampled_run(samples: &[TestSample]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physics::{CarReading, GForces, PhysicsConfig, Term, Train, demo_circuit};
+    use crate::physics::{
+        CarReading, GForces, PhysicsConfig, TIME_STEP, Term, Train, demo_circuit,
+    };
     use crate::track::catalog::unmeasured_catalog;
     use crate::track::{PieceId, PieceKind, TrackState, catalog, hybrid_model};
 
@@ -2448,6 +2798,177 @@ mod tests {
                 maximum_lateral_g: 0.5,
                 maximum_longitudinal_g: 1.1,
             })
+        );
+    }
+
+    #[test]
+    fn car_piece_force_peak_locations_keep_ties_per_axis() {
+        let first_car = report_for_samples(vec![
+            sample_for_piece(2, -0.8, 0.2, 0.3),
+            sample_for_piece(2, -0.9, 0.1, 0.2),
+        ]);
+        let second_car = report_for_samples(vec![
+            sample_for_piece(2, -1.2, -0.7, -0.8),
+            sample_for_piece(2, -1.2, 0.5, 0.8),
+        ]);
+        let mut train_report = first_car.clone();
+        train_report.rating_inputs = vec![
+            first_car.rating_inputs[0].clone(),
+            second_car.rating_inputs[0].clone(),
+        ];
+
+        let peaks = train_report.car_piece_force_peak_locations();
+        let second_car_piece = peaks
+            .iter()
+            .find(|peak| peak.car_index == 1 && peak.piece_index == 2)
+            .unwrap();
+
+        assert_eq!(second_car_piece.peaks.minimum_vertical_g, -1.2);
+        assert_eq!(second_car_piece.minimum_vertical_g.len(), 2);
+        assert_eq!(second_car_piece.maximum_lateral_g.len(), 1);
+        assert_eq!(second_car_piece.maximum_longitudinal_g.len(), 2);
+    }
+
+    #[test]
+    fn preview_force_envelope_keeps_violation_indices_when_sample_slots_are_empty() {
+        let circuit = demo_circuit();
+        let mut sampler = PreviewForcePeakRecorder::new(&circuit, 1);
+        sampler.samples[7] = Some(PreviewForceSample {
+            distance: 7.0,
+            speed: 10.0,
+            minimum_vertical_g: -1.2,
+            maximum_vertical_g: -1.2,
+            lateral_g: 0.0,
+            longitudinal_g: 0.0,
+            force_limit_exceeded: [false; 3],
+            piece_index: circuit.piece_index(7.0),
+        });
+        sampler.metre_violations[7] = [true, false, false];
+
+        let samples = sampler.force_envelope_samples();
+
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].distance, 7.0);
+        assert_eq!(samples[0].force_limit_exceeded, [true, false, false]);
+    }
+
+    #[test]
+    fn preview_force_sampler_keeps_open_endpoint_violations_on_the_last_metre() {
+        let closed_circuit = demo_circuit();
+        let circuit = Circuit::open(closed_circuit.pieces().to_vec())
+            .expect("demo pieces form a connected open track");
+        let mut sampler = PreviewForcePeakRecorder::new(&circuit, 1);
+
+        sampler.record(
+            0,
+            reading(circuit.length(), 10.0, -1.2, 0.0, 0.0),
+            [true, false, true],
+        );
+
+        assert_eq!(sampler.metre_violations[0], [false; 3]);
+        assert_eq!(sampler.metre_violations.last(), Some(&[false, true, false]));
+        let samples = sampler.force_envelope_samples();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].distance, circuit.length());
+        assert_eq!(samples[0].piece_index, circuit.pieces().len() - 1);
+        assert_eq!(samples[0].force_limit_exceeded, [false, true, false]);
+    }
+
+    #[test]
+    fn preview_force_sampler_matches_test_run_per_metre_and_piece_envelopes() {
+        let circuit = demo_circuit();
+        let model = hybrid_model();
+        assert!(model.train.cars > 1);
+        let config = PhysicsConfig {
+            lift_speed: 5.0,
+            ..PhysicsConfig::default()
+        };
+        let mut train = Train::new(&circuit, &model.train, config, 0.0, 2.0);
+        let mut recorders =
+            crate::physics::ConstructionTestRunRecorder::for_circuit_with_train_and_model(
+                &circuit,
+                &model.train,
+                &model,
+            );
+        let mut evaluators: Vec<_> = (0..model.train.cars)
+            .map(|_| ForceEvaluator::new(model.comfortable_force_limits, TIME_STEP))
+            .collect();
+        let mut sampler = PreviewForcePeakRecorder::new(&circuit, model.train.cars);
+        let mut completed = false;
+        for _ in 0..200_000 {
+            train.step(&circuit);
+            let readings = train.take_readings();
+            for frame in &readings {
+                for (car_index, (reading, evaluator)) in
+                    frame.iter().zip(&mut evaluators).enumerate()
+                {
+                    let evaluated = evaluator.update(reading.g);
+                    sampler.record(
+                        car_index,
+                        CarReading {
+                            g: evaluated.filtered,
+                            ..*reading
+                        },
+                        evaluated.axis_within_limits,
+                    );
+                }
+            }
+            recorders.record(&readings, model.name);
+            if train.distance() >= circuit.length() {
+                completed = true;
+                break;
+            }
+        }
+        let expected = recorders.finish(completed, !train.notes().is_empty());
+        let mut expected_samples: Vec<Option<PreviewForceSample>> =
+            vec![None; circuit.length().ceil() as usize];
+        for sample in expected
+            .rating_inputs
+            .iter()
+            .flat_map(|input| &input.samples)
+        {
+            let sample_index = sample.distance.round() as usize % expected_samples.len();
+            let candidate = PreviewForceSample {
+                distance: sample.distance,
+                speed: sample.speed,
+                minimum_vertical_g: sample.vertical_g,
+                maximum_vertical_g: sample.vertical_g,
+                lateral_g: sample.lateral_g,
+                longitudinal_g: sample.longitudinal_g,
+                force_limit_exceeded: sample.force_limit_exceeded,
+                piece_index: sample.piece_index,
+            };
+            if let Some(current) = &mut expected_samples[sample_index] {
+                current.minimum_vertical_g =
+                    current.minimum_vertical_g.min(candidate.minimum_vertical_g);
+                current.maximum_vertical_g =
+                    current.maximum_vertical_g.max(candidate.maximum_vertical_g);
+                if candidate.lateral_g.abs() > current.lateral_g.abs() {
+                    current.lateral_g = candidate.lateral_g;
+                }
+                if candidate.longitudinal_g.abs() > current.longitudinal_g.abs() {
+                    current.longitudinal_g = candidate.longitudinal_g;
+                }
+                current.speed = current.speed.max(candidate.speed);
+                for (exceeded, other_exceeded) in current
+                    .force_limit_exceeded
+                    .iter_mut()
+                    .zip(candidate.force_limit_exceeded)
+                {
+                    *exceeded |= other_exceeded;
+                }
+            } else {
+                expected_samples[sample_index] = Some(candidate);
+            }
+        }
+
+        assert_eq!(
+            sampler.force_envelope_samples(),
+            expected_samples.into_iter().flatten().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            sampler.piece_force_peaks(&expected),
+            expected.piece_force_peaks()
         );
     }
 

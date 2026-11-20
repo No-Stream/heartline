@@ -437,6 +437,7 @@ pub(crate) enum Shape {
     ResolvedBank {
         spec: Arc<crate::track::shaped::ElementSpec>,
     },
+    VirtualStraight { length: f64 },
 }
 impl Shape {
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
@@ -448,12 +449,14 @@ impl Shape {
             Self::SpeedBank { .. } => 15,
             Self::ResolvedBank { .. } => 16,
             Self::ShapedProfile { .. } => 17,
+            Self::VirtualStraight { .. } => 18,
             Self::Profile(_) => 11,
             Self::Roll(_) => 12,
             Self::RolledProfile(_, _) => 13,
         };
         hash.write_u8(tag);
         match self {
+            Self::VirtualStraight { length } => hash.write_f64(*length),
             Self::WaveTurn { bump, peak } => {
                 hash.write_f64(*bump);
                 hash.write_f64(*peak);
@@ -942,6 +945,46 @@ impl Piece {
     /// The roll-rate design rule for rated rolling pieces, in degrees per second.
     pub const MAXIMUM_ROLL_RATE_DEGREES_PER_SECOND: f64 = 200.0;
 
+    /// Builds terminal preview geometry whose integer exit connector is only bookkeeping.
+    /// The preview run-out must remain the final circuit piece because its exact sampled endpoint
+    /// can fall between the track grid positions represented by `TrackState`.
+    pub(crate) fn virtual_tangent_runout(start: TrackState, length: f64) -> Self {
+        assert!(length.is_finite() && length > 0.0);
+        let entry = TrackState {
+            horizontal_curvature: HorizontalCurvature::Straight,
+            vertical_curvature: VerticalCurvature::Straight,
+            ..start
+        };
+        let end_position = entry.position() + entry.tangent() * length;
+        let exit = TrackState {
+            x: (end_position.x / 2.0).round() as i32,
+            y: (end_position.y / 2.0).round() as i32,
+            z: (end_position.z / 2.0).round() as i32,
+            heading: entry.heading,
+            slope: entry.slope,
+            bank: entry.bank,
+            horizontal_curvature: HorizontalCurvature::Straight,
+            vertical_curvature: VerticalCurvature::Straight,
+        };
+        Self {
+            id: PieceId::Straight,
+            name: "Virtual tangent run-out",
+            kind: PieceKind::Track,
+            launch_target_speed: None,
+            inversion: None,
+            heartlining: None,
+            structure_material: None,
+            design_speeds: None,
+            family: None,
+            entry,
+            exit,
+            shape: Shape::VirtualStraight { length },
+            tangent_scale: length,
+            mirrored: false,
+            arc_table: Arc::new(OnceLock::new()),
+        }
+    }
+
     /// Peak roll rate in degrees per second on a rolled hill entered at `entry_speed`, with each car's speed set by
     /// the mean height of an 18 m train of 6 or 12 cars.
     pub fn rolled_hill_peak_roll_rate(&self, entry_speed: f64) -> f64 {
@@ -1195,6 +1238,14 @@ impl Piece {
     }
 
     fn raw(&self, t: f64) -> (Vec3, Vec3, Vec3) {
+        if let Shape::VirtualStraight { length } = self.shape {
+            let velocity = self.entry.tangent() * length;
+            return (
+                self.entry.position() + velocity * t,
+                velocity,
+                Vec3::new(0.0, 0.0, 0.0),
+            );
+        }
         if let Shape::SpeedBank { design_speed } = self.shape {
             return self.speed_turn_raw(design_speed, t);
         }

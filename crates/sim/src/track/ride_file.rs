@@ -1,6 +1,7 @@
 use crate::track::blocks::BlockSectionPlacement;
 use crate::track::shaped::{ElementIntent, ElementSpec};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RideFileFormat {
@@ -104,11 +105,85 @@ pub struct RideExpect {
     pub inversions: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub airtime_moments_at_least: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within_comfortable_force_limits: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inversions_at_least: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launches: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub biggest_drop_at_least: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_speed_at_least: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inverted_seconds: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<RideExpectFeatures>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RideExpectFeatures {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub piece_prefixes_at_least: BTreeMap<String, u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub piece_prefix_groups_at_least: Vec<RideExpectPiecePrefixGroup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heartlined_inversions_at_least: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub piece_prefixes_after: Vec<RideExpectPiecePrefixAfter>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ordered_steps: Vec<Vec<RideExpectFeatureStep>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adjacent_steps: Vec<Vec<RideExpectFeatureStep>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RideExpectPiecePrefixGroup {
+    pub prefixes: Vec<String>,
+    pub minimum: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RideExpectPiecePrefixAfter {
+    pub prefix: String,
+    pub after: RideExpectFeatureStep,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RideExpectFeatureStep {
+    Place(RideExpectPlaceFeatureStep),
+    PlacePrefix(RideExpectPlacePrefixFeatureStep),
+    Chain(RideExpectChainFeatureStep),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RideExpectPlaceFeatureStep {
+    pub place: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RideExpectPlacePrefixFeatureStep {
+    pub place_prefix: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RideExpectChainFeatureStep {
+    pub chain: bool,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RideFile, RideFileFormat, RideHeading, RideShapeStep, RideStep};
+    use super::{
+        RideExpectChainFeatureStep, RideExpectFeatureStep, RideFile, RideFileFormat, RideHeading,
+        RideShapeStep, RideStep,
+    };
     use crate::track::shaped::{
         ElementIntent, ElementSpec, HillSizeHint, ResolvedTurnGeometry, SpeedTurnKnot, TurnSizeHint,
     };
@@ -147,7 +222,21 @@ mod tests {
         "sustainedMinVerticalG": [-1.2, -0.8],
         "maxLateralG": 0.6,
         "inversions": 0,
-        "airtimeMomentsAtLeast": 4
+        "airtimeMomentsAtLeast": 4,
+        "withinComfortableForceLimits": true,
+        "inversionsAtLeast": 2,
+        "launches": 2,
+        "biggestDropAtLeast": 50.0,
+        "maxSpeedAtLeast": 30.0,
+        "invertedSeconds": 0.0,
+        "features": {
+          "piecePrefixesAtLeast": {"FamilyHill": 2},
+          "piecePrefixGroupsAtLeast": [{"prefixes": ["TightTwister", "Twister"], "minimum": 2}],
+          "heartlinedInversionsAtLeast": 2,
+          "piecePrefixesAfter": [{"prefix": "BankedTurnStandalone", "after": {"chain": false}}],
+          "orderedSteps": [[{"chain": true}, {"place": "TurnSmallStandalone"}, {"chain": false}]],
+          "adjacentSteps": [[{"place": "Launch"}, {"place": "LaunchedTopHat"}]]
+        }
       }
     }
     "#;
@@ -161,6 +250,35 @@ mod tests {
         assert!(matches!(ride.steps[0], RideStep::Chain(_)));
         assert!(matches!(ride.steps[1], RideStep::Place(_)));
         assert!(matches!(ride.steps[5], RideStep::BlockSections(_)));
+        assert_eq!(
+            ride.expect
+                .as_ref()
+                .unwrap()
+                .within_comfortable_force_limits,
+            Some(true)
+        );
+        assert_eq!(ride.expect.as_ref().unwrap().inversions_at_least, Some(2));
+        assert_eq!(ride.expect.as_ref().unwrap().launches, Some(2));
+        assert_eq!(
+            ride.expect.as_ref().unwrap().biggest_drop_at_least,
+            Some(50.0)
+        );
+        assert_eq!(ride.expect.as_ref().unwrap().max_speed_at_least, Some(30.0));
+        assert_eq!(ride.expect.as_ref().unwrap().inverted_seconds, Some(0.0));
+        let features = ride.expect.as_ref().unwrap().features.as_ref().unwrap();
+        assert_eq!(features.piece_prefixes_at_least["FamilyHill"], 2);
+        assert_eq!(features.piece_prefix_groups_at_least[0].minimum, 2);
+        assert_eq!(features.heartlined_inversions_at_least, Some(2));
+        assert_eq!(
+            features.piece_prefixes_after[0].prefix,
+            "BankedTurnStandalone"
+        );
+        assert!(matches!(
+            features.piece_prefixes_after[0].after,
+            RideExpectFeatureStep::Chain(RideExpectChainFeatureStep { chain: false })
+        ));
+        assert_eq!(features.ordered_steps.len(), 1);
+        assert_eq!(features.adjacent_steps.len(), 1);
         let serialized_ride = serde_json::to_string(&ride).unwrap();
         assert_eq!(
             serde_json::from_str::<RideFile>(&serialized_ride).unwrap(),

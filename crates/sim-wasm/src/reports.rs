@@ -131,12 +131,41 @@ pub(crate) struct RideStatisticsReport {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TestingReport {
     pub samples: Vec<TestingSample>,
+    pub piece_force_peaks: Vec<PieceForcePeaksReport>,
     pub launches: Vec<LaunchReport>,
     pub notes: Vec<String>,
     pub proximity_events: Vec<ProximityEventReport>,
     pub rating: TestingRating,
     pub breakdown: ScoreBreakdownReport,
     pub statistics: RideStatisticsReport,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PieceForcePeaksReport {
+    pub piece_index: usize,
+    pub front_car: Option<PieceForceValuesReport>,
+    pub worst_car: Option<PieceForceValuesReport>,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PieceForceValuesReport {
+    pub minimum_vertical_g: f64,
+    pub maximum_vertical_g: f64,
+    pub maximum_lateral_g: f64,
+    pub maximum_longitudinal_g: f64,
+}
+
+impl From<theme_park_sim::physics::ForcePeakValues> for PieceForceValuesReport {
+    fn from(peaks: theme_park_sim::physics::ForcePeakValues) -> Self {
+        Self {
+            minimum_vertical_g: peaks.minimum_vertical_g,
+            maximum_vertical_g: peaks.maximum_vertical_g,
+            maximum_lateral_g: peaks.maximum_lateral_g,
+            maximum_longitudinal_g: peaks.maximum_longitudinal_g,
+        }
+    }
 }
 
 /// What the ride info window shows for one coaster: its model, its force limits and its latest test report.
@@ -473,6 +502,16 @@ mod wire_tests {
                 longitudinal_g: 8.0,
                 airtime: true,
                 force_limit_exceeded: [true, false, true],
+            }],
+            piece_force_peaks: vec![PieceForcePeaksReport {
+                piece_index: 2,
+                front_car: Some(PieceForceValuesReport {
+                    minimum_vertical_g: -0.5,
+                    maximum_vertical_g: 3.0,
+                    maximum_lateral_g: 0.7,
+                    maximum_longitudinal_g: 0.4,
+                }),
+                worst_car: None,
             }],
             launches: vec![LaunchReport {
                 piece_index: 4,

@@ -186,5 +186,14 @@
     {
       "close": true
     }
-  ]
+  ],
+  "expect": {
+    "excitement": [8.0, 10.0],
+    "withinComfortableForceLimits": true,
+    "inversionsAtLeast": 2,
+    "airtimeMomentsAtLeast": 4,
+    "features": {
+      "heartlinedInversionsAtLeast": 2
+    }
+  }
 }

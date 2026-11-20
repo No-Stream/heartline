@@ -37,8 +37,31 @@ use super::*;
 use crate::track::construction::{Construction, track_support_obstacles};
 use crate::track::supports::generate_dense_wooden_lattice;
 use crate::track::wooden_twister_model;
-use crate::track::{PieceId, TrackState, catalog, hybrid_model};
+use crate::track::{
+    Bank, CoasterModel, Heading, HorizontalCurvature, PieceId, Slope, TrackState,
+    VerticalCurvature, catalog, hybrid_model,
+};
 use crate::world::{Surface, World};
+
+fn construction_test_run_from_test_start(
+    circuit: &Circuit,
+    model: &CoasterModel,
+    config: PhysicsConfig,
+) -> TestRun {
+    let mut train = Train::new(circuit, &model.train, config, 0.0, 2.0);
+    let mut recorder =
+        ConstructionTestRunRecorder::for_circuit_with_train_and_model(circuit, &model.train, model);
+    let mut completed = false;
+    for _ in 0..200_000 {
+        train.step(circuit);
+        recorder.record(&train.take_readings(), model.name);
+        if train.distance() >= circuit.length() {
+            completed = true;
+            break;
+        }
+    }
+    recorder.finish(completed, !train.notes().is_empty())
+}
 
 #[test]
 fn lift_drives_until_the_last_car_clears_the_crest() {
@@ -241,7 +264,6 @@ fn lead_car_forces_match_recorded_forces_and_do_not_change_state_hash() {
 fn open_track_preview_matches_closed_run_until_the_open_end() {
     let circuit = demo_circuit();
     let model = hybrid_model();
-    let configuration = model.train.clone();
     let config = PhysicsConfig {
         lift_speed: 5.0,
         ..PhysicsConfig::default()
@@ -249,27 +271,22 @@ fn open_track_preview_matches_closed_run_until_the_open_end() {
     let preview =
         preview::preview_at_step(circuit.pieces(), &model, config, 200_000, TIME_STEP).unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
-    let preview = preview.report;
-    let mut run = CoasterRun::new(&circuit, &configuration, &model, config);
-    let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit, "Timber Tumbler"))
-        .unwrap();
-    for sample in &preview.samples {
-        let recorded = outcome.reports[0]
+    let report = construction_test_run_from_test_start(&circuit, &model, config);
+    for sample in &preview.report.samples {
+        let recorded = report
             .samples
             .iter()
             .find(|other| other.distance == sample.distance)
             .unwrap();
         assert_eq!(sample, recorded);
     }
-    assert!(!preview.samples.is_empty());
+    assert!(!preview.report.samples.is_empty());
 }
 
 #[test]
 fn open_track_prefix_matches_closed_run_until_its_end() {
     let circuit = demo_circuit();
     let model = hybrid_model();
-    let configuration = model.train.clone();
     let config = PhysicsConfig {
         lift_speed: 5.0,
         ..PhysicsConfig::default()
@@ -277,20 +294,50 @@ fn open_track_prefix_matches_closed_run_until_its_end() {
     let pieces = &circuit.pieces()[..circuit.pieces().len() - 1];
     let preview = preview::preview_at_step(pieces, &model, config, 200_000, TIME_STEP).unwrap();
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
-    let preview = preview.report;
-    let mut run = CoasterRun::new(&circuit, &configuration, &model, config);
-    let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit, "Timber Tumbler"))
-        .unwrap();
-    for sample in &preview.samples {
-        let recorded = outcome.reports[0]
+    let report = construction_test_run_from_test_start(&circuit, &model, config);
+    for sample in &preview.report.samples {
+        let recorded = report
             .samples
             .iter()
             .find(|other| other.distance == sample.distance)
             .unwrap();
         assert_eq!(sample, recorded);
     }
-    assert!(!preview.samples.is_empty());
+    assert!(!preview.report.samples.is_empty());
+}
+
+#[test]
+fn preview_matches_the_test_run_start_and_worst_car_report() {
+    let circuit = demo_circuit();
+    let model = hybrid_model();
+    let config = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+    let preview = preview_open_track(circuit.pieces(), &model, config).unwrap();
+    let mut train = Train::new(&circuit, &model.train, config, 0.0, 2.0);
+    let mut recorder = ConstructionTestRunRecorder::for_circuit_with_train_and_model(
+        &circuit,
+        &model.train,
+        &model,
+    );
+    let mut completed = false;
+    for _ in 0..200_000 {
+        train.step(&circuit);
+        recorder.record(&train.take_readings(), model.name);
+        if train.distance() >= circuit.length() {
+            completed = true;
+            break;
+        }
+    }
+    let expected = recorder.finish(completed, !train.notes().is_empty());
+
+    assert_eq!(preview.status, PreviewStatus::ReachedEnd);
+    assert_eq!(preview.report.samples.len(), expected.samples.len());
+    for (actual, expected) in preview.report.samples.iter().zip(&expected.samples) {
+        assert_eq!(actual, expected, "sample at {} m", actual.distance);
+    }
+    assert_eq!(preview.piece_force_peaks, expected.piece_force_peaks());
 }
 
 #[test]
@@ -307,14 +354,11 @@ fn approximate_open_preview_stays_close_to_closed_demo_run() {
         config,
     )
     .unwrap();
-    let mut run = CoasterRun::new(&circuit, &model.train, &model, config);
-    let outcome = (0..200_000)
-        .find_map(|_| run.step(&circuit, "Timber Tumbler"))
-        .unwrap();
+    let report = construction_test_run_from_test_start(&circuit, &model, config);
     assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let mut maximum_differences = [0.0_f64; 4];
     for sample in &preview.report.samples {
-        let recorded = outcome.reports[0]
+        let recorded = report
             .samples
             .iter()
             .find(|other| other.distance == sample.distance)
@@ -328,21 +372,17 @@ fn approximate_open_preview_stays_close_to_closed_demo_run() {
             *maximum = maximum.max(difference);
         }
     }
-    eprintln!(
-        "maximum differences [speed m/s, vertical g, lateral g, longitudinal g]: {maximum_differences:?}"
-    );
     assert!(
         maximum_differences[0] < 0.5
             && maximum_differences[1] < 0.3
             && maximum_differences[2] < 0.3
-            // TASK-146: the 50 ms estimate reads 0.36 g more braking than the 200 Hz run inside the zero-g roll.
-            && maximum_differences[3] < 0.4,
+            && maximum_differences[3] < 0.3,
         "maximum differences {maximum_differences:?}"
     );
 }
 
 #[test]
-fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
+fn open_track_preview_accepts_a_short_track_at_the_test_start() {
     let circuit = demo_circuit();
     let model = hybrid_model();
     let preview = preview_open_track(
@@ -354,8 +394,10 @@ fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
         },
     )
     .unwrap();
-    assert_eq!(preview.status, PreviewStatus::Stalled);
+    assert_eq!(preview.status, PreviewStatus::ReachedEnd);
     let preview = preview.report;
+    assert!(preview.completed);
+    assert!(!preview.samples.is_empty());
     assert!(
         preview
             .samples
@@ -364,6 +406,150 @@ fn open_track_preview_stops_at_a_stall_and_accepts_short_track() {
     );
     assert!(preview.furthest_distance < circuit.pieces()[0].length());
     assert!(preview_open_track(&[], &model, PhysicsConfig::default(),).is_none());
+}
+
+#[test]
+fn virtual_runout_preserves_endpoint_pitch_and_bank_until_the_train_clears() {
+    let headings = [
+        Heading::East,
+        Heading::NorthEast,
+        Heading::North,
+        Heading::NorthWest,
+        Heading::West,
+        Heading::SouthWest,
+        Heading::South,
+        Heading::SouthEast,
+    ];
+    let slopes = [
+        Slope::DownSteep,
+        Slope::DownSixty,
+        Slope::DownModerate,
+        Slope::DownGentle,
+        Slope::Level,
+        Slope::UpGentle,
+        Slope::UpModerate,
+        Slope::UpSteep,
+        Slope::UpSixty,
+    ];
+    let banks = [Bank::Right, Bank::Level, Bank::Left, Bank::Inverted];
+
+    for heading in headings {
+        for slope in slopes {
+            for bank in banks {
+                let end = TrackState {
+                    x: 12,
+                    y: -8,
+                    z: 4,
+                    heading,
+                    slope,
+                    bank,
+                    horizontal_curvature: HorizontalCurvature::LeftSmall,
+                    vertical_curvature: VerticalCurvature::Down,
+                };
+                let runout = preview::virtual_tangent_runout(end, 20.0);
+
+                assert_eq!(runout.len(), 1);
+                let piece = &runout[0];
+                assert!(piece.length() >= 20.0);
+                assert_eq!(piece.entry.position(), end.position());
+                assert_eq!(piece.entry.heading, end.heading);
+                assert_eq!(piece.entry.slope, end.slope);
+                assert_eq!(piece.exit.slope, end.slope);
+                assert_eq!(piece.entry.bank, end.bank);
+                assert_eq!(piece.exit.bank, end.bank);
+                assert_eq!(
+                    piece.entry.horizontal_curvature,
+                    HorizontalCurvature::Straight
+                );
+                assert_eq!(
+                    piece.exit.horizontal_curvature,
+                    HorizontalCurvature::Straight
+                );
+                assert_eq!(piece.entry.vertical_curvature, VerticalCurvature::Straight);
+                assert_eq!(piece.exit.vertical_curvature, VerticalCurvature::Straight);
+
+                for distance in [0.0, piece.length() / 2.0, piece.length()] {
+                    let sample = piece.sample(distance);
+                    let expected_position = end.position() + end.tangent() * distance;
+                    assert!((sample.position - expected_position).length() < 1e-9);
+                    assert!((sample.tangent - end.tangent()).length() < 1e-9);
+                    assert!(sample.curvature < 1e-12);
+                    assert!((sample.roll - bank.radians()).abs() < 1e-9);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn runout_preview_cache_matches_fresh_runs_for_sloped_and_banked_open_ends() {
+    let station = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::Station)
+        .unwrap()
+        .clone();
+    let level_to_gentle_up = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::LevelToGentleUp)
+        .unwrap()
+        .at(station.exit)
+        .unwrap();
+    let gentle_up = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::GentleUp)
+        .unwrap()
+        .at(level_to_gentle_up.exit)
+        .unwrap();
+    let bank_left = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::BankLeft)
+        .unwrap()
+        .at(station.exit)
+        .unwrap();
+    let banked_straight_left = catalog()
+        .iter()
+        .find(|piece| piece.id == PieceId::BankedStraightLeft)
+        .unwrap()
+        .at(bank_left.exit)
+        .unwrap();
+    let tracks = [
+        vec![station.clone(), level_to_gentle_up, gentle_up],
+        vec![station, bank_left, banked_straight_left],
+    ];
+    let model = hybrid_model();
+    let config = PhysicsConfig {
+        lift_speed: 8.0,
+        ..PhysicsConfig::default()
+    };
+
+    for track in tracks {
+        let mut cache = PreviewCache::default();
+        let cached = cache.preview(&track, &model, config).unwrap();
+        let snapshot_count = cache.snapshot_count();
+        let repeated = cache.preview(&track, &model, config).unwrap();
+        let fresh = PreviewCache::default()
+            .preview(&track, &model, config)
+            .unwrap();
+
+        assert!(snapshot_count > 0);
+        assert_eq!(cache.snapshot_count(), snapshot_count);
+        assert_eq!(cached.report, repeated.report);
+        assert_eq!(cached.report, fresh.report);
+        assert_eq!(cached.force_envelope_samples, fresh.force_envelope_samples);
+        assert_eq!(cached.piece_force_peaks, fresh.piece_force_peaks);
+        assert!(
+            cached
+                .force_envelope_samples
+                .iter()
+                .all(|sample| sample.distance < cached.report.statistics.track_length)
+        );
+        assert!(
+            cached
+                .piece_force_peaks
+                .iter()
+                .all(|peak| peak.piece_index < track.len())
+        );
+    }
 }
 
 #[test]
@@ -1232,29 +1418,49 @@ fn demo_circuit_is_closed_and_train_readings_can_be_cleared() {
 #[test]
 fn demo_circuit_builds_piece_by_piece_in_the_demo_world() {
     let world = crate::demo_world::demo_world();
-    let mut construction = Construction::new(DEMO_STATION_ENTRY, hybrid_model());
+    let ride: RideFile =
+        serde_json::from_str(include_str!("../../../../content/rides/demo.ride.json"))
+            .expect("demo ride file is valid");
+    let station = TrackState {
+        x: ride.station.x * 2,
+        y: ride.station.y * 2,
+        z: ride.station.z / 2,
+        heading: match ride.station.heading {
+            RideHeading::East => Heading::East,
+            RideHeading::North => Heading::North,
+            RideHeading::West => Heading::West,
+            RideHeading::South => Heading::South,
+        },
+        ..TrackState::origin()
+    };
+    assert_eq!(
+        station, DEMO_STATION_ENTRY,
+        "demo ride starts at its park station"
+    );
+    let model = hybrid_model();
+    assert_eq!(
+        ride.model, model.key,
+        "demo ride uses the park coaster model"
+    );
+    let mut construction = Construction::new(station, model);
     construction
         .append(PieceId::Station, &world, &[])
         .expect("demo station validates");
-    let section = DEMO_CIRCUIT_TEXT.split("[Demo]").nth(1).unwrap();
-    for line in section
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        match line {
-            "+chain" => construction.set_chain(true),
-            "-chain" => construction.set_chain(false),
-            name => {
+    for step in ride.steps {
+        match step {
+            RideStep::Chain(chain) => construction.set_chain(chain.chain),
+            RideStep::Place(place) => {
                 let id = catalog()
                     .iter()
-                    .find(|piece| format!("{:?}", piece.id) == name)
-                    .unwrap()
+                    .find(|piece| format!("{:?}", piece.id) == place.place)
+                    .unwrap_or_else(|| panic!("unknown demo piece {:?}", place.place))
                     .id;
                 construction
                     .append(id, &world, &[])
-                    .unwrap_or_else(|error| panic!("demo piece {name}: {error:?}"));
+                    .unwrap_or_else(|error| panic!("demo piece {}: {error:?}", place.place));
             }
+            RideStep::Close(close) => assert!(close.close, "demo closes with true"),
+            RideStep::BlockSections(_) => {}
         }
     }
     construction.close().expect("demo closes at its station");

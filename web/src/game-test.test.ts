@@ -18,10 +18,10 @@ test("reads the selected piece and construction estimates from the latest state"
     maximumLongitudinalG: 1,
   };
   const forcePreview: NonNullable<ConstructionState["constructionForcePreview"]> = {
-    samples: [], completed: true, status: "reachedEnd", lastPlaced: null, launches: [], limits,
+    samples: [], forceEnvelopeSamples: [], pieceForcePeaks: [], completed: true, status: "reachedEnd", lastPlaced: null, launches: [], limits,
   };
   const candidateForcePreview: NonNullable<ConstructionState["candidateForcePreview"]> = {
-    status: "reachedEnd", outerBank: false, entrySpeed: 12, peaks: null, samples: [], limits, ratedSpeed: null,
+    status: "reachedEnd", outerBank: false, entrySpeed: 12, peaks: null, samples: [], forceEnvelopeSamples: [], pieceForcePeaks: [], limits, ratedSpeed: null,
   };
   const speedMatch: NonNullable<ConstructionState["speedMatch"]> = {
     entrySpeed: 12, recommendedId: "FloaterHill16x96", fits: true, variants: [],

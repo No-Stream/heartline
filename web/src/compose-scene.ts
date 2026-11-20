@@ -112,7 +112,7 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
     : noGeometry;
   const testingSamples = overlaySamples(
     input.construction?.testingReport?.samples ?? null,
-    input.construction?.constructionForcePreview?.samples ?? null,
+    input.construction?.constructionForcePreview?.forceEnvelopeSamples ?? null,
   );
   const sprites = [
     ...facilitySprites(input.facilities, input.camera.rotation),
@@ -164,7 +164,7 @@ export function composeScene(input: ComposeSceneInput): SceneComposition {
       ...(input.construction ? buildGhostQuads(input.construction.previewRails, input.construction.previewTies, input.construction.previewSupports, input.construction.canAppend, camera, viewport, trackStyle(atlas), previewWouldTunnel) : []),
       ...(input.construction?.candidateForcePreview && input.activeTool === "coaster"
         ? buildTestingRibbon(
-          input.construction.candidateForcePreview.samples,
+          input.construction.candidateForcePreview.forceEnvelopeSamples,
           "limitCloseness",
           camera,
           viewport,

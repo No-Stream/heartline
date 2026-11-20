@@ -1,10 +1,11 @@
+use super::testing::PreviewForcePeakRecorder;
 use super::{
-    Circuit, ForceEvaluator, PhysicsConfig, TIME_STEP, TestRun, TestRunRecorder, TestSample, Train,
-    candidate_force_peak_summary,
+    CarReading, Circuit, ForceEvaluator, PhysicsConfig, PieceForcePeaks, PreviewForceSample,
+    TIME_STEP, TestRun, TestRunRecorder, TestSample, Train, candidate_force_peak_summary,
 };
 use crate::physics::ForcePeakValues;
 use crate::state_hash::StateHasher;
-use crate::track::{CoasterModel, Piece, PieceKind};
+use crate::track::{CoasterModel, Piece, PieceKind, TrackState};
 
 const PREVIEW_MAX_SECONDS: f64 = 1000.0;
 
@@ -17,6 +18,8 @@ pub enum PreviewStatus {
 
 pub struct TrackPreview {
     pub report: TestRun,
+    pub force_envelope_samples: Vec<PreviewForceSample>,
+    pub piece_force_peaks: Vec<PieceForcePeaks>,
     pub status: PreviewStatus,
     /// Front-car speed interpolated at the exact open-track endpoint when reached.
     pub end_speed_mps: Option<f64>,
@@ -65,6 +68,7 @@ struct PreviewCompletion {
     end_speed_mps: Option<f64>,
     flags: Vec<bool>,
     recorder: Option<TestRunRecorder>,
+    force_peak_recorder: PreviewForcePeakRecorder,
     car_recorders: Option<Vec<TestRunRecorder>>,
     candidate_recorders: Option<Vec<CandidateCarRecorder>>,
     circuit_length: f64,
@@ -104,6 +108,7 @@ struct Snapshot {
     boundary: usize,
     train: Train,
     recorder: TestRunRecorder,
+    force_peak_recorder: PreviewForcePeakRecorder,
     evaluators: Vec<ForceEvaluator>,
     flags: Vec<bool>,
     previous_flags: Vec<Option<(f64, bool)>>,
@@ -238,6 +243,7 @@ impl PreviewCache {
         let (
             mut train,
             mut recorder,
+            mut force_peak_recorder,
             mut evaluators,
             mut flags,
             mut previous_flags,
@@ -259,6 +265,7 @@ impl PreviewCache {
             (
                 train,
                 recorder,
+                snapshot.force_peak_recorder.clone(),
                 snapshot.evaluators.clone(),
                 flags,
                 snapshot.previous_flags.clone(),
@@ -273,6 +280,7 @@ impl PreviewCache {
                 candidate_piece_index
                     .is_none()
                     .then(|| TestRunRecorder::for_circuit_with_model(&circuit, model)),
+                PreviewForcePeakRecorder::new(&circuit, configuration.cars),
                 vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)],
                 vec![false; length.ceil() as usize],
                 vec![None; usize::from(configuration.cars)],
@@ -335,6 +343,7 @@ impl PreviewCache {
                         .as_ref()
                         .expect("track previews retain a recorder")
                         .clone(),
+                    force_peak_recorder: force_peak_recorder.clone(),
                     evaluators: evaluators.clone(),
                     flags: flags.clone(),
                     previous_flags: previous_flags.clone(),
@@ -375,6 +384,14 @@ impl PreviewCache {
                         frame.iter_mut().zip(&mut evaluators).enumerate()
                     {
                         let evaluated = evaluator.update(reading.g);
+                        force_peak_recorder.record(
+                            car_index,
+                            CarReading {
+                                g: evaluated.filtered,
+                                ..*reading
+                            },
+                            evaluated.axis_within_limits,
+                        );
                         let exceeded = !evaluated.within_limits;
                         if let Some(candidate_recorders) = &mut candidate_recorders {
                             let mut filtered_reading = *reading;
@@ -443,6 +460,7 @@ impl PreviewCache {
                     end_speed_mps,
                     flags,
                     recorder,
+                    force_peak_recorder,
                     car_recorders,
                     candidate_recorders,
                     circuit_length: length,
@@ -461,6 +479,7 @@ impl PreviewCache {
                     end_speed_mps: None,
                     flags,
                     recorder,
+                    force_peak_recorder,
                     car_recorders,
                     candidate_recorders,
                     circuit_length: length,
@@ -474,6 +493,7 @@ impl PreviewCache {
             end_speed_mps: None,
             flags,
             recorder,
+            force_peak_recorder,
             car_recorders,
             candidate_recorders,
             circuit_length: length,
@@ -519,15 +539,20 @@ fn preview_output(completion: PreviewCompletion) -> PreviewOutput {
             cars,
         })
     } else {
+        let report = finish_preview(
+            completion
+                .recorder
+                .expect("track previews retain a recorder"),
+            completion.car_recorders,
+            completion.completed,
+            completion.rolled_back,
+        );
+        let force_envelope_samples = completion.force_peak_recorder.force_envelope_samples();
+        let piece_force_peaks = completion.force_peak_recorder.piece_force_peaks(&report);
         PreviewOutput::Track(Box::new(TrackPreview {
-            report: finish_preview(
-                completion
-                    .recorder
-                    .expect("track previews retain a recorder"),
-                completion.car_recorders,
-                completion.completed,
-                completion.rolled_back,
-            ),
+            report,
+            force_envelope_samples,
+            piece_force_peaks,
             status: completion.status,
             end_speed_mps: completion.end_speed_mps,
             force_limit_exceeded: completion.flags,
@@ -730,6 +755,12 @@ fn interpolate_speed_at_distance(
     (previous_speed + fraction * (current_speed - previous_speed)).abs()
 }
 
+/// Builds a straight extension that continues the open connector's tangent and bank.
+pub fn virtual_tangent_runout(end: TrackState, minimum_length: f64) -> Vec<Piece> {
+    assert!(minimum_length.is_finite() && minimum_length > 0.0);
+    vec![Piece::virtual_tangent_runout(end, minimum_length)]
+}
+
 /// Simulate a train from the station to the end of the placed track.
 /// Samples beyond a stall are omitted. A completed report means the front car
 /// reached the end, rather than that the ride completed a circuit.
@@ -786,6 +817,8 @@ pub(super) fn preview_at_step(
             }
             return Some(TrackPreview {
                 report: recorder.finish(true, false),
+                force_envelope_samples: Vec::new(),
+                piece_force_peaks: Vec::new(),
                 status: PreviewStatus::ReachedEnd,
                 end_speed_mps: Some(interpolate_speed_at_distance(
                     previous_distance,
@@ -807,6 +840,8 @@ pub(super) fn preview_at_step(
         if !train.notes().is_empty() || stationary_steps >= (2.0 / time_step) as usize {
             return Some(TrackPreview {
                 report: recorder.finish(false, true),
+                force_envelope_samples: Vec::new(),
+                piece_force_peaks: Vec::new(),
                 status: PreviewStatus::Stalled,
                 end_speed_mps: None,
                 force_limit_exceeded: Vec::new(),
@@ -815,6 +850,8 @@ pub(super) fn preview_at_step(
     }
     Some(TrackPreview {
         report: recorder.finish(false, false),
+        force_envelope_samples: Vec::new(),
+        piece_force_peaks: Vec::new(),
         status: PreviewStatus::TimedOut,
         end_speed_mps: None,
         force_limit_exceeded: Vec::new(),

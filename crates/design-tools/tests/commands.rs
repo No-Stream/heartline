@@ -176,6 +176,101 @@ fn estimate_uses_the_exact_requested_piece_after_a_high_speed_launch() {
 }
 
 #[test]
+fn matched_speed_turn_uses_a_concrete_variant_inside_its_rated_window() {
+    let ride = TempFile::new("matched-speed-turn.ride.json");
+    ride.write(OPEN_RIDE);
+
+    let mut arguments = vec!["ride".into(), ride.path().into(), "--json".into()];
+    arguments.extend(speed_matched_prefix_commands());
+    arguments.push("place SpeedTurnLarge32Left --matched".into());
+    let output = run_cli(&arguments, "").unwrap();
+    let replies: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let matched_turn = replies.as_array().unwrap().last().unwrap();
+    let entry_speed = matched_turn["estimate"]["entrySpeed"].as_f64().unwrap();
+    let window = matched_turn["estimate"]["ratedWindow"].as_array().unwrap();
+
+    assert!(
+        matched_turn["placed"]
+            .as_str()
+            .unwrap()
+            .starts_with("SpeedTurnLarge")
+    );
+    assert_eq!(matched_turn["requested"], "SpeedTurnLarge32Left");
+    assert!(window[0].as_f64().unwrap() <= entry_speed);
+    assert!(entry_speed <= window[1].as_f64().unwrap());
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
+    assert_eq!(
+        saved["steps"].as_array().unwrap().last().unwrap()["place"],
+        matched_turn["placed"]
+    );
+}
+
+#[test]
+fn matched_placement_fails_when_no_variant_window_fits_the_entry_speed() {
+    let ride = TempFile::new("unmatched-speed-turn.ride.json");
+    ride.write(OPEN_RIDE);
+
+    let error = run_cli(
+        &[
+            "ride".into(),
+            ride.path().into(),
+            "place SpeedTurnLarge32Left --matched".into(),
+        ],
+        "",
+    )
+    .unwrap_err();
+
+    assert!(error.contains("no speed-matched variant"), "{error}");
+    assert!(error.contains("2.00 m/s"), "{error}");
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
+    assert!(saved["steps"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn matched_hill_uses_a_concrete_variant_inside_its_rated_window() {
+    let ride = TempFile::new("matched-hill.ride.json");
+    ride.write(OPEN_RIDE);
+
+    let mut arguments = vec!["ride".into(), ride.path().into(), "--json".into()];
+    arguments.extend(speed_matched_prefix_commands());
+    arguments.push("place FloaterHill12x96 --matched".into());
+    let output = run_cli(&arguments, "").unwrap();
+    let replies: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let matched_hill = replies.as_array().unwrap().last().unwrap();
+    let entry_speed = matched_hill["estimate"]["entrySpeed"].as_f64().unwrap();
+    let window = matched_hill["estimate"]["ratedWindow"].as_array().unwrap();
+
+    assert!(
+        matched_hill["placed"]
+            .as_str()
+            .unwrap()
+            .starts_with("FloaterHill")
+    );
+    assert_eq!(matched_hill["requested"], "FloaterHill12x96");
+    assert!(window[0].as_f64().unwrap() <= entry_speed);
+    assert!(entry_speed <= window[1].as_f64().unwrap());
+}
+
+fn speed_matched_prefix_commands() -> Vec<String> {
+    [
+        "chain on",
+        "place LevelToGentleUp",
+        "place GentleUp",
+        "place GentleUp",
+        "place GentleUpToLevel",
+        "chain off",
+        "place LevelToGentleDown",
+        "place GentleDown",
+        "place GentleDown",
+        "place GentleDown",
+        "place GentleDownToLevel",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+#[test]
 fn hill_estimate_labels_the_open_track_estimate_and_closed_form_prediction() {
     let ride = TempFile::new("hill-estimate.ride.json");
     ride.write(OPEN_RIDE);

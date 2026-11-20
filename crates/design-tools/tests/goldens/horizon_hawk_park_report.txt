@@ -4,7 +4,7 @@ Scores: excitement 7.19, intensity 6.32, nausea 0.84
 Expectations: pass
 Force targets: excitement 6.0-8.0 (pass); pullout 3.2; target 3.0 to 3.5 g for 0.5 s (pass); airtime -0.7; target -1.2 to -0.8 g for 0.3 s (fail); lateral 0.2 g / <= 0.6 g (pass)
 Worst pieces: pullout Begin gentle climb; airtime End gentle climb; lateral Large left turn banked for 28 m/s; longitudinal Begin wide 60-degree descent
-Native agreement: fail
+Native agreement: pass
 Trains: 1; seats per train: 32; completed guest rides: 50; unique riders: 9 (56.2% of guests)
 Riders/hour: 150.0 / 1313.6
 Average guest rating: 36.8/100 enjoyment
