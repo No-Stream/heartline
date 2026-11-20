@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn ride_file_shapes_store_numbers_at_six_decimal_precision() {
+    fn ride_file_shapes_store_numbers_at_fixed_decimal_precision() {
         let mut ride: RideFile = serde_json::from_str(VALID_RIDE).unwrap();
         ride.steps.push(RideStep::Shape(RideShapeStep {
             intent: ElementIntent::Hill {
@@ -272,9 +272,23 @@ mod tests {
 
         let serialized = serde_json::to_string(&ride).unwrap();
         let encoded: Value = serde_json::from_str(&serialized).unwrap();
-        for step_index in [6, 7] {
-            assert_six_decimal_precision(&encoded["steps"][step_index]["spec"]);
+        let hill_spec = &encoded["steps"][6]["spec"];
+        for field in [
+            "design_speed_mps",
+            "target_g",
+            "delivered_g",
+            "height_m",
+            "span_m",
+        ] {
+            assert_decimal_precision(&hill_spec[field], 1_000_000.0);
         }
+        assert_decimal_precision(&hill_spec["profile"], 1_000_000_000.0);
+        assert!(
+            (hill_spec["profile"]["points"][0]["angle"].as_f64().unwrap() - 0.456_789_123).abs()
+                < 1e-9,
+            "profile coordinates retain the measured nine-decimal precision"
+        );
+        assert_decimal_precision(&encoded["steps"][7]["spec"], 1_000_000.0);
 
         let decoded: RideFile = serde_json::from_str(&serialized).unwrap();
         let decoded_again: Value = serde_json::to_value(decoded).unwrap();
@@ -353,30 +367,32 @@ mod tests {
         assert!(encoded["steps"][6]["intent"].is_object());
         assert!(encoded["steps"][6]["spec"].to_string().contains("profile"));
         assert!(encoded["steps"][7]["spec"].to_string().contains("knots"));
+        let restored = serde_json::from_value::<RideFile>(encoded.clone()).unwrap();
         assert_eq!(
-            serde_json::from_value::<RideFile>(encoded).unwrap(),
-            shaped_ride
+            serde_json::to_value(restored).unwrap(),
+            encoded,
+            "human-readable shaped specs retain their canonical JSON values"
         );
     }
 
-    fn assert_six_decimal_precision(value: &Value) {
+    fn assert_decimal_precision(value: &Value, decimal_scale: f64) {
         match value {
             Value::Number(number) => {
                 let value = number.as_f64().expect("ride spec numbers are finite");
-                let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
+                let rounded = (value * decimal_scale).round() / decimal_scale;
                 assert!(
                     (value - rounded).abs() <= 1e-9,
-                    "ride spec number {value} has more than six decimal places"
+                    "ride spec number {value} is not at decimal scale {decimal_scale}"
                 );
             }
             Value::Array(values) => {
                 for value in values {
-                    assert_six_decimal_precision(value);
+                    assert_decimal_precision(value, decimal_scale);
                 }
             }
             Value::Object(values) => {
                 for value in values.values() {
-                    assert_six_decimal_precision(value);
+                    assert_decimal_precision(value, decimal_scale);
                 }
             }
             Value::Null | Value::Bool(_) | Value::String(_) => {}
