@@ -641,6 +641,7 @@ fn solve_hill(
         HillSizeHint::Auto => solve_hill_analytically(
             feel,
             strength_g,
+            None,
             maximum_previews,
             provisional,
             preview_seed,
@@ -660,7 +661,15 @@ fn solve_hill(
                     height_m,
                 });
             }
-            Err(SolveRefusal::UnsupportedSizeOverride)
+            solve_hill_analytically(
+                feel,
+                strength_g,
+                Some(height_m),
+                maximum_previews,
+                provisional,
+                preview_seed,
+                context,
+            )
         }
     }
 }
@@ -668,6 +677,7 @@ fn solve_hill(
 fn solve_hill_analytically(
     feel: HillFeel,
     strength_g: Option<f64>,
+    fixed_height_m: Option<f64>,
     maximum_previews: u8,
     provisional: bool,
     preview_seed: Option<&SolvedElement>,
@@ -741,8 +751,14 @@ fn solve_hill_analytically(
     }
 
     while preview_count < maximum_previews {
-        let (profile, height_m, span_m) =
-            hill_profile_for_energy_height(context, design_speed_mps, crest_g)?;
+        let (profile, height_m, span_m) = hill_profile_for_height(
+            context,
+            design_speed_mps,
+            crest_g,
+            fixed_height_m.unwrap_or_else(|| {
+                design_speed_mps.powi(2) / (2.0 * GRAVITY) * HILL_HEIGHT_ENERGY_FRACTION
+            }),
+        )?;
         let mut candidate_spec = ElementSpec::Hill {
             design_speed_mps,
             cars: context.train.cars,
@@ -910,12 +926,12 @@ fn default_hill_strength(feel: HillFeel, model: &CoasterModel) -> f64 {
     }
 }
 
-fn hill_profile_for_energy_height(
+fn hill_profile_for_height(
     context: &SolveContext<'_>,
     design_speed_mps: f64,
     crest_g: f64,
+    target_height_m: f64,
 ) -> Result<(SolvedProfile, f64, f64), SolveRefusal> {
-    let target_height_m = design_speed_mps.powi(2) / (2.0 * GRAVITY) * HILL_HEIGHT_ENERGY_FRACTION;
     let train = OfflineTrain::Coaster {
         cars: context.train.cars,
         length_metres: context.train.length_metres,
@@ -1101,7 +1117,27 @@ fn solve_turn(
         && let ElementSpec::Turn { bank_degrees, .. } = seed.spec
     {
         preview_count = 1;
-        peak_bank = (bank_degrees.to_radians().tan() * 0.9).atan();
+        let preview_lateral_g = seed
+            .calibration_seed
+            .as_ref()
+            .map(|seed| {
+                seed.preview
+                    .cars
+                    .iter()
+                    .map(|car| car.peaks.maximum_lateral_g)
+                    .fold(0.0, f64::max)
+            })
+            .unwrap_or(0.0);
+        let adjustment = if requested_radius_m.is_some()
+            && preview_lateral_g > MAXIMUM_FULLY_BANKED_LATERAL_G
+        {
+            1.1
+        } else {
+            0.9
+        };
+        peak_bank = (bank_degrees.to_radians().tan() * adjustment)
+            .atan()
+            .min(rules.maximum_bank_degrees.to_radians());
     }
     let mut last_headroom_g = f64::NEG_INFINITY;
     let mut last_lateral_g = f64::INFINITY;
@@ -1221,7 +1257,18 @@ fn solve_turn(
         if preview_count >= maximum_previews {
             break;
         }
-        peak_bank = (peak_bank.tan() * 0.9).atan();
+        let adjustment = if requested_radius_m.is_some()
+            && lateral_g > MAXIMUM_FULLY_BANKED_LATERAL_G
+            && headroom_g >= REQUIRED_FORCE_HEADROOM_G
+            && every_car_within_limits
+        {
+            1.1
+        } else {
+            0.9
+        };
+        peak_bank = (peak_bank.tan() * adjustment)
+            .atan()
+            .min(rules.maximum_bank_degrees.to_radians());
     }
     Err(SolveRefusal::InfeasibleTarget {
         target_g: target_vertical_g,
@@ -1342,7 +1389,10 @@ fn turn_exit(entry: TrackState, hand: Hand, radius_m: f64) -> Result<TrackState,
     };
     let half_radius = radius_m / grid_step_m;
     let steps = half_radius.round();
-    if !half_radius.is_finite() || steps < 1.0 || (half_radius - steps).abs() > 1e-8 {
+    if !half_radius.is_finite()
+        || steps < 1.0
+        || !stored_radius_is_grid_aligned(radius_m, grid_step_m)
+    {
         return Err(SolveRefusal::InvalidContext);
     }
     let turn_tiles = match hand {
@@ -1365,6 +1415,11 @@ fn turn_exit(entry: TrackState, hand: Hand, radius_m: f64) -> Result<TrackState,
     exit.horizontal_curvature = HorizontalCurvature::Straight;
     exit.vertical_curvature = VerticalCurvature::Straight;
     Ok(exit)
+}
+
+fn stored_radius_is_grid_aligned(radius_m: f64, grid_step_m: f64) -> bool {
+    let nearest_grid_radius_m = (radius_m / grid_step_m).round() * grid_step_m;
+    (radius_m - nearest_grid_radius_m).abs() <= ELEMENT_SPEC_HALF_DECIMAL_STEP + 1e-9
 }
 
 fn grid_heading_delta(heading: Heading, tiles: i32) -> (i32, i32) {
@@ -1706,18 +1761,7 @@ fn intent_matches_spec(
             } else {
                 2.0 * std::f64::consts::SQRT_2
             };
-            let radius_steps = radius_m / grid_step;
-            let radius_is_grid_aligned = (radius_steps - radius_steps.round()).abs() <= 1e-8;
-            let size_matches = match size {
-                TurnSizeHint::Auto => true,
-                TurnSizeHint::Radius(requested) => {
-                    requested.is_finite()
-                        && *radius_m >= *requested
-                        && *radius_m - *requested < grid_step + 1e-8
-                }
-            };
-            radius_is_grid_aligned
-                && size_matches
+            turn_radius_matches_intent(*size, *radius_m, grid_step, model.shaped_element_rules())
                 && geometry.knots.len() == super::curves::SPEED_TURN_STEPS + 1
                 && geometry.length.is_finite()
                 && geometry.length > 0.0
@@ -1733,6 +1777,35 @@ fn intent_matches_spec(
                 })
         }
         _ => false,
+    }
+}
+
+fn turn_radius_matches_intent(
+    size: TurnSizeHint,
+    radius_m: f64,
+    grid_step_m: f64,
+    rules: ShapedElementRules,
+) -> bool {
+    if !radius_m.is_finite()
+        || radius_m < rules.minimum_turn_radius_m
+        || radius_m > rules.maximum_turn_radius_m
+        || !stored_radius_is_grid_aligned(radius_m, grid_step_m)
+    {
+        return false;
+    }
+    match size {
+        TurnSizeHint::Auto => true,
+        TurnSizeHint::Radius(requested_radius_m) => {
+            if !requested_radius_m.is_finite()
+                || requested_radius_m < rules.minimum_turn_radius_m
+                || requested_radius_m > rules.maximum_turn_radius_m
+            {
+                return false;
+            }
+            let fixed_grid_radius_m =
+                super::curves::grid_radius_at_least(requested_radius_m, grid_step_m);
+            (radius_m - fixed_grid_radius_m).abs() <= ELEMENT_SPEC_HALF_DECIMAL_STEP + 1e-9
+        }
     }
 }
 
@@ -1753,5 +1826,59 @@ mod refusal_tests {
             2.0,
         );
         assert_eq!(result, Err(SolveRefusal::InvalidGeometry));
+    }
+}
+
+#[cfg(test)]
+mod turn_radius_guard_tests {
+    use super::*;
+
+    fn test_rules() -> ShapedElementRules {
+        ShapedElementRules {
+            allow_airtime_hills: true,
+            allow_fully_banked_turns: true,
+            default_floater_g: -0.5,
+            default_strong_floater_g: -0.85,
+            steel_ejector_g: -1.2,
+            wooden_ejector_g: -0.8,
+            hill_pull_g: 2.0,
+            turn_vertical_g: 3.0,
+            maximum_bank_degrees: 75.0,
+            minimum_turn_radius_m: 5.0,
+            maximum_turn_radius_m: 256.0,
+        }
+    }
+
+    #[test]
+    fn explicit_radius_matches_its_grid_value_and_stays_within_model_limits() {
+        let rules = test_rules();
+        let size = TurnSizeHint::Radius(64.0);
+
+        assert!(turn_radius_matches_intent(size, 64.0, 2.0, rules));
+        assert!(!turn_radius_matches_intent(size, 80.0, 2.0, rules));
+        assert!(!turn_radius_matches_intent(size, 62.0, 2.0, rules));
+        assert!(!turn_radius_matches_intent(size, 258.0, 2.0, rules));
+        assert!(!turn_radius_matches_intent(
+            TurnSizeHint::Radius(258.0),
+            256.0,
+            2.0,
+            rules
+        ));
+    }
+
+    #[test]
+    fn rounded_diagonal_radius_still_matches_its_grid() {
+        let diagonal_grid_step_m = 2.0 * std::f64::consts::SQRT_2;
+        let stored_radius_m = round_element_value(diagonal_grid_step_m * 4.0);
+        let diagonal_entry = TrackState {
+            heading: Heading::from_index(1),
+            ..TrackState::origin()
+        };
+
+        assert!(stored_radius_is_grid_aligned(
+            stored_radius_m,
+            diagonal_grid_step_m
+        ));
+        assert!(turn_exit(diagonal_entry, Hand::Left, stored_radius_m).is_ok());
     }
 }

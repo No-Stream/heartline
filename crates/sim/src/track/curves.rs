@@ -896,14 +896,14 @@ pub(crate) fn shaped_speed_turn_geometry(
     speed_loss_fraction: f64,
     radius_grid_step_m: f64,
     minimum_radius_m: f64,
-    requested_radius_m: Option<f64>,
+    fixed_radius_m: Option<f64>,
 ) -> (SpeedTurnGeometry, f64, f64) {
     assert!(design_speed_mps.is_finite() && design_speed_mps > 0.0);
     assert!(peak_bank.is_finite() && peak_bank > 0.0 && peak_bank < std::f64::consts::FRAC_PI_2);
     assert!(speed_loss_fraction.is_finite() && (0.0..1.0).contains(&speed_loss_fraction));
     assert!(radius_grid_step_m.is_finite() && radius_grid_step_m > 0.0);
     assert!(minimum_radius_m.is_finite() && minimum_radius_m > 0.0);
-    assert!(requested_radius_m.is_none_or(|radius| radius.is_finite() && radius > 0.0));
+    assert!(fixed_radius_m.is_none_or(|radius| radius.is_finite() && radius > 0.0));
 
     let integrate_at_bank = |bank_peak: f64| {
         let curvatures: Vec<_> = (0..SPEED_TURN_STEPS)
@@ -948,10 +948,14 @@ pub(crate) fn shaped_speed_turn_geometry(
         raw_radius_m >= minimum_radius_m,
         "shaped turn bank exceeds model radius minimum"
     );
-    let radius_floor_m = minimum_radius_m.max(requested_radius_m.unwrap_or(0.0));
-    let minimum_grid_radius_m = (radius_floor_m / radius_grid_step_m).ceil() * radius_grid_step_m;
-    let radius_m = ((raw_radius_m / radius_grid_step_m).round() * radius_grid_step_m)
-        .max(minimum_grid_radius_m);
+    let minimum_grid_radius_m = grid_radius_at_least(minimum_radius_m, radius_grid_step_m);
+    let radius_m = fixed_radius_m.map_or_else(
+        || {
+            ((raw_radius_m / radius_grid_step_m).round() * radius_grid_step_m)
+                .max(minimum_grid_radius_m)
+        },
+        |requested_radius_m| grid_radius_at_least(requested_radius_m, radius_grid_step_m),
+    );
     let scale = radius_m / raw_radius_m;
     for knot in &mut knots {
         knot.x *= scale;
@@ -963,6 +967,10 @@ pub(crate) fn shaped_speed_turn_geometry(
         knots,
     };
     (geometry, radius_m, resolved_bank)
+}
+
+pub(crate) fn grid_radius_at_least(radius_m: f64, grid_step_m: f64) -> f64 {
+    (radius_m / grid_step_m).ceil() * grid_step_m
 }
 
 pub(crate) fn speed_turn_radius_for_peak_bank(peak_bank: f64, design_speed: f64) -> f64 {

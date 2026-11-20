@@ -451,7 +451,7 @@
 [data-speed-match-variants] button[aria-pressed="true"] { background: var(--teal); color: var(--paper); }
 [data-speed-match-message] { margin: 0.3rem 0; font-size: 0.8rem; }
 
-/* The shaped element inspector shows calibration controls under the selected hill or banked turn. */
+/* The inspector restores the classic airtime hill controls and switches to calibrated shaped controls by selection. */
 .builder__hill { padding: 0.45rem 0; }
 .builder__hill summary {
   display: flex;
@@ -484,7 +484,8 @@
 }
 .builder__hill-body { display: grid; gap: 0.45rem; padding-top: 0.55rem; }
 .builder__hill-steppers { display: grid; gap: 0.3rem; }
-.builder__hill .stepper { grid-template-columns: 4.3rem 1.6rem minmax(0, 1fr) 1.6rem auto; }
+.builder__hill .stepper { grid-template-columns: 4.3rem 1.6rem minmax(0, 1fr) 1.6rem; }
+.builder__shape-controls .stepper { grid-template-columns: 4.3rem 1.6rem minmax(0, 1fr) 1.6rem auto; }
 .builder__hill-suggestion { color: var(--ink-soft); font-size: 0.8rem; font-style: italic; }
 .builder__hill-suggestion:has(span:empty):has(button[hidden]) { display: none; }
 .builder__hill-readout {

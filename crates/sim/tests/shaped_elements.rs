@@ -653,6 +653,40 @@ fn hyper_turns_meet_lateral_and_force_limits_for_four_to_eight_cars() {
 }
 
 #[test]
+fn fixed_height_hill_keeps_requested_size_and_calibrates_airtime() {
+    let requested_height_m = 14.0;
+    let (model, prefix, solved) = solve_with_prefix(
+        ElementIntent::Hill {
+            feel: HillFeel::Floater,
+            strength_g: Some(-0.5),
+            size: HillSizeHint::Height(requested_height_m),
+        },
+        &hyper_model(),
+        4,
+        26.0,
+    )
+    .unwrap_or_else(|refusal| panic!("fixed-height hill refused: {refusal:?}"));
+    let ElementSpec::Hill {
+        height_m, target_g, ..
+    } = &solved.spec
+    else {
+        panic!("hill intent resolved to a turn")
+    };
+    assert!(
+        (*height_m - requested_height_m).abs() <= 0.5,
+        "resolved height {height_m:.3} m differs from requested {requested_height_m:.3} m"
+    );
+    assert_hill_force_contract(
+        &prefix,
+        &model,
+        &solved.piece,
+        26.0,
+        *target_g,
+        "fixed-height hyper floater hill",
+    );
+}
+
+#[test]
 fn shaped_elements_below_twenty_two_metres_per_second_return_typed_refusals() {
     let base_model = hyper_model();
     for cars in 4..=8 {

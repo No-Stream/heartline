@@ -1,13 +1,13 @@
 import { carsPerTrainControl } from "./cars-per-train";
 import { constructionEndSpeed, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
 import { configureLaunchSpeedInput } from "./construction-launch-speed";
-import { candidateForceReadout, shapedElementReadout } from "./candidate-force-readout";
+import { candidateForceReadout, hillReadout, shapedElementReadout } from "./candidate-force-readout";
 import { COASTER_COLOR_NAMES, COASTER_COLORS, COASTER_PARTS, type CoasterPart } from "./coaster-colors";
 import { coasterModelOptionsMarkup } from "./coaster-model-options";
 import { COASTER_MODELS } from "./generated/coaster-models";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
-import { groupedPieces, hillLabel, pieceDisplayName, pieceInGroup, shapedPaletteChoices, speedTurnPalette, steppedPieceSelection, stepperOptions, type PieceStep, type StepAttribute } from "./construction-choices";
+import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, shapedPaletteChoices, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
 import { shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements";
 import type { BlockReport, ConstructionElement, ConstructionHillOption, ConstructionPiece, ConstructionShapedElement, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
@@ -44,6 +44,14 @@ const steppers: readonly { attribute: StepAttribute; label: string; previous: st
   { attribute: "slope", label: "Slope", previous: "Slope down", next: "Slope up", keys: ["slopeDown", "slopeUp"] },
   { attribute: "bank", label: "Bank", previous: "Bank left", next: "Bank right", keys: ["bankLeft", "bankRight"] },
 ];
+const hillSteppers: readonly { attribute: HillAttribute; label: string; previous: string; next: string }[] = [
+  { attribute: "feel", label: "Feel", previous: "Previous hill feel", next: "Next hill feel" },
+  { attribute: "height", label: "Height", previous: "Lower hill", next: "Taller hill" },
+  { attribute: "span", label: "Length", previous: "Shorter hill", next: "Longer hill" },
+  { attribute: "twist", label: "Twist", previous: "Twist left", next: "Twist right" },
+];
+const defaultHillFeel = "ejector";
+const hillSummaryHint = "Sized for the train's speed";
 const hillFeels = ["floater", "strongFloater", "ejector"] as const;
 /** Building comes first; colours and running the ride are settings the player visits when they want them. */
 const builderTabs = [
@@ -120,9 +128,21 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
           </div>
         </section>
         <details class="tool-panel__section builder__hill" data-hill data-shaped-inspector>
-          <summary><span class="builder__hill-title">Shaped element</span><span class="builder__hill-current" data-shape-current>Select a shaped element</span></summary>
+          <summary><span class="builder__hill-title" data-hill-title>Airtime hill</span><span class="builder__hill-current" data-hill-current data-shape-current>${hillSummaryHint}</span></summary>
           <div class="builder__hill-body">
-            <div class="builder__hill-steppers">
+            <div class="builder__hill-steppers" data-hill-steppers>${hillSteppers.map(({ attribute, label, previous, next }) => `
+              <div class="stepper" role="group" aria-label="Hill ${label.toLowerCase()}">
+                <span class="tool-panel__label">${label}</span>
+                <button type="button" data-hill-stepper="${attribute}--1" aria-label="${previous}">−</button>
+                <span class="stepper__value" data-hill-value="${attribute}"></span>
+                <button type="button" data-hill-stepper="${attribute}-1" aria-label="${next}">+</button>
+              </div>`).join("")}
+            </div>
+            <p class="builder__hill-suggestion"><span data-hill-suggestion></span> <button type="button" class="tool-panel__action tool-panel__action--quiet" data-hill-suggested hidden>Use suggested size</button></p>
+            <dl class="builder__hill-readout" data-hill-readout aria-live="polite" aria-label="Predicted ride on this hill"></dl>
+            <p class="builder__hill-message" data-hill-message hidden></p>
+            <p class="tool-panel__hint" data-hill-hint>Place it with ${hint("place")}. The hill stays chosen, so pressing ${hint("place")} again adds another for a camelback run.</p>
+            <div class="builder__hill-steppers builder__shape-controls" data-shape-controls hidden>
               <div class="stepper" role="group" aria-label="Shaped element feel" data-shape-control="feel">
                 <span class="tool-panel__label">Feel</span>
                 <button type="button" data-shape-stepper="feel--1" aria-label="Previous shaped feel">−</button>
@@ -152,9 +172,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
               </div>
             </div>
             <p class="builder__hill-suggestion" data-shape-message hidden></p>
-            <div class="builder__hill-readout builder__shape-readout" data-hill-readout data-shape-readout aria-live="polite" aria-label="Calibrated shaped element"></div>
-            <p class="builder__hill-message" data-hill-message hidden></p>
-            <p class="tool-panel__hint">Place it with ${hint("place")} to add another shaped element.</p>
+            <div class="builder__hill-readout builder__shape-readout" data-shape-readout aria-live="polite" aria-label="Calibrated shaped element" hidden></div>
+            <p class="tool-panel__hint" data-shape-hint hidden>Place it with ${hint("place")} to add another shaped element.</p>
           </div>
         </details>
         <div class="tool-panel__section builder__chain" data-chain-section>
@@ -347,7 +366,13 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const blockSuggestions = element<HTMLUListElement>("[data-block-suggestions]");
   const blockPanelHint = element("[data-block-panel-hint]");
   const choices = element("[data-choices]");
-  const shapeSection = element<HTMLDetailsElement>("[data-shaped-inspector]");
+  const hillSection = element<HTMLDetailsElement>("[data-hill]");
+  const hillReadoutList = element("[data-hill-readout]");
+  const hillMessage = element("[data-hill-message]");
+  const hillSuggested = element<HTMLButtonElement>("[data-hill-suggested]");
+  const hillSteppersElement = element("[data-hill-steppers]");
+  const hillSuggestion = element("[data-hill-suggestion]");
+  const shapeControls = element("[data-shape-controls]");
   const shapeReadoutElement = element("[data-shape-readout]");
   const shapeMessage = element("[data-shape-message]");
   const tabList = element("[data-builder-tabs]");
@@ -369,7 +394,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   let selectedBlock: number | null = null;
   let closed = false;
   let units: Units = "imperial";
-  let shapeWasSelected = false;
+  let hillChosenBefore = false;
+  let inspectorSelection: "classic" | "shaped" | null = null;
 
   const shapeOf = (id: string, slope?: string): PieceShape => {
     const shape = (slope && shapes.get(`${id}\0${slope}`)) ?? shapes.get(id);
@@ -567,6 +593,19 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   for (const { attribute } of steppers) for (const step of [-1, 1] as const) {
     element(`[data-stepper="${attribute}-${step}"]`).addEventListener("click", () => dispatch({ type: "piece-step", attribute, step }));
   }
+  for (const { attribute } of hillSteppers) for (const step of [-1, 1] as const) {
+    element(`[data-hill-stepper="${attribute}-${step}"]`).addEventListener("click", () => {
+      const action = state && steppedHillSelection(state.hillOptions, state.selected, attribute, step);
+      if (action) dispatch(action);
+    });
+  }
+  hillSection.addEventListener("toggle", () => {
+    if (!hillSection.open || !state || state.selectedShape || state.hillOptions.some(({ id }) => id === state!.selected)) return;
+    select(hillToOpen(state.hillOptions, state.pieces, hillChosenBefore ? null : defaultHillFeel));
+  });
+  hillSuggested.addEventListener("click", () => {
+    if (hillSuggested.dataset.piece) select(hillSuggested.dataset.piece, true);
+  });
   element("[data-speed-match-variants]").addEventListener("click", (event) => {
     const button = (event.target as Element).closest<HTMLButtonElement>("[data-speed-match-variant]");
     if (button) {
@@ -782,6 +821,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
 
   function renderSelection(current: ConstructionState, focusInPalette: boolean): void {
     const selectedShape = current.selectedShape;
+    const selectedHill = current.hillOptions.find(({ id }) => id === current.selected);
     const selectedShapedPaletteId = selectedShape ? shapedPaletteId(selectedShape) : null;
     for (const tile of elements.querySelectorAll<HTMLElement>("[data-track-choice]")) tile.setAttribute("aria-pressed", String(tile.dataset.trackChoice === current.selected));
     for (const tile of palette.querySelectorAll<HTMLElement>("[data-piece]")) {
@@ -799,7 +839,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       }
     }
     const speedMatch = element("[data-speed-match]");
-    speedMatch.hidden = !current.speedMatch || !!selectedShape;
+    speedMatch.hidden = !current.speedMatch || !!selectedHill || !!selectedShape;
     const selectedSpeedTurn = current.selected ? speedTurnOf(current.selected) : undefined;
     element("[data-speed-match-message]").textContent = !current.speedMatch ? ""
       : selectedSpeedTurn ? speedTurnMessage(current.speedMatch, current.selected, current.speedTurns, units)
@@ -819,7 +859,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       return button;
     }));
     const selected = current.pieces.find(({ id }) => id === current.selected);
-    const forcePreview = selectedShape ? null : current.candidateForcePreview;
+    const forcePreview = selectedHill || selectedShape ? null : current.candidateForcePreview;
     const candidateForce = element("[data-candidate-force-preview]");
     candidateForce.hidden = !forcePreview;
     candidateForce.replaceChildren(...(forcePreview ? candidateForceReadout(forcePreview, units) : []).map((line) => {
@@ -851,7 +891,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       element("[data-preview-name]").textContent = shapedElementName(selectedShape);
       element("[data-preview-group]").textContent = "Shaped";
     }
-    element("[data-steppers]").hidden = !!selectedShape;
+    element("[data-steppers]").hidden = !!selectedHill || !!selectedShape;
+    renderHill(current, selectedHill, selected?.hillEstimate ?? null, selectedShape);
     renderShapedElement(current, selectedShape);
     const stepPalette = speedTurnPalette(current.pieces, current.speedTurns);
     for (const { attribute } of steppers) {
@@ -883,17 +924,78 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     return `Fully banked ${shape.hand} turn`;
   }
 
+  function renderHill(
+    current: ConstructionState,
+    selectedHill: ConstructionHillOption | undefined,
+    estimate: ConstructionPiece["hillEstimate"],
+    selectedShape: ConstructionShapedElement | null,
+  ): void {
+    const selectedMode = selectedHill ? "classic" : selectedShape ? "shaped" : null;
+    if (selectedMode !== inspectorSelection) hillSection.open = selectedMode !== null;
+    inspectorSelection = selectedMode;
+    hillSection.hidden = closed || current.canClose || (!selectedShape && current.hillOptions.length === 0);
+    const title = element("[data-hill-title]");
+    title.textContent = selectedShape ? "Shaped element" : "Airtime hill";
+    if (selectedHill) hillChosenBefore = true;
+    const classicControls = [hillSteppersElement, hillSuggestion, hillReadoutList, hillMessage, element("[data-hill-hint]")];
+    for (const control of classicControls) control.hidden = !!selectedShape;
+    element("[data-shape-hint]").hidden = !selectedShape;
+    element("[data-hill-current]").textContent = selectedHill ? hillLabel(selectedHill, units)
+      : selectedShape ? shapedElementName(selectedShape) : hillSummaryHint;
+    for (const { attribute } of hillSteppers) {
+      const options = hillStepperOptions(current.hillOptions, current.selected, attribute, units);
+      const value = element(`[data-hill-value="${attribute}"]`);
+      const text = options ? options.values[options.index] : "";
+      if (value.textContent !== text) {
+        value.textContent = text;
+        value.classList.remove("stepper__value--changed");
+        void value.offsetWidth;
+        value.classList.add("stepper__value--changed");
+      }
+      element<HTMLButtonElement>(`[data-hill-stepper="${attribute}--1"]`).disabled = !options || options.index <= 0;
+      element<HTMLButtonElement>(`[data-hill-stepper="${attribute}-1"]`).disabled = !options || options.index >= options.values.length - 1;
+    }
+    const match = selectedHill ? current.speedMatch : null;
+    const suggested = current.hillOptions.find(({ id }) => id === match?.recommendedId);
+    const suggestedSize = suggested ? formatHillSize(suggested.height, suggested.span, units) : "";
+    hillSuggestion.textContent = !match || match.entrySpeed === null ? ""
+      : !suggested ? "No size of this hill fits here."
+        : match.fits === false ? `No size fits the predicted entry speed; ${suggestedSize} is the closest.`
+          : suggested.id === current.selected ? "Sized for the predicted entry speed." : `Suggested for this speed: ${suggestedSize}.`;
+    hillSuggested.hidden = !suggested || suggested.id === current.selected || !!selectedShape;
+    hillSuggested.dataset.piece = suggested?.id ?? "";
+    const readout = estimate ? hillReadout(estimate, units) : { rows: [], message: "" };
+    hillReadoutList.replaceChildren(...readout.rows.map(({ label, value, note, tone }) => {
+      const row = document.createElement("div");
+      row.className = "builder__hill-row";
+      const term = document.createElement("dt");
+      term.className = "tool-panel__label";
+      term.textContent = label;
+      const amount = document.createElement("dd");
+      amount.textContent = value;
+      if (note) {
+        const rating = document.createElement("span");
+        rating.className = "builder__hill-rating";
+        rating.dataset.tone = tone ?? "";
+        rating.textContent = note;
+        amount.append(" ", rating);
+      }
+      row.append(term, amount);
+      return row;
+    }));
+    hillReadoutList.hidden = readout.rows.length === 0 || !!selectedShape;
+    hillMessage.textContent = readout.message;
+    hillMessage.hidden = readout.message === "" || !!selectedShape;
+  }
+
   function renderShapedElement(current: ConstructionState, shape: ConstructionShapedElement | null): void {
-    if (!!shape !== shapeWasSelected) shapeSection.open = !!shape;
-    shapeWasSelected = !!shape;
-    shapeSection.hidden = closed || current.canClose || !shape;
     const feelControl = element<HTMLElement>('[data-shape-control="feel"]');
     const strengthControl = element<HTMLElement>('[data-shape-control="strength"]');
     const sizeControl = element<HTMLElement>('[data-shape-control="size"]');
     const radiusControl = element<HTMLElement>('[data-shape-control="radius"]');
+    shapeControls.hidden = !shape;
     for (const control of [feelControl, strengthControl, sizeControl, radiusControl]) control.hidden = !shape;
     if (!shape) {
-      element("[data-shape-current]").textContent = "Select a shaped element";
       shapeReadoutElement.replaceChildren();
       shapeReadoutElement.hidden = true;
       shapeMessage.textContent = "";
@@ -940,15 +1042,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     }
 
     const readout = shapedElementReadout(shape, units);
-    const refusal = shape.refusal !== null;
-    shapeMessage.textContent = refusal ? readout[0] : "";
-    shapeMessage.hidden = !refusal;
-    shapeReadoutElement.replaceChildren(...(refusal ? [] : readout).map((line) => {
+    shapeMessage.textContent = "";
+    shapeMessage.hidden = true;
+    shapeReadoutElement.replaceChildren(...readout.map((line) => {
       const paragraph = document.createElement("p");
       paragraph.textContent = line;
       return paragraph;
     }));
-    shapeReadoutElement.hidden = refusal || readout.length === 0;
+    shapeReadoutElement.hidden = readout.length === 0;
   }
 
   function renderLaunchPositions(current: ConstructionState): void {
