@@ -1243,7 +1243,7 @@ pub fn hyper_model() -> CoasterModel {
         sloped_turn_slopes: vec![Slope::UpGentle, Slope::DownGentle],
         minimum_radius_metres: 8.0,
         comfortable_force_limits: ComfortableForceLimits {
-            minimum_vertical_g: -1.3,
+            minimum_vertical_g: -1.5,
             maximum_vertical_g: 4.0,
             maximum_lateral_g: 1.2,
             // The heart-line surge over every floater hill and the first drop's crest reaches 1.2 to 1.5 g, so a
