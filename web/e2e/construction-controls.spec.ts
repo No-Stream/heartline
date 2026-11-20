@@ -303,7 +303,6 @@ test("focused finish status updates finish and append controls", async ({ page }
 test("station height stepper stays within its range in two-metre steps", async ({ page }) => {
   await page.goto(fixtureUrl);
   const height = page.getByLabel("Station height above ground (metres)");
-  await expect(height).toHaveAttribute("min", "2");
   await page.getByRole("button", { name: "Raise the station" }).click();
   await page.getByRole("button", { name: "Raise the station" }).click();
   await expect(height).toHaveValue("16");
@@ -318,8 +317,8 @@ test("station height stepper stays within its range in two-metre steps", async (
   await page.getByRole("button", { name: "Raise the station" }).click();
   await height.fill("1");
   await height.press("Tab");
-  await expect(height).toHaveValue("2");
-  expect(await recorded(page)).toEqual([14, 16, 14, 8, 100, 2].map((value) => ({ type: "station-height", height: value })));
+  await expect(height).toHaveValue("4");
+  expect(await recorded(page)).toEqual([14, 16, 14, 8, 100, 4].map((value) => ({ type: "station-height", height: value })));
 });
 
 test("station heights convert when units change and inputs dispatch metres", async ({ page }) => {

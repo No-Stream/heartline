@@ -1128,13 +1128,12 @@ fn solve_turn(
                     .fold(0.0, f64::max)
             })
             .unwrap_or(0.0);
-        let adjustment = if requested_radius_m.is_some()
-            && preview_lateral_g > MAXIMUM_FULLY_BANKED_LATERAL_G
-        {
-            1.1
-        } else {
-            0.9
-        };
+        let adjustment =
+            if requested_radius_m.is_some() && preview_lateral_g > MAXIMUM_FULLY_BANKED_LATERAL_G {
+                1.1
+            } else {
+                0.9
+            };
         peak_bank = (bank_degrees.to_radians().tan() * adjustment)
             .atan()
             .min(rules.maximum_bank_degrees.to_radians());

@@ -38,7 +38,7 @@ const groupNames: Record<string, string> = { straight: "Straight", turn: "Turns"
 const groupPlates: Record<string, string> = { straight: "var(--slate)", turn: "var(--teal)", slope: "var(--mustard)", bank: "var(--coral)", inversion: "var(--coral)", special: "var(--slate)" };
 const blockTrackKindNames: Record<string, string> = { blockBrake: "Brake run", station: "Station", lift: "Lift", launch: "Launch", brake: "Brake", track: "Track" };
 const coasterPartNames: Record<CoasterPart, string> = { track: "Track", supports: "Supports", trains: "Trains" };
-const stationHeight = { minimum: 2, maximum: 100, step: 2, initial: 12 };
+const stationHeight = { minimum: 4, maximum: 100, step: 2, initial: 12 };
 const steppers: readonly { attribute: StepAttribute; label: string; previous: string; next: string; keys: readonly [keyof typeof builderShortcuts, keyof typeof builderShortcuts] }[] = [
   { attribute: "turn", label: "Direction", previous: "Turn left", next: "Turn right", keys: ["turnLeft", "turnRight"] },
   { attribute: "slope", label: "Slope", previous: "Slope down", next: "Slope up", keys: ["slopeDown", "slopeUp"] },
@@ -138,7 +138,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
                 <button type="button" data-hill-stepper="${attribute}-1" aria-label="${next}">+</button>
               </div>`).join("")}
             </div>
-            <p class="builder__hill-suggestion"><span data-hill-suggestion></span> <button type="button" class="tool-panel__action tool-panel__action--quiet" data-hill-suggested hidden>Use suggested size</button></p>
+            <p class="builder__hill-suggestion" data-hill-suggestion-row><span data-hill-suggestion></span> <button type="button" class="tool-panel__action tool-panel__action--quiet" data-hill-suggested hidden>Use suggested size</button></p>
             <dl class="builder__hill-readout" data-hill-readout aria-live="polite" aria-label="Predicted ride on this hill"></dl>
             <p class="builder__hill-message" data-hill-message hidden></p>
             <p class="tool-panel__hint" data-hill-hint>Place it with ${hint("place")}. The hill stays chosen, so pressing ${hint("place")} again adds another for a camelback run.</p>
@@ -372,6 +372,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const hillSuggested = element<HTMLButtonElement>("[data-hill-suggested]");
   const hillSteppersElement = element("[data-hill-steppers]");
   const hillSuggestion = element("[data-hill-suggestion]");
+  const hillSuggestionRow = element("[data-hill-suggestion-row]");
   const shapeControls = element("[data-shape-controls]");
   const shapeReadoutElement = element("[data-shape-readout]");
   const shapeMessage = element("[data-shape-message]");
@@ -937,7 +938,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     const title = element("[data-hill-title]");
     title.textContent = selectedShape ? "Shaped element" : "Airtime hill";
     if (selectedHill) hillChosenBefore = true;
-    const classicControls = [hillSteppersElement, hillSuggestion, hillReadoutList, hillMessage, element("[data-hill-hint]")];
+    const classicControls = [hillSteppersElement, hillSuggestionRow, hillReadoutList, hillMessage, element("[data-hill-hint]")];
     for (const control of classicControls) control.hidden = !!selectedShape;
     element("[data-shape-hint]").hidden = !selectedShape;
     element("[data-hill-current]").textContent = selectedHill ? hillLabel(selectedHill, units)
