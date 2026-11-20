@@ -380,8 +380,17 @@ fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
         &[
             "ride".into(),
             ride.path().into(),
-            "new --model velocity_viper --station 100,100,10,east".into(),
-            "place LaunchLong --launch-speed 16".into(),
+            "new --model hyper --station 241,249,10,north --cars 4".into(),
+            "chain on".into(),
+            "place LevelToGentleUp".into(),
+            "place GentleToSteepUp".into(),
+            "place SteepUp".into(),
+            "place SteepUp".into(),
+            "place SteepToGentleUp".into(),
+            "place GentleUpToLevel".into(),
+            "chain off".into(),
+            "place WideLevelToSixtyDown".into(),
+            "place WideSixtyDownToLevel".into(),
             "place turn left feel=banked radius=64".into(),
         ],
         "",
@@ -389,14 +398,21 @@ fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
     .unwrap();
 
     let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
-    assert_eq!(saved["steps"][1]["intent"]["kind"], "turn");
-    assert_eq!(saved["steps"][1]["intent"]["hand"], "Left");
-    assert_eq!(saved["steps"][1]["spec"]["kind"], "turn");
-    assert!(saved["steps"][1]["spec"]["geometry"]["knots"].is_array());
-    assert_six_decimal_precision(&saved["steps"][1]["spec"]);
+    let shaped_turn = saved["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["intent"]["kind"] == "turn")
+        .unwrap();
+    assert_eq!(shaped_turn["intent"]["kind"], "turn");
+    assert_eq!(shaped_turn["intent"]["hand"], "Left");
+    assert_eq!(shaped_turn["spec"]["kind"], "turn");
+    assert!(shaped_turn["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
+    assert!(shaped_turn["spec"]["geometry"]["knots"].is_array());
+    assert_six_decimal_precision(&shaped_turn["spec"]);
 
     let replay = run_cli(&["ride".into(), ride.path().into(), "state".into()], "").unwrap();
-    assert!(replay.contains("Pieces: 2"), "{replay}");
+    assert!(replay.contains("Pieces: 9"), "{replay}");
 
     run_cli(
         &[
@@ -422,11 +438,11 @@ fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
             resolved_append["command"]["intentJson"].as_str().unwrap()
         )
         .unwrap(),
-        saved["steps"][1]["intent"]
+        shaped_turn["intent"]
     );
     let exported_spec: serde_json::Value =
         serde_json::from_str(resolved_append["command"]["specJson"].as_str().unwrap()).unwrap();
-    let saved_spec = &saved["steps"][1]["spec"];
+    let saved_spec = &shaped_turn["spec"];
     for field in [
         "kind",
         "design_speed_mps",

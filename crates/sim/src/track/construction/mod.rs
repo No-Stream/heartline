@@ -185,6 +185,13 @@ struct ChoicesCache {
     available_choices: Vec<AvailableChoice>,
 }
 
+pub(crate) struct ShapedSolveCacheEntry {
+    pub(crate) cache_key: u64,
+    pub(crate) provisional: bool,
+    pub(crate) result:
+        Result<crate::track::shaped::SolvedElement, crate::track::shaped::SolveRefusal>,
+}
+
 #[derive(Clone)]
 struct ValidationCache {
     world_id: usize,
@@ -229,13 +236,7 @@ pub struct Construction {
     #[serde(skip)]
     force_preview_cache: RefCell<crate::physics::PreviewCache>,
     #[serde(skip)]
-    pub(crate) shaped_solve_cache: RefCell<
-        Option<(
-            u64,
-            bool,
-            Result<crate::track::shaped::SolvedElement, crate::track::shaped::SolveRefusal>,
-        )>,
-    >,
+    pub(crate) shaped_solve_cache: RefCell<Option<ShapedSolveCacheEntry>>,
     /// `state_hash` of the current editable state; every mutation of a hashed field clears it.
     #[serde(skip)]
     state_hash_memo: Cell<Option<u64>>,

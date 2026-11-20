@@ -23,6 +23,7 @@ const wasmMock = vi.hoisted(() => ({
   constructionUndo: vi.fn(),
   constructionDelete: vi.fn(),
   constructionStart: vi.fn(),
+  constructionCanAppend: vi.fn(() => false),
   builderInvalidated: vi.fn(),
   builderSelected: vi.fn(),
   builderEstimate: vi.fn(),
@@ -156,6 +157,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_block_candidates() { return new Float64Array(); }
     construction_placed_ties() { return new Float32Array(); }
     construction_placed_supports() { return new Float32Array(); }
+    construction_can_append() { return wasmMock.constructionCanAppend(); }
     construction_can_close() { return false; }
     construction_test_report_json() { return "null"; }
     construction_can_test() { return false; }
@@ -201,6 +203,7 @@ afterEach(() => {
   wasmMock.constructionUndo.mockReset();
   wasmMock.constructionDelete.mockReset();
   wasmMock.constructionStart.mockReset();
+  wasmMock.constructionCanAppend.mockReset().mockReturnValue(false);
   wasmMock.builderInvalidated.mockReset();
   wasmMock.builderSelected.mockReset();
   wasmMock.builderEstimate.mockReset();

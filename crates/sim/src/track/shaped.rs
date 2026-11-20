@@ -1490,8 +1490,8 @@ impl crate::track::construction::Construction {
             .shaped_solve_cache
             .borrow()
             .as_ref()
-            .filter(|(cached_key, _, _)| *cached_key == cache_key)
-            .map(|(_, cached_provisional, result)| (*cached_provisional, result.clone()));
+            .filter(|cached_entry| cached_entry.cache_key == cache_key)
+            .map(|cached_entry| (cached_entry.provisional, cached_entry.result.clone()));
         if let Some((cached_provisional, result)) = &cached_entry
             && provisional == *cached_provisional
         {
@@ -1518,7 +1518,12 @@ impl crate::track::construction::Construction {
             }
             (false, _) => solve(intent, &mut context),
         };
-        *self.shaped_solve_cache.borrow_mut() = Some((cache_key, provisional, result.clone()));
+        *self.shaped_solve_cache.borrow_mut() =
+            Some(crate::track::construction::ShapedSolveCacheEntry {
+                cache_key,
+                provisional,
+                result: result.clone(),
+            });
         result
     }
 
