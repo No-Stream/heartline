@@ -246,4 +246,4 @@ Thirty-two cases solved and supplied 960 timed samples. Twenty-eight returned ty
 | Velocity Viper | 4/0 | 0/4 | 39.711 |
 | Wooden twister | 9/0 | 0/9 | 76.660 |
 
-The run log is `target/shaped-elements-cold-bench.log`. It used the generated 46,845-row, 56,631,209-byte table and runtime commit `3d3c2e8`; the shared worktree also contained uncommitted physics preview changes when the WASM artifact was built. The performance target was not met, and this measurement does not establish latency for a later clean, committed source snapshot.
+The run log is `target/shaped-elements-cold-bench.log`. It used the generated 46,845-row, 51,510,317-byte table and runtime commit `3d3c2e8`; the shared worktree also contained uncommitted physics preview changes when the WASM artifact was built. The performance target was not met, and this measurement does not establish latency for a later clean, committed source snapshot.
