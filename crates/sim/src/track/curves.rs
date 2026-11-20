@@ -890,6 +890,81 @@ fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
     }
 }
 
+pub(crate) fn shaped_speed_turn_geometry(
+    design_speed_mps: f64,
+    peak_bank: f64,
+    speed_loss_fraction: f64,
+    radius_grid_step_m: f64,
+    minimum_radius_m: f64,
+    requested_radius_m: Option<f64>,
+) -> (SpeedTurnGeometry, f64, f64) {
+    assert!(design_speed_mps.is_finite() && design_speed_mps > 0.0);
+    assert!(peak_bank.is_finite() && peak_bank > 0.0 && peak_bank < std::f64::consts::FRAC_PI_2);
+    assert!(speed_loss_fraction.is_finite() && (0.0..1.0).contains(&speed_loss_fraction));
+    assert!(radius_grid_step_m.is_finite() && radius_grid_step_m > 0.0);
+    assert!(minimum_radius_m.is_finite() && minimum_radius_m > 0.0);
+    assert!(requested_radius_m.is_none_or(|radius| radius.is_finite() && radius > 0.0));
+
+    let integrate_at_bank = |bank_peak: f64| {
+        let curvatures: Vec<_> = (0..SPEED_TURN_STEPS)
+            .map(|index| {
+                let t = (index as f64 + 0.5) / SPEED_TURN_STEPS as f64;
+                let bank = bank_peak * speed_turn_bank_fraction(t);
+                let local_speed = design_speed_mps * (1.0 - speed_loss_fraction * t);
+                let required_curvature = crate::physics::GRAVITY * bank.tan() / local_speed.powi(2);
+                let heart_offset_factor = HEART_HEIGHT_METRES * bank.sin();
+                let discriminant = 1.0 - 4.0 * heart_offset_factor * required_curvature;
+                assert!(
+                    discriminant >= 0.0,
+                    "shaped turn heart-curvature has no real solution"
+                );
+                2.0 * required_curvature / (1.0 + discriminant.sqrt())
+            })
+            .collect();
+        let step = 1.0 / SPEED_TURN_STEPS as f64;
+        let length = std::f64::consts::FRAC_PI_2 / (curvatures.iter().sum::<f64>() * step);
+        let distance = length * step;
+        let (mut x, mut y, mut heading) = (0.0, 0.0, 0.0);
+        let mut knots = Vec::with_capacity(SPEED_TURN_STEPS + 1);
+        knots.push(SpeedTurnKnot { x, y, heading });
+        for curvature in curvatures {
+            let angle = curvature * distance;
+            let midpoint = heading + angle / 2.0;
+            x += distance * midpoint.cos();
+            y += distance * midpoint.sin();
+            heading += angle;
+            knots.push(SpeedTurnKnot { x, y, heading });
+        }
+        ((x + y) / 2.0, length, knots)
+    };
+
+    let mut resolved_bank = peak_bank;
+    let (mut raw_radius_m, mut length_m, mut knots) = integrate_at_bank(resolved_bank);
+    if raw_radius_m < minimum_radius_m {
+        resolved_bank = (resolved_bank.tan() * raw_radius_m / minimum_radius_m).atan();
+        (raw_radius_m, length_m, knots) = integrate_at_bank(resolved_bank);
+    }
+    assert!(
+        raw_radius_m >= minimum_radius_m,
+        "shaped turn bank exceeds model radius minimum"
+    );
+    let radius_floor_m = minimum_radius_m.max(requested_radius_m.unwrap_or(0.0));
+    let minimum_grid_radius_m = (radius_floor_m / radius_grid_step_m).ceil() * radius_grid_step_m;
+    let radius_m = ((raw_radius_m / radius_grid_step_m).round() * radius_grid_step_m)
+        .max(minimum_grid_radius_m);
+    let scale = radius_m / raw_radius_m;
+    for knot in &mut knots {
+        knot.x *= scale;
+        knot.y *= scale;
+    }
+    let geometry = SpeedTurnGeometry {
+        peak_bank: resolved_bank,
+        length: length_m * scale,
+        knots,
+    };
+    (geometry, radius_m, resolved_bank)
+}
+
 pub(crate) fn speed_turn_radius_for_peak_bank(peak_bank: f64, design_speed: f64) -> f64 {
     assert!(peak_bank.is_finite() && peak_bank > 0.0 && peak_bank < std::f64::consts::FRAC_PI_2);
     assert!(design_speed.is_finite() && design_speed > 0.0);

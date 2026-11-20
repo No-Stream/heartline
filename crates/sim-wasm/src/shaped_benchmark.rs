@@ -1,16 +1,23 @@
 use serde_json::{Value, json};
 use theme_park_sim::physics::{PhysicsConfig, PreviewCache, PreviewStatus, TrackPreview};
+use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, SolveContext, SolvedElement, TurnSizeHint, solve,
 };
 use theme_park_sim::track::{
     Hand, HillFeel, Piece, PieceId, PieceKind, TrackState, catalog, coaster_models,
 };
+use theme_park_sim::world::{Surface, World};
 use wasm_bindgen::prelude::*;
 
 const HYPER_HILL_ENTRY_SPEED_MPS: f64 = 34.0;
 const HYPER_TURN_ENTRY_SPEED_MPS: f64 = 28.0;
 const GRID_MIDPOINT_ENTRY_SPEED_MPS: f64 = 30.25;
+const STRONG_FLOATER_TARGET_G: f64 = -0.85;
+const COLD_BENCHMARK_CARS: [u8; 3] = [4, 6, 8];
+const COLD_BENCHMARK_SPEEDS_MPS: [f64; 5] = [22.0, 26.0, 30.0, 34.0, 36.0];
+const COLD_BENCHMARK_ELEMENTS: [&str; 3] =
+    ["floater-hill", "strong-floater-hill", "fully-banked-turn"];
 
 #[wasm_bindgen]
 pub struct ShapedSolveBenchmark {
@@ -32,6 +39,8 @@ pub struct ShapedSolveBenchmark {
     all_cars_preview: Option<TrackPreview>,
     calibration_result: Option<(usize, usize)>,
     solve_refusal: Option<String>,
+    commit_would_tunnel: Option<bool>,
+    commit_world: World,
 }
 
 #[wasm_bindgen]
@@ -64,6 +73,15 @@ impl ShapedSolveBenchmark {
             all_cars_preview: None,
             calibration_result: None,
             solve_refusal: None,
+            commit_would_tunnel: None,
+            commit_world: World::new(
+                512,
+                512,
+                Surface {
+                    corners: [0; 4],
+                    water: None,
+                },
+            ),
         }
     }
 
@@ -90,6 +108,7 @@ impl ShapedSolveBenchmark {
         );
         self.solved = None;
         self.solve_refusal = None;
+        self.commit_would_tunnel = None;
     }
 
     /// Runs the production solver against the configured model train and seeded prefix preview.
@@ -109,6 +128,7 @@ impl ShapedSolveBenchmark {
         self.solved = None;
         self.calibration_piece = None;
         self.solve_refusal = None;
+        self.commit_would_tunnel = None;
         let solved = {
             let mut context = SolveContext {
                 entry: self.entry,
@@ -131,6 +151,20 @@ impl ShapedSolveBenchmark {
         };
         self.calibration_piece = Some(solved.piece.clone());
         self.solved = Some(solved);
+    }
+
+    /// Runs the production solve and validates the resolved piece through construction append.
+    pub fn try_solve_and_commit(&mut self) {
+        self.try_solve();
+        let Some(solved) = self.solved.as_ref() else {
+            return;
+        };
+        let mut construction = Construction::new(solved.piece.entry, self.model.clone());
+        self.commit_would_tunnel = Some(
+            construction
+                .append_resolved(&self.intent, &solved.spec, &self.commit_world, &[])
+                .unwrap_or_else(|error| panic!("{} commit failed: {error:?}", self.kind)),
+        );
     }
 
     /// Resets and seeds the common-prefix snapshot outside the calibration timer.
@@ -282,34 +316,38 @@ impl ShapedSolveBenchmark {
             }))
             .expect("refusal result serializes");
         };
-        serde_json::to_string(&result_summary(
+        let mut result = result_summary(
             &self.kind,
             self.model.key,
             self.requested_entry_speed_mps,
             self.observed_entry_speed_mps,
             solved,
-        ))
-        .expect("benchmark result serializes")
+        );
+        result["construction_append_would_tunnel"] = self
+            .commit_would_tunnel
+            .map_or(Value::Null, |would_tunnel| json!(would_tunnel));
+        serde_json::to_string(&result).expect("benchmark result serializes")
     }
 }
 
-/// Lists the interpolation cases across every model and allowed train length.
+/// Lists the stage-1 hyper cases across the supported train lengths and speeds.
 #[wasm_bindgen]
 pub fn shaped_benchmark_cases_json() -> String {
-    let cases: Vec<_> = coaster_models()
+    let cases: Vec<_> = COLD_BENCHMARK_ELEMENTS
         .into_iter()
-        .flat_map(|model| {
-            let model_key = model.key;
-            model.cars_per_train.clone().flat_map(move |cars| {
-                ["floater-hill", "fully-banked-turn"].map(move |element| {
-                    json!({
-                        "id": format!("{element}:{model_key}:{cars}"),
-                        "model": model_key,
-                        "cars": cars,
-                        "element": element,
-                        "requested_speed_mps": GRID_MIDPOINT_ENTRY_SPEED_MPS,
+        .flat_map(|element| {
+            COLD_BENCHMARK_CARS.into_iter().flat_map(move |cars| {
+                COLD_BENCHMARK_SPEEDS_MPS
+                    .into_iter()
+                    .map(move |requested_speed_mps| {
+                        json!({
+                            "id": format!("{element}:hyper:{cars}:{requested_speed_mps}"),
+                            "model": "hyper",
+                            "cars": cars,
+                            "element": element,
+                            "requested_speed_mps": requested_speed_mps,
+                        })
                     })
-                })
             })
         })
         .collect();
@@ -323,7 +361,7 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
             None,
             ElementIntent::Hill {
                 feel: HillFeel::StrongFloater,
-                strength_g: None,
+                strength_g: Some(STRONG_FLOATER_TARGET_G),
                 size: HillSizeHint::Auto,
             },
             HYPER_HILL_ENTRY_SPEED_MPS,
@@ -339,7 +377,10 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
         ),
         _ => {
             let fields: Vec<_> = kind.split(':').collect();
-            assert_eq!(fields.len(), 3, "unknown shaped benchmark case: {kind}");
+            assert!(
+                fields.len() == 3 || fields.len() == 4,
+                "unknown shaped benchmark case: {kind}"
+            );
             let intent = match fields[0] {
                 "floater-hill" => ElementIntent::Hill {
                     feel: HillFeel::Floater,
@@ -350,12 +391,22 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
                     hand: Hand::Left,
                     size: TurnSizeHint::Auto,
                 },
+                "strong-floater-hill" => ElementIntent::Hill {
+                    feel: HillFeel::StrongFloater,
+                    strength_g: Some(STRONG_FLOATER_TARGET_G),
+                    size: HillSizeHint::Auto,
+                },
                 _ => panic!("unknown shaped benchmark element: {}", fields[0]),
             };
             let cars = fields[2]
                 .parse::<u8>()
                 .expect("benchmark car count is an unsigned integer");
-            (fields[1], Some(cars), intent, GRID_MIDPOINT_ENTRY_SPEED_MPS)
+            let requested_speed_mps = fields
+                .get(3)
+                .map_or(GRID_MIDPOINT_ENTRY_SPEED_MPS, |speed| {
+                    speed.parse::<f64>().expect("benchmark speed is a number")
+                });
+            (fields[1], Some(cars), intent, requested_speed_mps)
         }
     };
     let mut model = coaster_models()
@@ -413,9 +464,15 @@ fn lift_prefix(model: &theme_park_sim::track::CoasterModel, target_speed_mps: f6
         .iter()
         .find(|piece| piece.id == PieceId::Straight)
         .expect("catalog includes straight track");
+    let start = TrackState {
+        x: 128,
+        y: 256,
+        z: 8,
+        ..TrackState::origin()
+    };
     let mut prefix = vec![
         station_template
-            .at(TrackState::origin())
+            .at(start)
             .expect("station starts at the origin"),
     ];
     let physics = PhysicsConfig::default();

@@ -85,7 +85,6 @@ pub struct ConstructionShapeSpecWire {
     rename_all_fields = "camelCase"
 )]
 pub enum ConstructionShapeRefusalWire {
-    TableUnavailable,
     Stall {
         entry_speed_mps: f64,
         height_m: f64,
@@ -94,17 +93,11 @@ pub enum ConstructionShapeRefusalWire {
         target_g: f64,
         available_headroom_g: f64,
     },
-    UnmeasuredTarget {
-        target_g: f64,
-    },
-    BelowVerifiedSpeed {
+    BelowMinimumSpeed {
         entry_speed_mps: f64,
         minimum_speed_mps: f64,
     },
-    AboveVerifiedSpeed {
-        entry_speed_mps: f64,
-        maximum_speed_mps: f64,
-    },
+    UnsupportedScope,
     PreviewTimedOut,
     InvalidContext,
     UnsupportedConnector,
@@ -317,7 +310,6 @@ fn shaped_spec_wire(spec: &ElementSpec) -> ConstructionShapeSpecWire {
 
 fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
     match refusal {
-        SolveRefusal::TableUnavailable => ConstructionShapeRefusalWire::TableUnavailable,
         SolveRefusal::Stall {
             entry_speed_mps,
             height_m,
@@ -332,23 +324,14 @@ fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
             target_g,
             available_headroom_g,
         },
-        SolveRefusal::UnmeasuredTarget { target_g } => {
-            ConstructionShapeRefusalWire::UnmeasuredTarget { target_g }
-        }
-        SolveRefusal::BelowVerifiedSpeed {
+        SolveRefusal::BelowMinimumSpeed {
             entry_speed_mps,
             minimum_speed_mps,
-        } => ConstructionShapeRefusalWire::BelowVerifiedSpeed {
+        } => ConstructionShapeRefusalWire::BelowMinimumSpeed {
             entry_speed_mps,
             minimum_speed_mps,
         },
-        SolveRefusal::AboveVerifiedSpeed {
-            entry_speed_mps,
-            maximum_speed_mps,
-        } => ConstructionShapeRefusalWire::AboveVerifiedSpeed {
-            entry_speed_mps,
-            maximum_speed_mps,
-        },
+        SolveRefusal::UnsupportedScope => ConstructionShapeRefusalWire::UnsupportedScope,
         SolveRefusal::PreviewTimedOut => ConstructionShapeRefusalWire::PreviewTimedOut,
         SolveRefusal::InvalidContext => ConstructionShapeRefusalWire::InvalidContext,
         SolveRefusal::UnsupportedConnector => ConstructionShapeRefusalWire::UnsupportedConnector,
@@ -361,35 +344,27 @@ fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
 
 fn solve_refusal_message(refusal: SolveRefusal) -> String {
     match refusal {
-        SolveRefusal::TableUnavailable => {
-            "The generated shaped-element table has no row for this model, train length, and selection.".into()
-        }
         SolveRefusal::Stall { height_m, .. } => format!("Hill stalls at {height_m:.1} m."),
         SolveRefusal::InfeasibleTarget { target_g, .. } => {
             format!("The force target {target_g:.2} g is not feasible for this model.")
         }
-        SolveRefusal::UnmeasuredTarget { target_g } => {
-            format!("The force target {target_g:.2} g has no measured best case.")
-        }
-        SolveRefusal::BelowVerifiedSpeed {
+        SolveRefusal::BelowMinimumSpeed {
             entry_speed_mps,
             minimum_speed_mps,
         } => format!(
-            "Entry speed {entry_speed_mps:.1} m/s is below the verified {minimum_speed_mps:.1} m/s table range."
+            "Entry speed {entry_speed_mps:.1} m/s is below the shaped-element minimum of {minimum_speed_mps:.1} m/s."
         ),
-        SolveRefusal::AboveVerifiedSpeed {
-            entry_speed_mps,
-            maximum_speed_mps,
-        } => format!(
-            "Entry speed {entry_speed_mps:.1} m/s is above the verified {maximum_speed_mps:.1} m/s table range."
-        ),
+        SolveRefusal::UnsupportedScope => {
+            "Shaped elements require a hyper coaster with 4–8 cars and entry speed up to 36 m/s."
+                .into()
+        }
         SolveRefusal::PreviewTimedOut => "The train preview timed out.".into(),
         SolveRefusal::InvalidContext => "The train cannot reach this element entry.".into(),
         SolveRefusal::UnsupportedConnector => {
             "Shaped elements need a level, straight entry connector.".into()
         }
         SolveRefusal::UnsupportedSizeOverride => {
-            "This size override is not covered by the verified shaped-element table.".into()
+            "This fixed size override is not supported for shaped elements.".into()
         }
         SolveRefusal::InvalidGeometry => {
             "The shaped element geometry cannot be integrated for this entry speed.".into()
@@ -1172,6 +1147,9 @@ impl WasmSimulation {
     pub fn construction_candidate_force_preview(
         &self,
     ) -> Option<ConstructionCandidateForcePreviewWire> {
+        if self.selected_shape.is_some() {
+            return None;
+        }
         let construction = self.construction.as_ref()?;
         // Undoing the station leaves an empty construction: there is no train to estimate from.
         if construction.pieces().is_empty() {
@@ -1469,6 +1447,21 @@ impl WasmSimulation {
         &self,
         intent: &ElementIntent,
     ) -> Result<theme_park_sim::track::shaped::SolvedElement, SolveRefusal> {
+        self.construction_shape_candidate_with_mode(intent, true)
+    }
+
+    fn construction_shape_candidate_for_confirm(
+        &self,
+        intent: &ElementIntent,
+    ) -> Result<theme_park_sim::track::shaped::SolvedElement, SolveRefusal> {
+        self.construction_shape_candidate_with_mode(intent, false)
+    }
+
+    fn construction_shape_candidate_with_mode(
+        &self,
+        intent: &ElementIntent,
+        provisional: bool,
+    ) -> Result<theme_park_sim::track::shaped::SolvedElement, SolveRefusal> {
         let construction = self
             .construction
             .as_ref()
@@ -1490,19 +1483,34 @@ impl WasmSimulation {
             .end_speed_mps
             .filter(|speed| speed.is_finite() && *speed > 0.0)
             .ok_or(SolveRefusal::InvalidContext)?;
-        construction.shape_candidate(
-            intent,
-            entry_speed_mps,
-            PhysicsConfig {
-                lift_speed: 5.0,
-                ..PhysicsConfig::default()
-            },
-        )
+        let physics = PhysicsConfig {
+            lift_speed: 5.0,
+            ..PhysicsConfig::default()
+        };
+        self.construction_shape_candidate_at_speed(intent, entry_speed_mps, physics, provisional)
+    }
+
+    fn construction_shape_candidate_at_speed(
+        &self,
+        intent: &ElementIntent,
+        entry_speed_mps: f64,
+        physics: PhysicsConfig,
+        provisional: bool,
+    ) -> Result<theme_park_sim::track::shaped::SolvedElement, SolveRefusal> {
+        let construction = self
+            .construction
+            .as_ref()
+            .ok_or(SolveRefusal::InvalidContext)?;
+        if provisional {
+            construction.shape_candidate_preview(intent, entry_speed_mps, physics)
+        } else {
+            construction.shape_candidate(intent, entry_speed_mps, physics)
+        }
     }
 
     pub(crate) fn construction_selected_shape_wire(
         &self,
-        include_calibration: bool,
+        _include_calibration: bool,
     ) -> Option<ConstructionShapedElementWire> {
         let intent = self.selected_shape.as_ref()?;
         let selection = shape_selection_id(intent);
@@ -1510,19 +1518,6 @@ impl WasmSimulation {
             ElementIntent::Hill { .. } => ("hill", shape_feel(intent), None),
             ElementIntent::Turn { .. } => ("turn", shape_feel(intent), shape_hand(intent)),
         };
-        if !include_calibration {
-            return Some(ConstructionShapedElementWire {
-                selection,
-                kind,
-                feel,
-                hand,
-                strength_g: shape_strength(intent),
-                fixed_size: shape_size_hint(intent),
-                spec: None,
-                refusal: None,
-                piece_shape: None,
-            });
-        }
         match self.construction_shape_candidate(intent) {
             Ok(solved) => Some(ConstructionShapedElementWire {
                 selection,
@@ -1951,7 +1946,7 @@ impl WasmSimulation {
     pub fn construction_append(&mut self) {
         if let Some(intent) = self.selected_shape.clone() {
             let result = self
-                .construction_shape_candidate(&intent)
+                .construction_shape_candidate_for_confirm(&intent)
                 .map_err(solve_refusal_message)
                 .and_then(|solved| self.construction_append_resolved_typed(&intent, &solved.spec));
             self.construction_message = result.err().unwrap_or_default();
@@ -3120,5 +3115,133 @@ mod getter_tests {
         simulation.construction_select("unknown-piece");
 
         assert_eq!(simulation.construction_message(), "Unknown piece");
+    }
+}
+
+#[cfg(test)]
+mod shaped_candidate_mode_tests {
+    use super::WasmSimulation;
+    use theme_park_sim::physics::PhysicsConfig;
+    use theme_park_sim::track::construction::Construction;
+    use theme_park_sim::track::shaped::{ElementIntent, ElementSpec, HillSizeHint};
+    use theme_park_sim::track::{Heading, HillFeel, PieceId, TrackState, hyper_model};
+
+    #[test]
+    fn browse_uses_one_preview_and_confirmation_does_not_reuse_its_inaccurate_result() {
+        let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+        let mut model = hyper_model();
+        model.train.cars = 4;
+        model.train.length_metres *= 0.5;
+        let mut construction = Construction::new(
+            TrackState {
+                x: 200,
+                y: 200,
+                z: 20,
+                heading: Heading::East,
+                ..TrackState::origin()
+            },
+            model,
+        );
+        let physics = PhysicsConfig {
+            lift_speed: 34.0,
+            ..PhysicsConfig::default()
+        };
+        let straight_length_m = theme_park_sim::track::catalog()
+            .iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .expect("catalog includes straight track")
+            .length();
+        let lift_length_m = (physics.lift_speed.powi(2) - physics.station_speed.powi(2))
+            / (2.0 * physics.drive_acceleration)
+            + construction.model().train.length_metres
+            + 40.0;
+        let lift_piece_count = (lift_length_m / straight_length_m).ceil() as usize;
+        let world = &simulation.park.world;
+        construction
+            .append(PieceId::Station, world, &[])
+            .expect("hyper construction accepts a station");
+        construction.set_chain(true);
+        for _ in 0..lift_piece_count {
+            construction
+                .append(PieceId::Straight, world, &[])
+                .expect("hyper construction accepts chain lift track");
+        }
+        construction.set_chain(false);
+        simulation.park.construction = Some(construction);
+
+        let intent = ElementIntent::Hill {
+            feel: HillFeel::StrongFloater,
+            strength_g: Some(-0.85),
+            size: HillSizeHint::Auto,
+        };
+        let prefix_piece_count = simulation
+            .park
+            .construction
+            .as_ref()
+            .expect("test construction exists")
+            .pieces()
+            .len();
+
+        let browse = simulation
+            .construction_shape_candidate_at_speed(&intent, 34.0, physics, true)
+            .expect("browse produces a shaped candidate");
+        assert_eq!(browse.calibration_runs, 1);
+        assert_eq!(
+            simulation
+                .park
+                .construction
+                .as_ref()
+                .expect("test construction exists")
+                .pieces()
+                .len(),
+            prefix_piece_count
+        );
+        let ElementSpec::Hill {
+            target_g,
+            delivered_g: browse_delivery_g,
+            ..
+        } = browse.spec
+        else {
+            panic!("hill intent resolves to a hill");
+        };
+        assert!((browse_delivery_g - target_g).abs() > 0.1);
+
+        let confirmed = simulation
+            .construction_shape_candidate_at_speed(&intent, 34.0, physics, false)
+            .expect("confirmation calibrates the browsed hill");
+        assert!((2..=4).contains(&confirmed.calibration_runs));
+        let ElementSpec::Hill {
+            target_g,
+            delivered_g: confirmed_delivery_g,
+            ..
+        } = confirmed.spec
+        else {
+            panic!("hill intent resolves to a hill");
+        };
+        assert!((confirmed_delivery_g - target_g).abs() <= 0.1);
+
+        let rebrowsed = simulation
+            .construction_shape_candidate_at_speed(&intent, 34.0, physics, true)
+            .expect("browse recomputes a one-preview candidate after confirmation");
+        assert_eq!(rebrowsed.calibration_runs, 1);
+        let ElementSpec::Hill {
+            target_g,
+            delivered_g: rebrowsed_delivery_g,
+            ..
+        } = rebrowsed.spec
+        else {
+            panic!("hill intent resolves to a hill");
+        };
+        assert!((rebrowsed_delivery_g - target_g).abs() > 0.1);
+        assert_eq!(
+            simulation
+                .park
+                .construction
+                .as_ref()
+                .expect("test construction exists")
+                .pieces()
+                .len(),
+            prefix_piece_count
+        );
     }
 }

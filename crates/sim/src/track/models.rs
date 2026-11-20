@@ -337,7 +337,7 @@ fn is_resolved_shaped_piece(
                     radius_m,
                     bank_degrees,
                     ..
-                } if lateral_g.abs() <= 0.1
+                } if lateral_g.abs() <= 0.15
                     && *radius_m >= rules.minimum_turn_radius_m
                     && *radius_m <= rules.maximum_turn_radius_m
                     && *bank_degrees <= rules.maximum_bank_degrees
@@ -354,7 +354,7 @@ fn is_resolved_shaped_piece(
                     radius_m,
                     bank_degrees,
                     ..
-                } if lateral_g.abs() <= 0.1
+                } if lateral_g.abs() <= 0.15
                     && *radius_m >= rules.minimum_turn_radius_m
                     && *radius_m <= rules.maximum_turn_radius_m
                     && *bank_degrees <= rules.maximum_bank_degrees

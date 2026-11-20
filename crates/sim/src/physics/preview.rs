@@ -51,7 +51,7 @@ pub(crate) struct CandidateForceSample {
     pub(crate) mean_train_slope_z: f64,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CandidateCalibrationPreview {
     pub status: PreviewStatus,
     pub end_speed_mps: Option<f64>,
@@ -331,7 +331,8 @@ impl PreviewCache {
             let previous_boundary = circuit
                 .starts
                 .partition_point(|start| *start <= previous_distance);
-            let crossed_end = previous_distance < source_length && train.distance() >= source_length;
+            let crossed_end =
+                previous_distance < source_length && train.distance() >= source_length;
             if crossed_end {
                 end_speed_mps = Some(interpolate_speed_at_distance(
                     previous_distance,
@@ -451,9 +452,7 @@ impl PreviewCache {
                     for (car_index, recorder) in car_recorders.iter_mut().enumerate() {
                         let car_readings: Vec<_> = readings
                             .iter()
-                            .filter(|frame| {
-                                closed || frame[car_index].distance < source_length
-                            })
+                            .filter(|frame| closed || frame[car_index].distance < source_length)
                             .cloned()
                             .collect();
                         recorder.record_train_car(&car_readings, car_index, model_key);
@@ -471,8 +470,8 @@ impl PreviewCache {
                         .record(&front, model_key);
                 }
             }
-            let reached_candidate_end = candidate_piece_index.is_some()
-                && train.distance() >= source_length;
+            let reached_candidate_end =
+                candidate_piece_index.is_some() && train.distance() >= source_length;
             let reached_preview_end = train.distance() >= preview_end_distance;
             if reached_candidate_end || reached_preview_end {
                 return Some(preview_output(PreviewCompletion {

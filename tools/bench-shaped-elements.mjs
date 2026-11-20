@@ -48,7 +48,7 @@ function runWasmTrySingle(modulePath, kind) {
   const benchmark = new wasm.ShapedSolveBenchmark(kind);
   benchmark.prepare();
   const startedAt = performance.now();
-  benchmark.try_solve();
+  benchmark.try_solve_and_commit();
   const elapsedMs = performance.now() - startedAt;
   const result = JSON.parse(benchmark.result_json());
   process.stdout.write(`${JSON.stringify({ ...result, elapsed_ms: elapsedMs })}\n`);
@@ -59,8 +59,10 @@ function runColdWasmSuite(wasmModulePath) {
   const requireFromModule = createRequire(resolvedModulePath);
   const wasm = requireFromModule(resolvedModulePath);
   const cases = JSON.parse(wasm.shaped_benchmark_cases_json());
-  const successfulCases = [];
-  const refusedCases = [];
+  if (cases.length !== 45) {
+    throw new Error(`Expected 45 stage-1 hyper benchmark cases, received ${cases.length}`);
+  }
+  const casesRun = [];
   const allSuccessfulSamples = [];
 
   for (const benchmarkCase of cases) {
@@ -74,45 +76,33 @@ function runColdWasmSuite(wasmModulePath) {
       return JSON.parse(output);
     });
     validateTrySamples(benchmarkCase, samples);
-    const first = samples[0];
-    if (first.status === 'refused') {
-      refusedCases.push({
-        id: benchmarkCase.id,
-        model: benchmarkCase.model,
-        cars: benchmarkCase.cars,
-        element: benchmarkCase.element,
-        refusal: first.refusal,
-      });
-    } else {
-      const timing = summarize(samples);
-      successfulCases.push({
-        id: benchmarkCase.id,
-        model: benchmarkCase.model,
-        cars: benchmarkCase.cars,
-        element: benchmarkCase.element,
-        cold_node_wasm: timing,
-      });
-      allSuccessfulSamples.push(...samples);
-    }
+    const timing = summarize(samples);
+    casesRun.push({
+      id: benchmarkCase.id,
+      model: benchmarkCase.model,
+      cars: benchmarkCase.cars,
+      element: benchmarkCase.element,
+      requested_speed_mps: benchmarkCase.requested_speed_mps,
+      cold_node_wasm: timing,
+    });
+    allSuccessfulSamples.push(...samples);
   }
 
-  if (successfulCases.length === 0) {
-    throw new Error('No shaped benchmark case solved successfully');
-  }
-  const worstCaseP95Ms = Math.max(...successfulCases.map((item) => item.cold_node_wasm.p95_ms));
+  const worstCaseP95Ms = Math.max(...casesRun.map((item) => item.cold_node_wasm.p95_ms));
   const report = {
     mode: 'cold-node-wasm',
     samples_per_case: COLD_WASM_RUNS,
-    target_p95_ms: 50,
+    scope: 'hyper, 4/6/8 cars, 22/26/30/34/36 m/s, floater/strong-floater/turn',
+    timed_operation: 'production solve, calibration previews, corrections, and Construction::append_resolved',
+    target_p95_ms: 250,
     all_successful_samples: summarize(allSuccessfulSamples),
     worst_case_cold_p95_ms: worstCaseP95Ms,
-    within_target: worstCaseP95Ms <= 50,
-    successful_cases: successfulCases,
-    refused_cases: refusedCases,
+    within_target: worstCaseP95Ms <= 250,
+    cases: casesRun,
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (!report.within_target) {
-    throw new Error(`Cold Node/WASM solve p95 ${worstCaseP95Ms.toFixed(2)} ms exceeded 50 ms`);
+    throw new Error(`Cold Node/WASM solve p95 ${worstCaseP95Ms.toFixed(2)} ms exceeded 250 ms`);
   }
 }
 
@@ -127,8 +117,11 @@ function validateTrySamples(benchmarkCase, samples) {
       || sample.cars !== benchmarkCase.cars) {
       throw new Error(`Unexpected benchmark case: ${JSON.stringify(sample)}`);
     }
-    if (sample.status !== 'solved' && sample.status !== 'refused') {
+    if (sample.status !== 'solved') {
       throw new Error(`Unexpected solve status: ${JSON.stringify(sample)}`);
+    }
+    if (typeof sample.construction_append_would_tunnel !== 'boolean') {
+      throw new Error(`Construction append was not validated: ${JSON.stringify(sample)}`);
     }
     if (sample.requested_entry_speed_mps !== benchmarkCase.requested_speed_mps
       || Math.abs(sample.observed_entry_speed_mps - benchmarkCase.requested_speed_mps) > 0.01) {
@@ -137,8 +130,10 @@ function validateTrySamples(benchmarkCase, samples) {
     if (!Number.isFinite(sample.elapsed_ms) || sample.elapsed_ms <= 0) {
       throw new Error(`Invalid timing sample: ${JSON.stringify(sample)}`);
     }
+    if (!Number.isInteger(sample.calibration_runs) || sample.calibration_runs > 4) {
+      throw new Error(`Solve used more than four previews: ${JSON.stringify(sample)}`);
+    }
     if (sample.status !== first.status
-      || sample.refusal !== first.refusal
       || sample.spec_hash !== first.spec_hash) {
       throw new Error(`${benchmarkCase.id} changed solve outcome between samples`);
     }

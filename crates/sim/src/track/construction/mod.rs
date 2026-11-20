@@ -232,6 +232,7 @@ pub struct Construction {
     pub(crate) shaped_solve_cache: RefCell<
         Option<(
             u64,
+            bool,
             Result<crate::track::shaped::SolvedElement, crate::track::shaped::SolveRefusal>,
         )>,
     >,

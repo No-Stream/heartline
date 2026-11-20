@@ -8,7 +8,7 @@ PARK ?= content/parks/horizon-hawk.park.json
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold generate-report-types check-report-types generate-profiles generate-shaped-elements generate-rated-windows ride-agreement design-tools test-design-tools park-report
+.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools test-design-tools park-report
 
 install:
 	npm ci
@@ -36,11 +36,6 @@ test-design-tools:
 
 generate-profiles:
 	UPDATE_SOLVED_PROFILES=1 $(CARGO) test -p theme-park-sim --lib track::profile::tests::solved_profiles_are_current
-
-SHAPED_ELEMENTS_TABLE ?= crates/sim/src/track/shaped/generated_grid.rs
-
-generate-shaped-elements:
-	$(CARGO) run --release -p theme-park-sim --example generate_shaped_elements -- --output $(SHAPED_ELEMENTS_TABLE)
 
 generate-rated-windows:
 	UPDATE_RATED_WINDOWS=1 $(CARGO) run --release -p theme-park-sim --example measure_force_windows
@@ -171,6 +166,7 @@ bench-shaped-elements: wasm-bindgen
 	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target nodejs --out-dir /tmp/theme-park-sim-shaped-bench
 	node tools/bench-shaped-elements.mjs --run /tmp/theme-park-sim-shaped-bench/theme_park_sim_wasm.js target/release/examples/shaped_solver_bench $(SHAPED_BENCH_CASES)
 
+# Covers 45 hyper cases; the cold Node/WASM solve-and-append p95 budget is 250 ms.
 bench-shaped-elements-cold: wasm-bindgen
 	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm --features shaped-benchmark
 	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target nodejs --out-dir /tmp/theme-park-sim-shaped-bench

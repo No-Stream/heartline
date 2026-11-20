@@ -17,6 +17,7 @@ fn main() {
 
     match mode.as_str() {
         "--single" => measure_single(&kind),
+        "--single-commit" => measure_single_commit(&kind),
         "--warm" => measure_warm(&kind),
         "--single-calibration" => measure_single_calibration(&kind),
         "--warm-calibration" => measure_warm_calibration(&kind),
@@ -24,6 +25,21 @@ fn main() {
         "--warm-preview-modes" => measure_warm_preview_modes(&kind),
         _ => panic!("unknown benchmark mode: {mode}"),
     }
+}
+
+fn measure_single_commit(kind: &str) {
+    let mut benchmark = ShapedSolveBenchmark::new(kind);
+    benchmark.prepare();
+    let started_at = Instant::now();
+    black_box(benchmark.try_solve_and_commit());
+    let elapsed_ms = started_at.elapsed().as_secs_f64() * 1_000.0;
+    let mut result: Value =
+        serde_json::from_str(&benchmark.result_json()).expect("benchmark result is JSON");
+    result["elapsed_ms"] = json!(elapsed_ms);
+    println!(
+        "{}",
+        serde_json::to_string(&result).expect("result serializes")
+    );
 }
 
 fn measure_single(kind: &str) {

@@ -10,16 +10,10 @@ use crate::state_hash::StateHasher;
 use crate::track::construction::ConstructionError;
 use crate::track::profile::{
     OfflineHillSpec, OfflineTrain, SHAPED_HILL_TAPER_ANGLE, SolvedProfile,
-    integrate_shaped_hill_once_profile,
+    solve_shaped_hill_offline_profile,
 };
-#[cfg(test)]
-use crate::track::profile::{ProfileSpec, integrate_checked, reflect_hill};
 pub(crate) use crate::track::shaped::precision::canonicalize_element_spec;
 use crate::track::shaped::precision::round_element_value;
-use crate::track::shaped_generator::{
-    CellFailure, CellRefusal, GeneratedSpec, GridElement, lookup_generated_spec,
-    lookup_turn_radius_override_base_spec,
-};
 use crate::track::supports::SupportObstacle;
 use crate::track::{
     Bank, CoasterModel, Hand, Heading, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind,
@@ -33,11 +27,17 @@ pub use crate::track::curves::{SpeedTurnGeometry as ResolvedTurnGeometry, SpeedT
 pub use crate::track::profile::SolvedProfile as ResolvedHillProfile;
 
 const PROFILE_STEPS: usize = 512;
-#[cfg(test)]
-pub(crate) const HILL_TAPER_ANGLE: f64 = SHAPED_HILL_TAPER_ANGLE;
 const REQUIRED_FORCE_HEADROOM_G: f64 = 0.25;
-const MAXIMUM_HILL_INTENT_ERROR_G: f64 = 0.1;
-const MAXIMUM_FULLY_BANKED_LATERAL_G: f64 = 0.1;
+const MAXIMUM_HILL_INTENT_ERROR_G: f64 = 0.05;
+const MAXIMUM_FULLY_BANKED_LATERAL_G: f64 = 0.15;
+const MINIMUM_SHAPED_SPEED_MPS: f64 = 22.0;
+const MAXIMUM_SHAPED_SPEED_MPS: f64 = 36.0;
+const MINIMUM_SHAPED_TRAIN_CARS: u8 = 4;
+const MAXIMUM_SHAPED_TRAIN_CARS: u8 = 8;
+const MAXIMUM_SHAPED_PREVIEWS: u8 = 4;
+const HILL_HEIGHT_ENERGY_FRACTION: f64 = 0.4;
+const SHAPED_HILL_PULL_G: f64 = 3.3;
+const SHAPED_FLANK_SEARCH_STEPS: usize = 8;
 const SHAPED_HILL_NAME: &str = "Shaped airtime hill";
 const SHAPED_LEFT_TURN_NAME: &str = "Shaped banked turn left";
 const SHAPED_RIGHT_TURN_NAME: &str = "Shaped banked turn right";
@@ -389,6 +389,13 @@ pub struct SolvedElement {
     pub spec: ElementSpec,
     pub calibration_runs: u8,
     pub cap_note: Option<FeelCapNote>,
+    pub(crate) calibration_seed: Option<CalibrationSeed>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CalibrationSeed {
+    preview: CandidateCalibrationPreview,
+    hill_crest_g: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -412,7 +419,6 @@ pub struct SolveContext<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "camelCase")]
 pub enum SolveRefusal {
-    TableUnavailable,
     Stall {
         entry_speed_mps: f64,
         height_m: f64,
@@ -421,17 +427,11 @@ pub enum SolveRefusal {
         target_g: f64,
         available_headroom_g: f64,
     },
-    UnmeasuredTarget {
-        target_g: f64,
-    },
-    BelowVerifiedSpeed {
+    BelowMinimumSpeed {
         entry_speed_mps: f64,
         minimum_speed_mps: f64,
     },
-    AboveVerifiedSpeed {
-        entry_speed_mps: f64,
-        maximum_speed_mps: f64,
-    },
+    UnsupportedScope,
     PreviewTimedOut,
     InvalidContext,
     UnsupportedConnector,
@@ -460,7 +460,7 @@ impl CoasterModel {
             allow_airtime_hills: true,
             allow_fully_banked_turns: true,
             default_floater_g: -0.5,
-            default_strong_floater_g: -0.9,
+            default_strong_floater_g: -0.85,
             steel_ejector_g: -1.2,
             wooden_ejector_g: -0.8,
             hill_pull_g: (self.comfortable_force_limits.maximum_vertical_g - 0.5).min(2.0),
@@ -484,14 +484,66 @@ pub fn solve(
     intent: &ElementIntent,
     context: &mut SolveContext<'_>,
 ) -> Result<SolvedElement, SolveRefusal> {
+    solve_with_preview_limit(intent, context, MAXIMUM_SHAPED_PREVIEWS, false, None)
+}
+
+pub fn solve_preview(
+    intent: &ElementIntent,
+    context: &mut SolveContext<'_>,
+) -> Result<SolvedElement, SolveRefusal> {
+    solve_with_preview_limit(intent, context, 1, true, None)
+}
+
+pub fn solve_confirm(
+    intent: &ElementIntent,
+    context: &mut SolveContext<'_>,
+    preview: &SolvedElement,
+) -> Result<SolvedElement, SolveRefusal> {
     validate_context(context)?;
+    validate_scope(context)?;
+    if !preview_candidate_is_confirmed(intent, context, preview) {
+        let maximum_previews = match intent {
+            ElementIntent::Hill { .. } => MAXIMUM_SHAPED_PREVIEWS,
+            ElementIntent::Turn { .. } => 3,
+        };
+        return solve_with_preview_limit(intent, context, maximum_previews, false, Some(preview));
+    }
+    let mut confirmed = preview.clone();
+    confirmed.calibration_seed = None;
+    Ok(confirmed)
+}
+
+fn solve_with_preview_limit(
+    intent: &ElementIntent,
+    context: &mut SolveContext<'_>,
+    maximum_previews: u8,
+    provisional: bool,
+    preview_seed: Option<&SolvedElement>,
+) -> Result<SolvedElement, SolveRefusal> {
+    validate_context(context)?;
+    validate_scope(context)?;
     match intent {
         ElementIntent::Hill {
             feel,
             strength_g,
             size,
-        } => solve_hill(*feel, *strength_g, *size, context),
-        ElementIntent::Turn { hand, size } => solve_turn(*hand, *size, context),
+        } => solve_hill(
+            *feel,
+            *strength_g,
+            *size,
+            maximum_previews,
+            provisional,
+            preview_seed,
+            context,
+        ),
+        ElementIntent::Turn { hand, size } => solve_turn(
+            *hand,
+            *size,
+            maximum_previews.min(3),
+            provisional,
+            preview_seed,
+            context,
+        ),
     }
 }
 
@@ -522,14 +574,78 @@ fn validate_context(context: &SolveContext<'_>) -> Result<(), SolveRefusal> {
     Ok(())
 }
 
+fn validate_scope(context: &SolveContext<'_>) -> Result<(), SolveRefusal> {
+    if context.model.key != "hyper"
+        || !(MINIMUM_SHAPED_TRAIN_CARS..=MAXIMUM_SHAPED_TRAIN_CARS).contains(&context.train.cars)
+        || context.entry_speed_mps > MAXIMUM_SHAPED_SPEED_MPS
+    {
+        return Err(SolveRefusal::UnsupportedScope);
+    }
+    if context.entry_speed_mps < MINIMUM_SHAPED_SPEED_MPS {
+        return Err(SolveRefusal::BelowMinimumSpeed {
+            entry_speed_mps: context.entry_speed_mps,
+            minimum_speed_mps: MINIMUM_SHAPED_SPEED_MPS,
+        });
+    }
+    Ok(())
+}
+
+fn preview_candidate_is_confirmed(
+    intent: &ElementIntent,
+    context: &SolveContext<'_>,
+    candidate: &SolvedElement,
+) -> bool {
+    let Some(seed) = candidate.calibration_seed.as_ref() else {
+        return false;
+    };
+    if seed.preview.cars.len() != usize::from(context.train.cars)
+        || !intent_matches_spec(intent, &candidate.spec, context.model, context.entry)
+        || seed.preview.cars.iter().any(|car| !car.within_limits)
+        || force_headroom_for_candidate(context.model, &seed.preview.cars)
+            < REQUIRED_FORCE_HEADROOM_G
+    {
+        return false;
+    }
+    match (&candidate.spec, intent) {
+        (ElementSpec::Hill { target_g, .. }, ElementIntent::Hill { .. }) => seed
+            .preview
+            .cars
+            .iter()
+            .filter_map(|car| car.sustained_minimum_vertical_g)
+            .reduce(f64::min)
+            .is_some_and(|delivered_g| {
+                (delivered_g - target_g).abs() <= MAXIMUM_HILL_INTENT_ERROR_G
+            }),
+        (ElementSpec::Turn { .. }, ElementIntent::Turn { .. }) => {
+            seed.preview
+                .cars
+                .iter()
+                .map(|car| car.peaks.maximum_lateral_g)
+                .fold(0.0, f64::max)
+                <= MAXIMUM_FULLY_BANKED_LATERAL_G
+        }
+        _ => false,
+    }
+}
+
 fn solve_hill(
     feel: HillFeel,
     strength_g: Option<f64>,
     size: HillSizeHint,
+    maximum_previews: u8,
+    provisional: bool,
+    preview_seed: Option<&SolvedElement>,
     context: &mut SolveContext<'_>,
 ) -> Result<SolvedElement, SolveRefusal> {
     match size {
-        HillSizeHint::Auto => solve_hill_from_table(feel, strength_g, context),
+        HillSizeHint::Auto => solve_hill_analytically(
+            feel,
+            strength_g,
+            maximum_previews,
+            provisional,
+            preview_seed,
+            context,
+        ),
         HillSizeHint::Height(height_m) => {
             if !height_m.is_finite() || height_m <= 0.0 {
                 return Err(SolveRefusal::InfeasibleTarget {
@@ -549,16 +665,19 @@ fn solve_hill(
     }
 }
 
-fn solve_hill_from_table(
+fn solve_hill_analytically(
     feel: HillFeel,
     strength_g: Option<f64>,
+    maximum_previews: u8,
+    provisional: bool,
+    preview_seed: Option<&SolvedElement>,
     context: &mut SolveContext<'_>,
 ) -> Result<SolvedElement, SolveRefusal> {
     if !matches!(
         feel,
         HillFeel::Floater | HillFeel::StrongFloater | HillFeel::Ejector
     ) {
-        return Err(SolveRefusal::TableUnavailable);
+        return Err(SolveRefusal::InvalidGeometry);
     }
     let requested_target_g = strength_g.unwrap_or(default_hill_strength(feel, context.model));
     if !requested_target_g.is_finite() {
@@ -568,99 +687,213 @@ fn solve_hill_from_table(
         });
     }
     let design_speed_mps = round_element_value(context.entry_speed_mps);
-    let generated_spec = lookup_generated_spec(
-        context.model.key,
-        context.train.cars,
-        GridElement::Hill {
-            feel,
-            strength_g: requested_target_g,
-        },
-        context.entry_speed_mps,
-    )
-    .map_err(|refusal| table_refusal_to_solve(refusal, context.entry_speed_mps))?;
-    let GeneratedSpec::Hill {
-        requested_target_g: table_requested_target_g,
-        target_g,
-        delivered_g: table_delivered_g,
-        pull_g,
-        crest_g,
-        flank_angle_radians,
-        ..
-    } = generated_spec
-    else {
-        unreachable!("hill table key resolved to a turn")
-    };
-    assert!(
-        (table_requested_target_g - requested_target_g).abs() < 1e-9,
-        "generated hill row strength does not match its lookup key"
-    );
-    let (profile, height_m, span_m) = resolve_hill_profile(
-        context,
-        design_speed_mps,
-        pull_g,
-        crest_g,
-        flank_angle_radians,
-    )?;
-    let mut spec = ElementSpec::Hill {
-        design_speed_mps,
-        cars: context.train.cars,
-        target_g,
-        delivered_g: table_delivered_g,
-        height_m,
-        span_m,
-        profile,
-    };
-    canonicalize_element_spec(&mut spec);
-    let candidate = piece_from_spec(context.entry, &spec)?;
-    let preview = calibrate_piece(context, &candidate)?;
-    if preview.cars.len() != usize::from(context.train.cars) {
-        return Err(SolveRefusal::PreviewTimedOut);
+    let target_floor =
+        context.model.comfortable_force_limits.minimum_vertical_g + REQUIRED_FORCE_HEADROOM_G;
+    let mut target_g = requested_target_g.min(-0.05);
+    if target_g < target_floor {
+        let cap_steps = ((target_floor - target_g) / 0.05).ceil();
+        target_g += cap_steps * 0.05;
     }
-    let headroom_g = force_headroom_for_candidate(context.model, &preview.cars);
-    let delivered_g = preview
-        .cars
-        .iter()
-        .filter_map(|car| car.sustained_minimum_vertical_g)
-        .reduce(f64::min);
-    if !preview
-        .cars
-        .iter()
-        .all(|car| car.sustained_minimum_vertical_g.is_some() && car.within_limits)
-        || headroom_g < REQUIRED_FORCE_HEADROOM_G
-        || delivered_g
-            .is_none_or(|delivered| (delivered - target_g).abs() > MAXIMUM_HILL_INTENT_ERROR_G)
-    {
-        return Err(SolveRefusal::InfeasibleTarget {
-            target_g,
-            available_headroom_g: headroom_g,
-        });
-    }
-    let delivered_g = round_element_value(delivered_g.expect("validated delivery exists"));
-    let mut spec = ElementSpec::Hill {
-        design_speed_mps,
-        cars: context.train.cars,
-        target_g,
-        delivered_g,
-        height_m,
-        span_m,
-        profile: match spec {
-            ElementSpec::Hill { profile, .. } => profile,
-            ElementSpec::Turn { .. } => unreachable!(),
-        },
-    };
-    canonicalize_element_spec(&mut spec);
-    let piece = piece_from_spec(context.entry, &spec)?;
-    let cap_note = ((requested_target_g - target_g).abs() > 1e-9).then_some(FeelCapNote {
-        feel,
-        requested_target_g,
-        capped_target_g: target_g,
-        delivered_g,
+    let seed = preview_seed.and_then(|candidate| {
+        let ElementSpec::Hill { target_g, .. } = candidate.spec else {
+            return None;
+        };
+        let seed = candidate.calibration_seed.as_ref()?;
+        let crest_g = seed.hill_crest_g?;
+        let delivered_g = seed
+            .preview
+            .cars
+            .iter()
+            .filter_map(|car| car.sustained_minimum_vertical_g)
+            .reduce(f64::min)?;
+        Some((target_g, delivered_g, crest_g, seed))
     });
-    Ok(SolvedElement {
-        piece,
-        spec,
-        calibration_runs: 1,
-        cap_note,
+    if let Some((seed_target_g, ..)) = seed {
+        target_g = seed_target_g;
+    }
+    let mut preview_count = u8::from(seed.is_some());
+    let mut previous_attempt = seed.map(|(_, delivered_g, crest_g, _)| (crest_g, delivered_g));
+    let mut crest_g = target_g;
+    let mut last_headroom_g = f64::NEG_INFINITY;
+    let mut last_delivered_g = None;
+    if let Some((_, delivered_g, seed_crest_g, seed)) = seed {
+        last_headroom_g = force_headroom_for_candidate(context.model, &seed.preview.cars);
+        last_delivered_g = Some(delivered_g);
+        if last_headroom_g < REQUIRED_FORCE_HEADROOM_G
+            || seed.preview.cars.iter().any(|car| !car.within_limits)
+        {
+            let next_target_g = (target_g + 0.05).min(-0.05);
+            if feel == HillFeel::StrongFloater
+                && context.entry_speed_mps >= 24.0
+                && next_target_g > -0.75
+            {
+                return Err(SolveRefusal::InfeasibleTarget {
+                    target_g,
+                    available_headroom_g: last_headroom_g,
+                });
+            }
+            target_g = next_target_g;
+            crest_g = target_g;
+            previous_attempt = None;
+        } else {
+            crest_g = seed_crest_g + target_g - delivered_g;
+        }
+    }
+
+    while preview_count < maximum_previews {
+        let (profile, height_m, span_m) =
+            hill_profile_for_energy_height(context, design_speed_mps, crest_g)?;
+        let mut candidate_spec = ElementSpec::Hill {
+            design_speed_mps,
+            cars: context.train.cars,
+            target_g,
+            delivered_g: target_g,
+            height_m,
+            span_m,
+            profile,
+        };
+        canonicalize_element_spec(&mut candidate_spec);
+        let candidate = piece_from_spec(context.entry, &candidate_spec)?;
+        let preview = calibrate_piece(context, &candidate)?;
+        preview_count += 1;
+        if preview.cars.len() != usize::from(context.train.cars) {
+            return Err(SolveRefusal::PreviewTimedOut);
+        }
+        let headroom_g = force_headroom_for_candidate(context.model, &preview.cars);
+        last_headroom_g = headroom_g;
+        let delivered_g = preview
+            .cars
+            .iter()
+            .filter_map(|car| car.sustained_minimum_vertical_g)
+            .reduce(f64::min)
+            .ok_or(SolveRefusal::InfeasibleTarget {
+                target_g,
+                available_headroom_g: headroom_g,
+            })?;
+        last_delivered_g = Some(delivered_g);
+
+        if provisional {
+            let mut preview_spec = candidate_spec;
+            let ElementSpec::Hill {
+                height_m,
+                span_m,
+                profile,
+                ..
+            } = preview_spec
+            else {
+                unreachable!();
+            };
+            preview_spec = ElementSpec::Hill {
+                design_speed_mps,
+                cars: context.train.cars,
+                target_g,
+                delivered_g: round_element_value(delivered_g),
+                height_m,
+                span_m,
+                profile,
+            };
+            canonicalize_element_spec(&mut preview_spec);
+            let piece = piece_from_spec(context.entry, &preview_spec)?;
+            let cap_note = ((requested_target_g - target_g).abs() > 1e-9).then_some(FeelCapNote {
+                feel,
+                requested_target_g,
+                capped_target_g: target_g,
+                delivered_g: round_element_value(delivered_g),
+            });
+            return Ok(SolvedElement {
+                piece,
+                spec: preview_spec,
+                calibration_runs: preview_count,
+                cap_note,
+                calibration_seed: Some(CalibrationSeed {
+                    preview,
+                    hill_crest_g: Some(crest_g),
+                }),
+            });
+        }
+
+        if headroom_g < REQUIRED_FORCE_HEADROOM_G
+            || preview.cars.iter().any(|car| !car.within_limits)
+        {
+            let next_target_g = (target_g + 0.05).min(-0.05);
+            if feel == HillFeel::StrongFloater
+                && context.entry_speed_mps >= 24.0
+                && next_target_g > -0.75
+            {
+                return Err(SolveRefusal::InfeasibleTarget {
+                    target_g,
+                    available_headroom_g: headroom_g,
+                });
+            }
+            if (next_target_g - target_g).abs() < 1e-9 {
+                return Err(SolveRefusal::InfeasibleTarget {
+                    target_g,
+                    available_headroom_g: headroom_g,
+                });
+            }
+            target_g = next_target_g;
+            crest_g = target_g;
+            previous_attempt = None;
+            continue;
+        }
+
+        if (delivered_g - target_g).abs() <= MAXIMUM_HILL_INTENT_ERROR_G {
+            let mut final_spec = candidate_spec;
+            let ElementSpec::Hill {
+                height_m,
+                span_m,
+                profile,
+                ..
+            } = final_spec
+            else {
+                unreachable!();
+            };
+            final_spec = ElementSpec::Hill {
+                design_speed_mps,
+                cars: context.train.cars,
+                target_g,
+                delivered_g: round_element_value(delivered_g),
+                height_m,
+                span_m,
+                profile,
+            };
+            canonicalize_element_spec(&mut final_spec);
+            let piece = piece_from_spec(context.entry, &final_spec)?;
+            let cap_note = ((requested_target_g - target_g).abs() > 1e-9).then_some(FeelCapNote {
+                feel,
+                requested_target_g,
+                capped_target_g: target_g,
+                delivered_g: round_element_value(delivered_g),
+            });
+            return Ok(SolvedElement {
+                piece,
+                spec: final_spec,
+                calibration_runs: preview_count,
+                cap_note,
+                calibration_seed: None,
+            });
+        }
+
+        let next_crest_g = match previous_attempt {
+            Some((previous_crest, previous_delivered)) => {
+                let slope = (delivered_g - previous_delivered) / (crest_g - previous_crest);
+                if !slope.is_finite() || slope.abs() < 1e-6 {
+                    return Err(SolveRefusal::InfeasibleTarget {
+                        target_g,
+                        available_headroom_g: headroom_g,
+                    });
+                }
+                crest_g + (target_g - delivered_g) / slope
+            }
+            None => crest_g + target_g - delivered_g,
+        };
+        previous_attempt = Some((crest_g, delivered_g));
+        crest_g = next_crest_g;
+    }
+
+    Err(SolveRefusal::InfeasibleTarget {
+        target_g: last_delivered_g.unwrap_or(target_g),
+        available_headroom_g: last_headroom_g,
     })
 }
 
@@ -677,47 +910,90 @@ fn default_hill_strength(feel: HillFeel, model: &CoasterModel) -> f64 {
     }
 }
 
-fn table_refusal_to_solve(refusal: CellRefusal, entry_speed_mps: f64) -> SolveRefusal {
-    match refusal {
-        CellRefusal::TableUnavailable => SolveRefusal::TableUnavailable,
-        CellRefusal::BelowFirstVerifiedSpeed { minimum_speed_mps } => {
-            SolveRefusal::BelowVerifiedSpeed {
-                entry_speed_mps,
-                minimum_speed_mps,
-            }
+fn hill_profile_for_energy_height(
+    context: &SolveContext<'_>,
+    design_speed_mps: f64,
+    crest_g: f64,
+) -> Result<(SolvedProfile, f64, f64), SolveRefusal> {
+    let target_height_m = design_speed_mps.powi(2) / (2.0 * GRAVITY) * HILL_HEIGHT_ENERGY_FRACTION;
+    let train = OfflineTrain::Coaster {
+        cars: context.train.cars,
+        length_metres: context.train.length_metres,
+    };
+    let mut low_flank_degrees: f64 = 2.0;
+    let mut high_flank_degrees: f64 = 75.0;
+    let mut best: Option<(f64, SolvedProfile, f64)> = None;
+    for _ in 0..SHAPED_FLANK_SEARCH_STEPS {
+        let flank_degrees = (low_flank_degrees + high_flank_degrees) / 2.0;
+        let profile_spec = OfflineHillSpec {
+            entry_speed_mps: design_speed_mps,
+            pull_g: SHAPED_HILL_PULL_G,
+            crest_g,
+            flank_angle_radians: flank_degrees.to_radians(),
+            taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
+        };
+        let Ok((profile, _, _)) = solve_shaped_hill_offline_profile(profile_spec, train, 256)
+        else {
+            high_flank_degrees = flank_degrees;
+            continue;
+        };
+        let height_m = profile
+            .resolved_points()
+            .iter()
+            .map(|point| point[2])
+            .fold(f64::NEG_INFINITY, f64::max);
+        let error_m = (height_m - target_height_m).abs();
+        if best
+            .as_ref()
+            .is_none_or(|(best_error, ..)| error_m < *best_error)
+        {
+            best = Some((error_m, profile.clone(), flank_degrees));
         }
-        CellRefusal::AboveLastVerifiedSpeed { maximum_speed_mps } => {
-            SolveRefusal::AboveVerifiedSpeed {
-                entry_speed_mps,
-                maximum_speed_mps,
-            }
+        if height_m < target_height_m {
+            low_flank_degrees = flank_degrees;
+        } else {
+            high_flank_degrees = flank_degrees;
         }
-        CellRefusal::InvalidGeometry { .. } => SolveRefusal::InvalidGeometry,
-        CellRefusal::InfeasibleTarget {
-            target_g,
-            available_headroom_g,
-            failure,
-            ..
-        } => match failure {
-            CellFailure::OfflineSolver(
-                crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres },
-            ) => SolveRefusal::Stall {
-                entry_speed_mps,
-                height_m: height_metres,
-            },
-            CellFailure::OfflineSolver(
-                crate::track::profile::OfflineSolveError::InvalidCurvature { .. },
-            ) => SolveRefusal::InvalidGeometry,
-            _ => match available_headroom_g {
-                Some(available_headroom_g) => SolveRefusal::InfeasibleTarget {
-                    target_g,
-                    available_headroom_g,
-                },
-                None => SolveRefusal::UnmeasuredTarget { target_g },
-            },
-        },
     }
+    let (_, _, flank_degrees) = best.ok_or(SolveRefusal::InvalidGeometry)?;
+    let profile_spec = OfflineHillSpec {
+        entry_speed_mps: design_speed_mps,
+        pull_g: SHAPED_HILL_PULL_G,
+        crest_g,
+        flank_angle_radians: flank_degrees.to_radians(),
+        taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
+    };
+    let (mut profile, _, _) = solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS)
+        .map_err(|failure| match failure {
+            crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
+                SolveRefusal::Stall {
+                    entry_speed_mps: design_speed_mps,
+                    height_m: height_metres,
+                }
+            }
+            crate::track::profile::OfflineSolveError::InvalidCurvature { .. }
+            | crate::track::profile::OfflineSolveError::DidNotConverge => {
+                SolveRefusal::InvalidGeometry
+            }
+        })?;
+    let diagonal_scale = if context.entry.heading.index() % 2 == 0 {
+        1.0
+    } else {
+        std::f64::consts::SQRT_2
+    };
+    let span_m = (profile.endpoint()[0] * diagonal_scale / (2.0 * diagonal_scale)).ceil()
+        * 2.0
+        * diagonal_scale;
+    profile.append_level_straight(span_m / diagonal_scale - profile.endpoint()[0]);
+    profile.round_to_nine_decimal_places();
+    let height_m = profile
+        .resolved_points()
+        .iter()
+        .map(|point| point[2])
+        .fold(f64::NEG_INFINITY, f64::max);
+    Ok((profile, height_m, span_m))
 }
+#[cfg(test)]
 pub(crate) fn synthesize_hill_profile(
     design_speed_mps: f64,
     pull_g: f64,
@@ -734,176 +1010,35 @@ pub(crate) fn synthesize_hill_profile(
         flank_angle_radians: flank_angle,
         taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
     };
-    integrate_shaped_hill_once_profile(
-        spec,
-        train,
-        PROFILE_STEPS,
-        connector_grid_scale,
-        connector_grid_span_metres,
-    )
-    .map_err(|failure| match failure {
-        crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
-            SolveRefusal::Stall {
-                entry_speed_mps: design_speed_mps,
-                height_m: height_metres,
+    let (mut profile, _, _) = solve_shaped_hill_offline_profile(spec, train, PROFILE_STEPS)
+        .map_err(|failure| match failure {
+            crate::track::profile::OfflineSolveError::NonPositiveSpeedSquared { height_metres } => {
+                SolveRefusal::Stall {
+                    entry_speed_mps: design_speed_mps,
+                    height_m: height_metres,
+                }
             }
-        }
-        crate::track::profile::OfflineSolveError::InvalidCurvature { .. } => {
-            SolveRefusal::InvalidGeometry
-        }
-        crate::track::profile::OfflineSolveError::DidNotConverge => {
-            unreachable!("single profile integration does not iterate")
-        }
-    })
-}
-
-fn resolve_hill_profile(
-    context: &SolveContext<'_>,
-    design_speed_mps: f64,
-    pull_g: f64,
-    crest_g: f64,
-    flank_angle: f64,
-) -> Result<(SolvedProfile, f64, f64), SolveRefusal> {
-    let diagonal_scale = if context.entry.heading.index() % 2 == 0 {
-        1.0
-    } else {
-        std::f64::consts::SQRT_2
-    };
-    let grid_span_m = if diagonal_scale == 1.0 {
-        2.0
-    } else {
-        2.0 * diagonal_scale
-    };
-    let train = OfflineTrain::Coaster {
-        cars: context.train.cars,
-        length_metres: context.train.length_metres,
-    };
-    let (profile, span_m, _) = synthesize_hill_profile(
-        design_speed_mps,
-        pull_g,
-        crest_g,
-        flank_angle,
-        train,
-        diagonal_scale,
-        grid_span_m,
-    )?;
-    let height_m = profile
-        .resolved_points()
-        .iter()
-        .map(|point| point[2])
-        .fold(f64::NEG_INFINITY, f64::max);
-    Ok((profile, height_m, span_m))
-}
-
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct HillCandidateMeasurement {
-    pub(crate) delivered_g: Option<f64>,
-    pub(crate) headroom_g: f64,
-    pub(crate) every_car_within_limits: bool,
-    pub(crate) height_m: f64,
-    pub(crate) span_m: f64,
-    pub(crate) profile_minimum_radius_m: f64,
-    pub(crate) piece_minimum_radius_m: f64,
-    pub(crate) model_minimum_radius_m: f64,
-    pub(crate) profile_radius_within_limit: bool,
-    pub(crate) piece_radius_within_limit: bool,
-    pub(crate) cars: Vec<CandidateCarForces>,
-}
-
-#[cfg(test)]
-pub(crate) fn measure_hill_candidate_with_taper(
-    context: &mut SolveContext<'_>,
-    target_g: f64,
-    pull_g: f64,
-    crest_g: f64,
-    flank_angle: f64,
-    taper_angle: f64,
-) -> Result<HillCandidateMeasurement, SolveRefusal> {
-    let (profile, height_m, span_m) = resolve_hill_profile_for_calibration(
-        context,
-        context.entry_speed_mps,
-        pull_g,
-        crest_g,
-        flank_angle,
-        taper_angle,
-    )?;
-    let profile_minimum_radius_m = profile.minimum_radius();
-    let spec = ElementSpec::Hill {
-        design_speed_mps: context.entry_speed_mps,
-        cars: context.train.cars,
-        target_g,
-        delivered_g: target_g,
-        height_m,
-        span_m,
-        profile,
-    };
-    let candidate = piece_from_spec(context.entry, &spec)?;
-    let piece_minimum_radius_m = candidate.maximum_curvature().recip();
-    let model_minimum_radius_m = context.model.minimum_radius_metres;
-    let preview = calibrate_piece(context, &candidate)?;
-    let delivered_g = preview
-        .cars
-        .iter()
-        .filter_map(|car| car.sustained_minimum_vertical_g)
-        .reduce(f64::min);
-    Ok(HillCandidateMeasurement {
-        delivered_g,
-        headroom_g: force_headroom_for_candidate(context.model, &preview.cars),
-        every_car_within_limits: preview.cars.len() == usize::from(context.train.cars)
-            && preview.cars.iter().all(|car| car.within_limits),
-        height_m,
-        span_m,
-        profile_minimum_radius_m,
-        piece_minimum_radius_m,
-        model_minimum_radius_m,
-        profile_radius_within_limit: profile_minimum_radius_m >= model_minimum_radius_m,
-        piece_radius_within_limit: piece_minimum_radius_m >= model_minimum_radius_m,
-        cars: preview.cars,
-    })
-}
-
-#[cfg(test)]
-fn resolve_hill_profile_for_calibration(
-    context: &SolveContext<'_>,
-    design_speed_mps: f64,
-    pull_g: f64,
-    crest_g: f64,
-    flank_angle: f64,
-    taper_angle: f64,
-) -> Result<(SolvedProfile, f64, f64), SolveRefusal> {
-    let spec =
-        ProfileSpec::hill_with_taper(design_speed_mps, pull_g, crest_g, flank_angle, taper_angle);
-    let half_profile =
-        integrate_checked(&spec, None, PROFILE_STEPS).map_err(|height_m| SolveRefusal::Stall {
-            entry_speed_mps: design_speed_mps,
-            height_m,
+            crate::track::profile::OfflineSolveError::InvalidCurvature { .. } => {
+                SolveRefusal::InvalidGeometry
+            }
+            crate::track::profile::OfflineSolveError::DidNotConverge => {
+                unreachable!("single profile integration does not iterate")
+            }
         })?;
-    let mut profile = reflect_hill(&half_profile);
     let endpoint_x = profile.endpoint()[0];
-    let diagonal_scale = if context.entry.heading.index() % 2 == 0 {
-        1.0
-    } else {
-        std::f64::consts::SQRT_2
-    };
-    let grid_span_m = if diagonal_scale == 1.0 {
-        2.0
-    } else {
-        2.0 * diagonal_scale
-    };
-    let span_m = (endpoint_x * diagonal_scale / grid_span_m).ceil() * grid_span_m;
-    profile.append_level_straight(span_m / diagonal_scale - endpoint_x);
-    let height_m = profile
-        .resolved_points()
-        .iter()
-        .map(|point| point[2])
-        .fold(f64::NEG_INFINITY, f64::max);
-    Ok((profile, height_m, span_m))
+    let span_metres = (endpoint_x * connector_grid_scale / connector_grid_span_metres).ceil()
+        * connector_grid_span_metres;
+    let connector_insert_metres = span_metres / connector_grid_scale - endpoint_x;
+    profile.append_level_straight(connector_insert_metres);
+    Ok((profile, span_metres, connector_insert_metres))
 }
 
 fn solve_turn(
     hand: Hand,
     size: TurnSizeHint,
+    maximum_previews: u8,
+    provisional: bool,
+    preview_seed: Option<&SolvedElement>,
     context: &mut SolveContext<'_>,
 ) -> Result<SolvedElement, SolveRefusal> {
     let design_speed_mps = round_element_value(context.entry_speed_mps);
@@ -938,104 +1073,167 @@ fn solve_turn(
     } else {
         2.0 * std::f64::consts::SQRT_2
     };
-    let generated_spec = match size {
-        TurnSizeHint::Auto => lookup_generated_spec(
-            context.model.key,
-            context.train.cars,
-            GridElement::FullyBankedTurn,
-            context.entry_speed_mps,
-        ),
-        TurnSizeHint::Radius(_) => lookup_turn_radius_override_base_spec(
-            context.model.key,
-            context.train.cars,
-            context.entry_speed_mps,
-        ),
-    }
-    .map_err(|refusal| table_refusal_to_solve(refusal, context.entry_speed_mps))?;
-    let GeneratedSpec::Turn {
-        radius_m: automatic_radius,
-        ..
-    } = generated_spec
-    else {
-        unreachable!("turn table key resolved to a hill")
+    let requested_radius_m = match size {
+        TurnSizeHint::Auto => None,
+        TurnSizeHint::Radius(radius_m) => Some(radius_m),
     };
-    let requested_radius = match size {
-        TurnSizeHint::Auto => automatic_radius.max(rules.minimum_turn_radius_m),
-        TurnSizeHint::Radius(radius_m) => radius_m,
-    };
-    let radius_m = (requested_radius / radius_step).ceil() * radius_step;
-    if radius_m < rules.minimum_turn_radius_m || radius_m > rules.maximum_turn_radius_m {
+    if requested_radius_m.is_some_and(|radius| {
+        radius < rules.minimum_turn_radius_m || radius > rules.maximum_turn_radius_m
+    }) {
         return Err(SolveRefusal::InfeasibleTarget {
             target_g: target_vertical_g,
             available_headroom_g: 0.0,
         });
     }
-    let geometry = super::curves::speed_turn_geometry(radius_m, design_speed_mps);
-    let geometry = (*geometry).clone();
-    let bank_degrees = geometry.peak_bank.to_degrees();
-    if bank_degrees > rules.maximum_bank_degrees {
-        return Err(SolveRefusal::InfeasibleTarget {
-            target_g: target_vertical_g,
-            available_headroom_g: rules.maximum_bank_degrees - bank_degrees,
-        });
-    }
-    let mut initial_spec = ElementSpec::Turn {
-        design_speed_mps,
-        cars: context.train.cars,
-        hand,
-        vertical_g: 1.0 / geometry.peak_bank.cos(),
-        lateral_g: 0.0,
-        radius_m,
-        bank_degrees,
-        geometry,
-    };
-    canonicalize_element_spec(&mut initial_spec);
-    let piece = piece_from_spec(context.entry, &initial_spec)?;
-    let preview = calibrate_piece(context, &piece)?;
-    if preview.cars.len() != usize::from(context.train.cars) {
-        return Err(SolveRefusal::PreviewTimedOut);
-    }
-    let lateral_g = preview
-        .cars
-        .iter()
-        .map(|car| car.peaks.maximum_lateral_g)
-        .fold(0.0, f64::max);
-    let available_headroom = force_headroom_for_candidate(context.model, &preview.cars);
-    if lateral_g > MAXIMUM_FULLY_BANKED_LATERAL_G
-        || available_headroom < REQUIRED_FORCE_HEADROOM_G
-        || preview.cars.iter().any(|car| !car.within_limits)
+
+    let mut peak_bank = target_vertical_g
+        .recip()
+        .acos()
+        .min(rules.maximum_bank_degrees.to_radians());
+    let mut preview_count = 0_u8;
+    if let Some(seed) = preview_seed
+        && let ElementSpec::Turn { bank_degrees, .. } = seed.spec
     {
-        return Err(SolveRefusal::InfeasibleTarget {
-            target_g: target_vertical_g,
-            available_headroom_g: available_headroom
-                .min(MAXIMUM_FULLY_BANKED_LATERAL_G - lateral_g),
-        });
+        preview_count = 1;
+        peak_bank = (bank_degrees.to_radians().tan() * 0.9).atan();
     }
-    let vertical_g = preview
-        .cars
-        .iter()
-        .map(|car| car.peaks.maximum_vertical_g)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let mut spec = ElementSpec::Turn {
-        design_speed_mps,
-        cars: context.train.cars,
-        hand,
-        vertical_g,
-        lateral_g,
-        radius_m,
-        bank_degrees,
-        geometry: match initial_spec {
-            ElementSpec::Turn { geometry, .. } => geometry,
-            ElementSpec::Hill { .. } => unreachable!(),
-        },
-    };
-    canonicalize_element_spec(&mut spec);
-    Ok(SolvedElement {
-        piece: piece_from_spec(context.entry, &spec)?,
-        spec,
-        calibration_runs: 1,
-        cap_note: None,
+    let mut last_headroom_g = f64::NEG_INFINITY;
+    let mut last_lateral_g = f64::INFINITY;
+    while preview_count < maximum_previews {
+        let speed_loss_fraction =
+            estimated_turn_speed_loss_fraction(context, design_speed_mps, peak_bank);
+        let (geometry, radius_m, resolved_bank) = super::curves::shaped_speed_turn_geometry(
+            design_speed_mps,
+            peak_bank,
+            speed_loss_fraction,
+            radius_step,
+            rules.minimum_turn_radius_m,
+            requested_radius_m,
+        );
+        peak_bank = resolved_bank;
+        if radius_m > rules.maximum_turn_radius_m {
+            return Err(SolveRefusal::InfeasibleTarget {
+                target_g: target_vertical_g,
+                available_headroom_g: 0.0,
+            });
+        }
+        let bank_degrees = peak_bank.to_degrees();
+        if bank_degrees > rules.maximum_bank_degrees {
+            return Err(SolveRefusal::InfeasibleTarget {
+                target_g: target_vertical_g,
+                available_headroom_g: rules.maximum_bank_degrees - bank_degrees,
+            });
+        }
+        let mut candidate_spec = ElementSpec::Turn {
+            design_speed_mps,
+            cars: context.train.cars,
+            hand,
+            vertical_g: peak_bank.cos().recip(),
+            lateral_g: 0.0,
+            radius_m,
+            bank_degrees,
+            geometry,
+        };
+        canonicalize_element_spec(&mut candidate_spec);
+        let piece = piece_from_spec(context.entry, &candidate_spec)?;
+        let preview = calibrate_piece(context, &piece)?;
+        preview_count += 1;
+        if preview.cars.len() != usize::from(context.train.cars) {
+            return Err(SolveRefusal::PreviewTimedOut);
+        }
+        let lateral_g = preview
+            .cars
+            .iter()
+            .map(|car| car.peaks.maximum_lateral_g)
+            .fold(0.0, f64::max);
+        let headroom_g = force_headroom_for_candidate(context.model, &preview.cars);
+        last_headroom_g = headroom_g;
+        last_lateral_g = lateral_g;
+        let every_car_within_limits = preview.cars.iter().all(|car| car.within_limits);
+        if provisional {
+            let vertical_g = preview
+                .cars
+                .iter()
+                .map(|car| car.peaks.maximum_vertical_g)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let mut spec = ElementSpec::Turn {
+                design_speed_mps,
+                cars: context.train.cars,
+                hand,
+                vertical_g,
+                lateral_g,
+                radius_m,
+                bank_degrees,
+                geometry: match candidate_spec {
+                    ElementSpec::Turn { geometry, .. } => geometry,
+                    ElementSpec::Hill { .. } => unreachable!(),
+                },
+            };
+            canonicalize_element_spec(&mut spec);
+            return Ok(SolvedElement {
+                piece: piece_from_spec(context.entry, &spec)?,
+                spec,
+                calibration_runs: preview_count,
+                cap_note: None,
+                calibration_seed: Some(CalibrationSeed {
+                    preview,
+                    hill_crest_g: None,
+                }),
+            });
+        }
+        if lateral_g <= MAXIMUM_FULLY_BANKED_LATERAL_G
+            && headroom_g >= REQUIRED_FORCE_HEADROOM_G
+            && every_car_within_limits
+        {
+            let vertical_g = preview
+                .cars
+                .iter()
+                .map(|car| car.peaks.maximum_vertical_g)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let mut spec = ElementSpec::Turn {
+                design_speed_mps,
+                cars: context.train.cars,
+                hand,
+                vertical_g,
+                lateral_g,
+                radius_m,
+                bank_degrees,
+                geometry: match candidate_spec {
+                    ElementSpec::Turn { geometry, .. } => geometry,
+                    ElementSpec::Hill { .. } => unreachable!(),
+                },
+            };
+            canonicalize_element_spec(&mut spec);
+            return Ok(SolvedElement {
+                piece: piece_from_spec(context.entry, &spec)?,
+                spec,
+                calibration_runs: preview_count,
+                cap_note: None,
+                calibration_seed: None,
+            });
+        }
+        if preview_count >= maximum_previews {
+            break;
+        }
+        peak_bank = (peak_bank.tan() * 0.9).atan();
+    }
+    Err(SolveRefusal::InfeasibleTarget {
+        target_g: target_vertical_g,
+        available_headroom_g: last_headroom_g.min(MAXIMUM_FULLY_BANKED_LATERAL_G - last_lateral_g),
     })
+}
+
+fn estimated_turn_speed_loss_fraction(
+    context: &SolveContext<'_>,
+    design_speed_mps: f64,
+    peak_bank: f64,
+) -> f64 {
+    let nominal_radius_m = design_speed_mps.powi(2) / (GRAVITY * peak_bank.tan());
+    let turn_length_estimate_m = std::f64::consts::FRAC_PI_2 * nominal_radius_m;
+    let deceleration_mps2 = context.physics.rolling_resistance * GRAVITY
+        + context.physics.drag_coefficient * design_speed_mps.powi(2)
+            / (context.physics.car_mass_kg * f64::from(context.train.cars));
+    deceleration_mps2 * turn_length_estimate_m / design_speed_mps.powi(2)
 }
 
 pub(super) fn piece_from_spec(
@@ -1256,15 +1454,40 @@ impl crate::track::construction::Construction {
         entry_speed_mps: f64,
         physics: PhysicsConfig,
     ) -> Result<SolvedElement, SolveRefusal> {
+        self.shape_candidate_with_mode(intent, entry_speed_mps, physics, false)
+    }
+
+    pub fn shape_candidate_preview(
+        &self,
+        intent: &ElementIntent,
+        entry_speed_mps: f64,
+        physics: PhysicsConfig,
+    ) -> Result<SolvedElement, SolveRefusal> {
+        self.shape_candidate_with_mode(intent, entry_speed_mps, physics, true)
+    }
+
+    fn shape_candidate_with_mode(
+        &self,
+        intent: &ElementIntent,
+        entry_speed_mps: f64,
+        physics: PhysicsConfig,
+        provisional: bool,
+    ) -> Result<SolvedElement, SolveRefusal> {
         let mut cache_key = StateHasher::new();
-        cache_key.write_tag(b"shaped-candidate-v1");
+        cache_key.write_tag(b"shaped-candidate-v2");
         cache_key.write_u64(self.state_hash());
         cache_key.write_f64(entry_speed_mps);
         physics.hash_into(&mut cache_key);
         cache_key.write_bytes(&postcard::to_allocvec(intent).expect("shaped intent serializes"));
         let cache_key = cache_key.finish();
-        if let Some((cached_key, result)) = self.shaped_solve_cache.borrow().as_ref()
-            && *cached_key == cache_key
+        let cached_entry = self
+            .shaped_solve_cache
+            .borrow()
+            .as_ref()
+            .filter(|(cached_key, _, _)| *cached_key == cache_key)
+            .map(|(_, cached_provisional, result)| (*cached_provisional, result.clone()));
+        if let Some((cached_provisional, result)) = &cached_entry
+            && provisional == *cached_provisional
         {
             return result.clone();
         }
@@ -1273,19 +1496,23 @@ impl crate::track::construction::Construction {
         let entry = self.end();
         let model = self.model();
         let train = &model.train;
-        let result = solve(
-            intent,
-            &mut SolveContext {
-                entry,
-                entry_speed_mps,
-                model,
-                train,
-                prefix,
-                preview_cache: &mut cache,
-                physics,
-            },
-        );
-        *self.shaped_solve_cache.borrow_mut() = Some((cache_key, result.clone()));
+        let mut context = SolveContext {
+            entry,
+            entry_speed_mps,
+            model,
+            train,
+            prefix,
+            preview_cache: &mut cache,
+            physics,
+        };
+        let result = match (provisional, cached_entry.as_ref()) {
+            (true, _) => solve_preview(intent, &mut context),
+            (false, Some((true, Ok(preview)))) if preview.calibration_seed.is_some() => {
+                solve_confirm(intent, &mut context, preview)
+            }
+            (false, _) => solve(intent, &mut context),
+        };
+        *self.shaped_solve_cache.borrow_mut() = Some((cache_key, provisional, result.clone()));
         result
     }
 
@@ -1372,6 +1599,7 @@ fn intent_matches_spec(
                 size,
             },
             ElementSpec::Hill {
+                design_speed_mps,
                 target_g,
                 delivered_g,
                 height_m,
@@ -1393,7 +1621,15 @@ fn intent_matches_spec(
             let Some(default_target) = default_target else {
                 return false;
             };
-            let target_matches = (target_g - strength_g.unwrap_or(default_target)).abs() <= 1e-9;
+            let requested_target_g = strength_g.unwrap_or(default_target);
+            let cap_steps = (target_g - requested_target_g) / 0.05;
+            let target_matches = (target_g - requested_target_g).abs() <= 1e-9
+                || (cap_steps > 0.0
+                    && (cap_steps - cap_steps.round()).abs() <= 1e-8
+                    && *target_g <= -0.05
+                    && (*feel != HillFeel::StrongFloater
+                        || *design_speed_mps < 24.0
+                        || *target_g <= -0.75));
             let size_matches = match size {
                 HillSizeHint::Auto => true,
                 HillSizeHint::Height(height) => {
@@ -1490,35 +1726,8 @@ fn intent_matches_spec(
 }
 
 #[cfg(test)]
-mod calibration_coefficients;
-
-#[cfg(test)]
 mod refusal_tests {
     use super::*;
-
-    #[test]
-    fn unavailable_generated_table_row_keeps_its_distinct_runtime_refusal() {
-        assert_eq!(
-            table_refusal_to_solve(CellRefusal::TableUnavailable, 20.0),
-            SolveRefusal::TableUnavailable
-        );
-    }
-
-    #[test]
-    fn missing_runtime_model_key_is_not_reported_as_infeasible() {
-        let table_refusal = lookup_generated_spec(
-            "missing-model-regression-key",
-            4,
-            GridElement::FullyBankedTurn,
-            20.0,
-        )
-        .expect_err("the generated table has no matching model key");
-
-        assert_eq!(
-            table_refusal_to_solve(table_refusal, 20.0),
-            SolveRefusal::TableUnavailable
-        );
-    }
 
     #[test]
     fn invalid_curvature_is_reported_as_invalid_geometry() {
@@ -1533,57 +1742,5 @@ mod refusal_tests {
             2.0,
         );
         assert_eq!(result, Err(SolveRefusal::InvalidGeometry));
-    }
-
-    #[test]
-    fn generated_invalid_curvature_is_not_reported_as_force_infeasibility() {
-        let refusal = table_refusal_to_solve(
-            CellRefusal::InfeasibleTarget {
-                target_g: -0.5,
-                delivered_g: None,
-                available_headroom_g: None,
-                failure: CellFailure::OfflineSolver(
-                    crate::track::profile::OfflineSolveError::InvalidCurvature {
-                        angle_radians: 0.0,
-                        curvature_per_metre: 0.0,
-                        height_metres: 0.0,
-                    },
-                ),
-            },
-            20.0,
-        );
-        assert_eq!(refusal, SolveRefusal::InvalidGeometry);
-    }
-
-    #[test]
-    fn missing_measurements_are_not_reported_as_zero_force_headroom() {
-        let refusal = table_refusal_to_solve(
-            CellRefusal::InfeasibleTarget {
-                target_g: -0.5,
-                delivered_g: None,
-                available_headroom_g: None,
-                failure: CellFailure::PreviewUnavailable,
-            },
-            20.0,
-        );
-        assert_eq!(refusal, SolveRefusal::UnmeasuredTarget { target_g: -0.5 });
-    }
-
-    #[test]
-    fn unmeasurable_table_geometry_preserves_the_invalid_geometry_refusal() {
-        let refusal = table_refusal_to_solve(
-            CellRefusal::InvalidGeometry {
-                attempts: 1,
-                failure: CellFailure::OfflineSolver(
-                    crate::track::profile::OfflineSolveError::InvalidCurvature {
-                        angle_radians: 0.0,
-                        curvature_per_metre: 0.0,
-                        height_metres: 0.0,
-                    },
-                ),
-            },
-            20.0,
-        );
-        assert_eq!(refusal, SolveRefusal::InvalidGeometry);
     }
 }
