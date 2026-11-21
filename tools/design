@@ -18,11 +18,15 @@ build() {
 # Replays ride files through the browser worker's builder path in Node with the release WASM build and compares
 # every value the browser ride-agreement test compares (web/e2e/rides/fast-agreement.ts).
 agree() {
-  build agreement-wasm
+  if [[ "${THEME_PARK_DESIGN_TOOLS_PREBUILT:-0}" != "1" ]]; then
+    build agreement-wasm
+  fi
   node --experimental-strip-types --no-warnings "$repo_root/web/e2e/rides/fast-agreement-cli.ts" "$design_binary" "$@"
 }
 
-build design-tools
+if [[ "${THEME_PARK_DESIGN_TOOLS_PREBUILT:-0}" != "1" ]]; then
+  build design-tools
+fi
 command="${1:-}"
 if [[ "$command" == agree ]]; then
   shift
