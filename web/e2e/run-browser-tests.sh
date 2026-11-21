@@ -92,6 +92,9 @@ if [[ "${THEME_PARK_PLAYWRIGHT_DOCKER:-0}" == "1" ]]; then
     --env THEME_PARK_PLAYWRIGHT_DOCKER=1
     --env THEME_PARK_PIECE_CATALOG_FIXTURE="$container_fixture_path"
   )
+  if [[ "${THEME_PARK_DESIGN_TOOLS_PREBUILT:-0}" == "1" ]]; then
+    docker_arguments+=(--env THEME_PARK_DESIGN_TOOLS_PREBUILT=1)
+  fi
   if [[ "$selected_project" == "journey" ]]; then
     docker_arguments+=(--env THEME_PARK_LIVE_PAUSE_RENDER=1)
   fi
