@@ -1,10 +1,10 @@
 ---
 id: TASK-162
 title: Explain Briar Blitz's 7 g lateral and 4.4 g vertical in the design check
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-21 05:39'
-updated_date: '2026-11-21 05:47'
+updated_date: '2026-11-21 14:40'
 labels: []
 dependencies: []
 ordinal: 158000
@@ -42,4 +42,6 @@ Proposed piece-design change: the flat classic turns (TurnSmallStandalone, TurnL
 Not a blocker for TASK-160 item 3 on measurement grounds: the numbers are honest. Making margins fatal for every ride still needs Briar Blitz (and Daisy Dash, TASK-161) redesigned or exempted by the owner.
 
 Minor observation: the first sample of the report trace (distance 0, piece 0) carries the station arrival of the previous lap (23.5 m/s, 0.97 g lateral) before the speed resets to 2.0 m/s. It does not affect peaks here, but it looks like a lap-wrap sample worth a separate check.
+
+2026-11-21 redesign landed (branch briar-redesign, 8973ba1, merged with master as 2d4b675 and fast-forwarded into master). Briar Blitz is now a force-shaped wooden twister: steep straight first drop with LongGentleDownToLevel pull-out, banked 28 m/s speed turn, top hat, floater hills, a mid-course brake, 20 m/s banked turns and S-bends, ejector hills, then a climb to four tight twisters at 6-7 m/s and a gentle drop into the station brakes. `tools/design check`: lateral 0.43 g default / 0.58 g construction-test (was 7.26 g), positive vertical 3.38 / 3.44 g (was 4.41 g), minimum vertical -0.45 / -0.53 g, forward 1.03 / 1.06 g, braking 1.07 / 1.08 g; every force-headroom row passes. Excitement 4.72 default / 5.44 construction-test. All expectations pass. Remaining design-margin failure: TopHat (piece 16) rated margin -0.24 m/s default and -0.53 m/s construction-test under the current narrow-window centre rule (window 24.63-27.74 m/s, entries 26.48 / 26.77); by my calculation both would pass the owner's proposed min(1.5 m/s, 25% of width) edge rule at about +0.48 and +0.19 m/s, which is not on master yet. Also an advisory placement-estimate note on piece 44 (longitudinal 0.007 g estimate vs 0.346 g measured, classified as downstream track; does not fail the agreement). Tests changed by the branch: Briar Blitz builder state hash and output trace digest re-recorded (crates/sim-wasm/src/builder_session.rs); the prefix-ordering expectation test in crates/design-tools/src/commands.rs builds its own feature list instead of reading Briar Blitz's expect block (the BankedTurnStandalone-after-lift expectation is gone from the ride); the journey's "Descending small left-banked turn" label check moved to web/src/construction-choices.test.ts. Gates on 2d4b675: Rust workspace --no-fail-fast 1139 passed, 0 failed; Vitest 497 + art 9; typecheck; lint; make check (@fast 47 passed); ride-agreement briar-blitz 2/2 (parity 45/45); feature 200/200; journeys 11/11.
 <!-- SECTION:NOTES:END -->
