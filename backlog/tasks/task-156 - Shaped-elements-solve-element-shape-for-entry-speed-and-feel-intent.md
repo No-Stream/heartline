@@ -1,9 +1,10 @@
 ---
 id: TASK-156
 title: 'Shaped elements: solve element shape for entry speed and feel intent'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-19 16:16'
+updated_date: '2026-11-21 21:25'
 labels: []
 dependencies: []
 priority: high
@@ -471,3 +472,9 @@ The first full ride agreement run after the hill fix timed out on Horizon Hawk a
 The next Horizon Hawk run reached the report and failed because the browser test compared the ride file's sustainedMaxVerticalG target of 3.0 to 3.5 g with the report's brief peak of 3.63 g. `tools/design check` (also on master `f07cfd9`) compares these targets with sustained force peaks, which give 3.31 g. The browser test now checks the targets against the native sustained observations, and still requires the browser report samples to match the native samples within 1e-6 (commit `a1726ef`). Stale Horizon Hawk digest pins in `web/src/park-bundle.test.ts` and `web/e2e/park-description.spec.ts` were updated to the 18 shaped steps of the regenerated ride.
 
 Gates: workspace Rust tests passed (lead's run on `c6d9f3d`; web-only commits since), `make lint` passed, `make check` passed on `e49ac18` (Vitest 495/495 and 9/9, 47 fast browser tests), `PLAYWRIGHT_PORT=4781 make e2e-feature` passed 200/200, `PLAYWRIGHT_PORT=4782 make journeys` passed 11/11, and `make ride-agreement` passed 8/8 on `4c59fc3`.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Backlog review 2026-11-21: the earlier shaped-element stages are not all closed by this review. Stage 1 output is present on master (shaped elements in f07cfd9; the one two-piece brake Horizon Hawk layout in 6661fe4). The new architecture in TASK-166/167 supersedes the remaining staged direction: global windows/force judging in TASK-166 and per-model shaped profiles and finish search in TASK-167. Keep this tracking item open as a partial annotation; the remaining old stages (turn feel/vertical transitions, named inversions with peak force, and other showcase rides) must be carried into TASK-167, not treated as completed.
+<!-- SECTION:NOTES:END -->

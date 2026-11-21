@@ -4,7 +4,7 @@ title: Fix design tool friction found while writing the ride guide
 status: To Do
 assignee: []
 created_date: '2026-11-21 03:05'
-updated_date: '2026-11-21 05:16'
+updated_date: '2026-11-21 21:25'
 labels: []
 dependencies: []
 ordinal: 156000
@@ -28,4 +28,6 @@ Fixed on branch tool-friction (2026-11-20), each item re-checked against master 
 (6) estimate prints the solved shape line for shaped ids, from the existing preview data.
 (7) Left as a documented limitation (docs/designing-rides.md, Targets and the check).
 docs/designing-rides.md updated, including the Close the circuit section, which still described the pre-TASK-159 finish (80 m, five pieces, run close after finish).
+
+Backlog review 2026-11-21: items 1-6 and the documented output behavior are implemented on master (e94cd57; fixes recorded in the ticket). Keep open because item 7, a command to write the ride expect block, is explicitly still a documented limitation in docs/designing-rides.md.
 <!-- SECTION:NOTES:END -->

@@ -1,9 +1,10 @@
 ---
 id: TASK-161
 title: Bring Daisy Dash inside its force headroom
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-21 03:15'
+updated_date: '2026-11-21 21:25'
 labels: []
 dependencies: []
 ordinal: 157000
@@ -28,3 +29,9 @@ Full attempt (second half rebuilt, no mid-course brake): first hill, TerrainRise
 
 Conclusion: with the classic family-coaster pieces, the 0.25 g headroom and the rated-window rule, Daisy Dash cannot keep its excitement band (default physics 2.94 against a 2.5 floor) with local edits; it needs a full re-layout, or one of: a gentle level-to-climb piece (a long LevelToGentleUp), a speed turn rated around 18 m/s, shaped elements for family_coaster, or an owner decision on the family coaster headroom or excitement target. Experiment command lists are in the lead session scratchpad (orig.cmds, a.cmds, h.cmds).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Superseded by TASK-167. Daisy Dash’s profile, force-headroom redesign, ride-file digests/goldens, and validation under both physics configurations move into its all-model rollout; the local redesign attempts recorded here did not produce a viable layout.
+<!-- SECTION:FINAL_SUMMARY:END -->

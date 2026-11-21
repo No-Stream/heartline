@@ -1,10 +1,10 @@
 ---
 id: TASK-155
 title: Intermittent zero-size game canvas during browser ride tests
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-19 05:31'
-updated_date: '2026-11-19 08:26'
+updated_date: '2026-11-21 21:25'
 labels:
   - bug
   - testing
@@ -23,3 +23,9 @@ On master 66d3f93 the full gate's browser ride tests (make ride-agreement) faile
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-19: seen again once in make check on branch hawk-redesign (Browser agreement fast circuit test); the recorded stack shows the main render loop calling render (web/src/render/index.ts:360). Rerun passed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Canvas resizing now defers updates when either layout bound is zero, preserving positive backing-store dimensions; the focused canvas-sizing tests cover zero and positive bounds. Master commit 7c2fe00.
+<!-- SECTION:FINAL_SUMMARY:END -->
