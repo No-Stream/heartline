@@ -29,4 +29,5 @@ Horizon Hawk results: without its last 2 steps, one straight (22.5 m/s arrival, 
 Test changes: the TASK-159 test that Horizon Hawk without its last 4 steps reports "too fast" now finishes with a shaped turn (new tests for 4 and 5 steps check the saved steps re-solve to their digests and that `check` passes); the too-fast explanation and the state test use Horizon Hawk without its last 27 steps instead.
 
 Not done: shaped hills; turns from diagonal headings (the browser's 2 m radius stepper cannot select their 2.8 m grid); a finish that ends with a shaped turn at the station entry (the builder then has no piece selected, which the ride check's builder snapshots cannot record).
+Gates on 1eab904: workspace tests (skipping the seeded walk tests) 1139 passed, 0 failed, 1 ignored; `make lint` passed; `make check` passed (Vitest 497, browser 47); `make ride-agreement RIDE=horizon-hawk` 2 passed. Finish apply now also refuses a completion whose piece ids disagree with its geometry, which keeps the existing tampered-completion test meaningful now that apply rebuilds from geometry.
 <!-- SECTION:NOTES:END -->
