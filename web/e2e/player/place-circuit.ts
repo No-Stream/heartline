@@ -1,7 +1,10 @@
 import { expect, type Page } from "@playwright/test";
-import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection } from "../../src/construction-shaped-elements";
+import { shapeSelectionId } from "../../src/construction-shaped-elements";
 import { displayToMetres, metresPerSecondToDisplay, type Units } from "../../src/units";
-import type { RideShapeIntent, RideShapeStep, RideStep } from "./rides";
+import { classicHillTargets, hillAttributeOrder, hillFeelOrder, hillTwistOrder, selectionFromRideIntent, shapeBaseSelectionId } from "./ride-shape-selection";
+import type { RideShapeStep, RideStep } from "./rides";
+
+export { selectionFromRideIntent };
 
 export type PlaceCircuitShapeStep = RideShapeStep;
 
@@ -9,8 +12,6 @@ export type PlaceCircuitRideStep = RideStep | PlaceCircuitShapeStep;
 
 type HillAttribute = "feel" | "height" | "span" | "twist";
 
-const hillFeelOrder = ["Ejector", "Strong floater", "Floater", "Speed hill", "Zero-g roll", "Stall"];
-const hillTwistOrder = ["Outer bank left", "Upright", "Outer bank right", "Roll left", "Roll right"];
 const previewNames: Record<string, string> = {
   TopHat: "Top hat", TightTwisterLeft: "Tight left turn", TightTwisterRight: "Tight right turn",
   TwisterFanLeft: "Left fan turn", TwisterFanRight: "Right fan turn",
@@ -63,25 +64,16 @@ async function selectPiece(page: Page, piece: string): Promise<void> {
     await page.locator(`[data-speed-match-variant="${piece}"]`).click();
   } else {
     const direct = page.locator(`[data-piece="${piece}"]`);
-    const hill = /^(WoodenEjector|Ejector|Floater|Family|Speed)Hill(\d+)x(\d+)(OuterLeft|OuterRight)?$/.exec(piece);
-    const roll = /^ZeroGRoll(Fast|Compact)(Left|Right)$/.exec(piece);
-    const stall = /^Stall(Left|Right)$/.exec(piece);
+    const hillTargets = classicHillTargets(piece);
     // A palette click on a hill is re-sized by the worker for the predicted speed, so hills are sized in the inspector.
-    if (!hill && !roll && !stall) {
+    if (!hillTargets) {
       await expect(direct, `Piece ${piece} is not offered by the palette`).toBeVisible();
       await direct.click();
     } else {
       const hillSection = page.locator("[data-hill]");
       if (await hillSection.getAttribute("open") === null) await hillSection.locator("summary").click();
       await expect(hillSection.locator('[data-hill-value="feel"]')).toHaveText(/\S/);
-      const feel = stall ? "Stall" : roll ? "Zero-g roll" : piece === "WoodenEjectorHill8x64" ? "Strong floater"
-        : hill![1].includes("Ejector") ? "Ejector" : hill![1] === "Floater" || hill![1] === "Family" ? "Floater" : "Speed hill";
-      await stepHill(page, "feel", feel);
-      const twist = stall ? `Roll ${stall[1].toLowerCase()}` : roll ? `Roll ${roll[2].toLowerCase()}`
-        : hill?.[4] === "OuterLeft" ? "Outer bank left" : hill?.[4] === "OuterRight" ? "Outer bank right" : "Upright";
-      await stepHill(page, "twist", twist);
-      await stepHill(page, "height", `${stall ? 13 : roll ? (roll[1] === "Fast" ? 8 : 10) : hill![2]} m`);
-      await stepHill(page, "span", `${stall ? 104 : roll ? (roll[1] === "Fast" ? 86 : 80) : hill![3]} m`);
+      for (const attribute of hillAttributeOrder) await stepHill(page, attribute, hillTargets[attribute]);
     }
   }
   await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
@@ -100,39 +92,6 @@ function asRideStep(step: string | PlaceCircuitRideStep): PlaceCircuitRideStep {
   if (step === "+chain") return { chain: true };
   if (step === "-chain") return { chain: false };
   return { place: step };
-}
-
-export function selectionFromRideIntent(intent: RideShapeIntent): ShapedElementSelection {
-  if ("hill" in intent) {
-    const hill = intent.hill;
-    let feel: "ejector" | "floater" | "strongFloater";
-    switch (hill.feel) {
-      case "Ejector": feel = "ejector"; break;
-      case "Floater": feel = "floater"; break;
-      case "StrongFloater": feel = "strongFloater"; break;
-    }
-    const size = hill.size === "Auto"
-      ? { kind: "auto" as const }
-      : { kind: "height" as const, heightMetres: hill.size.Height };
-    return { kind: "hill", feel, strengthG: hill.strength_g, size };
-  }
-  const turn = intent.turn;
-  const size = turn.size === "Auto"
-    ? { kind: "auto" as const }
-    : { kind: "radius" as const, radiusMetres: turn.size.Radius };
-  return {
-    kind: "turn",
-    hand: turn.hand === "Left" ? "left" : "right",
-    feel: "fullyBanked",
-    size,
-  };
-}
-
-function shapeBaseSelectionId(selection: ShapedElementSelection): string {
-  if (selection.kind === "hill") {
-    return defaultShapeSelectionId(selection.feel);
-  }
-  return shapeSelectionId({ ...selection, size: { kind: "auto" } });
 }
 
 async function readResolvedShapeDimension(page: Page, kind: "hill" | "turn"): Promise<number> {

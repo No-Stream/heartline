@@ -271,8 +271,12 @@ function isRideExpect(value: unknown): value is RideExpect {
 /** Read and validate one ride file by its filename stem, such as `timber-tumbler`. */
 export function readRide(name: string): RideFile {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) throw new Error(`Invalid ride filename stem: ${name}`);
-  const rideJson = readFileSync(new URL(`../../../content/rides/${name}.ride.json`, import.meta.url), "utf8");
-  const parsedRide: unknown = JSON.parse(rideJson);
-  if (!isRideFile(parsedRide)) throw new Error(`Invalid ride file content/rides/${name}.ride.json`);
+  return readRideFile(new URL(`../../../content/rides/${name}.ride.json`, import.meta.url));
+}
+
+/** Read and validate a ride file at any path. */
+export function readRideFile(path: string | URL): RideFile {
+  const parsedRide: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (!isRideFile(parsedRide)) throw new Error(`Invalid ride file ${String(path)}`);
   return parsedRide;
 }

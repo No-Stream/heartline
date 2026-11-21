@@ -4,10 +4,52 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(dirname "$script_dir")"
 build_log="$repo_root/target/design-tools-build.log"
+design_binary="$repo_root/target/release/heartline-design"
 mkdir -p "$repo_root/target"
-if ! make -C "$repo_root" design-tools >"$build_log" 2>&1; then
-  cat "$build_log" >&2
-  echo "tools/design: building the design tool failed; full log in $build_log" >&2
-  exit 1
+
+build() {
+  if ! make -C "$repo_root" "$@" >"$build_log" 2>&1; then
+    cat "$build_log" >&2
+    echo "tools/design: building $* failed; full log in $build_log" >&2
+    exit 1
+  fi
+}
+
+# Replays ride files through the browser worker's builder path in Node with the release WASM build and compares
+# every value the browser ride-agreement test compares (web/e2e/rides/fast-agreement.ts).
+agree() {
+  build agreement-wasm
+  node --experimental-strip-types --no-warnings "$repo_root/web/e2e/rides/fast-agreement-cli.ts" "$design_binary" "$@"
+}
+
+build design-tools
+command="${1:-}"
+if [[ "$command" == agree ]]; then
+  shift
+  [[ $# -gt 0 ]] || { echo "usage: tools/design agree <ride file> ..." >&2; exit 1; }
+  agree "$@"
+  exit
 fi
-exec "$repo_root/target/release/heartline-design" "$@"
+if [[ "$command" != check ]] || [[ " $* " == *" --json "* ]]; then
+  exec "$design_binary" "$@"
+fi
+
+# Text-mode check: the native check and the browser-path agreement run side by side. The agreement is reported
+# unless the native check could not run at all (for example on stale shaped geometry).
+check_output="$(mktemp)"
+agree_output="$(mktemp)"
+trap 'rm -f "$check_output" "$agree_output"' EXIT
+agree "${@:2}" >"$agree_output" 2>&1 &
+agree_pid=$!
+check_status=0
+"$design_binary" "$@" | tee "$check_output" || check_status=$?
+if [[ $check_status -ne 0 && ! -s "$check_output" ]]; then
+  kill "$agree_pid" 2>/dev/null || true
+  wait "$agree_pid" 2>/dev/null || true
+  exit "$check_status"
+fi
+agree_status=0
+wait "$agree_pid" || agree_status=$?
+cat "$agree_output"
+if [[ $check_status -ne 0 ]]; then exit "$check_status"; fi
+exit "$agree_status"

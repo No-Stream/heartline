@@ -1,0 +1,422 @@
+{
+  "format": "heartline-ride",
+  "version": 1,
+  "name": "Horizon Hawk",
+  "model": "hyper",
+  "station": {
+    "x": 241,
+    "y": 249,
+    "z": 10,
+    "heading": "north"
+  },
+  "carsPerTrain": 8,
+  "trains": 1,
+  "steps": [
+    {
+      "chain": true
+    },
+    {
+      "place": "LevelToGentleUp"
+    },
+    {
+      "place": "GentleToSteepUp"
+    },
+    {
+      "place": "SteepUp"
+    },
+    {
+      "place": "SteepUp"
+    },
+    {
+      "place": "SteepToGentleUp"
+    },
+    {
+      "place": "GentleUpToLevel"
+    },
+    {
+      "chain": false
+    },
+    {
+      "place": "WideLevelToSixtyDown"
+    },
+    {
+      "place": "WideSixtyDownToLevel"
+    },
+    {
+      "intent": {
+        "turn": {
+          "hand": "Left",
+          "size": {
+            "Radius": 68.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "turn",
+        "design_speed_mps": 34.626991,
+        "cars": 8,
+        "hand": "Left",
+        "vertical_g": 3.395807,
+        "lateral_g": 0.114109,
+        "radius_m": 68.0,
+        "bank_degrees": 71.532594,
+        "train_length_metres": "20.0",
+        "geometry_peak_bank_radians": "1.2484792839123728",
+        "geometry_speed_loss_fraction": "0.00930187536527679",
+        "geometry_radius_m": "68.0",
+        "geometry_digest": "8797319693809644329"
+      }
+    },
+    {
+      "intent": {
+        "hill": {
+          "feel": "StrongFloater",
+          "strength_g": -0.85,
+          "size": {
+            "Height": 24.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "hill",
+        "design_speed_mps": 34.025172,
+        "cars": 8,
+        "target_g": -0.85,
+        "delivered_g": -0.85034,
+        "height_m": 24.135445,
+        "span_m": 180.0,
+        "train_length_metres": "20.0",
+        "target_height_m": "24.0",
+        "pull_g": "3.3",
+        "crest_g": "-0.9233287599678178",
+        "flank_angle_degrees": "25.953125",
+        "profile_grid_half_tiles": 90,
+        "diagonal": false,
+        "geometry_digest": "4899501492469701947"
+      }
+    },
+    {
+      "intent": {
+        "turn": {
+          "hand": "Left",
+          "size": {
+            "Radius": 64.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "turn",
+        "design_speed_mps": 33.196144,
+        "cars": 8,
+        "hand": "Left",
+        "vertical_g": 3.308471,
+        "lateral_g": 0.091296,
+        "radius_m": 64.0,
+        "bank_degrees": 71.532594,
+        "train_length_metres": "20.0",
+        "geometry_peak_bank_radians": "1.2484792839123728",
+        "geometry_speed_loss_fraction": "0.00876130915291646",
+        "geometry_radius_m": "64.0",
+        "geometry_digest": "15472937212493982818"
+      }
+    },
+    {
+      "intent": {
+        "turn": {
+          "hand": "Left",
+          "size": {
+            "Radius": 64.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "turn",
+        "design_speed_mps": 32.646058,
+        "cars": 8,
+        "hand": "Left",
+        "vertical_g": 3.17714,
+        "lateral_g": 0.120605,
+        "radius_m": 64.0,
+        "bank_degrees": 69.828729,
+        "train_length_metres": "20.0",
+        "geometry_peak_bank_radians": "1.2187412274858929",
+        "geometry_speed_loss_fraction": "0.00941551563511565",
+        "geometry_radius_m": "64.0",
+        "geometry_digest": "15252334152116589189"
+      }
+    },
+    {
+      "intent": {
+        "hill": {
+          "feel": "StrongFloater",
+          "strength_g": -0.95,
+          "size": {
+            "Height": 12.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "hill",
+        "design_speed_mps": 32.102205,
+        "cars": 8,
+        "target_g": -0.95,
+        "delivered_g": -0.937229,
+        "height_m": 12.006139,
+        "span_m": 142.0,
+        "train_length_metres": "20.0",
+        "target_height_m": "12.0",
+        "pull_g": "3.3",
+        "crest_g": "-1.1026346687878572",
+        "flank_angle_degrees": "16.2578125",
+        "profile_grid_half_tiles": 71,
+        "diagonal": false,
+        "geometry_digest": "2236750557105544969"
+      }
+    },
+    {
+      "intent": {
+        "turn": {
+          "hand": "Right",
+          "size": {
+            "Radius": 64.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "turn",
+        "design_speed_mps": 31.436074,
+        "cars": 8,
+        "hand": "Right",
+        "vertical_g": 2.970158,
+        "lateral_g": 0.071137,
+        "radius_m": 64.0,
+        "bank_degrees": 69.828729,
+        "train_length_metres": "20.0",
+        "geometry_peak_bank_radians": "1.2187412274858929",
+        "geometry_speed_loss_fraction": "0.00894041335754142",
+        "geometry_radius_m": "64.0",
+        "geometry_digest": "2589811755385408841"
+      }
+    },
+    {
+      "intent": {
+        "turn": {
+          "hand": "Right",
+          "size": {
+            "Radius": 60.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "turn",
+        "design_speed_mps": 30.906237,
+        "cars": 8,
+        "hand": "Right",
+        "vertical_g": 3.068185,
+        "lateral_g": 0.115853,
+        "radius_m": 60.0,
+        "bank_degrees": 69.828729,
+        "train_length_metres": "20.0",
+        "geometry_peak_bank_radians": "1.2187412274858929",
+        "geometry_speed_loss_fraction": "0.00873802025262552",
+        "geometry_radius_m": "60.0",
+        "geometry_digest": "4833598224291227361"
+      }
+    },
+    {
+      "intent": {
+        "hill": {
+          "feel": "StrongFloater",
+          "strength_g": -0.95,
+          "size": {
+            "Height": 12.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "hill",
+        "design_speed_mps": 30.40294,
+        "cars": 8,
+        "target_g": -0.95,
+        "delivered_g": -0.940812,
+        "height_m": 12.052893,
+        "span_m": 132.0,
+        "train_length_metres": "20.0",
+        "target_height_m": "12.0",
+        "pull_g": "3.3",
+        "crest_g": "-1.0691745220245694",
+        "flank_angle_degrees": "17.68359375",
+        "profile_grid_half_tiles": 66,
+        "diagonal": false,
+        "geometry_digest": "12112013053948774387"
+      }
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "HalfTileStraight"
+    },
+    {
+      "intent": {
+        "turn": {
+          "hand": "Left",
+          "size": {
+            "Radius": 56.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "turn",
+        "design_speed_mps": 29.771864,
+        "cars": 8,
+        "hand": "Left",
+        "vertical_g": 3.002708,
+        "lateral_g": 0.080488,
+        "radius_m": 56.0,
+        "bank_degrees": 69.828729,
+        "train_length_metres": "20.0",
+        "geometry_peak_bank_radians": "1.2187412274858929",
+        "geometry_speed_loss_fraction": "0.00831626704512212",
+        "geometry_radius_m": "56.0",
+        "geometry_digest": "5654565966350130418"
+      }
+    },
+    {
+      "intent": {
+        "turn": {
+          "hand": "Left",
+          "size": {
+            "Radius": 56.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "turn",
+        "design_speed_mps": 29.289328,
+        "cars": 8,
+        "hand": "Left",
+        "vertical_g": 2.938517,
+        "lateral_g": 0.063113,
+        "radius_m": 56.0,
+        "bank_degrees": 69.828729,
+        "train_length_metres": "20.0",
+        "geometry_peak_bank_radians": "1.2187412274858929",
+        "geometry_speed_loss_fraction": "0.00814164363693019",
+        "geometry_radius_m": "56.0",
+        "geometry_digest": "4131557575749932961"
+      }
+    },
+    {
+      "intent": {
+        "hill": {
+          "feel": "StrongFloater",
+          "strength_g": -0.95,
+          "size": {
+            "Height": 10.0
+          }
+        }
+      },
+      "spec": {
+        "kind": "hill",
+        "design_speed_mps": 28.828862,
+        "cars": 8,
+        "target_g": -0.95,
+        "delivered_g": -0.935868,
+        "height_m": 9.917808,
+        "span_m": 116.0,
+        "train_length_metres": "20.0",
+        "target_height_m": "10.0",
+        "pull_g": "3.3",
+        "crest_g": "-1.1239469614679067",
+        "flank_angle_degrees": "16.54296875",
+        "profile_grid_half_tiles": 58,
+        "diagonal": false,
+        "geometry_digest": "14123452800794564180"
+      }
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "HalfTileStraight"
+    },
+    {
+      "place": "HalfTileStraight"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "Brakes"
+    },
+    {
+      "place": "SpeedTurnLarge16Left"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "OneTileStraight"
+    },
+    {
+      "place": "TerrainFall"
+    },
+    {
+      "place": "Straight"
+    },
+    {
+      "close": true
+    }
+  ],
+  "expect": {
+    "designMargins": true,
+    "excitement": [
+      6.0,
+      8.0
+    ],
+    "sustainedMaxVerticalG": [
+      3.0,
+      3.5
+    ],
+    "sustainedMinVerticalG": [
+      -1.2,
+      -0.8
+    ],
+    "maxLateralG": 0.6,
+    "inversions": 0,
+    "airtimeMomentsAtLeast": 6,
+    "withinComfortableForceLimits": true,
+    "launches": 0,
+    "biggestDropAtLeast": 50.0,
+    "maxSpeedAtLeast": 30.0,
+    "features": {
+      "piecePrefixesAtLeast": {
+        "ShapedHill": 4,
+        "ShapedTurn": 7,
+        "WideLevelToSixtyDown": 1
+      }
+    }
+  }
+}

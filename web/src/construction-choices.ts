@@ -1,6 +1,6 @@
 import type { ConstructionHillOption, ConstructionPiece, ConstructionSpeedTurn, PieceShape } from "./construction-protocol";
-import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements";
-import { formatLength, metresToDisplay, unitLabel, type Units } from "./units";
+import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements.ts";
+import { formatLength, metresToDisplay, unitLabel, type Units } from "./units.ts";
 
 export type StepAttribute = "turn" | "slope" | "bank";
 export type PieceStep = StepAttribute | "piece";
@@ -213,6 +213,8 @@ export type HillAttribute = "feel" | "height" | "span" | "twist";
 const hillFeelOrder = ["ejector", "strongFloater", "floater", "speed", "zeroGRoll", "stall"];
 /** Left-hand twists sit on the "previous" side, as on the bank stepper. */
 const hillTwistOrder = ["outerLeft", "none", "outerRight", "left", "right"];
+/** The feel the hill inspector opens on until the player has selected a hill. */
+export const defaultHillFeel = "ejector";
 export const hillFeelLabels: Readonly<Record<string, string>> = { ejector: "Ejector", strongFloater: "Strong floater", floater: "Floater", speed: "Speed hill", zeroGRoll: "Zero-g roll", stall: "Stall" };
 export const hillTwistLabels: Readonly<Record<string, string>> = { none: "Upright", outerLeft: "Outer bank left", outerRight: "Outer bank right", left: "Roll left", right: "Roll right" };
 

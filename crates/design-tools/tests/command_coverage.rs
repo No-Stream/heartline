@@ -597,3 +597,20 @@ fn check_json_exposes_worker_estimates_and_raw_agreement_values() {
         );
     }
 }
+
+#[test]
+fn check_fails_fast_on_shaped_geometry_saved_by_an_older_solver() {
+    let ride_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../web/e2e/rides/fixtures/horizon-hawk-older-solver.ride.json"
+    );
+    let output = run_cli_with_status(&["check".into(), ride_path.into()], "");
+    assert_eq!(output.exit_code, 1, "stdout: {}", output.stdout);
+    assert!(output.stdout.is_empty(), "{}", output.stdout);
+    assert!(
+        output.stderr.contains("stale shaped geometry: ride step 11 at ")
+            && output.stderr.contains("saved shaped geometry digest 7a165ba6bd127329 differs from the current solver's 0f412105af8180cd"),
+        "{}",
+        output.stderr
+    );
+}

@@ -7,8 +7,8 @@ import { coasterModelOptionsMarkup } from "./coaster-model-options";
 import { COASTER_MODELS } from "./generated/coaster-models";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
-import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, shapedPaletteChoices, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
-import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements";
+import { defaultHillFeel, formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, shapedPaletteChoices, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
+import { defaultShapeSelectionId, shapedElementSelection, shapeSelectionId, steppedShapedSelection, type ShapedElementSelection, type ShapedHillFeel, type ShapedStepAttribute } from "./construction-shaped-elements";
 import type { BlockReport, ConstructionElement, ConstructionHillOption, ConstructionPiece, ConstructionShapedElement, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
@@ -50,9 +50,7 @@ const hillSteppers: readonly { attribute: HillAttribute; label: string; previous
   { attribute: "span", label: "Length", previous: "Shorter hill", next: "Longer hill" },
   { attribute: "twist", label: "Twist", previous: "Twist left", next: "Twist right" },
 ];
-const defaultHillFeel = "ejector";
 const hillSummaryHint = "Sized for the train's speed";
-const hillFeels = ["floater", "strongFloater", "ejector"] as const;
 /** Building comes first; colours and running the ride are settings the player visits when they want them. */
 const builderTabs = [
   { id: "build", label: "Build" },
@@ -416,27 +414,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
     if (action) dispatch(action);
   };
   const speedTurnOf = (id: string) => state?.speedTurns.find((turn) => turn.id === id);
-  const shapeSelection = (shape: ConstructionShapedElement): ShapedElementSelection => {
-    if (shape.kind === "hill") {
-      if (shape.feel !== "floater" && shape.feel !== "strongFloater" && shape.feel !== "ejector") {
-        throw new Error(`Unknown shaped hill feel ${shape.feel}`);
-      }
-      if (shape.strengthG === null) throw new Error("Selected shaped hill has no explicit target g");
-      return {
-        kind: "hill",
-        feel: shape.feel as ShapedHillFeel,
-        strengthG: shape.strengthG,
-        size: shape.fixedSize === null ? { kind: "auto" } : { kind: "height", heightMetres: shape.fixedSize },
-      };
-    }
-    if (shape.hand !== "left" && shape.hand !== "right") throw new Error(`Unknown shaped turn hand ${shape.hand}`);
-    return {
-      kind: "turn",
-      hand: shape.hand,
-      feel: "fullyBanked",
-      size: shape.fixedSize === null ? { kind: "auto" } : { kind: "radius", radiusMetres: shape.fixedSize },
-    };
-  };
+  const shapeSelection = shapedElementSelection;
   const shapedPaletteId = (shape: ConstructionShapedElement): string => {
     if (shape.kind === "hill") {
       const feel = shape.feel;
@@ -451,37 +429,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const selectShape = (selection: ShapedElementSelection): void => {
     dispatch({ type: "construction-select", piece: shapeSelectionId(selection), exact: true });
   };
-  const stepShape = (attribute: "feel" | "strength" | "size" | "radius", step: -1 | 1): void => {
+  const stepShape = (attribute: ShapedStepAttribute, step: -1 | 1): void => {
     const shape = state?.selectedShape;
     if (!shape) return;
-    const selection = shapeSelection(shape);
-    if (attribute === "feel" && selection.kind === "hill") {
-      const index = hillFeels.indexOf(selection.feel);
-      const next = hillFeels[Math.max(0, Math.min(hillFeels.length - 1, index + step))];
-      if (next !== selection.feel) selectShape({ ...selection, feel: next });
-      return;
-    }
-    if (attribute === "strength" && selection.kind === "hill") {
-      const currentStrength = selection.strengthG;
-      // Step exactly 0.1 g from the current target; rounding to hundredths only removes float noise,
-      // so off-grid defaults such as the −0.85 g strong floater stay reachable (−0.95 g, −1.05 g).
-      const strengthG = Math.round((currentStrength - step * 0.1) * 100) / 100;
-      selectShape({ ...selection, strengthG });
-      return;
-    }
-    if (attribute === "size" && selection.kind === "hill") {
-      const currentHeight = selection.size.kind === "height" ? selection.size.heightMetres : shape.spec?.heightM;
-      if (currentHeight === null || currentHeight === undefined) return;
-      const heightMetres = Math.max(2, Math.round(currentHeight / 2) * 2 + step * 2);
-      selectShape({ ...selection, size: { kind: "height", heightMetres } });
-      return;
-    }
-    if (attribute === "radius" && selection.kind === "turn") {
-      const currentRadius = selection.size.kind === "radius" ? selection.size.radiusMetres : shape.spec?.radiusM;
-      if (currentRadius === null || currentRadius === undefined) return;
-      const radiusMetres = Math.max(2, Math.round(currentRadius / 2) * 2 + step * 2);
-      selectShape({ ...selection, size: { kind: "radius", radiusMetres } });
-    }
+    const selection = steppedShapedSelection(shape, attribute, step);
+    if (selection) selectShape(selection);
   };
   const setShapeAutoSize = (): void => {
     const shape = state?.selectedShape;

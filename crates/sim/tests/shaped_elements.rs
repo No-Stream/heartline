@@ -9,13 +9,14 @@ use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::ride_file::{
     RideFile, RideFileFormat, RideHeading, RideShapeStep, RideStation, RideStep,
 };
+use theme_park_sim::track::saved_shape_check::check_saved_shaped_geometry;
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, ShapedConstructionError, SolveContext, SolveRefusal,
     TurnSizeHint, default_hill_strength, solve, solve_confirm, solve_preview,
 };
 use theme_park_sim::track::{
     Bank, CoasterModel, Hand, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind, Slope,
-    TrackState, TrainConfiguration, VerticalCurvature, catalog, coaster_models, hyper_model,
+    TrackState, TrainConfiguration, VerticalCurvature, catalog, hyper_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -140,18 +141,6 @@ fn solve_with_prefix(
     Ok((model, prefix, solved))
 }
 
-fn replayed_entry_speed(
-    preview_cache: &mut PreviewCache,
-    construction: &Construction,
-    physics: PhysicsConfig,
-) -> f64 {
-    preview_cache
-        .preview(construction.pieces(), construction.model(), physics)
-        .expect("replayed ride prefix contains its station")
-        .end_speed_mps
-        .expect("replayed ride prefix reaches its open end")
-}
-
 fn content_ride_paths() -> Vec<std::path::PathBuf> {
     let rides_directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/rides");
     let mut ride_paths: Vec<_> = fs::read_dir(rides_directory)
@@ -168,123 +157,30 @@ fn content_ride_paths() -> Vec<std::path::PathBuf> {
 
 #[test]
 fn every_content_ride_shaped_intent_resolves_to_its_saved_geometry_digest() {
-    let world = World::new(
-        512,
-        512,
-        Surface {
-            corners: [8; 4],
-            water: None,
-        },
-    );
-    let physics = PhysicsConfig {
-        lift_speed: 5.0,
-        ..PhysicsConfig::default()
-    };
-
     for path in content_ride_paths() {
         let source = fs::read(&path)
             .unwrap_or_else(|error| panic!("could not read ride {}: {error}", path.display()));
         let ride = RideFile::from_json_slice(&source)
             .unwrap_or_else(|error| panic!("could not parse ride {}: {error}", path.display()));
-        let mut model = coaster_models()
-            .into_iter()
-            .find(|model| model.key == ride.model)
-            .unwrap_or_else(|| panic!("unknown model {} in ride {}", ride.model, ride.name));
-        model.train.length_metres *= f64::from(ride.cars_per_train) / f64::from(model.train.cars);
-        model.train.cars = ride.cars_per_train;
-        let start = TrackState {
-            x: ride.station.x * 2,
-            y: ride.station.y * 2,
-            z: ride.station.z / 2,
-            heading: match ride.station.heading {
-                RideHeading::East => theme_park_sim::track::Heading::East,
-                RideHeading::North => theme_park_sim::track::Heading::North,
-                RideHeading::West => theme_park_sim::track::Heading::West,
-                RideHeading::South => theme_park_sim::track::Heading::South,
-            },
-            ..TrackState::origin()
-        };
-        let mut construction = Construction::new(start, model.clone());
-        construction
-            .append(PieceId::Station, &world, &[])
-            .unwrap_or_else(|error| panic!("{} station: {error:?}", ride.name));
-        let mut preview_cache = PreviewCache::default();
-
-        for (step_index, step) in ride.steps.iter().enumerate() {
-            match step {
-                RideStep::Chain(chain) => construction.set_chain(chain.chain),
-                RideStep::Place(place) => {
-                    let piece_id = catalog()
-                        .iter()
-                        .find(|candidate| format!("{:?}", candidate.id) == place.place)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "{} step {}: unknown piece {}",
-                                ride.name, step_index, place.place
-                            )
-                        })
-                        .id;
-                    construction
-                        .append(piece_id, &world, &[])
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "{} step {} {}: {error:?}",
-                                ride.name, step_index, place.place
-                            )
-                        });
-                    if let Some(launch_speed) = place.launch_speed {
-                        let piece_id = *construction
-                            .piece_ids()
-                            .last()
-                            .expect("appended piece has a construction id");
-                        construction
-                            .set_launch_intensity(piece_id, launch_speed)
-                            .unwrap_or_else(|error| {
-                                panic!("{} step {} launch speed: {error:?}", ride.name, step_index)
-                            });
-                    }
-                }
-                RideStep::Shape(shape) => {
-                    let entry_speed_mps =
-                        replayed_entry_speed(&mut preview_cache, &construction, physics);
-                    let mut context = SolveContext {
-                        entry: construction.end(),
-                        entry_speed_mps,
-                        model: &model,
-                        train: &model.train,
-                        prefix: construction.pieces(),
-                        preview_cache: &mut preview_cache,
-                        physics,
-                    };
-                    let solved = solve(&shape.intent, &mut context).unwrap_or_else(|error| {
-                        panic!(
-                            "{} step {}: could not re-solve shaped intent {:?} at {:.6} m/s: {error:?}",
-                            ride.name, step_index, shape.intent, entry_speed_mps
-                        )
-                    });
-                    let saved_digest = shape.spec.resolved_geometry_digest();
-                    let resolved_digest = solved.spec.resolved_geometry_digest();
-                    assert_eq!(
-                        saved_digest, resolved_digest,
-                        "{} step {} at {:.6} m/s saved shaped geometry digest {:016x} differs from re-solved digest {:016x}; regenerate the ride with tools/design",
-                        ride.name, step_index, entry_speed_mps, saved_digest, resolved_digest
-                    );
-                    construction
-                        .append_resolved(&shape.intent, &shape.spec, &world, &[])
-                        .unwrap_or_else(|error| {
-                            panic!("{} step {} shaped append: {error:?}", ride.name, step_index)
-                        });
-                }
-                RideStep::Close(close) => {
-                    assert!(close.close, "{} step {} close flag", ride.name, step_index);
-                    construction.close().unwrap_or_else(|error| {
-                        panic!("{} step {} close: {error:?}", ride.name, step_index)
-                    });
-                }
-                RideStep::BlockSections(_) => {}
-            }
+        if let Err(message) = check_saved_shaped_geometry(&ride) {
+            panic!("{}: {message}", ride.name);
         }
     }
+}
+
+#[test]
+fn saved_shaped_geometry_check_rejects_a_ride_saved_by_an_older_solver() {
+    let ride = RideFile::from_json_str(include_str!(
+        "../../../web/e2e/rides/fixtures/horizon-hawk-older-solver.ride.json"
+    ))
+    .expect("the older Horizon Hawk fixture parses");
+    let message = check_saved_shaped_geometry(&ride)
+        .expect_err("the older solver's first shaped turn differs from the current solver");
+    assert!(
+        message.starts_with("ride step 11 at ")
+            && message.contains("saved shaped geometry digest 7a165ba6bd127329 differs from the current solver's 0f412105af8180cd"),
+        "{message}"
+    );
 }
 
 fn simulate_with_preview(

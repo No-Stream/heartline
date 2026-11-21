@@ -231,7 +231,8 @@ fn help_text() -> &'static str {
 Top-level commands:
   help                                      list commands and choice groups
   ride <file> [command ...]                 create or edit a ride file
-  check <ride file> ...                     check ride estimates against expectations
+  check <ride file> ...                     check ride estimates against expectations, then agree (text mode)
+  agree <ride file> ...                     replay rides through the browser builder path in Node/WASM
   park build <park file> --save <path>      build and save a park
   park report <park file> [options]          simulate and report on a park
 
@@ -3742,6 +3743,8 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         let ride = RideFile::from_json_slice(&bytes)
             .map_err(|error| format!("parse ride {path}: {error}"))?;
         let model = validate_model(&ride.model)?;
+        theme_park_sim::track::saved_shape_check::check_saved_shaped_geometry(&ride)
+            .map_err(|error| format!("{path}: stale shaped geometry: {error}"))?;
         let (test_run, estimates, browser_estimates, circuit) =
             test_ride_with_browser_estimates(&ride).map_err(|error| format!("{path}: {error}"))?;
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
@@ -3861,6 +3864,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
             "forceHeadroomFailures": force_headroom_failures,
             "agreement": agreement_json(&agreement),
             "browserEstimates": browser_estimates,
+            "reportSamples": test_run.samples,
         }));
     }
     check_response(json_mode, rows, text, has_check_failures)

@@ -1,11 +1,9 @@
-import type { ConstructionSpeedMatch } from "./construction-speed-match";
-import type { CandidateForcePreview } from "./candidate-force-readout";
 import type { ConstructionColorsWire as ConstructionColors } from "./generated/ConstructionColorsWire";
 import type { Facility, FacilityAction } from "./facilities";
 import init, { BuilderSessionBridge, WasmSimulation, piece_shapes_json } from "./wasm/theme_park_sim_wasm.js";
 import { captureWorldSnapshot, validateSurfaceEdit, type SetSurfaceMessage } from "./world-snapshot";
 import { advanceSimulation, createSimulationClock } from "./simulation-loop";
-import type { ConstructionAction, ConstructionElement, ConstructionForcePreview, ConstructionHillOption, ConstructionPiece, ConstructionShapedElement, ConstructionSpeedTurn, ConstructionTrack, PieceShape } from "./construction-protocol";
+import type { ConstructionTrack, PieceShape } from "./construction-protocol";
 import type { Scenery, SceneryCommand } from "./scenery-tool";
 import type { TerrainEditCommand } from "./landscaping-tool";
 import { validateBlockAnalysisBudget } from "./game-test";
@@ -14,8 +12,9 @@ import { SessionRecorder } from "./session-recording";
 import { parseCoasterColors } from "./coaster-colors";
 import { parseTrainLayout, type TrainLayout } from "./train-layout";
 import { shouldInvalidateConstructionFinishSearch } from "./construction-finish-search";
+import { applyConstructionAction, readBuilderEstimates, sendsIncompleteConstructionState } from "./worker-construction";
 
-import { sendWorkerMessage, assertNever, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition, type PlacementOutcome } from "./protocol";
+import { sendWorkerMessage, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition, type PlacementOutcome } from "./protocol";
 import type { BlockReport } from "./construction-protocol";
 import type { TestingReport } from "./coaster-testing";
 import type { GuestDetail } from "./guest-panel/protocol";
@@ -148,19 +147,8 @@ function sendRideInfo(testMessage = ""): void {
   sendWorkerMessage(outputScope, { type: "ride-info", info, testMessage });
 }
 
-type BuilderWorkerEstimates = {
-  readonly constructionForcePreview: ConstructionForcePreview | null;
-  readonly pieces: ConstructionPiece[];
-  readonly elements: ConstructionElement[];
-  readonly hillOptions: ConstructionHillOption[];
-  readonly speedTurns: ConstructionSpeedTurn[];
-  readonly selectedShape: ConstructionShapedElement | null;
-  readonly candidateForcePreview: CandidateForcePreview | null;
-  readonly speedMatch: ConstructionSpeedMatch | null;
-};
-
 function sendConstruction(complete = true): void {
-  const estimates = JSON.parse(builderSession.estimates(simulation, complete)) as BuilderWorkerEstimates;
+  const estimates = readBuilderEstimates(simulation, builderSession, complete);
   const { constructionForcePreview, pieces, elements } = estimates;
   const selected = simulation.construction_selected();
   const selectedChoice = pieces.find((piece) => piece.id === selected);
@@ -604,42 +592,8 @@ workerScope.addEventListener("message", (event) => {
       return;
     }
     if (action.type !== "set-surface") {
-      if (action.type !== "construction-select") builderSession.invalidate();
-      switch (action.type) {
-        case "construction-start": builderSession.start(simulation, action.x, action.y, action.z, action.heading); break;
-        case "construction-select": builderSession.select(simulation, action.piece, action.exact ?? false); break;
-        case "construction-set-chain": simulation.construction_set_chain(action.enabled); break;
-        case "construction-set-launch-intensity": simulation.construction_set_launch_intensity(action.id, action.targetSpeed); break;
-        case "construction-append": simulation.construction_append(); break;
-        case "construction-append-resolved": simulation.construction_append_resolved(action.intentJson, action.specJson); break;
-        case "construction-undo": simulation.construction_undo(); break;
-        case "construction-delete": simulation.construction_delete(action.id); break;
-        case "construction-close": simulation.construction_close(); break;
-        case "construction-finish-preview": simulation.construction_finish_preview(); break;
-        case "construction-finish-confirm": simulation.construction_finish_confirm(); scheduleFinishSearch(); break;
-        case "construction-finish-cancel": simulation.construction_finish_cancel(); break;
-        case "construction-set-open": simulation.construction_set_open(action.open); break;
-        case "construction-set-coaster-price": simulation.construction_set_coaster_price(action.price); break;
-        case "construction-set-colors": simulation.construction_set_colors(action.colors.track, action.colors.supports, action.colors.trains); break;
-        case "construction-test": simulation.construction_test(); break;
-        case "construction-auto-blocks": simulation.construction_auto_blocks(); break;
-        case "construction-apply-best-blocks": simulation.construction_apply_best_block_sections(); break;
-        case "construction-set-train-count": simulation.construction_set_train_count(action.count); break;
-        case "construction-set-cars-per-train": simulation.construction_set_cars_per_train(action.cars); break;
-        case "construction-move-block": simulation.construction_move_block_section(action.index, action.boundaryMetres); break;
-        case "construction-remove-block": simulation.construction_remove_block_section(action.index); break;
-        case "construction-add-block": simulation.construction_add_block_section(action.boundaryMetres); break;
-        case "construction-set-block-sections": simulation.construction_install_block_layout(
-          JSON.stringify(action.blockSections),
-          action.trainCapacity,
-          action.capacitySearchComplete,
-          action.placementSearchComplete,
-        ); break;
-        case "construction-delete-mode": return;
-        default: assertNever(action);
-      }
-      if (["construction-start", "construction-append", "construction-append-resolved", "construction-undo", "construction-delete"].includes(action.type)
-        && simulation.construction_active() && !simulation.construction_selected().startsWith("element:")) sendConstruction(false);
+      if (!applyConstructionAction(simulation, builderSession, action, scheduleFinishSearch)) return;
+      if (sendsIncompleteConstructionState(action, simulation)) sendConstruction(false);
       if (["construction-start", "construction-append", "construction-append-resolved", "construction-undo", "construction-delete", "construction-close", "construction-finish-confirm", "construction-set-open"].includes(action.type)) sendWorld();
       sendConstruction();
       sendRideInfo();

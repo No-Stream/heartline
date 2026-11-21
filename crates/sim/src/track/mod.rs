@@ -8,6 +8,7 @@ pub mod construction;
 pub mod curves;
 pub mod models;
 pub mod ride_file;
+pub mod saved_shape_check;
 pub mod shaped;
 pub mod supports;
 #[cfg(test)]

@@ -8,7 +8,7 @@ PARK ?= content/parks/horizon-hawk.park.json
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold check-shaped-turn-arc-parity generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools test-design-tools park-report
+.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold check-shaped-turn-arc-parity generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools agreement-wasm test-agreement test-design-tools park-report
 
 install:
 	npm ci
@@ -28,8 +28,17 @@ check-report-types:
 design-tools:
 	$(CARGO) build --release -p theme-park-design-tools
 
+# The browser's release WASM build without the art and web bundle, for tools/design agree.
+agreement-wasm: wasm-bindgen
+	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
+	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target web --out-dir web/src/wasm
+
 park-report: design-tools
 	target/release/heartline-design park report "$(PARK)"
+
+# The fast browser-path agreement check's own regression tests.
+test-agreement: design-tools agreement-wasm
+	npx vitest run web/e2e/rides/fast-agreement.test.ts
 
 test-design-tools:
 	$(CARGO) test -p theme-park-design-tools
@@ -50,6 +59,7 @@ check: build design-tools
 	npm test
 	npm run test:art
 	npm run typecheck
+	npx vitest run web/e2e/rides/fast-agreement.test.ts
 	PLAYWRIGHT_PORT=$${PLAYWRIGHT_PORT:-4271} npm run e2e -- --grep @fast
 
 test: test-rust test-threads test-flexibility test-web
