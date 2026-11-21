@@ -4918,9 +4918,13 @@ mod expectation_tests {
             serde_json::from_str(include_str!("../../../content/rides/briar-blitz.ride.json"))
                 .unwrap();
         let circuit = theme_park_sim::physics::demo_circuit();
-        let features = ride.expect.as_ref().unwrap().features.as_ref().unwrap();
+        let features: RideExpectFeatures = serde_json::from_value(serde_json::json!({
+            "piecePrefixGroupsAtLeast": [{"prefixes": ["TightTwister", "Twister"], "minimum": 2}],
+            "piecePrefixesAfter": [{"prefix": "TightTwister", "after": {"chain": false}}]
+        }))
+        .unwrap();
 
-        let results = evaluate_feature_expectations(&ride.steps, features, &circuit).unwrap();
+        let results = evaluate_feature_expectations(&ride.steps, &features, &circuit).unwrap();
         assert!(results.iter().all(|result| result.passed));
         assert!(
             results

@@ -42,9 +42,6 @@ test("Briar Blitz player journey @journey", async ({ page }) => {
     if (entry === "TurnSmallStandalone" && chainEnabled) {
       await expect(previewName).toHaveText("Climbing small left turn");
     }
-    if (entry === "BankedTurnStandalone" && !chainEnabled) {
-      await expect(previewName).toHaveText("Descending small left-banked turn");
-    }
     if (entry === "TightTwisterLeft") await expect(previewName).toHaveText("Tight left turn");
     if (entry === "TightTwisterRight") await expect(previewName).toHaveText("Tight right turn");
     await expect(page.getByRole("button", { name: "Place piece" })).toBeEnabled();

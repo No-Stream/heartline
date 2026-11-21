@@ -1431,7 +1431,7 @@ mod tests {
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x9566e10f3ebf29b0,
+                0xdea292045568287b,
             ),
             (
                 "Browser agreement fast circuit",
@@ -1474,7 +1474,7 @@ mod tests {
             (
                 "Briar Blitz",
                 include_str!("../../../content/rides/briar-blitz.ride.json"),
-                0x0161df3c4dd85407,
+                0xa881b24133654438,
             ),
             (
                 "Browser agreement fast circuit",
