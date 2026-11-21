@@ -4,7 +4,7 @@ title: Builder force estimate disagrees with the test run
 status: To Do
 assignee: []
 created_date: '2026-11-18 13:05'
-updated_date: '2026-11-18 17:37'
+updated_date: '2026-11-21 21:25'
 labels:
   - coaster
   - physics
@@ -346,4 +346,5 @@ piece check2 check3 entry[placement/finished/test m/s] placement[min/max/lat/lon
 Agreement: pass
 ```
 
+Backlog review 2026-11-21: the shared estimate-versus-test implementation and six-ride reports are on master (01cc712, 17da143); the current task notes still state that the owner’s exact exported session is unavailable. Keep open until that session-specific comparison is possible.
 <!-- SECTION:NOTES:END -->

@@ -1,9 +1,10 @@
 ---
 id: TASK-159
 title: Finish the circuit search for agents and the builder
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-20 16:45'
+updated_date: '2026-11-21 21:25'
 labels:
   - construction
   - tooling
@@ -29,3 +30,9 @@ Owner request 2026-11-20 ("a goal both for humans and agents"): from wherever th
 
 2026-11-20: merged master 6661fe4 (final Horizon Hawk). The final layout ends in the same place, so the finish results are unchanged: without its last 2 steps one one-tile straight, without its last 3 two one-tile straights (22.5 m/s, ride check pass), without its last 4 or 5 no safe finish (a classic large turn reaches 1.23 g lateral at 22.8 m/s). Without its last step the track already reaches the station, and the search now says to close the circuit instead of reporting no route. The Horizon Hawk failures from the base commit are gone. make lint and make check pass. Daisy Dash fails force headroom on master 6661fe4 too (same values, so not caused by this branch), and `heartline-design check` exits 0 despite those failures.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Ranked, physics-checked finish options are available through tools/design and the builder, including apply-time validation and the completed Horizon Hawk route. Master commits 45e0702 and 1eab904; the ticket records lint, check, 47 fast browser tests, 11 journeys, and 8/8 ride-agreement passes across the final runs.
+<!-- SECTION:FINAL_SUMMARY:END -->

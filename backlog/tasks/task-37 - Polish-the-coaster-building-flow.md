@@ -4,7 +4,7 @@ title: Polish the coaster building flow
 status: In Progress
 assignee: []
 created_date: '2026-11-03 06:15'
-updated_date: '2026-11-04 00:18'
+updated_date: '2026-11-21 21:24'
 labels:
   - coaster
   - interface
@@ -27,7 +27,7 @@ Make building coasters feel delightful before and after the owner's first try: s
 - [x] #2 Panel styled to print-modern with piece icons drawn from the piece curves
 - [x] #3 Keyboard shortcuts cover the whole build loop and are listed in the panel
 - [x] #4 The camera follows the open track end while building
-- [ ] #5 Owner feedback from the first try is applied
+- [x] #5 Owner feedback from the first try is applied
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -36,4 +36,6 @@ Make building coasters feel delightful before and after the owner's first try: s
 Owner tried it on 2026-11-03. Their feedback is filed as TASK-42 (level-out on Velocity Viper), TASK-43 (broader vocabularies) and TASK-45 (tools opening without a second click); the last criterion closes when those land.
 
 2026-11-03: the remaining dependencies landed (TASK-42 level-out labels, TASK-45 tool activation, chain toggle, climbing turns and 60-degree slopes); close after the owner playtests the builder and TASK-70.
+
+Backlog review 2026-11-21: criteria 1-5 are implemented on master; follow-up tickets for first-try feedback landed. Remaining: owner playtest/sign-off of the builder flow, which the existing notes require before closure; TASK-70 has its own playtest.
 <!-- SECTION:NOTES:END -->
