@@ -856,3 +856,84 @@ Nausea: 0.84
   excessive forces (+0.0, 0.0 s)
   forces above the ASTM comfort envelope (+0.0, 0.0 g-s)
 ```
+
+## ASTM F2291 envelope check, 2026-11-21
+
+This section compares the comfort envelope in `crates/sim/src/physics/comfort.rs` with the acceleration limits of ASTM F2291. The production judge is `EnvelopeTracker`; `ComfortTracker` is the older test-only tracker. The owner's direction is to follow F2291 loosely and resolve ambiguity in the player's favour. This is a game calibration note, not a safety assessment.
+
+### Sources and how far to trust them
+
+| Key | Source | Edition | Reliability |
+|---|---|---|---|
+| S06 | ASTM F2291-06a full text, posted by Public.Resource.Org as incorporated into Indiana law: <https://ia800607.us.archive.org/34/items/gov.law.astm.f2291.2006/astm.f2291.2006.pdf>. Read for this check: section 7.1 and Figs. 6 to 20. | 2006a | Primary text. Figures are scans; printed breakpoint labels are exact, times between labels read to about ±0.1 s. |
+| R | M. Rohde, *Some Details about the Development of Acceleration Limits for Amusement Rides*, 2nd ed., March 2024 (VDV): <https://www.vdv-freizeittechnologie.de/files/bilder-vdv/pdf/Rohde-Accelerationlimits-2nd-edition-2024.pdf>. Rohde is a member of the ASTM/CEN g-force task group. | redraws F2291-23b and EN 13814:2019 | Strong secondary source. Redrawn curves with numbered axes; defines the slicing ("isoacceleration") duration method; Table 7.1 and Fig. 7.15 give the combined-axis "eggs". |
+| C | R. S. Cargill II (JP Research), *Amusement Rides: How much thrill is too much?*, PSPE slides, 2019: <https://pspe-philly.org/programs/PSPE_ASTM_%20presentation.pdf> | F2291, edition not stated (2019) | Good secondary source: reproduces the standard's Gx figure, the x-z combined figure and Appendix X2 Figs. X2.5 and X2.6 (slicing method) as images. |
+| O | openFVD research note `docs/research/r3-force-limits.md` (branch `claude/r3-force-limits`, PR 25 of mbuck21/openFVD), 2026-11-10 | summarises R, C and the F2291-21 preview | Enthusiast/tooling analysis, well referenced. Used only to cross-check and for the F2291-21 definitions 3.1.1 and 3.1.2 (impact under 200 ms, sustained at or above 200 ms). It did not read S06. |
+
+The current edition is F2291-26b (O, from the ASTM store listing); I did not read it. S06 and R agree on every single-axis breakpoint below, so the curves appear unchanged from 2006a to 23b. Changes after 23b are unknown.
+
+### Single-axis duration curves
+
+Axis names follow F2291: +Gz eyes down (pressed into the seat), -Gz eyes up (airtime), ±Gy lateral, +Gx eyes back (pressed into the seat back, launch), -Gx eyes front (thrown into the restraint, braking). In the game, `vertical`, `lateral` and `longitudinal` are specific force (gravity included) dotted with the car's up, side and forward vectors (`physics/mod.rs:796`), so positive `longitudinal` is +Gx. The game data are filtered with a 5 Hz, 4-pole Butterworth before judging (`ForceFilter`), which is what F2291 7.1.1.2 requires.
+
+| Axis | Duration (s) | F2291-06a (S06) | F2291-23b (R) | Code (both trackers) | Recommendation |
+|---|---|---|---|---|---|
+| +Gz | 0.2 to 1.0 | 6.0 g | 6.0 g | 6.0 g | keep |
+| +Gz | 2.0 to 4.0 | 4.0 g (linear 6 to 4 from 1 to 2 s) | 4.0 g | 4.0 g | keep |
+| +Gz | 5.0 to 11.8 | 3.0 g | 3.0 g | 3.0 g | keep |
+| +Gz | 12.0 to 40 | 2.0 g | 2.0 g, "max. 40 s" | 2.0 g, held indefinitely | keep; note below |
+| +Gz after 3 s or more of -Gz | 0.2 to about 1.5 | 5.0 g | 5.0 g | 2.0 g cap (`limit.min(2.0)`) | loosen to standard |
+| same | 2.0 | 4.0 g (joins the normal curve) | 4.0 g | 2.0 g cap | loosen to standard |
+| same | 2.5 to 6.0 | 2.0 g | 2.0 g | 2.0 g cap | keep |
+| -Gz (base) | 0.2 | -2.0 g | -2.0 g | -2.0 g | keep |
+| -Gz (base) | 0.5 to 4.0 | -1.5 g | -1.5 g | -1.5 g | keep |
+| -Gz (base) | 7.0 onward | -1.1 g | -1.1 g | -1.1 g | keep |
+| -Gz extended | 0.2 / 1.0 / 3.0 | -2.8 / -2.2 / -1.5 g, "special restraints" (bungee) | same | not used | keep unused |
+| ±Gy | 0.2 to 1.0 | 3.0 g | 3.0 g | 3.0 g | keep |
+| ±Gy | 2.0 onward | 2.0 g | 2.0 g | 2.0 g | keep |
+| +Gx (with headrest) | 0.2 to 1.0 | 6.0 g | 6.0 g | 6.0 g | keep |
+| +Gx | 2.0 to 4.0 | 4.0 g | 4.0 g | 4.0 g | keep |
+| +Gx | 5.0 to 11.8 | 3.0 g | 3.0 g | 3.0 g | keep |
+| +Gx | 12.0 onward | 2.5 g | 2.5 g | 2.5 g | keep |
+| -Gx base case | 0.2 | -2.0 g | -2.0 g | -2.0 g | keep |
+| -Gx base case | 0.5 onward | -1.5 g | -1.5 g | -1.5 g | keep |
+| -Gx over-the-shoulder | 0.2 onward | -2.0 g | -2.0 g | not modelled | note |
+| -Gx prone | 0.2 to 2 / 3 to 4 / 5 on | -3.5 / -2.5 / -2.0 g | same | not modelled | note |
+
+The plan for this work (`docs/superpowers/plans/2026-11-21-global-limits-and-shaped-elements.md`) recalled the +Gz curve as "5 g at 2 s, 4 g at 4 s". That recollection is wrong: the code's +Gz curve matches both editions exactly. The 5 g line in Fig. 10 of F2291-06a is the reduced curve that applies after 3 s or more of airtime.
+
+Notes on the curves. The +Gz chart stops at 40 s; F2291-06a 7.1.4.6 says steady-state values are not time-limited unless stated and that exposure beyond 90 s is not addressed, while R (p. 27) writes "after 40 seconds 1 g must be assured". No coaster spends 40 s above 2 g, so holding 2 g is harmless. The +Gx curve assumes a headrest; without one, F2291 allows at most 4 s above 1.5 g, or 2.0 g if onset is under 5 g/s. The game does not model headrests and should keep assuming one. The -Gx limit depends on the restraint (base case, over-the-shoulder, prone), and the game has no restraint type in `track/models.rs`; keeping the base case (1.5 g after 0.5 s) is the conservative reading, and over-the-shoulder trains could use the flat 2.0 g line if a restraint field is ever added.
+
+### Rules around the curves
+
+| Rule | F2291 | Code | Recommendation |
+|---|---|---|---|
+| Minimum event | 7.1.4.2 (06a): "impacts of less than 200 ms duration are not addressed by this practice"; 3.1.1 and 3.1.2 (F2291-21, via O): impact below 200 ms, sustained at or above 200 ms. | `ComfortTracker`: a level must persist more than 40 samples (200 ms) before it counts. `EnvelopeTracker`: no minimum; any sample above the 0.2 s limit counts at once (the clock is clamped to at least 0.2 s, which only picks the limit). | Loosen to standard: ignore anything shorter than 200 ms at its level, in every rule. |
+| How duration is measured | Appendix X2 (C, Figs. X2.5 and X2.6) and R ("isoacceleration"): slice the filtered trace at levels no more than 0.1 g apart; each continuous stretch beyond a level is one event, judged as (its length, that level) against the curve. | `ComfortTracker`: exactly this, 0.1 g slices to 6 g, then 1 g slices. `EnvelopeTracker`: one clock per axis that runs while the value is beyond the curve's long-duration plateau (+Gz 2.0, -Gz 1.1, Gy 2.0, +Gx 2.5, -Gx 1.5 g); the current value is judged against the curve at that clock. | Loosen to standard: per-level durations, as the type-split work item already plans. |
+| Combined axes | 7.1.5.1 (06a): "instantaneous combined acceleration magnitude of any two axes" limited per quadrant by an ellipse with radii equal to the 200 ms limits × 1.1; Figs. 11 to 18 shade the band between 1.0× and 1.1×, where points "must also meet the individual axis requirements". | Both trackers: radii 6.6 / 2.2 (+/-Gz), 3.3 (Gy), 6.6 / 2.2 (+/-Gx), that is 1.1× the base 0.2 s limits. `EnvelopeTracker` judges each sample; `ComfortTracker` needs 200 ms above a slice. | Keep 1.1 (the only edition text I could read). Apply the 200 ms minimum here too (player-favourable reading of 7.1.4.2 against "instantaneous"; flag as an interpretation). See the edition note below. |
+| Reversals in x and y | 7.1.6.1 (06a): between consecutive *sustained* events in opposite directions, peak-to-peak time must exceed 200 ms; otherwise "the limit for the peak values shall be reduced by 50 %". Fig. 19 shows a sub-200 ms spike next to a sustained event as acceptable. R reads the halved limit as half the 0.2 s limit (3.0 g in x, 1.5 g in y). | `EnvelopeTracker`: if lateral or longitudinal reached ≥0.5 g of the opposite sign less than 0.2 s ago, the current duration-curve limit is halved. Neither lobe has to be sustained, and sample times are compared, not peak times. | Loosen to standard: require both events to be sustained (200 ms or more), measure between their peaks, and halve the 0.2 s limit rather than the duration-reduced one. |
+| Push-pull (airtime then positive g) | 7.1.7.1: after more than 3 s of negative Gz, the reduced +Gz curve applies for 6 s after the transition. | Trigger matches (vertical below 0 for more than 3 s, 6 s window from the return to 0 g or above), but the limit is a flat `min(2.0)`. | Loosen to standard: use the curve 5.0 g to 1.5 s, 4.0 g at 2.0 s, 2.0 g from 2.5 s to 6 s, judged on per-level duration. Read "negative Gz environment" as Gz below 0 g, as the code does. |
+| Onset from weightlessness | 7.1.7.2: from *sustained* weightless (0 g) or more negative to 2 g or more, effective onset must be under 15 g/s; Fig. 20 shows this as at least 133 ms from 0 to 2 g. | `EnvelopeTracker`: from the last sample at or below 0 g to the first at or above 2 g, rate above 15 g/s gives a 0.5 ratio for one sample. No requirement that the 0 g phase lasted 200 ms. | Loosen to standard: only check when vertical stayed at or below 0 g for at least 200 ms. Keep the rate definition. The 0.5 ratio is a game choice. |
+| Rider height | 7.1.4.3: the limits are for riders 48 in (1.22 m) and taller; for smaller riders the designer decides whether stricter limits apply. Newer editions add informative Appendix X8, a multiplier from 0.6 at 32 in to 1.0 at 48 in (R section 7.5; not in 06a). | Not modelled. | Note only. The plan's decision 4 (no family-model exception) stands; guests' intensity preference covers family rides. |
+| Restraint class | Restraint class 1 to 5 is chosen *from* the 1 Hz sustained accelerations on the restraint diagram; any sustained airtime means class 5 (O, from the F2291-21 preview and R chapter 6). | Not modelled. | Note only. It does not change the limits apart from the -Gx line and the extended -Gz line above. |
+| Filtering | 7.1.1.2: 4-pole single-pass Butterworth low pass, 5 Hz corner. | `ForceFilter`: 5 Hz, two biquads with Q 0.541 and 1.307 (a 4th-order Butterworth). | Keep. |
+| Severity | F2291 is pass or fail. | Excess ratio integrated over time (g-seconds). | Keep; it is a game scoring choice. |
+
+### Edition note on the 1.1 combined multiplier
+
+F2291-06a states the 1.1 factor in the text and draws it in Figs. 11 to 18. The newer renditions do not show it: Cargill's 2019 slide of the standard's Fig. 11 draws the x-z boundary touching +6/-2 g in x and +6/-2 g in z, and Rohde (Table 7.1, Fig. 7.15, formulas 1 to 3) uses the plain 0.2 s limits as the radii. So later editions probably dropped the 1.1 factor, but I could not read their text and this is unconfirmed. Keeping 1.1 is the player-favourable choice and follows the only primary text available; the plan's decision 1 already chose it.
+
+### How the two duration methods differ in practice
+
+The standard judges each level by how long the trace stays beyond that level. `EnvelopeTracker` judges the current value by how long the trace has been beyond the curve's plateau, so a long, moderate pull makes a short peak inside it look long. A hand-calculated example: a valley rises from 2 g to 4.2 g over 1 s, holds 4.2 g for 1.2 s and falls back over 1 s. By slicing, 4.2 g lasts 1.2 s (limit 5.6 g), 4.0 g about 1.3 s (5.4 g), 3.0 g about 1.7 s (4.6 g), and every level passes. In `EnvelopeTracker` the +Gz clock passes 2.0 s near the end of the hold, where the limit is 4.0 g, so the last 0.2 s or so count as exceedance. The same effect applies to airtime, where the -Gz clock starts at -1.1 g rather than at the level being judged. This is the largest difference between the code and the standard, and it always makes the code stricter.
+
+### Recommended changes
+
+All changes make the envelope more generous; none tightens it.
+
+1. Judge single-axis limits by per-level duration with a 200 ms minimum event, as `ComfortTracker` does, in the production envelope.
+2. Replace the flat 2.0 g push-pull cap with the standard's reduced curve (5.0 g to 1.5 s, 4.0 g at 2.0 s, 2.0 g from 2.5 s to 6 s).
+3. Require both lobes of an x or y reversal to be sustained, compare peak times, and halve the 0.2 s limit (3.0 g longitudinal forwards, 1.0 g braking, 1.5 g lateral).
+4. Check the 15 g/s onset only after at least 200 ms at or below 0 g.
+5. Keep the 1.1 combined multiplier, and ignore combined excesses shorter than 200 ms.
+6. Keep all six single-axis curves, the 5 Hz filter, the headrest assumption for +Gx and the base-case -Gx line.
