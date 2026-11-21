@@ -1,6 +1,6 @@
 # Project status
 
-Last updated 2026-11-18. The project is now called Heartline and is public at github.com/No-Stream/heartline (MIT). For in-flight work and the order to resume in, see the newest file in `docs/handoffs/` (dated, not committed). The design is in `docs/superpowers/specs/2026-11-02-theme-park-sim-design.md`, the roadmap in `docs/superpowers/plans/2026-11-02-theme-park-sim-roadmap.md`, and the live task list in Backlog.md (`backlog task list --plain`).
+Last updated 2026-11-18. The project is now called Heartline and is public at github.com/No-Stream/heartline (MIT). For in-flight work and the order to resume in, see the newest file in `docs/handoffs/` (dated, not committed). The design is in `docs/superpowers/specs/2026-11-02-theme-park-sim-design.md`, the roadmap in `docs/superpowers/plans/2026-11-02-theme-park-sim-roadmap.md`, and the live task list in Backlog.md (`backlog task list --plain`). To design or check a coaster with the command-line design tool, read `docs/designing-rides.md`.
 
 ## What works
 
