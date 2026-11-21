@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use theme_park_design_tools::run_cli;
+use theme_park_sim::track::ride_file::{RideFile, RideStep};
+use theme_park_sim::track::saved_shape_check::check_saved_shaped_geometry;
+use theme_park_sim::track::shaped::{ElementIntent, TurnSizeHint};
 
 static NEXT_TEMP_RIDE: AtomicUsize = AtomicUsize::new(0);
 
@@ -108,9 +111,93 @@ fn horizon_hawk_without_its_last_straights_gets_a_checked_completion() {
     );
 }
 
+/// Every shaped turn in the best option is solved for its entry speed within the owner's force
+/// targets, saved as the builder saves it (intent plus solved recipe with its geometry digest),
+/// and re-solves to the same geometry when the ride is replayed, as the browser does.
+fn assert_best_option_uses_shaped_turns(ride: &TempRide) -> serde_json::Value {
+    let best = assert_best_option_applies(ride);
+    let shaped_reports: Vec<_> = best["physics"]["pieces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|piece| piece["id"].as_str().unwrap().starts_with("ShapedTurn"))
+        .collect();
+    assert!(!shaped_reports.is_empty(), "{best}");
+    for report in &shaped_reports {
+        let peaks = &report["worstCarPeaks"];
+        assert!(
+            peaks["maximum_vertical_g"].as_f64().unwrap() <= 3.5,
+            "{report}"
+        );
+        assert!(
+            peaks["maximum_lateral_g"].as_f64().unwrap() <= 0.6,
+            "{report}"
+        );
+    }
+
+    let saved = RideFile::from_json_slice(&fs::read(&ride.0).unwrap()).unwrap();
+    let shaped_steps: Vec<_> = saved
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            RideStep::Shape(shape) => Some(shape),
+            _ => None,
+        })
+        .collect();
+    let finish_turns = &shaped_steps[shaped_steps.len() - shaped_reports.len()..];
+    for shape in finish_turns {
+        assert!(
+            matches!(
+                shape.intent,
+                ElementIntent::Turn {
+                    size: TurnSizeHint::Radius(radius_m),
+                    ..
+                } if radius_m % 2.0 == 0.0
+            ),
+            "finish turns use a fixed even radius the browser stepper can select: {:?}",
+            shape.intent
+        );
+    }
+    check_saved_shaped_geometry(&saved).unwrap();
+    let check = run_cli(&["check".to_owned(), ride.path()], "");
+    assert!(check.is_ok(), "{check:?}");
+    best
+}
+
 #[test]
-fn horizon_hawk_before_its_final_banked_turn_explains_it_is_too_fast() {
+fn horizon_hawk_before_its_final_banked_turn_finishes_with_a_shaped_turn() {
     let ride = TempRide::truncated("horizon-hawk", 4);
+
+    let best = assert_best_option_uses_shaped_turns(&ride);
+
+    assert_eq!(
+        best["pieces"],
+        serde_json::json!(["ShapedTurnRight", "OneTileStraight", "OneTileStraight"])
+    );
+}
+
+#[test]
+fn horizon_hawk_five_steps_from_closed_finishes_with_a_straight_and_a_shaped_turn() {
+    let ride = TempRide::truncated("horizon-hawk", 5);
+
+    let best = assert_best_option_uses_shaped_turns(&ride);
+
+    assert_eq!(
+        best["pieces"],
+        serde_json::json!([
+            "OneTileStraight",
+            "ShapedTurnRight",
+            "OneTileStraight",
+            "OneTileStraight"
+        ])
+    );
+}
+
+/// Before its brakes, Horizon Hawk is fast and 108 m from the station: classic turns are over
+/// the force limits and no shaped turn the search tries leads back.
+#[test]
+fn horizon_hawk_before_its_brakes_explains_it_is_too_fast() {
+    let ride = TempRide::truncated("horizon-hawk", 27);
 
     let error = ride.run(&["finish"]).unwrap_err();
 
@@ -118,6 +205,10 @@ fn horizon_hawk_before_its_final_banked_turn_explains_it_is_too_fast() {
     assert!(error.contains("over a force limit"), "{error}");
     assert!(error.contains("The train is too fast here"), "{error}");
     assert!(error.contains("90 degree heading mismatch"), "{error}");
+    assert!(
+        error.contains("shaped turn(s) could not be solved"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -150,7 +241,7 @@ fn state_reports_the_searched_finish_result_instead_of_a_pending_search() {
         "{state}"
     );
 
-    let too_fast = TempRide::truncated("horizon-hawk", 4);
+    let too_fast = TempRide::truncated("horizon-hawk", 27);
     let state = too_fast.run(&["state"]).unwrap();
     assert!(
         state.contains("can finish: false (No safe finish found"),

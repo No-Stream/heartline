@@ -123,8 +123,8 @@ const PROFILE_STEPS: usize = 512;
 const REQUIRED_FORCE_HEADROOM_G: f64 = 0.25;
 const MAXIMUM_HILL_INTENT_ERROR_G: f64 = 0.05;
 const MAXIMUM_FULLY_BANKED_LATERAL_G: f64 = 0.15;
-const MINIMUM_SHAPED_SPEED_MPS: f64 = 22.0;
-const MAXIMUM_SHAPED_SPEED_MPS: f64 = 36.0;
+pub(crate) const MINIMUM_SHAPED_SPEED_MPS: f64 = 22.0;
+pub(crate) const MAXIMUM_SHAPED_SPEED_MPS: f64 = 36.0;
 const MINIMUM_SHAPED_TRAIN_CARS: u8 = 4;
 const MAXIMUM_SHAPED_TRAIN_CARS: u8 = 8;
 const MAXIMUM_SHAPED_PREVIEWS: u8 = 4;
@@ -1068,9 +1068,17 @@ fn validate_context(context: &SolveContext<'_>) -> Result<(), SolveRefusal> {
     Ok(())
 }
 
+/// Whether the solver can shape elements for this model and train at some entry speed.
+pub(crate) fn model_supports_shaped_elements(
+    model: &CoasterModel,
+    train: &TrainConfiguration,
+) -> bool {
+    model.key == "hyper"
+        && (MINIMUM_SHAPED_TRAIN_CARS..=MAXIMUM_SHAPED_TRAIN_CARS).contains(&train.cars)
+}
+
 fn validate_scope(context: &SolveContext<'_>) -> Result<(), SolveRefusal> {
-    if context.model.key != "hyper"
-        || !(MINIMUM_SHAPED_TRAIN_CARS..=MAXIMUM_SHAPED_TRAIN_CARS).contains(&context.train.cars)
+    if !model_supports_shaped_elements(context.model, context.train)
         || context.entry_speed_mps > MAXIMUM_SHAPED_SPEED_MPS
     {
         return Err(SolveRefusal::UnsupportedScope);
@@ -1581,11 +1589,7 @@ fn solve_turn(
                 .min(model_limits.maximum_vertical_g - target_vertical_g),
         });
     }
-    let radius_step = if context.entry.heading.index() % 2 == 0 {
-        2.0
-    } else {
-        2.0 * std::f64::consts::SQRT_2
-    };
+    let radius_step = turn_radius_grid_step(context.entry.heading);
     let requested_radius_m = match size {
         TurnSizeHint::Auto => None,
         TurnSizeHint::Radius(radius_m) => Some(radius_m),
@@ -1632,8 +1636,12 @@ fn solve_turn(
     let mut last_headroom_g = f64::NEG_INFINITY;
     let mut last_lateral_g = f64::INFINITY;
     while preview_count < maximum_previews {
-        let speed_loss_fraction =
-            estimated_turn_speed_loss_fraction(context, design_speed_mps, peak_bank);
+        let speed_loss_fraction = estimated_turn_speed_loss_fraction(
+            context.physics,
+            context.train,
+            design_speed_mps,
+            peak_bank,
+        );
         let (_, radius_m, resolved_bank) = super::curves::shaped_speed_turn_geometry(
             design_speed_mps,
             peak_bank,
@@ -1811,16 +1819,54 @@ fn solve_turn(
 }
 
 fn estimated_turn_speed_loss_fraction(
-    context: &SolveContext<'_>,
+    physics: PhysicsConfig,
+    train: &TrainConfiguration,
     design_speed_mps: f64,
     peak_bank: f64,
 ) -> f64 {
     let nominal_radius_m = design_speed_mps.powi(2) / (GRAVITY * peak_bank.tan());
     let turn_length_estimate_m = std::f64::consts::FRAC_PI_2 * nominal_radius_m;
-    let deceleration_mps2 = context.physics.rolling_resistance * GRAVITY
-        + context.physics.drag_coefficient * design_speed_mps.powi(2)
-            / (context.physics.car_mass_kg * f64::from(context.train.cars));
+    let deceleration_mps2 = physics.rolling_resistance * GRAVITY
+        + physics.drag_coefficient * design_speed_mps.powi(2)
+            / (physics.car_mass_kg * f64::from(train.cars));
     deceleration_mps2 * turn_length_estimate_m / design_speed_mps.powi(2)
+}
+
+fn turn_radius_grid_step(heading: Heading) -> f64 {
+    if heading.index() % 2 == 0 {
+        2.0
+    } else {
+        2.0 * std::f64::consts::SQRT_2
+    }
+}
+
+/// The radius the solver starts an automatically sized fully banked turn with at this entry
+/// speed. Fixed radii close to it need the least bank correction to keep lateral force low.
+pub(crate) fn automatic_turn_radius_m(
+    model: &CoasterModel,
+    train: &TrainConfiguration,
+    heading: Heading,
+    entry_speed_mps: f64,
+    physics: PhysicsConfig,
+) -> f64 {
+    let rules = model.shaped_element_rules();
+    let design_speed_mps = round_element_value(entry_speed_mps);
+    let peak_bank = rules
+        .turn_vertical_g
+        .recip()
+        .acos()
+        .min(rules.maximum_bank_degrees.to_radians());
+    let speed_loss_fraction =
+        estimated_turn_speed_loss_fraction(physics, train, design_speed_mps, peak_bank);
+    let (_, radius_m, _) = super::curves::shaped_speed_turn_geometry(
+        design_speed_mps,
+        peak_bank,
+        speed_loss_fraction,
+        turn_radius_grid_step(heading),
+        rules.minimum_turn_radius_m,
+        None,
+    );
+    radius_m
 }
 
 pub(super) fn piece_from_spec(
@@ -1920,12 +1966,12 @@ fn hill_exit(entry: TrackState, span_m: f64) -> Result<TrackState, SolveRefusal>
     Ok(exit)
 }
 
-fn turn_exit(entry: TrackState, hand: Hand, radius_m: f64) -> Result<TrackState, SolveRefusal> {
-    let grid_step_m = if entry.heading.index() % 2 == 0 {
-        2.0
-    } else {
-        2.0 * std::f64::consts::SQRT_2
-    };
+pub(crate) fn turn_exit(
+    entry: TrackState,
+    hand: Hand,
+    radius_m: f64,
+) -> Result<TrackState, SolveRefusal> {
+    let grid_step_m = turn_radius_grid_step(entry.heading);
     let half_radius = radius_m / grid_step_m;
     let steps = half_radius.round();
     if !half_radius.is_finite()

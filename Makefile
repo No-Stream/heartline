@@ -8,7 +8,7 @@ PARK ?= content/parks/horizon-hawk.park.json
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold check-shaped-turn-arc-parity generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools agreement-wasm test-agreement test-design-tools park-report
+.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-finish bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold check-shaped-turn-arc-parity generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools agreement-wasm test-agreement test-design-tools park-report
 
 install:
 	npm ci
@@ -163,6 +163,10 @@ bench-builder-updates-browser: wasm-bindgen
 	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm
 	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target web --out-dir web/src/wasm
 	flock /tmp/theme-park-sim-browser-tests.lock node web/construction-bench/placements.mjs
+
+# Times the finish search alone on Horizon Hawk without its last 2 to 6 ride steps.
+bench-finish:
+	$(CARGO) run --release -p theme-park-sim-wasm --example finish_search_bench -- horizon-hawk 2 3 4 5 6
 
 bench-player-circuits:
 	$(CARGO) run --release -p theme-park-sim --example player_circuit_preview_bench

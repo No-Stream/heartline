@@ -59,7 +59,7 @@ mod speed_estimate;
 mod walk_tests;
 pub use completion::{
     Completion, CompletionPhysics, CompletionPieceReport, CompletionSearch,
-    CompletionSearchProgress, FORCE_HEADROOM_G, construction_preview_physics,
+    CompletionSearchProgress, FORCE_HEADROOM_G, construction_preview_physics, shaped_turn_intent,
 };
 pub use elements::ElementChoice;
 pub use speed_estimate::{EndSpeedEstimate, EndSpeedSource};

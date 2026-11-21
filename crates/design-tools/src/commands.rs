@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use theme_park_sim::physics::{CarPieceForcePeakLocations, Circuit, ForcePeakValues, TestRun};
 use theme_park_sim::track::blocks::BlockSectionPlacement;
+use theme_park_sim::track::construction::shaped_turn_intent;
 use theme_park_sim::track::ride_file::{
     RideBlockSectionsStep, RideChainStep, RideCloseStep, RideExpectFeatureStep, RideExpectFeatures,
     RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideShapeStep, RideStation, RideStep,
@@ -1487,15 +1488,31 @@ fn execute_command(
                 .map_err(|error| error.to_string())?;
             let track_after = construction_track(session)?;
             let added = track_after.len().saturating_sub(track_before);
-            for piece in track_after.iter().skip(track_before) {
-                let id = piece["label"]
-                    .as_str()
-                    .ok_or_else(|| "finished piece has no label".to_owned())?;
-                ride.steps.push(RideStep::Place(RidePlaceStep {
-                    place: id.to_owned(),
-                    launch_speed: None,
-                    note: None,
-                }));
+            if added != completion.geometry.len() {
+                return Err(format!(
+                    "finish option {rank} added {added} piece(s) but has {}",
+                    completion.geometry.len()
+                ));
+            }
+            for (piece, placed) in completion
+                .geometry
+                .iter()
+                .zip(track_after.iter().skip(track_before))
+            {
+                ride.steps.push(match piece.element_spec() {
+                    Some(spec) => RideStep::Shape(RideShapeStep {
+                        intent: shaped_turn_intent(spec),
+                        spec: spec.clone(),
+                    }),
+                    None => RideStep::Place(RidePlaceStep {
+                        place: placed["label"]
+                            .as_str()
+                            .ok_or_else(|| "finished piece has no label".to_owned())?
+                            .to_owned(),
+                        launch_speed: None,
+                        note: None,
+                    }),
+                });
             }
             ride.steps
                 .push(RideStep::Close(RideCloseStep { close: true }));
