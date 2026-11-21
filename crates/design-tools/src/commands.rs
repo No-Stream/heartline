@@ -52,7 +52,7 @@ struct CommandReply {
 #[derive(Debug)]
 enum CliResponse {
     Success(String),
-    FailureWithStdout(String),
+    Failure { stdout: String, stderr: String },
 }
 
 #[derive(Debug)]
@@ -185,9 +185,9 @@ fn cli_output(response: Result<CliResponse, String>) -> CliOutput {
             stderr: String::new(),
             exit_code: 0,
         },
-        Ok(CliResponse::FailureWithStdout(stdout)) => CliOutput {
+        Ok(CliResponse::Failure { stdout, stderr }) => CliOutput {
             stdout,
-            stderr: String::new(),
+            stderr,
             exit_code: 1,
         },
         Err(stderr) => CliOutput {
@@ -239,7 +239,8 @@ Top-level commands:
   park report <park file> [options]          simulate and report on a park
 
 Ride commands:
-  new --model <key> --station x,y,z,heading start a ride
+  new --model <key> --station x,y,z,heading [--cars <count>]
+                                            start a ride
   state                                     show the open end and construction status
   choices [group]                           list offered pieces and their rated windows
   options shapes                            list feasible shaped elements at the open end
@@ -803,7 +804,7 @@ fn run_ride(path: &Path, commands: Vec<RideCommand>, json_mode: bool) -> Result<
         let is_state_command = matches!(command, RideCommand::State);
         let result = if is_state_command {
             match replay_estimates.take() {
-                Some(estimates) => render_state_with_estimates(&session, estimates),
+                Some(estimates) => render_state_with_estimates(&mut session, estimates),
                 None => match state_cache.as_ref() {
                     Some(state) => Ok(render_state_value(state.clone())),
                     None => render_state(&mut session),
@@ -836,7 +837,7 @@ fn run_ride(path: &Path, commands: Vec<RideCommand>, json_mode: bool) -> Result<
     }
     if replies.is_empty() {
         let reply = match (replay_estimates.take(), state_cache.take()) {
-            (Some(estimates), None) => render_state_with_estimates(&session, estimates)?,
+            (Some(estimates), None) => render_state_with_estimates(&mut session, estimates)?,
             (None, Some(state)) => render_state_value(state),
             (None, None) => render_state(&mut session)?,
             (Some(_), Some(_)) => unreachable!("replay estimates and cached state are exclusive"),
@@ -846,7 +847,7 @@ fn run_ride(path: &Path, commands: Vec<RideCommand>, json_mode: bool) -> Result<
     }
     if state_cache.is_none() {
         state_cache = Some(match replay_estimates.take() {
-            Some(estimates) => state_value_with_estimates(&session, estimates)?,
+            Some(estimates) => state_value_with_estimates(&mut session, estimates)?,
             None => state_value(&mut session)?,
         });
     }
@@ -1622,7 +1623,7 @@ fn render_state(session: &mut BuilderSession) -> Result<CommandReply, String> {
 }
 
 fn render_state_with_estimates(
-    session: &BuilderSession,
+    session: &mut BuilderSession,
     estimates: BuilderEstimates,
 ) -> Result<CommandReply, String> {
     let state = state_value_with_estimates(session, estimates)?;
@@ -1643,9 +1644,10 @@ fn state_value(session: &mut BuilderSession) -> Result<Value, String> {
 }
 
 fn state_value_with_estimates(
-    session: &BuilderSession,
+    session: &mut BuilderSession,
     estimates: BuilderEstimates,
 ) -> Result<Value, String> {
+    session.search_finish();
     let simulation = session.simulation();
     let construction = simulation
         .construction
@@ -2093,7 +2095,7 @@ fn render_shaped_choices(session: &mut BuilderSession) -> Result<CommandReply, S
         let shape = &row["shape"];
         let spec = &shape["spec"];
         let design_speed = optional_number(spec["designSpeedMps"].as_f64());
-        let delivered = optional_number(
+        let delivered = optional_g(
             spec["deliveredG"]
                 .as_f64()
                 .or_else(|| spec["lateralG"].as_f64()),
@@ -2188,6 +2190,9 @@ fn render_estimates(session: &mut BuilderSession, ids: &[String]) -> Result<Comm
                 )
                 .unwrap();
             }
+        }
+        if let Some(shape) = row.get("shape").filter(|shape| !shape["spec"].is_null()) {
+            write!(text, "  {}", format_shape_details(shape)).unwrap();
         }
         if let Some(reason) = row["previewUnavailableReason"].as_str() {
             writeln!(text, "  {reason}").unwrap();
@@ -2318,8 +2323,8 @@ fn format_shape_details(value: &Value) -> String {
                 .as_f64()
                 .expect("design speed is a number"),
             spec["cars"].as_u64().expect("car count is an integer"),
-            optional_number(spec["targetG"].as_f64()),
-            optional_number(spec["deliveredG"].as_f64()),
+            optional_g(spec["targetG"].as_f64()),
+            optional_g(spec["deliveredG"].as_f64()),
             optional_number(spec["heightM"].as_f64()),
             optional_number(spec["spanM"].as_f64()),
         ),
@@ -2330,8 +2335,8 @@ fn format_shape_details(value: &Value) -> String {
                 .as_f64()
                 .expect("design speed is a number"),
             spec["cars"].as_u64().expect("car count is an integer"),
-            optional_number(spec["verticalG"].as_f64()),
-            optional_number(spec["lateralG"].as_f64()),
+            optional_g(spec["verticalG"].as_f64()),
+            optional_g(spec["lateralG"].as_f64()),
             optional_number(spec["radiusM"].as_f64()),
             optional_number(spec["bankDegrees"].as_f64()),
         ),
@@ -3793,7 +3798,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
     }
     let mut rows = Vec::new();
     let mut text = String::new();
-    let mut has_check_failures = false;
+    let mut failed_ride_summaries = Vec::new();
     for path in paths {
         let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
         let ride = RideFile::from_json_slice(&bytes)
@@ -3844,7 +3849,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
             .as_ref()
             .and_then(|expectation| expectation.design_margins)
             .unwrap_or(false);
-        has_check_failures |= check_has_failures(
+        let failed_gates = check_failed_gates(
             &failures,
             &default_expectation_failures,
             &agreement,
@@ -3852,6 +3857,9 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
             &force_headroom_failures,
             design_margins_required,
         );
+        if !failed_gates.is_empty() {
+            failed_ride_summaries.push(format!("{}: {}", ride.name, failed_gates.join(", ")));
+        }
         writeln!(
             text,
             "{}: expectations {}; native agreement {}",
@@ -3923,44 +3931,71 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
             "reportSamples": test_run.samples,
         }));
     }
-    check_response(json_mode, rows, text, has_check_failures)
+    check_response(json_mode, rows, text, &failed_ride_summaries)
 }
 
-fn check_has_failures(
+/// Names the check gates a ride failed; rated-margin and force-headroom failures only gate
+/// rides whose expectations set `designMargins`.
+fn check_failed_gates(
     expectation_failures: &[String],
     default_expectation_failures: &[String],
     agreement: &AgreementReport,
     rated_speed_failures: &[String],
     force_headroom_failures: &[String],
     design_margins_required: bool,
-) -> bool {
-    !expectation_failures.is_empty()
-        || !default_expectation_failures.is_empty()
-        || !agreement.passed
-        || (design_margins_required
-            && (!rated_speed_failures.is_empty() || !force_headroom_failures.is_empty()))
+) -> Vec<&'static str> {
+    [
+        (!expectation_failures.is_empty(), "expectations"),
+        (
+            !default_expectation_failures.is_empty(),
+            "default physics expectations",
+        ),
+        (!agreement.passed, "native agreement"),
+        (
+            design_margins_required && !rated_speed_failures.is_empty(),
+            "rated speed margins",
+        ),
+        (
+            design_margins_required && !force_headroom_failures.is_empty(),
+            "force headroom",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(failed, gate)| failed.then_some(gate))
+    .collect()
 }
 
+/// A failing check prints its full report on stdout and exits nonzero. Text mode also writes a
+/// short summary of the failing rides to stderr; JSON mode keeps stderr empty.
 fn check_response(
     json_mode: bool,
     rows: Vec<Value>,
     text: String,
-    has_failures: bool,
+    failed_ride_summaries: &[String],
 ) -> Result<CliResponse, String> {
-    if json_mode {
-        let json = serde_json::to_string_pretty(&Value::Array(rows))
-            .map_err(|error| error.to_string())?
-            + "\n";
-        return Ok(if has_failures {
-            CliResponse::FailureWithStdout(json)
-        } else {
-            CliResponse::Success(json)
-        });
+    let ride_count = rows.len();
+    let stdout = if json_mode {
+        serde_json::to_string_pretty(&Value::Array(rows)).map_err(|error| error.to_string())?
+            + "\n"
+    } else {
+        text
+    };
+    if failed_ride_summaries.is_empty() {
+        return Ok(CliResponse::Success(stdout));
     }
-    if has_failures {
-        return Err(text);
-    }
-    Ok(CliResponse::Success(text))
+    let stderr = if json_mode {
+        String::new()
+    } else {
+        format!(
+            "check failed for {} of {ride_count} ride(s); the report is on stdout:\n{}",
+            failed_ride_summaries.len(),
+            failed_ride_summaries
+                .iter()
+                .map(|summary| format!("  {summary}\n"))
+                .collect::<String>()
+        )
+    };
+    Ok(CliResponse::Failure { stdout, stderr })
 }
 
 pub(crate) fn check_expectations(
@@ -4026,7 +4061,7 @@ fn evaluate_expectations(
     }
     if let Some([minimum, maximum]) = expect.sustained_max_vertical_g {
         results.push(range_expectation(
-            "maximum vertical g",
+            "sustained maximum vertical g",
             minimum,
             maximum,
             sustained.maximum_vertical_g,
@@ -4556,6 +4591,11 @@ fn optional_number(value: Option<f64>) -> String {
     value.map_or_else(|| "—".to_owned(), |value| format!("{value:.1}"))
 }
 
+/// Shaped-element forces print to two decimals, as the browser's element inspector shows them.
+fn optional_g(value: Option<f64>) -> String {
+    value.map_or_else(|| "—".to_owned(), |value| format!("{value:.2}"))
+}
+
 #[cfg(test)]
 mod replay_snapshot_tests {
     use super::*;
@@ -4587,7 +4627,7 @@ mod replay_snapshot_tests {
 #[cfg(test)]
 mod agreement_replay_tests {
     use super::{
-        agreement_json, check_has_failures, check_response, cli_output, replay_with_estimates,
+        agreement_json, check_failed_gates, check_response, cli_output, replay_with_estimates,
         speed_at_distance,
     };
     use crate::agreement::{AgreementCheck, AgreementFailure, AgreementReport};
@@ -4612,12 +4652,12 @@ mod agreement_replay_tests {
             passed: true,
         };
 
-        let has_failures = check_has_failures(&[], &[], &agreement, &[], &[], false);
+        assert!(check_failed_gates(&[], &[], &agreement, &[], &[], false).is_empty());
         let response = check_response(
             true,
             vec![serde_json::json!({"agreement": agreement_json(&agreement)})],
             String::new(),
-            has_failures,
+            &[],
         );
         let output = cli_output(response);
 
@@ -4650,67 +4690,52 @@ mod agreement_replay_tests {
             failures: Vec::new(),
             passed: true,
         };
+        let rated_failures = ["piece 3 rated margin -0.20 m/s".to_owned()];
+        let force_failures = ["default physics maximum vertical g headroom -0.01 g".to_owned()];
 
-        let rated_failure = check_has_failures(
-            &[],
-            &[],
-            &agreement,
-            &["piece 3 rated margin -0.20 m/s".to_owned()],
-            &[],
-            true,
+        assert_eq!(
+            check_failed_gates(&[], &[], &agreement, &rated_failures, &[], true),
+            ["rated speed margins"]
         );
-        assert!(!check_has_failures(
-            &[],
-            &[],
-            &agreement,
-            &["piece 3 rated margin -0.20 m/s".to_owned()],
-            &[],
-            false,
-        ));
-        let rated_output = cli_output(check_response(
-            true,
-            vec![
-                serde_json::json!({"ratedSpeedMarginFailures": ["piece 3 rated margin -0.20 m/s"]}),
-            ],
-            String::new(),
-            rated_failure,
-        ));
-        assert_eq!(rated_output.exit_code, 1);
-
-        let force_failure = check_has_failures(
-            &[],
-            &[],
-            &agreement,
-            &[],
-            &["default physics maximum vertical g headroom -0.01 g".to_owned()],
-            true,
+        assert!(check_failed_gates(&[], &[], &agreement, &rated_failures, &[], false).is_empty());
+        assert_eq!(
+            check_failed_gates(&[], &[], &agreement, &[], &force_failures, true),
+            ["force headroom"]
         );
-        assert!(!check_has_failures(
-            &[],
-            &[],
-            &agreement,
-            &[],
-            &["default physics maximum vertical g headroom -0.01 g".to_owned()],
-            false,
-        ));
-        let force_output = cli_output(check_response(
-            true,
-            vec![
-                serde_json::json!({"forceHeadroomFailures": ["default physics maximum vertical g headroom -0.01 g"]}),
-            ],
-            String::new(),
-            force_failure,
-        ));
-        assert_eq!(force_output.exit_code, 1);
+        assert!(check_failed_gates(&[], &[], &agreement, &[], &force_failures, false).is_empty());
+        assert_eq!(
+            check_failed_gates(
+                &[],
+                &["default physics: expectation excitement failed".to_owned()],
+                &agreement,
+                &[],
+                &[],
+                false,
+            ),
+            ["default physics expectations"]
+        );
 
-        assert!(check_has_failures(
-            &[],
-            &["default physics: expectation excitement failed".to_owned()],
-            &agreement,
-            &[],
-            &[],
-            false,
+        let json_output = cli_output(check_response(
+            true,
+            vec![serde_json::json!({"ratedSpeedMarginFailures": rated_failures})],
+            String::new(),
+            &["Test ride: rated speed margins".to_owned()],
         ));
+        assert_eq!(json_output.exit_code, 1);
+        assert!(json_output.stderr.is_empty());
+
+        let text_output = cli_output(check_response(
+            false,
+            vec![serde_json::json!({}), serde_json::json!({})],
+            "full report\n".to_owned(),
+            &["Test ride: force headroom".to_owned()],
+        ));
+        assert_eq!(text_output.exit_code, 1);
+        assert_eq!(text_output.stdout, "full report\n");
+        assert_eq!(
+            text_output.stderr,
+            "check failed for 1 of 2 ride(s); the report is on stdout:\n  Test ride: force headroom\n"
+        );
     }
 
     #[test]
@@ -4998,7 +5023,7 @@ mod expectation_tests {
             Some([minimum_vertical_g - 0.2, minimum_vertical_g - 0.1]);
         let failures = check_expectations(&ride, &test_run, &circuit).unwrap();
         assert_eq!(failures.len(), 2);
-        assert!(failures[0].starts_with("expectation maximum vertical g expected"));
+        assert!(failures[0].starts_with("expectation sustained maximum vertical g expected"));
         assert!(failures[1].starts_with("expectation sustained minimum vertical g expected"));
     }
 

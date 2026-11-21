@@ -636,6 +636,30 @@ fn failed_check_json_is_written_to_stdout_with_a_failure_exit_code() {
 }
 
 #[test]
+fn failed_text_check_prints_its_report_on_stdout_and_a_summary_on_stderr() {
+    let ride = TempRide::new();
+    write_expectation_failure_ride(&ride, serde_json::json!({"excitement": [100.0, 101.0]}));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_heartline-design"))
+        .args(["check", &ride.path()])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stdout.contains("expectation excitement expected 100.00 to 101.00, observed "),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Rated entry-speed margin"), "{stdout}");
+    assert_eq!(
+        stderr,
+        "check failed for 1 of 1 ride(s); the report is on stdout:\n  Browser agreement fast circuit: expectations, default physics expectations\n"
+    );
+}
+
+#[test]
 fn binary_check_json_failure_uses_stdout_and_exits_nonzero() {
     let ride = TempRide::new();
     write_expectation_failure_ride(&ride, serde_json::json!({"excitement": [100.0, 101.0]}));

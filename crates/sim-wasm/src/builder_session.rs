@@ -525,9 +525,15 @@ impl BuilderSession {
     }
 
     /// Runs the finish search to the end and returns its ranked completions.
-    pub fn finish_options(&mut self) -> Result<Vec<Completion>, BuilderSessionError> {
+    /// Runs the finish search to completion, so `construction_can_finish` and
+    /// `construction_finish_reason` describe the current track instead of a pending search.
+    pub fn search_finish(&mut self) {
         self.simulation.construction_finish_search_start();
         while !self.simulation.construction_finish_search_advance() {}
+    }
+
+    pub fn finish_options(&mut self) -> Result<Vec<Completion>, BuilderSessionError> {
+        self.search_finish();
         if !self.simulation.construction_can_finish() {
             return Err(self.bridge_error(
                 "finish coaster",
@@ -575,6 +581,17 @@ impl BuilderSession {
     }
 
     fn close_track(&mut self) -> Result<(), BuilderSessionError> {
+        if self
+            .simulation
+            .construction
+            .as_ref()
+            .is_some_and(|construction| construction.is_closed())
+        {
+            return Err(self.bridge_error(
+                "close circuit",
+                "The coaster circuit is already closed.".to_owned(),
+            ));
+        }
         self.end_speed_cache = None;
         self.simulation.construction_close();
         self.check_bridge_message("close circuit")

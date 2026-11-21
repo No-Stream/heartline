@@ -101,7 +101,7 @@ Open end: tile (108.0, 100.0), height 10.0 m, heading East, slope Level, bank Le
 Height above ground: 2 steps; offset to station entry: 32.0 m (x -8.0, y +0.0 tiles, height +0.0 m)
 Closure approach: remaining offset: 8.0 tiles (32.0 m); heading mismatch: 0 degrees
 Chain: false; predicted end speed: 1.6 m/s (reachedEnd)
-Can close: false; can finish: false (Checking for a connection to the station.); can test: false
+Can close: false; can finish: false (No finish found: no route of up to 6 pieces reaches the station entry without a collision; the end is 32 m from the station entry (x -8.0, y +0.0 tiles, height +0.0 m) with a 0 degree heading mismatch, and the train reaches it at 1.6 m/s. Bring the end closer to the station entry, line it up with the station's heading, or clear the way.); can test: false
 "#;
     assert_eq!(reply, expected);
     let saved: serde_json::Value =
@@ -683,7 +683,7 @@ fn new_creates_a_ride_and_state_reports_the_open_end() {
 
     assert_eq!(
         reply,
-        "Pieces: 0\nOpen end: tile (104.0, 100.0), height 10.0 m, heading East, slope Level, bank Level\nHeight above ground: 2 steps; offset to station entry: 16.0 m (x -4.0, y +0.0 tiles, height +0.0 m)\nClosure approach: remaining offset: 4.0 tiles (16.0 m); heading mismatch: 0 degrees\nChain: false; predicted end speed: 2.0 m/s (reachedEnd)\nCan close: false; can finish: false (Checking for a connection to the station.); can test: false\n"
+        "Pieces: 0\nOpen end: tile (104.0, 100.0), height 10.0 m, heading East, slope Level, bank Level\nHeight above ground: 2 steps; offset to station entry: 16.0 m (x -4.0, y +0.0 tiles, height +0.0 m)\nClosure approach: remaining offset: 4.0 tiles (16.0 m); heading mismatch: 0 degrees\nChain: false; predicted end speed: 2.0 m/s (reachedEnd)\nCan close: false; can finish: false (No finish found: no route of up to 6 pieces reaches the station entry without a collision; the end is 16 m from the station entry (x -4.0, y +0.0 tiles, height +0.0 m) with a 0 degree heading mismatch, and the train reaches it at 2.0 m/s. Bring the end closer to the station entry, line it up with the station's heading, or clear the way.); can test: false\n"
     );
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&ride.0).unwrap()).unwrap();

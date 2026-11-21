@@ -140,3 +140,59 @@ fn finish_apply_refuses_an_option_that_does_not_exist() {
 
     assert!(error.contains("finish option 9 does not exist"), "{error}");
 }
+
+#[test]
+fn state_reports_the_searched_finish_result_instead_of_a_pending_search() {
+    let finishable = TempRide::truncated("velocity-viper", 4);
+    let state = finishable.run(&["state"]).unwrap();
+    assert!(
+        state.contains("Can close: false; can finish: true; can test: false"),
+        "{state}"
+    );
+
+    let too_fast = TempRide::truncated("horizon-hawk", 4);
+    let state = too_fast.run(&["state"]).unwrap();
+    assert!(
+        state.contains("can finish: false (No safe finish found"),
+        "{state}"
+    );
+    assert!(state.contains("The train is too fast here"), "{state}");
+
+    let at_station = TempRide::truncated("horizon-hawk", 1);
+    let state = at_station.run(&["state"]).unwrap();
+    assert!(
+        state.contains(
+            "Can close: true; can finish: false (The track already reaches the station entry; close the circuit instead.)"
+        ),
+        "{state}"
+    );
+
+    for state in [
+        finishable.run(&["state"]).unwrap(),
+        too_fast.run(&["state"]).unwrap(),
+        at_station.run(&["state"]).unwrap(),
+    ] {
+        assert!(!state.contains("Checking for a connection"), "{state}");
+    }
+}
+
+#[test]
+fn a_finished_circuit_reports_closed_and_refuses_a_second_close() {
+    let ride = TempRide::truncated("velocity-viper", 4);
+    let applied = ride.run(&["finish apply 1"]).unwrap();
+    assert!(
+        applied.contains(
+            "Can close: false; can finish: false (The coaster circuit is already closed.); can test: true"
+        ),
+        "{applied}"
+    );
+    let saved_after_finish = fs::read(&ride.0).unwrap();
+
+    let error = ride.run(&["close"]).unwrap_err();
+
+    assert!(
+        error.contains("The coaster circuit is already closed."),
+        "{error}"
+    );
+    assert_eq!(fs::read(&ride.0).unwrap(), saved_after_finish);
+}

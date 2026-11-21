@@ -63,6 +63,10 @@ fn help_lists_commands_and_choice_groups() {
     ] {
         assert!(help.contains(command), "help omits {command}:\n{help}");
     }
+    assert!(
+        help.contains("new --model <key> --station x,y,z,heading [--cars <count>]"),
+        "help omits new --cars:\n{help}"
+    );
     for group in [
         "bank",
         "element",

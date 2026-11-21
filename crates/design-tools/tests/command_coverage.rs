@@ -617,3 +617,65 @@ fn check_fails_fast_on_shaped_geometry_saved_by_an_older_solver() {
         output.stderr
     );
 }
+
+#[test]
+fn shaped_hill_text_uses_two_decimals_and_estimate_prints_the_shaped_forces() {
+    let ride = TempRide::new();
+    fs::write(
+        &ride.0,
+        include_str!("../../../content/rides/horizon-hawk.ride.json"),
+    )
+    .unwrap();
+    let hill = "shape:hill:strongFloater:default:auto";
+    run_cli(&["ride".into(), ride.path().into(), "truncate 10".into()], "").unwrap();
+    let probe_json: serde_json::Value = serde_json::from_str(
+        &run_cli(
+            &[
+                "ride".into(),
+                ride.path().into(),
+                "--json".into(),
+                format!("probe {hill}"),
+            ],
+            "",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let spec = &probe_json["shape"]["spec"];
+    let target = spec["targetG"].as_f64().unwrap();
+    let delivered = spec["deliveredG"].as_f64().unwrap();
+    assert_eq!(target, -0.85);
+    let shape_line = format!("target {target:.2} g, delivered {delivered:.2} g");
+
+    let probe = run_cli(
+        &["ride".into(), ride.path().into(), format!("probe {hill}")],
+        "",
+    )
+    .unwrap();
+    assert!(probe.contains(&shape_line), "{probe}");
+
+    let estimate = run_cli(
+        &["ride".into(), ride.path().into(), format!("estimate {hill}")],
+        "",
+    )
+    .unwrap();
+    assert!(
+        estimate.contains("  Shaped hill: strongFloater at "),
+        "{estimate}"
+    );
+    assert!(estimate.contains(&shape_line), "{estimate}");
+
+    let shapes = run_cli(
+        &["ride".into(), ride.path().into(), "options shapes".into()],
+        "",
+    )
+    .unwrap();
+    let strong_floater_row = shapes
+        .lines()
+        .find(|line| line.starts_with(hill))
+        .unwrap_or_else(|| panic!("options shapes omits {hill}:\n{shapes}"));
+    assert!(
+        strong_floater_row.contains(&format!(" {delivered:.2} ")),
+        "{shapes}"
+    );
+}

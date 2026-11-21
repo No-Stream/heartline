@@ -6,7 +6,7 @@ This guide is for agents and people who design coasters with `tools/design`, the
 
 A ride lives in a JSON ride file, usually `content/rides/<name>.ride.json`. The file is the source of truth: it holds the model, station, train size, an ordered list of steps (chain toggles, classic pieces, shaped elements, close) and an optional `expect` block of targets. Every `tools/design ride <file> ...` call replays the file into a fresh builder session, runs the commands you give it, and writes the file back if anything changed. A cache file `<file>.snapshot` sits next to the ride (it is gitignored) and is rebuilt whenever the ride or the tool binary changes. `tools/design` runs the simulation as a native Rust binary. The game runs the same code compiled to WebAssembly, and players build rides in the browser's builder panel, which this guide calls the visible builder. Native agreement, part of `check`, compares the builder's per-piece estimates with the measured test inside the native binary; the browser agreement test builds the ride through the visible builder and compares its results with the native ones. `tools/design` runs `make design-tools` before every call, which rebuilds the release binary only when the source changed; a build failure prints the log path under `target/`.
 
-You can chain several commands in one call; each command name starts a new command. A call is all or nothing: if any command fails, the tool prints the error and the state at the failure, exits 1, and writes none of that call's changes. With no commands on the line, the tool reads commands from standard input, one per line. Add `--json` anywhere on the line for machine-readable output; it shows exact values where the text output rounds to one decimal (a strong floater that delivers -0.850314 g prints as "-0.9 g" in text).
+You can chain several commands in one call; each command name starts a new command. A call is all or nothing: if any command fails, the tool prints the error and the state at the failure, exits 1, and writes none of that call's changes. With no commands on the line, the tool reads commands from standard input, one per line. Add `--json` anywhere on the line for machine-readable output; it shows exact values where the text output rounds. Text prints shaped-element forces to two decimals, as the browser does (a strong floater that delivers -0.850314 g prints as "-0.85 g"), and most other values to one decimal.
 
 ```sh
 tools/design help                                   # command list (there is no per-command --help)
@@ -17,18 +17,18 @@ tools/design check content/rides/horizon-hawk.ride.json      # the acceptance ch
 
 | Command | What it does |
 | --- | --- |
-| `new --model <key> --station x,y,z,heading [--cars <n>]` | Start a ride file. `--cars` defaults to 6 and is not listed by `help`. |
+| `new --model <key> --station x,y,z,heading [--cars <n>]` | Start a ride file. `--cars` defaults to 6. |
 | `state` | Open end position, height, heading, offset to the station, predicted end speed. |
 | `choices [group]` | Classic pieces offered at the open end, with rated windows and refusals. Groups: bank, element, hill, inversion, shapes, slope, special, straight, turn. |
 | `options shapes` | Shaped elements offered at the open end and the model's shaped-element limits. |
-| `estimate <id> ...` | Builder force estimate for one or more classic pieces without placing them. |
+| `estimate <id> ...` | Builder force estimate for one or more pieces or shaped elements without placing them. |
 | `probe <id>` | Preview one piece or shaped element: entry speed, forces, end tile, or the refusal. |
 | `place <id> [--matched] [--launch-speed <m/s>] [--note <text>]` | Place a classic piece. |
 | `place hill feel=<floater\|strong-floater\|ejector> [g=<target>] [height=<m>]` | Place a shaped airtime hill. |
 | `place turn <left\|right> feel=banked [radius=<m>]` | Place a shaped fully banked turn. |
 | `chain on\|off`, `launch-speed <n> <m/s>`, `cars <n>`, `trains <n>`, `auto-blocks` | Lift, launch, train and block settings. |
 | `undo [count]`, `truncate <steps>` | Remove placements. |
-| `finish`, `close` | Search for a short way back to the station; close the circuit. |
+| `finish`, `finish apply <n>`, `close` | List ranked ways back to the station; place one and close the circuit; close a circuit that already reaches the station. |
 | `test`, `report [--samples]`, `agreement`, `map` | Measure a closed ride; draw the footprint. |
 | `export --save <path>` / `--session <path>` | Write a park save or a replay session. |
 
@@ -45,10 +45,10 @@ Open end: tile (241.0, 253.0), height 10.0 m, heading North, slope Level, bank L
 Height above ground: 2 steps; offset to station entry: 16.0 m (x +0.0, y -4.0 tiles, height +0.0 m)
 Closure approach: remaining offset: 4.0 tiles (16.0 m); heading mismatch: 0 degrees
 Chain: false; predicted end speed: 2.0 m/s (reachedEnd)
-Can close: false; can finish: false (Checking for a connection to the station.); can test: false
+Can close: false; can finish: false (No finish found: no route of up to 6 pieces reaches the station entry without a collision; the end is 16 m from the station entry (x +0.0, y -4.0 tiles, height +0.0 m) with a 0 degree heading mismatch, and the train reaches it at 2.0 m/s. Bring the end closer to the station entry, line it up with the station's heading, or clear the way.); can test: false
 ```
 
-Three values in the state output matter most while building. "Offset to station entry" and "heading mismatch" tell you how far the open end is from where the circuit must close. "Predicted end speed" is the builder's estimate of the speed at the open end, which decides which pieces and shaped elements fit next. The "can finish" flag is not reliable in this version: it reads "Checking for a connection" even where `finish` succeeds, so run `finish` instead of trusting the flag.
+Three values in the state output matter most while building. "Offset to station entry" and "heading mismatch" tell you how far the open end is from where the circuit must close. "Predicted end speed" is the builder's estimate of the speed at the open end, which decides which pieces and shaped elements fit next. "Can finish" is the result of the same search `finish` runs, with its reason when no finish exists, so it tells you after each placement whether a checked way back to the station exists; near the station the search adds up to a few seconds to each command. "Can close" is true only when the open end already sits at the station entry; after the circuit is closed both flags are false and the reason says the circuit is already closed.
 
 ### Look before you place
 
@@ -61,23 +61,23 @@ WideLevelToSixtyDown            5.0 1.0-9.5       +4.0 1.0 (weak) / -0.8 (good) 
 LevelToGentleDown               5.0 —                — 1.0 (weak) / 0.4 (weak)                    0.0 (fine)         0.4 (fine)         reachedEnd
 ```
 
-`probe` works for both classic ids and shaped ids. Use it for shaped elements, because `estimate` prints no forces for them. Shaped ids have the form `shape:hill:<floater|strongFloater|ejector>:<g or default>:<auto or fixed-<metres>>` and `shape:turn:<left|right>:fullyBanked:<auto or fixed-<metres>>`; `options shapes` prints the automatic ones.
+`probe` works for both classic ids and shaped ids. For a shaped id, both `probe` and `estimate` print the solved shape: design speed, target and delivered force, and size. Shaped ids have the form `shape:hill:<floater|strongFloater|ejector>:<g or default>:<auto or fixed-<metres>>` and `shape:turn:<left|right>:fullyBanked:<auto or fixed-<metres>>`; `options shapes` prints the automatic ones.
 
 ```console
 $ tools/design ride demo-hyper.ride.json options shapes
 Model hyper limits: vertical -1.50 to +4.00 g, lateral up to 1.20 g; default hill targets floater -0.50 g, strong floater -0.85 g, ejector steel -1.20 g or wood -0.80 g; turn radius 8.0 to 256.0 m, bank up to 75.0 degrees.
 id                                   name                     design m/s delivered g size                 refusal
-shape:hill:floater:default:auto      floater hill                   34.6        -0.5 24.5x198.0 m
-shape:hill:strongFloater:default:auto strong floater hill            34.6        -0.8 24.3x186.0 m
-shape:hill:ejector:default:auto      ejector hill                   34.6        -1.2 24.6x178.0 m
-shape:turn:left:fullyBanked:auto     left fully banked turn         34.6         0.1 radius 82.0 m
-shape:turn:right:fullyBanked:auto    right fully banked turn        34.6         0.1 radius 82.0 m
+shape:hill:floater:default:auto      floater hill                   34.6       -0.50 24.5x198.0 m
+shape:hill:strongFloater:default:auto strong floater hill            34.6       -0.85 24.3x186.0 m
+shape:hill:ejector:default:auto      ejector hill                   34.6       -1.20 24.6x178.0 m
+shape:turn:left:fullyBanked:auto     left fully banked turn         34.6        0.07 radius 82.0 m
+shape:turn:right:fullyBanked:auto    right fully banked turn        34.6        0.07 radius 82.0 m
 
 $ tools/design ride demo-hyper.ride.json probe shape:turn:left:fullyBanked:fixed-32
 Shape refusal: {"availableHeadroomG":-2.149668693537394,"kind":"infeasibleTarget","targetG":2.9}
 ```
 
-For turns, `options shapes` shows only the lateral force in its "delivered g" column. Use `probe` to see the vertical force, which is the number the owner cares about in a banked turn. Refusals give no feasible size range yet, so to find a radius that works, probe a few sizes.
+For turns, `options shapes` shows only the lateral force in its "delivered g" column. Use `probe` or `estimate` to see the vertical force, which is the number the owner cares about in a banked turn. Refusals give no feasible size range yet, so to find a radius that works, probe a few sizes.
 
 ### Place classic pieces
 
@@ -98,10 +98,10 @@ Shaped elements are solved for the entry speed and the actual train: you ask for
 ```console
 $ tools/design ride demo-hyper.ride.json place turn left feel=banked radius=68 place hill feel=strong-floater g=-0.85 height=24
 Placed shape:turn:left:fullyBanked:fixed-68
-Estimate: 34.6 m/s entry, Shaped left fully banked turn: 34.6 m/s for 8 cars; delivered vertical 3.4 g and lateral 0.1 g; radius 68.0 m, bank 71.5 degrees
+Estimate: 34.6 m/s entry, Shaped left fully banked turn: 34.6 m/s for 8 cars; delivered vertical 3.38 g and lateral 0.11 g; radius 68.0 m, bank 71.5 degrees
 ...
 Placed shape:hill:strongFloater:-0.85:fixed-24
-Estimate: 34.0 m/s entry, Shaped hill: strongFloater at 34.0 m/s for 8 cars; target -0.8 g, delivered -0.9 g; height 24.1 m, span 180.0 m
+Estimate: 34.0 m/s entry, Shaped hill: strongFloater at 34.0 m/s for 8 cars; target -0.85 g, delivered -0.85 g; height 24.1 m, span 180.0 m
 ```
 
 Shaped elements are not supported everywhere yet. The solver accepts only the `hyper` model, trains of 4 to 8 cars, entry speeds from 22 to 36 m/s, and an entry that is level, unbanked and straight. Outside that scope the tool refuses with `unsupportedScope`, `belowMinimumSpeed` or `unsupportedConnector`. Other models still use classic hills and turns.
@@ -114,23 +114,27 @@ Pick values the visible builder can reach. The browser's strength stepper moves 
 
 ### Close the circuit
 
-`close` succeeds only when the open end sits exactly at the station entry, at the station's height and heading. `finish` searches for up to five plain track pieces that bring the end there; it only starts within 80 m of the station and never places shaped elements, lifts or launches. After `finish`, run `close` separately.
+`close` succeeds only when the open end sits exactly at the station entry, at the station's height and heading, and refuses a circuit that is already closed. `finish` searches for routes of up to six plain track pieces that bring the end there; it only starts within 120 m of the station and never places shaped elements, lifts or launches. It lists the routes it found, best first, each with its arrival speed, the energy its brakes remove, its force headroom, its rated-window margin and whether the closed ride passes the rated-window and force-headroom rules of `check`. `finish apply <n>` places route `n` and closes the circuit in one step, so do not run `close` after it.
 
 ```console
-$ tools/design ride hawk-end.ride.json truncate 42     # Horizon Hawk minus its last straight and close
-Kept 42 ride step(s).
+$ tools/design ride hawk-end.ride.json truncate 41     # Horizon Hawk minus its last two straights and close
+Kept 41 ride step(s).
 ...
-Open end: tile (241.0, 248.0), height 10.0 m, heading North, slope Level, bank Level
-Closure approach: remaining offset: 1.0 tiles (4.0 m); heading mismatch: 0 degrees
+Closure approach: remaining offset: 2.0 tiles (8.0 m); heading mismatch: 0 degrees
+Chain: false; predicted end speed: 22.5 m/s (reachedEnd)
+Can close: false; can finish: true; can test: false
 $ tools/design ride hawk-end.ride.json close
 close circuit: The track must connect back to its station.
-$ tools/design ride hawk-end.ride.json finish close
-Finish search added 1 piece(s).
+$ tools/design ride hawk-end.ride.json finish
+Found 1 way(s) to finish the circuit, best first (construction-test physics; 'finish apply <n>' places one):
+1. OneTileStraight, OneTileStraight (2 pieces): arrives at 22.5 m/s; brakes remove 0 kJ; force headroom +0.92 g; rated margin none rated; ride check pass
 ...
-Circuit closed.
+$ tools/design ride hawk-end.ride.json finish apply 1
+Placed finish option 1 (2 piece(s)) and closed the circuit.
+...
 ```
 
-When the search fails, it prints "No nearby connection to the station was found." whether the end was too far away or no five-piece route exists. In practice, you bring the end within a tile or two, at station height and heading, with your own pieces, and let `finish` add the last straight.
+When the search fails, the reason says why: the end is too far away, no route of up to six pieces gets there without a collision, or every route that gets there breaks a force or rated-window rule, with the worst case for each. In practice, you bring the end within a few tiles, near station height and heading, with your own pieces, and let `finish` add the last pieces.
 
 ### Test and report
 
@@ -176,7 +180,7 @@ The `expect` block holds the ride's targets. No command writes it; add it to the
 
 Other keys are `inversionsAtLeast`, `invertedSeconds`, and under `features`: `piecePrefixGroupsAtLeast`, `heartlinedInversionsAtLeast`, `piecePrefixesAfter`, `orderedSteps` and `adjacentSteps`. Unknown keys are rejected when the file is parsed. Shaped steps count as `ShapedHill`, `ShapedTurnLeft` or `ShapedTurnRight` for the prefix features. Do not loosen `expect` to make a ride pass; if a target looks wrong, raise it with the owner.
 
-`tools/design check <file> ...` tests the ride twice. Default physics starts the train at rest with a 3 m/s lift; construction-test physics, which the builder's estimates use, starts at 2 m/s with a 5 m/s lift. For each configuration, it prints rated-window margins, force headroom and every expectation, then any agreement failures. It exits 1 when an expectation fails under either configuration or native agreement fails. Rated-window and force-headroom failures make it exit 1 only when `designMargins` is `true`; without it they are printed and ignored, so set it on every new ride. A failing check prints its whole report on standard error, so capture both streams (`2>&1`). The Horizon Hawk check takes about 25 seconds.
+`tools/design check <file> ...` tests the ride twice. Default physics starts the train at rest with a 3 m/s lift; construction-test physics, which the builder's estimates use, starts at 2 m/s with a 5 m/s lift. For each configuration, it prints rated-window margins, force headroom and every expectation, then any agreement failures. It exits 1 when an expectation fails under either configuration or native agreement fails. Rated-window and force-headroom failures make it exit 1 only when `designMargins` is `true`; without it they are printed and ignored, so set it on every new ride. A failing check still prints its whole report on standard output; standard error gets only a short summary naming each failing ride and the checks it failed, for example `demo hyper: expectations, default physics expectations`. The Horizon Hawk check takes about 25 seconds.
 
 ```console
 $ tools/design check content/rides/horizon-hawk.ride.json
@@ -192,14 +196,14 @@ default physics maximum positive vertical g 3.58 3.75 +0.17 PASS
 ...
 construction-test physics maximum forward g 1.17 1.25 +0.08 PASS
   expectation excitement expected 6.00 to 8.00, observed 7.42 (pass)
-  expectation maximum vertical g expected 3.00 to 3.50, observed 3.31 (pass)
+  expectation sustained maximum vertical g expected 3.00 to 3.50, observed 3.31 (pass)
   expectation sustained minimum vertical g expected -1.20 to -0.80, observed -0.94 (pass)
   expectation maximum lateral g expected at most 0.60, observed 0.44 (pass)
 ...
   default physics expectation excitement expected 6.00 to 8.00, observed 6.71 (pass)
 ```
 
-The line labelled "maximum vertical g" checks `sustainedMaxVerticalG`, which is the sustained value despite the label. Expect lower numbers under default physics: the slower lift gives a slower train, so Horizon Hawk scores 6.71 there against 7.42 in the construction test, and its floaters deliver -0.91 g against -0.94 g. Leave room for both.
+The "sustained maximum vertical g" and "sustained minimum vertical g" lines check `sustainedMaxVerticalG` and `sustainedMinVerticalG`. Expect lower numbers under default physics: the slower lift gives a slower train, so Horizon Hawk scores 6.71 there against 7.42 in the construction test, and its floaters deliver -0.91 g against -0.94 g. Leave room for both.
 
 ### Export
 
@@ -239,7 +243,7 @@ So "brief peaks up to 4.5 g" holds only on `velocity_viper`; on `hyper` and `woo
 
 ## Reading check failures
 
-**Expectation failure.** The line names the target and the value, for example `expectation maximum vertical g expected 3.40 to 3.50, observed 3.31 (fail)`. A line prefixed "default physics" failed only in the slower configuration. Find the element responsible in `report`'s "Measured per-element forces" table, which gives each element's worst-car sustained vertical and peak lateral force under both configurations. Low pullouts call for tighter shaped turns or a stronger hill; floaters that are too weak call for a stronger `g=` target, remembering that default physics delivers a little less than the construction test.
+**Expectation failure.** The line names the target and the value, for example `expectation sustained maximum vertical g expected 3.40 to 3.50, observed 3.31 (fail)`. A line prefixed "default physics" failed only in the slower configuration. Find the element responsible in `report`'s "Measured per-element forces" table, which gives each element's worst-car sustained vertical and peak lateral force under both configurations. Low pullouts call for tighter shaped turns or a stronger hill; floaters that are too weak call for a stronger `g=` target, remembering that default physics delivers a little less than the construction test.
 
 **Rated speed margin failure.** The message reads `rated speed margin failure: piece 8 WideSixtyDownToLevel rated margin under default physics is -0.20 m/s` (format from `crates/design-tools/src/report.rs`). The train enters a classic piece too fast or too slow for its rated window. For a turn, try `--matched` to pick the variant for this speed, or replace it with a shaped banked turn. Trimming speed with a brake run in front of it is the last resort, because it moves the energy problem elsewhere: in one Horizon Hawk attempt, a brake moved in front of `SpeedTurnLarge28Left` left the turn only 1.3 m/s inside its 25-31 m/s window, below the 1.5 m/s rule.
 
@@ -253,7 +257,7 @@ So "brief peaks up to 4.5 g" holds only on `velocity_viper`; on `hyper` and `woo
 
 ## Traps that cost hours
 
-**Closing the circuit at station height and heading.** Long shaped elements move the open end tens of metres at a time, and the finish search only looks within 80 m of the station and adds at most five plain pieces. During the Horizon Hawk rebuild, an end 5.4 tiles away with a 180-degree heading mismatch could not be finished, and after a turn brought it within 1.2 tiles, a 90-degree mismatch still blocked `close`. Plan the return from the start: decide which way the last element must point, and watch the offset and heading-mismatch lines after every placement. Bring the train back to station height early, with gentle slopes, and finish with straights pointing at the station. Horizon Hawk ends with a 28 m left turn, a one-tile straight, a 36 m right turn and two one-tile straights.
+**Closing the circuit at station height and heading.** Long shaped elements move the open end tens of metres at a time, and the finish search only looks within 120 m of the station and adds at most six plain pieces. During the Horizon Hawk rebuild, an end 5.4 tiles away with a 180-degree heading mismatch could not be finished, and after a turn brought it within 1.2 tiles, a 90-degree mismatch still blocked `close`. Plan the return from the start: decide which way the last element must point, and watch the offset and heading-mismatch lines after every placement. Bring the train back to station height early, with gentle slopes, and finish with straights pointing at the station. Horizon Hawk ends with a 28 m left turn, a one-tile straight, a 36 m right turn and two one-tile straights.
 
 **Brake runs and the station.** A `Brakes` piece is four tiles (16 m) long. In one Horizon Hawk attempt, a brake placed after the last turn left only three tiles before the station, and the descent that had to follow then collided with the station track and was refused. If a brake run is needed, place it where the layout has room, well before the station approach.
 
