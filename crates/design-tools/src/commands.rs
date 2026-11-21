@@ -3975,8 +3975,7 @@ fn check_response(
 ) -> Result<CliResponse, String> {
     let ride_count = rows.len();
     let stdout = if json_mode {
-        serde_json::to_string_pretty(&Value::Array(rows)).map_err(|error| error.to_string())?
-            + "\n"
+        serde_json::to_string_pretty(&Value::Array(rows)).map_err(|error| error.to_string())? + "\n"
     } else {
         text
     };

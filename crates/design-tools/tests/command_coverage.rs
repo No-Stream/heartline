@@ -627,7 +627,11 @@ fn shaped_hill_text_uses_two_decimals_and_estimate_prints_the_shaped_forces() {
     )
     .unwrap();
     let hill = "shape:hill:strongFloater:default:auto";
-    run_cli(&["ride".into(), ride.path().into(), "truncate 10".into()], "").unwrap();
+    run_cli(
+        &["ride".into(), ride.path().into(), "truncate 10".into()],
+        "",
+    )
+    .unwrap();
     let probe_json: serde_json::Value = serde_json::from_str(
         &run_cli(
             &[
@@ -655,7 +659,11 @@ fn shaped_hill_text_uses_two_decimals_and_estimate_prints_the_shaped_forces() {
     assert!(probe.contains(&shape_line), "{probe}");
 
     let estimate = run_cli(
-        &["ride".into(), ride.path().into(), format!("estimate {hill}")],
+        &[
+            "ride".into(),
+            ride.path().into(),
+            format!("estimate {hill}"),
+        ],
         "",
     )
     .unwrap();
