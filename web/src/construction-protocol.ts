@@ -90,6 +90,7 @@ export interface ConstructionState {
   readonly selected: string | null;
   readonly track: readonly ConstructionTrack[];
   readonly canAppend: boolean;
+  readonly appendReason: string;
   readonly canClose: boolean;
   readonly finishPreview: boolean;
   readonly canFinish: boolean;

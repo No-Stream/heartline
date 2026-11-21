@@ -52,7 +52,7 @@ it("waits for exact shaped geometry placement before replaying the next command"
   const worker = new FakeWorker();
   const command = {
     type: "construction-append-resolved",
-    intentJson: "{\"kind\":\"hill\",\"feel\":\"floater\",\"strength_g\":null,\"size\":\"Auto\"}",
+    intentJson: "{\"hill\":{\"feel\":\"Floater\",\"strength_g\":-0.5,\"size\":\"Auto\"}}",
     specJson: "{\"kind\":\"hill\",\"design_speed_mps\":34,\"cars\":8}",
   };
   const session: ReplaySession = { format: "theme-park-session", version: 1, seed: "1", park: "new", guestCount: 0, commands: [{ tick: 0, command }], checkpoints: [], finalTick: 0 };

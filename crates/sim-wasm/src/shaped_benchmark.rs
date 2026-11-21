@@ -1,6 +1,9 @@
+use crate::WasmSimulation;
+use crate::builder_session::BuilderSession;
 use serde_json::{Value, json};
 use theme_park_sim::physics::{PhysicsConfig, PreviewCache, PreviewStatus, TrackPreview};
 use theme_park_sim::track::construction::Construction;
+use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, SolveContext, SolvedElement, TurnSizeHint, solve,
 };
@@ -18,6 +21,99 @@ const COLD_BENCHMARK_CARS: [u8; 3] = [4, 6, 8];
 const COLD_BENCHMARK_SPEEDS_MPS: [f64; 5] = [22.0, 26.0, 30.0, 34.0, 36.0];
 const COLD_BENCHMARK_ELEMENTS: [&str; 3] =
     ["floater-hill", "strong-floater-hill", "fully-banked-turn"];
+
+#[wasm_bindgen]
+pub fn horizon_hawk_first_turn_arc_table_json() -> String {
+    let mut ride = RideFile::from_json_str(include_str!(
+        "../../../content/rides/horizon-hawk.ride.json"
+    ))
+    .expect("Horizon Hawk ride file is valid");
+    let first_turn_index = ride
+        .steps
+        .iter()
+        .position(|step| matches!(step, RideStep::Shape(shape) if matches!(shape.spec, ElementSpec::Turn { .. })))
+        .expect("Horizon Hawk contains a shaped turn");
+    ride.steps.truncate(first_turn_index + 1);
+
+    let mut session = BuilderSession::new(WasmSimulation::new(42, 0, String::from("new")));
+    session
+        .replay_ride(&ride)
+        .expect("Horizon Hawk prefix replays through the first shaped turn");
+    session
+        .simulation()
+        .construction_last_piece_arc_table_json()
+}
+
+#[wasm_bindgen]
+pub fn horizon_hawk_first_turn_candidate_preview_json() -> String {
+    let mut ride = RideFile::from_json_str(include_str!(
+        "../../../content/rides/horizon-hawk.ride.json"
+    ))
+    .expect("Horizon Hawk ride file is valid");
+    let first_turn_index = ride
+        .steps
+        .iter()
+        .position(|step| matches!(step, RideStep::Shape(shape) if matches!(shape.spec, ElementSpec::Turn { .. })))
+        .expect("Horizon Hawk contains a shaped turn");
+    ride.steps.truncate(first_turn_index + 1);
+
+    let mut session = BuilderSession::new(WasmSimulation::new(42, 0, String::from("new")));
+    let estimates = session
+        .replay_ride(&ride)
+        .expect("Horizon Hawk prefix replays through the first shaped turn");
+    serde_json::to_string(
+        estimates
+            .candidate_preview
+            .as_ref()
+            .expect("first shaped turn leaves a selected candidate"),
+    )
+    .expect("candidate preview serializes")
+}
+
+/// Selects the first shaped hill of Horizon Hawk after its saved prefix, as the builder does,
+/// so native and WASM solves of the same intent can be compared exactly.
+#[wasm_bindgen]
+pub fn horizon_hawk_first_hill_selected_shape_json() -> String {
+    let mut ride = RideFile::from_json_str(include_str!(
+        "../../../content/rides/horizon-hawk.ride.json"
+    ))
+    .expect("Horizon Hawk ride file is valid");
+    let first_hill_index = ride
+        .steps
+        .iter()
+        .position(|step| matches!(step, RideStep::Shape(shape) if matches!(shape.spec, ElementSpec::Hill { .. })))
+        .expect("Horizon Hawk contains a shaped hill");
+    let RideStep::Shape(first_hill) = ride.steps[first_hill_index].clone() else {
+        unreachable!("the first hill index points at a shaped step")
+    };
+    ride.steps.truncate(first_hill_index);
+
+    let mut session = BuilderSession::new(WasmSimulation::new(42, 0, String::from("new")));
+    session
+        .replay_ride(&ride)
+        .expect("Horizon Hawk prefix replays up to the first shaped hill");
+    let ElementIntent::Hill {
+        feel: HillFeel::StrongFloater,
+        strength_g,
+        size: HillSizeHint::Height(height_m),
+    } = first_hill.intent
+    else {
+        panic!("Horizon Hawk's first shaped hill is expected to be a fixed-height strong floater");
+    };
+    session
+        .select(
+            &format!("shape:hill:strongFloater:{strength_g}:fixed-{height_m}"),
+            true,
+        )
+        .expect("the first shaped hill selects");
+    serde_json::to_string(
+        &session
+            .estimates()
+            .selected_shape
+            .expect("the first shaped hill is the selected shape"),
+    )
+    .expect("selected shape serializes")
+}
 
 #[wasm_bindgen]
 pub struct ShapedSolveBenchmark {
@@ -361,7 +457,7 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
             None,
             ElementIntent::Hill {
                 feel: HillFeel::StrongFloater,
-                strength_g: Some(STRONG_FLOATER_TARGET_G),
+                strength_g: STRONG_FLOATER_TARGET_G,
                 size: HillSizeHint::Auto,
             },
             HYPER_HILL_ENTRY_SPEED_MPS,
@@ -384,7 +480,7 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
             let intent = match fields[0] {
                 "floater-hill" => ElementIntent::Hill {
                     feel: HillFeel::Floater,
-                    strength_g: None,
+                    strength_g: -0.5,
                     size: HillSizeHint::Auto,
                 },
                 "fully-banked-turn" => ElementIntent::Turn {
@@ -393,7 +489,7 @@ fn benchmark_case(kind: &str) -> (theme_park_sim::track::CoasterModel, ElementIn
                 },
                 "strong-floater-hill" => ElementIntent::Hill {
                     feel: HillFeel::StrongFloater,
-                    strength_g: Some(STRONG_FLOATER_TARGET_G),
+                    strength_g: STRONG_FLOATER_TARGET_G,
                     size: HillSizeHint::Auto,
                 },
                 _ => panic!("unknown shaped benchmark element: {}", fields[0]),

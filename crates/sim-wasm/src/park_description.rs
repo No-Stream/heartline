@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 
 use serde::Deserialize;
 use theme_park_sim::park_guests::ParkGuests;
-use theme_park_sim::track::ride_file::{RideFile, RideStation};
+use theme_park_sim::track::ride_file::{RideFile, RideFileLoadError, RideStation};
 
 use crate::WasmSimulation;
 use crate::builder_session::BuilderSession;
@@ -11,6 +11,10 @@ use crate::builder_session::BuilderSession;
 pub enum ParkDescriptionError {
     Json(serde_json::Error),
     Invalid(String),
+    RideFile {
+        coaster_index: usize,
+        source: RideFileLoadError,
+    },
     Entry {
         collection: &'static str,
         index: usize,
@@ -24,6 +28,10 @@ impl Display for ParkDescriptionError {
         match self {
             Self::Json(error) => write!(formatter, "invalid park description JSON: {error}"),
             Self::Invalid(message) => formatter.write_str(message),
+            Self::RideFile {
+                coaster_index,
+                source,
+            } => write!(formatter, "coasters[{coaster_index}] ride: {source}"),
             Self::Entry {
                 collection,
                 index,
@@ -40,7 +48,15 @@ impl Display for ParkDescriptionError {
     }
 }
 
-impl std::error::Error for ParkDescriptionError {}
+impl std::error::Error for ParkDescriptionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Json(error) => Some(error),
+            Self::RideFile { source, .. } => Some(source),
+            Self::Invalid(_) | Self::Entry { .. } => None,
+        }
+    }
+}
 
 impl From<serde_json::Error> for ParkDescriptionError {
     fn from(error: serde_json::Error) -> Self {
@@ -59,7 +75,7 @@ struct ParkDescription {
     paths: Vec<PathDescription>,
     facilities: Vec<FacilityDescription>,
     scenery: Vec<SceneryDescription>,
-    coasters: Vec<CoasterDescription>,
+    coasters: Vec<CoasterDescriptionJson>,
 }
 
 #[derive(Deserialize)]
@@ -123,6 +139,13 @@ struct SceneryDescription {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CoasterDescriptionJson {
+    ride: serde_json::Value,
+    station: RideStation,
+    open: bool,
+    price: u16,
+}
+
 struct CoasterDescription {
     ride: RideFile,
     station: RideStation,
@@ -159,6 +182,26 @@ impl WasmSimulation {
                 terrain.preset
             )));
         }
+        let coasters = coasters
+            .into_iter()
+            .enumerate()
+            .map(
+                |(coaster_index, coaster)| -> Result<CoasterDescription, ParkDescriptionError> {
+                    let ride = RideFile::from_json_value(coaster.ride).map_err(|source| {
+                        ParkDescriptionError::RideFile {
+                            coaster_index,
+                            source,
+                        }
+                    })?;
+                    Ok(CoasterDescription {
+                        ride,
+                        station: coaster.station,
+                        open: coaster.open,
+                        price: coaster.price,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
         if coasters.len() > 1 {
             return Err(ParkDescriptionError::Invalid(
                 "this build supports one player coaster per park".into(),
@@ -368,6 +411,7 @@ fn entry_error(collection: &'static str, index: usize, message: String) -> ParkD
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
+    use theme_park_sim::track::ride_file::RideFileLoadError;
 
     use crate::WasmSimulation;
 
@@ -454,6 +498,52 @@ mod tests {
                 .to_string()
                 .contains("this build supports one player coaster per park")
         );
+    }
+
+    #[test]
+    fn description_preserves_typed_shaped_ride_digest_errors() {
+        let mut ride: Value = serde_json::from_str(include_str!(
+            "../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .unwrap();
+        let steps = ride["steps"].as_array().expect("ride has a steps array");
+        let step_index = steps
+            .iter()
+            .position(|step| step.get("spec").is_some())
+            .expect("Horizon Hawk has a shaped step");
+        let changed_digest = ride["steps"][step_index]["spec"]["geometry_digest"]
+            .as_str()
+            .expect("shaped step has a decimal geometry digest")
+            .parse::<u64>()
+            .unwrap()
+            .wrapping_add(1);
+        ride["steps"][step_index]["spec"]["geometry_digest"] = json!(changed_digest.to_string());
+        let mut description = park_description();
+        description["coasters"] = json!([{
+            "ride": ride,
+            "station": {"x": 241, "y": 249, "z": 10, "heading": "north"},
+            "open": false,
+            "price": 6
+        }]);
+        let json = serde_json::to_string(&description).unwrap();
+
+        let error = WasmSimulation::from_park_description(17, 0, &json)
+            .err()
+            .expect("a shaped ride with an altered digest is rejected");
+        let crate::park_description::ParkDescriptionError::RideFile {
+            coaster_index,
+            source:
+                RideFileLoadError::ShapedGeometryDigestMismatch {
+                    step_index: loaded_step_index,
+                    mismatch,
+                },
+        } = error
+        else {
+            panic!("expected typed shaped ride digest error, got {error}");
+        };
+        assert_eq!(coaster_index, 0);
+        assert_eq!(loaded_step_index, step_index);
+        assert_ne!(mismatch.expected, mismatch.actual);
     }
 
     #[test]

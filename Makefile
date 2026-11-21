@@ -8,7 +8,7 @@ PARK ?= content/parks/horizon-hawk.park.json
 SHELL := tools/run-in-budget.sh
 .SHELLFLAGS := bash -c
 
-.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools test-design-tools park-report
+.PHONY: install build check test test-rust test-rated-windows test-force-rule test-construction-cache test-inversion-compile test-threads test-web test-design-json-harness test-canvas-sizing test-flexibility lint serve e2e e2e-feature e2e-journey e2e-smoothness e2e-slow e2e-feature-docker e2e-feature-docker-update-snapshots e2e-journey-docker e2e-journey-docker-update-snapshots journeys ci wasm-bindgen art art-drawings art-demo art-screenshots art-themes bench-render bench bench-guests bench-construction bench-builder-updates bench-builder-updates-browser bench-player-circuits bench-player-force-preview bench-shaped-elements bench-shaped-elements-cold check-shaped-turn-arc-parity generate-report-types check-report-types generate-profiles generate-rated-windows ride-agreement design-tools test-design-tools park-report
 
 install:
 	npm ci
@@ -165,6 +165,13 @@ bench-shaped-elements: wasm-bindgen
 	$(CARGO) build --release --target wasm32-unknown-unknown -p theme-park-sim-wasm --features shaped-benchmark
 	$(WASM_BINDGEN) target/wasm32-unknown-unknown/release/theme_park_sim_wasm.wasm --target nodejs --out-dir /tmp/theme-park-sim-shaped-bench
 	node tools/bench-shaped-elements.mjs --run /tmp/theme-park-sim-shaped-bench/theme_park_sim_wasm.js target/release/examples/shaped_solver_bench $(SHAPED_BENCH_CASES)
+
+# Native and Node/WASM must agree on Horizon Hawk's first shaped turn arc table and its first solved shaped hill.
+check-shaped-turn-arc-parity: wasm-bindgen
+	$(CARGO) build -p theme-park-sim-wasm --features shaped-benchmark --example shaped_solver_bench
+	$(CARGO) build --target wasm32-unknown-unknown -p theme-park-sim-wasm --features shaped-benchmark
+	$(WASM_BINDGEN) target/wasm32-unknown-unknown/debug/theme_park_sim_wasm.wasm --target nodejs --out-dir /tmp/theme-park-sim-shaped-arc-parity
+	node tools/bench-shaped-elements.mjs --check-horizon-hawk-arc-parity /tmp/theme-park-sim-shaped-arc-parity/theme_park_sim_wasm.js target/debug/examples/shaped_solver_bench
 
 # Covers 45 hyper cases; the cold Node/WASM solve-and-append p95 budget is 250 ms.
 bench-shaped-elements-cold: wasm-bindgen

@@ -1,5 +1,5 @@
 import type { ConstructionHillOption, ConstructionPiece, ConstructionSpeedTurn, PieceShape } from "./construction-protocol";
-import { shapeSelectionId, type ShapedElementSelection } from "./construction-shaped-elements";
+import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements";
 import { formatLength, metresToDisplay, unitLabel, type Units } from "./units";
 
 export type StepAttribute = "turn" | "slope" | "bank";
@@ -14,19 +14,15 @@ export interface ShapedPaletteChoice {
 }
 
 export function shapedPaletteChoices(): ShapedPaletteChoice[] {
-  const hillSelections: readonly Extract<ShapedElementSelection, { kind: "hill" }>[] = [
-    { kind: "hill", feel: "floater", strengthG: null, size: { kind: "auto" } },
-    { kind: "hill", feel: "strongFloater", strengthG: null, size: { kind: "auto" } },
-    { kind: "hill", feel: "ejector", strengthG: null, size: { kind: "auto" } },
-  ];
+  const hillFeels: readonly ShapedHillFeel[] = ["floater", "strongFloater", "ejector"];
   const turnSelections: readonly Extract<ShapedElementSelection, { kind: "turn" }>[] = [
     { kind: "turn", hand: "left", feel: "fullyBanked", size: { kind: "auto" } },
     { kind: "turn", hand: "right", feel: "fullyBanked", size: { kind: "auto" } },
   ];
   return [
-    ...hillSelections.map((selection) => ({
-      id: shapeSelectionId(selection),
-      label: `${({ floater: "Floater", strongFloater: "Strong floater", ejector: "Ejector" } as const)[selection.feel]} hill`,
+    ...hillFeels.map((feel) => ({
+      id: defaultShapeSelectionId(feel),
+      label: `${({ floater: "Floater", strongFloater: "Strong floater", ejector: "Ejector" } as const)[feel]} hill`,
       group: "hill" as const,
     })),
     ...turnSelections.map((selection) => ({

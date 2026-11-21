@@ -9,7 +9,7 @@ test("finds rider poses when active train car IDs are not contiguous", () => {
   ]);
 });
 
-test("reads the selected piece and construction estimates from the latest state", () => {
+test("reads selected piece, shape and construction estimates from the latest state", () => {
   const limits: NonNullable<ConstructionState["candidateForcePreview"]>["limits"] = {
     minimumVerticalG: -2,
     maximumVerticalG: 6,
@@ -40,17 +40,30 @@ test("reads the selected piece and construction estimates from the latest state"
     id: "FloaterHill16x96", label: "Floater hill", group: "hills", heartlined: null,
     heading: "Straight", slope: "Level", bank: "Upright", refusal: "", wouldTunnel: false, hillEstimate,
   };
-  const state: Pick<ConstructionState, "selected" | "pieces" | "constructionForcePreview" | "candidateForcePreview" | "speedMatch"> = {
+  const selectedShape: NonNullable<ConstructionState["selectedShape"]> = {
+    selection: "shape:turn:left:fullyBanked:fixed-68",
+    kind: "turn",
+    feel: "fullyBanked",
+    hand: "left",
+    strengthG: null,
+    fixedSize: 68,
+    spec: null,
+    refusal: null,
+    pieceShape: null,
+  };
+  const state: Pick<ConstructionState, "selected" | "pieces" | "constructionForcePreview" | "candidateForcePreview" | "speedMatch" | "selectedShape"> = {
     selected: selectedPiece.id,
     pieces: [selectedPiece],
     constructionForcePreview: forcePreview,
     candidateForcePreview,
     speedMatch,
+    selectedShape,
   };
 
   expect(readConstructionEstimates(state)).toEqual({
     selected: selectedPiece.id,
     selectedPiece,
+    selectedShape,
     constructionForcePreview: forcePreview,
     candidateForcePreview,
     speedMatch,
@@ -62,6 +75,7 @@ test("returns empty construction estimates before a construction state arrives",
   expect(readConstructionEstimates(undefined)).toEqual({
     selected: null,
     selectedPiece: null,
+    selectedShape: null,
     constructionForcePreview: null,
     candidateForcePreview: null,
     speedMatch: null,
@@ -70,12 +84,13 @@ test("returns empty construction estimates before a construction state arrives",
 });
 
 test("preserves selected element ids without inventing a piece or hill estimate", () => {
-  const state: Pick<ConstructionState, "selected" | "pieces" | "constructionForcePreview" | "candidateForcePreview" | "speedMatch"> = {
+  const state: Pick<ConstructionState, "selected" | "pieces" | "constructionForcePreview" | "candidateForcePreview" | "speedMatch" | "selectedShape"> = {
     selected: "element:immelmann-left",
     pieces: [],
     constructionForcePreview: null,
     candidateForcePreview: null,
     speedMatch: null,
+    selectedShape: null,
   };
 
   expect(readConstructionEstimates(state)).toMatchObject({

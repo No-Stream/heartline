@@ -4,7 +4,7 @@ export type ShapedElementSelection =
   | {
       readonly kind: "hill";
       readonly feel: ShapedHillFeel;
-      readonly strengthG: number | null;
+      readonly strengthG: number;
       readonly size: { readonly kind: "auto" } | { readonly kind: "height"; readonly heightMetres: number };
     }
   | {
@@ -32,11 +32,14 @@ function fixedTurnRadius(size: Extract<ShapedElementSelection, { kind: "turn" }>
 
 export function shapeSelectionId(selection: ShapedElementSelection): string {
   if (selection.kind === "hill") {
-    if (selection.strengthG !== null && !Number.isFinite(selection.strengthG)) {
+    if (!Number.isFinite(selection.strengthG)) {
       throw new RangeError(`Invalid shaped hill strength ${selection.strengthG}`);
     }
-    const strength = selection.strengthG === null ? "default" : String(selection.strengthG);
-    return `shape:hill:${selection.feel}:${strength}:${fixedHillHeight(selection.size)}`;
+    return `shape:hill:${selection.feel}:${selection.strengthG}:${fixedHillHeight(selection.size)}`;
   }
   return `shape:turn:${selection.hand}:${selection.feel}:${fixedTurnRadius(selection.size)}`;
+}
+
+export function defaultShapeSelectionId(feel: ShapedHillFeel): string {
+  return `shape:hill:${feel}:default:auto`;
 }

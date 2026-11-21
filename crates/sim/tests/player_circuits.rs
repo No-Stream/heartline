@@ -38,7 +38,12 @@ fn player_circuits_close() {
                     }
                     count += 1;
                 }
-                RideStep::Shape(_) => panic!("{name} player fixture contains only catalog pieces"),
+                RideStep::Shape(shape) => construction
+                    .append_resolved(&shape.intent, &shape.spec, &world, &[])
+                    .map(|_| ())
+                    .unwrap_or_else(|error| {
+                        panic!("{name} cannot append resolved shape: {error:?}")
+                    }),
                 RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
                 RideStep::BlockSections(_) => {}
             }
@@ -127,7 +132,10 @@ fn build_player_circuit(
                     .append(id, &world, &[])
                     .unwrap_or_else(|error| panic!("{}: {error:?}", place.place));
             }
-            RideStep::Shape(_) => panic!("{name} player fixture contains only catalog pieces"),
+            RideStep::Shape(shape) => construction
+                .append_resolved(&shape.intent, &shape.spec, &world, &[])
+                .map(|_| ())
+                .unwrap_or_else(|error| panic!("{name} cannot append resolved shape: {error:?}")),
             RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
             RideStep::BlockSections(_) => {}
         }

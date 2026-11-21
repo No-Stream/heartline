@@ -4,11 +4,12 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { candidateForceReadout, hillReadout } from "../../src/candidate-force-readout";
+import { shapeSelectionId } from "../../src/construction-shaped-elements";
 import type { TestingReport } from "../../src/generated/TestingReport";
 import type { CoasterModelKey } from "../../src/generated/coaster-models";
 import { parseReplaySession } from "../../src/session-replay";
 import { advanceUntilState, clickCanvas, openTool, placeStation, selectUnits, setGameSpeed, showBuilderTab, startPark, testRide } from "../player/driver";
-import { placeCircuit } from "../player/place-circuit";
+import { placeCircuit, selectionFromRideIntent } from "../player/place-circuit";
 import { expectRideReportExplained } from "../player/ride-report";
 import { readRide, type RideFeatureStep, type RideFile, type RideStep } from "../player/rides";
 import { runDesignJson } from "./design-json";
@@ -66,9 +67,18 @@ for (const { stem, ride } of rides) {
     await placeCircuit(page, placementSteps, {
       carsPerTrain: ride.carsPerTrain,
       onEstimate: async (phase, step, stepNumber) => {
-        if (!("place" in step)) throw new Error(`Estimate callback for non-placement step ${stepNumber}`);
+        const stepName = "place" in step
+          ? step.place
+          : "intent" in step
+            ? "hill" in step.intent
+              ? `shaped hill ${step.intent.hill.feel}`
+              : `shaped turn ${step.intent.turn.hand}`
+            : `non-placement step ${stepNumber}`;
+        if (!("place" in step) && !("intent" in step)) {
+          throw new Error(`Estimate callback for non-placement step ${stepNumber}`);
+        }
         const expected = expectedByStep.get(stepNumber);
-        if (!expected) throw new Error(`Native estimate missing for ride step ${stepNumber} (${step.place})`);
+        if (!expected) throw new Error(`Native estimate missing for ride step ${stepNumber} (${stepName})`);
         const nativeSnapshot = expected[phase === "selected" ? "selection" : "placement"];
         const browserView = await page.evaluate(() => {
           const requireElement = <T extends Element>(selector: string): T => {
@@ -80,7 +90,12 @@ for (const { stem, ride } of rides) {
           const candidatePanel = builder.querySelector<HTMLElement>("[data-candidate-force-preview]");
           const hillPanel = builder.querySelector<HTMLElement>("[data-hill-readout]");
           const hillMessage = builder.querySelector<HTMLElement>("[data-hill-message]");
-          if (!candidatePanel || !hillPanel || !hillMessage) throw new Error("Missing builder estimate readouts");
+          const shapePanel = builder.querySelector<HTMLElement>("[data-shape-readout]");
+          const appendReason = builder.querySelector<HTMLElement>("[data-append-reason]");
+          const appendButton = builder.querySelector<HTMLButtonElement>("[data-append]");
+          if (!candidatePanel || !hillPanel || !hillMessage || !shapePanel || !appendReason || !appendButton) {
+            throw new Error("Missing builder estimate or placement readouts");
+          }
           const textOf = (element: Element): string => {
             if (element.textContent === null) throw new Error("Builder estimate readout has null text");
             return element.textContent;
@@ -103,12 +118,17 @@ for (const { stem, ride } of rides) {
               hillRows,
               hillMessageHidden: Boolean(hillMessage.hidden),
               hillMessage: textOf(hillMessage).trim(),
+              shapeText: textOf(shapePanel).replace(/\s+/g, " ").trim(),
+              appendDisabled: appendButton.disabled,
+              appendReasonHidden: Boolean(appendReason.hidden),
+              appendReason: textOf(appendReason).trim(),
             },
           };
         });
         const browserSnapshot = browserView.estimate;
         const browserWire = {
           selected: browserSnapshot.selected,
+          selectedShape: browserSnapshot.selectedShape,
           selectedPieceId: browserSnapshot.selectedPiece?.id ?? null,
           constructionForcePreview: browserSnapshot.constructionForcePreview,
           candidateForcePreview: browserSnapshot.candidateForcePreview,
@@ -117,11 +137,34 @@ for (const { stem, ride } of rides) {
         };
         const expectedWire = {
           ...nativeSnapshot,
-          selectedPieceId: nativeSnapshot.selected.startsWith("element:") ? null : nativeSnapshot.selected,
+          selectedPieceId: nativeSnapshot.selected.startsWith("element:") || nativeSnapshot.selected.startsWith("shape:")
+            ? null
+            : nativeSnapshot.selected,
         };
         const mismatch = firstMismatch(expectedWire, browserWire, `${phase} estimate at ride step ${stepNumber}`);
-        expect(mismatch, `${phase} estimate at ride step ${stepNumber}`).toBeNull();
+        const candidateSampleContext = mismatch?.includes("candidateForcePreview.forceEnvelopeSamples[0]")
+          ? `; native first envelope sample=${JSON.stringify(firstCandidateForceEnvelopeSample(nativeSnapshot.candidateForcePreview))}`
+            + `; browser first envelope sample=${JSON.stringify(firstCandidateForceEnvelopeSample(browserSnapshot.candidateForcePreview))}`
+            + `; selected shape digests=${JSON.stringify({
+              native: nativeSnapshot.selectedShape?.spec?.geometryDigest ?? null,
+              browser: browserSnapshot.selectedShape?.spec?.geometryDigest ?? null,
+            })}`
+          : "";
+        expect(mismatch, `${phase} estimate at ride step ${stepNumber}${candidateSampleContext}`).toBeNull();
+        if (phase === "selected" && "intent" in step) {
+          const nativeGeometryDigest = nativeSnapshot.selectedShape?.spec?.geometryDigest;
+          const browserGeometryDigest = browserSnapshot.selectedShape?.spec?.geometryDigest;
+          expect(nativeGeometryDigest, `native shaped geometry digest at ride step ${stepNumber}`).toMatch(/^[0-9a-f]{16}$/);
+          expect(browserGeometryDigest, `browser shaped geometry digest at ride step ${stepNumber}`).toBe(nativeGeometryDigest);
+        }
         expectFormattedReadouts(browserView.readouts, browserSnapshot);
+        if (stem === "horizon-hawk" && phase === "selected" && "intent" in step
+          && "turn" in step.intent && step.intent.turn.size !== "Auto" && step.intent.turn.size.Radius === 68) {
+          expect(browserView.readouts.shapeText).toContain("71.53° bank");
+          expect(browserView.readouts.appendDisabled).toBe(false);
+          expect(browserView.readouts.appendReasonHidden).toBe(true);
+          expect(browserView.readouts.appendReason).toBe("");
+        }
         estimateComparisons += 1;
       },
     });
@@ -155,7 +198,7 @@ for (const { stem, ride } of rides) {
     await advanceUntilState(page, async () => !!(await page.evaluate(() => window.gameTest.testingReport())), { ticks: 40_000 });
 
     const report = await expectRideReportExplained(page);
-    expectRideTargets(ride, report);
+    expectRideTargets(ride, report, nativeCheck);
     if (stem === "horizon-hawk") {
       expect(report.statistics.launches).toBe(0);
       expect(report.statistics.maxNegativeVerticalG).toBeGreaterThanOrEqual(-1.3);
@@ -232,11 +275,49 @@ for (const { stem, ride } of rides) {
   });
 }
 
+test("placeCircuit replays lift-fed shaped elements through visible controls @fast", async ({ page }) => {
+  const ride = {
+    name: "Horizon Hawk shaped replay fixture",
+    model: "hyper",
+    station: { x: 241, y: 249, z: 10, heading: "north" as const },
+  };
+  await startPark(page, { park: "new", seed: 156, speed: 1, testMode: true });
+  const stationHeight = await prepareStationTerrain(page, ride);
+  await placeStation(page, {
+    model: ride.model as CoasterModelKey,
+    height: stationHeight,
+    tile: { x: ride.station.x, y: ride.station.y, z: 2 },
+    direction: stationDirection(ride.station.x, ride.station.y, ride.station.heading),
+  });
+
+  const steps: RideStep[] = readRide("horizon-hawk").steps.slice(0, 12);
+  const initialTrackCount = await page.locator("[data-track] li").count();
+  let shapedEstimateCount = 0;
+  await placeCircuit(page, steps, {
+    carsPerTrain: 8,
+    onEstimate: async (phase, step) => {
+      if (!("intent" in step)) return;
+      shapedEstimateCount += 1;
+      const selected = shapeSelectionId(selectionFromRideIntent(step.intent));
+      if (phase === "selected") {
+        await expect(page.locator("[data-construction]")).toHaveAttribute("data-selected", selected);
+        await expect(page.locator("[data-shape-readout]")).toContainText("Design speed:");
+      } else {
+        await expect(page.locator("[data-track] li").last()).toContainText("Shaped");
+      }
+    },
+  });
+
+  const placementCount = steps.filter((step) => "place" in step || "intent" in step).length;
+  await expect(page.locator("[data-track] li")).toHaveCount(initialTrackCount + placementCount);
+  expect(shapedEstimateCount).toBe(4);
+});
+
 function expectNoPageErrors(pageErrors: readonly string[], checkpoint: string): void {
   expect(pageErrors, `Unexpected page errors ${checkpoint}`).toEqual([]);
 }
 
-async function prepareStationTerrain(page: Page, ride: RideFile): Promise<number> {
+async function prepareStationTerrain(page: Page, ride: Pick<RideFile, "model" | "name" | "station">): Promise<number> {
   await selectUnits(page, "metric");
   await openTool(page, "Coaster");
   const coasterModel = page.getByRole("combobox", { name: "Coaster model" });
@@ -369,6 +450,7 @@ type NativeBrowserEstimate = {
 
 type BrowserEstimateSnapshot = {
   readonly selected: string;
+  readonly selectedShape: { readonly spec: { readonly geometryDigest: string } | null } | null;
   readonly constructionForcePreview: unknown;
   readonly candidateForcePreview: unknown;
   readonly speedMatch: unknown;
@@ -446,6 +528,12 @@ function firstMismatch(expected: unknown, actual: unknown, path: string): string
   return null;
 }
 
+function firstCandidateForceEnvelopeSample(preview: unknown): unknown {
+  if (preview === null || typeof preview !== "object" || !("forceEnvelopeSamples" in preview)) return null;
+  const samples = preview.forceEnvelopeSamples;
+  return Array.isArray(samples) ? samples[0] : null;
+}
+
 function expectFormattedReadouts(
   actual: {
     readonly candidateHidden: boolean;
@@ -454,6 +542,10 @@ function expectFormattedReadouts(
     readonly hillRows: readonly { readonly label: string; readonly value: string }[];
     readonly hillMessageHidden: boolean;
     readonly hillMessage: string;
+    readonly shapeText: string;
+    readonly appendDisabled: boolean;
+    readonly appendReasonHidden: boolean;
+    readonly appendReason: string;
   },
   estimate: ReturnType<typeof window.gameTest.constructionEstimates>,
 ): void {
@@ -463,7 +555,13 @@ function expectFormattedReadouts(
     ? []
     : candidateForceReadout(estimate.candidateForcePreview, "metric");
   const formattedHill = selectedHill ? hillReadout(selectedHill, "metric") : { rows: [], message: "" };
-  expect(actual).toEqual({
+  const {
+    appendDisabled,
+    appendReasonHidden,
+    appendReason,
+    ...readouts
+  } = actual;
+  expect(readouts).toEqual({
     candidateHidden: candidateIsHidden,
     candidateLines,
     hillHidden: formattedHill.rows.length === 0,
@@ -473,21 +571,42 @@ function expectFormattedReadouts(
     })),
     hillMessageHidden: formattedHill.message === "",
     hillMessage: formattedHill.message,
+    shapeText: estimate.selectedShape ? expect.stringContaining("Design speed:") : "",
+  });
+
+  const refusal = estimate.selectedPiece
+    ? estimate.selectedPiece.refusal
+    : estimate.selectedShape?.refusal ?? "";
+  expect({ appendDisabled, appendReasonHidden, appendReason }).toEqual({
+    appendDisabled: refusal !== "",
+    appendReasonHidden: refusal === "",
+    appendReason: refusal,
   });
 }
 
-function expectRideTargets(ride: RideFile, report: TestingReport): void {
+function nativeSustainedVerticalG(nativeCheck: NativeRideCheck, metric: string): number {
+  const expectation = nativeCheck.expectations.find((candidate) => candidate.metric === metric);
+  if (!expectation) throw new Error(`Native check omitted the ${metric} expectation`);
+  if (typeof expectation.observed !== "number") throw new Error(`Native ${metric} has no sustained observation`);
+  return expectation.observed;
+}
+
+function expectRideTargets(ride: RideFile, report: TestingReport, nativeCheck: NativeRideCheck): void {
   const targets = ride.expect;
   if (targets?.excitement) expect(report.rating.excitement).toBeGreaterThanOrEqual(targets.excitement[0]);
   if (targets?.excitement) expect(report.rating.excitement).toBeLessThanOrEqual(targets.excitement[1]);
+  // The sustained targets are checked against the native checker's sustained force peaks (forces held over
+  // a time window, ignoring brief spikes). The browser report has no sustained statistic, but its samples
+  // must match the native samples within 1e-6, which reportCheckResults asserts.
   if (targets?.sustainedMaxVerticalG) {
-    // The CLI currently applies these ride-file targets to the report's maximum-force fields.
-    expect(report.statistics.maxPositiveVerticalG).toBeGreaterThanOrEqual(targets.sustainedMaxVerticalG[0]);
-    expect(report.statistics.maxPositiveVerticalG).toBeLessThanOrEqual(targets.sustainedMaxVerticalG[1]);
+    const sustainedMaximum = nativeSustainedVerticalG(nativeCheck, "maximum vertical g");
+    expect(sustainedMaximum).toBeGreaterThanOrEqual(targets.sustainedMaxVerticalG[0]);
+    expect(sustainedMaximum).toBeLessThanOrEqual(targets.sustainedMaxVerticalG[1]);
   }
   if (targets?.sustainedMinVerticalG) {
-    expect(report.statistics.maxNegativeVerticalG).toBeGreaterThanOrEqual(targets.sustainedMinVerticalG[0]);
-    expect(report.statistics.maxNegativeVerticalG).toBeLessThanOrEqual(targets.sustainedMinVerticalG[1]);
+    const sustainedMinimum = nativeSustainedVerticalG(nativeCheck, "sustained minimum vertical g");
+    expect(sustainedMinimum).toBeGreaterThanOrEqual(targets.sustainedMinVerticalG[0]);
+    expect(sustainedMinimum).toBeLessThanOrEqual(targets.sustainedMinVerticalG[1]);
   }
   if (targets?.maxLateralG !== undefined) expect(report.statistics.maxLateralG).toBeLessThanOrEqual(targets.maxLateralG);
   if (targets?.inversions !== undefined) expect(report.statistics.inversions).toBe(targets.inversions);
@@ -557,13 +676,15 @@ function expectRideFeatures(ride: RideFile, nativeCheck: NativeRideCheck): void 
   }
 
   for (const [piecePrefix, minimumCount] of Object.entries(features.piecePrefixesAtLeast ?? {})) {
-    const observedCount = ride.steps.filter((step) => "place" in step && step.place.startsWith(piecePrefix)).length;
+    const observedCount = ride.steps.filter((step) => rideStepPieceId(step)?.startsWith(piecePrefix) === true).length;
     expect(observedCount, `${ride.name} needs at least ${minimumCount} pieces starting with ${piecePrefix}`)
       .toBeGreaterThanOrEqual(minimumCount);
   }
   for (const group of prefixGroups) {
-    const observedCount = ride.steps.filter((step) => "place" in step
-      && group.prefixes.some((prefix) => step.place.startsWith(prefix))).length;
+    const observedCount = ride.steps.filter((step) => {
+      const pieceId = rideStepPieceId(step);
+      return pieceId !== undefined && group.prefixes.some((prefix) => pieceId.startsWith(prefix));
+    }).length;
     expect(observedCount, `${ride.name} needs at least ${group.minimum} pieces matching ${group.prefixes.join(" or ")}`)
       .toBeGreaterThanOrEqual(group.minimum);
   }
@@ -572,7 +693,7 @@ function expectRideFeatures(ride: RideFile, nativeCheck: NativeRideCheck): void 
     expect(afterIndex, `${ride.name} must contain the feature after ${describeRideFeatureSequence([after])}`)
       .toBeGreaterThanOrEqual(0);
     const matchingBeforeAnchor = ride.steps.slice(0, afterIndex).some((step) =>
-      "place" in step && step.place.startsWith(prefix));
+      rideStepPieceId(step)?.startsWith(prefix) === true);
     expect(matchingBeforeAnchor, `${ride.name} places every ${prefix} after ${describeRideFeatureSequence([after])}`)
       .toBe(false);
   }
@@ -615,9 +736,23 @@ function containsAdjacentRideFeatures(
 
 function rideFeatureMatches(rideStep: RideStep | undefined, expectedStep: RideFeatureStep): boolean {
   if (!rideStep) return false;
-  if ("place" in expectedStep) return "place" in rideStep && rideStep.place === expectedStep.place;
-  if ("placePrefix" in expectedStep) return "place" in rideStep && rideStep.place.startsWith(expectedStep.placePrefix);
+  const pieceId = rideStepPieceId(rideStep);
+  if ("place" in expectedStep) return pieceId === expectedStep.place;
+  if ("placePrefix" in expectedStep) return pieceId?.startsWith(expectedStep.placePrefix) ?? false;
   return "chain" in rideStep && rideStep.chain === expectedStep.chain;
+}
+
+function rideStepPieceId(rideStep: RideStep): string | undefined {
+  if ("place" in rideStep) return rideStep.place;
+  if (!("intent" in rideStep)) return undefined;
+
+  switch (rideStep.spec.kind) {
+    case "hill":
+      return "ShapedHill";
+    case "turn":
+      if (!rideStep.spec.hand) throw new Error("Resolved shaped turn has no hand");
+      return rideStep.spec.hand === "Left" ? "ShapedTurnLeft" : "ShapedTurnRight";
+  }
 }
 
 function describeRideFeatureSequence(sequence: readonly RideFeatureStep[]): string {
@@ -663,7 +798,7 @@ async function reportCheckResults(
     },
     agreement: nativeCheck.agreement,
     browserReportEnvelope,
-    expectationTargetSemantics: "The ride-file sustainedMaxVerticalG and sustainedMinVerticalG targets currently compare with maxPositiveVerticalG and maxNegativeVerticalG peaks, matching the native checker; no sustained-force target is verified.",
+    expectationTargetSemantics: "The ride-file sustainedMaxVerticalG and sustainedMinVerticalG targets compare with the native checker's sustained vertical force peaks; browser report samples must match the native samples.",
     expectationFailures: nativeCheck.expectationFailures,
   };
   console.info(`${ride.name}: check 2 native ${check2Passed}/${nativeCheck.agreement.rows.length} pieces; browser report parity ${browserAgreement.passedPieces}/${browserAgreement.totalPieces}; check 3 placement failures ${check3Failures.length} (${downstreamTrackFailures} downstream track, ${estimateErrorFailures} estimate error)`);

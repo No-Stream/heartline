@@ -522,6 +522,22 @@ fn check_json_exposes_worker_estimates_and_raw_agreement_values() {
             .unwrap()
             .is_empty()
     );
+    let force_headroom = checks[0]["forceHeadroom"].as_array().unwrap();
+    assert_eq!(force_headroom.len(), 10);
+    assert!(force_headroom.iter().any(|result| {
+        result["physics_configuration"] == "default physics"
+            && result["unavailable_reason"].is_string()
+            && result["observed_g"].is_null()
+            && result["headroom_g"].is_null()
+            && result["passed"] == false
+    }));
+    assert!(
+        checks[0]["forceHeadroomFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| failure.as_str().unwrap().contains("unavailable"))
+    );
     assert_eq!(checks[0]["agreement"]["passed"], false);
     let agreement = &checks[0]["agreement"];
     assert!(

@@ -437,7 +437,7 @@ test("shows and places a shaped floater hill and fully banked turn on a hyper co
   const readout = hill.locator("[data-shape-readout]");
   await expect(hill).not.toHaveAttribute("open");
   await choices.locator('[data-piece="shape:hill:floater:default:auto"]').click();
-  await expect(selected).toHaveAttribute("data-selected", "shape:hill:floater:default:auto");
+  await expect(selected).toHaveAttribute("data-selected", "shape:hill:floater:-0.5:auto");
   await expect(hill.getByRole("group", { name: "Shaped element feel" })).toContainText("Floater");
   await expect(hill.locator('[data-shape-value="strength"]')).toHaveText("−0.5 g");
   await expect(readout).toContainText("Design speed");
@@ -448,11 +448,11 @@ test("shows and places a shaped floater hill and fully banked turn on a hyper co
   await expect(hill).toHaveScreenshot("shaped-hill-inspector.png", { animations: "disabled" });
 
   await hill.getByRole("button", { name: "Increase hill size" }).click();
-  await expect(selected).toHaveAttribute("data-selected", /shape:hill:floater:default:fixed-/);
+  await expect(selected).toHaveAttribute("data-selected", /shape:hill:floater:-0\.5:fixed-/);
   await expect(hill.locator('[data-shape-value="size"]')).not.toHaveText("Auto");
   await expect(readout).toContainText("Resolved size:");
   await hill.getByRole("button", { name: "Use automatic hill size" }).click();
-  await expect(selected).toHaveAttribute("data-selected", "shape:hill:floater:default:auto");
+  await expect(selected).toHaveAttribute("data-selected", "shape:hill:floater:-0.5:auto");
 
   await placePiece.click();
   await expect(track).toHaveCount(7);

@@ -2,7 +2,7 @@ import type { ActiveVoices, OfflineResult, OfflineScript } from "./audio/engine"
 import type { UiSound } from "./audio/mapping";
 import type { TestingReport } from "./coaster-testing";
 import type { CandidateForcePreview } from "./candidate-force-readout";
-import type { ConstructionForcePreview, ConstructionPiece, ConstructionState } from "./construction-protocol";
+import type { ConstructionForcePreview, ConstructionPiece, ConstructionShapedElement, ConstructionState } from "./construction-protocol";
 import type { ConstructionSpeedMatch } from "./construction-speed-match";
 import type { GuestDetail } from "./guest-panel/protocol";
 import type { RideInfo } from "./ride-window/protocol";
@@ -49,6 +49,7 @@ export interface SnapshotArrivalEntry {
 export interface ConstructionEstimates {
   selected: string | null;
   selectedPiece: ConstructionPiece | null;
+  selectedShape: ConstructionShapedElement | null;
   constructionForcePreview: ConstructionForcePreview | null;
   candidateForcePreview: CandidateForcePreview | null;
   speedMatch: ConstructionSpeedMatch | null;
@@ -57,7 +58,7 @@ export interface ConstructionEstimates {
 
 type ConstructionEstimatesState = Pick<
   ConstructionState,
-  "selected" | "pieces" | "constructionForcePreview" | "candidateForcePreview" | "speedMatch"
+  "selected" | "pieces" | "constructionForcePreview" | "candidateForcePreview" | "speedMatch" | "selectedShape"
 >;
 
 export function readConstructionEstimates(state: ConstructionEstimatesState | undefined): ConstructionEstimates {
@@ -65,6 +66,7 @@ export function readConstructionEstimates(state: ConstructionEstimatesState | un
   return {
     selected: state?.selected ?? null,
     selectedPiece,
+    selectedShape: state?.selectedShape ?? null,
     constructionForcePreview: state?.constructionForcePreview ?? null,
     candidateForcePreview: state?.candidateForcePreview ?? null,
     speedMatch: state?.speedMatch ?? null,

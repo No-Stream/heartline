@@ -1,6 +1,11 @@
 import { expect, type Page } from "@playwright/test";
-import { metresPerSecondToDisplay } from "../../src/units";
-import type { RideStep } from "./rides";
+import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection } from "../../src/construction-shaped-elements";
+import { displayToMetres, metresPerSecondToDisplay, type Units } from "../../src/units";
+import type { RideShapeIntent, RideShapeStep, RideStep } from "./rides";
+
+export type PlaceCircuitShapeStep = RideShapeStep;
+
+export type PlaceCircuitRideStep = RideStep | PlaceCircuitShapeStep;
 
 type HillAttribute = "feel" | "height" | "span" | "twist";
 
@@ -87,14 +92,165 @@ export interface PlaceCircuitOptions {
   readonly keyboard?: boolean;
   readonly carsPerTrain?: number;
   /** The step number is one-based and counts every ride-file step, including chain and close steps. */
-  readonly onEstimate?: (phase: "selected" | "placed", step: RideStep, stepNumber: number) => Promise<void>;
+  readonly onEstimate?: (phase: "selected" | "placed", step: PlaceCircuitRideStep, stepNumber: number) => Promise<void>;
 }
 
-function asRideStep(step: string | RideStep): RideStep {
+function asRideStep(step: string | PlaceCircuitRideStep): PlaceCircuitRideStep {
   if (typeof step !== "string") return step;
   if (step === "+chain") return { chain: true };
   if (step === "-chain") return { chain: false };
   return { place: step };
+}
+
+export function selectionFromRideIntent(intent: RideShapeIntent): ShapedElementSelection {
+  if ("hill" in intent) {
+    const hill = intent.hill;
+    let feel: "ejector" | "floater" | "strongFloater";
+    switch (hill.feel) {
+      case "Ejector": feel = "ejector"; break;
+      case "Floater": feel = "floater"; break;
+      case "StrongFloater": feel = "strongFloater"; break;
+    }
+    const size = hill.size === "Auto"
+      ? { kind: "auto" as const }
+      : { kind: "height" as const, heightMetres: hill.size.Height };
+    return { kind: "hill", feel, strengthG: hill.strength_g, size };
+  }
+  const turn = intent.turn;
+  const size = turn.size === "Auto"
+    ? { kind: "auto" as const }
+    : { kind: "radius" as const, radiusMetres: turn.size.Radius };
+  return {
+    kind: "turn",
+    hand: turn.hand === "Left" ? "left" : "right",
+    feel: "fullyBanked",
+    size,
+  };
+}
+
+function shapeBaseSelectionId(selection: ShapedElementSelection): string {
+  if (selection.kind === "hill") {
+    return defaultShapeSelectionId(selection.feel);
+  }
+  return shapeSelectionId({ ...selection, size: { kind: "auto" } });
+}
+
+async function readResolvedShapeDimension(page: Page, kind: "hill" | "turn"): Promise<number> {
+  const readout = page.locator("[data-shape-readout]");
+  const lines = await readout.locator("p").allTextContents();
+  const dimensionLine = lines.find((line) => line.startsWith("Resolved size:"));
+  if (!dimensionLine) throw new Error("Selected shaped element has no resolved size readout");
+  const expression = kind === "hill" ? /Resolved size: ([\d,.]+) (m|ft) high/ : /Resolved size: ([\d,.]+) (m|ft) radius/;
+  const match = expression.exec(dimensionLine);
+  if (!match) throw new Error(`Cannot read resolved shaped size: ${dimensionLine}`);
+  const displayValue = Number(match[1].replaceAll(",", ""));
+  if (!Number.isFinite(displayValue)) throw new Error(`Invalid resolved shaped size: ${dimensionLine}`);
+  const units: Units = match[2] === "m" ? "metric" : "imperial";
+  return displayToMetres(displayValue, units);
+}
+
+function parseShapeForce(line: string): number {
+  const match = /Airtime target: ([−-]?[\d,.]+) g/.exec(line);
+  if (!match) throw new Error(`Cannot read shaped airtime target: ${line}`);
+  const value = Number(match[1].replace("−", "-").replaceAll(",", ""));
+  if (!Number.isFinite(value)) throw new Error(`Invalid shaped airtime target: ${line}`);
+  return value;
+}
+
+async function stepShapeValue(page: Page, attribute: "strength" | "size" | "radius", direction: -1 | 1): Promise<void> {
+  const value = page.locator(`[data-shape-value="${attribute}"]`);
+  const editor = page.locator("[data-construction] [data-editor]");
+  const current = (await value.textContent())?.trim();
+  if (!current) throw new Error(`Missing shaped element ${attribute} value`);
+  const button = page.locator(`[data-shape-stepper="${attribute}-${direction}"]`);
+  await expect(button, `Cannot adjust shaped element ${attribute}`).toBeEnabled();
+  await button.click();
+  // The editor stays aria-busy="false" until the worker answers the click, so wait for the
+  // worker-confirmed value to change before reading any readout.
+  await expect(value).not.toHaveText(current);
+  await expect(editor).toHaveAttribute("aria-busy", "false");
+}
+
+async function selectShapedStep(page: Page, step: PlaceCircuitShapeStep): Promise<string> {
+  const intentSelection = selectionFromRideIntent(step.intent);
+  const baseId = shapeBaseSelectionId(intentSelection);
+  if (intentSelection.kind === "hill") {
+    const selected = page.locator("[data-construction]");
+    const editor = page.locator("[data-construction] [data-editor]");
+    const paletteChoice = page.locator(`[data-piece="${baseId}"]`);
+    await expect(editor).toHaveAttribute("aria-busy", "false");
+    await expect(paletteChoice, `Shaped hill ${baseId} is not offered by the palette`).toBeVisible();
+    await paletteChoice.click();
+    await expect(editor).toHaveAttribute("aria-busy", "false");
+
+    const targetLine = page.locator("[data-shape-readout] p").filter({ hasText: "Airtime target:" });
+    const defaultStrength = parseShapeForce((await targetLine.textContent()) ?? "");
+    const defaultId = shapeSelectionId({
+      ...intentSelection,
+      strengthG: defaultStrength,
+      size: { kind: "auto" },
+    });
+    await expect(selected).toHaveAttribute("data-selected", defaultId);
+  } else {
+    await selectPiece(page, baseId);
+  }
+  await expect(page.locator("[data-shape-readout]")).toBeVisible();
+
+  if (intentSelection.kind === "hill") {
+    const targetStrength = "hill" in step.intent && step.spec.kind === "hill"
+      ? step.intent.hill.strength_g
+      : undefined;
+    if (targetStrength !== undefined) {
+      const readout = page.locator("[data-shape-readout] p").filter({ hasText: "Airtime target:" });
+      let currentStrength = parseShapeForce((await readout.textContent()) ?? "");
+      const strengthSteps = (currentStrength - targetStrength) / 0.1;
+      if (Math.abs(strengthSteps - Math.round(strengthSteps)) > 1e-5) {
+        throw new Error(`Visible strength stepper cannot select ${targetStrength} g from ${currentStrength} g in 0.1 g steps`);
+      }
+      while (Math.abs(currentStrength - targetStrength) > 1e-5) {
+        const direction = currentStrength > targetStrength ? 1 : -1;
+        const expectedStrength = currentStrength - direction * 0.1;
+        await stepShapeValue(page, "strength", direction);
+        currentStrength = parseShapeForce((await readout.textContent()) ?? "");
+        expect(currentStrength, `Strength stepper must move to ${expectedStrength} g while selecting ${targetStrength} g`)
+          .toBeCloseTo(expectedStrength, 5);
+      }
+    }
+    if (intentSelection.size.kind === "height") {
+      await setFixedShapeDimension(page, "hill", intentSelection.size.heightMetres);
+    }
+  } else if (intentSelection.size.kind === "radius") {
+    await setFixedShapeDimension(page, "turn", intentSelection.size.radiusMetres);
+  }
+
+  const expectedId = shapeSelectionId(intentSelection);
+  const selectedId = await page.locator("[data-construction]").getAttribute("data-selected");
+  if (selectedId !== expectedId) {
+    throw new Error(`Visible shaped-element controls selected ${selectedId}, but ride intent requires ${expectedId}`);
+  }
+  return expectedId;
+}
+
+async function setFixedShapeDimension(page: Page, kind: "hill" | "turn", targetMetres: number): Promise<void> {
+  const attribute = kind === "hill" ? "size" : "radius";
+  if (Math.abs(targetMetres / 2 - Math.round(targetMetres / 2)) > 1e-8) {
+    throw new Error(`Visible shaped element ${attribute} stepper only selects 2 m increments; ride intent requests ${targetMetres} m`);
+  }
+  const targetGridValue = Math.round(targetMetres / 2) * 2;
+  let resolvedSize = await readResolvedShapeDimension(page, kind);
+  let currentGridValue = Math.round(resolvedSize / 2) * 2;
+  let selectedFixedSize = false;
+  while (currentGridValue !== targetGridValue || !selectedFixedSize) {
+    const direction: -1 | 1 = currentGridValue < targetGridValue ? 1 : -1;
+    await stepShapeValue(page, attribute, direction);
+    const valueLabel = (await page.locator(`[data-shape-value="${attribute}"]`).textContent())?.trim() ?? "";
+    if (valueLabel === "Auto") {
+      throw new Error(`The visible ${attribute} stepper did not select a fixed shaped element size`);
+    }
+    selectedFixedSize = true;
+    resolvedSize = await readResolvedShapeDimension(page, kind);
+    currentGridValue = Math.round(resolvedSize / 2) * 2;
+  }
 }
 
 async function setCarsPerTrain(page: Page, carsPerTrain: number): Promise<void> {
@@ -146,7 +302,7 @@ async function setLaunchSpeed(page: Page, launchSpeed: number): Promise<void> {
 /** Place exact ride steps with visible builder controls, waiting for every worker-confirmed change. */
 export async function placeCircuit(
   page: Page,
-  steps: readonly (string | RideStep)[],
+  steps: readonly (string | PlaceCircuitRideStep)[],
   keyboardOrOptions: boolean | PlaceCircuitOptions = false,
   onEstimate?: PlaceCircuitOptions["onEstimate"],
 ): Promise<void> {
@@ -180,7 +336,7 @@ export async function placeCircuit(
     if ("blockSections" in step) {
       throw new Error("placeCircuit cannot apply saved block sections through the visible controls");
     }
-    const piece = step.place;
+    const piece = "intent" in step ? await selectShapedStep(page, step) : step.place;
     if ((options.keyboard ?? false) && (piece === "LaunchLong" || piece === "LaunchShort")) {
       await page.locator("canvas").focus();
       const selected = page.locator('[data-piece][aria-checked="true"]');
@@ -201,7 +357,16 @@ export async function placeCircuit(
     if (piece in previewNames) {
       await expect(page.locator("[data-next] [data-preview-name]")).toHaveText(previewNames[piece]);
     }
-    await expect(page.getByRole("button", { name: "Place piece" }), `cannot place ${piece}`).toBeEnabled();
+    const placeButton = page.getByRole("button", { name: "Place piece" });
+    if (await placeButton.isDisabled()) {
+      const shapeReadout = await page.locator("[data-shape-readout]").innerText();
+      const constructionMessage = await page.locator("[data-construction] [data-message]").innerText();
+      throw new Error(
+        `cannot place ${piece}; worker shape readout: ${JSON.stringify(shapeReadout)}; `
+        + `construction message: ${JSON.stringify(constructionMessage)}`,
+      );
+    }
+    await expect(placeButton, `cannot place ${piece}`).toBeEnabled();
     if (options.keyboard ?? false) {
       await page.locator("canvas").focus();
       await page.keyboard.press("b");
@@ -216,7 +381,7 @@ export async function placeCircuit(
       await expect(track).toHaveCount(++trackCount);
     }
     await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");
-    if (step.launchSpeed !== undefined) await setLaunchSpeed(page, step.launchSpeed);
+    if ("place" in step && step.launchSpeed !== undefined) await setLaunchSpeed(page, step.launchSpeed);
     await options.onEstimate?.("placed", step, index + 1);
   }
   await expect(page.locator("[data-construction] [data-editor]")).toHaveAttribute("aria-busy", "false");

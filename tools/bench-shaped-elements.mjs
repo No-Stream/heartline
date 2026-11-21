@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,8 @@ const scriptPath = fileURLToPath(import.meta.url);
 
 if (process.argv[2] === '--wasm-single') {
   runWasmSingle(process.argv[3], process.argv[4]);
+} else if (process.argv[2] === '--check-horizon-hawk-arc-parity') {
+  checkHorizonHawkArcParity(process.argv[3], process.argv[4]);
 } else if (process.argv[2] === '--wasm-try-single') {
   runWasmTrySingle(process.argv[3], process.argv[4]);
 } else if (process.argv[2] === '--cold-wasm') {
@@ -39,6 +42,95 @@ function runWasmSingle(modulePath, kind) {
   const elapsedMs = performance.now() - startedAt;
   const result = JSON.parse(benchmark.result_json());
   process.stdout.write(`${JSON.stringify({ ...result, elapsed_ms: elapsedMs })}\n`);
+}
+
+function checkHorizonHawkArcParity(wasmModulePath, nativeBinaryPath) {
+  const resolvedModulePath = path.resolve(wasmModulePath);
+  const requireFromModule = createRequire(resolvedModulePath);
+  const wasm = requireFromModule(resolvedModulePath);
+  const wasmArcTable = wasm.horizon_hawk_first_turn_arc_table_json();
+  const nativeArcTable = runProcess(nativeBinaryPath, ['--horizon-hawk-turn-arc-table']);
+  const wasmDigest = createHash('sha256').update(wasmArcTable).digest('hex');
+  const nativeDigest = createHash('sha256').update(nativeArcTable).digest('hex');
+  if (wasmArcTable !== nativeArcTable) {
+    throw new Error(
+      `Horizon Hawk first shaped-turn arc table differs: native ${nativeDigest}, WASM ${wasmDigest}`,
+    );
+  }
+
+  const table = JSON.parse(nativeArcTable);
+  if (table.lengths.length !== 1025 || table.speeds.length !== 1025) {
+    throw new Error(
+      `Expected 1,025 Horizon Hawk arc rows, received ${table.lengths.length} lengths and ${table.speeds.length} speeds`,
+    );
+  }
+  const wasmCandidatePreviewText = wasm.horizon_hawk_first_turn_candidate_preview_json();
+  const nativeCandidatePreviewText = runProcess(nativeBinaryPath, [
+    '--horizon-hawk-turn-candidate-preview',
+  ]);
+  const wasmCandidatePreview = JSON.parse(wasmCandidatePreviewText);
+  const nativeCandidatePreview = JSON.parse(nativeCandidatePreviewText);
+  const candidatePreviewMismatch = firstMismatch(
+    nativeCandidatePreview,
+    wasmCandidatePreview,
+    'candidatePreview',
+  );
+  if (candidatePreviewMismatch) {
+    throw new Error(`Horizon Hawk first-turn candidate force preview differs across targets: ${candidatePreviewMismatch}`);
+  }
+  const wasmHillSelection = JSON.parse(wasm.horizon_hawk_first_hill_selected_shape_json());
+  const nativeHillSelection = JSON.parse(runProcess(nativeBinaryPath, ['--horizon-hawk-hill-selected-shape']));
+  const nativeHillSpec = JSON.stringify(nativeHillSelection.spec);
+  const wasmHillSpec = JSON.stringify(wasmHillSelection.spec);
+  if (nativeHillSpec !== wasmHillSpec) {
+    throw new Error(`Horizon Hawk first shaped hill solves differently across targets: native ${nativeHillSpec}, WASM ${wasmHillSpec}`);
+  }
+  const hillSelectionMismatch = firstMismatch(nativeHillSelection, wasmHillSelection, 'firstHillSelection');
+  if (hillSelectionMismatch) {
+    throw new Error(`Horizon Hawk first shaped hill selection differs across targets: ${hillSelectionMismatch}`);
+  }
+  process.stdout.write(`${JSON.stringify({
+    ride: 'Horizon Hawk',
+    piece: 'first shaped turn',
+    arc_rows: table.lengths.length,
+    force_samples: JSON.parse(nativeCandidatePreviewText).forceEnvelopeSamples.length,
+    native_sha256: nativeDigest,
+    wasm_sha256: wasmDigest,
+    force_previews_within_tolerance: true,
+    first_hill_selected_shape: nativeHillSelection.spec,
+    identical: true,
+  })}\n`);
+}
+
+function firstMismatch(expected, actual, path) {
+  if (typeof expected === 'number') {
+    if (typeof actual !== 'number') return `${path} must be numeric`;
+    const difference = Math.abs(expected - actual);
+    return difference <= 1e-6 ? null : `${path} differs by ${difference.toExponential(2)} (native ${expected}, wasm ${actual})`;
+  }
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return `${path} must be an array`;
+    if (actual.length !== expected.length) return `${path} length differs (native ${expected.length}, wasm ${actual.length})`;
+    for (let index = 0; index < expected.length; index += 1) {
+      const mismatch = firstMismatch(expected[index], actual[index], `${path}[${index}]`);
+      if (mismatch) return mismatch;
+    }
+    return null;
+  }
+  if (expected !== null && typeof expected === 'object') {
+    if (actual === null || typeof actual !== 'object' || Array.isArray(actual)) return `${path} must be an object`;
+    const expectedKeys = Object.keys(expected);
+    const actualKeys = Object.keys(actual);
+    if (expectedKeys.length !== actualKeys.length || expectedKeys.some((key) => !(key in actual))) {
+      return `${path} fields differ`;
+    }
+    for (const key of expectedKeys) {
+      const mismatch = firstMismatch(expected[key], actual[key], `${path}.${key}`);
+      if (mismatch) return mismatch;
+    }
+    return null;
+  }
+  return Object.is(expected, actual) ? null : `${path} differs (native ${expected}, wasm ${actual})`;
 }
 
 function runWasmTrySingle(modulePath, kind) {

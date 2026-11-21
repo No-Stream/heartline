@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use theme_park_sim::physics::{Circuit, GRAVITY, PhysicsConfig, TestRun, TestSample};
 use theme_park_sim::track::PieceKind;
 
@@ -8,6 +10,146 @@ const MAX_SAMPLED_GAP_METRES: f64 = 2.0;
 struct BrakeEnergySummary {
     mid_course_brake_runs: usize,
     lift_energy_removed_share: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct BrakeRunConfigurationSpeeds {
+    pub(crate) sampled_entry_speed_mps: Option<f64>,
+    pub(crate) sampled_exit_speed_mps: Option<f64>,
+    pub(crate) sampled_speed_removed_mps: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct BrakeRunSpeedRow {
+    pub(crate) run_index: usize,
+    pub(crate) piece_indices: Vec<usize>,
+    pub(crate) mid_course: bool,
+    pub(crate) default_physics: BrakeRunConfigurationSpeeds,
+    pub(crate) construction_test_physics: BrakeRunConfigurationSpeeds,
+}
+
+pub(crate) fn brake_run_speed_rows(
+    circuit: &Circuit,
+    default_test_run: &TestRun,
+    construction_test_run: &TestRun,
+) -> Vec<BrakeRunSpeedRow> {
+    let runs = contiguous_brake_runs(circuit);
+    let pieces = circuit.pieces();
+    let station_index = pieces
+        .iter()
+        .position(|piece| piece.kind == PieceKind::Station)
+        .expect("a tested circuit contains a station");
+    let station_predecessor = (station_index + pieces.len() - 1) % pieces.len();
+    let piece_starts: Vec<_> = pieces
+        .iter()
+        .scan(0.0, |distance, piece| {
+            let start = *distance;
+            *distance += piece.length();
+            Some(start)
+        })
+        .collect();
+
+    runs.into_iter()
+        .enumerate()
+        .map(|(run_index, piece_indices)| {
+            let first_piece = *piece_indices
+                .first()
+                .expect("brake runs contain at least one piece");
+            let last_piece = *piece_indices
+                .last()
+                .expect("brake runs contain at least one piece");
+            let entry_distance = piece_starts[first_piece];
+            let exit_distance = piece_starts[last_piece] + pieces[last_piece].length();
+            let default_physics = brake_run_configuration_speeds(
+                default_test_run,
+                entry_distance,
+                exit_distance,
+                circuit.length(),
+            );
+            let construction_test_physics = brake_run_configuration_speeds(
+                construction_test_run,
+                entry_distance,
+                exit_distance,
+                circuit.length(),
+            );
+            BrakeRunSpeedRow {
+                run_index: run_index + 1,
+                mid_course: last_piece != station_predecessor,
+                piece_indices,
+                default_physics,
+                construction_test_physics,
+            }
+        })
+        .collect()
+}
+
+fn brake_run_configuration_speeds(
+    test_run: &TestRun,
+    entry_distance: f64,
+    exit_distance: f64,
+    circuit_length: f64,
+) -> BrakeRunConfigurationSpeeds {
+    let sampled_entry_speed_mps =
+        sampled_speed_at_distance(&test_run.samples, entry_distance, circuit_length);
+    let sampled_exit_speed_mps =
+        sampled_speed_at_distance(&test_run.samples, exit_distance, circuit_length);
+    let sampled_speed_removed_mps = sampled_entry_speed_mps
+        .zip(sampled_exit_speed_mps)
+        .map(|(entry_speed, exit_speed)| entry_speed - exit_speed);
+    BrakeRunConfigurationSpeeds {
+        sampled_entry_speed_mps,
+        sampled_exit_speed_mps,
+        sampled_speed_removed_mps,
+    }
+}
+
+fn sampled_speed_at_distance(
+    samples: &[TestSample],
+    distance: f64,
+    circuit_length: f64,
+) -> Option<f64> {
+    let target_distance = distance.rem_euclid(circuit_length);
+    samples
+        .iter()
+        .filter_map(|sample| {
+            let direct_distance = (sample.distance - target_distance).abs();
+            let distance_to_boundary = direct_distance.min(circuit_length - direct_distance);
+            (distance_to_boundary <= MAX_SAMPLED_GAP_METRES / 2.0)
+                .then_some((distance_to_boundary, sample.speed))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, speed)| speed)
+}
+
+pub(crate) fn render_brake_run_speed_table(rows: &[BrakeRunSpeedRow]) -> String {
+    let mut output = String::from(
+        "Brake run speeds (lead-car samples nearest each brake boundary):\n# run class piece_indices default_entry_m/s default_exit_m/s default_removed_m/s construction_entry_m/s construction_exit_m/s construction_removed_m/s\n",
+    );
+    for row in rows {
+        writeln!(
+            output,
+            "{:>3} {:<8} {:<16} {} {} {} {} {} {}",
+            row.run_index,
+            if row.mid_course {
+                "mid-course"
+            } else {
+                "station"
+            },
+            format!("{:?}", row.piece_indices),
+            format_speed(row.default_physics.sampled_entry_speed_mps),
+            format_speed(row.default_physics.sampled_exit_speed_mps),
+            format_speed(row.default_physics.sampled_speed_removed_mps),
+            format_speed(row.construction_test_physics.sampled_entry_speed_mps),
+            format_speed(row.construction_test_physics.sampled_exit_speed_mps),
+            format_speed(row.construction_test_physics.sampled_speed_removed_mps),
+        )
+        .unwrap();
+    }
+    output
+}
+
+fn format_speed(speed: Option<f64>) -> String {
+    speed.map_or_else(|| "—".to_owned(), |speed| format!("{speed:.2}"))
 }
 
 /// Summarizes non-terminal brake sections and estimates the mechanical energy they remove.
@@ -189,7 +331,7 @@ fn lift_energy_removed_share(
 
 #[cfg(test)]
 mod tests {
-    use super::{BrakeEnergySummary, summarize_brake_energy};
+    use super::{BrakeEnergySummary, sampled_speed_at_distance, summarize_brake_energy};
     use theme_park_sim::physics::{Circuit, TestSample, demo_circuit};
     use theme_park_sim::track::PieceKind;
 
@@ -271,6 +413,15 @@ mod tests {
 
         assert_eq!(summary.mid_course_brake_runs, 1);
         assert_eq!(summary.lift_energy_removed_share, None);
+    }
+
+    #[test]
+    fn brake_boundary_sample_lookup_wraps_at_the_station_seam() {
+        let samples = [sample(0.5, 12.0, 0.0), sample(99.4, 5.0, 0.0)];
+
+        let sampled_speed = sampled_speed_at_distance(&samples, 99.9, 100.0);
+
+        assert_eq!(sampled_speed, Some(5.0));
     }
 
     fn circuit_piece_count() -> usize {

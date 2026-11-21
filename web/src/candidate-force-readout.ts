@@ -38,6 +38,8 @@ function shapeRefusalMessage(shape: ConstructionShapedElementWire, units: Units)
       return ["This fixed size override is not supported for shaped elements."];
     case "invalidGeometry":
       return ["The shaped element geometry could not be integrated at this entry speed."];
+    case "geometryDigestMismatch":
+      return ["Saved shaped geometry does not match its recipe."];
   }
 }
 

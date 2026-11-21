@@ -181,12 +181,14 @@ function sendConstruction(complete = true): void {
   const colorNames = JSON.parse(simulation.construction_colors()) as ConstructionColors | null;
   const layoutReport = JSON.parse(simulation.construction_train_layout()) as TrainLayout | null;
   const trainLayout = layoutReport ? parseTrainLayout(layoutReport) : null;
+  const canAppend = simulation.construction_finish_preview_active() || simulation.construction_can_append();
+  const appendReason = canAppend ? "" : simulation.construction_preview_reason();
   sendWorkerMessage(outputScope, { type: "construction-state", complete, active: simulation.construction_active(), chain: simulation.construction_chain(), colors: colorNames ? parseCoasterColors(colorNames) : null, trainLayout, pieces, elements,
     hillOptions: estimates.hillOptions,
     speedTurns: estimates.speedTurns,
     selectedShape: estimates.selectedShape,
     selected: selected || null, track,
-    canAppend: simulation.construction_finish_preview_active() || simulation.construction_can_append(), canClose: simulation.construction_can_close(),
+    canAppend, appendReason, canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
     canFinish: simulation.construction_can_finish(), finishReason: simulation.construction_finish_reason(),
     testingReport: JSON.parse(simulation.construction_test_report_json()) as TestingReport | null,

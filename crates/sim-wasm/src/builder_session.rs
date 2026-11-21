@@ -1387,7 +1387,7 @@ mod tests {
     }
 
     #[test]
-    fn content_ride_builder_hashes_match_master() {
+    fn content_ride_builder_hashes_match_recorded_baselines() {
         for (ride_name, ride_json, expected_hash) in [
             (
                 "Briar Blitz",
@@ -1407,7 +1407,7 @@ mod tests {
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0x2c88d291751f3c4f,
+                0x4a320e535b59d6c1,
             ),
             (
                 "Timber Tumbler",
@@ -1429,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn content_ride_builder_output_traces_match_master() {
+    fn content_ride_builder_output_traces_match_recorded_baselines() {
         let mut mismatches = Vec::new();
         for (ride_name, ride_json, expected_digest) in [
             (
@@ -1450,7 +1450,7 @@ mod tests {
             (
                 "Horizon Hawk",
                 include_str!("../../../content/rides/horizon-hawk.ride.json"),
-                0xa8cb26b5cb347452,
+                0x12060b4d3394f30a,
             ),
             (
                 "Timber Tumbler",
@@ -1525,6 +1525,10 @@ mod tests {
                     push_content_ride_estimates(&mut session, &mut trace, false);
                     push_content_ride_estimates(&mut session, &mut trace, true);
                 }
+                RideStep::Shape(shape) => {
+                    session.append_resolved(&shape.intent, &shape.spec).unwrap();
+                    push_content_ride_estimates(&mut session, &mut trace, true);
+                }
                 RideStep::Chain(chain) => {
                     session.set_chain(chain.chain).unwrap();
                     push_content_ride_estimates(&mut session, &mut trace, true);
@@ -1545,7 +1549,6 @@ mod tests {
                         .unwrap();
                     push_content_ride_estimates(&mut session, &mut trace, true);
                 }
-                _ => panic!("content ride trace encountered a new step kind"),
             }
             trace_call(&mut trace, "content:step_index", step_offset + 1);
             push_content_ride_snapshot(&session, &mut trace);

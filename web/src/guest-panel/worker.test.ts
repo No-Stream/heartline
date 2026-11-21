@@ -24,6 +24,7 @@ const wasmMock = vi.hoisted(() => ({
   constructionDelete: vi.fn(),
   constructionStart: vi.fn(),
   constructionCanAppend: vi.fn(() => false),
+  constructionPreviewReason: vi.fn(() => ""),
   builderInvalidated: vi.fn(),
   builderSelected: vi.fn(),
   builderEstimate: vi.fn(),
@@ -158,6 +159,7 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_placed_ties() { return new Float32Array(); }
     construction_placed_supports() { return new Float32Array(); }
     construction_can_append() { return wasmMock.constructionCanAppend(); }
+    construction_preview_reason() { return wasmMock.constructionPreviewReason(); }
     construction_can_close() { return false; }
     construction_test_report_json() { return "null"; }
     construction_can_test() { return false; }
@@ -204,6 +206,7 @@ afterEach(() => {
   wasmMock.constructionDelete.mockReset();
   wasmMock.constructionStart.mockReset();
   wasmMock.constructionCanAppend.mockReset().mockReturnValue(false);
+  wasmMock.constructionPreviewReason.mockReset().mockReturnValue("");
   wasmMock.builderInvalidated.mockReset();
   wasmMock.builderSelected.mockReset();
   wasmMock.builderEstimate.mockReset();
@@ -218,6 +221,7 @@ afterEach(() => {
 
 it("sends an incomplete station state before the complete state", async () => {
   wasmMock.initialize.mockResolvedValue(undefined);
+  wasmMock.constructionPreviewReason.mockReturnValue("This coaster model cannot use this piece.");
   const postMessage = vi.fn();
   let onMessage!: (event: MessageEvent) => void;
   vi.stubGlobal("self", { name: "theme-park-test-manual", postMessage, addEventListener: (_type: string, listener: (event: MessageEvent) => void) => { onMessage = listener; } });
@@ -228,6 +232,13 @@ it("sends an incomplete station state before the complete state", async () => {
   onMessage({ data: { type: "construction-start", x: 5, y: 7, z: 8, heading: 2 } } as MessageEvent);
   await Promise.resolve();
   expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state").map(([message]) => message.complete)).toEqual([false, true]);
+  const constructionStates = postMessage.mock.calls
+    .map(([message]) => message)
+    .filter((message): message is ConstructionState => message.type === "construction-state");
+  expect(constructionStates.map((message) => message.appendReason)).toEqual([
+    "This coaster model cannot use this piece.",
+    "This coaster model cannot use this piece.",
+  ]);
   expect(wasmMock.constructionStart).toHaveBeenCalledWith(5, 7, 8, 2);
   expect(wasmMock.builderEstimate.mock.calls.map(([complete]) => complete)).toEqual([false, true]);
   const sent = postMessage.mock.calls.map(([message]) => message);
@@ -277,7 +288,7 @@ it("dispatches saved shaped geometry through the exact resolved append bridge", 
   onMessage({ data: { type: "construction-start", x: 0, y: 0, z: 0, heading: 0 } } as MessageEvent);
   await Promise.resolve();
 
-  const intentJson = '{"kind":"hill","feel":"Floater","strength_g":null,"size":"Auto"}';
+  const intentJson = '{"hill":{"feel":"Floater","strength_g":-0.5,"size":"Auto"}}';
   const specJson = '{"kind":"hill","design_speed_mps":34,"cars":8,"target_g":-0.5,"delivered_g":-0.5,"height_m":36,"span_m":52,"profile":{"points":[],"cached_minimum_entry":null,"cached_minimum_radius":null}}';
   postMessage.mockClear();
   onMessage({ data: { type: "construction-append-resolved", intentJson, specJson } } as MessageEvent);

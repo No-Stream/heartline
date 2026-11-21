@@ -191,12 +191,16 @@ test("replays a design tool resolved shaped turn through the real worker @fast",
     if (typeof command.intentJson !== "string" || typeof command.specJson !== "string") {
       throw new Error("resolved shaped geometry must contain JSON strings");
     }
-    expect(JSON.parse(command.intentJson)).toMatchObject({ kind: "turn", hand: "Left" });
-    expect(JSON.parse(command.specJson)).toMatchObject({
+    expect(JSON.parse(command.intentJson)).toMatchObject({ turn: { hand: "Left" } });
+    const resolvedSpec = JSON.parse(command.specJson) as Record<string, unknown>;
+    expect(resolvedSpec).toMatchObject({
       kind: "turn",
       radius_m: 64,
-      geometry: { knots: expect.any(Array) },
+      geometry_radius_m: "64",
+      geometry_digest: expect.stringMatching(/^(0|[1-9]\d{0,19})$/),
     });
+    expect(resolvedSpec).not.toHaveProperty("geometry");
+    expect(resolvedSpec).not.toHaveProperty("profile");
 
     const outcome = await replayWithWorker(page, session);
     expect(outcome.observation.constructionPieces).toBeGreaterThan(2);

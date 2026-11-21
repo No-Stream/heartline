@@ -7,6 +7,7 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, ShapedConstructionError, SolveRefusal, TurnSizeHint,
+    default_hill_strength,
 };
 use theme_park_sim::track::{
     Bank, CoasterModel, Hand, Heartlining, HillFeel, HillTwist, PieceFamily,
@@ -76,6 +77,7 @@ pub struct ConstructionShapeSpecWire {
     pub span_m: Option<f64>,
     pub radius_m: Option<f64>,
     pub bank_degrees: Option<f64>,
+    pub geometry_digest: String,
 }
 
 #[derive(Serialize, TS)]
@@ -103,6 +105,10 @@ pub enum ConstructionShapeRefusalWire {
     UnsupportedConnector,
     UnsupportedSizeOverride,
     InvalidGeometry,
+    GeometryDigestMismatch {
+        expected: u64,
+        actual: u64,
+    },
 }
 
 #[derive(Serialize, TS)]
@@ -121,7 +127,7 @@ pub struct ConstructionShapedElementWire {
     pub piece_shape: Option<crate::reports::PieceShapeReport>,
 }
 
-fn parse_shape_selection(selection: &str) -> Result<ElementIntent, String> {
+fn parse_shape_selection(selection: &str, model: &CoasterModel) -> Result<ElementIntent, String> {
     let parts: Vec<_> = selection.split(':').collect();
     match parts.as_slice() {
         ["shape", "hill", feel, strength, size] => {
@@ -132,7 +138,7 @@ fn parse_shape_selection(selection: &str) -> Result<ElementIntent, String> {
                 _ => return Err(format!("Unknown shaped hill feel {feel:?}")),
             };
             let strength_g = if *strength == "default" {
-                None
+                default_hill_strength(feel, model)
             } else {
                 let value = strength
                     .parse::<f64>()
@@ -140,7 +146,7 @@ fn parse_shape_selection(selection: &str) -> Result<ElementIntent, String> {
                 if !value.is_finite() {
                     return Err(format!("Invalid shaped hill strength {strength:?}"));
                 }
-                Some(value)
+                value
             };
             let size = parse_shape_size(size, "hill height")?
                 .map_or(HillSizeHint::Auto, HillSizeHint::Height);
@@ -198,7 +204,7 @@ fn shape_selection_id(intent: &ElementIntent) -> String {
                 HillFeel::Ejector => "ejector",
                 other => panic!("unsupported shaped hill feel {other:?}"),
             };
-            let strength = strength_g.map_or_else(|| "default".into(), |value| value.to_string());
+            let strength = strength_g.to_string();
             let size = match size {
                 HillSizeHint::Auto => "auto".into(),
                 HillSizeHint::Height(height) => format!("fixed-{height}"),
@@ -246,7 +252,7 @@ fn shape_feel(intent: &ElementIntent) -> Option<&'static str> {
 
 fn shape_strength(intent: &ElementIntent) -> Option<f64> {
     match intent {
-        ElementIntent::Hill { strength_g, .. } => *strength_g,
+        ElementIntent::Hill { strength_g, .. } => Some(*strength_g),
         ElementIntent::Turn { .. } => None,
     }
 }
@@ -283,6 +289,7 @@ fn shaped_spec_wire(spec: &ElementSpec) -> ConstructionShapeSpecWire {
             span_m: Some(*span_m),
             radius_m: None,
             bank_degrees: None,
+            geometry_digest: format!("{:016x}", spec.resolved_geometry_digest()),
         },
         ElementSpec::Turn {
             design_speed_mps,
@@ -304,6 +311,7 @@ fn shaped_spec_wire(spec: &ElementSpec) -> ConstructionShapeSpecWire {
             span_m: None,
             radius_m: Some(*radius_m),
             bank_degrees: Some(*bank_degrees),
+            geometry_digest: format!("{:016x}", spec.resolved_geometry_digest()),
         },
     }
 }
@@ -339,6 +347,9 @@ fn solve_refusal_wire(refusal: SolveRefusal) -> ConstructionShapeRefusalWire {
             ConstructionShapeRefusalWire::UnsupportedSizeOverride
         }
         SolveRefusal::InvalidGeometry => ConstructionShapeRefusalWire::InvalidGeometry,
+        SolveRefusal::GeometryDigestMismatch { expected, actual } => {
+            ConstructionShapeRefusalWire::GeometryDigestMismatch { expected, actual }
+        }
     }
 }
 
@@ -369,6 +380,9 @@ fn solve_refusal_message(refusal: SolveRefusal) -> String {
         SolveRefusal::InvalidGeometry => {
             "The shaped element geometry cannot be integrated for this entry speed.".into()
         }
+        SolveRefusal::GeometryDigestMismatch { .. } => {
+            "The saved shaped geometry does not match its resolved parameters.".into()
+        }
     }
 }
 
@@ -379,6 +393,7 @@ fn shaped_construction_error_message(error: ShapedConstructionError) -> String {
         ShapedConstructionError::InvalidResolvedSpec => {
             "The saved shaped element does not match its resolved geometry.".into()
         }
+        ShapedConstructionError::GeometryDigestMismatch(mismatch) => mismatch.to_string(),
     }
 }
 
@@ -1372,7 +1387,12 @@ impl WasmSimulation {
         if id.starts_with("shape:") {
             self.selected = None;
             self.selected_element = None;
-            match parse_shape_selection(id) {
+            let model = self
+                .construction
+                .as_ref()
+                .map(|construction| construction.model().clone())
+                .unwrap_or_else(|| coaster_model(&self.construction_model));
+            match parse_shape_selection(id, &model) {
                 Ok(intent) => {
                     self.selected_shape = Some(intent);
                     self.construction_message.clear();
@@ -1447,7 +1467,8 @@ impl WasmSimulation {
         &self,
         intent: &ElementIntent,
     ) -> Result<theme_park_sim::track::shaped::SolvedElement, SolveRefusal> {
-        self.construction_shape_candidate_with_mode(intent, true)
+        // The builder displays and validates the same calibrated shape that append confirms.
+        self.construction_shape_candidate_with_mode(intent, false)
     }
 
     fn construction_shape_candidate_for_confirm(
@@ -1722,6 +1743,28 @@ impl WasmSimulation {
             })
             .unwrap_or_default();
         serde_json::to_string(&track).expect("construction track serializes")
+    }
+
+    #[cfg(feature = "shaped-benchmark")]
+    pub fn construction_last_piece_arc_table_json(&self) -> String {
+        let piece = self
+            .construction
+            .as_ref()
+            .and_then(|construction| construction.pieces().last())
+            .expect("construction has a placed shaped turn");
+        assert!(matches!(
+            piece.element_spec(),
+            Some(theme_park_sim::track::shaped::ElementSpec::Turn { .. })
+        ));
+        piece.length();
+        let serialized_piece = serde_json::to_value(piece).expect("piece serializes");
+        let serialized_arc_table = serialized_piece
+            .get("arc_table")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|fields| fields.get(1))
+            .filter(|table| !table.is_null())
+            .expect("piece arc table is populated");
+        serde_json::to_string(serialized_arc_table).expect("arc table serializes")
     }
 
     pub fn construction_can_append(&self) -> bool {
@@ -3121,17 +3164,18 @@ mod getter_tests {
 #[cfg(test)]
 mod shaped_candidate_mode_tests {
     use super::WasmSimulation;
+    use crate::builder_session::BuilderSession;
     use theme_park_sim::physics::PhysicsConfig;
     use theme_park_sim::track::construction::Construction;
+    use theme_park_sim::track::ride_file::{RideFile, RideStep};
     use theme_park_sim::track::shaped::{ElementIntent, ElementSpec, HillSizeHint};
     use theme_park_sim::track::{Heading, HillFeel, PieceId, TrackState, hyper_model};
 
-    #[test]
-    fn browse_uses_one_preview_and_confirmation_does_not_reuse_its_inaccurate_result() {
+    fn hyper_hill_simulation(cars: u8, speed_mps: f64) -> WasmSimulation {
         let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
         let mut model = hyper_model();
-        model.train.cars = 4;
-        model.train.length_metres *= 0.5;
+        model.train.length_metres *= f64::from(cars) / f64::from(model.train.cars);
+        model.train.cars = cars;
         let mut construction = Construction::new(
             TrackState {
                 x: 200,
@@ -3143,7 +3187,7 @@ mod shaped_candidate_mode_tests {
             model,
         );
         let physics = PhysicsConfig {
-            lift_speed: 34.0,
+            lift_speed: speed_mps,
             ..PhysicsConfig::default()
         };
         let straight_length_m = theme_park_sim::track::catalog()
@@ -3168,10 +3212,20 @@ mod shaped_candidate_mode_tests {
         }
         construction.set_chain(false);
         simulation.park.construction = Some(construction);
+        simulation
+    }
+
+    #[test]
+    fn browse_uses_one_preview_and_confirmation_does_not_reuse_its_inaccurate_result() {
+        let simulation = hyper_hill_simulation(4, 34.0);
+        let physics = PhysicsConfig {
+            lift_speed: 34.0,
+            ..PhysicsConfig::default()
+        };
 
         let intent = ElementIntent::Hill {
             feel: HillFeel::StrongFloater,
-            strength_g: Some(-0.85),
+            strength_g: -0.85,
             size: HillSizeHint::Auto,
         };
         let prefix_piece_count = simulation
@@ -3196,6 +3250,7 @@ mod shaped_candidate_mode_tests {
                 .len(),
             prefix_piece_count
         );
+        let browse_spec = browse.spec.clone();
         let ElementSpec::Hill {
             target_g,
             delivered_g: browse_delivery_g,
@@ -3204,12 +3259,21 @@ mod shaped_candidate_mode_tests {
         else {
             panic!("hill intent resolves to a hill");
         };
-        assert!((browse_delivery_g - target_g).abs() > 0.1);
+        let browse_geometry_digest = browse_spec.resolved_geometry_digest();
+        assert!(
+            (browse_delivery_g - target_g).abs() > 0.1,
+            "one-preview browse delivered {browse_delivery_g:.6} g for {target_g:.6} g target"
+        );
 
         let confirmed = simulation
             .construction_shape_candidate_at_speed(&intent, 34.0, physics, false)
             .expect("confirmation calibrates the browsed hill");
         assert!((2..=4).contains(&confirmed.calibration_runs));
+        assert_ne!(
+            confirmed.spec.resolved_geometry_digest(),
+            browse_geometry_digest,
+            "confirmation should resolve the provisional geometry again"
+        );
         let ElementSpec::Hill {
             target_g,
             delivered_g: confirmed_delivery_g,
@@ -3224,6 +3288,11 @@ mod shaped_candidate_mode_tests {
             .construction_shape_candidate_at_speed(&intent, 34.0, physics, true)
             .expect("browse recomputes a one-preview candidate after confirmation");
         assert_eq!(rebrowsed.calibration_runs, 1);
+        assert_eq!(
+            rebrowsed.spec.resolved_geometry_digest(),
+            browse_geometry_digest,
+            "browsing after confirmation must return the one-preview candidate"
+        );
         let ElementSpec::Hill {
             target_g,
             delivered_g: rebrowsed_delivery_g,
@@ -3243,5 +3312,93 @@ mod shaped_candidate_mode_tests {
                 .len(),
             prefix_piece_count
         );
+    }
+
+    #[test]
+    fn horizon_hawk_first_shaped_turn_uses_confirmed_geometry_for_validation() {
+        let mut ride: RideFile = serde_json::from_str(include_str!(
+            "../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .expect("Horizon Hawk ride file parses");
+        let first_shape_index = ride
+            .steps
+            .iter()
+            .position(|step| matches!(step, RideStep::Shape(_)))
+            .expect("Horizon Hawk has a shaped element");
+        let RideStep::Shape(first_shape) = ride.steps[first_shape_index].clone() else {
+            unreachable!("first shaped step was located above");
+        };
+        ride.steps.truncate(first_shape_index);
+
+        let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+        assert!(simulation.set_world_surface(241, 249, vec![6; 4], None));
+        let mut session = BuilderSession::new(simulation);
+        session
+            .replay_ride(&ride)
+            .expect("Horizon Hawk prefix replays before its first shaped turn");
+        session
+            .select("shape:turn:left:fullyBanked:fixed-68", true)
+            .expect("Horizon Hawk first turn is offered");
+        let simulation = session.simulation();
+        let construction = simulation
+            .construction
+            .as_ref()
+            .expect("ride prefix leaves construction active");
+        let preview = simulation
+            .construction_shape_candidate_with_mode(&first_shape.intent, true)
+            .expect("provisional shape solves");
+        let confirmed = simulation
+            .construction_shape_candidate_for_confirm(&first_shape.intent)
+            .expect("confirmed shape solves");
+        let obstacles = simulation.facility_obstacles();
+        let preview_validation =
+            construction.validate_shaped_piece(&preview.piece, &simulation.world, &obstacles);
+        let confirmed_validation =
+            construction.validate_shaped_piece(&confirmed.piece, &simulation.world, &obstacles);
+
+        let ElementSpec::Turn {
+            radius_m: preview_radius_m,
+            bank_degrees: preview_bank_degrees,
+            ..
+        } = preview.spec
+        else {
+            panic!("first Horizon Hawk shape is a turn");
+        };
+        let ElementSpec::Turn {
+            radius_m: confirmed_radius_m,
+            bank_degrees: confirmed_bank_degrees,
+            ..
+        } = confirmed.spec
+        else {
+            panic!("first Horizon Hawk shape is a turn");
+        };
+
+        assert_eq!(preview_radius_m, 68.0);
+        assert_eq!(confirmed_radius_m, 68.0);
+        assert!((preview_bank_degrees - 69.83).abs() < 0.02);
+        assert!((confirmed_bank_degrees - 71.532594).abs() < 0.02);
+        assert!(
+            preview_validation.is_err(),
+            "provisional geometry should reproduce the disabled Place state"
+        );
+        assert!(
+            confirmed_validation.is_ok(),
+            "confirmed geometry should be placeable: {confirmed_validation:?}"
+        );
+        assert!(
+            simulation.construction_can_append(),
+            "Place should use the confirmed geometry shown to the player: {}",
+            simulation.construction_preview_reason()
+        );
+        assert!(simulation.construction_preview_reason().is_empty());
+        let selected_shape = simulation
+            .construction_selected_shape_wire(true)
+            .expect("builder state includes the selected shaped turn");
+        let selected_bank_degrees = selected_shape
+            .spec
+            .expect("selected shape has a resolved specification")
+            .bank_degrees
+            .expect("selected turn reports its bank");
+        assert!((selected_bank_degrees - confirmed_bank_degrees).abs() < 0.001);
     }
 }

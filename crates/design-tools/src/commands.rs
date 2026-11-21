@@ -12,15 +12,18 @@ use theme_park_sim::track::ride_file::{
     RideBlockSectionsStep, RideChainStep, RideCloseStep, RideExpectFeatureStep, RideExpectFeatures,
     RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideShapeStep, RideStation, RideStep,
 };
-use theme_park_sim::track::shaped::{ElementIntent, ElementSpec, HillSizeHint, TurnSizeHint};
+use theme_park_sim::track::shaped::{
+    ElementIntent, ElementSpec, HillSizeHint, TurnSizeHint, default_hill_strength,
+};
 use theme_park_sim::track::{
     CoasterModel, Hand, Heading as TrackHeading, Heartlining, HillFeel, PieceId, coaster_models,
 };
 use theme_park_sim_wasm::WasmSimulation;
 use theme_park_sim_wasm::builder_session::{BuilderEstimates, BuilderSession};
 use theme_park_sim_wasm::construction::{
-    ConstructionCandidateForcePreviewWire, ConstructionForceRatingBandWire,
-    ConstructionLastPlacedForceWire, ConstructionShapedElementWire,
+    ConstructionCandidateForcePreviewWire, ConstructionForcePreviewWire,
+    ConstructionForceRatingBandWire, ConstructionLastPlacedForceWire,
+    ConstructionShapedElementWire,
 };
 use theme_park_sim_wasm::reports::TestingSample;
 
@@ -28,9 +31,13 @@ use crate::agreement::{
     AgreementInput, AgreementReport, ForcePeaks, PlacementFailureClassification,
     PlacementPeakContext, PlacementPeakContexts, evaluate_agreement,
 };
-use crate::brake_report::mid_course_brake_energy_report;
+use crate::brake_report::{
+    brake_run_speed_rows, mid_course_brake_energy_report, render_brake_run_speed_table,
+};
 use crate::report::{
-    ForceRatings, RidePieceEstimate, ShapedElementReportRow, rated_speed_margin_report,
+    ForceRatings, RidePieceEstimate, ShapedElementReportRow, default_physics_test_run,
+    element_physics_report_rows, force_headroom_results, format_force_headroom_results,
+    rated_speed_margin_failures, rated_speed_margin_report, render_element_physics_table,
     render_ride_report_with_margins, render_shaped_elements_table, shaped_element_entry_speeds,
 };
 
@@ -71,7 +78,7 @@ enum RideCommand {
         matched: bool,
         launch_speed: Option<f64>,
         note: Option<String>,
-        shape_intent: Option<ElementIntent>,
+        shape_request: Option<ShapedPlaceRequest>,
     },
     Chain(bool),
     LaunchSpeed {
@@ -91,6 +98,36 @@ enum RideCommand {
     Map,
     ExportSave(PathBuf),
     ExportSession(PathBuf),
+}
+
+#[derive(Debug)]
+enum ShapedPlaceRequest {
+    Hill {
+        feel: HillFeel,
+        strength_g: Option<f64>,
+        size: HillSizeHint,
+    },
+    Turn {
+        hand: Hand,
+        size: TurnSizeHint,
+    },
+}
+
+impl ShapedPlaceRequest {
+    fn into_intent(self, model: &CoasterModel) -> ElementIntent {
+        match self {
+            Self::Hill {
+                feel,
+                strength_g,
+                size,
+            } => ElementIntent::Hill {
+                feel,
+                strength_g: strength_g.unwrap_or_else(|| default_hill_strength(feel, model)),
+                size,
+            },
+            Self::Turn { hand, size } => ElementIntent::Turn { hand, size },
+        }
+    }
 }
 
 const COMMAND_NAMES: &[&str] = &[
@@ -311,7 +348,7 @@ pub(crate) fn inline_park_ride_files(
                 ride_path.display()
             )
         })?;
-        let ride: RideFile = serde_json::from_str(&ride_source).map_err(|error| {
+        let ride = RideFile::from_json_str(&ride_source).map_err(|error| {
             format!(
                 "park coaster {coaster_index} ride {ride_reference:?}: parse {}: {error}",
                 ride_path.display()
@@ -508,12 +545,12 @@ fn parse_place(parameters: &[String]) -> Result<RideCommand, String> {
         matched,
         launch_speed,
         note,
-        shape_intent: None,
+        shape_request: None,
     })
 }
 
 fn parse_shaped_place(kind: &str, parameters: &[String]) -> Result<RideCommand, String> {
-    let (id, intent) = match kind {
+    let (id, request) = match kind {
         "hill" => {
             let (mut feel, mut strength_g, mut height) = (None, None, None);
             for parameter in parameters {
@@ -556,7 +593,7 @@ fn parse_shaped_place(kind: &str, parameters: &[String]) -> Result<RideCommand, 
             let size = height.map_or_else(|| "auto".to_owned(), |value| format!("fixed-{}", value));
             (
                 format!("shape:hill:{feel_wire}:{strength}:{size}"),
-                ElementIntent::Hill {
+                ShapedPlaceRequest::Hill {
                     feel,
                     strength_g,
                     size: height.map_or(HillSizeHint::Auto, HillSizeHint::Height),
@@ -610,7 +647,7 @@ fn parse_shaped_place(kind: &str, parameters: &[String]) -> Result<RideCommand, 
             };
             (
                 format!("shape:turn:{hand_wire}:fullyBanked:{size}"),
-                ElementIntent::Turn {
+                ShapedPlaceRequest::Turn {
                     hand,
                     size: radius.map_or(TurnSizeHint::Auto, TurnSizeHint::Radius),
                 },
@@ -623,7 +660,7 @@ fn parse_shaped_place(kind: &str, parameters: &[String]) -> Result<RideCommand, 
         matched: false,
         launch_speed: None,
         note: None,
-        shape_intent: Some(intent),
+        shape_request: Some(request),
     })
 }
 
@@ -640,8 +677,7 @@ fn shape_selection_id(intent: &ElementIntent) -> Result<String, String> {
                 HillFeel::Ejector => "ejector",
                 feel => return Err(format!("unsupported shaped hill feel {feel:?}")),
             };
-            let strength =
-                strength_g.map_or_else(|| "default".to_owned(), |value| value.to_string());
+            let strength = strength_g.to_string();
             let size = match size {
                 HillSizeHint::Auto => "auto".to_owned(),
                 HillSizeHint::Height(height_m) => format!("fixed-{height_m}"),
@@ -697,7 +733,7 @@ fn run_ride(path: &Path, commands: Vec<RideCommand>, json_mode: bool) -> Result<
     let mut ride = if file_exists {
         let bytes =
             fs::read(&path).map_err(|error| format!("read ride {}: {error}", path.display()))?;
-        let ride = serde_json::from_slice::<RideFile>(&bytes)
+        let ride = RideFile::from_json_slice(&bytes)
             .map_err(|error| format!("parse ride {}: {error}", path.display()))?;
         ride_source_bytes = Some(bytes);
         ride
@@ -1021,8 +1057,24 @@ fn execute_command(
             matched,
             launch_speed,
             note,
-            shape_intent,
+            shape_request,
         } => {
+            let shape_intent = shape_request
+                .map(|request| {
+                    let model = session
+                        .simulation()
+                        .construction
+                        .as_ref()
+                        .ok_or_else(|| "shaped placement requires active construction".to_owned())?
+                        .model();
+                    Ok::<ElementIntent, String>(request.into_intent(model))
+                })
+                .transpose()?;
+            let id = shape_intent
+                .as_ref()
+                .map(shape_selection_id)
+                .transpose()?
+                .unwrap_or(id);
             let selection = session
                 .select(&id, !matched)
                 .map_err(|error| error.to_string())?;
@@ -1443,10 +1495,22 @@ fn execute_command(
                 &rated_margins,
                 include_samples,
             )?;
+            let model = validate_model(&ride.model)?;
+            let default_test_run = default_physics_test_run(&circuit, &model);
             let shaped_elements = shaped_element_report_rows(ride, &circuit)?;
             if !shaped_elements.is_empty() {
                 report.push_str(&render_shaped_elements_table(&shaped_elements));
             }
+            let element_physics = element_physics_report_rows(
+                &circuit,
+                &estimates,
+                &shaped_elements,
+                &default_test_run,
+                &test_run,
+            )?;
+            report.push_str(&render_element_physics_table(&element_physics));
+            let brake_runs = brake_run_speed_rows(&circuit, &default_test_run, &test_run);
+            report.push_str(&render_brake_run_speed_table(&brake_runs));
             report.push_str(&mid_course_brake_energy_report(
                 &circuit,
                 &test_run,
@@ -1454,7 +1518,7 @@ fn execute_command(
             ));
             Ok(CommandReply {
                 text: report.clone(),
-                json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "shapedElements": shaped_elements, "text": report}),
+                json: json!({"ride": ride, "testRun": test_run, "estimates": estimates, "shapedElements": shaped_elements, "elementPhysics": element_physics, "brakeRuns": brake_runs, "text": report}),
                 changed_ride: false,
             })
         }
@@ -2994,35 +3058,14 @@ pub(crate) fn replay_with_estimates(
                         "resolved shaped piece has no construction force preview",
                     )
                 })?;
-                let end_distance =
-                    start_distance + construction_after.pieces()[piece_index].length();
-                let piece_samples: Vec<_> = force_preview
-                    .samples
-                    .iter()
-                    .filter(|sample| {
-                        sample.distance >= start_distance && sample.distance <= end_distance
-                    })
-                    .collect();
                 let entry_speed = speed_at_distance(&force_preview.samples, start_distance);
-                let measured =
-                    ForcePeaks::from_preview_samples(piece_samples.iter().copied()).map(|peaks| {
-                        ForcePeakValues {
-                            minimum_vertical_g: peaks.minimum_vertical_g,
-                            maximum_vertical_g: peaks.maximum_vertical_g,
-                            maximum_lateral_g: peaks.maximum_lateral_g,
-                            maximum_longitudinal_g: peaks.maximum_longitudinal_g,
-                        }
-                    });
-                estimates.push(RidePieceEstimate {
+                estimates.push(ride_piece_estimate_from_force_preview(
                     piece_index,
-                    piece_id: piece_id.to_owned(),
+                    piece_id,
                     entry_speed,
-                    rated_window: None,
-                    estimated: measured,
-                    ratings: None,
-                    preview_status: force_preview.status.to_owned(),
-                    notes: vec!["resolved shaped geometry".to_owned()],
-                });
+                    force_preview,
+                    Some("resolved shaped geometry".to_owned()),
+                ));
                 if let Some(selection_snapshot) = selection_snapshot {
                     browser_estimates.push(json!({
                         "stepIndex": step_index + 1,
@@ -3102,10 +3145,6 @@ fn builder_estimates_snapshot(
         .force_preview
         .as_ref()
         .ok_or("builder snapshot has no construction force preview")?;
-    let candidate_preview = estimates
-        .candidate_preview
-        .as_ref()
-        .ok_or("builder snapshot has no candidate force preview")?;
     let hill_estimate = estimates
         .choices
         .iter()
@@ -3113,8 +3152,9 @@ fn builder_estimates_snapshot(
         .and_then(|choice| choice.hill_estimate.as_ref());
     Ok(json!({
         "selected": selected,
+        "selectedShape": estimates.selected_shape,
         "constructionForcePreview": force_preview,
-        "candidateForcePreview": candidate_preview,
+        "candidateForcePreview": estimates.candidate_preview,
         "speedMatch": estimates.speed_match,
         "hillEstimate": hill_estimate,
     }))
@@ -3168,6 +3208,36 @@ fn ride_piece_estimate_from_piece_peaks(
         estimated,
         note,
     )
+}
+
+fn ride_piece_estimate_from_force_preview(
+    piece_index: usize,
+    piece_id: &str,
+    entry_speed: Option<f64>,
+    force_preview: &ConstructionForcePreviewWire,
+    note: Option<String>,
+) -> RidePieceEstimate {
+    let estimated = force_preview
+        .piece_force_peaks
+        .iter()
+        .find(|peaks| peaks.piece_index == piece_index)
+        .and_then(|peaks| peaks.worst_car.as_ref())
+        .map(|peaks| ForcePeakValues {
+            minimum_vertical_g: peaks.minimum_vertical_g,
+            maximum_vertical_g: peaks.maximum_vertical_g,
+            maximum_lateral_g: peaks.maximum_lateral_g,
+            maximum_longitudinal_g: peaks.maximum_longitudinal_g,
+        });
+    RidePieceEstimate {
+        piece_index,
+        piece_id: piece_id.to_owned(),
+        entry_speed,
+        rated_window: None,
+        estimated,
+        ratings: None,
+        preview_status: force_preview.status.to_owned(),
+        notes: note.into_iter().collect(),
+    }
 }
 
 fn ride_piece_estimate_with_peaks(
@@ -3669,7 +3739,7 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
     let mut has_check_failures = false;
     for path in paths {
         let bytes = fs::read(path).map_err(|error| format!("read ride {path}: {error}"))?;
-        let ride: RideFile = serde_json::from_slice(&bytes)
+        let ride = RideFile::from_json_slice(&bytes)
             .map_err(|error| format!("parse ride {path}: {error}"))?;
         let model = validate_model(&ride.model)?;
         let (test_run, estimates, browser_estimates, circuit) =
@@ -3677,26 +3747,79 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
         let agreement = compare_estimates(&ride, &test_run, &estimates)?;
         let rated_speed_margins = crate::report::rated_speed_margins(&circuit, &model)
             .map_err(|error| format!("{path}: {error}"))?;
+        let rated_speed_failures = rated_speed_margin_failures(&rated_speed_margins);
+        let default_test_run = default_physics_test_run(&circuit, &model);
+        let force_headroom = [
+            force_headroom_results(
+                &default_test_run,
+                model.comfortable_force_limits,
+                "default physics",
+            ),
+            force_headroom_results(
+                &test_run,
+                model.comfortable_force_limits,
+                "construction-test physics",
+            ),
+        ]
+        .concat();
+        let force_headroom_failures: Vec<_> = force_headroom
+            .iter()
+            .filter(|result| !result.passed)
+            .map(|result| result.failure())
+            .collect();
         let expectation_results = evaluate_expectations(&ride, &test_run, &model, &circuit)?;
+        let default_expectation_results =
+            evaluate_expectations(&ride, &default_test_run, &model, &circuit)?;
         let failures: Vec<_> = expectation_results
             .iter()
             .filter(|result| !result.passed)
             .map(ExpectationResult::format)
             .collect();
-        has_check_failures |= check_has_failures(&failures, &agreement);
+        let default_expectation_failures: Vec<_> = default_expectation_results
+            .iter()
+            .filter(|result| !result.passed)
+            .map(|result| format!("default physics: {}", result.format()))
+            .collect();
+        let design_margins_required = ride
+            .expect
+            .as_ref()
+            .and_then(|expectation| expectation.design_margins)
+            .unwrap_or(false);
+        has_check_failures |= check_has_failures(
+            &failures,
+            &default_expectation_failures,
+            &agreement,
+            &rated_speed_failures,
+            &force_headroom_failures,
+            design_margins_required,
+        );
         writeln!(
             text,
             "{}: expectations {}; native agreement {}",
             ride.name,
-            if failures.is_empty() { "pass" } else { "fail" },
+            if failures.is_empty() && default_expectation_failures.is_empty() {
+                "pass"
+            } else {
+                "fail"
+            },
             if agreement.passed { "pass" } else { "fail" }
         )
         .unwrap();
         text.push_str(&crate::report::format_rated_speed_margins(
             &rated_speed_margins,
         ));
+        text.push_str(&format_force_headroom_results(&force_headroom));
         for result in &expectation_results {
             writeln!(text, "  {}", result.format()).unwrap();
+        }
+        for result in &default_expectation_results {
+            writeln!(text, "  default physics {}", result.format()).unwrap();
+        }
+        for failure in &rated_speed_failures {
+            writeln!(text, "  rated speed margin failure: {failure}").unwrap();
+        }
+        for failure in &force_headroom_failures {
+            writeln!(text, "  force headroom failure: {failure}").unwrap();
         }
         for failure in &agreement.failures {
             writeln!(
@@ -3731,6 +3854,11 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
             })).collect::<Vec<_>>(),
             "expectations": expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
             "expectationFailures": failures,
+            "defaultPhysicsExpectations": default_expectation_results.iter().map(ExpectationResult::json).collect::<Vec<_>>(),
+            "defaultPhysicsExpectationFailures": default_expectation_failures,
+            "ratedSpeedMarginFailures": rated_speed_failures,
+            "forceHeadroom": force_headroom,
+            "forceHeadroomFailures": force_headroom_failures,
             "agreement": agreement_json(&agreement),
             "browserEstimates": browser_estimates,
         }));
@@ -3738,8 +3866,19 @@ fn run_check(paths: &[String], json_mode: bool) -> Result<CliResponse, String> {
     check_response(json_mode, rows, text, has_check_failures)
 }
 
-fn check_has_failures(expectation_failures: &[String], agreement: &AgreementReport) -> bool {
-    !expectation_failures.is_empty() || !agreement.passed
+fn check_has_failures(
+    expectation_failures: &[String],
+    default_expectation_failures: &[String],
+    agreement: &AgreementReport,
+    rated_speed_failures: &[String],
+    force_headroom_failures: &[String],
+    design_margins_required: bool,
+) -> bool {
+    !expectation_failures.is_empty()
+        || !default_expectation_failures.is_empty()
+        || !agreement.passed
+        || (design_margins_required
+            && (!rated_speed_failures.is_empty() || !force_headroom_failures.is_empty()))
 }
 
 fn check_response(
@@ -3986,9 +4125,8 @@ fn evaluate_feature_expectations(
     for (prefix, minimum) in &features.piece_prefixes_at_least {
         let observed = ride_steps
             .iter()
-            .filter(|step| match step {
-                RideStep::Place(place) => place.place.starts_with(prefix),
-                _ => false,
+            .filter(|step| {
+                ride_step_piece_id(step).is_some_and(|piece_id| piece_id.starts_with(prefix))
             })
             .count();
         results.push(ExpectationResult {
@@ -4002,12 +4140,13 @@ fn evaluate_feature_expectations(
     for group in &features.piece_prefix_groups_at_least {
         let observed = ride_steps
             .iter()
-            .filter(|step| match step {
-                RideStep::Place(place) => group
-                    .prefixes
-                    .iter()
-                    .any(|prefix| place.place.starts_with(prefix)),
-                _ => false,
+            .filter(|step| {
+                ride_step_piece_id(step).is_some_and(|piece_id| {
+                    group
+                        .prefixes
+                        .iter()
+                        .any(|prefix| piece_id.starts_with(prefix))
+                })
             })
             .count();
         results.push(ExpectationResult {
@@ -4044,9 +4183,9 @@ fn evaluate_feature_expectations(
         let matching_indices: Vec<_> = ride_steps
             .iter()
             .enumerate()
-            .filter(|(_, step)| match step {
-                RideStep::Place(place) => place.place.starts_with(&expectation.prefix),
-                _ => false,
+            .filter(|(_, step)| {
+                ride_step_piece_id(step)
+                    .is_some_and(|piece_id| piece_id.starts_with(&expectation.prefix))
             })
             .map(|(step_index, _)| step_index)
             .collect();
@@ -4099,6 +4238,22 @@ fn valid_feature_step(step: &RideExpectFeatureStep) -> bool {
     }
 }
 
+fn ride_step_piece_id(ride_step: &RideStep) -> Option<&str> {
+    match ride_step {
+        RideStep::Place(place) => Some(&place.place),
+        RideStep::Shape(shape) => Some(match &shape.spec {
+            ElementSpec::Hill { .. } => "ShapedHill",
+            ElementSpec::Turn {
+                hand: Hand::Left, ..
+            } => "ShapedTurnLeft",
+            ElementSpec::Turn {
+                hand: Hand::Right, ..
+            } => "ShapedTurnRight",
+        }),
+        _ => None,
+    }
+}
+
 fn contains_ordered_feature_sequence(
     ride_steps: &[RideStep],
     feature_sequence: &[RideExpectFeatureStep],
@@ -4132,11 +4287,12 @@ fn contains_adjacent_feature_sequence(
 
 fn ride_feature_step_matches(ride_step: &RideStep, expected_step: &RideExpectFeatureStep) -> bool {
     match (ride_step, expected_step) {
-        (RideStep::Place(place), RideExpectFeatureStep::Place(expected)) => {
-            place.place == expected.place
+        (RideStep::Place(_) | RideStep::Shape(_), RideExpectFeatureStep::Place(expected)) => {
+            ride_step_piece_id(ride_step).is_some_and(|piece_id| piece_id == expected.place)
         }
-        (RideStep::Place(place), RideExpectFeatureStep::PlacePrefix(expected)) => {
-            place.place.starts_with(&expected.place_prefix)
+        (RideStep::Place(_) | RideStep::Shape(_), RideExpectFeatureStep::PlacePrefix(expected)) => {
+            ride_step_piece_id(ride_step)
+                .is_some_and(|piece_id| piece_id.starts_with(&expected.place_prefix))
         }
         (RideStep::Chain(chain), RideExpectFeatureStep::Chain(expected)) => {
             chain.chain == expected.chain
@@ -4396,7 +4552,7 @@ mod agreement_replay_tests {
             passed: true,
         };
 
-        let has_failures = check_has_failures(&[], &agreement);
+        let has_failures = check_has_failures(&[], &[], &agreement, &[], &[], false);
         let response = check_response(
             true,
             vec![serde_json::json!({"agreement": agreement_json(&agreement)})],
@@ -4425,6 +4581,76 @@ mod agreement_replay_tests {
             "estimate error"
         );
         assert!(reports[0]["agreement"]["failures"][0]["cause"].is_string());
+    }
+
+    #[test]
+    fn design_margin_failures_are_gated_only_when_required() {
+        let agreement = AgreementReport {
+            rows: Vec::new(),
+            failures: Vec::new(),
+            passed: true,
+        };
+
+        let rated_failure = check_has_failures(
+            &[],
+            &[],
+            &agreement,
+            &["piece 3 rated margin -0.20 m/s".to_owned()],
+            &[],
+            true,
+        );
+        assert!(!check_has_failures(
+            &[],
+            &[],
+            &agreement,
+            &["piece 3 rated margin -0.20 m/s".to_owned()],
+            &[],
+            false,
+        ));
+        let rated_output = cli_output(check_response(
+            true,
+            vec![
+                serde_json::json!({"ratedSpeedMarginFailures": ["piece 3 rated margin -0.20 m/s"]}),
+            ],
+            String::new(),
+            rated_failure,
+        ));
+        assert_eq!(rated_output.exit_code, 1);
+
+        let force_failure = check_has_failures(
+            &[],
+            &[],
+            &agreement,
+            &[],
+            &["default physics maximum vertical g headroom -0.01 g".to_owned()],
+            true,
+        );
+        assert!(!check_has_failures(
+            &[],
+            &[],
+            &agreement,
+            &[],
+            &["default physics maximum vertical g headroom -0.01 g".to_owned()],
+            false,
+        ));
+        let force_output = cli_output(check_response(
+            true,
+            vec![
+                serde_json::json!({"forceHeadroomFailures": ["default physics maximum vertical g headroom -0.01 g"]}),
+            ],
+            String::new(),
+            force_failure,
+        ));
+        assert_eq!(force_output.exit_code, 1);
+
+        assert!(check_has_failures(
+            &[],
+            &["default physics: expectation excitement failed".to_owned()],
+            &agreement,
+            &[],
+            &[],
+            false,
+        ));
     }
 
     #[test]
@@ -4619,6 +4845,52 @@ mod expectation_tests {
     }
 
     #[test]
+    fn shaped_piece_prefix_expectations_count_canonical_hill_and_turn_ids() {
+        let ride: RideFile = serde_json::from_str(include_str!(
+            "../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .unwrap();
+        let features: RideExpectFeatures = serde_json::from_value(serde_json::json!({
+            "piecePrefixesAtLeast": {"ShapedHill": 4, "ShapedTurn": 7},
+            "piecePrefixGroupsAtLeast": [{"prefixes": ["ShapedHill", "ShapedTurn"], "minimum": 11}],
+            "piecePrefixesAfter": [{"prefix": "ShapedTurnRight", "after": {"placePrefix": "ShapedTurnLeft"}}],
+            "orderedSteps": [[{"placePrefix": "ShapedHill"}, {"placePrefix": "ShapedTurn"}]],
+            "adjacentSteps": [[{"placePrefix": "ShapedHill"}, {"placePrefix": "ShapedTurn"}]]
+        }))
+        .unwrap();
+
+        let results = evaluate_feature_expectations(
+            &ride.steps,
+            &features,
+            &theme_park_sim::physics::demo_circuit(),
+        )
+        .unwrap();
+
+        let counts: Vec<_> = results
+            .iter()
+            .filter(|result| result.metric == "ride feature count")
+            .collect();
+        assert_eq!(counts.len(), 2);
+        assert_eq!(counts[0].observed, serde_json::json!(4));
+        assert_eq!(counts[1].observed, serde_json::json!(14));
+        assert!(counts.iter().all(|result| result.passed));
+        let group = results
+            .iter()
+            .find(|result| result.metric == "grouped ride feature count")
+            .unwrap();
+        assert_eq!(group.observed, serde_json::json!(18));
+        assert!(group.passed);
+        assert!(results.iter().all(|result| {
+            !matches!(
+                result.metric,
+                "ride feature prefix ordering"
+                    | "ordered ride feature steps"
+                    | "adjacent ride feature steps"
+            ) || result.passed
+        }));
+    }
+
+    #[test]
     fn sustained_expectations_ignore_short_peak_stats_but_check_held_force() {
         let mut ride: RideFile = serde_json::from_str(include_str!(
             "../../../content/rides/horizon-hawk.ride.json"
@@ -4728,7 +5000,12 @@ mod expectation_tests {
 
 #[cfg(test)]
 mod shaped_command_parser_tests {
-    use super::{RideCommand, parse_commands, render_choices, render_probe};
+    use super::{
+        RideCommand, parse_commands, render_choices, render_probe, shape_selection_id,
+        validate_model,
+    };
+    use theme_park_sim::track::ride_file::{RideFile, RideStep};
+    use theme_park_sim::track::shaped::ElementIntent;
     use theme_park_sim_wasm::WasmSimulation;
     use theme_park_sim_wasm::builder_session::BuilderSession;
 
@@ -4779,6 +5056,66 @@ mod shaped_command_parser_tests {
     }
 
     #[test]
+    fn design_default_matches_horizon_hawk_ride_and_browser_selection() {
+        let commands = parse_commands(&["place hill feel=strong-floater height=24".to_owned()])
+            .expect("strong floater command should parse");
+        let RideCommand::Place {
+            shape_request: Some(request),
+            ..
+        } = &commands[0]
+        else {
+            panic!("command should retain its shaped hill request");
+        };
+        let model = validate_model("hyper").expect("Horizon Hawk model is available");
+        let design_intent = match request {
+            super::ShapedPlaceRequest::Hill {
+                feel,
+                strength_g,
+                size,
+            } => super::ShapedPlaceRequest::Hill {
+                feel: *feel,
+                strength_g: *strength_g,
+                size: *size,
+            }
+            .into_intent(&model),
+            super::ShapedPlaceRequest::Turn { .. } => panic!("expected hill request"),
+        };
+        let ride: RideFile = serde_json::from_str(include_str!(
+            "../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .expect("Horizon Hawk shaped ride is valid");
+        let ride_intent = ride
+            .steps
+            .iter()
+            .find_map(|step| match step {
+                RideStep::Shape(shape)
+                    if matches!(
+                        &shape.intent,
+                        ElementIntent::Hill {
+                            feel: theme_park_sim::track::HillFeel::StrongFloater,
+                            strength_g,
+                            ..
+                        } if (*strength_g + 0.85).abs() <= 1e-9
+                    ) =>
+                {
+                    Some(shape.intent.clone())
+                }
+                _ => None,
+            })
+            .expect("Horizon Hawk contains a strong floater hill");
+        let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+        simulation.construction_select("model:hyper");
+        simulation.construction_start(100, 100, 20, 0);
+        simulation.construction_select("shape:hill:strongFloater:default:fixed-24");
+
+        assert_eq!(design_intent, ride_intent);
+        assert_eq!(
+            shape_selection_id(&design_intent).unwrap(),
+            simulation.construction_selected()
+        );
+    }
+
+    #[test]
     fn shape_choices_report_feasibility_and_model_ranges_at_the_open_end() {
         let simulation = WasmSimulation::new(42, 0, "new".into());
         let mut session = BuilderSession::new(simulation);
@@ -4806,5 +5143,155 @@ mod shaped_command_parser_tests {
 
         assert!(!reply.json["shape"].is_null());
         assert!(reply.text.contains("Shaped hill") || reply.text.contains("Shape refusal"));
+    }
+}
+
+#[cfg(test)]
+mod builder_snapshot_tests {
+    use super::builder_estimates_snapshot;
+    use theme_park_sim_wasm::WasmSimulation;
+    use theme_park_sim_wasm::builder_session::BuilderSession;
+
+    #[test]
+    fn builder_snapshot_serializes_an_absent_candidate_preview_as_null() {
+        let simulation = WasmSimulation::new(42, 0, "new".into());
+        let mut session = BuilderSession::new(simulation);
+        session.start("hyper", 100, 100, 10, 0).unwrap();
+        let mut estimates = session.estimates();
+        let selected_snapshot = builder_estimates_snapshot(&session, &estimates).unwrap();
+        assert!(selected_snapshot["candidateForcePreview"].is_object());
+
+        estimates.candidate_preview = None;
+
+        let placement_snapshot = builder_estimates_snapshot(&session, &estimates).unwrap();
+
+        assert!(placement_snapshot["constructionForcePreview"].is_object());
+        assert!(placement_snapshot["candidateForcePreview"].is_null());
+    }
+}
+
+#[cfg(test)]
+mod shaped_replay_estimate_tests {
+    use super::{replay_with_estimates, shape_selection_id};
+    use theme_park_sim::physics::ForcePeakValues;
+    use theme_park_sim::track::Hand;
+    use theme_park_sim::track::ride_file::{
+        RideChainStep, RideFile, RideFileFormat, RideHeading, RidePlaceStep, RideShapeStep,
+        RideStation, RideStep,
+    };
+    use theme_park_sim::track::shaped::{ElementIntent, TurnSizeHint};
+    use theme_park_sim_wasm::WasmSimulation;
+    use theme_park_sim_wasm::builder_session::BuilderSession;
+
+    #[test]
+    fn shaped_placement_estimate_uses_worst_car_force_peaks() {
+        let intent = ElementIntent::Turn {
+            hand: Hand::Left,
+            size: TurnSizeHint::Auto,
+        };
+        let mut spec_session = BuilderSession::new(WasmSimulation::new(42, 0, "new".into()));
+        spec_session.start("hyper", 241, 249, 10, 1).unwrap();
+        spec_session.set_cars_per_train(8).unwrap();
+        spec_session.estimates();
+        spec_session.set_chain(true).unwrap();
+        let lift_pieces = [
+            "LevelToGentleUp",
+            "GentleToSteepUp",
+            "SteepUp",
+            "SteepUp",
+            "SteepToGentleUp",
+            "GentleUpToLevel",
+        ];
+        for piece in lift_pieces {
+            spec_session.select(piece, true).unwrap();
+            spec_session.place().unwrap();
+        }
+        spec_session.set_chain(false).unwrap();
+        for piece in ["WideLevelToSixtyDown", "WideSixtyDownToLevel"] {
+            spec_session.select(piece, true).unwrap();
+            spec_session.place().unwrap();
+        }
+        spec_session
+            .select(&shape_selection_id(&intent).unwrap(), true)
+            .unwrap();
+        spec_session.estimates();
+        spec_session.place().unwrap();
+        let spec = spec_session
+            .simulation()
+            .construction
+            .as_ref()
+            .unwrap()
+            .pieces()
+            .last()
+            .unwrap()
+            .element_spec()
+            .unwrap()
+            .clone();
+        let mut steps = vec![RideStep::Chain(RideChainStep { chain: true })];
+        steps.extend(lift_pieces.into_iter().map(|place| {
+            RideStep::Place(RidePlaceStep {
+                place: place.into(),
+                launch_speed: None,
+                note: None,
+            })
+        }));
+        steps.push(RideStep::Chain(RideChainStep { chain: false }));
+        steps.extend(
+            ["WideLevelToSixtyDown", "WideSixtyDownToLevel"].map(|place| {
+                RideStep::Place(RidePlaceStep {
+                    place: place.into(),
+                    launch_speed: None,
+                    note: None,
+                })
+            }),
+        );
+        steps.push(RideStep::Shape(RideShapeStep { intent, spec }));
+        let ride = RideFile {
+            format: RideFileFormat::HeartlineRide,
+            version: 1,
+            name: "Shaped estimate source regression".into(),
+            model: "hyper".into(),
+            station: RideStation {
+                x: 241,
+                y: 249,
+                z: 10,
+                heading: RideHeading::North,
+            },
+            cars_per_train: 8,
+            trains: 1,
+            steps,
+            expect: None,
+        };
+
+        let (mut session, estimates, _) = replay_with_estimates(&ride, false).unwrap();
+        let piece_index = session
+            .simulation()
+            .construction
+            .as_ref()
+            .unwrap()
+            .pieces()
+            .len()
+            - 1;
+        let shaped_estimate = estimates
+            .iter()
+            .find(|estimate| estimate.piece_index == piece_index)
+            .unwrap();
+        let force_preview = session.estimates().force_preview.unwrap();
+        let worst_car = force_preview
+            .piece_force_peaks
+            .iter()
+            .find(|peaks| peaks.piece_index == piece_index)
+            .and_then(|peaks| peaks.worst_car.as_ref())
+            .unwrap();
+
+        assert_eq!(
+            shaped_estimate.estimated,
+            Some(ForcePeakValues {
+                minimum_vertical_g: worst_car.minimum_vertical_g,
+                maximum_vertical_g: worst_car.maximum_vertical_g,
+                maximum_lateral_g: worst_car.maximum_lateral_g,
+                maximum_longitudinal_g: worst_car.maximum_longitudinal_g,
+            })
+        );
     }
 }

@@ -11,6 +11,7 @@ pub mod layouts;
 pub mod park_description;
 pub mod reports;
 mod save;
+pub use save::SaveLoadError;
 #[cfg(test)]
 mod save_tests;
 mod scenery;

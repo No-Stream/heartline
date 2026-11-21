@@ -4,9 +4,10 @@ use theme_park_sim::physics::{
 };
 use theme_park_sim::track::construction::Construction;
 use theme_park_sim::track::ride_file::{RideFile, RideHeading, RideStep};
+use theme_park_sim::track::shaped::ElementIntent;
 use theme_park_sim::track::{
-    CoasterModel, ComfortableForceLimits, Heading, Heartlining, PieceId, PieceKind, TrackState,
-    catalog, family_coaster_model, hybrid_model, hyper_model, multi_launch_model,
+    CoasterModel, ComfortableForceLimits, Heading, Heartlining, HillFeel, PieceId, PieceKind,
+    TrackState, catalog, family_coaster_model, hybrid_model, hyper_model, multi_launch_model,
     rated_speed_margin, rated_speeds, wooden_twister_model,
 };
 use theme_park_sim::world::{Surface, World};
@@ -48,13 +49,66 @@ fn player_circuit(name: &str, model: CoasterModel) -> Circuit {
                     .append(id, &world, &[])
                     .unwrap_or_else(|error| panic!("{}: {error:?}", place.place));
             }
-            RideStep::Shape(_) => panic!("{name} statistic fixture contains only catalog pieces"),
+            RideStep::Shape(shape) => {
+                construction
+                    .append_resolved(&shape.intent, &shape.spec, &world, &[])
+                    .unwrap_or_else(|error| panic!("{name} shaped element: {error:?}"));
+            }
             RideStep::Close(close) => assert!(close.close, "{name} ride must close"),
             RideStep::BlockSections(_) => {}
         }
     }
     construction.close().unwrap();
     construction.circuit().unwrap()
+}
+
+fn strong_floater_piece_indices(ride: &RideFile) -> Vec<usize> {
+    let mut piece_index = 1;
+    let mut strong_floater_piece_indices = Vec::new();
+    for step in &ride.steps {
+        match step {
+            RideStep::Place(_) => piece_index += 1,
+            RideStep::Shape(shape) => {
+                if matches!(
+                    shape.intent,
+                    ElementIntent::Hill {
+                        feel: HillFeel::StrongFloater,
+                        ..
+                    }
+                ) {
+                    strong_floater_piece_indices.push(piece_index);
+                }
+                piece_index += 1;
+            }
+            RideStep::Chain(_) | RideStep::Close(_) | RideStep::BlockSections(_) => {}
+        }
+    }
+    strong_floater_piece_indices
+}
+
+fn mid_course_brake_run_count(circuit: &Circuit) -> usize {
+    let pieces = circuit.pieces();
+    let station_index = pieces
+        .iter()
+        .position(|piece| piece.kind == PieceKind::Station)
+        .expect("a tested circuit contains a station");
+    let station_predecessor = (station_index + pieces.len() - 1) % pieces.len();
+
+    (0..pieces.len())
+        .filter(|&index| {
+            pieces[index].kind == PieceKind::Brakes
+                && pieces[(index + pieces.len() - 1) % pieces.len()].kind != PieceKind::Brakes
+        })
+        .filter(|&start| {
+            let mut last = start;
+            let mut index = (start + 1) % pieces.len();
+            while pieces[index].kind == PieceKind::Brakes {
+                last = index;
+                index = (index + 1) % pieces.len();
+            }
+            last != station_predecessor
+        })
+        .count()
 }
 
 fn player_ride(name: &str) -> RideFile {
@@ -463,6 +517,7 @@ fn daisy_dash_is_a_gentle_family_ride_under_both_physics_configs() {
 #[test]
 fn horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs() {
     let model = hyper_model();
+    let ride = player_ride("Horizon Hawk");
     let circuit = player_circuit("Horizon Hawk", model.clone());
     let pieces = circuit.pieces();
     let lift: Vec<_> = pieces
@@ -487,6 +542,63 @@ fn horizon_hawk_is_a_straight_lift_hyper_under_both_physics_configs() {
     assert!(stats.airtime_moments >= 6, "{stats:?}");
     assert!(stats.biggest_drop >= 50.0, "{stats:?}");
     assert!(stats.max_speed >= 30.0, "{stats:?}");
+    assert!(
+        mid_course_brake_run_count(&circuit) <= 1,
+        "Horizon Hawk has {} mid-course brake runs",
+        mid_course_brake_run_count(&circuit)
+    );
+
+    let strong_floater_piece_indices = strong_floater_piece_indices(&ride);
+    assert!(!strong_floater_piece_indices.is_empty());
+    for (configuration_index, report) in reports.iter().enumerate() {
+        let configuration = if configuration_index == 0 {
+            "default physics"
+        } else {
+            "construction-test physics"
+        };
+        assert!(
+            report.statistics.airtime_moments >= 6,
+            "{configuration}: {:#?}",
+            report.statistics
+        );
+        assert!(
+            report.statistics.max_lateral_g <= 0.6,
+            "{configuration}: lateral g {}",
+            report.statistics.max_lateral_g
+        );
+        let sustained = report.sustained_force_peaks();
+        assert!(
+            sustained
+                .maximum_vertical_g
+                .is_some_and(|force| (3.0..=3.5).contains(&force)),
+            "{configuration}: sustained positive vertical g {sustained:?}"
+        );
+        let car_piece_peaks = report.car_piece_sustained_force_peaks();
+        for piece_index in &strong_floater_piece_indices {
+            let hill_peaks: Vec<_> = car_piece_peaks
+                .iter()
+                .filter(|peaks| peaks.piece_index == *piece_index)
+                .collect();
+            assert_eq!(
+                hill_peaks.len(),
+                model.train.cars as usize,
+                "{configuration}: strong-floater piece {piece_index} lacks per-car sustained samples"
+            );
+            let worst_car_airtime = hill_peaks
+                .iter()
+                .filter_map(|peaks| peaks.peaks.minimum_vertical_g)
+                .min_by(f64::total_cmp)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{configuration}: strong-floater piece {piece_index} has no sustained airtime"
+                    )
+                });
+            assert!(
+                worst_car_airtime <= -0.8,
+                "{configuration}: strong-floater piece {piece_index} worst-car sustained airtime {worst_car_airtime:.3} g"
+            );
+        }
+    }
 }
 
 #[test]

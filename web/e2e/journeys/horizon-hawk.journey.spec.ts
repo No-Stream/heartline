@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { placeStation, startPark } from "../player/driver";
+import { flattenTerrainTiles, placeStation, startPark } from "../player/driver";
 import { placeCircuit } from "../player/place-circuit";
 import { readRide } from "../player/rides";
 
@@ -13,14 +13,38 @@ test("Horizon Hawk hyper coaster journey @journey", async ({ page }) => {
   const circuit = ride.steps.slice(0, 13);
   const circuitPieces = ride.steps.flatMap((step) => "place" in step ? [step.place] : []);
   expect(circuitPieces).toContain("WideLevelToSixtyDown");
-  expect(circuitPieces).toContain("FloaterHill24x160");
-  expect(circuitPieces).toContain("FloaterHill20x128");
-  expect(circuitPieces.filter((piece) => /^FloaterHill\d+x\d+$/.test(piece)).length).toBeGreaterThanOrEqual(3);
-  expect(circuitPieces.filter((piece) => piece === "GentleUpToLevel").length).toBeGreaterThanOrEqual(3);
-  expect(circuitPieces.filter((piece) => piece.startsWith("SpeedTurnLarge")).length).toBeGreaterThanOrEqual(4);
+  const shapedHills = ride.steps.filter((step) => "intent" in step
+    && "hill" in step.intent
+    && step.intent.hill.feel === "StrongFloater");
+  expect(shapedHills.length).toBeGreaterThanOrEqual(4);
+  expect(shapedHills[0]).toMatchObject({
+    intent: { hill: { feel: "StrongFloater", strength_g: -0.85, size: { Height: 24 } } },
+  });
+  expect(shapedHills.every((step) => "intent" in step
+    && "hill" in step.intent
+    && step.intent.hill.strength_g <= -0.8)).toBe(true);
+  const shapedTurns = ride.steps.filter((step) => "intent" in step && "turn" in step.intent);
+  expect(shapedTurns.length).toBeGreaterThanOrEqual(7);
+  expect(shapedTurns.some((step) => "intent" in step && "turn" in step.intent && step.intent.turn.hand === "Left")).toBe(true);
+  expect(shapedTurns.some((step) => "intent" in step && "turn" in step.intent && step.intent.turn.hand === "Right")).toBe(true);
+  expect(ride.expect?.airtimeMomentsAtLeast).toBeGreaterThanOrEqual(6);
 
   await startPark(page, { park: "new", seed: 2028, speed: 1 });
-  await placeStation(page, { model: "hyper", height: 4, tile: { x: 241, y: 249, z: 2 }, direction: { x: 241, y: 251, z: 2 } });
+  const defaultParkSurfaceHeight = 8;
+  const minimumStationHeight = 4;
+  const adjustedStationSurfaceHeight = ride.station.z - minimumStationHeight;
+  expect(adjustedStationSurfaceHeight).toBe(defaultParkSurfaceHeight - 2);
+  await flattenTerrainTiles(page, [{
+    x: ride.station.x,
+    y: ride.station.y,
+    height: adjustedStationSurfaceHeight,
+  }]);
+  await placeStation(page, {
+    model: "hyper",
+    height: minimumStationHeight,
+    tile: { x: ride.station.x, y: ride.station.y, z: 2 },
+    direction: { x: ride.station.x, y: ride.station.y + 2, z: 2 },
+  });
   await expect(page.getByRole("combobox", { name: "Coaster model" }).locator("option:checked")).toHaveText("Horizon Hawk · Boulder & Marlin");
 
   // The lift is straight only, so the chain refuses a turn.

@@ -8,7 +8,7 @@ import { COASTER_MODELS } from "./generated/coaster-models";
 import { constructionEvent } from "./construction-effects";
 import { availableBlockBoundaries, blockPanelState } from "./block-panel-state";
 import { formatHillSize, groupedPieces, hillLabel, hillStepperOptions, hillToOpen, pieceDisplayName, pieceInGroup, shapedPaletteChoices, speedTurnPalette, steppedHillSelection, steppedPieceSelection, stepperOptions, type HillAttribute, type PieceStep, type StepAttribute } from "./construction-choices";
-import { shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements";
+import { defaultShapeSelectionId, shapeSelectionId, type ShapedElementSelection, type ShapedHillFeel } from "./construction-shaped-elements";
 import type { BlockReport, ConstructionElement, ConstructionHillOption, ConstructionPiece, ConstructionShapedElement, ConstructionState, PieceShape } from "./construction-protocol";
 import type { InputAction } from "./input/actions";
 import { builderShortcuts, groupKeyHint, keyHint } from "./input/bindings";
@@ -189,6 +189,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
           <div class="builder__place-actions">
             <button type="button" class="tool-panel__action tool-panel__action--primary" data-append>Place piece ${hint("place")}</button>
             <button type="button" class="tool-panel__action" data-undo>Undo last piece ${hint("undo")}</button>
+            <p class="tool-panel__hint builder__append-reason" data-append-reason aria-live="polite" hidden></p>
           </div>
           <p class="builder__test-hint" data-panel-track-height></p>
           <p class="builder__test-hint" data-panel-station-height></p>
@@ -420,6 +421,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       if (shape.feel !== "floater" && shape.feel !== "strongFloater" && shape.feel !== "ejector") {
         throw new Error(`Unknown shaped hill feel ${shape.feel}`);
       }
+      if (shape.strengthG === null) throw new Error("Selected shaped hill has no explicit target g");
       return {
         kind: "hill",
         feel: shape.feel as ShapedHillFeel,
@@ -441,7 +443,7 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       if (feel !== "floater" && feel !== "strongFloater" && feel !== "ejector") {
         throw new Error(`Unknown shaped hill feel ${feel}`);
       }
-      return shapeSelectionId({ kind: "hill", feel, strengthG: null, size: { kind: "auto" } });
+      return defaultShapeSelectionId(feel);
     }
     if (shape.hand !== "left" && shape.hand !== "right") throw new Error(`Unknown shaped turn hand ${shape.hand}`);
     return shapeSelectionId({ kind: "turn", hand: shape.hand, feel: "fullyBanked", size: { kind: "auto" } });
@@ -460,9 +462,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       return;
     }
     if (attribute === "strength" && selection.kind === "hill") {
-      const currentStrength = selection.strengthG ?? shape.spec?.targetG;
-      if (currentStrength === null || currentStrength === undefined) return;
-      const strengthG = Math.round((currentStrength - step * 0.1) * 10) / 10;
+      const currentStrength = selection.strengthG;
+      // Step exactly 0.1 g from the current target; rounding to hundredths only removes float noise,
+      // so off-grid defaults such as the −0.85 g strong floater stay reachable (−0.95 g, −1.05 g).
+      const strengthG = Math.round((currentStrength - step * 0.1) * 100) / 100;
       selectShape({ ...selection, strengthG });
       return;
     }
@@ -1024,8 +1027,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       ? ({ floater: "Floater", strongFloater: "Strong floater", ejector: "Ejector" } as const)[selection.feel]
       : "Fully banked";
     setValue("feel", feel);
-    const strength = selection.kind === "hill" ? selection.strengthG ?? shape.spec?.targetG : null;
-    setValue("strength", strength === null || strength === undefined ? "—" : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(strength).replace("-", "−")} g`);
+    const strength = selection.kind === "hill" ? selection.strengthG : null;
+    setValue("strength", strength === null || strength === undefined ? "—" : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(strength).replace("-", "−")} g`);
     const fixedSizeLabel = shape.fixedSize === null ? "Auto" : formatLength(shape.fixedSize, units);
     setValue("size", shape.kind === "hill" ? fixedSizeLabel : "");
     setValue("radius", shape.kind === "turn" ? fixedSizeLabel : "");
@@ -1343,6 +1346,10 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       const nextTrackKey = next.track.map(({ id, label, kind, launchTargetSpeed }) => `${id}:${label}:${kind}:${launchTargetSpeed}`).join("|");
       if (nextTrackKey !== trackKey) { trackKey = nextTrackKey; renderTrack(next, event === "placed"); }
       append.disabled = next.complete && !next.canAppend;
+      append.title = next.canAppend ? "" : next.appendReason;
+      const appendReason = element("[data-append-reason]");
+      appendReason.textContent = next.appendReason;
+      appendReason.hidden = next.canAppend || next.appendReason === "";
       undo.disabled = next.complete && next.track.length === 0;
       close.disabled = next.complete && !next.canClose;
       test.disabled = next.complete && !next.canTest;

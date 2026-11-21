@@ -3,10 +3,13 @@ use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use theme_park_sim::physics::{
-    Contribution, ForcePeakLocation, ForcePeakValues, PhysicsConfig, TestRun, Train,
+    ConstructionTestRunRecorder, Contribution, ForcePeakLocation, ForcePeakValues, PhysicsConfig,
+    TestRun, Train,
 };
 use theme_park_sim::track::ride_file::{RideFile, RideStep};
-use theme_park_sim::track::{CoasterModel, PieceKind, rated_speed_margin, rated_speeds};
+use theme_park_sim::track::{
+    CoasterModel, ComfortableForceLimits, PieceKind, rated_speed_margin, rated_speeds,
+};
 
 pub(crate) type ShapedElementEntrySpeeds = BTreeMap<usize, (Option<f64>, Option<f64>)>;
 
@@ -43,6 +46,224 @@ pub struct RatedPieceEntryMargin {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct ForceHeadroomResult {
+    pub(crate) physics_configuration: &'static str,
+    pub(crate) metric: &'static str,
+    pub(crate) observed_g: Option<f64>,
+    pub(crate) boundary_g: f64,
+    pub(crate) headroom_g: Option<f64>,
+    pub(crate) passed: bool,
+    pub(crate) unavailable_reason: Option<String>,
+}
+
+impl ForceHeadroomResult {
+    pub(crate) fn failure(&self) -> String {
+        if let Some(reason) = &self.unavailable_reason {
+            return format!(
+                "{} {} unavailable: {reason}",
+                self.physics_configuration, self.metric,
+            );
+        }
+        format!(
+            "{} {} observed {:.2} g against {:.2} g boundary (headroom {:.2} g)",
+            self.physics_configuration,
+            self.metric,
+            self.observed_g
+                .expect("available headroom has an observed force"),
+            self.boundary_g,
+            self.headroom_g.expect("available headroom has a margin"),
+        )
+    }
+}
+
+pub(crate) fn format_force_headroom_results(results: &[ForceHeadroomResult]) -> String {
+    let mut output = String::from(
+        "Force headroom (0.25 g inside each model limit):\n# physics metric observed_g boundary_g remaining_g status\n",
+    );
+    for result in results {
+        writeln!(
+            output,
+            "{} {} {} {:.2} {} {}",
+            result.physics_configuration,
+            result.metric,
+            result
+                .observed_g
+                .map_or_else(|| "—".to_owned(), |value| format!("{value:.2}")),
+            result.boundary_g,
+            result
+                .headroom_g
+                .map_or_else(|| "—".to_owned(), |value| format!("{value:+.2}")),
+            if result.unavailable_reason.is_some() {
+                "UNAVAILABLE"
+            } else if result.passed {
+                "PASS"
+            } else {
+                "FAIL"
+            },
+        )
+        .unwrap();
+    }
+    output
+}
+
+pub(crate) fn force_headroom_results(
+    test_run: &TestRun,
+    limits: ComfortableForceLimits,
+    physics_configuration: &'static str,
+) -> Vec<ForceHeadroomResult> {
+    if !test_run.completed {
+        let reason = if let Some(note) = test_run.notes.first() {
+            format!("train stopped before completing a lap: {note}")
+        } else {
+            format!(
+                "train stopped after {:.2} m before completing a lap",
+                test_run.furthest_distance
+            )
+        };
+        return unavailable_force_headroom_results(limits, physics_configuration, reason);
+    }
+
+    let statistics = test_run.statistics;
+    let maximum_positive_vertical_g = limits.maximum_vertical_g - 0.25;
+    let minimum_vertical_g = limits.minimum_vertical_g + 0.25;
+    let maximum_lateral_g = limits.maximum_lateral_g - 0.25;
+    let maximum_longitudinal_g = limits.maximum_longitudinal_g - 0.25;
+    [
+        (
+            "maximum positive vertical g",
+            statistics.max_positive_vertical_g,
+            maximum_positive_vertical_g,
+            maximum_positive_vertical_g - statistics.max_positive_vertical_g,
+        ),
+        (
+            "minimum vertical g",
+            statistics.max_negative_vertical_g,
+            minimum_vertical_g,
+            statistics.max_negative_vertical_g - minimum_vertical_g,
+        ),
+        (
+            "maximum lateral g",
+            statistics.max_lateral_g,
+            maximum_lateral_g,
+            maximum_lateral_g - statistics.max_lateral_g,
+        ),
+        (
+            "maximum forward g",
+            statistics.max_forward_g,
+            maximum_longitudinal_g,
+            maximum_longitudinal_g - statistics.max_forward_g,
+        ),
+        (
+            "maximum braking g",
+            statistics.max_braking_g.abs(),
+            maximum_longitudinal_g,
+            maximum_longitudinal_g - statistics.max_braking_g.abs(),
+        ),
+    ]
+    .into_iter()
+    .map(
+        |(metric, observed_g, boundary_g, headroom_g)| ForceHeadroomResult {
+            physics_configuration,
+            metric,
+            observed_g: Some(observed_g),
+            boundary_g,
+            headroom_g: Some(headroom_g),
+            passed: headroom_g >= 0.0,
+            unavailable_reason: None,
+        },
+    )
+    .collect()
+}
+
+fn unavailable_force_headroom_results(
+    limits: ComfortableForceLimits,
+    physics_configuration: &'static str,
+    reason: String,
+) -> Vec<ForceHeadroomResult> {
+    [
+        (
+            "maximum positive vertical g",
+            limits.maximum_vertical_g - 0.25,
+        ),
+        ("minimum vertical g", limits.minimum_vertical_g + 0.25),
+        ("maximum lateral g", limits.maximum_lateral_g - 0.25),
+        ("maximum forward g", limits.maximum_longitudinal_g - 0.25),
+        ("maximum braking g", limits.maximum_longitudinal_g - 0.25),
+    ]
+    .into_iter()
+    .map(|(metric, boundary_g)| ForceHeadroomResult {
+        physics_configuration,
+        metric,
+        observed_g: None,
+        boundary_g,
+        headroom_g: None,
+        passed: false,
+        unavailable_reason: Some(reason.clone()),
+    })
+    .collect()
+}
+
+pub(crate) fn rated_speed_margin_failures(margins: &[RatedPieceEntryMargin]) -> Vec<String> {
+    margins
+        .iter()
+        .filter_map(|margin| {
+            let physics_configuration = if margin.construction_test {
+                "construction-test physics"
+            } else {
+                "default physics"
+            };
+            if let Some(reason) = &margin.unavailable_reason {
+                return Some(format!(
+                    "piece {} {} rated margin unavailable under {physics_configuration}: {reason}",
+                    margin.piece_index, margin.piece_id
+                ));
+            }
+            match margin.rule_margin {
+                Some(rule_margin) if rule_margin >= 0.0 => None,
+                Some(rule_margin) => Some(format!(
+                    "piece {} {} rated margin under {physics_configuration} is {:.2} m/s",
+                    margin.piece_index, margin.piece_id, rule_margin
+                )),
+                None => Some(format!(
+                    "piece {} {} rated margin unavailable under {physics_configuration}: entry samples missing",
+                    margin.piece_index, margin.piece_id
+                )),
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn default_physics_test_run(
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &CoasterModel,
+) -> TestRun {
+    let start = circuit.pieces()[0].length() / 2.0;
+    let mut train = Train::new(circuit, &model.train, PhysicsConfig::default(), start, 0.0);
+    let mut recorder =
+        ConstructionTestRunRecorder::for_circuit_with_train_and_model(circuit, &model.train, model);
+    let mut slow_steps = 0;
+    for _ in 0..60_000 {
+        train.step(circuit);
+        recorder.record(&train.take_readings(), model.name);
+        if !train.notes().is_empty() {
+            return recorder.finish(false, true);
+        }
+        if train.distance() >= circuit.length() + start {
+            return recorder.finish(true, false);
+        }
+        if train.speed().abs() < 0.05 {
+            slow_steps += 1;
+            if slow_steps >= 200 {
+                return recorder.finish(false, false);
+            }
+        } else {
+            slow_steps = 0;
+        }
+    }
+    recorder.finish(false, false)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ShapedElementReportRow {
     pub piece_index: usize,
     pub element: String,
@@ -53,6 +274,165 @@ pub struct ShapedElementReportRow {
     pub delivered: String,
     pub headroom: String,
     pub size: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct ForceMeasurement {
+    pub g: f64,
+    pub car_index: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ElementPhysicsRunRow {
+    pub completed: bool,
+    pub sampled_entry_speed_mps: Option<f64>,
+    pub minimum_vertical_sustained: Option<ForceMeasurement>,
+    pub maximum_vertical_sustained: Option<ForceMeasurement>,
+    pub maximum_lateral: Option<ForceMeasurement>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ElementPhysicsReportRow {
+    pub piece_index: usize,
+    pub element: String,
+    pub intent: Option<String>,
+    pub shaped_delivery: Option<String>,
+    pub default_physics: ElementPhysicsRunRow,
+    pub construction_test_physics: ElementPhysicsRunRow,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ElementForceSummary {
+    minimum_vertical_sustained: Option<ForceMeasurement>,
+    maximum_vertical_sustained: Option<ForceMeasurement>,
+    maximum_lateral: Option<ForceMeasurement>,
+}
+
+pub(crate) fn element_physics_report_rows(
+    circuit: &theme_park_sim::physics::Circuit,
+    estimates: &[RidePieceEstimate],
+    shaped_elements: &[ShapedElementReportRow],
+    default_test_run: &TestRun,
+    construction_test_run: &TestRun,
+) -> Result<Vec<ElementPhysicsReportRow>, String> {
+    let mut estimates_by_piece = BTreeMap::new();
+    for estimate in estimates {
+        if estimates_by_piece
+            .insert(estimate.piece_index, estimate)
+            .is_some()
+        {
+            return Err(format!(
+                "ride report has duplicate estimate for piece index {}",
+                estimate.piece_index
+            ));
+        }
+    }
+    let shaped_elements_by_piece: BTreeMap<_, _> = shaped_elements
+        .iter()
+        .map(|element| (element.piece_index, element))
+        .collect();
+    let default_forces = element_force_summaries(default_test_run);
+    let construction_forces = element_force_summaries(construction_test_run);
+
+    (1..circuit.pieces().len())
+        .map(|piece_index| {
+            let estimate = estimates_by_piece.get(&piece_index).ok_or_else(|| {
+                format!("ride report has no estimate for piece index {piece_index}")
+            })?;
+            Ok(ElementPhysicsReportRow {
+                piece_index,
+                element: estimate.piece_id.clone(),
+                intent: shaped_elements_by_piece
+                    .get(&piece_index)
+                    .map(|element| element.intent.clone()),
+                shaped_delivery: shaped_elements_by_piece
+                    .get(&piece_index)
+                    .map(|element| element.delivered.clone()),
+                default_physics: element_physics_run_row(
+                    default_test_run,
+                    sampled_piece_entry_speed(default_test_run, piece_index),
+                    default_forces.get(&piece_index).copied(),
+                ),
+                construction_test_physics: element_physics_run_row(
+                    construction_test_run,
+                    sampled_piece_entry_speed(construction_test_run, piece_index),
+                    construction_forces.get(&piece_index).copied(),
+                ),
+            })
+        })
+        .collect()
+}
+
+fn sampled_piece_entry_speed(test_run: &TestRun, piece_index: usize) -> Option<f64> {
+    test_run
+        .samples
+        .iter()
+        .find(|sample| sample.piece_index == piece_index)
+        .map(|sample| sample.speed)
+}
+
+fn element_physics_run_row(
+    test_run: &TestRun,
+    entry_speed_mps: Option<f64>,
+    forces: Option<ElementForceSummary>,
+) -> ElementPhysicsRunRow {
+    let forces = forces.unwrap_or_default();
+    ElementPhysicsRunRow {
+        completed: test_run.completed,
+        sampled_entry_speed_mps: entry_speed_mps,
+        minimum_vertical_sustained: forces.minimum_vertical_sustained,
+        maximum_vertical_sustained: forces.maximum_vertical_sustained,
+        maximum_lateral: forces.maximum_lateral,
+    }
+}
+
+fn element_force_summaries(test_run: &TestRun) -> BTreeMap<usize, ElementForceSummary> {
+    let mut summaries = BTreeMap::new();
+    for force in test_run.car_piece_sustained_force_peaks() {
+        let summary = summaries
+            .entry(force.piece_index)
+            .or_insert_with(ElementForceSummary::default);
+        if let Some(value) = force.peaks.minimum_vertical_g {
+            let measured = ForceMeasurement {
+                g: value,
+                car_index: force.car_index,
+            };
+            if summary
+                .minimum_vertical_sustained
+                .is_none_or(|current| measured.g < current.g)
+            {
+                summary.minimum_vertical_sustained = Some(measured);
+            }
+        }
+        if let Some(value) = force.peaks.maximum_vertical_g {
+            let measured = ForceMeasurement {
+                g: value,
+                car_index: force.car_index,
+            };
+            if summary
+                .maximum_vertical_sustained
+                .is_none_or(|current| measured.g > current.g)
+            {
+                summary.maximum_vertical_sustained = Some(measured);
+            }
+        }
+    }
+    for force in test_run.car_piece_force_peaks() {
+        let summary = summaries
+            .entry(force.piece_index)
+            .or_insert_with(ElementForceSummary::default);
+        let measured = ForceMeasurement {
+            g: force.peaks.maximum_lateral_g,
+            car_index: force.car_index,
+        };
+        if summary
+            .maximum_lateral
+            .is_none_or(|current| measured.g > current.g)
+        {
+            summary.maximum_lateral = Some(measured);
+        }
+    }
+    summaries
 }
 
 pub fn render_shaped_elements_table(rows: &[ShapedElementReportRow]) -> String {
@@ -79,6 +459,45 @@ pub fn render_shaped_elements_table(rows: &[ShapedElementReportRow]) -> String {
         .unwrap();
     }
     output
+}
+
+pub fn render_element_physics_table(rows: &[ElementPhysicsReportRow]) -> String {
+    let mut output = String::from(
+        "Measured per-element forces (first front-car sample in piece; worst-car sustained vertical and sampled peak lateral):\n# piece element intended_force shaped_delivery default_sampled_entry/min_sustained_vertical/max_sustained_vertical/max_sampled_lateral construction_sampled_entry/min_sustained_vertical/max_sustained_vertical/max_sampled_lateral\n",
+    );
+    for row in rows {
+        let intent = row.intent.as_deref().unwrap_or("fixed catalog piece");
+        let delivery = row.shaped_delivery.as_deref().unwrap_or("—");
+        writeln!(
+            output,
+            "{:>3} {:<24} {:<34} {:<24} {} {}",
+            row.piece_index,
+            row.element,
+            intent,
+            delivery,
+            format_element_physics_run(&row.default_physics),
+            format_element_physics_run(&row.construction_test_physics)
+        )
+        .unwrap();
+    }
+    output
+}
+
+fn format_element_physics_run(run: &ElementPhysicsRunRow) -> String {
+    format!(
+        "{} / {} / {} / {}",
+        format_optional(run.sampled_entry_speed_mps),
+        format_force_measurement(run.minimum_vertical_sustained),
+        format_force_measurement(run.maximum_vertical_sustained),
+        format_force_measurement(run.maximum_lateral)
+    )
+}
+
+fn format_force_measurement(measurement: Option<ForceMeasurement>) -> String {
+    measurement.map_or_else(
+        || "—".to_owned(),
+        |measurement| format!("{:.2} g car {}", measurement.g, measurement.car_index),
+    )
 }
 
 pub(crate) fn shaped_element_entry_speeds(
@@ -822,6 +1241,117 @@ mod tests {
 
         assert!(report.contains("Samples (front car, one metre spacing):"));
         assert!(report.contains("10.0 2.50 -0.20 0.40 1"));
+    }
+
+    #[test]
+    fn force_headroom_uses_the_existing_quarter_g_margin_at_inclusive_boundaries() {
+        let mut run = test_run();
+        run.completed = true;
+        let limits = hybrid_model().comfortable_force_limits;
+        run.statistics.max_positive_vertical_g = limits.maximum_vertical_g - 0.25;
+        run.statistics.max_negative_vertical_g = limits.minimum_vertical_g + 0.25;
+        run.statistics.max_lateral_g = limits.maximum_lateral_g - 0.25;
+        run.statistics.max_forward_g = limits.maximum_longitudinal_g - 0.25;
+        run.statistics.max_braking_g = -(limits.maximum_longitudinal_g - 0.25);
+
+        let results = super::force_headroom_results(&run, limits, "default physics");
+
+        assert_eq!(results.len(), 5);
+        assert!(results.iter().all(|result| result.passed));
+        assert!(results.iter().all(|result| {
+            result
+                .headroom_g
+                .is_some_and(|headroom| headroom.abs() < 1e-12)
+        }));
+
+        run.statistics.max_positive_vertical_g += 0.01;
+        let results = super::force_headroom_results(&run, limits, "default physics");
+        assert!(!results[0].passed);
+        assert_eq!(results[0].physics_configuration, "default physics");
+    }
+
+    #[test]
+    fn incomplete_force_headroom_run_is_unavailable_and_fails() {
+        let mut run = test_run();
+        run.completed = false;
+        run.furthest_distance = 13.5;
+        run.notes.clear();
+        let limits = hybrid_model().comfortable_force_limits;
+
+        let results = super::force_headroom_results(&run, limits, "default physics");
+
+        assert_eq!(results.len(), 5);
+        assert!(results.iter().all(|result| !result.passed));
+        assert!(results.iter().all(|result| result.observed_g.is_none()));
+        assert!(results.iter().all(|result| result.headroom_g.is_none()));
+        assert!(results.iter().all(|result| {
+            result
+                .unavailable_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("13.50 m"))
+        }));
+        assert!(results[0].failure().contains("unavailable"));
+    }
+
+    #[test]
+    fn default_physics_force_headroom_run_completes_and_records_worst_car_peaks() {
+        let circuit = demo_circuit();
+        let report = super::default_physics_test_run(&circuit, &hybrid_model());
+
+        assert!(report.completed);
+        assert!(report.statistics.max_speed > 0.0);
+        assert!(
+            report
+                .piece_force_peaks()
+                .iter()
+                .any(|piece| piece.worst_car.is_some())
+        );
+    }
+
+    #[test]
+    fn rated_margin_failures_include_negative_and_unavailable_rows() {
+        use super::RatedPieceEntryMargin;
+
+        let margins = [
+            RatedPieceEntryMargin {
+                piece_index: 2,
+                piece_id: "SpeedTurnLarge32".into(),
+                car_index: Some(7),
+                entry_speed: Some(32.0),
+                window: (27.0, 34.0),
+                rule_margin: Some(-0.2),
+                unavailable_reason: None,
+                construction_test: false,
+            },
+            RatedPieceEntryMargin {
+                piece_index: 4,
+                piece_id: "FloaterHill24x160".into(),
+                car_index: None,
+                entry_speed: None,
+                window: (27.0, 34.0),
+                rule_margin: None,
+                unavailable_reason: Some("train stopped before the hill".into()),
+                construction_test: true,
+            },
+            RatedPieceEntryMargin {
+                piece_index: 5,
+                piece_id: "SpeedTurnLarge32".into(),
+                car_index: Some(0),
+                entry_speed: Some(31.0),
+                window: (27.0, 34.0),
+                rule_margin: Some(0.5),
+                unavailable_reason: None,
+                construction_test: false,
+            },
+        ];
+
+        let failures = super::rated_speed_margin_failures(&margins);
+
+        assert_eq!(failures.len(), 2);
+        assert!(failures[0].contains("default physics"));
+        assert!(failures[0].contains("-0.20 m/s"));
+        assert!(failures[1].contains("construction-test physics"));
+        assert!(failures[1].contains("train stopped before the hill"));
     }
 
     fn ride_file() -> RideFile {

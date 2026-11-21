@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use theme_park_design_tools::run_cli;
+use theme_park_sim::track::ride_file::{RideFile, RideStep};
 use theme_park_sim_wasm::WasmSimulation;
+use theme_park_sim_wasm::builder_session::BuilderSession;
 
 static NEXT_TEMP_FILE: AtomicUsize = AtomicUsize::new(0);
 
@@ -30,30 +32,6 @@ impl TempFile {
 impl Drop for TempFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
-    }
-}
-
-fn assert_six_decimal_precision(value: &serde_json::Value) {
-    match value {
-        serde_json::Value::Number(number) => {
-            let value = number.as_f64().expect("ride spec numbers are finite");
-            let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
-            assert!(
-                (value - rounded).abs() <= 1e-9,
-                "ride spec number {value} has more than six decimal places"
-            );
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                assert_six_decimal_precision(value);
-            }
-        }
-        serde_json::Value::Object(values) => {
-            for value in values.values() {
-                assert_six_decimal_precision(value);
-            }
-        }
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::String(_) => {}
     }
 }
 
@@ -402,14 +380,18 @@ fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|step| step["intent"]["kind"] == "turn")
+        .find(|step| step["intent"]["turn"].is_object())
         .unwrap();
-    assert_eq!(shaped_turn["intent"]["kind"], "turn");
-    assert_eq!(shaped_turn["intent"]["hand"], "Left");
+    assert_eq!(shaped_turn["intent"]["turn"]["hand"], "Left");
     assert_eq!(shaped_turn["spec"]["kind"], "turn");
     assert!(shaped_turn["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
-    assert!(shaped_turn["spec"]["geometry"]["knots"].is_array());
-    assert_six_decimal_precision(&shaped_turn["spec"]);
+    assert!(shaped_turn["spec"]["geometry"].is_null());
+    assert!(shaped_turn["spec"]["profile"].is_null());
+    assert!(shaped_turn["spec"]["geometry_digest"].as_str().is_some());
+    assert!(
+        serde_json::to_vec(&shaped_turn["spec"]).unwrap().len() < 2_000,
+        "shaped turn recipe should stay compact"
+    );
 
     let replay = run_cli(&["ride".into(), ride.path().into(), "state".into()], "").unwrap();
     assert!(replay.contains("Pieces: 9"), "{replay}");
@@ -459,26 +441,9 @@ fn shaped_placement_persists_intent_and_resolved_geometry_for_replay() {
         );
     }
     assert_eq!(
-        exported_spec["geometry"]["length"],
-        saved_spec["geometry"]["length"]
+        exported_spec, *saved_spec,
+        "export retains the compact recipe and digest"
     );
-    assert_eq!(
-        exported_spec["geometry"]["peak_bank"],
-        saved_spec["geometry"]["peak_bank"]
-    );
-    assert_eq!(
-        exported_spec["geometry"]["knots"].as_array().unwrap().len(),
-        saved_spec["geometry"]["knots"].as_array().unwrap().len()
-    );
-    for (knot_index, (exported, saved)) in exported_spec["geometry"]["knots"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .zip(saved_spec["geometry"]["knots"].as_array().unwrap())
-        .enumerate()
-    {
-        assert_eq!(exported, saved, "resolved geometry knot {knot_index}");
-    }
 }
 
 #[test]
@@ -524,19 +489,98 @@ fn shaped_hill_and_fully_banked_turn_place_on_a_hyper_and_replay() {
         .filter(|step| step.get("intent").is_some())
         .collect();
     assert_eq!(shape_steps.len(), 2);
-    assert_eq!(shape_steps[0]["intent"]["kind"], "hill");
-    assert_eq!(shape_steps[0]["intent"]["feel"], "Floater");
+    assert_eq!(shape_steps[0]["intent"]["hill"]["feel"], "Floater");
+    assert_eq!(shape_steps[0]["intent"]["hill"]["strength_g"], -0.5);
     assert_eq!(shape_steps[0]["spec"]["kind"], "hill");
     assert!(shape_steps[0]["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
-    assert!(shape_steps[0]["spec"]["profile"]["points"].is_array());
-    assert_eq!(shape_steps[1]["intent"]["kind"], "turn");
-    assert_eq!(shape_steps[1]["intent"]["hand"], "Left");
+    assert!(shape_steps[0]["spec"]["profile"].is_null());
+    assert!(shape_steps[0]["spec"]["geometry_digest"].as_str().is_some());
+    assert_eq!(shape_steps[1]["intent"]["turn"]["hand"], "Left");
     assert_eq!(shape_steps[1]["spec"]["kind"], "turn");
     assert!(shape_steps[1]["spec"]["design_speed_mps"].as_f64().unwrap() >= 22.0);
-    assert!(shape_steps[1]["spec"]["geometry"]["knots"].is_array());
+    assert!(shape_steps[1]["spec"]["geometry"].is_null());
+    assert!(shape_steps[1]["spec"]["geometry_digest"].as_str().is_some());
+    assert!(
+        fs::metadata(&ride.0).unwrap().len() < 100_000,
+        "shaped ride file is {} bytes",
+        fs::metadata(&ride.0).unwrap().len()
+    );
 
     let replay = run_cli(&["ride".into(), ride.path().into(), "state".into()], "").unwrap();
     assert!(replay.contains("Pieces: 10"), "{replay}");
+
+    let ride_file: RideFile = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
+    let mut simulation = WasmSimulation::new(42, 0, String::from("new"));
+    assert!(simulation.set_world_surface(511, 511, vec![6; 4], None));
+    let mut session = BuilderSession::new(simulation);
+    session.replay_ride(&ride_file).unwrap();
+    let expected_state_hash = session.state_hash();
+    let snapshot = session.save_native_snapshot().unwrap();
+    let restored = BuilderSession::load_native_snapshot(&snapshot).unwrap();
+    assert_eq!(restored.state_hash(), expected_state_hash);
+}
+
+#[test]
+fn horizon_hawk_compact_recipes_preserve_the_original_shaped_geometry() {
+    let ride_source = include_str!("../../../content/rides/horizon-hawk.ride.json");
+    let ride = RideFile::from_json_str(ride_source).unwrap();
+    let shaped_steps: Vec<_> = ride
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            RideStep::Shape(shape) => Some(shape),
+            _ => None,
+        })
+        .collect();
+    let geometry_digests: Vec<_> = shaped_steps
+        .iter()
+        .map(|step| step.spec.resolved_geometry_digest())
+        .collect();
+    assert_eq!(
+        geometry_digests,
+        [
+            0x0f412105af8180cd,
+            0xb5fdb605bdac02c8,
+            0x3b36b9805f13f147,
+            0xd3ab2d19dc77d285,
+            0x067e0677470869e7,
+            0x23f0dc11f2e0cd49,
+            0x431463f9b9d666e1,
+            0x05cdbecdfafb0a34,
+            0x4e790dc987501cf2,
+            0x39563db9a7a617a1,
+            0x620b01280dba1e97,
+            0xb88c053b41d86dee,
+            0x7a6ccd1134d9cf3c,
+            0x30885ab0ec7a42af,
+            0x5edbc0c05541f27b,
+            0x53bed891e975c891,
+            0xe7d180559b7d15ca,
+            0x6272c4b7f502533a,
+        ]
+    );
+
+    let serialized_ride = serde_json::to_value(&ride).unwrap();
+    for step in serialized_ride["steps"].as_array().unwrap() {
+        if step.get("intent").is_none() {
+            continue;
+        }
+        assert!(step["spec"].get("geometry").is_none());
+        assert!(step["spec"].get("profile").is_none());
+        assert!(step["spec"]["geometry_digest"].as_str().is_some());
+    }
+    assert!(serde_json::to_vec(&serialized_ride).unwrap().len() < 100_000);
+
+    let reloaded_ride = RideFile::from_json_value(serialized_ride).unwrap();
+    let reloaded_digests: Vec<_> = reloaded_ride
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            RideStep::Shape(shape) => Some(shape.spec.resolved_geometry_digest()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reloaded_digests, geometry_digests);
 }
 
 #[test]

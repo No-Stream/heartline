@@ -82,7 +82,7 @@ pub(crate) fn run_park_report(arguments: &[String], json_mode: bool) -> Result<S
         let ride_path = resolve_park_ride_path(0, ride_reference)?;
         let ride_source = fs::read_to_string(&ride_path)
             .map_err(|error| format!("read park coaster ride {}: {error}", ride_path.display()))?;
-        let mut ride: RideFile = serde_json::from_str(&ride_source)
+        let mut ride: RideFile = RideFile::from_json_str(&ride_source)
             .map_err(|error| format!("parse park coaster ride {}: {error}", ride_path.display()))?;
         coaster_name = Some(ride.name.clone());
         ride.station = serde_json::from_value(

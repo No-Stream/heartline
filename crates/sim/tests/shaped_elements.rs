@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::Path;
+
 use theme_park_sim::physics::{
     Circuit, ConstructionTestRunRecorder, PhysicsConfig, PreviewCache, PreviewStatus, TestRun,
     TrackPreview, Train,
@@ -8,11 +11,11 @@ use theme_park_sim::track::ride_file::{
 };
 use theme_park_sim::track::shaped::{
     ElementIntent, ElementSpec, HillSizeHint, ShapedConstructionError, SolveContext, SolveRefusal,
-    TurnSizeHint, solve, solve_confirm, solve_preview,
+    TurnSizeHint, default_hill_strength, solve, solve_confirm, solve_preview,
 };
 use theme_park_sim::track::{
     Bank, CoasterModel, Hand, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind, Slope,
-    TrackState, TrainConfiguration, VerticalCurvature, catalog, hyper_model,
+    TrackState, TrainConfiguration, VerticalCurvature, catalog, coaster_models, hyper_model,
 };
 use theme_park_sim::world::{Surface, World};
 
@@ -135,6 +138,153 @@ fn solve_with_prefix(
     };
     let solved = solve(&intent, &mut context)?;
     Ok((model, prefix, solved))
+}
+
+fn replayed_entry_speed(
+    preview_cache: &mut PreviewCache,
+    construction: &Construction,
+    physics: PhysicsConfig,
+) -> f64 {
+    preview_cache
+        .preview(construction.pieces(), construction.model(), physics)
+        .expect("replayed ride prefix contains its station")
+        .end_speed_mps
+        .expect("replayed ride prefix reaches its open end")
+}
+
+fn content_ride_paths() -> Vec<std::path::PathBuf> {
+    let rides_directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/rides");
+    let mut ride_paths: Vec<_> = fs::read_dir(rides_directory)
+        .expect("content/rides exists")
+        .map(|entry| entry.expect("ride directory entry is readable").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect();
+    ride_paths.sort();
+    ride_paths
+}
+
+#[test]
+fn every_content_ride_shaped_intent_resolves_to_its_saved_geometry_digest() {
+    let world = World::new(
+        512,
+        512,
+        Surface {
+            corners: [8; 4],
+            water: None,
+        },
+    );
+    let physics = PhysicsConfig {
+        lift_speed: 5.0,
+        ..PhysicsConfig::default()
+    };
+
+    for path in content_ride_paths() {
+        let source = fs::read(&path)
+            .unwrap_or_else(|error| panic!("could not read ride {}: {error}", path.display()));
+        let ride = RideFile::from_json_slice(&source)
+            .unwrap_or_else(|error| panic!("could not parse ride {}: {error}", path.display()));
+        let mut model = coaster_models()
+            .into_iter()
+            .find(|model| model.key == ride.model)
+            .unwrap_or_else(|| panic!("unknown model {} in ride {}", ride.model, ride.name));
+        model.train.length_metres *= f64::from(ride.cars_per_train) / f64::from(model.train.cars);
+        model.train.cars = ride.cars_per_train;
+        let start = TrackState {
+            x: ride.station.x * 2,
+            y: ride.station.y * 2,
+            z: ride.station.z / 2,
+            heading: match ride.station.heading {
+                RideHeading::East => theme_park_sim::track::Heading::East,
+                RideHeading::North => theme_park_sim::track::Heading::North,
+                RideHeading::West => theme_park_sim::track::Heading::West,
+                RideHeading::South => theme_park_sim::track::Heading::South,
+            },
+            ..TrackState::origin()
+        };
+        let mut construction = Construction::new(start, model.clone());
+        construction
+            .append(PieceId::Station, &world, &[])
+            .unwrap_or_else(|error| panic!("{} station: {error:?}", ride.name));
+        let mut preview_cache = PreviewCache::default();
+
+        for (step_index, step) in ride.steps.iter().enumerate() {
+            match step {
+                RideStep::Chain(chain) => construction.set_chain(chain.chain),
+                RideStep::Place(place) => {
+                    let piece_id = catalog()
+                        .iter()
+                        .find(|candidate| format!("{:?}", candidate.id) == place.place)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{} step {}: unknown piece {}",
+                                ride.name, step_index, place.place
+                            )
+                        })
+                        .id;
+                    construction
+                        .append(piece_id, &world, &[])
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{} step {} {}: {error:?}",
+                                ride.name, step_index, place.place
+                            )
+                        });
+                    if let Some(launch_speed) = place.launch_speed {
+                        let piece_id = *construction
+                            .piece_ids()
+                            .last()
+                            .expect("appended piece has a construction id");
+                        construction
+                            .set_launch_intensity(piece_id, launch_speed)
+                            .unwrap_or_else(|error| {
+                                panic!("{} step {} launch speed: {error:?}", ride.name, step_index)
+                            });
+                    }
+                }
+                RideStep::Shape(shape) => {
+                    let entry_speed_mps =
+                        replayed_entry_speed(&mut preview_cache, &construction, physics);
+                    let mut context = SolveContext {
+                        entry: construction.end(),
+                        entry_speed_mps,
+                        model: &model,
+                        train: &model.train,
+                        prefix: construction.pieces(),
+                        preview_cache: &mut preview_cache,
+                        physics,
+                    };
+                    let solved = solve(&shape.intent, &mut context).unwrap_or_else(|error| {
+                        panic!(
+                            "{} step {}: could not re-solve shaped intent {:?} at {:.6} m/s: {error:?}",
+                            ride.name, step_index, shape.intent, entry_speed_mps
+                        )
+                    });
+                    let saved_digest = shape.spec.resolved_geometry_digest();
+                    let resolved_digest = solved.spec.resolved_geometry_digest();
+                    assert_eq!(
+                        saved_digest, resolved_digest,
+                        "{} step {} at {:.6} m/s saved shaped geometry digest {:016x} differs from re-solved digest {:016x}; regenerate the ride with tools/design",
+                        ride.name, step_index, entry_speed_mps, saved_digest, resolved_digest
+                    );
+                    construction
+                        .append_resolved(&shape.intent, &shape.spec, &world, &[])
+                        .unwrap_or_else(|error| {
+                            panic!("{} step {} shaped append: {error:?}", ride.name, step_index)
+                        });
+                }
+                RideStep::Close(close) => {
+                    assert!(close.close, "{} step {} close flag", ride.name, step_index);
+                    construction.close().unwrap_or_else(|error| {
+                        panic!("{} step {} close: {error:?}", ride.name, step_index)
+                    });
+                }
+                RideStep::BlockSections(_) => {}
+            }
+        }
+    }
 }
 
 fn simulate_with_preview(
@@ -267,6 +417,17 @@ fn assert_ride_file_shape_round_trip(
         expect: None,
     };
     let serialized = serde_json::to_string(&ride).expect("solved ride file serializes");
+    assert!(
+        serialized.len() < 100_000,
+        "ride file is {} bytes",
+        serialized.len()
+    );
+    let encoded: serde_json::Value =
+        serde_json::from_str(&serialized).expect("solved ride JSON parses");
+    let spec_json = &encoded["steps"][0]["spec"];
+    assert!(spec_json.get("geometry").is_none());
+    assert!(spec_json.get("profile").is_none());
+    assert!(spec_json["geometry_digest"].as_str().is_some());
     let restored: RideFile = serde_json::from_str(&serialized).expect("ride file deserializes");
     let serialized_again = serde_json::to_string(&restored).expect("restored ride file serializes");
     assert_eq!(
@@ -288,6 +449,134 @@ fn assert_ride_file_shape_round_trip(
         serde_json::to_value(spec).expect("resolved spec serializes"),
         "ride-file round trip changed canonical resolved geometry"
     );
+}
+
+#[test]
+fn shaped_ride_specs_store_compact_recipes_and_reject_a_changed_geometry_digest() {
+    let hill_intent = ElementIntent::Hill {
+        feel: HillFeel::StrongFloater,
+        strength_g: -0.85,
+        size: HillSizeHint::Height(32.0),
+    };
+    let turn_intent = ElementIntent::Turn {
+        hand: Hand::Left,
+        size: TurnSizeHint::Auto,
+    };
+
+    for intent in [hill_intent, turn_intent] {
+        let (_, _, solved) = solve_with_prefix(intent.clone(), &hyper_model(), 4, 30.0)
+            .expect("representative shaped element solves");
+        let serialized_spec = serde_json::to_value(&solved.spec).unwrap();
+        assert!(serialized_spec.get("geometry").is_none());
+        assert!(serialized_spec.get("profile").is_none());
+        let digest_string = serialized_spec["geometry_digest"]
+            .as_str()
+            .expect("human-readable geometry digest is a decimal string");
+        let serialized_digest = digest_string.parse::<u64>().unwrap();
+        assert!(serialized_digest > (1_u64 << 53));
+        assert_eq!(serialized_digest, solved.spec.resolved_geometry_digest());
+
+        let compact_json = serde_json::to_vec(&solved.spec).unwrap();
+        assert!(
+            compact_json.len() < 2_000,
+            "spec uses {} bytes",
+            compact_json.len()
+        );
+        let restored: ElementSpec = serde_json::from_slice(&compact_json).unwrap();
+        assert_eq!(
+            restored, solved.spec,
+            "compact recipe changed resolved geometry"
+        );
+
+        let compact_binary = postcard::to_allocvec(&solved.spec).unwrap();
+        assert!(
+            compact_binary.len() < 256,
+            "binary spec uses {} bytes",
+            compact_binary.len()
+        );
+        let restored_binary: ElementSpec = postcard::from_bytes(&compact_binary)
+            .unwrap_or_else(|error| panic!("{intent:?} binary recipe failed: {error}"));
+        assert_eq!(
+            restored_binary, solved.spec,
+            "binary recipe changed resolved geometry"
+        );
+
+        let mut changed_digest = serialized_spec;
+        let changed_digest_value = changed_digest["geometry_digest"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            .wrapping_add(1);
+        changed_digest["geometry_digest"] = serde_json::json!(changed_digest_value.to_string());
+        let error = serde_json::from_value::<ElementSpec>(changed_digest).unwrap_err();
+        assert!(
+            error.to_string().contains("geometry digest mismatch"),
+            "{error}"
+        );
+
+        let mut changed_spec = solved.spec.clone();
+        match &mut changed_spec {
+            ElementSpec::Hill {
+                geometry_digest, ..
+            }
+            | ElementSpec::Turn {
+                geometry_digest, ..
+            } => *geometry_digest = geometry_digest.wrapping_add(1),
+        }
+        let typed_error = changed_spec.verify_geometry_digest().unwrap_err();
+        assert_ne!(typed_error.expected, typed_error.actual);
+    }
+}
+
+#[test]
+fn ride_file_loader_preserves_typed_geometry_digest_mismatches() {
+    let intent = ElementIntent::Turn {
+        hand: Hand::Left,
+        size: TurnSizeHint::Auto,
+    };
+    let (_, _, solved) = solve_with_prefix(intent.clone(), &hyper_model(), 4, 30.0)
+        .expect("representative shaped element solves");
+    let ride = RideFile {
+        format: RideFileFormat::HeartlineRide,
+        version: 1,
+        name: "Typed shaped load".to_owned(),
+        model: "hyper".to_owned(),
+        station: RideStation {
+            x: 0,
+            y: 0,
+            z: 0,
+            heading: RideHeading::East,
+        },
+        cars_per_train: 4,
+        trains: 1,
+        steps: vec![RideStep::Shape(RideShapeStep {
+            intent,
+            spec: solved.spec,
+        })],
+        expect: None,
+    };
+    let mut ride_json = serde_json::to_value(&ride).expect("ride serializes");
+    let changed_digest = ride_json["steps"][0]["spec"]["geometry_digest"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap()
+        .wrapping_add(1);
+    ride_json["steps"][0]["spec"]["geometry_digest"] =
+        serde_json::json!(changed_digest.to_string());
+    let ride_json = serde_json::to_string(&ride_json).expect("ride JSON serializes");
+
+    let error = RideFile::from_json_str(&ride_json).unwrap_err();
+    let theme_park_sim::track::ride_file::RideFileLoadError::ShapedGeometryDigestMismatch {
+        step_index,
+        mismatch,
+    } = error
+    else {
+        panic!("expected typed shaped geometry digest mismatch, got {error}");
+    };
+    assert_eq!(step_index, 0);
+    assert_ne!(mismatch.expected, mismatch.actual);
 }
 
 fn assert_force_limits(
@@ -492,7 +781,7 @@ fn assert_turn_lateral_contract(
 fn solved_hill_specs_pass_the_resolved_construction_guard() {
     let intent = ElementIntent::Hill {
         feel: HillFeel::Floater,
-        strength_g: None,
+        strength_g: -0.5,
         size: HillSizeHint::Auto,
     };
     let (model, _, solved) = solve_with_prefix(intent.clone(), &hyper_model(), 4, 22.0)
@@ -524,7 +813,7 @@ fn hyper_hills_meet_airtime_and_force_limits_for_four_to_eight_cars() {
                 let (model, prefix, solved) = solve_with_prefix(
                     ElementIntent::Hill {
                         feel,
-                        strength_g: Some(requested_target_g),
+                        strength_g: requested_target_g,
                         size: HillSizeHint::Auto,
                     },
                     &base_model,
@@ -658,7 +947,7 @@ fn fixed_height_hill_keeps_requested_size_and_calibrates_airtime() {
     let (model, prefix, solved) = solve_with_prefix(
         ElementIntent::Hill {
             feel: HillFeel::Floater,
-            strength_g: Some(-0.5),
+            strength_g: -0.5,
             size: HillSizeHint::Height(requested_height_m),
         },
         &hyper_model(),
@@ -693,7 +982,7 @@ fn shaped_elements_below_twenty_two_metres_per_second_return_typed_refusals() {
         let hill_result = solve_with_prefix(
             ElementIntent::Hill {
                 feel: HillFeel::Floater,
-                strength_g: Some(-0.5),
+                strength_g: -0.5,
                 size: HillSizeHint::Auto,
             },
             &base_model,
@@ -764,13 +1053,39 @@ fn shaped_elements_refuse_models_train_sizes_and_speeds_outside_supported_scope(
 }
 
 #[test]
+fn shaped_hill_intent_requires_an_explicit_target_g() {
+    let intent =
+        serde_json::from_str::<ElementIntent>(r#"{"hill":{"feel":"StrongFloater","size":"Auto"}}"#);
+
+    assert!(
+        intent.is_err(),
+        "shaped hill intent accepted a missing target g"
+    );
+}
+
+#[test]
+fn shaped_hill_intent_uses_postcard_safe_explicit_strength() {
+    let intent = ElementIntent::Hill {
+        feel: HillFeel::StrongFloater,
+        strength_g: -0.85,
+        size: HillSizeHint::Height(24.0),
+    };
+
+    let encoded = postcard::to_allocvec(&intent).expect("intent serializes to postcard");
+    let decoded = postcard::from_bytes::<ElementIntent>(&encoded)
+        .expect("postcard restores the selected hill intent");
+
+    assert_eq!(decoded, intent);
+}
+
+#[test]
 fn default_hill_targets_match_the_revised_stage_one_intents() {
     let model = hyper_model();
     for (feel, expected_target_g) in [(HillFeel::Floater, -0.5), (HillFeel::StrongFloater, -0.85)] {
         let (_, _, solved) = solve_with_prefix(
             ElementIntent::Hill {
                 feel,
-                strength_g: None,
+                strength_g: default_hill_strength(feel, &model),
                 size: HillSizeHint::Auto,
             },
             &model,
@@ -796,7 +1111,7 @@ fn browse_uses_one_preview_and_confirmation_reuses_it_for_the_secant() {
     let (_, mut preview_cache) = entry_preview(&prefix, &model, 34.0, physics);
     let intent = ElementIntent::Hill {
         feel: HillFeel::StrongFloater,
-        strength_g: Some(-0.85),
+        strength_g: -0.85,
         size: HillSizeHint::Auto,
     };
     let mut context = SolveContext {
@@ -830,7 +1145,7 @@ fn force_margin_caps_strong_floater_in_five_hundredths_of_a_g() {
     let (_, _, solved) = solve_with_prefix(
         ElementIntent::Hill {
             feel: HillFeel::StrongFloater,
-            strength_g: Some(-1.5),
+            strength_g: -1.5,
             size: HillSizeHint::Auto,
         },
         &model,
@@ -861,7 +1176,7 @@ fn shaped_hill_and_turn_solves_are_deterministic_and_save_round_trip() {
     for intent in [
         ElementIntent::Hill {
             feel: HillFeel::Floater,
-            strength_g: Some(-0.5),
+            strength_g: -0.5,
             size: HillSizeHint::Auto,
         },
         ElementIntent::Turn {

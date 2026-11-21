@@ -847,6 +847,67 @@ fn speed_turn_bank_fraction(t: f64) -> f64 {
     }
 }
 
+fn track_sin(shape: &Shape, value: f64) -> f64 {
+    if matches!(shape, Shape::ResolvedBank { .. }) {
+        libm::sin(value)
+    } else {
+        value.sin()
+    }
+}
+
+fn track_cos(shape: &Shape, value: f64) -> f64 {
+    if matches!(shape, Shape::ResolvedBank { .. }) {
+        libm::cos(value)
+    } else {
+        value.cos()
+    }
+}
+
+#[cfg(test)]
+mod shaped_turn_math_tests {
+    use super::{Shape, track_cos, track_sin};
+    use crate::track::ride_file::{RideFile, RideStep};
+    use std::sync::Arc;
+
+    #[test]
+    fn shaped_turn_math_uses_portable_trigonometry_and_preserves_classic_math() {
+        let ride = RideFile::from_json_str(include_str!(
+            "../../../../content/rides/horizon-hawk.ride.json"
+        ))
+        .expect("Horizon Hawk ride file is valid");
+        let first_shaped_spec = ride
+            .steps
+            .iter()
+            .find_map(|step| match step {
+                RideStep::Shape(shape) => Some(shape.spec.clone()),
+                _ => None,
+            })
+            .expect("Horizon Hawk contains a shaped turn");
+        let shaped_turn = Shape::ResolvedBank {
+            spec: Arc::new(first_shaped_spec),
+        };
+        let classic_turn = Shape::SpeedBank { design_speed: 28.0 };
+        let roll_angle = f64::from_bits(0x3fc0_7ea3_1ae8_ab71);
+
+        assert_eq!(
+            track_sin(&shaped_turn, roll_angle).to_bits(),
+            0x3fc0_72f5_bc71_89c4
+        );
+        assert_eq!(
+            track_cos(&shaped_turn, roll_angle).to_bits(),
+            0x3fef_bc13_5335_81bb
+        );
+        assert_eq!(
+            track_sin(&classic_turn, roll_angle).to_bits(),
+            roll_angle.sin().to_bits()
+        );
+        assert_eq!(
+            track_cos(&classic_turn, roll_angle).to_bits(),
+            roll_angle.cos().to_bits()
+        );
+    }
+}
+
 fn build_speed_turn(radius: f64, design_speed: f64) -> SpeedTurnGeometry {
     let integrate = |peak_bank: f64| {
         let step = 1.0 / SPEED_TURN_STEPS as f64;
@@ -905,44 +966,15 @@ pub(crate) fn shaped_speed_turn_geometry(
     assert!(minimum_radius_m.is_finite() && minimum_radius_m > 0.0);
     assert!(fixed_radius_m.is_none_or(|radius| radius.is_finite() && radius > 0.0));
 
-    let integrate_at_bank = |bank_peak: f64| {
-        let curvatures: Vec<_> = (0..SPEED_TURN_STEPS)
-            .map(|index| {
-                let t = (index as f64 + 0.5) / SPEED_TURN_STEPS as f64;
-                let bank = bank_peak * speed_turn_bank_fraction(t);
-                let local_speed = design_speed_mps * (1.0 - speed_loss_fraction * t);
-                let required_curvature = crate::physics::GRAVITY * bank.tan() / local_speed.powi(2);
-                let heart_offset_factor = HEART_HEIGHT_METRES * bank.sin();
-                let discriminant = 1.0 - 4.0 * heart_offset_factor * required_curvature;
-                assert!(
-                    discriminant >= 0.0,
-                    "shaped turn heart-curvature has no real solution"
-                );
-                2.0 * required_curvature / (1.0 + discriminant.sqrt())
-            })
-            .collect();
-        let step = 1.0 / SPEED_TURN_STEPS as f64;
-        let length = std::f64::consts::FRAC_PI_2 / (curvatures.iter().sum::<f64>() * step);
-        let distance = length * step;
-        let (mut x, mut y, mut heading) = (0.0, 0.0, 0.0);
-        let mut knots = Vec::with_capacity(SPEED_TURN_STEPS + 1);
-        knots.push(SpeedTurnKnot { x, y, heading });
-        for curvature in curvatures {
-            let angle = curvature * distance;
-            let midpoint = heading + angle / 2.0;
-            x += distance * midpoint.cos();
-            y += distance * midpoint.sin();
-            heading += angle;
-            knots.push(SpeedTurnKnot { x, y, heading });
-        }
-        ((x + y) / 2.0, length, knots)
-    };
-
     let mut resolved_bank = peak_bank;
-    let (mut raw_radius_m, mut length_m, mut knots) = integrate_at_bank(resolved_bank);
+    let (mut raw_radius_m, mut length_m, mut knots) =
+        integrate_shaped_turn_at_bank(design_speed_mps, resolved_bank, speed_loss_fraction)
+            .expect("shaped turn heart-curvature has a real solution");
     if raw_radius_m < minimum_radius_m {
         resolved_bank = (resolved_bank.tan() * raw_radius_m / minimum_radius_m).atan();
-        (raw_radius_m, length_m, knots) = integrate_at_bank(resolved_bank);
+        (raw_radius_m, length_m, knots) =
+            integrate_shaped_turn_at_bank(design_speed_mps, resolved_bank, speed_loss_fraction)
+                .expect("radius-limited shaped turn has a real solution");
     }
     assert!(
         raw_radius_m >= minimum_radius_m,
@@ -967,6 +999,73 @@ pub(crate) fn shaped_speed_turn_geometry(
         knots,
     };
     (geometry, radius_m, resolved_bank)
+}
+
+pub(crate) fn regenerate_shaped_speed_turn_geometry(
+    design_speed_mps: f64,
+    peak_bank_radians: f64,
+    speed_loss_fraction: f64,
+    radius_m: f64,
+) -> Result<SpeedTurnGeometry, String> {
+    if !design_speed_mps.is_finite()
+        || design_speed_mps <= 0.0
+        || !peak_bank_radians.is_finite()
+        || peak_bank_radians <= 0.0
+        || peak_bank_radians >= std::f64::consts::FRAC_PI_2
+        || !speed_loss_fraction.is_finite()
+        || !(0.0..1.0).contains(&speed_loss_fraction)
+        || !radius_m.is_finite()
+        || radius_m <= 0.0
+    {
+        return Err("shaped turn recipe contains invalid parameters".into());
+    }
+    let (raw_radius_m, length_m, mut knots) =
+        integrate_shaped_turn_at_bank(design_speed_mps, peak_bank_radians, speed_loss_fraction)?;
+    let scale = radius_m / raw_radius_m;
+    for knot in &mut knots {
+        knot.x *= scale;
+        knot.y *= scale;
+    }
+    Ok(SpeedTurnGeometry {
+        peak_bank: peak_bank_radians,
+        length: length_m * scale,
+        knots,
+    })
+}
+
+fn integrate_shaped_turn_at_bank(
+    design_speed_mps: f64,
+    peak_bank_radians: f64,
+    speed_loss_fraction: f64,
+) -> Result<(f64, f64, Vec<SpeedTurnKnot>), String> {
+    let mut curvatures = Vec::with_capacity(SPEED_TURN_STEPS);
+    for index in 0..SPEED_TURN_STEPS {
+        let t = (index as f64 + 0.5) / SPEED_TURN_STEPS as f64;
+        let bank = peak_bank_radians * speed_turn_bank_fraction(t);
+        let local_speed = design_speed_mps * (1.0 - speed_loss_fraction * t);
+        let required_curvature = crate::physics::GRAVITY * bank.tan() / local_speed.powi(2);
+        let heart_offset_factor = HEART_HEIGHT_METRES * bank.sin();
+        let discriminant = 1.0 - 4.0 * heart_offset_factor * required_curvature;
+        if !discriminant.is_finite() || discriminant < 0.0 {
+            return Err("shaped turn heart-curvature has no real solution".into());
+        }
+        curvatures.push(2.0 * required_curvature / (1.0 + discriminant.sqrt()));
+    }
+    let step = 1.0 / SPEED_TURN_STEPS as f64;
+    let length = std::f64::consts::FRAC_PI_2 / (curvatures.iter().sum::<f64>() * step);
+    let distance = length * step;
+    let (mut x, mut y, mut heading) = (0.0, 0.0, 0.0);
+    let mut knots = Vec::with_capacity(SPEED_TURN_STEPS + 1);
+    knots.push(SpeedTurnKnot { x, y, heading });
+    for curvature in curvatures {
+        let angle = curvature * distance;
+        let midpoint = heading + angle / 2.0;
+        x += distance * midpoint.cos();
+        y += distance * midpoint.sin();
+        heading += angle;
+        knots.push(SpeedTurnKnot { x, y, heading });
+    }
+    Ok(((x + y) / 2.0, length, knots))
 }
 
 pub(crate) fn grid_radius_at_least(radius_m: f64, grid_step_m: f64) -> f64 {
@@ -1160,12 +1259,20 @@ impl Piece {
         let h10 = fraction.powi(3) - 2.0 * fraction.powi(2) + fraction;
         let h01 = -2.0 * fraction.powi(3) + 3.0 * fraction.powi(2);
         let h11 = fraction.powi(3) - fraction.powi(2);
-        let x = h00 * x0 + h10 * h * heading0.cos() + h01 * x1 + h11 * h * heading1.cos();
-        let y = h00 * y0 + h10 * h * heading0.sin() + h01 * y1 + h11 * h * heading1.sin();
+        let x = h00 * x0
+            + h10 * h * track_cos(&self.shape, heading0)
+            + h01 * x1
+            + h11 * h * track_cos(&self.shape, heading1);
+        let y = h00 * y0
+            + h10 * h * track_sin(&self.shape, heading0)
+            + h01 * y1
+            + h11 * h * track_sin(&self.shape, heading1);
         let heading = heading0 + (heading1 - heading0) * fraction;
-        let tangent = forward * heading.cos() + left * (hand * heading.sin());
+        let tangent = forward * track_cos(&self.shape, heading)
+            + left * (hand * track_sin(&self.shape, heading));
         let roll = hand * geometry.peak_bank * speed_turn_bank_fraction(t);
-        let up = vertical * roll.cos() + vertical.cross(tangent) * roll.sin();
+        let up = vertical * track_cos(&self.shape, roll)
+            + vertical.cross(tangent) * track_sin(&self.shape, roll);
         let heart = self.entry.position()
             + forward * x
             + left * (hand * y)

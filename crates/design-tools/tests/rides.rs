@@ -95,6 +95,57 @@ fn short_straight_and_hill_ride_runs_through_native_agreement() {
 }
 
 #[test]
+fn ride_report_json_includes_both_physics_element_forces_and_brake_speeds() {
+    let ride_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../content/rides/timber-tumbler.ride.json")
+        .display()
+        .to_string();
+    let output = run_cli(
+        &["ride".into(), ride_path, "report".into(), "--json".into()],
+        "",
+    )
+    .unwrap();
+    let report: serde_json::Value = serde_json::from_str(&output).unwrap();
+    let element_physics = report["elementPhysics"].as_array().unwrap();
+    assert_eq!(
+        element_physics.len(),
+        report["estimates"].as_array().unwrap().len()
+    );
+    assert!(element_physics.iter().any(|element| {
+        element["default_physics"]["sampled_entry_speed_mps"].is_number()
+            && element["construction_test_physics"]["sampled_entry_speed_mps"].is_number()
+            && element["default_physics"]["minimum_vertical_sustained"]["car_index"].is_number()
+            && element["construction_test_physics"]["minimum_vertical_sustained"]["car_index"]
+                .is_number()
+            && element["default_physics"]["maximum_lateral"]["car_index"].is_number()
+            && element["construction_test_physics"]["maximum_lateral"]["car_index"].is_number()
+    }));
+
+    let brake_run = report["brakeRuns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| {
+            run["default_physics"]["sampled_speed_removed_mps"].is_number()
+                && run["construction_test_physics"]["sampled_speed_removed_mps"].is_number()
+        })
+        .expect("a measured brake run is reported under both physics configurations");
+    for configuration in ["default_physics", "construction_test_physics"] {
+        let entry_speed = brake_run[configuration]["sampled_entry_speed_mps"]
+            .as_f64()
+            .unwrap();
+        let exit_speed = brake_run[configuration]["sampled_exit_speed_mps"]
+            .as_f64()
+            .unwrap();
+        let speed_removed = brake_run[configuration]["sampled_speed_removed_mps"]
+            .as_f64()
+            .unwrap();
+        assert!(entry_speed > exit_speed);
+        assert!((speed_removed - (entry_speed - exit_speed)).abs() < 1e-9);
+    }
+}
+
+#[test]
 fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
     let rides = ride_files();
     let ride_names: Vec<_> = rides
@@ -122,12 +173,22 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
 
     assert_eq!(reports.as_array().unwrap().len(), rides.len());
     let mut has_agreement_failures = false;
-    for report in reports.as_array().unwrap() {
+    let mut has_design_margin_opt_in = false;
+    for (report, path) in reports.as_array().unwrap().iter().zip(&rides) {
+        let ride_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        let design_margins_required = ride_json["expect"]["designMargins"] == true;
         assert_eq!(
             report["agreementGate"],
             "enabled; finished-track agreement failures exit nonzero"
         );
         assert!(report["expectationFailures"].as_array().unwrap().is_empty());
+        assert!(
+            report["defaultPhysicsExpectationFailures"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         has_agreement_failures |= !report["agreement"]["passed"].as_bool().unwrap();
         let rated_speed_margins = report["ratedSpeedMargins"].as_array().unwrap();
         if !rated_speed_margins.is_empty() {
@@ -155,7 +216,32 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
                         }
                     },
                 );
+                if design_margins_required {
+                    assert_eq!(margin["status"], "PASS", "{path:?}: {margin}");
+                }
             }
+        }
+        if design_margins_required {
+            has_design_margin_opt_in = true;
+            assert!(
+                report["ratedSpeedMarginFailures"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                report["forceHeadroomFailures"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                report["forceHeadroom"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|result| result["passed"] == true)
+            );
         }
         let agreement = &report["agreement"];
         let rows = agreement["rows"].as_array().unwrap();
@@ -187,6 +273,10 @@ fn native_agreement_check_reports_every_ride_and_attributes_each_failure() {
             assert!(failure["reason"].is_string());
         }
     }
+    assert!(
+        has_design_margin_opt_in,
+        "no ride opted into design margins"
+    );
     assert_eq!(output.exit_code, i32::from(has_agreement_failures));
 }
 
@@ -343,6 +433,126 @@ fn check_prints_observed_values_for_passing_and_failing_expectations() {
             "expectation sustained minimum vertical g expected -1.20 to -0.80, observed "
         ),
         "{text}"
+    );
+}
+
+#[test]
+fn check_fails_when_default_physics_expectations_fail() {
+    let ride = TempRide::new();
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../content/rides/browser-agreement-fast.ride.json"),
+    )
+    .unwrap();
+    let mut ride_json: serde_json::Value = serde_json::from_str(&source).unwrap();
+    ride_json["expect"] = serde_json::json!({"excitement": [0.0, 100.0]});
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
+
+    let baseline = run_cli_with_status(&["check".into(), "--json".into(), ride.path()], "");
+    let baseline_reports: serde_json::Value = serde_json::from_str(&baseline.stdout).unwrap();
+    let construction_excitement = baseline_reports[0]["expectations"][0]["observed"]
+        .as_f64()
+        .unwrap();
+    let default_excitement = baseline_reports[0]["defaultPhysicsExpectations"][0]["observed"]
+        .as_f64()
+        .unwrap();
+    assert_ne!(construction_excitement, default_excitement);
+
+    ride_json["expect"]["excitement"] =
+        serde_json::json!([construction_excitement, construction_excitement]);
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
+
+    let output = run_cli_with_status(&["check".into(), "--json".into(), ride.path()], "");
+
+    assert_eq!(output.exit_code, 1);
+    let reports: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(
+        reports[0]["defaultPhysicsExpectations"][0]["metric"],
+        "excitement"
+    );
+    assert_eq!(reports[0]["defaultPhysicsExpectations"][0]["passed"], false);
+    assert_eq!(reports[0]["expectations"][0]["passed"], true);
+    assert!(
+        reports[0]["expectationFailures"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !reports[0]["defaultPhysicsExpectationFailures"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn check_reports_design_margin_failures_without_gating_legacy_rides() {
+    let ride = TempRide::new();
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../content/rides/browser-agreement-fast.ride.json"),
+    )
+    .unwrap();
+    let ride_json: serde_json::Value = serde_json::from_str(&source).unwrap();
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
+
+    let output = run_cli_with_status(&["check".into(), "--json".into(), ride.path()], "");
+
+    assert_eq!(output.exit_code, 0, "{}", output.stderr);
+    let reports: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(reports[0]["agreement"]["passed"], true);
+    assert!(
+        reports[0]["expectationFailures"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        reports[0]["ratedSpeedMarginFailures"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        reports[0]["forceHeadroomFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| failure.as_str().unwrap().contains("maximum lateral g"))
+    );
+}
+
+#[test]
+fn check_gates_design_margin_failures_when_opted_in() {
+    let ride = TempRide::new();
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../content/rides/browser-agreement-fast.ride.json"),
+    )
+    .unwrap();
+    let mut ride_json: serde_json::Value = serde_json::from_str(&source).unwrap();
+    ride_json["expect"]["designMargins"] = true.into();
+    fs::write(&ride.0, serde_json::to_vec_pretty(&ride_json).unwrap()).unwrap();
+
+    let output = run_cli_with_status(&["check".into(), "--json".into(), ride.path()], "");
+
+    assert_eq!(output.exit_code, 1);
+    assert!(output.stderr.is_empty(), "{}", output.stderr);
+    let reports: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+    assert_eq!(reports[0]["agreement"]["passed"], true);
+    assert!(
+        reports[0]["expectationFailures"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        reports[0]["forceHeadroomFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| failure.as_str().unwrap().contains("maximum lateral g"))
     );
 }
 

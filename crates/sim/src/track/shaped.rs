@@ -1,5 +1,9 @@
+use std::cell::Cell;
+use std::cell::RefCell;
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
+use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::physics::{
@@ -19,6 +23,95 @@ use crate::track::{
     Bank, CoasterModel, Hand, Heading, HillFeel, HorizontalCurvature, Piece, PieceId, PieceKind,
     Shape, Slope, TrackState, TrainConfiguration, VerticalCurvature, catalog,
 };
+
+std::thread_local! {
+    static LEGACY_V4_SAVE_DECODE_ACTIVE: Cell<Option<bool>> = const { Cell::new(None) };
+    static CURRENT_SAVE_DECODE_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static CURRENT_SAVE_DIGEST_MISMATCH: RefCell<Option<GeometryDigestMismatch>> = const { RefCell::new(None) };
+}
+
+struct LegacyV4SaveDecodeGuard;
+
+impl Drop for LegacyV4SaveDecodeGuard {
+    fn drop(&mut self) {
+        LEGACY_V4_SAVE_DECODE_ACTIVE.with(|active| active.set(None));
+    }
+}
+
+pub fn with_legacy_v4_save_decode_context<T>(decode: impl FnOnce() -> T) -> (T, bool) {
+    let entered = LEGACY_V4_SAVE_DECODE_ACTIVE.with(|active| {
+        if active.get().is_some() {
+            false
+        } else {
+            active.set(Some(false));
+            true
+        }
+    });
+    assert!(entered, "legacy v4 save decode contexts cannot be nested");
+    let guard = LegacyV4SaveDecodeGuard;
+    let result = decode();
+    let shaped_element_seen = LEGACY_V4_SAVE_DECODE_ACTIVE.with(|active| {
+        active
+            .get()
+            .expect("legacy v4 save decode context remains active")
+    });
+    drop(guard);
+    (result, shaped_element_seen)
+}
+
+fn reject_shaped_element_in_legacy_v4_save() -> bool {
+    LEGACY_V4_SAVE_DECODE_ACTIVE.with(|active| match active.get() {
+        Some(_) => {
+            active.set(Some(true));
+            true
+        }
+        None => false,
+    })
+}
+
+struct CurrentSaveDecodeGuard;
+
+impl Drop for CurrentSaveDecodeGuard {
+    fn drop(&mut self) {
+        CURRENT_SAVE_DECODE_ACTIVE.with(|active| active.set(false));
+        CURRENT_SAVE_DIGEST_MISMATCH.with(|mismatch| mismatch.borrow_mut().take());
+    }
+}
+
+pub fn with_current_save_decode_context<T>(
+    decode: impl FnOnce() -> T,
+) -> (T, Option<GeometryDigestMismatch>) {
+    let entered = CURRENT_SAVE_DECODE_ACTIVE.with(|active| {
+        if active.get() {
+            false
+        } else {
+            active.set(true);
+            true
+        }
+    });
+    assert!(entered, "current save decode contexts cannot be nested");
+    CURRENT_SAVE_DIGEST_MISMATCH.with(|mismatch| mismatch.borrow_mut().take());
+    let guard = CurrentSaveDecodeGuard;
+    let result = decode();
+    let mismatch = CURRENT_SAVE_DIGEST_MISMATCH.with(|mismatch| *mismatch.borrow());
+    drop(guard);
+    (result, mismatch)
+}
+
+fn capture_current_save_digest_mismatch(mismatch: GeometryDigestMismatch) -> bool {
+    CURRENT_SAVE_DECODE_ACTIVE.with(|active| {
+        if !active.get() {
+            return false;
+        }
+        CURRENT_SAVE_DIGEST_MISMATCH.with(|recorded| {
+            let mut recorded = recorded.borrow_mut();
+            if recorded.is_none() {
+                *recorded = Some(mismatch);
+            }
+        });
+        true
+    })
+}
 use crate::world::World;
 
 mod precision;
@@ -55,11 +148,11 @@ pub enum TurnSizeHint {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub enum ElementIntent {
     Hill {
         feel: HillFeel,
-        strength_g: Option<f64>,
+        strength_g: f64,
         size: HillSizeHint,
     },
     Turn {
@@ -73,20 +166,33 @@ pub enum ElementSpec {
     Hill {
         design_speed_mps: f64,
         cars: u8,
+        train_length_metres: f64,
         target_g: f64,
         delivered_g: f64,
         height_m: f64,
         span_m: f64,
+        target_height_m: f64,
+        pull_g: f64,
+        crest_g: f64,
+        flank_angle_degrees: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        geometry_digest: u64,
         profile: ResolvedHillProfile,
     },
     Turn {
         design_speed_mps: f64,
         cars: u8,
+        train_length_metres: f64,
         hand: Hand,
         vertical_g: f64,
         lateral_g: f64,
         radius_m: f64,
         bank_degrees: f64,
+        geometry_peak_bank_radians: f64,
+        geometry_speed_loss_fraction: f64,
+        geometry_radius_m: f64,
+        geometry_digest: u64,
         geometry: ResolvedTurnGeometry,
     },
 }
@@ -101,7 +207,20 @@ enum HumanReadableElementSpec {
         delivered_g: f64,
         height_m: f64,
         span_m: f64,
-        profile: ResolvedHillProfile,
+        #[serde(with = "recipe_f64")]
+        train_length_metres: f64,
+        #[serde(with = "recipe_f64")]
+        target_height_m: f64,
+        #[serde(with = "recipe_f64")]
+        pull_g: f64,
+        #[serde(with = "recipe_f64")]
+        crest_g: f64,
+        #[serde(with = "recipe_f64")]
+        flank_angle_degrees: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        #[serde(with = "digest_u64")]
+        geometry_digest: u64,
     },
     Turn {
         design_speed_mps: f64,
@@ -111,8 +230,71 @@ enum HumanReadableElementSpec {
         lateral_g: f64,
         radius_m: f64,
         bank_degrees: f64,
-        geometry: ResolvedTurnGeometry,
+        #[serde(with = "recipe_f64")]
+        train_length_metres: f64,
+        #[serde(with = "recipe_f64")]
+        geometry_peak_bank_radians: f64,
+        #[serde(with = "recipe_f64")]
+        geometry_speed_loss_fraction: f64,
+        #[serde(with = "recipe_f64")]
+        geometry_radius_m: f64,
+        #[serde(with = "digest_u64")]
+        geometry_digest: u64,
     },
+}
+
+mod recipe_f64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<f64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let encoded = String::deserialize(deserializer)?;
+        let value = encoded
+            .parse::<f64>()
+            .map_err(<D::Error as serde::de::Error>::custom)?;
+        if !value.is_finite() {
+            return Err(<D::Error as serde::de::Error>::custom(
+                "shaped recipe parameter must be finite",
+            ));
+        }
+        Ok(value)
+    }
+}
+
+mod digest_u64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let encoded = String::deserialize(deserializer)?;
+        let value = encoded
+            .parse::<u64>()
+            .map_err(<D::Error as serde::de::Error>::custom)?;
+        if value.to_string() != encoded {
+            return Err(<D::Error as serde::de::Error>::custom(
+                "geometry digest must be a canonical decimal u64 string",
+            ));
+        }
+        Ok(value)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -124,7 +306,14 @@ enum BinaryElementSpec {
         delivered_g: f64,
         height_m: f64,
         span_m: f64,
-        profile: ResolvedHillProfile,
+        train_length_metres: f64,
+        target_height_m: f64,
+        pull_g: f64,
+        crest_g: f64,
+        flank_angle_degrees: f64,
+        profile_grid_half_tiles: u16,
+        diagonal: bool,
+        geometry_digest: u64,
     },
     Turn {
         design_speed_mps: f64,
@@ -134,8 +323,144 @@ enum BinaryElementSpec {
         lateral_g: f64,
         radius_m: f64,
         bank_degrees: f64,
-        geometry: ResolvedTurnGeometry,
+        train_length_metres: f64,
+        geometry_peak_bank_radians: f64,
+        geometry_speed_loss_fraction: f64,
+        geometry_radius_m: f64,
+        geometry_digest: u64,
     },
+}
+
+fn resolve_human_readable_spec(
+    wire: HumanReadableElementSpec,
+) -> Result<ElementSpec, ElementSpecLoadError> {
+    let mut spec = match wire {
+        HumanReadableElementSpec::Hill {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            target_g,
+            delivered_g,
+            height_m,
+            span_m,
+            target_height_m,
+            pull_g,
+            crest_g,
+            flank_angle_degrees,
+            profile_grid_half_tiles,
+            diagonal,
+            geometry_digest,
+        } => ElementSpec::Hill {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            target_g,
+            delivered_g,
+            height_m,
+            span_m,
+            target_height_m,
+            pull_g,
+            crest_g,
+            flank_angle_degrees,
+            profile_grid_half_tiles,
+            diagonal,
+            geometry_digest,
+            profile: regenerate_hill_profile(
+                cars,
+                design_speed_mps,
+                train_length_metres,
+                pull_g,
+                crest_g,
+                flank_angle_degrees,
+                profile_grid_half_tiles,
+            )
+            .map_err(ElementSpecLoadError::InvalidRecipe)?,
+        },
+        HumanReadableElementSpec::Turn {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            hand,
+            vertical_g,
+            lateral_g,
+            radius_m,
+            bank_degrees,
+            geometry_peak_bank_radians,
+            geometry_speed_loss_fraction,
+            geometry_radius_m,
+            geometry_digest,
+        } => ElementSpec::Turn {
+            design_speed_mps,
+            cars,
+            train_length_metres,
+            hand,
+            vertical_g,
+            lateral_g,
+            radius_m,
+            bank_degrees,
+            geometry_peak_bank_radians,
+            geometry_speed_loss_fraction,
+            geometry_radius_m,
+            geometry_digest,
+            geometry: super::curves::regenerate_shaped_speed_turn_geometry(
+                round_element_value(design_speed_mps),
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+            )
+            .map_err(ElementSpecLoadError::InvalidRecipe)?,
+        },
+    };
+    canonicalize_element_spec(&mut spec);
+    spec.verify_geometry_digest()
+        .map_err(ElementSpecLoadError::GeometryDigestMismatch)?;
+    Ok(spec)
+}
+
+fn regenerate_hill_profile(
+    cars: u8,
+    design_speed_mps: f64,
+    train_length_metres: f64,
+    pull_g: f64,
+    crest_g: f64,
+    flank_angle_degrees: f64,
+    profile_grid_half_tiles: u16,
+) -> Result<ResolvedHillProfile, String> {
+    let entry_speed_mps = round_element_value(design_speed_mps);
+    if cars == 0
+        || !entry_speed_mps.is_finite()
+        || entry_speed_mps <= 0.0
+        || !train_length_metres.is_finite()
+        || train_length_metres <= 0.0
+        || !pull_g.is_finite()
+        || !crest_g.is_finite()
+        || !flank_angle_degrees.is_finite()
+        || !(0.0..90.0).contains(&flank_angle_degrees)
+        || profile_grid_half_tiles == 0
+    {
+        return Err("shaped hill recipe contains invalid parameters".into());
+    }
+    let profile_spec = OfflineHillSpec {
+        entry_speed_mps,
+        pull_g,
+        crest_g,
+        flank_angle_radians: flank_angle_degrees.to_radians(),
+        taper_angle_radians: Some(SHAPED_HILL_TAPER_ANGLE),
+    };
+    let train = OfflineTrain::Coaster {
+        cars,
+        length_metres: train_length_metres,
+    };
+    let (mut profile, _, _) = solve_shaped_hill_offline_profile(profile_spec, train, PROFILE_STEPS)
+        .map_err(|error| format!("could not regenerate shaped hill geometry: {error:?}"))?;
+    let snapped_span_metres = f64::from(profile_grid_half_tiles) * 2.0;
+    let connector_insert_metres = snapped_span_metres - profile.endpoint()[0];
+    if !connector_insert_metres.is_finite() || connector_insert_metres < 0.0 {
+        return Err("shaped hill recipe has an invalid grid span".into());
+    }
+    profile.append_level_straight(connector_insert_metres);
+    profile.round_to_nine_decimal_places();
+    Ok(profile)
 }
 
 impl Serialize for ElementSpec {
@@ -143,6 +468,8 @@ impl Serialize for ElementSpec {
     where
         S: Serializer,
     {
+        self.verify_geometry_digest()
+            .map_err(serde::ser::Error::custom)?;
         let mut canonicalized = self.clone();
         if serializer.is_human_readable() {
             canonicalize_element_spec(&mut canonicalized);
@@ -153,38 +480,62 @@ impl Serialize for ElementSpec {
                 Self::Hill {
                     design_speed_mps,
                     cars,
+                    train_length_metres,
                     target_g,
                     delivered_g,
                     height_m,
                     span_m,
-                    profile,
+                    target_height_m,
+                    pull_g,
+                    crest_g,
+                    flank_angle_degrees,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    geometry_digest,
+                    ..
                 } => HumanReadableElementSpec::Hill {
                     design_speed_mps: *design_speed_mps,
                     cars: *cars,
+                    train_length_metres: *train_length_metres,
                     target_g: *target_g,
                     delivered_g: *delivered_g,
                     height_m: *height_m,
                     span_m: *span_m,
-                    profile: profile.clone(),
+                    target_height_m: *target_height_m,
+                    pull_g: *pull_g,
+                    crest_g: *crest_g,
+                    flank_angle_degrees: *flank_angle_degrees,
+                    profile_grid_half_tiles: *profile_grid_half_tiles,
+                    diagonal: *diagonal,
+                    geometry_digest: *geometry_digest,
                 },
                 Self::Turn {
                     design_speed_mps,
                     cars,
+                    train_length_metres,
                     hand,
                     vertical_g,
                     lateral_g,
                     radius_m,
                     bank_degrees,
-                    geometry,
+                    geometry_peak_bank_radians,
+                    geometry_speed_loss_fraction,
+                    geometry_radius_m,
+                    geometry_digest,
+                    ..
                 } => HumanReadableElementSpec::Turn {
                     design_speed_mps: *design_speed_mps,
                     cars: *cars,
+                    train_length_metres: *train_length_metres,
                     hand: *hand,
                     vertical_g: *vertical_g,
                     lateral_g: *lateral_g,
                     radius_m: *radius_m,
                     bank_degrees: *bank_degrees,
-                    geometry: geometry.clone(),
+                    geometry_peak_bank_radians: *geometry_peak_bank_radians,
+                    geometry_speed_loss_fraction: *geometry_speed_loss_fraction,
+                    geometry_radius_m: *geometry_radius_m,
+                    geometry_digest: *geometry_digest,
                 },
             };
             spec.serialize(serializer)
@@ -193,38 +544,62 @@ impl Serialize for ElementSpec {
                 Self::Hill {
                     design_speed_mps,
                     cars,
+                    train_length_metres,
                     target_g,
                     delivered_g,
                     height_m,
                     span_m,
-                    profile,
+                    target_height_m,
+                    pull_g,
+                    crest_g,
+                    flank_angle_degrees,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    geometry_digest,
+                    ..
                 } => BinaryElementSpec::Hill {
                     design_speed_mps: *design_speed_mps,
                     cars: *cars,
+                    train_length_metres: *train_length_metres,
                     target_g: *target_g,
                     delivered_g: *delivered_g,
                     height_m: *height_m,
                     span_m: *span_m,
-                    profile: profile.clone(),
+                    target_height_m: *target_height_m,
+                    pull_g: *pull_g,
+                    crest_g: *crest_g,
+                    flank_angle_degrees: *flank_angle_degrees,
+                    profile_grid_half_tiles: *profile_grid_half_tiles,
+                    diagonal: *diagonal,
+                    geometry_digest: *geometry_digest,
                 },
                 Self::Turn {
                     design_speed_mps,
                     cars,
+                    train_length_metres,
                     hand,
                     vertical_g,
                     lateral_g,
                     radius_m,
                     bank_degrees,
-                    geometry,
+                    geometry_peak_bank_radians,
+                    geometry_speed_loss_fraction,
+                    geometry_radius_m,
+                    geometry_digest,
+                    ..
                 } => BinaryElementSpec::Turn {
                     design_speed_mps: *design_speed_mps,
                     cars: *cars,
+                    train_length_metres: *train_length_metres,
                     hand: *hand,
                     vertical_g: *vertical_g,
                     lateral_g: *lateral_g,
                     radius_m: *radius_m,
                     bank_degrees: *bank_degrees,
-                    geometry: geometry.clone(),
+                    geometry_peak_bank_radians: *geometry_peak_bank_radians,
+                    geometry_speed_loss_fraction: *geometry_speed_loss_fraction,
+                    geometry_radius_m: *geometry_radius_m,
+                    geometry_digest: *geometry_digest,
                 },
             };
             spec.serialize(serializer)
@@ -238,99 +613,166 @@ impl<'de> Deserialize<'de> for ElementSpec {
         D: Deserializer<'de>,
     {
         if deserializer.is_human_readable() {
-            let mut spec = match HumanReadableElementSpec::deserialize(deserializer)? {
-                HumanReadableElementSpec::Hill {
-                    design_speed_mps,
-                    cars,
-                    target_g,
-                    delivered_g,
-                    height_m,
-                    span_m,
-                    profile,
-                } => Self::Hill {
-                    design_speed_mps,
-                    cars,
-                    target_g,
-                    delivered_g,
-                    height_m,
-                    span_m,
-                    profile,
-                },
-                HumanReadableElementSpec::Turn {
-                    design_speed_mps,
-                    cars,
-                    hand,
-                    vertical_g,
-                    lateral_g,
-                    radius_m,
-                    bank_degrees,
-                    geometry,
-                } => Self::Turn {
-                    design_speed_mps,
-                    cars,
-                    hand,
-                    vertical_g,
-                    lateral_g,
-                    radius_m,
-                    bank_degrees,
-                    geometry,
-                },
-            };
-            canonicalize_element_spec(&mut spec);
-            Ok(spec)
+            let wire = HumanReadableElementSpec::deserialize(deserializer)?;
+            resolve_human_readable_spec(wire).map_err(D::Error::custom)
         } else {
-            Ok(match BinaryElementSpec::deserialize(deserializer)? {
+            if reject_shaped_element_in_legacy_v4_save() {
+                return Err(D::Error::custom(
+                    "version 4 saves with shaped coaster elements are unsupported",
+                ));
+            }
+            let mut spec = match BinaryElementSpec::deserialize(deserializer)? {
                 BinaryElementSpec::Hill {
                     design_speed_mps,
                     cars,
+                    train_length_metres,
                     target_g,
                     delivered_g,
                     height_m,
                     span_m,
-                    profile,
+                    target_height_m,
+                    pull_g,
+                    crest_g,
+                    flank_angle_degrees,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    geometry_digest,
                 } => Self::Hill {
                     design_speed_mps,
                     cars,
+                    train_length_metres,
                     target_g,
                     delivered_g,
                     height_m,
                     span_m,
-                    profile,
+                    target_height_m,
+                    pull_g,
+                    crest_g,
+                    flank_angle_degrees,
+                    profile_grid_half_tiles,
+                    diagonal,
+                    geometry_digest,
+                    profile: regenerate_hill_profile(
+                        cars,
+                        design_speed_mps,
+                        train_length_metres,
+                        pull_g,
+                        crest_g,
+                        flank_angle_degrees,
+                        profile_grid_half_tiles,
+                    )
+                    .map_err(D::Error::custom)?,
                 },
                 BinaryElementSpec::Turn {
                     design_speed_mps,
                     cars,
+                    train_length_metres,
                     hand,
                     vertical_g,
                     lateral_g,
                     radius_m,
                     bank_degrees,
-                    geometry,
+                    geometry_peak_bank_radians,
+                    geometry_speed_loss_fraction,
+                    geometry_radius_m,
+                    geometry_digest,
                 } => Self::Turn {
                     design_speed_mps,
                     cars,
+                    train_length_metres,
                     hand,
                     vertical_g,
                     lateral_g,
                     radius_m,
                     bank_degrees,
-                    geometry,
+                    geometry_peak_bank_radians,
+                    geometry_speed_loss_fraction,
+                    geometry_radius_m,
+                    geometry_digest,
+                    geometry: super::curves::regenerate_shaped_speed_turn_geometry(
+                        round_element_value(design_speed_mps),
+                        geometry_peak_bank_radians,
+                        geometry_speed_loss_fraction,
+                        geometry_radius_m,
+                    )
+                    .map_err(D::Error::custom)?,
                 },
-            })
+            };
+            canonicalize_element_spec(&mut spec);
+            if let Err(mismatch) = spec.verify_geometry_digest() {
+                if !capture_current_save_digest_mismatch(mismatch) {
+                    return Err(D::Error::custom(mismatch));
+                }
+            }
+            Ok(spec)
         }
     }
 }
 
 impl ElementSpec {
+    pub(crate) fn from_human_readable_json(
+        value: serde_json::Value,
+    ) -> Result<Self, ElementSpecLoadError> {
+        let wire = serde_json::from_value(value)
+            .map_err(|error| ElementSpecLoadError::InvalidRecipe(error.to_string()))?;
+        resolve_human_readable_spec(wire)
+    }
+
+    pub fn resolved_geometry_digest(&self) -> u64 {
+        let mut hash = StateHasher::new();
+        hash.write_tag(b"shaped-geometry-v1");
+        match self {
+            Self::Hill { profile, .. } => profile.hash_into(&mut hash),
+            Self::Turn { geometry, .. } => geometry.hash_into(&mut hash),
+        }
+        hash.finish()
+    }
+
+    pub fn verify_geometry_digest(&self) -> Result<(), GeometryDigestMismatch> {
+        let (expected, actual) = match self {
+            Self::Hill {
+                geometry_digest, ..
+            }
+            | Self::Turn {
+                geometry_digest, ..
+            } => (*geometry_digest, self.resolved_geometry_digest()),
+        };
+        if expected == actual {
+            Ok(())
+        } else {
+            Err(GeometryDigestMismatch { expected, actual })
+        }
+    }
+
+    pub(crate) fn set_resolved_geometry_digest(&mut self) {
+        let digest = self.resolved_geometry_digest();
+        match self {
+            Self::Hill {
+                geometry_digest, ..
+            }
+            | Self::Turn {
+                geometry_digest, ..
+            } => *geometry_digest = digest,
+        }
+    }
+
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         match self {
             Self::Hill {
                 design_speed_mps,
                 cars,
+                train_length_metres: _,
                 target_g,
                 delivered_g,
                 height_m,
                 span_m,
+                target_height_m: _,
+                pull_g: _,
+                crest_g: _,
+                flank_angle_degrees: _,
+                profile_grid_half_tiles: _,
+                diagonal: _,
+                geometry_digest: _,
                 profile,
             } => {
                 hash.write_u8(0);
@@ -345,11 +787,16 @@ impl ElementSpec {
             Self::Turn {
                 design_speed_mps,
                 cars,
+                train_length_metres: _,
                 hand,
                 vertical_g,
                 lateral_g,
                 radius_m,
                 bank_degrees,
+                geometry_peak_bank_radians: _,
+                geometry_speed_loss_fraction: _,
+                geometry_radius_m: _,
+                geometry_digest: _,
                 geometry,
             } => {
                 hash.write_u8(1);
@@ -379,6 +826,48 @@ impl ElementSpec {
     pub fn cars(&self) -> u8 {
         match self {
             Self::Hill { cars, .. } | Self::Turn { cars, .. } => *cars,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GeometryDigestMismatch {
+    pub expected: u64,
+    pub actual: u64,
+}
+
+impl Display for GeometryDigestMismatch {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "resolved geometry digest mismatch: stored {:016x}, regenerated {:016x}",
+            self.expected, self.actual
+        )
+    }
+}
+
+impl std::error::Error for GeometryDigestMismatch {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ElementSpecLoadError {
+    InvalidRecipe(String),
+    GeometryDigestMismatch(GeometryDigestMismatch),
+}
+
+impl Display for ElementSpecLoadError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidRecipe(message) => formatter.write_str(message),
+            Self::GeometryDigestMismatch(mismatch) => Display::fmt(mismatch, formatter),
+        }
+    }
+}
+
+impl std::error::Error for ElementSpecLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidRecipe(_) => None,
+            Self::GeometryDigestMismatch(mismatch) => Some(mismatch),
         }
     }
 }
@@ -437,6 +926,10 @@ pub enum SolveRefusal {
     UnsupportedConnector,
     UnsupportedSizeOverride,
     InvalidGeometry,
+    GeometryDigestMismatch {
+        expected: u64,
+        actual: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -478,6 +971,7 @@ pub enum ShapedConstructionError {
     Solve(SolveRefusal),
     Construction(ConstructionError),
     InvalidResolvedSpec,
+    GeometryDigestMismatch(GeometryDigestMismatch),
 }
 
 pub fn solve(
@@ -630,7 +1124,7 @@ fn preview_candidate_is_confirmed(
 
 fn solve_hill(
     feel: HillFeel,
-    strength_g: Option<f64>,
+    strength_g: f64,
     size: HillSizeHint,
     maximum_previews: u8,
     provisional: bool,
@@ -650,7 +1144,7 @@ fn solve_hill(
         HillSizeHint::Height(height_m) => {
             if !height_m.is_finite() || height_m <= 0.0 {
                 return Err(SolveRefusal::InfeasibleTarget {
-                    target_g: strength_g.unwrap_or(0.0),
+                    target_g: strength_g,
                     available_headroom_g: 0.0,
                 });
             }
@@ -676,7 +1170,7 @@ fn solve_hill(
 
 fn solve_hill_analytically(
     feel: HillFeel,
-    strength_g: Option<f64>,
+    strength_g: f64,
     fixed_height_m: Option<f64>,
     maximum_previews: u8,
     provisional: bool,
@@ -689,7 +1183,7 @@ fn solve_hill_analytically(
     ) {
         return Err(SolveRefusal::InvalidGeometry);
     }
-    let requested_target_g = strength_g.unwrap_or(default_hill_strength(feel, context.model));
+    let requested_target_g = strength_g;
     if !requested_target_g.is_finite() {
         return Err(SolveRefusal::InfeasibleTarget {
             target_g: requested_target_g,
@@ -751,24 +1245,41 @@ fn solve_hill_analytically(
     }
 
     while preview_count < maximum_previews {
-        let (profile, height_m, span_m) = hill_profile_for_height(
-            context,
-            design_speed_mps,
-            crest_g,
-            fixed_height_m.unwrap_or_else(|| {
-                design_speed_mps.powi(2) / (2.0 * GRAVITY) * HILL_HEIGHT_ENERGY_FRACTION
-            }),
-        )?;
+        // Each crest correction comes from a measured train preview, whose last bits differ between
+        // native and WASM builds; the hill geometry is sensitive to those bits. Rounding the crest
+        // to the element-spec grid, as the design speed is, keeps both builds solving the same hill.
+        crest_g = round_element_value(crest_g);
+        let target_height_m = fixed_height_m.unwrap_or_else(|| {
+            design_speed_mps.powi(2) / (2.0 * GRAVITY) * HILL_HEIGHT_ENERGY_FRACTION
+        });
+        let (profile, height_m, span_m, flank_angle_degrees) =
+            hill_profile_for_height(context, design_speed_mps, crest_g, target_height_m)?;
+        let diagonal = context.entry.heading.index() % 2 != 0;
+        let diagonal_scale = if diagonal {
+            std::f64::consts::SQRT_2
+        } else {
+            1.0
+        };
+        let profile_grid_half_tiles = (span_m / diagonal_scale / 2.0).round() as u16;
         let mut candidate_spec = ElementSpec::Hill {
             design_speed_mps,
             cars: context.train.cars,
+            train_length_metres: context.train.length_metres,
             target_g,
             delivered_g: target_g,
             height_m,
             span_m,
+            target_height_m,
+            pull_g: SHAPED_HILL_PULL_G,
+            crest_g,
+            flank_angle_degrees,
+            profile_grid_half_tiles,
+            diagonal,
+            geometry_digest: 0,
             profile,
         };
         canonicalize_element_spec(&mut candidate_spec);
+        candidate_spec.set_resolved_geometry_digest();
         let candidate = piece_from_spec(context.entry, &candidate_spec)?;
         let preview = calibrate_piece(context, &candidate)?;
         preview_count += 1;
@@ -790,25 +1301,15 @@ fn solve_hill_analytically(
 
         if provisional {
             let mut preview_spec = candidate_spec;
-            let ElementSpec::Hill {
-                height_m,
-                span_m,
-                profile,
+            if let ElementSpec::Hill {
+                delivered_g: stored_delivery_g,
                 ..
-            } = preview_spec
-            else {
-                unreachable!();
-            };
-            preview_spec = ElementSpec::Hill {
-                design_speed_mps,
-                cars: context.train.cars,
-                target_g,
-                delivered_g: round_element_value(delivered_g),
-                height_m,
-                span_m,
-                profile,
+            } = &mut preview_spec
+            {
+                *stored_delivery_g = round_element_value(delivered_g);
             };
             canonicalize_element_spec(&mut preview_spec);
+            preview_spec.set_resolved_geometry_digest();
             let piece = piece_from_spec(context.entry, &preview_spec)?;
             let cap_note = ((requested_target_g - target_g).abs() > 1e-9).then_some(FeelCapNote {
                 feel,
@@ -855,25 +1356,15 @@ fn solve_hill_analytically(
 
         if (delivered_g - target_g).abs() <= MAXIMUM_HILL_INTENT_ERROR_G {
             let mut final_spec = candidate_spec;
-            let ElementSpec::Hill {
-                height_m,
-                span_m,
-                profile,
+            if let ElementSpec::Hill {
+                delivered_g: stored_delivery_g,
                 ..
-            } = final_spec
-            else {
-                unreachable!();
-            };
-            final_spec = ElementSpec::Hill {
-                design_speed_mps,
-                cars: context.train.cars,
-                target_g,
-                delivered_g: round_element_value(delivered_g),
-                height_m,
-                span_m,
-                profile,
-            };
+            } = &mut final_spec
+            {
+                *stored_delivery_g = round_element_value(delivered_g);
+            }
             canonicalize_element_spec(&mut final_spec);
+            final_spec.set_resolved_geometry_digest();
             let piece = piece_from_spec(context.entry, &final_spec)?;
             let cap_note = ((requested_target_g - target_g).abs() > 1e-9).then_some(FeelCapNote {
                 feel,
@@ -913,7 +1404,7 @@ fn solve_hill_analytically(
     })
 }
 
-fn default_hill_strength(feel: HillFeel, model: &CoasterModel) -> f64 {
+pub fn default_hill_strength(feel: HillFeel, model: &CoasterModel) -> f64 {
     let rules = model.shaped_element_rules();
     match feel {
         HillFeel::Floater => rules.default_floater_g,
@@ -931,7 +1422,7 @@ fn hill_profile_for_height(
     design_speed_mps: f64,
     crest_g: f64,
     target_height_m: f64,
-) -> Result<(SolvedProfile, f64, f64), SolveRefusal> {
+) -> Result<(SolvedProfile, f64, f64, f64), SolveRefusal> {
     let train = OfflineTrain::Coaster {
         cars: context.train.cars,
         length_metres: context.train.length_metres,
@@ -1007,7 +1498,7 @@ fn hill_profile_for_height(
         .iter()
         .map(|point| point[2])
         .fold(f64::NEG_INFINITY, f64::max);
-    Ok((profile, height_m, span_m))
+    Ok((profile, height_m, span_m, flank_degrees))
 }
 /// Hill height and span are stored at six decimals while the profile keeps nine, so a stored value matches
 /// when it lies within half a six-decimal step of the profile value, plus slack for JSON parsing.
@@ -1143,7 +1634,7 @@ fn solve_turn(
     while preview_count < maximum_previews {
         let speed_loss_fraction =
             estimated_turn_speed_loss_fraction(context, design_speed_mps, peak_bank);
-        let (geometry, radius_m, resolved_bank) = super::curves::shaped_speed_turn_geometry(
+        let (_, radius_m, resolved_bank) = super::curves::shaped_speed_turn_geometry(
             design_speed_mps,
             peak_bank,
             speed_loss_fraction,
@@ -1165,17 +1656,33 @@ fn solve_turn(
                 available_headroom_g: rules.maximum_bank_degrees - bank_degrees,
             });
         }
+        let geometry_peak_bank_radians = peak_bank;
+        let geometry_speed_loss_fraction = speed_loss_fraction;
+        let geometry_radius_m = radius_m;
+        let geometry = super::curves::regenerate_shaped_speed_turn_geometry(
+            design_speed_mps,
+            geometry_peak_bank_radians,
+            geometry_speed_loss_fraction,
+            geometry_radius_m,
+        )
+        .map_err(|_| SolveRefusal::InvalidGeometry)?;
         let mut candidate_spec = ElementSpec::Turn {
             design_speed_mps,
             cars: context.train.cars,
+            train_length_metres: context.train.length_metres,
             hand,
             vertical_g: peak_bank.cos().recip(),
             lateral_g: 0.0,
             radius_m,
             bank_degrees,
+            geometry_peak_bank_radians,
+            geometry_speed_loss_fraction,
+            geometry_radius_m,
+            geometry_digest: 0,
             geometry,
         };
         canonicalize_element_spec(&mut candidate_spec);
+        candidate_spec.set_resolved_geometry_digest();
         let piece = piece_from_spec(context.entry, &candidate_spec)?;
         let preview = calibrate_piece(context, &piece)?;
         preview_count += 1;
@@ -1197,20 +1704,34 @@ fn solve_turn(
                 .iter()
                 .map(|car| car.peaks.maximum_vertical_g)
                 .fold(f64::NEG_INFINITY, f64::max);
+            let ElementSpec::Turn {
+                train_length_metres,
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+                geometry,
+                ..
+            } = candidate_spec
+            else {
+                unreachable!("turn solve produced a hill candidate")
+            };
             let mut spec = ElementSpec::Turn {
                 design_speed_mps,
                 cars: context.train.cars,
+                train_length_metres,
                 hand,
                 vertical_g,
                 lateral_g,
                 radius_m,
                 bank_degrees,
-                geometry: match candidate_spec {
-                    ElementSpec::Turn { geometry, .. } => geometry,
-                    ElementSpec::Hill { .. } => unreachable!(),
-                },
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+                geometry_digest: 0,
+                geometry,
             };
             canonicalize_element_spec(&mut spec);
+            spec.set_resolved_geometry_digest();
             return Ok(SolvedElement {
                 piece: piece_from_spec(context.entry, &spec)?,
                 spec,
@@ -1231,20 +1752,34 @@ fn solve_turn(
                 .iter()
                 .map(|car| car.peaks.maximum_vertical_g)
                 .fold(f64::NEG_INFINITY, f64::max);
+            let ElementSpec::Turn {
+                train_length_metres,
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+                geometry,
+                ..
+            } = candidate_spec
+            else {
+                unreachable!("turn solve produced a hill candidate")
+            };
             let mut spec = ElementSpec::Turn {
                 design_speed_mps,
                 cars: context.train.cars,
+                train_length_metres,
                 hand,
                 vertical_g,
                 lateral_g,
                 radius_m,
                 bank_degrees,
-                geometry: match candidate_spec {
-                    ElementSpec::Turn { geometry, .. } => geometry,
-                    ElementSpec::Hill { .. } => unreachable!(),
-                },
+                geometry_peak_bank_radians,
+                geometry_speed_loss_fraction,
+                geometry_radius_m,
+                geometry_digest: 0,
+                geometry,
             };
             canonicalize_element_spec(&mut spec);
+            spec.set_resolved_geometry_digest();
             return Ok(SolvedElement {
                 piece: piece_from_spec(context.entry, &spec)?,
                 spec,
@@ -1292,6 +1827,11 @@ pub(super) fn piece_from_spec(
     entry: TrackState,
     spec: &ElementSpec,
 ) -> Result<Piece, SolveRefusal> {
+    spec.verify_geometry_digest()
+        .map_err(|mismatch| SolveRefusal::GeometryDigestMismatch {
+            expected: mismatch.expected,
+            actual: mismatch.actual,
+        })?;
     let id = match spec {
         ElementSpec::Hill { .. } => PieceId::ShapedHill,
         ElementSpec::Turn { hand, .. } => match hand {
@@ -1594,6 +2134,11 @@ impl crate::track::construction::Construction {
         if spec.cars() != self.model().train.cars {
             return Err(SolveRefusal::InvalidContext);
         }
+        spec.verify_geometry_digest()
+            .map_err(|mismatch| SolveRefusal::GeometryDigestMismatch {
+                expected: mismatch.expected,
+                actual: mismatch.actual,
+            })?;
         piece_from_spec(self.end(), spec)
     }
 
@@ -1604,6 +2149,8 @@ impl crate::track::construction::Construction {
         world: &World,
         obstacles: &[SupportObstacle],
     ) -> Result<bool, ShapedConstructionError> {
+        spec.verify_geometry_digest()
+            .map_err(ShapedConstructionError::GeometryDigestMismatch)?;
         if !intent_matches_spec(intent, spec, self.model(), self.end()) {
             return Err(ShapedConstructionError::InvalidResolvedSpec);
         }
@@ -1673,20 +2220,13 @@ fn intent_matches_spec(
                 ..
             },
         ) => {
-            let rules = model.shaped_element_rules();
-            let default_target = match feel {
-                HillFeel::Floater => Some(rules.default_floater_g),
-                HillFeel::StrongFloater => Some(rules.default_strong_floater_g),
-                HillFeel::Ejector if model.track_material == crate::track::Material::Wood => {
-                    Some(rules.wooden_ejector_g)
-                }
-                HillFeel::Ejector => Some(rules.steel_ejector_g),
-                _ => None,
-            };
-            let Some(default_target) = default_target else {
+            if !matches!(
+                feel,
+                HillFeel::Floater | HillFeel::StrongFloater | HillFeel::Ejector
+            ) {
                 return false;
-            };
-            let requested_target_g = strength_g.unwrap_or(default_target);
+            }
+            let requested_target_g = *strength_g;
             let cap_steps = (target_g - requested_target_g) / 0.05;
             let target_matches = (target_g - requested_target_g).abs() <= 1e-9
                 || (cap_steps > 0.0
@@ -1829,6 +2369,131 @@ mod refusal_tests {
 }
 
 #[cfg(test)]
+mod provisional_hill_reporting_tests {
+    use super::{
+        ElementIntent, ElementSpec, HillSizeHint, SolveContext, calibrate_piece,
+        round_element_value, solve_confirm, solve_preview,
+    };
+    use crate::physics::{PhysicsConfig, PreviewCache};
+    use crate::track::{HillFeel, PieceId, PieceKind, TrackState, catalog, hyper_model};
+
+    #[test]
+    fn provisional_hill_spec_records_the_actual_first_preview() {
+        let speed_mps = 34.0;
+        let mut model = hyper_model();
+        model.train.cars = 4;
+        model.train.length_metres *= 0.5;
+        let physics = PhysicsConfig {
+            lift_speed: speed_mps,
+            ..PhysicsConfig::default()
+        };
+        let templates = catalog();
+        let station_template = templates
+            .iter()
+            .find(|piece| piece.id == PieceId::Station)
+            .expect("catalog includes a station");
+        let straight_template = templates
+            .iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .expect("catalog includes straight track");
+        let mut prefix = vec![
+            station_template
+                .at(TrackState::origin())
+                .expect("station starts at the origin"),
+        ];
+        let acceleration_distance_m = (speed_mps.powi(2) - physics.station_speed.powi(2))
+            / (2.0 * physics.drive_acceleration);
+        let lift_length_m = acceleration_distance_m + model.train.length_metres + 40.0;
+        let lift_piece_count = (lift_length_m / straight_template.length()).ceil() as usize;
+        for _ in 0..lift_piece_count {
+            let mut lift = straight_template
+                .at(prefix.last().expect("prefix has a station").exit)
+                .expect("straight pieces connect");
+            lift.kind = PieceKind::Lift;
+            prefix.push(lift);
+        }
+        let entry = prefix.last().expect("prefix has a station").exit;
+        let intent = ElementIntent::Hill {
+            feel: HillFeel::StrongFloater,
+            strength_g: -0.85,
+            size: HillSizeHint::Auto,
+        };
+        let mut preview_cache = PreviewCache::default();
+        let mut context = SolveContext {
+            entry,
+            entry_speed_mps: speed_mps,
+            model: &model,
+            train: &model.train,
+            prefix: &prefix,
+            preview_cache: &mut preview_cache,
+            physics,
+        };
+
+        let provisional =
+            solve_preview(&intent, &mut context).expect("one-preview hill candidate is available");
+        let measured_delivery_g = provisional
+            .calibration_seed
+            .as_ref()
+            .expect("provisional solve retains its candidate preview")
+            .preview
+            .cars
+            .iter()
+            .filter_map(|car| car.sustained_minimum_vertical_g)
+            .reduce(f64::min)
+            .expect("preview records sustained force for every car");
+        let ElementSpec::Hill {
+            target_g,
+            delivered_g: provisional_delivery_g,
+            ..
+        } = &provisional.spec
+        else {
+            panic!("hill intent resolves to a hill");
+        };
+
+        assert_eq!(
+            *provisional_delivery_g,
+            round_element_value(measured_delivery_g),
+            "provisional spec must store the measured worst-car delivery"
+        );
+        assert!(
+            (*provisional_delivery_g - target_g).abs() > 0.1,
+            "the selected provisional case must expose its measured target error"
+        );
+
+        let confirmed = solve_confirm(&intent, &mut context, &provisional)
+            .expect("confirmation calibrates the provisional hill");
+        let confirmed_preview = calibrate_piece(&mut context, &confirmed.piece)
+            .expect("confirmed hill can be previewed again");
+        let measured_confirmed_delivery_g = confirmed_preview
+            .cars
+            .iter()
+            .filter_map(|car| car.sustained_minimum_vertical_g)
+            .reduce(f64::min)
+            .expect("confirmed preview records sustained force for every car");
+        let ElementSpec::Hill {
+            target_g: confirmed_target_g,
+            delivered_g: confirmed_delivery_g,
+            crest_g: confirmed_crest_g,
+            ..
+        } = &confirmed.spec
+        else {
+            panic!("hill intent resolves to a hill");
+        };
+        assert_eq!(
+            *confirmed_delivery_g,
+            round_element_value(measured_confirmed_delivery_g),
+            "confirmed spec must store the measured worst-car delivery"
+        );
+        assert_eq!(
+            *confirmed_crest_g,
+            round_element_value(*confirmed_crest_g),
+            "a crest corrected from a measured preview must sit on the element-spec grid"
+        );
+        assert!((*confirmed_delivery_g - confirmed_target_g).abs() <= 0.05);
+    }
+}
+
+#[cfg(test)]
 mod turn_radius_guard_tests {
     use super::*;
 
@@ -1879,5 +2544,91 @@ mod turn_radius_guard_tests {
             diagonal_grid_step_m
         ));
         assert!(turn_exit(diagonal_entry, Hand::Left, stored_radius_m).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod legacy_save_decode_tests {
+    use super::{
+        BinaryElementSpec, ElementSpec, with_current_save_decode_context,
+        with_legacy_v4_save_decode_context,
+    };
+    use crate::track::{Hand, curves::regenerate_shaped_speed_turn_geometry};
+
+    #[test]
+    fn legacy_v4_decode_context_marks_only_shaped_element_payloads() {
+        let (classic_result, classic_shaped_seen) = with_legacy_v4_save_decode_context(|| {
+            postcard::from_bytes::<Option<ElementSpec>>(&[0])
+        });
+        assert_eq!(classic_result, Ok(None));
+        assert!(!classic_shaped_seen);
+
+        let geometry = regenerate_shaped_speed_turn_geometry(30.0, 1.0, 0.1, 64.0).unwrap();
+        let mut spec = ElementSpec::Turn {
+            design_speed_mps: 30.0,
+            cars: 1,
+            train_length_metres: 8.0,
+            hand: Hand::Left,
+            vertical_g: 1.0,
+            lateral_g: 0.0,
+            radius_m: 64.0,
+            bank_degrees: 1.0_f64.to_degrees(),
+            geometry_peak_bank_radians: 1.0,
+            geometry_speed_loss_fraction: 0.1,
+            geometry_radius_m: 64.0,
+            geometry_digest: 0,
+            geometry,
+        };
+        spec.set_resolved_geometry_digest();
+        let bytes = postcard::to_allocvec(&spec).unwrap();
+        let (shaped_result, shaped_seen) =
+            with_legacy_v4_save_decode_context(|| postcard::from_bytes::<ElementSpec>(&bytes));
+        assert_eq!(shaped_result, Err(postcard::Error::SerdeDeCustom));
+        assert!(shaped_seen);
+    }
+
+    #[test]
+    fn current_save_decode_context_captures_only_digest_mismatches() {
+        let turn_recipe = BinaryElementSpec::Turn {
+            design_speed_mps: 30.0,
+            cars: 1,
+            train_length_metres: 8.0,
+            hand: Hand::Left,
+            vertical_g: 1.0,
+            lateral_g: 0.0,
+            radius_m: 64.0,
+            bank_degrees: 1.0_f64.to_degrees(),
+            geometry_peak_bank_radians: 1.0,
+            geometry_speed_loss_fraction: 0.1,
+            geometry_radius_m: 64.0,
+            geometry_digest: 1,
+        };
+        let bytes = postcard::to_allocvec(&turn_recipe).unwrap();
+        let (decoded, mismatch) =
+            with_current_save_decode_context(|| postcard::from_bytes::<ElementSpec>(&bytes));
+        let decoded = decoded.unwrap();
+        let mismatch = mismatch.expect("wrong digest is captured after geometry regeneration");
+        assert_eq!(mismatch.expected, 1);
+        assert_eq!(mismatch.actual, decoded.resolved_geometry_digest());
+
+        let invalid_recipe = BinaryElementSpec::Turn {
+            design_speed_mps: 30.0,
+            cars: 1,
+            train_length_metres: 8.0,
+            hand: Hand::Left,
+            vertical_g: 1.0,
+            lateral_g: 0.0,
+            radius_m: 64.0,
+            bank_degrees: 1.0_f64.to_degrees(),
+            geometry_peak_bank_radians: 1.0,
+            geometry_speed_loss_fraction: 0.1,
+            geometry_radius_m: 0.0,
+            geometry_digest: 1,
+        };
+        let bytes = postcard::to_allocvec(&invalid_recipe).unwrap();
+        let (decoded, mismatch) =
+            with_current_save_decode_context(|| postcard::from_bytes::<ElementSpec>(&bytes));
+        assert_eq!(decoded, Err(postcard::Error::SerdeDeCustom));
+        assert_eq!(mismatch, None);
     }
 }

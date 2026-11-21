@@ -1,5 +1,7 @@
 use crate::track::blocks::BlockSectionPlacement;
-use crate::track::shaped::{ElementIntent, ElementSpec};
+use crate::track::shaped::{
+    ElementIntent, ElementSpec, ElementSpecLoadError, GeometryDigestMismatch,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -22,6 +24,153 @@ pub struct RideFile {
     pub steps: Vec<RideStep>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expect: Option<RideExpect>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RideFileJson {
+    format: RideFileFormat,
+    version: u32,
+    name: String,
+    model: String,
+    station: RideStation,
+    cars_per_train: u8,
+    trains: u8,
+    steps: Vec<serde_json::Value>,
+    #[serde(default)]
+    expect: Option<RideExpect>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RideShapeStepJson {
+    intent: ElementIntent,
+    spec: serde_json::Value,
+}
+
+#[derive(Debug)]
+pub enum RideFileLoadError {
+    InvalidJson(serde_json::Error),
+    InvalidStep {
+        step_index: usize,
+        source: serde_json::Error,
+    },
+    InvalidShapedRecipe {
+        step_index: usize,
+        message: String,
+    },
+    ShapedGeometryDigestMismatch {
+        step_index: usize,
+        mismatch: GeometryDigestMismatch,
+    },
+}
+
+impl std::fmt::Display for RideFileLoadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidJson(error) => write!(formatter, "invalid ride JSON: {error}"),
+            Self::InvalidStep { step_index, source } => {
+                write!(formatter, "invalid ride step {step_index}: {source}")
+            }
+            Self::InvalidShapedRecipe {
+                step_index,
+                message,
+            } => write!(
+                formatter,
+                "invalid shaped recipe at ride step {step_index}: {message}"
+            ),
+            Self::ShapedGeometryDigestMismatch {
+                step_index,
+                mismatch,
+            } => write!(formatter, "ride step {step_index}: {mismatch}"),
+        }
+    }
+}
+
+impl std::error::Error for RideFileLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidJson(error) => Some(error),
+            Self::InvalidStep { source, .. } => Some(source),
+            Self::InvalidShapedRecipe { .. } => None,
+            Self::ShapedGeometryDigestMismatch { mismatch, .. } => Some(mismatch),
+        }
+    }
+}
+
+impl RideFile {
+    /// Parses a ride file and preserves shaped geometry digest failures as typed errors.
+    pub fn from_json_str(source: &str) -> Result<Self, RideFileLoadError> {
+        let value = serde_json::from_str(source).map_err(RideFileLoadError::InvalidJson)?;
+        Self::from_json_value(value)
+    }
+
+    /// Parses a ride file byte slice and preserves shaped geometry digest failures as typed errors.
+    pub fn from_json_slice(source: &[u8]) -> Result<Self, RideFileLoadError> {
+        let value = serde_json::from_slice(source).map_err(RideFileLoadError::InvalidJson)?;
+        Self::from_json_value(value)
+    }
+
+    /// Parses a ride JSON value and preserves shaped geometry digest failures as typed errors.
+    pub fn from_json_value(value: serde_json::Value) -> Result<Self, RideFileLoadError> {
+        let wire: RideFileJson =
+            serde_json::from_value(value).map_err(RideFileLoadError::InvalidJson)?;
+        Self::from_json_wire(wire)
+    }
+
+    fn from_json_wire(wire: RideFileJson) -> Result<Self, RideFileLoadError> {
+        let steps = wire
+            .steps
+            .into_iter()
+            .enumerate()
+            .map(|(step_index, value)| Self::decode_json_step(value, step_index))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            format: wire.format,
+            version: wire.version,
+            name: wire.name,
+            model: wire.model,
+            station: wire.station,
+            cars_per_train: wire.cars_per_train,
+            trains: wire.trains,
+            steps,
+            expect: wire.expect,
+        })
+    }
+
+    fn decode_json_step(
+        value: serde_json::Value,
+        step_index: usize,
+    ) -> Result<RideStep, RideFileLoadError> {
+        let is_shaped_step = value
+            .as_object()
+            .is_some_and(|object| object.contains_key("intent") || object.contains_key("spec"));
+        if is_shaped_step {
+            let wire: RideShapeStepJson = serde_json::from_value(value)
+                .map_err(|source| RideFileLoadError::InvalidStep { step_index, source })?;
+            let spec =
+                ElementSpec::from_human_readable_json(wire.spec).map_err(|error| match error {
+                    ElementSpecLoadError::GeometryDigestMismatch(mismatch) => {
+                        RideFileLoadError::ShapedGeometryDigestMismatch {
+                            step_index,
+                            mismatch,
+                        }
+                    }
+                    ElementSpecLoadError::InvalidRecipe(message) => {
+                        RideFileLoadError::InvalidShapedRecipe {
+                            step_index,
+                            message,
+                        }
+                    }
+                })?;
+            return Ok(RideStep::Shape(RideShapeStep {
+                intent: wire.intent,
+                spec,
+            }));
+        }
+        serde_json::from_value(value)
+            .map_err(|source| RideFileLoadError::InvalidStep { step_index, source })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +242,8 @@ pub struct RideBlockSectionsStep {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RideExpect {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design_margins: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excitement: Option<[f64; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -184,10 +335,11 @@ mod tests {
         RideExpectChainFeatureStep, RideExpectFeatureStep, RideFile, RideFileFormat, RideHeading,
         RideShapeStep, RideStep,
     };
+    use crate::physics::{PhysicsConfig, PreviewCache, PreviewStatus};
     use crate::track::shaped::{
-        ElementIntent, ElementSpec, HillSizeHint, ResolvedTurnGeometry, SpeedTurnKnot, TurnSizeHint,
+        ElementIntent, ElementSpec, HillSizeHint, SolveContext, TurnSizeHint, solve,
     };
-    use crate::track::{Hand, HillFeel};
+    use crate::track::{Hand, HillFeel, PieceId, PieceKind, TrackState, catalog, hyper_model};
     use serde_json::{Value, json};
 
     const VALID_RIDE: &str = r#"
@@ -240,6 +392,58 @@ mod tests {
       }
     }
     "#;
+
+    fn solved_spec(intent: &ElementIntent, speed_mps: f64) -> ElementSpec {
+        let mut model = hyper_model();
+        let cars = 8;
+        model.train.length_metres *= f64::from(cars) / f64::from(model.train.cars);
+        model.train.cars = cars;
+        let templates = catalog();
+        let station = templates
+            .iter()
+            .find(|piece| piece.id == PieceId::Station)
+            .expect("catalog has a station")
+            .at(TrackState::origin())
+            .expect("station connects to origin");
+        let straight = templates
+            .iter()
+            .find(|piece| piece.id == PieceId::Straight)
+            .expect("catalog has a straight");
+        let physics = PhysicsConfig {
+            lift_speed: speed_mps,
+            ..PhysicsConfig::default()
+        };
+        let acceleration_distance_m = (speed_mps.powi(2) - physics.station_speed.powi(2)).max(0.0)
+            / (2.0 * physics.drive_acceleration);
+        let straight_count = ((acceleration_distance_m + model.train.length_metres + 40.0)
+            / straight.length())
+        .ceil() as usize;
+        let mut prefix = vec![station];
+        for _ in 0..straight_count {
+            let mut lift = straight
+                .at(prefix.last().expect("prefix contains station").exit)
+                .expect("lift straight connects");
+            lift.kind = PieceKind::Lift;
+            prefix.push(lift);
+        }
+        let mut preview_cache = PreviewCache::default();
+        let preview = preview_cache
+            .preview(&prefix, &model, physics)
+            .expect("lift prefix previews");
+        assert_eq!(preview.status, PreviewStatus::ReachedEnd);
+        let mut context = SolveContext {
+            entry: prefix.last().expect("prefix contains station").exit,
+            entry_speed_mps: speed_mps,
+            model: &model,
+            train: &model.train,
+            prefix: &prefix,
+            preview_cache: &mut preview_cache,
+            physics,
+        };
+        solve(intent, &mut context)
+            .expect("shaped test element solves")
+            .spec
+    }
 
     #[test]
     fn ride_file_round_trips_the_documented_json_shape() {
@@ -331,61 +535,42 @@ mod tests {
     #[test]
     fn ride_file_shapes_store_numbers_at_fixed_decimal_precision() {
         let mut ride: RideFile = serde_json::from_str(VALID_RIDE).unwrap();
+        let hill_intent = ElementIntent::Hill {
+            feel: HillFeel::Floater,
+            strength_g: -0.512345678,
+            size: HillSizeHint::Height(36.123456789),
+        };
+        let mut hill_spec = solved_spec(&hill_intent, 34.0);
+        let ElementSpec::Hill {
+            target_g,
+            delivered_g,
+            height_m,
+            span_m,
+            ..
+        } = &mut hill_spec
+        else {
+            panic!("hill intent solved to a turn");
+        };
+        *target_g = -0.512345678;
+        *delivered_g = -0.498765432;
+        *height_m = 36.123456789;
+        *span_m = 64.987654321;
         ride.steps.push(RideStep::Shape(RideShapeStep {
-            intent: ElementIntent::Hill {
-                feel: HillFeel::Floater,
-                strength_g: Some(-0.512345678),
-                size: HillSizeHint::Height(36.123456789),
-            },
-            spec: serde_json::from_value(json!({
-                "kind": "hill",
-                "design_speed_mps": 34.123456789,
-                "cars": 8,
-                "target_g": -0.512345678,
-                "delivered_g": -0.498765432,
-                "height_m": 36.123456789,
-                "span_m": 64.987654321,
-                "profile": {
-                    "points": [
-                        {"distance": 0.123456789, "x": 0.234567891, "z": 0.345678912, "angle": 0.456789123, "heart_curvature": 0.567891234, "curvature": 0.678912345},
-                        {"distance": 2.123456789, "x": 2.234567891, "z": 0.345678912, "angle": 0.456789123, "heart_curvature": 0.567891234, "curvature": 0.678912345}
-                    ],
-                    "cached_minimum_entry": 0.789123456,
-                    "cached_minimum_radius": 1.891234567
-                }
-            }))
-            .unwrap(),
+            intent: hill_intent,
+            spec: hill_spec,
         }));
+        let turn_intent = ElementIntent::Turn {
+            hand: Hand::Left,
+            size: TurnSizeHint::Auto,
+        };
+        let mut turn_spec = solved_spec(&turn_intent, 30.0);
+        let ElementSpec::Turn { bank_degrees, .. } = &mut turn_spec else {
+            panic!("turn intent solved to a hill");
+        };
+        *bank_degrees = 65.123456789;
         ride.steps.push(RideStep::Shape(RideShapeStep {
-            intent: ElementIntent::Turn {
-                hand: Hand::Left,
-                size: TurnSizeHint::Radius(64.123456789),
-            },
-            spec: ElementSpec::Turn {
-                design_speed_mps: 28.123456789,
-                cars: 8,
-                hand: Hand::Left,
-                vertical_g: 3.123456789,
-                lateral_g: 0.012345678,
-                radius_m: 64.123456789,
-                bank_degrees: 65.123456789,
-                geometry: ResolvedTurnGeometry {
-                    peak_bank: 1.123456789,
-                    length: 100.123456789,
-                    knots: vec![
-                        SpeedTurnKnot {
-                            x: 0.123456789,
-                            y: 0.234567891,
-                            heading: 0.345678912,
-                        },
-                        SpeedTurnKnot {
-                            x: 64.123456789,
-                            y: 64.234567891,
-                            heading: 1.456789123,
-                        },
-                    ],
-                },
-            },
+            intent: turn_intent,
+            spec: turn_spec,
         }));
 
         let serialized = serde_json::to_string(&ride).unwrap();
@@ -400,15 +585,14 @@ mod tests {
         ] {
             assert_decimal_precision(&hill_spec[field], 1_000_000.0);
         }
-        assert_decimal_precision(&hill_spec["profile"], 1_000_000_000.0);
-        assert!(
-            (hill_spec["profile"]["points"][0]["angle"].as_f64().unwrap() - 0.456_789_123).abs()
-                < 1e-9,
-            "profile coordinates retain the measured nine-decimal precision"
-        );
-        assert_decimal_precision(&encoded["steps"][7]["spec"], 1_000_000.0);
+        assert_decimal_precision(&hill_spec["train_length_metres"], 1_000_000_000.0);
+        assert_decimal_precision(&hill_spec["pull_g"], 1_000_000_000.0);
+        assert!(hill_spec.get("profile").is_none());
+        assert!(hill_spec["geometry_digest"].as_str().is_some());
+        assert_decimal_precision(&encoded["steps"][7]["spec"]["bank_degrees"], 1_000_000.0);
+        assert!(encoded["steps"][7]["spec"].get("geometry").is_none());
 
-        let decoded: RideFile = serde_json::from_str(&serialized).unwrap();
+        let decoded: RideFile = RideFile::from_json_str(&serialized).unwrap();
         let decoded_again: Value = serde_json::to_value(decoded).unwrap();
         assert_eq!(
             decoded_again["steps"][6]["spec"],
@@ -421,71 +605,41 @@ mod tests {
     }
 
     #[test]
-    fn shaped_ride_step_round_trips_intent_and_resolved_geometry() {
+    fn shaped_ride_step_round_trips_intent_and_compact_recipe() {
         let ride: RideFile = serde_json::from_str(VALID_RIDE).unwrap();
         let mut shaped_ride = ride;
+        let hill_intent = ElementIntent::Hill {
+            feel: HillFeel::Floater,
+            strength_g: -0.5,
+            size: HillSizeHint::Height(36.0),
+        };
         shaped_ride.steps.push(RideStep::Shape(RideShapeStep {
-            intent: ElementIntent::Hill {
-                feel: HillFeel::Floater,
-                strength_g: Some(-0.5),
-                size: HillSizeHint::Height(36.0),
-            },
-            spec: serde_json::from_value(json!({
-                "kind": "hill",
-                "design_speed_mps": 34.0,
-                "cars": 8,
-                "target_g": -0.5,
-                "delivered_g": -0.48,
-                "height_m": 36.0,
-                "span_m": 64.0,
-                "profile": {
-                    "points": [
-                        {"distance": 0.0, "x": 0.0, "z": 0.0, "angle": 0.0, "heart_curvature": 0.0, "curvature": 0.0},
-                        {"distance": 2.0, "x": 2.0, "z": 0.0, "angle": 0.0, "heart_curvature": 0.0, "curvature": 0.0}
-                    ],
-                    "cached_minimum_entry": null,
-                    "cached_minimum_radius": null
-                }
-            }))
-            .unwrap(),
-        }));
-        shaped_ride.steps.push(RideStep::Shape(RideShapeStep {
-            intent: ElementIntent::Turn {
-                hand: Hand::Left,
-                size: TurnSizeHint::Radius(64.0),
-            },
-            spec: ElementSpec::Turn {
-                design_speed_mps: 28.0,
-                cars: 8,
-                hand: Hand::Left,
-                vertical_g: 3.0,
-                lateral_g: 0.0,
-                radius_m: 64.0,
-                bank_degrees: 65.0,
-                geometry: ResolvedTurnGeometry {
-                    peak_bank: 65.0_f64.to_radians(),
-                    length: 100.0,
-                    knots: vec![
-                        SpeedTurnKnot {
-                            x: 0.0,
-                            y: 0.0,
-                            heading: 0.0,
-                        },
-                        SpeedTurnKnot {
-                            x: 64.0,
-                            y: 64.0,
-                            heading: 90.0_f64.to_radians(),
-                        },
-                    ],
+            intent: hill_intent,
+            spec: solved_spec(
+                &ElementIntent::Hill {
+                    feel: HillFeel::Floater,
+                    strength_g: -0.5,
+                    size: HillSizeHint::Height(36.0),
                 },
-            },
+                34.0,
+            ),
+        }));
+        let turn_intent = ElementIntent::Turn {
+            hand: Hand::Left,
+            size: TurnSizeHint::Auto,
+        };
+        shaped_ride.steps.push(RideStep::Shape(RideShapeStep {
+            intent: turn_intent.clone(),
+            spec: solved_spec(&turn_intent, 30.0),
         }));
 
         let encoded = serde_json::to_value(&shaped_ride).unwrap();
         assert!(encoded["steps"][6]["intent"].is_object());
-        assert!(encoded["steps"][6]["spec"].to_string().contains("profile"));
-        assert!(encoded["steps"][7]["spec"].to_string().contains("knots"));
-        let restored = serde_json::from_value::<RideFile>(encoded.clone()).unwrap();
+        assert!(encoded["steps"][6]["spec"].get("profile").is_none());
+        assert!(encoded["steps"][6]["spec"].get("geometry_digest").is_some());
+        assert!(encoded["steps"][7]["spec"].get("geometry").is_none());
+        assert!(encoded["steps"][7]["spec"].get("geometry_digest").is_some());
+        let restored = RideFile::from_json_value(encoded.clone()).unwrap();
         assert_eq!(
             serde_json::to_value(&restored).unwrap(),
             encoded,

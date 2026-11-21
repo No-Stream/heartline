@@ -1,9 +1,62 @@
+use std::fmt::{self, Display, Formatter};
+
 use wasm_bindgen::prelude::*;
 
 use crate::WasmSimulation;
+use theme_park_sim::track::shaped::GeometryDigestMismatch;
 
-const SAVE_HEADER: &[u8] = b"TPSAVE\x04";
+const SAVE_HEADER_V4: &[u8] = b"TPSAVE\x04";
+const SAVE_HEADER_V5: &[u8] = b"TPSAVE\x05";
 const MAX_SAVE_BYTES: u64 = 256 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SaveVersion {
+    V4,
+    V5,
+}
+
+#[derive(Debug)]
+pub enum SaveLoadError {
+    UnsupportedVersion,
+    Incomplete,
+    CorruptOrTooLarge,
+    LegacyShapedV4Unsupported,
+    ShapedGeometryDigestMismatch(GeometryDigestMismatch),
+    Decode(postcard::Error),
+    TrailingData,
+}
+
+impl Display for SaveLoadError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedVersion => {
+                formatter.write_str("Unsupported or invalid park save version")
+            }
+            Self::Incomplete => formatter.write_str("Park save is incomplete"),
+            Self::CorruptOrTooLarge => formatter.write_str("Park save is corrupt or too large"),
+            Self::LegacyShapedV4Unsupported => formatter.write_str(
+                "Version 4 park saves containing shaped elements cannot be loaded because they store legacy resolved geometry",
+            ),
+            Self::ShapedGeometryDigestMismatch(mismatch) => Display::fmt(mismatch, formatter),
+            Self::Decode(error) => write!(formatter, "Could not load park: {error}"),
+            Self::TrailingData => formatter.write_str("Could not load park: save has trailing data"),
+        }
+    }
+}
+
+impl std::error::Error for SaveLoadError {}
+
+pub(super) fn decode_error(
+    version: SaveVersion,
+    legacy_shaped_element_seen: bool,
+    error: postcard::Error,
+) -> SaveLoadError {
+    if version == SaveVersion::V4 && legacy_shaped_element_seen {
+        SaveLoadError::LegacyShapedV4Unsupported
+    } else {
+        SaveLoadError::Decode(error)
+    }
+}
 
 struct LimitedBytes {
     bytes: Vec<u8>,
@@ -39,22 +92,26 @@ impl postcard::ser_flavors::Flavor for LimitedBytes {
     }
 }
 
-fn checksum(bytes: &[u8]) -> u64 {
+pub(super) fn checksum(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
     })
 }
 
-pub(super) fn checked_payload(bytes: &[u8]) -> Result<&[u8], &'static str> {
-    let data = bytes
-        .strip_prefix(SAVE_HEADER)
-        .ok_or("Unsupported or invalid park save version")?;
-    let (stored, payload) = data.split_at_checked(8).ok_or("Park save is incomplete")?;
+pub(super) fn checked_payload(bytes: &[u8]) -> Result<(SaveVersion, &[u8]), SaveLoadError> {
+    let (version, data) = if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V5) {
+        (SaveVersion::V5, data)
+    } else if let Some(data) = bytes.strip_prefix(SAVE_HEADER_V4) {
+        (SaveVersion::V4, data)
+    } else {
+        return Err(SaveLoadError::UnsupportedVersion);
+    };
+    let (stored, payload) = data.split_at_checked(8).ok_or(SaveLoadError::Incomplete)?;
     let stored = u64::from_le_bytes(stored.try_into().expect("checksum length"));
     if payload.len() as u64 > MAX_SAVE_BYTES || checksum(payload) != stored {
-        return Err("Park save is corrupt or too large");
+        return Err(SaveLoadError::CorruptOrTooLarge);
     }
-    Ok(payload)
+    Ok((version, payload))
 }
 
 #[wasm_bindgen]
@@ -75,7 +132,7 @@ impl WasmSimulation {
     }
 
     fn save_state_native_with_limit(&self, limit: usize) -> Result<Vec<u8>, String> {
-        let mut bytes = SAVE_HEADER.to_vec();
+        let mut bytes = SAVE_HEADER_V5.to_vec();
         let payload = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
             postcard::serialize_with_flavor(self, LimitedBytes::new(limit))
         })
@@ -86,17 +143,40 @@ impl WasmSimulation {
     }
 
     pub fn load_state_native(bytes: &[u8]) -> Result<WasmSimulation, String> {
-        let payload = checked_payload(bytes).map_err(str::to_owned)?;
-        let mut simulation: Self = theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
-            postcard::take_from_bytes(payload).and_then(|(simulation, remaining)| {
-                if remaining.is_empty() {
-                    Ok(simulation)
-                } else {
-                    Err(postcard::Error::DeserializeBadEncoding)
-                }
+        Self::load_state_native_typed(bytes).map_err(|error| error.to_string())
+    }
+
+    pub fn load_state_native_typed(bytes: &[u8]) -> Result<WasmSimulation, SaveLoadError> {
+        let (version, payload) = checked_payload(bytes)?;
+        let decode = || {
+            theme_park_sim::track::curves::with_snapshot_arc_tables(|| {
+                postcard::take_from_bytes::<Self>(payload)
             })
-        })
-        .map_err(|error| format!("Could not load park: {error}"))?;
+        };
+        let (decoded, legacy_shaped_element_seen, geometry_digest_mismatch) = match version {
+            SaveVersion::V4 => {
+                let (decoded, shaped_seen) =
+                    theme_park_sim::track::shaped::with_legacy_v4_save_decode_context(decode);
+                (decoded, shaped_seen, None)
+            }
+            SaveVersion::V5 => {
+                let (decoded, mismatch) =
+                    theme_park_sim::track::shaped::with_current_save_decode_context(decode);
+                (decoded, false, mismatch)
+            }
+        };
+        let (mut simulation, remaining) = match decoded {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                return Err(decode_error(version, legacy_shaped_element_seen, error));
+            }
+        };
+        if let Some(mismatch) = geometry_digest_mismatch {
+            return Err(SaveLoadError::ShapedGeometryDigestMismatch(mismatch));
+        }
+        if !remaining.is_empty() {
+            return Err(SaveLoadError::TrailingData);
+        }
         simulation.park.rebind_world_after_loading();
         let construction_message = simulation.park.construction_message.clone();
         simulation.refresh_construction_support_rendering();
@@ -107,7 +187,7 @@ impl WasmSimulation {
 
 #[cfg(test)]
 mod tests {
-    use super::{SAVE_HEADER, checked_payload, checksum};
+    use super::{SAVE_HEADER_V5, SaveLoadError, SaveVersion, checked_payload, checksum};
     use crate::WasmSimulation;
 
     #[test]
@@ -119,14 +199,43 @@ mod tests {
     #[test]
     fn save_rejects_corruption_and_unsupported_versions() {
         let payload = b"park state";
-        let mut bytes = SAVE_HEADER.to_vec();
+        let mut bytes = SAVE_HEADER_V5.to_vec();
         bytes.extend(checksum(payload).to_le_bytes());
         bytes.extend(payload);
-        assert_eq!(checked_payload(&bytes), Ok(payload.as_slice()));
+        assert!(matches!(
+            checked_payload(&bytes),
+            Ok((SaveVersion::V5, actual_payload)) if actual_payload == payload
+        ));
         *bytes.last_mut().unwrap() ^= 1;
-        assert!(checked_payload(&bytes).is_err());
+        assert!(matches!(
+            checked_payload(&bytes),
+            Err(SaveLoadError::CorruptOrTooLarge)
+        ));
         bytes[6] = 0;
-        assert!(checked_payload(&bytes).is_err());
+        assert!(matches!(
+            checked_payload(&bytes),
+            Err(SaveLoadError::UnsupportedVersion)
+        ));
+    }
+
+    #[test]
+    fn only_a_v4_shaped_element_error_is_classified_as_legacy_shaped() {
+        assert!(matches!(
+            super::decode_error(SaveVersion::V4, true, postcard::Error::SerdeDeCustom),
+            SaveLoadError::LegacyShapedV4Unsupported,
+        ));
+        assert!(matches!(
+            super::decode_error(SaveVersion::V4, false, postcard::Error::SerdeDeCustom),
+            SaveLoadError::Decode(postcard::Error::SerdeDeCustom)
+        ));
+        assert!(matches!(
+            super::decode_error(
+                SaveVersion::V4,
+                false,
+                postcard::Error::DeserializeBadEncoding
+            ),
+            SaveLoadError::Decode(postcard::Error::DeserializeBadEncoding)
+        ));
     }
 
     #[test]

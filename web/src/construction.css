@@ -51,7 +51,9 @@
 
 /* Place and undo sit right under the chosen piece; the choices follow. */
 .builder__place { display: grid; gap: 0.3rem; }
-.builder__place-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; }
+/* Whole-pixel spacing keeps dock scrolling from shifting the testing report text. */
+.builder__place-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.35rem; }
+.builder__append-reason { grid-column: 1 / -1; line-height: 1.25rem; }
 .builder__choices { display: grid; gap: 0.35rem; }
 .builder__choices h3:not(:first-child) { margin-top: 0.6rem; }
 .builder__choices > .tool-panel__hint { margin-top: -0.3rem; }

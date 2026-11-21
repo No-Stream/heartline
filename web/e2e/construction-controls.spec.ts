@@ -236,8 +236,9 @@ test("construction controls dispatch actions with the keyboard and reflect worke
     { type: "construction-delete", id: 9 },
   ]);
   await expect(page.getByRole("button", { name: "Close circuit" })).toBeDisabled();
-  await page.evaluate(() => (window as unknown as Window).setConstructionState({ canAppend: false, message: "Track collides" }));
+  await page.evaluate(() => (window as unknown as Window).setConstructionState({ canAppend: false, appendReason: "Track collides with terrain.", message: "Track collides" }));
   await expect(page.getByRole("button", { name: "Place piece" })).toBeDisabled();
+  await expect(page.locator("[data-append-reason]")).toHaveText("Track collides with terrain.");
   await expect(page.getByRole("status")).toHaveText("Track collides");
 });
 

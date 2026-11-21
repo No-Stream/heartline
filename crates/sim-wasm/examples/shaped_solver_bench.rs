@@ -2,7 +2,10 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use serde_json::{Value, json};
-use theme_park_sim_wasm::shaped_benchmark::ShapedSolveBenchmark;
+use theme_park_sim_wasm::shaped_benchmark::{
+    ShapedSolveBenchmark, horizon_hawk_first_hill_selected_shape_json,
+    horizon_hawk_first_turn_arc_table_json, horizon_hawk_first_turn_candidate_preview_json,
+};
 
 const WARMUP_RUNS: usize = 3;
 const MEASURED_RUNS: usize = 30;
@@ -12,6 +15,21 @@ fn main() {
     let mode = arguments
         .next()
         .expect("expected a single-solve or calibration mode");
+    if mode == "--horizon-hawk-turn-arc-table" {
+        assert!(arguments.next().is_none(), "unexpected benchmark arguments");
+        println!("{}", horizon_hawk_first_turn_arc_table_json());
+        return;
+    }
+    if mode == "--horizon-hawk-turn-candidate-preview" {
+        assert!(arguments.next().is_none(), "unexpected benchmark arguments");
+        println!("{}", horizon_hawk_first_turn_candidate_preview_json());
+        return;
+    }
+    if mode == "--horizon-hawk-hill-selected-shape" {
+        assert!(arguments.next().is_none(), "unexpected benchmark arguments");
+        println!("{}", horizon_hawk_first_hill_selected_shape_json());
+        return;
+    }
     let kind = arguments.next().expect("expected shaped benchmark case");
     assert!(arguments.next().is_none(), "unexpected benchmark arguments");
 
