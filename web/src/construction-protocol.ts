@@ -1,3 +1,4 @@
+import type { ConstructionFinishOptionsWire } from "./generated/ConstructionFinishOptionsWire";
 import type { ConstructionSpeedMatch } from "./construction-speed-match";
 import type { CandidateForcePreview } from "./candidate-force-readout";
 import type { CoasterColorScheme } from "./coaster-colors";
@@ -18,6 +19,7 @@ export type ConstructionAction =
   | { readonly type: "construction-close" }
   | { readonly type: "construction-finish-preview" }
   | { readonly type: "construction-finish-confirm" }
+  | { readonly type: "construction-finish-cycle"; readonly step: 1 | -1 }
   | { readonly type: "construction-finish-cancel" }
   | { readonly type: "construction-set-open"; readonly open: boolean }
   | { readonly type: "construction-set-coaster-price"; readonly price: number }
@@ -95,6 +97,8 @@ export interface ConstructionState {
   readonly finishPreview: boolean;
   readonly canFinish: boolean;
   readonly finishReason: string;
+  /** Ranked ways back to the station and which one is being previewed. */
+  readonly finishOptions: ConstructionFinishOptionsWire;
   readonly canTest: boolean;
   readonly isOpen: boolean;
   readonly coasterPrice: number;

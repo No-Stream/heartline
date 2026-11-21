@@ -34,6 +34,7 @@ use crate::agreement::{
 use crate::brake_report::{
     brake_run_speed_rows, mid_course_brake_energy_report, render_brake_run_speed_table,
 };
+use crate::finish_report::{check_completion, finish_options_json, render_finish_options};
 use crate::report::{
     ForceRatings, RidePieceEstimate, ShapedElementReportRow, default_physics_test_run,
     element_physics_report_rows, force_headroom_results, format_force_headroom_results,
@@ -91,6 +92,7 @@ enum RideCommand {
     Undo(usize),
     Truncate(usize),
     Finish,
+    FinishApply(usize),
     Close,
     Test,
     Report(bool),
@@ -253,7 +255,8 @@ Ride commands:
   auto-blocks                               find automatic block sections
   undo [count]                              undo placements
   truncate <steps>                          keep the first ride steps
-  finish                                    search for a way back to the station
+  finish                                    list ranked ways back to the station
+  finish apply <n>                          place finish option n and close the circuit
   close                                     close the circuit at the station
   test                                      run a ride test
   report [--samples]                        print a ride test report
@@ -487,6 +490,9 @@ fn parse_command(command: &str, parameters: &[String]) -> Result<RideCommand, St
             "step count",
         )?)),
         "finish" if parameters.is_empty() => Ok(RideCommand::Finish),
+        "finish" if parameters.len() == 2 && parameters[0] == "apply" => Ok(
+            RideCommand::FinishApply(parse_number(&parameters[1], "finish option")?),
+        ),
         "close" if parameters.is_empty() => Ok(RideCommand::Close),
         "test" if parameters.is_empty() => Ok(RideCommand::Test),
         "report" if parameters.is_empty() || parameters == ["--samples"] => {
@@ -1440,8 +1446,44 @@ fn execute_command(
             ))
         }
         RideCommand::Finish => {
+            let completions = session
+                .finish_options()
+                .map_err(|error| error.to_string())?;
+            let model = validate_model(&ride.model)?;
+            let placed_pieces = placed_construction_pieces(session)?;
+            let checks = completions
+                .iter()
+                .map(|completion| check_completion(&placed_pieces, completion, &model))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(CommandReply {
+                text: render_finish_options(&completions, &checks),
+                json: finish_options_json(&completions, &checks),
+                changed_ride: false,
+            })
+        }
+        RideCommand::FinishApply(rank) => {
+            let completions = session
+                .finish_options()
+                .map_err(|error| error.to_string())?;
+            let completion = completions.get(rank.wrapping_sub(1)).ok_or_else(|| {
+                format!(
+                    "finish option {rank} does not exist; the search found {}",
+                    completions.len()
+                )
+            })?;
+            let model = validate_model(&ride.model)?;
+            let check =
+                check_completion(&placed_construction_pieces(session)?, completion, &model)?;
+            if !check.passed() {
+                return Err(format!(
+                    "finish option {rank} fails the ride check: {}",
+                    check.failures.join("; ")
+                ));
+            }
             let track_before = construction_track(session)?.len();
-            session.finish().map_err(|error| error.to_string())?;
+            session
+                .finish_apply(rank)
+                .map_err(|error| error.to_string())?;
             let track_after = construction_track(session)?;
             let added = track_after.len().saturating_sub(track_before);
             for piece in track_after.iter().skip(track_before) {
@@ -1454,11 +1496,13 @@ fn execute_command(
                     note: None,
                 }));
             }
+            ride.steps
+                .push(RideStep::Close(RideCloseStep { close: true }));
             let state = state_value(session)?;
             Ok(reply_state(
-                format!("Finish search added {added} piece(s).\n"),
+                format!("Placed finish option {rank} ({added} piece(s)) and closed the circuit.\n"),
                 state,
-                added > 0,
+                true,
             ))
         }
         RideCommand::Close => {
@@ -1741,6 +1785,18 @@ fn heading_mismatch_degrees(end: TrackHeading, station: TrackHeading) -> f64 {
     };
     let difference = (heading_index(end) - heading_index(station)).abs();
     f64::from(difference.min(8 - difference)) * 45.0
+}
+
+fn placed_construction_pieces(
+    session: &BuilderSession,
+) -> Result<Vec<theme_park_sim::track::Piece>, String> {
+    Ok(session
+        .simulation()
+        .construction
+        .as_ref()
+        .ok_or_else(|| "ride has no construction".to_owned())?
+        .pieces()
+        .to_vec())
 }
 
 fn construction_track(session: &BuilderSession) -> Result<Vec<Value>, String> {

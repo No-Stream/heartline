@@ -31,7 +31,6 @@ const wasmMock = vi.hoisted(() => ({
   constructionTrackLength: 0,
   finishConfirmCloses: false,
   finishAvailable: false,
-  finishSearchPending: false,
   finishInvalidate: vi.fn(),
   finishSearchStart: vi.fn(),
   finishSearchAdvance: vi.fn(() => true),
@@ -168,7 +167,8 @@ vi.mock("../wasm/theme_park_sim_wasm.js", () => ({
     construction_finish_reason() { return wasmMock.finishAvailable ? "" : "Checking for a connection to the station."; }
     construction_finish_search_start() { wasmMock.finishSearchStart(); wasmMock.finishAvailable = false; }
     construction_finish_search_advance() { return wasmMock.finishSearchAdvance(); }
-    construction_finish_search_pending() { return wasmMock.finishSearchPending; }
+    construction_finish_options_json() { return JSON.stringify({ previewedIndex: null, options: [] }); }
+    construction_finish_cycle() {}
     construction_finish_invalidate() { wasmMock.finishInvalidate(); wasmMock.finishAvailable = false; }
     construction_finish_preview() {}
     construction_finish_confirm() { if (wasmMock.finishConfirmCloses) wasmMock.constructionActive.mockReturnValue(false); }
@@ -213,7 +213,6 @@ afterEach(() => {
   wasmMock.constructionTrackLength = 0;
   wasmMock.finishConfirmCloses = false;
   wasmMock.finishAvailable = false;
-  wasmMock.finishSearchPending = false;
   wasmMock.finishInvalidate.mockReset();
   wasmMock.finishSearchStart.mockReset();
   wasmMock.finishSearchAdvance.mockReset().mockReturnValue(true);
@@ -356,7 +355,7 @@ it("publishes construction state for facility edits before resuming the finish s
   expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
 });
 
-it("continues a saved finish search without restarting it or sending a redundant state", async () => {
+it("searches again after loading a park, because saves do not keep finish results", async () => {
   vi.useFakeTimers();
   wasmMock.initialize.mockResolvedValue(undefined);
   const postMessage = vi.fn();
@@ -365,14 +364,13 @@ it("continues a saved finish search without restarting it or sending a redundant
   await import("../worker");
   onMessage({ data: { type: "init", seed: 2026n, park: "demo", guestCount: 12, frozen: true, manualBlockAnalysis: true } } as MessageEvent);
   await Promise.resolve();
-  wasmMock.finishSearchPending = true;
   onMessage({ data: { type: "load-park", requestId: 1, bytes: new Uint8Array() } } as MessageEvent);
   await Promise.resolve();
   expect(wasmMock.finishSearchStart).not.toHaveBeenCalled();
   expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
 
   await vi.advanceTimersByTimeAsync(0);
-  expect(wasmMock.finishSearchStart).not.toHaveBeenCalled();
+  expect(wasmMock.finishSearchStart).toHaveBeenCalledTimes(1);
   expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-state")).toHaveLength(1);
   expect(postMessage.mock.calls.filter(([message]) => message.type === "construction-finish-status")).toHaveLength(1);
 });

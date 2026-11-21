@@ -98,6 +98,7 @@ function isParkMutationIntent(action: WorkerAction): boolean {
     case "construction-close":
     case "construction-finish-preview":
     case "construction-finish-confirm":
+    case "construction-finish-cycle":
     case "construction-finish-cancel":
     case "construction-set-open":
     case "construction-set-coaster-price":

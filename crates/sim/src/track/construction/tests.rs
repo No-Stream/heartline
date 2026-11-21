@@ -1667,249 +1667,11 @@ fn closure_with_short_straights_and_full_tile_offsets() {
     }
 }
 
-#[test]
-fn completion_finds_a_valid_deterministic_nearby_connection() {
+/// A lift, a drop, a loop and turns that end one tile short of the station.
+fn lift_powered_open_circuit(world: &World) -> Construction {
     use PieceId::*;
-    let world = world();
-    let mut construction = Construction::new(start(), hybrid_model());
-    for id in [
-        Station,
-        TurnSmallStandalone,
-        TurnSmallStandalone,
-        Straight,
-        TurnSmallStandalone,
-    ] {
-        construction.append(id, &world, &[]).unwrap();
-    }
-    let original_hash = construction.state_hash();
-    let completion = construction
-        .find_completion(&world, &[])
-        .expect("nearby connection");
-    assert!(!completion.pieces.is_empty());
-    assert!(completion.score.is_finite());
-    let repeated = construction.find_completion(&world, &[]).unwrap();
-    assert_eq!(completion.pieces, repeated.pieces);
-    assert_eq!(completion.score, repeated.score);
-    assert_eq!(original_hash, construction.state_hash());
-    for id in completion.pieces {
-        construction.append(id, &world, &[]).unwrap();
-    }
-    assert_eq!(construction.end(), construction.start());
-    construction.close().unwrap();
-}
-
-#[test]
-fn completion_rejects_a_distant_end() {
-    let world = world();
-    let mut construction = Construction::new(start(), hybrid_model());
-    construction.append(PieceId::Station, &world, &[]).unwrap();
-    for _ in 0..20 {
-        construction.append(PieceId::Straight, &world, &[]).unwrap();
-    }
-    assert!(construction.find_completion(&world, &[]).is_none());
-}
-
-#[test]
-fn completion_search_yields_and_application_is_atomic() {
-    use PieceId::*;
-    let world = world();
-    let mut construction = Construction::new(start(), hybrid_model());
-    for id in [
-        Station,
-        TurnSmallStandalone,
-        TurnSmallStandalone,
-        Straight,
-        TurnSmallStandalone,
-    ] {
-        construction.append(id, &world, &[]).unwrap();
-    }
-    let mut search = construction.completion_search().unwrap();
-    assert!(matches!(
-        search.advance(&world, &[]),
-        CompletionSearchProgress::Pending
-    ));
-    let completion = loop {
-        let progress = search.advance(&world, &[]);
-        if let CompletionSearchProgress::Finished(result) = progress {
-            break result.unwrap();
-        }
-    };
-    let hash = construction.state_hash();
-    let mut invalid = completion.clone();
-    invalid.pieces.push(Straight);
-    assert!(
-        construction
-            .apply_completion(&invalid, &world, &[])
-            .is_err()
-    );
-    assert_eq!(construction.state_hash(), hash);
-    construction
-        .apply_completion(&completion, &world, &[])
-        .unwrap();
-    assert!(construction.is_closed());
-}
-
-#[test]
-fn completion_connects_a_short_turn_sequence() {
-    use PieceId::*;
-    let world = world();
-    let mut construction = Construction::new(start(), hybrid_model());
-    for id in [Station, TurnSmallStandalone, TurnSmallStandalone, Straight] {
-        construction.append(id, &world, &[]).unwrap();
-    }
-    let completion = construction
-        .find_completion(&world, &[])
-        .expect("two-turn connection");
-    construction
-        .apply_completion(&completion, &world, &[])
-        .unwrap();
-    assert!(construction.is_closed());
-}
-
-#[test]
-fn completion_connects_a_laterally_offset_approach() {
-    use PieceId::*;
-    let world = world();
-    let mut construction = Construction::new(start(), hybrid_model());
-    for id in [
-        Station,
-        TurnSmallStandalone,
-        TurnSmallStandalone,
-        Straight,
-        Straight,
-        Straight,
-        Straight,
-        TurnSmallStandalone,
-        TurnSmallStandalone,
-        OffsetLeft,
-    ] {
-        construction.append(id, &world, &[]).unwrap();
-    }
-    let mut expected = construction.copy_for_completion();
-    expected.append(OffsetRight, &world, &[]).unwrap();
-    assert_eq!(expected.end(), expected.start());
-    let completion = construction
-        .find_completion(&world, &[])
-        .expect("offset connection");
-    construction
-        .apply_completion(&completion, &world, &[])
-        .unwrap();
-}
-
-#[test]
-fn completion_connects_an_offset_followed_by_turns() {
-    use PieceId::*;
-    let world = world();
-    let mut construction = Construction::new(start(), hybrid_model());
-    for id in [
-        Station,
-        Straight,
-        Straight,
-        TurnSmallStandalone,
-        TurnSmallStandalone,
-        OffsetLeft,
-    ] {
-        construction.append(id, &world, &[]).unwrap();
-    }
-    let mut expected = construction.copy_for_completion();
-    for id in [OffsetRight, TurnSmallStandalone, TurnSmallStandalone] {
-        expected.append(id, &world, &[]).unwrap();
-    }
-    assert_eq!(expected.end(), expected.start());
-    expected.close().unwrap();
-    let mut search = construction.completion_search().unwrap();
-    let completion = loop {
-        let progress = search.advance(&world, &[]);
-        if let CompletionSearchProgress::Finished(result) = progress {
-            break result.expect("offset and turns connection");
-        }
-    };
-    construction
-        .apply_completion(&completion, &world, &[])
-        .unwrap();
-}
-
-#[test]
-fn completion_uses_short_offsets_for_a_tight_station_connection() {
-    use PieceId::*;
-    let world = world();
-    let allowed_pieces = [
-        Station,
-        Straight,
-        TurnSmallStandalone,
-        ShortOffsetLeft,
-        ShortOffsetRight,
-    ];
-    let mut model = hybrid_model();
-    model.allowed_pieces = allowed_pieces.to_vec();
-    let mut construction = Construction::new(start(), model);
-    for id in [
-        Station,
-        Straight,
-        Straight,
-        TurnSmallStandalone,
-        TurnSmallStandalone,
-        ShortOffsetLeft,
-    ] {
-        construction.append(id, &world, &[]).unwrap();
-    }
-    let mut without_short_offsets = construction.copy_for_completion();
-    without_short_offsets
-        .model
-        .allowed_pieces
-        .retain(|id| !matches!(id, ShortOffsetLeft | ShortOffsetRight));
-    assert!(without_short_offsets.find_completion(&world, &[]).is_none());
-    let completion = construction
-        .find_completion(&world, &[])
-        .expect("short offset connection");
-    assert!(
-        completion
-            .pieces
-            .iter()
-            .any(|id| matches!(id, ShortOffsetLeft | ShortOffsetRight))
-    );
-    construction
-        .apply_completion(&completion, &world, &[])
-        .unwrap();
-    assert!(construction.is_closed());
-}
-
-#[test]
-fn completion_connects_a_sloped_approach() {
-    use PieceId::*;
-    let world = world();
-    let mut construction = Construction::new(TrackState { z: 20, ..start() }, hybrid_model());
-    for id in [
-        Station,
-        LevelToGentleUp,
-        GentleUpToLevel,
-        TurnSmallStandalone,
-        TurnSmallStandalone,
-        Straight,
-        LevelToGentleDown,
-    ] {
-        construction.append(id, &world, &[]).unwrap();
-    }
-    let mut expected = construction.copy_for_completion();
-    for id in [GentleDownToLevel, TurnSmallStandalone, TurnSmallStandalone] {
-        expected.append(id, &world, &[]).unwrap();
-    }
-    assert_eq!(expected.end(), expected.start());
-    expected.close().unwrap();
-    let completion = construction
-        .find_completion(&world, &[])
-        .expect("sloped connection");
-    construction
-        .apply_completion(&completion, &world, &[])
-        .unwrap();
-}
-
-#[test]
-fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
-    use PieceId::*;
-    let world = world();
     let mut construction = Construction::new(TrackState { z: 36, ..start() }, hybrid_model());
-    construction.append(Station, &world, &[]).unwrap();
+    construction.append(Station, world, &[]).unwrap();
     construction.set_chain(true);
     for id in [
         LevelToGentleUp,
@@ -1921,7 +1683,7 @@ fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
         GentleUpToLevel,
         Straight,
     ] {
-        construction.append(id, &world, &[]).unwrap();
+        construction.append(id, world, &[]).unwrap();
     }
     construction.set_chain(false);
     for id in [
@@ -1945,26 +1707,74 @@ fn completion_finishes_the_lift_powered_circuit_after_a_loop() {
         OneTileStraight,
         OneTileStraight,
     ] {
-        construction
-            .append(id, &world, &[])
-            .unwrap_or_else(|error| {
-                panic!(
-                    "cannot append {id:?} at {:?}: {error:?}",
-                    construction.end()
-                )
-            });
+        construction.append(id, world, &[]).unwrap_or_else(|error| {
+            panic!(
+                "cannot append {id:?} at {:?}: {error:?}",
+                construction.end()
+            )
+        });
     }
-    let mut expected = construction.copy_for_completion();
-    expected.append(OneTileStraight, &world, &[]).unwrap();
-    assert_eq!(expected.end(), expected.start());
-    expected.close().unwrap();
-    let completion = construction
-        .find_completion(&world, &[])
-        .expect("one-tile straight");
-    assert_eq!(completion.pieces, [OneTileStraight]);
     construction
-        .apply_completion(&completion, &world, &[])
+}
+
+#[test]
+fn completion_rejects_a_distant_end() {
+    let world = world();
+    let mut construction = Construction::new(start(), hybrid_model());
+    construction.append(PieceId::Station, &world, &[]).unwrap();
+    for _ in 0..20 {
+        construction.append(PieceId::Straight, &world, &[]).unwrap();
+    }
+    assert!(construction.find_completions(&world, &[]).is_err());
+}
+
+#[test]
+fn completion_search_is_deterministic_yields_and_applies_atomically() {
+    use PieceId::*;
+    let world = world();
+    let mut construction = lift_powered_open_circuit(&world);
+    let hash = construction.state_hash();
+    let mut search = construction.completion_search().unwrap();
+    assert!(matches!(
+        search.advance(&world, &[]),
+        CompletionSearchProgress::Pending
+    ));
+    let completions = loop {
+        if let CompletionSearchProgress::Finished(result) = search.advance(&world, &[]) {
+            break result.unwrap();
+        }
+    };
+    let repeated = construction.find_completions(&world, &[]).unwrap();
+    assert_eq!(
+        completions
+            .iter()
+            .map(|completion| &completion.pieces)
+            .collect::<Vec<_>>(),
+        repeated
+            .iter()
+            .map(|completion| &completion.pieces)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(construction.state_hash(), hash);
+    let completion = &completions[0];
+    assert_eq!(completion.pieces, [OneTileStraight]);
+    assert_eq!(completion.score, 1.0);
+    let physics = &completion.physics;
+    assert!(physics.arrival_speed_mps > 0.0, "{physics:?}");
+    assert!(physics.minimum_force_headroom_g >= 0.0, "{physics:?}");
+    assert_eq!(physics.pieces.len(), 1);
+    let mut invalid = completion.clone();
+    invalid.pieces.push(Straight);
+    assert!(
+        construction
+            .apply_completion(&invalid, &world, &[])
+            .is_err()
+    );
+    assert_eq!(construction.state_hash(), hash);
+    construction
+        .apply_completion(completion, &world, &[])
         .unwrap();
+    assert!(construction.is_closed());
 }
 
 #[test]
@@ -2726,16 +2536,20 @@ fn completion_finds_known_connections_across_models_and_rotations() {
                         model.name
                     )
                 });
-                let completion = construction
-                    .find_completion(&world, &[])
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "{} {heading:?} {case}: search failed despite valid witness",
-                            model.name
-                        )
-                    });
+                let mut search = construction.completion_search_ignoring_physics();
+                let completions = loop {
+                    if let CompletionSearchProgress::Finished(result) = search.advance(&world, &[])
+                    {
+                        break result.unwrap_or_else(|reason| {
+                            panic!(
+                                "{} {heading:?} {case}: search failed despite valid witness: {reason}",
+                                model.name
+                            )
+                        });
+                    }
+                };
                 construction
-                    .apply_completion(&completion, &world, &[])
+                    .apply_completion(&completions[0], &world, &[])
                     .unwrap();
                 assert!(construction.is_closed());
             }

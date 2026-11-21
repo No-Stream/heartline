@@ -1,3 +1,4 @@
+import type { ConstructionFinishOptionsWire } from "./generated/ConstructionFinishOptionsWire";
 import { carsPerTrainControl } from "./cars-per-train";
 import { constructionEndSpeed, speedMatchMessage, speedTurnMessage, speedTurnName, speedTurnSizeLabel } from "./construction-speed-match";
 import { configureLaunchSpeedInput } from "./construction-launch-speed";
@@ -209,6 +210,11 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
               <p class="builder__finish-reason" id="finish-reason" data-finish-reason aria-live="polite"></p>
               <div class="builder__finish-confirmation" data-finish-confirmation hidden>
                 <p>Review the highlighted connection, then confirm to add it and close the circuit.</p>
+                <p class="builder__finish-option" data-finish-option aria-live="polite"></p>
+                <div class="builder__finish-cycle">
+                  <button type="button" class="tool-panel__action" data-finish-previous>Previous option</button>
+                  <button type="button" class="tool-panel__action" data-finish-next>Next option</button>
+                </div>
                 <button type="button" class="tool-panel__action tool-panel__action--primary" data-finish-confirm>Confirm coaster finish</button>
                 <button type="button" class="tool-panel__action" data-finish-cancel>Cancel finish preview</button>
               </div>
@@ -325,6 +331,9 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   const finishConfirmation = element("[data-finish-confirmation]");
   const confirmFinish = element<HTMLButtonElement>("[data-finish-confirm]");
   const cancelFinish = element<HTMLButtonElement>("[data-finish-cancel]");
+  const finishOption = element("[data-finish-option]");
+  const previousFinish = element<HTMLButtonElement>("[data-finish-previous]");
+  const nextFinish = element<HTMLButtonElement>("[data-finish-next]");
   const test = element<HTMLButtonElement>("[data-test]");
   const open = element<HTMLButtonElement>("[data-open]");
   const coasterPrice = element<HTMLInputElement>("[data-coaster-price]");
@@ -522,6 +531,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
   finish.addEventListener("click", () => dispatch({ type: "construction-finish-preview" }));
   confirmFinish.addEventListener("click", () => dispatch({ type: "construction-finish-confirm" }));
   cancelFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cancel" }));
+  previousFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cycle", step: -1 }));
+  nextFinish.addEventListener("click", () => dispatch({ type: "construction-finish-cycle", step: 1 }));
   test.addEventListener("click", () => dispatch({ type: "construction-test" }));
   element("[data-ride-info]").addEventListener("click", () => dispatch({ type: "ride-select", ride: "player" }));
   open.addEventListener("click", () => dispatch({ type: "construction-open-toggle" }));
@@ -1288,6 +1299,8 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       renderFinishStatus(next);
       updateFinishControls();
       finishConfirmation.hidden = closed || !next.finishPreview;
+      finishOption.textContent = describeFinishOption(next.finishOptions, units);
+      previousFinish.hidden = nextFinish.hidden = next.finishOptions.options.length < 2;
       stamp.classList.toggle("builder__stamp--fresh", event === "closed");
       const focusInPalette = palette.contains(document.activeElement);
       const nextPaletteKey = JSON.stringify([next.pieces.map(({ id, refusal }) => `${id}:${refusal}`), next.hillOptions.map(({ id }) => id)]);
@@ -1324,4 +1337,14 @@ export function createConstructionPanel(container: HTMLElement, dispatch: (actio
       renderFinishStatus(state);
     },
   };
+}
+
+/** "Option 1 of 2: ..." for the previewed finish, with the speed it arrives at and the brake energy. */
+export function describeFinishOption(finishOptions: ConstructionFinishOptionsWire, units: Units): string {
+  const index = finishOptions.previewedIndex;
+  if (index === null) return "";
+  const option = finishOptions.options[index];
+  if (!option) throw new Error(`Previewed finish option ${index} is missing`);
+  const brakes = option.brakeEnergyKj > 0 ? `; brakes remove ${Math.round(option.brakeEnergyKj)} kJ` : "";
+  return `Option ${index + 1} of ${finishOptions.options.length}: ${option.pieces.length} pieces (${option.pieces.join(", ")}). Arrives at ${formatSpeed(option.arrivalSpeedMps, units, 0)}${brakes}.`;
 }

@@ -716,20 +716,59 @@ fn browser_route_can_append_gentle_down_after_transition() {
     );
 }
 
+/// A chain lift, a drop, a loop and turns that end a few metres short of the station,
+/// so the train reaches the end with speed and a finish exists.
+fn build_lift_powered_open_circuit(simulation: &mut WasmSimulation) {
+    simulation.construction_start(100, 100, 36, 0);
+    let lift = [
+        "LevelToGentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUp",
+        "GentleUpToLevel",
+        "Straight",
+    ];
+    let descent = [
+        "OneTileStraight",
+        "OneTileStraight",
+        "OffsetLeft",
+        "TurnLargeEntry",
+        "TurnLargeExit",
+        "LevelToGentleDown",
+        "GentleDown",
+        "GentleDown",
+        "GentleDown",
+        "GentleDown",
+        "GentleDown",
+        "GentleDownToLevel",
+        "Loop",
+        "OffsetRight",
+        "TurnLargeEntry",
+        "TurnLargeExit",
+        "HalfTileStraight",
+        "OneTileStraight",
+        "OneTileStraight",
+    ];
+    for (chain, pieces) in [(true, &lift[..]), (false, &descent[..])] {
+        simulation.construction_set_chain(chain);
+        for piece in pieces {
+            simulation.construction_select(piece);
+            simulation.construction_append();
+            assert!(
+                simulation.construction_message().is_empty(),
+                "{piece}: {}",
+                simulation.construction_message()
+            );
+        }
+    }
+}
+
 #[test]
 fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    simulation.construction_start(200, 200, 20, 0);
-    for piece in [
-        "TurnSmallStandalone",
-        "TurnSmallStandalone",
-        "Straight",
-        "TurnSmallStandalone",
-    ] {
-        simulation.construction_select(piece);
-        simulation.construction_append();
-        assert!(simulation.construction_message().is_empty());
-    }
+    build_lift_powered_open_circuit(&mut simulation);
     let before = simulation.construction_track();
     simulation.construction_finish_search_start();
     while !simulation.construction_finish_search_advance() {}
@@ -750,6 +789,32 @@ fn finish_preview_does_not_change_track_and_confirmation_closes_it() {
 }
 
 #[test]
+fn finish_cycle_moves_the_preview_through_the_ranked_options() {
+    let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
+    build_lift_powered_open_circuit(&mut simulation);
+    simulation.construction_finish_search_start();
+    while !simulation.construction_finish_search_advance() {}
+    simulation.construction_finish_preview();
+    let previewed = |simulation: &WasmSimulation| {
+        serde_json::from_str::<serde_json::Value>(&simulation.construction_finish_options_json())
+            .unwrap()["previewedIndex"]
+            .clone()
+    };
+    let option_count = simulation.construction_finish_completions().len();
+    assert!(option_count >= 1);
+    assert_eq!(previewed(&simulation), 0);
+    simulation.construction_finish_cycle(1);
+    assert_eq!(previewed(&simulation), 1 % option_count);
+    simulation.construction_finish_cycle(-1);
+    assert_eq!(previewed(&simulation), 0);
+    simulation.construction_finish_cycle(-1);
+    assert_eq!(previewed(&simulation), option_count - 1);
+    assert!(simulation.construction_finish_preview_active());
+    simulation.construction_finish_confirm();
+    assert!(simulation.construction.as_ref().unwrap().is_closed());
+}
+
+#[test]
 fn finish_search_reports_when_the_station_is_missing() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
     simulation.construction_start(200, 200, 20, 0);
@@ -765,16 +830,7 @@ fn finish_search_reports_when_the_station_is_missing() {
 #[test]
 fn finish_preview_is_cancelled_by_track_edits() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    simulation.construction_start(200, 200, 20, 0);
-    for piece in [
-        "TurnSmallStandalone",
-        "TurnSmallStandalone",
-        "Straight",
-        "TurnSmallStandalone",
-    ] {
-        simulation.construction_select(piece);
-        simulation.construction_append();
-    }
+    build_lift_powered_open_circuit(&mut simulation);
     simulation.construction_finish_search_start();
     while !simulation.construction_finish_search_advance() {}
     simulation.construction_finish_preview();
@@ -789,17 +845,7 @@ fn finish_preview_is_cancelled_by_track_edits() {
 #[test]
 fn changing_cars_per_train_invalidates_and_rebuilds_finish_preview() {
     let mut simulation = WasmSimulation::new(42, 0, String::from("demo"));
-    simulation.construction_start(200, 200, 20, 0);
-    for piece in [
-        "TurnSmallStandalone",
-        "TurnSmallStandalone",
-        "Straight",
-        "TurnSmallStandalone",
-    ] {
-        simulation.construction_select(piece);
-        simulation.construction_append();
-        assert!(simulation.construction_message().is_empty());
-    }
+    build_lift_powered_open_circuit(&mut simulation);
     simulation.construction_finish_search_start();
     while !simulation.construction_finish_search_advance() {}
     assert!(simulation.construction_can_finish());

@@ -1,0 +1,142 @@
+//! `ride <file> finish`: ranked ways back to the station on real rides with their last pieces removed.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use theme_park_design_tools::run_cli;
+
+static NEXT_TEMP_RIDE: AtomicUsize = AtomicUsize::new(0);
+
+struct TempRide(PathBuf);
+
+impl TempRide {
+    /// A copy of a content ride, keeping all but its last `removed_steps` steps.
+    fn truncated(ride_name: &str, removed_steps: usize) -> Self {
+        let sequence = NEXT_TEMP_RIDE.fetch_add(1, Ordering::Relaxed);
+        let ride = Self(std::env::temp_dir().join(format!(
+            "theme-park-design-tools-finish-{}-{sequence}.ride.json",
+            std::process::id()
+        )));
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../content/rides/{ride_name}.ride.json"));
+        fs::copy(source, &ride.0).unwrap();
+        let step_count = serde_json::from_slice::<serde_json::Value>(&fs::read(&ride.0).unwrap())
+            .unwrap()["steps"]
+            .as_array()
+            .unwrap()
+            .len();
+        ride.run(&[&format!("truncate {}", step_count - removed_steps)])
+            .unwrap();
+        ride
+    }
+
+    fn path(&self) -> String {
+        self.0.display().to_string()
+    }
+
+    fn run(&self, commands: &[&str]) -> Result<String, String> {
+        let mut arguments = vec!["ride".to_owned(), self.path()];
+        arguments.extend(commands.iter().map(|command| (*command).to_owned()));
+        run_cli(&arguments, "")
+    }
+}
+
+impl Drop for TempRide {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+        let mut snapshot_path = self.0.as_os_str().to_owned();
+        snapshot_path.push(".snapshot");
+        let _ = fs::remove_file(snapshot_path);
+    }
+}
+
+fn finish_options(ride: &TempRide) -> Vec<serde_json::Value> {
+    let reply = ride.run(&["finish", "--json"]).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    json["replies"][0]["completions"]
+        .as_array()
+        .or_else(|| json["completions"].as_array())
+        .unwrap_or_else(|| panic!("finish JSON has no completions: {reply}"))
+        .clone()
+}
+
+/// The best option passes the closed-lap rated-margin and force-headroom rules of `check`
+/// under both physics configurations, and applying it closes a ride that replays closed.
+fn assert_best_option_applies(ride: &TempRide) -> serde_json::Value {
+    let options = finish_options(ride);
+    let best = options[0].clone();
+    assert_eq!(best["rank"], 1.0, "{best}");
+    assert_eq!(best["rideCheck"]["passed"], true, "{best}");
+    assert!(
+        best["physics"]["arrivalSpeedMps"].as_f64().unwrap() > 0.0,
+        "{best}"
+    );
+    assert!(
+        best["physics"]["minimumForceHeadroomG"].as_f64().unwrap() >= 0.0,
+        "{best}"
+    );
+    let applied = ride.run(&["finish apply 1"]).unwrap();
+    assert!(applied.contains("and closed the circuit."), "{applied}");
+    let replayed = ride.run(&["state"]).unwrap();
+    assert!(replayed.contains("can test: true"), "{replayed}");
+    best
+}
+
+#[test]
+fn nearly_finished_classic_ride_gets_a_checked_completion() {
+    let ride = TempRide::truncated("velocity-viper", 4);
+
+    let listing = ride.run(&["finish"]).unwrap();
+    assert!(listing.starts_with("Found "), "{listing}");
+    assert!(listing.contains("1. "), "{listing}");
+    assert!(listing.contains("ride check pass"), "{listing}");
+
+    let best = assert_best_option_applies(&ride);
+    assert_eq!(best["pieces"].as_array().unwrap().len(), 3, "{best}");
+}
+
+#[test]
+fn horizon_hawk_without_its_last_straights_gets_a_checked_completion() {
+    let ride = TempRide::truncated("horizon-hawk", 3);
+
+    let best = assert_best_option_applies(&ride);
+
+    assert_eq!(
+        best["pieces"],
+        serde_json::json!(["OneTileStraight", "OneTileStraight"])
+    );
+}
+
+#[test]
+fn horizon_hawk_before_its_final_banked_turn_explains_it_is_too_fast() {
+    let ride = TempRide::truncated("horizon-hawk", 4);
+
+    let error = ride.run(&["finish"]).unwrap_err();
+
+    assert!(error.contains("No safe finish found"), "{error}");
+    assert!(error.contains("over a force limit"), "{error}");
+    assert!(error.contains("The train is too fast here"), "{error}");
+    assert!(error.contains("90 degree heading mismatch"), "{error}");
+}
+
+#[test]
+fn horizon_hawk_one_step_from_closed_says_to_close_the_circuit() {
+    let ride = TempRide::truncated("horizon-hawk", 1);
+
+    let error = ride.run(&["finish"]).unwrap_err();
+
+    assert!(
+        error.contains("The track already reaches the station entry; close the circuit instead."),
+        "{error}"
+    );
+}
+
+#[test]
+fn finish_apply_refuses_an_option_that_does_not_exist() {
+    let ride = TempRide::truncated("velocity-viper", 4);
+
+    let error = ride.run(&["finish apply 9"]).unwrap_err();
+
+    assert!(error.contains("finish option 9 does not exist"), "{error}");
+}

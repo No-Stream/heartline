@@ -55,6 +55,7 @@ export function applyConstructionAction(
     case "construction-close": simulation.construction_close(); break;
     case "construction-finish-preview": simulation.construction_finish_preview(); break;
     case "construction-finish-confirm": simulation.construction_finish_confirm(); scheduleFinishSearch(); break;
+    case "construction-finish-cycle": simulation.construction_finish_cycle(action.step); break;
     case "construction-finish-cancel": simulation.construction_finish_cancel(); break;
     case "construction-set-open": simulation.construction_set_open(action.open); break;
     case "construction-set-coaster-price": simulation.construction_set_coaster_price(action.price); break;

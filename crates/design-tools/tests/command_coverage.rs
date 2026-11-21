@@ -422,41 +422,44 @@ fn auto_blocks_persists_the_best_layout_within_the_work_budget() {
 }
 
 #[test]
-fn truncate_removes_steps_and_finish_persists_the_search_result() {
+fn truncate_removes_steps_and_finish_apply_persists_the_completion() {
     let ride = TempRide::new();
-    fs::write(&ride.0, OPEN_RIDE).unwrap();
+    fs::write(&ride.0, LAUNCH_RIDE).unwrap();
+    let source: serde_json::Value = serde_json::from_str(LAUNCH_RIDE).unwrap();
+    let kept_steps = source["steps"].as_array().unwrap().len() - 4;
     run_cli(
         &[
             "ride".into(),
             ride.path().into(),
-            "place Straight".into(),
-            "truncate 0".into(),
+            format!("truncate {kept_steps}"),
         ],
         "",
     )
     .unwrap();
-    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
-    assert!(saved["steps"].as_array().unwrap().is_empty());
 
     let reply = run_cli(
-        &[
-            "ride".into(),
-            ride.path().into(),
-            "place Straight".into(),
-            "finish".into(),
-        ],
+        &["ride".into(), ride.path().into(), "finish apply 1".into()],
         "",
     )
     .unwrap();
 
-    assert!(reply.starts_with("Placed Straight\n"), "{reply}");
     assert!(
-        reply.contains("Finish search added 4 piece(s).\n"),
+        reply.starts_with("Placed finish option 1 (3 piece(s)) and closed the circuit.\n"),
         "{reply}"
     );
     assert!(reply.contains("can test: true"), "{reply}");
     let saved: serde_json::Value = serde_json::from_slice(&fs::read(&ride.0).unwrap()).unwrap();
-    assert_eq!(saved["steps"].as_array().unwrap().len(), 5);
+    let steps = saved["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), kept_steps + 4);
+    assert_eq!(steps.last().unwrap(), &serde_json::json!({ "close": true }));
+    let fresh_ride = TempRide::new();
+    fs::copy(&ride.0, &fresh_ride.0).unwrap();
+    let replayed = run_cli(
+        &["ride".into(), fresh_ride.path().into(), "state".into()],
+        "",
+    )
+    .unwrap();
+    assert!(replayed.contains("can test: true"), "{replayed}");
 }
 
 #[test]

@@ -104,7 +104,7 @@ impl Default for CandidateCarRecorder {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Snapshot {
     boundary: usize,
     train: Train,
@@ -119,7 +119,7 @@ struct Snapshot {
 }
 
 /// Incremental construction preview. Snapshots are taken before a boundary-crossing step.
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PreviewCache {
     piece_hashes: Vec<u64>,
     parameters: Vec<u8>,
@@ -150,7 +150,7 @@ impl PreviewCache {
         model: &CoasterModel,
         config: PhysicsConfig,
     ) -> Option<TrackPreview> {
-        match self.preview_impl(pieces, model, config, false, None)? {
+        match self.preview_impl(pieces, model, config, false, None, false)? {
             PreviewOutput::Track(preview) => Some(*preview),
             PreviewOutput::Candidate(_) => unreachable!("lead preview returns a track report"),
         }
@@ -166,7 +166,7 @@ impl PreviewCache {
         model: &CoasterModel,
         config: PhysicsConfig,
     ) -> Option<TrackPreview> {
-        match self.preview_impl(pieces, model, config, true, None)? {
+        match self.preview_impl(pieces, model, config, true, None, false)? {
             PreviewOutput::Track(preview) => Some(*preview),
             PreviewOutput::Candidate(_) => unreachable!("all-car preview returns a track report"),
         }
@@ -180,9 +180,47 @@ impl PreviewCache {
         config: PhysicsConfig,
         candidate_piece_index: usize,
     ) -> Option<CandidateCalibrationPreview> {
-        match self.preview_impl(pieces, model, config, false, Some(candidate_piece_index))? {
+        match self.preview_impl(
+            pieces,
+            model,
+            config,
+            false,
+            Some(candidate_piece_index),
+            false,
+        )? {
             PreviewOutput::Candidate(preview) => Some(preview),
             PreviewOutput::Track(_) => unreachable!("candidate preview returns force summaries"),
+        }
+    }
+
+    /// A cache holding only the snapshot taken where the train crosses the end of the first
+    /// `piece_count` pieces, so callers can branch several continuations from that end cheaply.
+    pub fn fork_at_end(&self, piece_count: usize) -> Option<Self> {
+        let snapshot = self
+            .snapshots
+            .iter()
+            .find(|snapshot| snapshot.boundary == piece_count)?
+            .clone();
+        Some(Self {
+            piece_hashes: self.piece_hashes.get(..piece_count)?.to_vec(),
+            parameters: self.parameters.clone(),
+            closed: false,
+            snapshots: vec![snapshot],
+        })
+    }
+
+    /// Previews `pieces` as open track even when they end where they start, so a closing
+    /// sequence resumes from the open-end snapshot instead of simulating a whole lap. The
+    /// train runs past the final piece onto a straight tangent runout.
+    pub fn preview_open_continuation(
+        &mut self,
+        pieces: &[Piece],
+        model: &CoasterModel,
+        config: PhysicsConfig,
+    ) -> Option<TrackPreview> {
+        match self.preview_impl(pieces, model, config, false, None, true)? {
+            PreviewOutput::Track(preview) => Some(*preview),
+            PreviewOutput::Candidate(_) => unreachable!("open continuation returns a track report"),
         }
     }
 
@@ -193,6 +231,7 @@ impl PreviewCache {
         config: PhysicsConfig,
         record_all_cars: bool,
         candidate_piece_index: Option<usize>,
+        treat_as_open: bool,
     ) -> Option<PreviewOutput> {
         let configuration = &model.train;
         let limits = model.comfortable_force_limits;
@@ -201,7 +240,7 @@ impl PreviewCache {
             .iter()
             .position(|piece| piece.kind == PieceKind::Station)?;
         assert!(pieces.windows(2).all(|pair| pair[0].exit == pair[1].entry));
-        let closed = pieces.last().unwrap().exit == pieces[0].entry;
+        let closed = !treat_as_open && pieces.last().unwrap().exit == pieces[0].entry;
         let source_circuit = circuit_from_pieces(pieces.to_vec(), !closed);
         let source_length = source_circuit.length;
         let source_piece_count = source_circuit.pieces.len();

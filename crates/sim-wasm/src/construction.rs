@@ -622,6 +622,25 @@ pub struct ConstructionLaunchEstimateWire {
     pub peak_longitudinal_g: Option<f64>,
 }
 
+/// One ranked way to finish the circuit, as the builder shows it.
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionFinishOptionWire {
+    pub rank: usize,
+    pub pieces: Vec<String>,
+    pub arrival_speed_mps: f64,
+    pub brake_energy_kj: f64,
+    pub minimum_force_headroom_g: f64,
+    pub minimum_rated_margin_mps: Option<f64>,
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstructionFinishOptionsWire {
+    pub previewed_index: Option<usize>,
+    pub options: Vec<ConstructionFinishOptionWire>,
+}
+
 #[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConstructionForcePreviewWire {
@@ -1044,6 +1063,36 @@ impl WasmSimulation {
 }
 
 impl WasmSimulation {
+    pub fn construction_finish_options(&self) -> ConstructionFinishOptionsWire {
+        ConstructionFinishOptionsWire {
+            previewed_index: self
+                .construction_completion
+                .is_some()
+                .then_some(self.construction_completion_index),
+            options: self
+                .construction_completion_available
+                .iter()
+                .map(|completion| ConstructionFinishOptionWire {
+                    rank: completion.score as usize,
+                    pieces: completion
+                        .geometry
+                        .iter()
+                        .map(|piece| format!("{:?}", piece.id))
+                        .collect(),
+                    arrival_speed_mps: completion.physics.arrival_speed_mps,
+                    brake_energy_kj: completion.physics.brake_energy_kj,
+                    minimum_force_headroom_g: completion.physics.minimum_force_headroom_g,
+                    minimum_rated_margin_mps: completion.physics.minimum_rated_margin_mps,
+                })
+                .collect(),
+        }
+    }
+
+    /// The finish options with their full physics reports, for native tools.
+    pub fn construction_finish_completions(&self) -> &[Completion] {
+        &self.construction_completion_available
+    }
+
     pub fn construction_force_preview(&self) -> Option<ConstructionForcePreviewWire> {
         let construction = self.construction.as_ref()?;
         let pieces = construction.pieces();
@@ -2278,14 +2327,11 @@ impl WasmSimulation {
         self.construction_completion.is_some()
     }
 
-    pub fn construction_finish_search_pending(&self) -> bool {
-        self.construction_completion_search.is_some()
-    }
-
     pub fn construction_finish_invalidate(&mut self) {
         let had_preview = self.construction_completion.is_some();
         self.construction_completion = None;
-        self.construction_completion_available = None;
+        self.construction_completion_available.clear();
+        self.construction_completion_index = 0;
         self.construction_completion_search = None;
         self.construction_completion_checked = false;
         self.construction_completion_unavailable_reason = None;
@@ -2295,20 +2341,24 @@ impl WasmSimulation {
     }
 
     pub fn construction_finish_search_start(&mut self) {
-        self.construction_completion_available = None;
-        let (search, reason) = self.construction.as_ref().map_or(
-            (None, Some("Place a station before finishing the coaster.")),
-            |construction| {
-                let search = construction.completion_search();
-                let reason = search
-                    .is_none()
-                    .then(|| construction_finish_unavailable_reason(construction));
-                (search, reason)
-            },
+        self.construction_completion_available.clear();
+        self.construction_completion_index = 0;
+        let search = self.construction.as_ref().map_or_else(
+            || Err("Place a station before finishing the coaster.".to_owned()),
+            Construction::completion_search,
         );
-        self.construction_completion_search = search;
-        self.construction_completion_unavailable_reason = reason.map(str::to_owned);
-        self.construction_completion_checked = self.construction_completion_search.is_none();
+        match search {
+            Ok(search) => {
+                self.construction_completion_search = Some(search);
+                self.construction_completion_unavailable_reason = None;
+                self.construction_completion_checked = false;
+            }
+            Err(reason) => {
+                self.construction_completion_search = None;
+                self.construction_completion_unavailable_reason = Some(reason);
+                self.construction_completion_checked = true;
+            }
+        }
     }
 
     pub fn construction_finish_search_advance(&mut self) -> bool {
@@ -2318,8 +2368,11 @@ impl WasmSimulation {
         };
         match search.advance(&self.park.world, &obstacles) {
             CompletionSearchProgress::Pending => false,
-            CompletionSearchProgress::Finished(completion) => {
-                self.construction_completion_available = completion;
+            CompletionSearchProgress::Finished(result) => {
+                match result {
+                    Ok(completions) => self.construction_completion_available = completions,
+                    Err(reason) => self.construction_completion_unavailable_reason = Some(reason),
+                }
                 self.construction_completion_search = None;
                 self.construction_completion_checked = true;
                 true
@@ -2328,7 +2381,7 @@ impl WasmSimulation {
     }
 
     pub fn construction_can_finish(&self) -> bool {
-        self.construction_completion_available.is_some() || self.construction_completion.is_some()
+        !self.construction_completion_available.is_empty()
     }
 
     pub fn construction_finish_reason(&self) -> String {
@@ -2336,26 +2389,46 @@ impl WasmSimulation {
             String::new()
         } else if self.construction_completion_checked {
             self.construction_completion_unavailable_reason
-                .as_deref()
-                .unwrap_or("No nearby connection to the station was found.")
-                .into()
+                .clone()
+                .expect("a finished search without completions has a reason")
         } else {
             "Checking for a connection to the station.".into()
         }
     }
 
+    /// Ranked finish options with their physics, and the option being previewed.
+    pub fn construction_finish_options_json(&self) -> String {
+        serde_json::to_string(&self.construction_finish_options())
+            .expect("finish options serialize")
+    }
+
     pub fn construction_finish_preview(&mut self) {
-        self.construction_completion = self.construction_completion_available.take();
+        self.construction_completion_index = 0;
+        self.construction_completion = self.construction_completion_available.first().cloned();
         self.construction_message = if self.construction_completion.is_some() {
             "Review the connection, then confirm to finish the coaster.".into()
         } else {
-            "No nearby connection to the station was found.".into()
+            self.construction_finish_reason()
         };
         self.refresh_construction_support_rendering();
     }
 
+    /// Previews the next (`step` 1) or previous (`step` -1) ranked finish option.
+    pub fn construction_finish_cycle(&mut self, step: i32) {
+        let count = self.construction_completion_available.len();
+        if self.construction_completion.is_none() || count == 0 {
+            self.construction_message = "Preview a connection first.".into();
+            return;
+        }
+        let index = (self.construction_completion_index as i64 + i64::from(step))
+            .rem_euclid(count as i64) as usize;
+        self.construction_completion_index = index;
+        self.construction_completion = Some(self.construction_completion_available[index].clone());
+        self.refresh_construction_support_rendering();
+    }
+
     pub fn construction_finish_cancel(&mut self) {
-        self.construction_completion_available = self.construction_completion.take();
+        self.construction_completion = None;
         self.construction_message.clear();
         self.refresh_construction_support_rendering();
     }
@@ -2406,6 +2479,8 @@ impl WasmSimulation {
             }
         };
         if message.is_empty() {
+            // The circuit is closed now; this records that without searching.
+            self.construction_finish_search_start();
             self.close_live_coaster();
             self.clear_block_layout();
             self.park.support_render_cache.clear();
@@ -2642,22 +2717,6 @@ impl WasmSimulation {
             self.recovered_station.as_ref(),
         );
         result
-    }
-}
-
-fn construction_finish_unavailable_reason(construction: &Construction) -> &'static str {
-    if construction.is_closed() {
-        "The coaster circuit is already closed."
-    } else if construction
-        .pieces()
-        .first()
-        .is_none_or(|piece| piece.kind != PieceKind::Station)
-    {
-        "Place a station before finishing the coaster."
-    } else if !construction.disconnected_segments().is_empty() {
-        "Reconnect the disconnected track before finishing the coaster."
-    } else {
-        "No nearby connection to the station was found."
     }
 }
 

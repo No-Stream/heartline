@@ -79,16 +79,25 @@ async function replayWithWorker(page: Page, session: ReplaySession): Promise<Rep
 
 test("replay waits for a finish-coaster search before confirming the connection @fast", async ({ page }) => {
   await page.goto(fixtureUrl);
-  const pieces = ["TurnSmallStandalone", "TurnSmallStandalone", "Straight", "TurnSmallStandalone"];
+  const lift = ["LevelToGentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUp", "GentleUpToLevel", "Straight"];
+  const descent = [
+    "OneTileStraight", "OneTileStraight", "OffsetLeft", "TurnLargeEntry", "TurnLargeExit", "LevelToGentleDown", "GentleDown", "GentleDown",
+    "GentleDown", "GentleDown", "GentleDown", "GentleDownToLevel", "Loop", "OffsetRight", "TurnLargeEntry", "TurnLargeExit", "HalfTileStraight",
+    "OneTileStraight", "OneTileStraight",
+  ];
+  const place = (pieces: readonly string[]) => pieces.flatMap((piece) => [{ type: "construction-select", piece }, { type: "construction-append" }]);
   const commands = [
-    { type: "construction-start", x: 100, y: 100, z: 40, heading: 0 },
-    ...pieces.flatMap((piece) => [{ type: "construction-select", piece }, { type: "construction-append" }]),
+    { type: "construction-start", x: 100, y: 100, z: 36, heading: 0 },
+    { type: "construction-set-chain", enabled: true },
+    ...place(lift),
+    { type: "construction-set-chain", enabled: false },
+    ...place(descent),
     { type: "construction-finish-preview" },
     { type: "construction-finish-confirm" },
   ].map((command) => ({ tick: 0, command }));
   const session = parseReplaySession({ format: "theme-park-session", version: 1, build: { gitHash: "test", mode: "development" }, seed: "42", park: "demo", guestCount: 0, commands, checkpoints: [], finalTick: 0 });
   const outcome = await replayWithWorker(page, session);
-  expect(outcome.observation.constructionPieces).toBeGreaterThan(5);
+  expect(outcome.observation.constructionPieces).toBeGreaterThan(1 + lift.length + descent.length);
 });
 
 test("records and replays a non-default car count through the real worker @fast", async ({ page }) => {

@@ -92,10 +92,13 @@ pub struct WasmSimulation {
     selected_element: Option<String>,
     construction_undo_groups: Vec<usize>,
     construction_completion: Option<Completion>,
-    construction_completion_available: Option<Completion>,
+    /// Ranked finish options. Byte-compatible with the earlier `Option<Completion>` in saves.
+    construction_completion_available: Vec<Completion>,
     construction_completion_search: Option<CompletionSearch>,
     construction_completion_checked: bool,
     construction_completion_unavailable_reason: Option<String>,
+    #[serde(skip)]
+    construction_completion_index: usize,
     #[serde(skip)]
     construction_preview_supports_cache: Vec<f32>,
     #[serde(skip)]

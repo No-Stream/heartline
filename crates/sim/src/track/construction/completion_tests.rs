@@ -1,20 +1,23 @@
 use super::*;
 use crate::physics::{ConstructionTestRunRecorder, PhysicsConfig, Train};
-use crate::track::{PieceId, PieceKind, TrackState, hybrid_model, wooden_twister_model};
+use crate::track::{PieceId, TrackState, hybrid_model, wooden_twister_model};
 use crate::world::Surface;
 
-#[test]
-fn completion_uses_unpowered_connectors_and_preserves_chain_mode() {
-    use PieceId::*;
-
-    let world = World::new(
-        128,
-        128,
+fn flat_world() -> World {
+    World::new(
+        256,
+        256,
         Surface {
             corners: [0; 4],
             water: None,
         },
-    );
+    )
+}
+
+#[test]
+fn unpowered_track_explains_that_the_train_stops_before_the_end() {
+    use PieceId::*;
+    let world = flat_world();
     let start = TrackState {
         x: 50,
         y: 50,
@@ -31,45 +34,19 @@ fn completion_uses_unpowered_connectors_and_preserves_chain_mode() {
     ] {
         construction.append(id, &world, &[]).unwrap();
     }
-    let original_length = construction.pieces().len();
-    construction.set_chain(true);
 
-    let completion = construction
-        .find_completion(&world, &[])
-        .expect("nearby connection with chain mode enabled");
+    let reason = construction.find_completions(&world, &[]).unwrap_err();
 
-    assert!(!completion.geometry.is_empty());
     assert!(
-        completion
-            .geometry
-            .iter()
-            .all(|piece| piece.kind == PieceKind::Track)
-    );
-    construction
-        .apply_completion(&completion, &world, &[])
-        .unwrap();
-
-    assert!(construction.is_closed());
-    assert!(construction.chain());
-    assert!(
-        construction.pieces()[original_length..]
-            .iter()
-            .all(|piece| piece.kind == PieceKind::Track)
+        reason.contains("The train stops before the end of the track"),
+        "{reason}"
     );
 }
 
 #[test]
-fn completion_finds_a_four_piece_southeast_offset_connection() {
+fn distant_end_explains_how_far_it_is_from_the_station() {
     use PieceId::*;
-
-    let world = World::new(
-        256,
-        256,
-        Surface {
-            corners: [0; 4],
-            water: None,
-        },
-    );
+    let world = flat_world();
     let start = TrackState {
         x: 128,
         y: 127,
@@ -78,30 +55,17 @@ fn completion_finds_a_four_piece_southeast_offset_connection() {
         ..TrackState::origin()
     };
     let mut construction = Construction::new(start, wooden_twister_model());
-    for id in [
-        Station,
-        Straight,
-        Straight,
-        Straight,
-        Straight,
-        Straight,
-        TurnSmallStandalone,
-        TurnSmallStandalone,
-        FullOffsetLeft,
-        FullOffsetLeft,
-    ] {
-        construction.append(id, &world, &[]).unwrap();
+    construction.append(Station, &world, &[]).unwrap();
+    for _ in 0..10 {
+        construction.append(Straight, &world, &[]).unwrap();
     }
 
-    let completion = construction
-        .find_completion(&world, &[])
-        .expect("two-tile offset connection");
+    let reason = construction.find_completions(&world, &[]).unwrap_err();
 
-    assert_eq!(completion.pieces.len(), 4);
-    construction
-        .apply_completion(&completion, &world, &[])
-        .unwrap();
-    assert!(construction.is_closed());
+    assert!(
+        reason.contains("from the station entry; bring it within 120 m"),
+        "{reason}"
+    );
 }
 
 #[test]
@@ -161,11 +125,12 @@ fn constructed_reference_laps_report_ratings() {
     ] {
         construction.append(id, &world, &[]).unwrap();
     }
-    let completion = construction
-        .find_completion(&world, &[])
+    let completions = construction
+        .find_completions(&world, &[])
         .expect("completion");
+    let completion = &completions[0];
     construction
-        .apply_completion(&completion, &world, &[])
+        .apply_completion(completion, &world, &[])
         .unwrap();
     let circuit = construction.circuit().unwrap();
     let config = PhysicsConfig {

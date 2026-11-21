@@ -57,7 +57,10 @@ mod flexibility_tests;
 mod speed_estimate;
 #[cfg(test)]
 mod walk_tests;
-pub use completion::{Completion, CompletionSearch, CompletionSearchProgress};
+pub use completion::{
+    Completion, CompletionPhysics, CompletionPieceReport, CompletionSearch,
+    CompletionSearchProgress, FORCE_HEADROOM_G, construction_preview_physics,
+};
 pub use elements::ElementChoice;
 pub use speed_estimate::{EndSpeedEstimate, EndSpeedSource};
 

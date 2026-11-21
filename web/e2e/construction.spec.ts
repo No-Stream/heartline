@@ -167,6 +167,17 @@ test("previews and confirms a lift-powered circuit finish, then completes a ride
 
   await finishCoaster.click();
   await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "true");
+  const finishOption = page.locator("[data-finish-option]");
+  await expect(finishOption).toHaveText(/^Option 1 of (\d+): \d+ pieces \(.+\)\. Arrives at \d+ km\/h/);
+  const optionCount = Number(/of (\d+)/.exec(await finishOption.textContent() ?? "")?.[1]);
+  const nextOption = page.getByRole("button", { name: "Next option" });
+  await expect(nextOption).toBeVisible({ visible: optionCount > 1 });
+  if (optionCount > 1) {
+    await nextOption.click();
+    await expect(finishOption).toHaveText(new RegExp(`^Option 2 of ${optionCount}: `));
+    await page.getByRole("button", { name: "Previous option" }).click();
+    await expect(finishOption).toHaveText(new RegExp(`^Option 1 of ${optionCount}: `));
+  }
   await page.getByRole("button", { name: "Confirm coaster finish" }).click();
   await expect(page.locator("[data-construction]")).toHaveAttribute("data-finish-preview", "false");
   await expect(page.getByText("Circuit complete", { exact: true })).toBeVisible();

@@ -3,6 +3,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 use serde::{Deserialize, Serialize};
 use theme_park_sim::track::blocks::BlockSectionPlacement;
 use theme_park_sim::track::coaster_models;
+use theme_park_sim::track::construction::Completion;
 use theme_park_sim::track::ride_file::{RideFile, RideFileFormat, RideHeading, RideStep};
 use theme_park_sim::track::shaped::{ElementIntent, ElementSpec};
 
@@ -518,21 +519,42 @@ impl BuilderSession {
         Ok(())
     }
 
+    /// Places the best-ranked way back to the station and closes the circuit.
     pub fn finish(&mut self) -> Result<BuilderEstimates, BuilderSessionError> {
-        self.end_speed_cache = None;
-        let previous_piece_count = self
-            .simulation
-            .construction
-            .as_ref()
-            .map(|construction| construction.piece_ids().len());
+        self.finish_apply(1)
+    }
+
+    /// Runs the finish search to the end and returns its ranked completions.
+    pub fn finish_options(&mut self) -> Result<Vec<Completion>, BuilderSessionError> {
         self.simulation.construction_finish_search_start();
         while !self.simulation.construction_finish_search_advance() {}
-        self.simulation.construction_finish_preview();
         if !self.simulation.construction_can_finish() {
             return Err(self.bridge_error(
                 "finish coaster",
                 self.simulation.construction_finish_reason(),
             ));
+        }
+        Ok(self.simulation.construction_finish_completions().to_vec())
+    }
+
+    /// Places finish option `rank` (1 is the best) and closes the circuit.
+    pub fn finish_apply(&mut self, rank: usize) -> Result<BuilderEstimates, BuilderSessionError> {
+        self.end_speed_cache = None;
+        let option_count = self.finish_options()?.len();
+        if rank == 0 || rank > option_count {
+            return Err(self.bridge_error(
+                "finish coaster",
+                format!("finish option {rank} does not exist; the search found {option_count}"),
+            ));
+        }
+        let previous_piece_count = self
+            .simulation
+            .construction
+            .as_ref()
+            .map(|construction| construction.piece_ids().len());
+        self.simulation.construction_finish_preview();
+        for _ in 1..rank {
+            self.simulation.construction_finish_cycle(1);
         }
         self.simulation.construction_finish_confirm();
         self.check_bridge_message("confirm finished coaster")?;

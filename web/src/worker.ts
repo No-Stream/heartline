@@ -13,6 +13,7 @@ import { parseCoasterColors } from "./coaster-colors";
 import { parseTrainLayout, type TrainLayout } from "./train-layout";
 import { shouldInvalidateConstructionFinishSearch } from "./construction-finish-search";
 import { applyConstructionAction, readBuilderEstimates, sendsIncompleteConstructionState } from "./worker-construction";
+import type { ConstructionFinishOptionsWire } from "./generated/ConstructionFinishOptionsWire";
 
 import { sendWorkerMessage, type WorkerAction, type WorkerMessage, type PathAction, type PathPosition, type PlacementOutcome } from "./protocol";
 import type { BlockReport } from "./construction-protocol";
@@ -179,6 +180,7 @@ function sendConstruction(complete = true): void {
     canAppend, appendReason, canClose: simulation.construction_can_close(),
     finishPreview: simulation.construction_finish_preview_active(),
     canFinish: simulation.construction_can_finish(), finishReason: simulation.construction_finish_reason(),
+    finishOptions: JSON.parse(simulation.construction_finish_options_json()) as ConstructionFinishOptionsWire,
     testingReport: JSON.parse(simulation.construction_test_report_json()) as TestingReport | null,
     constructionForcePreview,
     candidateForcePreview: estimates.candidateForcePreview,
@@ -201,12 +203,12 @@ function sendConstructionFinishStatus(): void {
 let finishSearchGeneration = 0;
 let finishSearchPending = false;
 let finishSearchAwaited = false;
-function scheduleFinishSearch(resume = false): void {
+function scheduleFinishSearch(): void {
   const generation = ++finishSearchGeneration;
   finishSearchPending = true;
   setTimeout(() => {
     if (generation !== finishSearchGeneration) return;
-    if (!resume) simulation.construction_finish_search_start();
+    simulation.construction_finish_search_start();
     const advance = (): void => {
       if (generation !== finishSearchGeneration) return;
       const deadline = performance.now() + finishSearchSliceMs;
@@ -403,7 +405,8 @@ workerScope.addEventListener("message", (event) => {
       sendWorkerMessage(outputScope, { type: "park-restoring" });
       for (const item of staged) sendWorkerMessage(outputScope, item.message, item.transfer);
       sendWorkerMessage(outputScope, { type: "park-loaded", requestId: action.requestId });
-      if ((simulation as WasmSimulation & { construction_finish_search_pending(): boolean }).construction_finish_search_pending()) scheduleFinishSearch(true);
+      // Loading discards saved finish results, so search again for the loaded track.
+      scheduleFinishSearch();
       scheduleBlockAnalysis();
       return;
     }

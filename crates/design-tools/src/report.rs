@@ -238,7 +238,31 @@ pub(crate) fn default_physics_test_run(
     model: &CoasterModel,
 ) -> TestRun {
     let start = circuit.pieces()[0].length() / 2.0;
-    let mut train = Train::new(circuit, &model.train, PhysicsConfig::default(), start, 0.0);
+    physics_test_run(circuit, model, PhysicsConfig::default(), start, 0.0)
+}
+
+/// A lap under the builder's construction-test physics, started like the rated-margin run.
+pub(crate) fn construction_physics_test_run(
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &CoasterModel,
+) -> TestRun {
+    physics_test_run(
+        circuit,
+        model,
+        theme_park_sim::track::construction::construction_preview_physics(),
+        0.0,
+        2.0,
+    )
+}
+
+fn physics_test_run(
+    circuit: &theme_park_sim::physics::Circuit,
+    model: &CoasterModel,
+    config: PhysicsConfig,
+    start: f64,
+    initial_speed: f64,
+) -> TestRun {
+    let mut train = Train::new(circuit, &model.train, config, start, initial_speed);
     let mut recorder =
         ConstructionTestRunRecorder::for_circuit_with_train_and_model(circuit, &model.train, model);
     let mut slow_steps = 0;

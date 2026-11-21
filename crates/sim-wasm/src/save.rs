@@ -178,6 +178,8 @@ impl WasmSimulation {
             return Err(SaveLoadError::TrailingData);
         }
         simulation.park.rebind_world_after_loading();
+        // Finish results carry physics that saves do not keep; the builder searches again.
+        simulation.construction_finish_invalidate();
         let construction_message = simulation.park.construction_message.clone();
         simulation.refresh_construction_support_rendering();
         simulation.park.construction_message = construction_message;
