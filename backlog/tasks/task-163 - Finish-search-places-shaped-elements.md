@@ -4,6 +4,7 @@ title: Finish search places shaped elements
 status: In Progress
 assignee: []
 created_date: '2026-11-21 06:31'
+updated_date: '2026-11-21 21:25'
 labels: []
 dependencies: []
 ordinal: 159000
@@ -30,4 +31,6 @@ Test changes: the TASK-159 test that Horizon Hawk without its last 4 steps repor
 
 Not done: shaped hills; turns from diagonal headings (the browser's 2 m radius stepper cannot select their 2.8 m grid); a finish that ends with a shaped turn at the station entry (the builder then has no piece selected, which the ride check's builder snapshots cannot record).
 Gates on 1eab904: workspace tests (skipping the seeded walk tests) 1139 passed, 0 failed, 1 ignored; `make lint` passed; `make check` passed (Vitest 497, browser 47); `make ride-agreement RIDE=horizon-hawk` 2 passed. Finish apply now also refuses a completion whose piece ids disagree with its geometry, which keeps the existing tampered-completion test meaningful now that apply rebuilds from geometry.
+
+Backlog review 2026-11-21: shaped turns are placed by the finish search on master (812cfb6; gates recorded in 1eab904 and bc12252). Keep open: the ticket explicitly leaves shaped hills, turns from diagonal headings, and finishes that end with a shaped turn at the station entry unresolved.
 <!-- SECTION:NOTES:END -->

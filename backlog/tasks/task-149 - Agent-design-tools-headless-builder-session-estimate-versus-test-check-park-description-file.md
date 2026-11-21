@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-11-18 17:03'
-updated_date: '2026-11-19 01:46'
+updated_date: '2026-11-21 21:28'
 labels:
   - tooling
 dependencies: []
@@ -81,7 +81,6 @@ Verification: `make build` passed. The requested workspace Rust command ran ever
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
 2026-11-18 lead, using tools/design to build the short agreement fixture (Launch 14 m/s, AirtimeHill, two small turns, finish, close; agreement passes on all 9 pieces). Friction for the agent guide (item 10): every call prints dozens of ts-rs 'failed to parse serde attribute' build warnings before the reply; there is no 'help' ride command (only the plan lists commands); 'finish' brings the track back to the station but a separate 'close' is still needed, and the state after finish says 'No nearby connection to the station was found' while 'can test: true' (same family as TASK-153).
 ## Work item 5: shared worker builder path (2026-11-18)
 
@@ -97,9 +96,7 @@ Verification so far: the workspace Rust command passed 950 tests in 22 suites; `
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
 2026-11-18 lead latency recheck for item 5, native construction bench run alternately master/branch twice under load 10-15: placement median Timber 108.0/109.9 master vs 108.4/107.7 branch; Viper 89.6/91.6 vs 89.5/89.9; Briar 84.4/87.1 vs 87.8/84.5 ms. Master's own Viper p95 moved 101.2 -> 117.2 ms between runs, so the earlier +5.9% p95 was noise; no regression. Item 5 accepted.
-<!-- SECTION:NOTES:END -->
 ## Work item 4 native JSON support (2026-11-18)
 
 `tools/design check --json` now includes one `browserEstimates` entry per placed ride-file step. Each entry records the original step index, first physical piece index, piece count, piece id, and full worker-shaped snapshots after selection and after placement (including launch-speed changes). Snapshots include the selected id, full construction force preview and samples, candidate force preview, speed match and selected hill estimate; missing construction or candidate previews fail the command. Agreement rows also include the raw placement estimate, finished-track estimate, front-car and worst-car measurements, and entry speeds so browser checks can report checks 2 and 3 without reconstructing numbers from display text. The existing estimate/test calculation is unchanged; this is additive JSON output needed by the browser spec. `make test-design-tools` passed 29 tests, including a check-JSON schema integration test. The remaining browser agreement and full repository gates are still pending.
@@ -261,3 +258,6 @@ Friction found while writing it: `new` accepts `--cars`, but `help` does not lis
 On the 035f766 Horizon Hawk file the fast check reports the same step 12 failure as the browser run (`selectedShape.spec.deliveredG` −0.850316 natively versus −0.850329 in WASM, a 1.30e-5 g difference, with different geometry digests). It also finds a problem the browser run never reached: at step 15 the visible strength stepper cannot select the ride's −0.95 g intent, because one click from the −0.85 g default rounds to −0.9 g and the next to −1.0 g, so `placeCircuit` would keep clicking until the browser test times out. Master's Horizon Hawk squash (6661fe4) changed the strength stepper to move exactly 0.1 g, and the fast check now mirrors the browser driver's assertion that each click moves exactly 0.1 g. After merging it, all seven content rides pass `tools/design agree` in 36.6 s, Horizon Hawk included. The 20483ea Horizon Hawk file fails `check` in 0.6 s with the stale shaped geometry message at step 11. All other content rides pass, as they do in the browser run. Wall times on this machine: 3 s for `browser-agreement-fast`, 11 to 17 s for the other classic rides, and about 21 to 25 s for Horizon Hawk, where the existing native check is the slowest part; all seven content rides take 36 s with `tools/design agree content/rides/*.ride.json`, which checks rides in parallel processes.
 
 What the fast check does not cover: the DOM readouts (formatted candidate and hill readouts, append button state, the Horizon Hawk "71.53° bank" text), page errors, screenshots, the Timber unit and overlay checks, the Velocity Viper launch panel, and the ride-target assertions on the browser report (the native check applies the same targets to native samples, which the fast check requires to match). Classic hills, rolls and stalls go through the hill inspector steppers with the same shared selection code as the page, but speed-matched turns are selected exactly instead of reproducing the turn and bank stepper clicks before them, and it does not lower terrain for a station below the minimum height or run the idle finish search (whose result only sets whether Finish is offered). To keep this mirror honest, the browser test now exports each ride's session and requires that the fast check sends the same decisive builder commands (the last selection before each other command, every placement, chain, launch speed, cars, close and test). Regression tests: `make test-agreement` (good ride passes, older-solver ride rejected, step 12 flagged), `saved_shaped_geometry_check_rejects_a_ride_saved_by_an_older_solver`, and `check_fails_fast_on_shaped_geometry_saved_by_an_older_solver`.
+
+Backlog review 2026-11-21: the headless session, estimate agreement, browser replay, and park-description layers are merged (a4aeac4, 17da143, 66d3f93, 2d5d680, 61da172). Keep open: the task notes record an unresolved park-report acceptance case caused by a support anchor overlapping path tiles; its deterministic report and positive riders-per-hour comparison remain unverified, and the recorded golden is only a blocker marker.
+<!-- SECTION:NOTES:END -->

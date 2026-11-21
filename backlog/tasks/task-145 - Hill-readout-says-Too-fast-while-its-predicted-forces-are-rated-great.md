@@ -1,10 +1,10 @@
 ---
 id: TASK-145
 title: Hill readout says Too fast while its predicted forces are rated great
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-18 13:05'
-updated_date: '2026-11-18 16:45'
+updated_date: '2026-11-21 21:25'
 labels:
   - coaster
   - interface
@@ -24,3 +24,9 @@ Owner playtest 2026-11-18: a Floater 10 x 105 ft hill at 42 mph entry shows Rate
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-18: likely cause is the floater cap in the rated-window generator (force-rule branch, crates/sim/examples/measure_force_windows.rs): a floater's maximum entry speed ends where any allowed default train rates stronger than Good airtime, so -1.1 g reads Great on the airtime scale but exceeds the floater feel, and the readout only says Too fast. Start after force-rule merges.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Superseded by TASK-166. The former bare “Too fast” result for a hill that still shows rated force readouts moves into TASK-166’s hard-edge versus model-feel-edge window behavior and amber consequence messaging. No TASK-145-specific implementation is needed.
+<!-- SECTION:FINAL_SUMMARY:END -->

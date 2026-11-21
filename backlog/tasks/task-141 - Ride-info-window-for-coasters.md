@@ -4,7 +4,7 @@ title: Ride info window for coasters
 status: In Progress
 assignee: []
 created_date: '2026-11-18 12:33'
-updated_date: '2026-11-18 16:45'
+updated_date: '2026-11-21 21:24'
 labels: []
 dependencies: []
 ordinal: 141000
@@ -27,4 +27,6 @@ Clicking a coaster in Watch mode (or Ride info in the builder) opens a window wi
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-18: merged to master (80cbf9b). web/e2e/ride-window.spec.ts covers the demo coaster with its Test button, the player coaster from the builder's Ride info button and a click, the three limit bands, and the hover cursor. Still open: the Docker screenshot baseline for the window (criterion 3).
+
+Backlog review 2026-11-21: criteria 1-2 are implemented and covered by web/e2e/ride-window.spec.ts on master (80cbf9b). Remaining: Docker screenshot baseline using the pinned Playwright image for criterion 3.
 <!-- SECTION:NOTES:END -->
