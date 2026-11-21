@@ -152,13 +152,12 @@ impl Park {
             .as_ref()
             .expect("open coaster has construction")
             .model();
-        let operation = BlockOperation::new_with_limits(
+        let operation = BlockOperation::new(
             self.block_layout
                 .as_ref()
                 .expect("open coaster has a block layout")
                 .clone(),
             model,
-            model.design_force_targets,
         );
         self.coaster_operation = Some(operation);
         self.coaster_facility = Some(facility);
@@ -221,11 +220,7 @@ impl Park {
                 .as_ref()
                 .expect("open coaster has construction")
                 .model();
-            self.coaster_operation = Some(BlockOperation::new_with_limits(
-                layout.clone(),
-                model,
-                model.design_force_targets,
-            ));
+            self.coaster_operation = Some(BlockOperation::new(layout.clone(), model));
         }
         self.block_layout = Some(layout);
         self.block_layout_is_automatic = automatic;

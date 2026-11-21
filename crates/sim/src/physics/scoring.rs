@@ -1,24 +1,17 @@
-use crate::track::DesignForceTargets;
 pub use crate::track::{ForceRating as ForceBand, ForceRatingAxis as ForceAxis};
+use crate::track::{classify_envelope_force, envelope_rating_bands};
 
-pub fn force_band(
-    axis: ForceAxis,
-    value_g: f64,
-    limits: DesignForceTargets,
-    model_key: &str,
-) -> ForceBand {
-    limits.classify_force(axis, value_g, model_key)
+pub fn force_band(axis: ForceAxis, value_g: f64, model_key: &str) -> ForceBand {
+    classify_envelope_force(axis, value_g, model_key)
 }
 
 pub(super) fn score_band_detail(
     axis: ForceAxis,
     band: ForceBand,
-    limits: DesignForceTargets,
     model_key: &str,
 ) -> Option<(usize, f64)> {
     let boundary = |rating| {
-        limits
-            .rating_bands(axis, model_key)
+        envelope_rating_bands(axis, model_key)
             .into_iter()
             .find(|entry| entry.rating == rating)
             .unwrap()
@@ -41,20 +34,16 @@ pub(super) fn score_band_detail(
 #[cfg(test)]
 mod tests {
     use super::{ForceAxis, ForceBand, force_band};
-    use crate::track::DesignForceTargets;
 
     #[test]
-    fn force_bands_match_overlay_boundaries_and_model_limits() {
-        let limits = DesignForceTargets {
-            minimum_vertical_g: -1.5,
-            maximum_vertical_g: 5.0,
-            maximum_lateral_g: 1.5,
-            maximum_longitudinal_g: 2.0,
-        };
+    fn force_bands_use_global_envelope_boundaries_and_model_great_thresholds() {
         for (axis, value, expected) in [
             (ForceAxis::Airtime, -0.2, ForceBand::Weak),
             (ForceAxis::Airtime, -0.2001, ForceBand::Good),
+            (ForceAxis::Airtime, -0.9, ForceBand::Good),
             (ForceAxis::Airtime, -0.9001, ForceBand::Great),
+            (ForceAxis::Airtime, -1.5, ForceBand::Great),
+            (ForceAxis::Airtime, -1.6, ForceBand::TooMuch),
             (ForceAxis::Airtime, -1.95, ForceBand::TooMuch),
             (ForceAxis::Airtime, -1.951, ForceBand::Dangerous),
             (ForceAxis::Vertical, 2.0, ForceBand::Weak),
@@ -64,72 +53,48 @@ mod tests {
             (ForceAxis::Vertical, 5.0, ForceBand::Great),
             (ForceAxis::Vertical, 6.5, ForceBand::TooMuch),
             (ForceAxis::Vertical, 6.501, ForceBand::Dangerous),
-            (ForceAxis::Longitudinal, -1.0, ForceBand::Fine),
-            (ForceAxis::Longitudinal, -2.0, ForceBand::Strong),
-            (ForceAxis::Longitudinal, -2.6, ForceBand::TooMuch),
-            (ForceAxis::Longitudinal, -2.601, ForceBand::Dangerous),
+            (ForceAxis::Lateral, -0.75, ForceBand::Fine),
+            (ForceAxis::Lateral, -0.76, ForceBand::Strong),
+            (ForceAxis::Lateral, -2.0, ForceBand::Strong),
+            (ForceAxis::Lateral, -2.1, ForceBand::TooMuch),
+            (ForceAxis::Lateral, -2.7, ForceBand::Dangerous),
+            (ForceAxis::Longitudinal, -0.75, ForceBand::Fine),
+            (ForceAxis::Longitudinal, -0.76, ForceBand::Strong),
+            (ForceAxis::Longitudinal, -1.5, ForceBand::Strong),
+            (ForceAxis::Longitudinal, -1.95, ForceBand::TooMuch),
+            (ForceAxis::Longitudinal, -1.96, ForceBand::Dangerous),
         ] {
-            assert_eq!(force_band(axis, value, limits, "Timber Tumbler"), expected);
+            assert_eq!(force_band(axis, value, "Timber Tumbler"), expected);
         }
         assert_eq!(
-            force_band(ForceAxis::Airtime, 0.0, limits, "Timber Tumbler"),
+            force_band(ForceAxis::Airtime, 0.0, "Timber Tumbler"),
             ForceBand::Weak
         );
+        // "Great from" stays per model because it only adds credit.
         assert_eq!(
-            force_band(ForceAxis::Airtime, -0.9, limits, "Timber Tumbler"),
+            force_band(ForceAxis::Vertical, 2.5, "Briar Blitz"),
+            ForceBand::Great
+        );
+        assert_eq!(
+            force_band(ForceAxis::Vertical, 2.499, "Briar Blitz"),
             ForceBand::Good
         );
         assert_eq!(
-            force_band(ForceAxis::Airtime, -1.0, limits, "Timber Tumbler"),
+            force_band(ForceAxis::Vertical, 2.5, "Timber Tumbler"),
+            ForceBand::Good
+        );
+        // Global strong lateral and airtime thresholds do not punish wood or family models.
+        assert_eq!(
+            force_band(ForceAxis::Airtime, -1.1, "Briar Blitz"),
             ForceBand::Great
         );
         assert_eq!(
-            force_band(ForceAxis::Airtime, -1.5, limits, "Timber Tumbler"),
+            force_band(ForceAxis::Airtime, -1.1, "Daisy Dash"),
             ForceBand::Great
         );
         assert_eq!(
-            force_band(ForceAxis::Airtime, -1.6, limits, "Timber Tumbler"),
-            ForceBand::TooMuch
-        );
-        assert_eq!(
-            force_band(ForceAxis::Lateral, -0.75, limits, "Timber Tumbler"),
+            force_band(ForceAxis::Lateral, 0.75, "Daisy Dash"),
             ForceBand::Fine
-        );
-        assert_eq!(
-            force_band(ForceAxis::Lateral, -1.5, limits, "Timber Tumbler"),
-            ForceBand::Strong
-        );
-        assert_eq!(
-            force_band(ForceAxis::Lateral, -2.0, limits, "Timber Tumbler"),
-            ForceBand::Dangerous
-        );
-        assert_eq!(
-            force_band(ForceAxis::Vertical, 2.5, limits, "Briar Blitz"),
-            ForceBand::Great
-        );
-        assert_eq!(
-            force_band(ForceAxis::Vertical, 2.5, limits, "Timber Tumbler"),
-            ForceBand::Good
-        );
-        let wooden = DesignForceTargets {
-            maximum_vertical_g: 4.0,
-            ..limits
-        };
-        assert_eq!(
-            force_band(ForceAxis::Vertical, 2.499, wooden, "Briar Blitz"),
-            ForceBand::Good
-        );
-        assert_eq!(
-            force_band(ForceAxis::Vertical, 2.5, wooden, "Briar Blitz"),
-            ForceBand::Great
-        );
-        let stricter = DesignForceTargets {
-            minimum_vertical_g: -1.0,
-            ..limits
-        };
-        assert_eq!(
-            force_band(ForceAxis::Airtime, -1.1, stricter, "Timber Tumbler"),
-            ForceBand::TooMuch
         );
     }
 }
@@ -148,7 +113,6 @@ mod score_tests {
         let bands = ForceBandDurations {
             airtime_great: 3.0,
             lateral_strong: 2.0,
-            dangerous: 1.0,
             ..Default::default()
         };
         let result = score(&features, &bands);
@@ -164,37 +128,6 @@ mod score_tests {
                 (total - contributions.iter().map(|item| item.value).sum::<f64>()).abs() < 1e-12
             );
         }
-    }
-
-    #[test]
-    fn excessive_force_details_keep_axis_duration_and_peak_separate() {
-        let features = ride_features(&[], &[], &[], 0.0, false);
-        let location = Location {
-            piece_index: 1,
-            piece_name: "Turn",
-            distance_m: 12.0,
-            seconds_from_start: 2.0,
-        };
-        let mut bands = ForceBandDurations {
-            too_much: 2.0,
-            ..Default::default()
-        };
-        bands.excessive_details[2] = Some(ExcessiveForceDetail {
-            value: 4.0,
-            limit: 1.5,
-            seconds: 2.0,
-            location,
-        });
-        let scores = score(&features, &bands);
-        let contribution = scores
-            .breakdown
-            .excitement
-            .iter()
-            .find(|item| item.term == Term::ExcessiveForces)
-            .unwrap();
-        assert_eq!(contribution.force_details[0].axis, "lateral");
-        assert_eq!(contribution.force_details[0].measured_value, 4.0);
-        assert_eq!(contribution.force_details[0].duration_seconds, Some(2.0));
     }
 
     #[test]
@@ -454,8 +387,7 @@ mod score_tests {
 use super::features::{Location, RideFeatures};
 use crate::track::Heartlining;
 
-/// Seconds in the model-specific bands used by the force overlay. Excessive
-/// durations are summed across axes, so simultaneous excessive axes both count.
+/// Seconds in the global force bands used by the force overlay.
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct ForceBandDurations {
     pub(super) airtime_good: f64,
@@ -464,16 +396,10 @@ pub(super) struct ForceBandDurations {
     pub(super) vertical_great: f64,
     pub(super) lateral_strong: f64,
     pub(super) longitudinal_strong: f64,
-    pub(super) too_much: f64,
-    pub(super) dangerous: f64,
-    #[serde(default)]
-    pub(super) excessive_details: [Option<ExcessiveForceDetail>; 4],
     #[serde(default)]
     pub(super) band_details: [Option<ExcessiveForceDetail>; 6],
     #[serde(default)]
     pub(super) peak_details: [Option<ExcessiveForceDetail>; 5],
-    #[serde(default)]
-    pub(super) dangerous_seconds_by_axis: [f64; 4],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -490,7 +416,6 @@ pub enum Term {
     PositiveForces,
     Laterals,
     LongitudinalForces,
-    ExcessiveForces,
     AirtimeMoments,
     Inversions,
     TopSpeed,
@@ -523,7 +448,6 @@ impl Term {
             Self::PositiveForces => "positive forces",
             Self::Laterals => "lateral forces",
             Self::LongitudinalForces => "longitudinal forces",
-            Self::ExcessiveForces => "excessive forces",
             Self::AirtimeMoments => "airtime moments",
             Self::Inversions => "inversions",
             Self::TopSpeed => "top speed",
@@ -555,7 +479,6 @@ impl Term {
             | Self::PositiveForces
             | Self::Laterals
             | Self::LongitudinalForces
-            | Self::ExcessiveForces
             | Self::FastRolls
             | Self::RideTime
             | Self::ShortRide
@@ -638,7 +561,6 @@ pub(super) struct Scores {
 // Each pair is a contribution weight and its characteristic scale. Calibration
 // anchors are maintained in calibration_tests.rs.
 struct ScoringConstants {
-    dangerous_duration_weight: f64,
     good_band_weight: f64,
     heartlined_nausea_weight: f64,
     non_heartlined_nausea_weight: f64,
@@ -666,11 +588,9 @@ struct ScoringConstants {
     n_reversal: (f64, f64),
     n_positive: (f64, f64),
     n_inverted: (f64, f64),
-    n_excessive: (f64, f64),
     n_envelope: (f64, f64),
     i_peak: (f64, f64),
     i_sustained: (f64, f64),
-    i_excessive: (f64, f64),
     i_speed: (f64, f64),
     i_drop: (f64, f64),
     i_inversions: (f64, f64),
@@ -680,7 +600,6 @@ struct ScoringConstants {
     positive: (f64, f64),
     lateral: (f64, f64),
     longitudinal: (f64, f64),
-    excessive: (f64, f64),
     moments: (f64, f64),
     inversions: (f64, f64),
     speed: (f64, f64),
@@ -696,7 +615,6 @@ struct ScoringConstants {
     envelope: (f64, f64),
 }
 const SCORING: ScoringConstants = ScoringConstants {
-    dangerous_duration_weight: 2.0,
     good_band_weight: 0.55,
     heartlined_nausea_weight: 0.6,
     non_heartlined_nausea_weight: 1.0,
@@ -724,11 +642,9 @@ const SCORING: ScoringConstants = ScoringConstants {
     n_reversal: (1.5, 6.0),
     n_positive: (1.0, 4.0),
     n_inverted: (0.5, 4.0),
-    n_excessive: (1.5, 2.0),
     n_envelope: (2.5, 1.0),
     i_peak: (4.0, 0.7),
     i_sustained: (3.0, 6.0),
-    i_excessive: (1.0, 2.0),
     i_speed: (1.5, 25.0),
     i_drop: (1.0, 50.0),
     i_inversions: (0.6, 3.0),
@@ -740,7 +656,6 @@ const SCORING: ScoringConstants = ScoringConstants {
     positive: (1.0, 2.0),
     lateral: (0.7, 2.0),
     longitudinal: (0.4, 2.0),
-    excessive: (-0.7, 2.0),
     moments: (1.2, 10.0),
     inversions: (2.2, 2.0),
     speed: (1.2, 20.0),
@@ -798,7 +713,6 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
     let stats = &features.statistics;
     let envelope = &features.envelope;
     let location = envelope.worst.as_ref().map(|worst| worst.location);
-    let excessive = bands.too_much + SCORING.dangerous_duration_weight * bands.dangerous;
     let airtime = bands.airtime_good * SCORING.good_band_weight + bands.airtime_great;
     let positive = bands.vertical_good * SCORING.good_band_weight + bands.vertical_great;
     let mut breakdown = ScoreBreakdown::default();
@@ -852,13 +766,6 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
     );
     add_soft(
         n,
-        Term::ExcessiveForces,
-        excessive,
-        SCORING.n_excessive,
-        None,
-    );
-    add_soft(
-        n,
         Term::Envelope,
         envelope.g_seconds,
         SCORING.n_envelope,
@@ -877,13 +784,6 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
         Term::SustainedForce,
         positive + bands.lateral_strong + airtime + bands.longitudinal_strong,
         SCORING.i_sustained,
-        None,
-    );
-    add_soft(
-        i,
-        Term::ExcessiveForces,
-        excessive,
-        SCORING.i_excessive,
         None,
     );
     add_soft(
@@ -950,7 +850,6 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
         SCORING.longitudinal,
         None,
     );
-    add_soft(e, Term::ExcessiveForces, excessive, SCORING.excessive, None);
     let inversion_points: f64 = features
         .inversion_passages
         .iter()
@@ -1108,36 +1007,6 @@ pub(super) fn score(features: &RideFeatures, bands: &ForceBandDurations) -> Scor
                 .unwrap()
                 .force_detail = Some(detail.clone());
         }
-    }
-    let details: Vec<_> = bands
-        .excessive_details
-        .iter()
-        .zip(["vertical", "negativeVertical", "lateral", "longitudinal"])
-        .enumerate()
-        .filter_map(|(index, (detail, axis))| {
-            detail.map(|detail| ForceDetail {
-                axis: axis.to_owned(),
-                measured_value: detail.value,
-                limit: detail.limit,
-                unit: "g".to_owned(),
-                duration_seconds: Some(detail.seconds),
-                location: detail.location,
-                weight: None,
-                car_index: None,
-                dangerous_seconds: Some(bands.dangerous_seconds_by_axis[index]),
-            })
-        })
-        .collect();
-    for contributions in [
-        &mut breakdown.excitement,
-        &mut breakdown.intensity,
-        &mut breakdown.nausea,
-    ] {
-        contributions
-            .iter_mut()
-            .find(|item| item.term == Term::ExcessiveForces)
-            .unwrap()
-            .force_details = details.clone();
     }
     let band_details: Vec<_> = bands
         .band_details

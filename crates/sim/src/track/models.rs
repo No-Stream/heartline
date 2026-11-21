@@ -123,6 +123,84 @@ pub fn great_positive_vertical_g(model_key: &str) -> f64 {
     }
 }
 
+/// Global threshold above which lateral or longitudinal force is rated strong.
+pub const STRONG_LATERAL_G: f64 = 0.75;
+pub const STRONG_LONGITUDINAL_G: f64 = 0.75;
+
+/// Reference display limits representing the sustained ASTM F2291 comfort envelope
+/// used by the track force overlay, ride force graph, and static band ratings.
+pub const ENVELOPE_DISPLAY_LIMITS: DesignForceTargets = DesignForceTargets {
+    minimum_vertical_g: -1.5,
+    maximum_vertical_g: 5.0,
+    maximum_lateral_g: 2.0,
+    maximum_longitudinal_g: 1.5,
+};
+
+/// Global ASTM-envelope rating bands for UI display and scoring credit bands.
+/// Lateral and longitudinal "strong" start at 0.75 g globally; positive vertical "great"
+/// remains per model because it only adds credit.
+pub fn envelope_rating_bands(axis: ForceRatingAxis, model_key: &str) -> Vec<ForceRatingBand> {
+    use ForceRating::*;
+    let band = |rating, up_to: f64, inclusive| ForceRatingBand {
+        rating,
+        up_to: Some(up_to),
+        inclusive,
+    };
+    let (mut bands, limit, at_limit) = match axis {
+        ForceRatingAxis::Airtime => (
+            vec![band(Weak, 0.2, true), band(Good, 0.9, true)],
+            -ENVELOPE_DISPLAY_LIMITS.minimum_vertical_g,
+            Great,
+        ),
+        ForceRatingAxis::Vertical => {
+            let great_from = great_positive_vertical_g(model_key);
+            (
+                vec![band(Weak, 2.0, true), band(Good, great_from, false)],
+                ENVELOPE_DISPLAY_LIMITS.maximum_vertical_g,
+                Great,
+            )
+        }
+        ForceRatingAxis::Lateral => (
+            vec![band(Fine, STRONG_LATERAL_G, true)],
+            ENVELOPE_DISPLAY_LIMITS.maximum_lateral_g,
+            Strong,
+        ),
+        ForceRatingAxis::Longitudinal => (
+            vec![band(Fine, STRONG_LONGITUDINAL_G, true)],
+            ENVELOPE_DISPLAY_LIMITS.maximum_longitudinal_g,
+            Strong,
+        ),
+    };
+    bands.extend([
+        band(at_limit, limit, true),
+        band(TooMuch, 1.3 * limit, true),
+        ForceRatingBand {
+            rating: Dangerous,
+            up_to: None,
+            inclusive: true,
+        },
+    ]);
+    bands
+}
+
+/// Rates a force in g against the global envelope rating bands.
+pub fn classify_envelope_force(
+    axis: ForceRatingAxis,
+    value_g: f64,
+    model_key: &str,
+) -> ForceRating {
+    let magnitude = match axis {
+        ForceRatingAxis::Airtime => -value_g,
+        ForceRatingAxis::Vertical => value_g,
+        ForceRatingAxis::Lateral | ForceRatingAxis::Longitudinal => value_g.abs(),
+    };
+    envelope_rating_bands(axis, model_key)
+        .into_iter()
+        .find(|band| band.covers(magnitude))
+        .expect("the last band covers every magnitude")
+        .rating
+}
+
 impl DesignForceTargets {
     /// How riders feel each force, from the gentlest band up; the force overlay shows these same bands. Anything past
     /// the model's comfortable limit is too much, and past 1.3 times the limit it is dangerous.

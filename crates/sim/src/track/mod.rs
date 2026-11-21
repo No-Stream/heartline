@@ -23,11 +23,12 @@ pub use curves::{
     TrackSample, TrackState, Vec3, VerticalCurvature,
 };
 pub use models::{
-    CoasterModel, DesignForceTargets, ForceRating, ForceRatingAxis, ForceRatingBand,
-    LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED, LAUNCH_MAX_SPEED_METRES_PER_SECOND,
-    LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules, Material, SupportStyle,
-    TrainConfiguration, coaster_models, family_coaster_model, hybrid_model, hyper_model,
-    multi_launch_model, wooden_twister_model,
+    CoasterModel, DesignForceTargets, ENVELOPE_DISPLAY_LIMITS, ForceRating, ForceRatingAxis,
+    ForceRatingBand, LAUNCH_MAX_ACCELERATION_METRES_PER_SECOND_SQUARED,
+    LAUNCH_MAX_SPEED_METRES_PER_SECOND, LaunchParameters, LaunchSpeedBounds, LaunchType, LiftRules,
+    Material, STRONG_LATERAL_G, STRONG_LONGITUDINAL_G, SupportStyle, TrainConfiguration,
+    classify_envelope_force, coaster_models, envelope_rating_bands, family_coaster_model,
+    great_positive_vertical_g, hybrid_model, hyper_model, multi_launch_model, wooden_twister_model,
 };
 
 #[cfg(test)]

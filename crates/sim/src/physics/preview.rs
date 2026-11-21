@@ -1,6 +1,7 @@
+use super::features::Location;
 use super::testing::PreviewForcePeakRecorder;
 use super::{
-    CarReading, Circuit, ForceEvaluator, PhysicsConfig, PieceForcePeaks, PreviewForceSample,
+    CarReading, Circuit, EnvelopeEvaluator, PhysicsConfig, PieceForcePeaks, PreviewForceSample,
     TIME_STEP, TestRun, TestRunRecorder, TestSample, Train, candidate_force_peak_summary,
 };
 use crate::physics::ForcePeakValues;
@@ -110,7 +111,7 @@ struct Snapshot {
     train: Train,
     recorder: TestRunRecorder,
     force_peak_recorder: PreviewForcePeakRecorder,
-    evaluators: Vec<ForceEvaluator>,
+    evaluators: Vec<EnvelopeEvaluator>,
     flags: Vec<bool>,
     previous_flags: Vec<Option<(f64, bool)>>,
     furthest_flag_metres: Vec<Option<usize>>,
@@ -234,7 +235,6 @@ impl PreviewCache {
         treat_as_open: bool,
     ) -> Option<PreviewOutput> {
         let configuration = &model.train;
-        let limits = model.design_force_targets;
         let model_key = model.name;
         let _station = pieces
             .iter()
@@ -269,9 +269,8 @@ impl PreviewCache {
                 hash.finish()
             })
             .collect();
-        let parameters =
-            postcard::to_allocvec(&(configuration, config, limits, model.key, model_key))
-                .expect("preview parameters serialize");
+        let parameters = postcard::to_allocvec(&(configuration, config, model.key, model_key))
+            .expect("preview parameters serialize");
         let common = if self.parameters == parameters && self.closed == closed {
             self.piece_hashes
                 .iter()
@@ -326,7 +325,7 @@ impl PreviewCache {
                     .is_none()
                     .then(|| TestRunRecorder::for_circuit_with_model(&source_circuit, model)),
                 PreviewForcePeakRecorder::new(&circuit, configuration.cars),
-                vec![ForceEvaluator::new(limits, TIME_STEP); usize::from(configuration.cars)],
+                vec![EnvelopeEvaluator::new(TIME_STEP); usize::from(configuration.cars)],
                 vec![false; source_length.ceil() as usize],
                 vec![None; usize::from(configuration.cars)],
                 vec![None; usize::from(configuration.cars)],
@@ -340,7 +339,7 @@ impl PreviewCache {
                 .map(|evaluator| {
                     let mut recorder =
                         TestRunRecorder::for_circuit_with_model(&source_circuit, model);
-                    recorder.set_force_evaluator(evaluator.clone());
+                    recorder.set_envelope_evaluator(evaluator.clone());
                     recorder
                 })
                 .collect::<Vec<_>>()
@@ -413,7 +412,22 @@ impl PreviewCache {
                 #[cfg(test)]
                 let mean_train_slope_z = mean_train_slope_z(&circuit, &candidate_readings);
                 for (car_index, reading) in candidate_readings.iter().copied().enumerate() {
-                    let evaluated = evaluators[car_index].update(reading.g);
+                    let piece = &circuit.pieces[reading.piece_index];
+                    let active = reading.speed > 1.0
+                        && matches!(
+                            piece.kind,
+                            PieceKind::Track | PieceKind::Launch | PieceKind::Brakes
+                        );
+                    let evaluated = evaluators[car_index].record(
+                        reading.g,
+                        active,
+                        Location {
+                            piece_index: reading.piece_index,
+                            piece_name: piece.name,
+                            distance_m: reading.distance.rem_euclid(circuit.length),
+                            seconds_from_start: 0.0,
+                        },
+                    );
                     let mut filtered_reading = reading;
                     filtered_reading.g = evaluated.filtered;
                     filtered_reading.airtime = evaluated.filtered.vertical < 0.0;
@@ -440,7 +454,22 @@ impl PreviewCache {
                     for (car_index, (reading, evaluator)) in
                         frame.iter_mut().zip(&mut evaluators).enumerate()
                     {
-                        let evaluated = evaluator.update(reading.g);
+                        let piece = &circuit.pieces[reading.piece_index];
+                        let active = reading.speed > 1.0
+                            && matches!(
+                                piece.kind,
+                                PieceKind::Track | PieceKind::Launch | PieceKind::Brakes
+                            );
+                        let evaluated = evaluator.record(
+                            reading.g,
+                            active,
+                            Location {
+                                piece_index: reading.piece_index,
+                                piece_name: piece.name,
+                                distance_m: reading.distance.rem_euclid(circuit.length),
+                                seconds_from_start: 0.0,
+                            },
+                        );
                         force_peak_recorder.record(
                             car_index,
                             CarReading {

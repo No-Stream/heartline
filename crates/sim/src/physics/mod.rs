@@ -802,5 +802,5 @@ fn rider_g(piece: &Piece, distance: f64, speed: f64, acceleration: f64) -> GForc
 }
 
 pub mod force_evaluation;
-pub use force_evaluation::{EvaluatedForce, ForceEvaluator, ForceFilter};
+pub use force_evaluation::{EnvelopeEvaluator, EvaluatedForce, ForceEvaluator, ForceFilter};
 pub mod rated_piece;

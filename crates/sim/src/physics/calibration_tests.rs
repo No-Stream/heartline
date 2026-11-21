@@ -134,7 +134,6 @@ fn score_classic_arrow_looper() -> Archetype {
             airtime_good: 1.0,
             vertical_great: 2.5,
             lateral_strong: 2.5,
-            too_much: 1.5,
             ..ForceBandDurations::default()
         },
     }
@@ -567,12 +566,12 @@ fn build_player_circuit(name: &str, ride: &RideFile) -> (CoasterModel, super::Ci
 }
 
 #[test]
-fn calibration_table_recorder_uses_each_model_force_limits() {
+fn calibration_table_recorder_judges_models_by_one_global_envelope() {
     let circuit = shared_calibration_circuit();
     let piece_index = 2;
     let scores = [hybrid_model(), wooden_twister_model()].map(|model| {
         let mut recorder = calibration_recorder(&circuit, &model);
-        for _ in 0..400 {
+        for _ in 0..200 {
             let reading = CarReading {
                 distance: circuit.starts[piece_index],
                 speed: 10.0,
@@ -591,17 +590,23 @@ fn calibration_table_recorder_uses_each_model_force_limits() {
         }
         recorder.finish(false, false)
     });
-    let excessive = |report: &super::TestRun| {
+    let envelope_penalty = |report: &super::TestRun| {
         report
             .breakdown
             .nausea
             .iter()
-            .find(|item| item.term == Term::ExcessiveForces)
+            .find(|item| item.term == Term::Envelope)
             .unwrap()
             .value
     };
-    assert_eq!(excessive(&scores[0]), 0.0);
-    assert!(excessive(&scores[1]) > 0.0);
+    // 4.2 g for 1.0 s is inside the ASTM envelope on every model, regardless of design targets.
+    assert_eq!(envelope_penalty(&scores[0]), 0.0);
+    assert_eq!(envelope_penalty(&scores[1]), 0.0);
+    assert!(
+        scores
+            .iter()
+            .all(|report| report.samples.iter().all(|s| !s.force_limit_exceeded[0]))
+    );
 }
 
 fn shared_calibration_circuit() -> super::Circuit {

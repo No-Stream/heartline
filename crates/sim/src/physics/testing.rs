@@ -1,10 +1,10 @@
-use super::comfort::{EnvelopeExceedance, EnvelopeTracker};
+use super::comfort::EnvelopeExceedance;
 use super::features::{PieceSummary, sample_interval};
 use super::scoring::{ForceAxis, ForceBand, ForceBandDurations, ScoreBreakdown, force_band, score};
-use super::{CarReading, Circuit, ForceEvaluator};
+use super::{CarReading, Circuit, EnvelopeEvaluator};
 use crate::state_hash::StateHasher;
 use crate::track::proximity::{ProximityEvent, TrainPosition, detect_dueling};
-use crate::track::{CoasterModel, DesignForceTargets, Piece, rated_speeds};
+use crate::track::{CoasterModel, Piece, rated_speeds};
 use std::collections::BTreeMap;
 
 // Report the requested ejector and floater bands in rider-frame vertical g.
@@ -157,7 +157,6 @@ struct RatingInput {
     visited_ranges: Vec<(f64, f64)>,
     circuit_length: f64,
     completed: bool,
-    force_limits: DesignForceTargets,
     force_bands: ForceBandDurations,
     statistics: RideStatistics,
     #[serde(default)]
@@ -183,14 +182,6 @@ impl RatingInput {
         write_ranges(hash, &self.visited_ranges);
         hash.write_f64(self.circuit_length);
         hash.write_bool(self.completed);
-        for value in [
-            self.force_limits.minimum_vertical_g,
-            self.force_limits.maximum_vertical_g,
-            self.force_limits.maximum_lateral_g,
-            self.force_limits.maximum_longitudinal_g,
-        ] {
-            hash.write_f64(value);
-        }
         hash_force_bands(hash, self.force_bands);
         write_ride_statistics(hash, self.statistics);
         hash_force_peak_locations(hash, self.force_peak_locations);
@@ -219,20 +210,8 @@ fn hash_force_bands(hash: &mut StateHasher, bands: ForceBandDurations) {
         bands.vertical_great,
         bands.lateral_strong,
         bands.longitudinal_strong,
-        bands.too_much,
-        bands.dangerous,
     ] {
         hash.write_f64(value);
-    }
-    if bands.excessive_details.iter().any(Option::is_some) {
-        for detail in bands.excessive_details {
-            hash.write_option(detail, |hash, detail| {
-                hash.write_f64(detail.value);
-                hash.write_f64(detail.limit);
-                hash.write_f64(detail.seconds);
-                write_location(hash, detail.location);
-            });
-        }
     }
     if bands.band_details.iter().any(Option::is_some) {
         for detail in bands.band_details {
@@ -251,15 +230,6 @@ fn hash_force_bands(hash: &mut StateHasher, bands: ForceBandDurations) {
                 hash.write_f64(detail.limit);
                 write_location(hash, detail.location);
             });
-        }
-    }
-    if bands
-        .dangerous_seconds_by_axis
-        .iter()
-        .any(|seconds| *seconds > 0.0)
-    {
-        for seconds in bands.dangerous_seconds_by_axis {
-            hash.write_f64(seconds);
         }
     }
 }
@@ -324,7 +294,7 @@ fn write_ride_statistics(hash: &mut StateHasher, stats: RideStatistics) {
 fn record_force_bands(
     durations: &mut ForceBandDurations,
     reading: CarReading,
-    limits: DesignForceTargets,
+    envelope_axis_ratio: [f64; 3],
     model_key: &str,
     seconds: f64,
     location: super::features::Location,
@@ -334,17 +304,30 @@ fn record_force_bands(
     } else {
         ForceAxis::Vertical
     };
-    for (axis, value) in [
+    for (axis_index, (axis, value)) in [
         (vertical_axis, reading.g.vertical),
         (ForceAxis::Lateral, reading.g.lateral),
         (ForceAxis::Longitudinal, reading.g.longitudinal),
-    ] {
-        if let Some((index, limit)) = super::scoring::score_band_detail(
-            axis,
-            force_band(axis, value, limits, model_key),
-            limits,
-            model_key,
-        ) {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let ratio = envelope_axis_ratio[axis_index];
+        let band = if ratio > 0.3 {
+            ForceBand::Dangerous
+        } else if ratio > 0.0 {
+            ForceBand::TooMuch
+        } else {
+            match force_band(axis, value, model_key) {
+                // Inside the ASTM duration envelope, brief strong peaks still earn credit.
+                ForceBand::TooMuch | ForceBand::Dangerous => match axis {
+                    ForceAxis::Airtime | ForceAxis::Vertical => ForceBand::Great,
+                    ForceAxis::Lateral | ForceAxis::Longitudinal => ForceBand::Strong,
+                },
+                other => other,
+            }
+        };
+        if let Some((index, limit)) = super::scoring::score_band_detail(axis, band, model_key) {
             let detail =
                 durations.band_details[index].get_or_insert(super::scoring::ExcessiveForceDetail {
                     value: value.abs(),
@@ -358,53 +341,16 @@ fn record_force_bands(
                 detail.location = location;
             }
         }
-        if matches!(
-            force_band(axis, value, limits, model_key),
-            ForceBand::TooMuch | ForceBand::Dangerous
-        ) {
-            let (index, limit) = match axis {
-                ForceAxis::Airtime => (1, -limits.minimum_vertical_g),
-                ForceAxis::Vertical => (0, limits.maximum_vertical_g),
-                ForceAxis::Lateral => (2, limits.maximum_lateral_g),
-                ForceAxis::Longitudinal => (3, limits.maximum_longitudinal_g),
-            };
-            let detail = durations.excessive_details[index].get_or_insert(
-                super::scoring::ExcessiveForceDetail {
-                    value: value.abs(),
-                    limit,
-                    seconds: 0.0,
-                    location,
-                },
-            );
-            detail.seconds += seconds;
-            if force_band(axis, value, limits, model_key) == ForceBand::Dangerous {
-                durations.dangerous_seconds_by_axis[index] += seconds;
-            }
-            if value.abs() > detail.value {
-                detail.value = value.abs();
-                detail.location = location;
-            }
-        }
-        match (axis, force_band(axis, value, limits, model_key)) {
+        match (axis, band) {
             (ForceAxis::Airtime, ForceBand::Good) => durations.airtime_good += seconds,
             (ForceAxis::Airtime, ForceBand::Great) => durations.airtime_great += seconds,
             (ForceAxis::Vertical, ForceBand::Good) => durations.vertical_good += seconds,
             (ForceAxis::Vertical, ForceBand::Great) => durations.vertical_great += seconds,
-            (ForceAxis::Lateral, ForceBand::Strong) => durations.lateral_strong += seconds,
+            (ForceAxis::Lateral, ForceBand::Strong | ForceBand::TooMuch | ForceBand::Dangerous) => {
+                durations.lateral_strong += seconds
+            }
             (ForceAxis::Longitudinal, ForceBand::Strong) => {
                 durations.longitudinal_strong += seconds
-            }
-            (axis, ForceBand::TooMuch) => {
-                durations.too_much += seconds;
-                if axis == ForceAxis::Lateral {
-                    durations.lateral_strong += seconds;
-                }
-            }
-            (axis, ForceBand::Dangerous) => {
-                durations.dangerous += seconds;
-                if axis == ForceAxis::Lateral {
-                    durations.lateral_strong += seconds;
-                }
             }
             _ => {}
         }
@@ -1450,13 +1396,11 @@ fn force_advice(envelopes: &[&EnvelopeExceedance]) -> Vec<String> {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TestRunRecorder {
     circuit_length: f64,
-    force_limits: DesignForceTargets,
-    force_evaluator: ForceEvaluator,
+    force_evaluator: EnvelopeEvaluator,
     time_step: f64,
     violation_seconds: [f64; 3],
     metre_violations: Vec<[bool; 3]>,
     force_bands: ForceBandDurations,
-    comfort: EnvelopeTracker,
     piece_starts: Vec<f64>,
     piece_summaries: Vec<PieceSummary>,
     rated_pieces: Vec<Option<RatedPieceSpeedWindow>>,
@@ -1512,7 +1456,7 @@ impl TestRunRecorder {
     }
 
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
-        hash.write_tag(b"TestRunRecorder-v7");
+        hash.write_tag(b"TestRunRecorder-v8");
         self.force_evaluator.hash_into(hash);
         hash.write_f64(self.time_step);
         for seconds in self.violation_seconds {
@@ -1525,17 +1469,8 @@ impl TestRunRecorder {
             }
         }
         hash.write_f64(self.circuit_length);
-        for value in [
-            self.force_limits.minimum_vertical_g,
-            self.force_limits.maximum_vertical_g,
-            self.force_limits.maximum_lateral_g,
-            self.force_limits.maximum_longitudinal_g,
-        ] {
-            hash.write_f64(value);
-        }
         hash_force_peak_locations(hash, self.force_peak_locations);
         hash_force_bands(hash, self.force_bands);
-        self.comfort.hash_into(hash);
         hash.write_len(self.piece_starts.len());
         for &piece_start in &self.piece_starts {
             hash.write_f64(piece_start);
@@ -1595,16 +1530,11 @@ impl TestRunRecorder {
         assert!(circuit_length.is_finite() && circuit_length > 0.0);
         Self {
             circuit_length,
-            force_limits: crate::track::hybrid_model().design_force_targets,
-            force_evaluator: ForceEvaluator::new(
-                crate::track::hybrid_model().design_force_targets,
-                super::TIME_STEP,
-            ),
+            force_evaluator: EnvelopeEvaluator::new(super::TIME_STEP),
             time_step: super::TIME_STEP,
             violation_seconds: [0.0; 3],
             metre_violations: vec![[false; 3]; circuit_length.ceil() as usize],
             force_bands: ForceBandDurations::default(),
-            comfort: EnvelopeTracker::default(),
             piece_starts: Vec::new(),
             piece_summaries: Vec::new(),
             rated_pieces: Vec::new(),
@@ -1638,20 +1568,11 @@ impl TestRunRecorder {
             !self.started,
             "cannot change time step after recording starts"
         );
-        self.force_evaluator = ForceEvaluator::new(self.force_limits, time_step);
+        self.force_evaluator = EnvelopeEvaluator::new(time_step);
         self.time_step = time_step;
     }
 
-    pub fn set_force_limits(&mut self, limits: DesignForceTargets) {
-        assert!(
-            !self.started,
-            "cannot change force limits after recording starts"
-        );
-        self.force_evaluator = ForceEvaluator::new(limits, self.time_step);
-        self.force_limits = limits;
-    }
-
-    pub(super) fn set_force_evaluator(&mut self, evaluator: ForceEvaluator) {
+    pub(super) fn set_envelope_evaluator(&mut self, evaluator: EnvelopeEvaluator) {
         assert!(
             !self.started,
             "cannot change force evaluator after recording starts"
@@ -1661,7 +1582,6 @@ impl TestRunRecorder {
 
     pub fn for_circuit_with_model(circuit: &Circuit, model: &CoasterModel) -> Self {
         let mut recorder = Self::new(circuit.length());
-        recorder.set_force_limits(model.design_force_targets);
         recorder.piece_starts.clone_from(&circuit.starts);
         recorder.piece_summaries = circuit
             .pieces
@@ -1737,16 +1657,6 @@ impl TestRunRecorder {
     }
 
     fn record_reading(&mut self, mut reading: CarReading, model_key: &str) {
-        let evaluated = self.force_evaluator.update(reading.g);
-        reading.g = evaluated.filtered;
-        reading.airtime = reading.g.vertical < 0.0;
-        let metre = reading.distance.rem_euclid(self.circuit_length).floor() as usize;
-        for axis in 0..3 {
-            if !evaluated.axis_within_limits[axis] {
-                self.violation_seconds[axis] += self.time_step;
-                self.metre_violations[metre][axis] = true;
-            }
-        }
         let active = reading.speed > 1.0
             && (self.piece_summaries.is_empty()
                 || matches!(
@@ -1763,8 +1673,18 @@ impl TestRunRecorder {
             piece_index: reading.piece_index,
             piece_name,
             distance_m: reading.distance.rem_euclid(self.circuit_length),
-            seconds_from_start: self.comfort.elapsed(),
+            seconds_from_start: self.force_evaluator.elapsed(),
         };
+        let evaluated = self.force_evaluator.record(reading.g, active, location);
+        reading.g = evaluated.filtered;
+        reading.airtime = reading.g.vertical < 0.0;
+        let metre = reading.distance.rem_euclid(self.circuit_length).floor() as usize;
+        for axis in 0..3 {
+            if !evaluated.axis_within_limits[axis] {
+                self.violation_seconds[axis] += self.time_step;
+                self.metre_violations[metre][axis] = true;
+            }
+        }
         for (index, (value, limit)) in [
             reading.g.vertical.max(0.0),
             (-reading.g.vertical).max(0.0),
@@ -1791,27 +1711,12 @@ impl TestRunRecorder {
             record_force_bands(
                 &mut self.force_bands,
                 reading,
-                self.force_limits,
+                evaluated.axis_ratio,
                 model_key,
                 self.time_step,
                 location,
             );
         }
-        self.comfort.record(
-            [
-                reading.g.vertical,
-                reading.g.lateral,
-                reading.g.longitudinal,
-            ],
-            self.time_step,
-            active,
-            super::features::Location {
-                piece_index: reading.piece_index,
-                piece_name,
-                distance_m: reading.distance.rem_euclid(self.circuit_length),
-                seconds_from_start: 0.0,
-            },
-        );
         let force_peak_location = ForcePeakLocation {
             piece_index: reading.piece_index,
             distance_m: reading.distance.rem_euclid(self.circuit_length),
@@ -2046,11 +1951,10 @@ impl TestRunRecorder {
             visited_ranges: self.visited_ranges.clone(),
             circuit_length,
             completed,
-            force_limits: self.force_limits,
             force_bands: self.force_bands,
             statistics,
             force_peak_locations: self.force_peak_locations,
-            envelope: self.comfort.finish(),
+            envelope: self.force_evaluator.finish_envelope(),
         };
         let mut report = TestRun {
             samples,
@@ -2891,7 +2795,7 @@ mod tests {
                 &model,
             );
         let mut evaluators: Vec<_> = (0..model.train.cars)
-            .map(|_| ForceEvaluator::new(model.design_force_targets, TIME_STEP))
+            .map(|_| EnvelopeEvaluator::new(TIME_STEP))
             .collect();
         let mut sampler = PreviewForcePeakRecorder::new(&circuit, model.train.cars);
         let mut completed = false;
@@ -3165,12 +3069,6 @@ mod tests {
             visited_ranges: Vec::new(),
             circuit_length: 10.0,
             completed: true,
-            force_limits: crate::track::DesignForceTargets {
-                minimum_vertical_g: -1.0,
-                maximum_vertical_g: 5.0,
-                maximum_lateral_g: 1.0,
-                maximum_longitudinal_g: 2.0,
-            },
             force_bands: ForceBandDurations::default(),
             statistics: RideStatistics::default(),
             force_peak_locations: ForcePeakLocations::default(),
@@ -3300,10 +3198,24 @@ mod tests {
         }];
         let features =
             super::super::features::ride_features(samples, &pieces, &[], circuit_length, true);
-        let limits = hybrid_model().design_force_targets;
+        let mut tracker = super::super::comfort::EnvelopeTracker::default();
         let mut bands = ForceBandDurations::default();
         for (index, sample) in samples.iter().enumerate() {
-            if !super::super::features::is_active_sample(sample, &pieces) {
+            let active = super::super::features::is_active_sample(sample, &pieces);
+            let dt = sample_interval(samples, index, circuit_length, true).seconds;
+            let location = super::super::features::Location {
+                piece_index: sample.piece_index,
+                piece_name: pieces[sample.piece_index].name,
+                distance_m: sample.distance,
+                seconds_from_start: 0.0,
+            };
+            let step = tracker.record(
+                [sample.vertical_g, sample.lateral_g, sample.longitudinal_g],
+                dt,
+                active,
+                location,
+            );
+            if !active {
                 continue;
             }
             let reading = CarReading {
@@ -3323,15 +3235,10 @@ mod tests {
             record_force_bands(
                 &mut bands,
                 reading,
-                limits,
+                step.axis_ratio,
                 "Timber Tumbler",
-                sample_interval(samples, index, circuit_length, true).seconds,
-                super::super::features::Location {
-                    piece_index: sample.piece_index,
-                    piece_name: pieces[sample.piece_index].name,
-                    distance_m: sample.distance,
-                    seconds_from_start: 0.0,
-                },
+                dt,
+                location,
             );
         }
         let result = score(&features, &bands);
@@ -3364,8 +3271,7 @@ mod tests {
     }
 
     #[test]
-    fn excessive_force_details_record_peak_and_axis_durations() {
-        let limits = hybrid_model().design_force_targets;
+    fn force_band_details_use_global_lateral_threshold_and_envelope_exclusions() {
         let mut bands = ForceBandDurations::default();
         let location = super::super::features::Location {
             piece_index: 0,
@@ -3378,7 +3284,7 @@ mod tests {
             speed: 10.0,
             g: GForces {
                 vertical: 1.0,
-                lateral: limits.maximum_lateral_g * 1.1,
+                lateral: 1.65,
                 longitudinal: 0.0,
             },
             airtime: false,
@@ -3387,20 +3293,42 @@ mod tests {
             roll: 0.0,
             piece_index: 0,
         };
-        record_force_bands(&mut bands, reading, limits, "Timber Tumbler", 2.0, location);
-        reading.g.lateral = limits.maximum_lateral_g * 1.5;
-        record_force_bands(&mut bands, reading, limits, "Timber Tumbler", 1.0, location);
-        let detail = bands.excessive_details[2].unwrap();
-        assert_eq!(detail.seconds, 3.0);
-        assert_eq!(bands.dangerous_seconds_by_axis[2], 1.0);
-        assert_eq!(detail.value, reading.g.lateral);
+        record_force_bands(
+            &mut bands,
+            reading,
+            [0.0, 0.1, 0.0],
+            "Timber Tumbler",
+            2.0,
+            location,
+        );
+        reading.g.lateral = 2.75;
+        record_force_bands(
+            &mut bands,
+            reading,
+            [0.0, 0.5, 0.0],
+            "Timber Tumbler",
+            1.0,
+            location,
+        );
+        assert_eq!(bands.lateral_strong, 3.0);
         assert_eq!(bands.band_details[4].unwrap().seconds, 3.0);
         assert_eq!(
             bands.band_details[4].unwrap().limit,
-            limits.maximum_lateral_g * 0.5
+            crate::track::STRONG_LATERAL_G
         );
-        assert_eq!(bands.too_much, 2.0);
-        assert_eq!(bands.dangerous, 1.0);
+        // Vertical forces exceeding the envelope do not earn positive vertical credit.
+        let mut high_vertical = reading;
+        high_vertical.g.vertical = 5.5;
+        high_vertical.g.lateral = 0.0;
+        record_force_bands(
+            &mut bands,
+            high_vertical,
+            [0.2, 0.0, 0.0],
+            "Timber Tumbler",
+            1.0,
+            location,
+        );
+        assert_eq!(bands.vertical_great, 0.0);
     }
 
     #[test]
@@ -3830,20 +3758,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "cannot change force limits after recording starts")]
-    fn recorder_rejects_force_limit_change_after_first_reading() {
-        let mut recorder = TestRunRecorder::new(10.0);
-        record(&mut recorder, reading(0.2, 0.0, 1.0, 0.0, 0.0));
-        recorder.set_force_limits(crate::track::wooden_twister_model().design_force_targets);
-    }
-
-    #[test]
     fn recorder_allows_brief_force_but_marks_sustained_force() {
         let mut recorder = TestRunRecorder::new(100.0);
-        recorder.set_force_limits(crate::track::wooden_twister_model().design_force_targets);
+        // 6.5 g for 0.1 s (20 steps) is below the 200 ms ASTM minimum; 6.5 g for 0.4 s (80 steps) exceeds it.
         for step in 0..200 {
             let vertical = if (40..60).contains(&step) || step >= 120 {
-                4.5
+                6.5
             } else {
                 1.0
             };
@@ -3873,24 +3793,29 @@ mod tests {
     fn recorder_preserves_violations_and_filter_through_save() {
         let model = crate::track::hybrid_model();
         let circuit = super::super::demo_circuit();
+        let track_piece_index = circuit
+            .pieces()
+            .iter()
+            .position(|piece| piece.kind == PieceKind::Track)
+            .expect("demo circuit has a track piece");
+        let track_start = circuit.starts[track_piece_index];
         let mut original = TestRunRecorder::for_circuit_with_model(&circuit, &model);
-        original.set_force_limits(crate::track::wooden_twister_model().design_force_targets);
         for step in 0..80 {
-            record(
-                &mut original,
-                reading(
-                    step as f64 * 0.05,
-                    10.0,
-                    if step < 20 { 1.0 } else { 4.5 },
-                    0.0,
-                    0.0,
-                ),
+            let mut sample = reading(
+                track_start + step as f64 * 0.05,
+                10.0,
+                if step < 20 { 1.0 } else { 6.5 },
+                0.0,
+                0.0,
             );
+            sample.piece_index = track_piece_index;
+            record(&mut original, sample);
         }
         let bytes = postcard::to_allocvec(&original).unwrap();
         let mut restored: TestRunRecorder = postcard::from_bytes(&bytes).unwrap();
         for step in 80..150 {
-            let value = reading(step as f64 * 0.05, 10.0, 4.5, 0.0, 0.0);
+            let mut value = reading(track_start + step as f64 * 0.05, 10.0, 6.5, 0.0, 0.0);
+            value.piece_index = track_piece_index;
             record(&mut original, value);
             record(&mut restored, value);
         }
@@ -4047,19 +3972,23 @@ mod tests {
     #[test]
     fn uncomfortable_forces_raise_intensity_and_nausea_and_reduce_excitement() {
         fn report(vertical: f64, lateral: f64, longitudinal: f64) -> TestRun {
-            let mut recorder = TestRunRecorder::new(10.0);
-            record(
-                &mut recorder,
-                reading(0.0, 30.0, vertical, lateral, longitudinal),
-            );
-            record(
-                &mut recorder,
-                reading(1.0, 30.0, vertical, lateral, longitudinal),
-            );
+            let mut recorder = TestRunRecorder::new(100.0);
+            for tick in 0..300 {
+                record(
+                    &mut recorder,
+                    reading(
+                        f64::from(tick) * 30.0 * super::super::TIME_STEP,
+                        30.0,
+                        vertical,
+                        lateral,
+                        longitudinal,
+                    ),
+                );
+            }
             recorder.finish(true, false)
         }
 
-        let comfortable = report(1.0, 0.1, 0.0);
+        let comfortable = report(3.5, 0.1, 0.0);
         let uncomfortable = report(5.0, 3.0, 2.0);
         assert!(uncomfortable.intensity > comfortable.intensity);
         assert!(uncomfortable.nausea > comfortable.nausea);
@@ -4118,14 +4047,14 @@ mod tests {
 
     #[test]
     fn strong_lateral_and_sustained_high_g_produce_advisory_notes() {
-        let mut recorder = TestRunRecorder::new(360.0);
+        let mut recorder = TestRunRecorder::new(500.0);
         for tick in 0..1600 {
             record(
                 &mut recorder,
                 reading_with_track(
-                    f64::from(tick) * 18.0 * super::super::TIME_STEP,
-                    18.0,
-                    5.0,
+                    f64::from(tick) * 28.0 * super::super::TIME_STEP,
+                    28.0,
+                    5.5,
                     1.4,
                     1.0,
                     0.0,
@@ -4681,19 +4610,30 @@ mod tests {
     }
 
     #[test]
-    fn recorder_rates_force_against_its_model_limits() {
-        let mut lenient = TestRunRecorder::new(100.0);
-        let mut strict = TestRunRecorder::new(100.0);
-        strict.force_limits.minimum_vertical_g = -1.0;
-        for tick in 0..800 {
-            let reading = reading(tick as f64 * 0.05, 10.0, -1.2, 0.0, 0.0);
-            record(&mut lenient, reading);
-            record(&mut strict, reading);
+    fn recorder_judges_models_by_global_envelope_rather_than_model_targets() {
+        let mut wooden = TestRunRecorder::new(100.0);
+        let mut hybrid = TestRunRecorder::new(100.0);
+        // -1.2 g for 3.0 s is past Briar Blitz's -1.0 g design target, but inside the ASTM -1.5 g (4 s) curve.
+        for tick in 0..600 {
+            let sample = reading(tick as f64 * 0.05, 10.0, -1.2, 0.0, 0.0);
+            wooden.record(&[vec![sample]], "Briar Blitz");
+            hybrid.record(&[vec![sample]], "Timber Tumbler");
         }
-        let lenient = lenient.finish(false, false);
-        let strict = strict.finish(false, false);
-        assert!(lenient.excitement > strict.excitement);
-        assert!(strict.nausea > lenient.nausea);
+        let wooden = wooden.finish(false, false);
+        let hybrid = hybrid.finish(false, false);
+        assert_eq!(wooden.excitement, hybrid.excitement);
+        assert_eq!(wooden.nausea, hybrid.nausea);
+        assert!(wooden.samples.iter().all(|s| !s.force_limit_exceeded[0]));
+
+        // -1.7 g for 1.0 s exceeds the ASTM -1.5 g (0.5 s) curve on both models.
+        let mut harsh = TestRunRecorder::new(100.0);
+        for tick in 0..200 {
+            let sample = reading(tick as f64 * 0.05, 10.0, -1.7, 0.0, 0.0);
+            harsh.record(&[vec![sample]], "Timber Tumbler");
+        }
+        let harsh = harsh.finish(false, false);
+        assert!(harsh.samples.iter().any(|s| s.force_limit_exceeded[0]));
+        assert!(harsh.nausea > hybrid.nausea);
     }
 
     #[test]
@@ -4712,9 +4652,7 @@ mod tests {
         changed_breakdown.breakdown.excitement[0].measure += 1.0;
         assert_ne!(digest(&report), digest(&changed_breakdown));
         let mut changed_input = report.clone();
-        changed_input.rating_inputs[0]
-            .force_limits
-            .minimum_vertical_g -= 0.1;
+        changed_input.rating_inputs[0].envelope.g_seconds += 0.1;
         assert_ne!(digest(&report), digest(&changed_input));
         let mut changed_theming = report.clone();
         changed_theming.set_theming(0.5);

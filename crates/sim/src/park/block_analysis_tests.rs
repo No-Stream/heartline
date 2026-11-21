@@ -368,15 +368,14 @@ fn manual_layout_installation_waits_until_active_train_is_gone() {
 }
 
 #[test]
-fn installing_a_live_layout_preserves_the_coaster_model_force_limits() {
+fn installing_a_live_layout_preserves_the_coaster_model_operation() {
     let mut park = block_test_park();
     let layout = unverified_layout(&park);
     let model = park.construction.as_ref().unwrap().model().clone();
-    let limits = model.design_force_targets;
     park.coaster_open = true;
     park.install_block_layout(layout.clone(), false);
 
-    let expected = crate::physics::BlockOperation::new_with_limits(layout, &model, limits);
+    let expected = crate::physics::BlockOperation::new(layout, &model);
     assert_eq!(
         park.coaster_operation.as_ref().unwrap().state_hash(),
         expected.state_hash()

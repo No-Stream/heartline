@@ -1,4 +1,6 @@
 use super::GForces;
+use super::comfort::{EnvelopeExceedance, EnvelopeStep, EnvelopeTracker};
+use super::features::Location;
 use crate::state_hash::StateHasher;
 use crate::track::DesignForceTargets;
 
@@ -123,11 +125,86 @@ pub struct EvaluatedForce {
     pub within_limits: bool,
     pub axis_within_limits: [bool; 3],
     pub axis_exceeding_sustained: [bool; 3],
+    pub axis_ratio: [f64; 3],
 }
 
-/// Applies provisional game limits to filtered force, independently for each axis.
-/// An excursion can exceed its sustained limit by at most 0.5 g for at most 0.2 s.
-/// These game parameters are not a statement of ASTM limits or ride safety.
+/// Judges filtered rider forces against the global ASTM F2291 comfort envelope.
+/// Used for player-built coasters in tests, previews, finish search, and hard rated windows.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct EnvelopeEvaluator {
+    filter: ForceFilter,
+    tracker: EnvelopeTracker,
+    time_step: f64,
+}
+
+impl EnvelopeEvaluator {
+    pub fn new(time_step: f64) -> Self {
+        Self {
+            filter: ForceFilter::new(time_step),
+            tracker: EnvelopeTracker::default(),
+            time_step,
+        }
+    }
+
+    pub(crate) fn elapsed(&self) -> f64 {
+        self.tracker.elapsed()
+    }
+
+    pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
+        hash.write_tag(b"EnvelopeEvaluator-v1");
+        self.filter.hash_into(hash);
+        self.tracker.hash_into(hash);
+        hash.write_f64(self.time_step);
+    }
+
+    pub fn update(&mut self, force: GForces) -> EvaluatedForce {
+        self.record(
+            force,
+            true,
+            Location {
+                piece_index: 0,
+                piece_name: "Track",
+                distance_m: 0.0,
+                seconds_from_start: 0.0,
+            },
+        )
+    }
+
+    pub(crate) fn record(
+        &mut self,
+        force: GForces,
+        active: bool,
+        location: Location,
+    ) -> EvaluatedForce {
+        let filtered = self.filter.update(force);
+        let EnvelopeStep {
+            axis_exceeded,
+            axis_ratio,
+            axis_above_plateau,
+        } = self.tracker.record(
+            [filtered.vertical, filtered.lateral, filtered.longitudinal],
+            self.time_step,
+            active,
+            location,
+        );
+        let axis_within_limits = axis_exceeded.map(|exceeded| !exceeded);
+        EvaluatedForce {
+            filtered,
+            within_limits: axis_within_limits.iter().all(|valid| *valid),
+            axis_within_limits,
+            axis_exceeding_sustained: axis_above_plateau,
+            axis_ratio,
+        }
+    }
+
+    pub(crate) fn finish_envelope(&self) -> EnvelopeExceedance {
+        self.tracker.finish()
+    }
+}
+
+/// Applies per-model design targets to filtered force, independently for each axis.
+/// An excursion can exceed its sustained target by at most 0.5 g for at most 0.2 s.
+/// Used for feel-edge rated windows and sample-ride design checks, never for punishing player rides.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ForceEvaluator {
     filter: ForceFilter,
@@ -157,6 +234,7 @@ impl ForceEvaluator {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn hash_into(&self, hash: &mut StateHasher) {
         self.filter.hash_into(hash);
         hash.write_f64(self.limits.minimum_vertical_g);
@@ -187,6 +265,7 @@ impl ForceEvaluator {
         ];
         let mut exceeding = [false; 3];
         let mut valid = [true; 3];
+        let mut axis_ratio = [0.0; 3];
         for axis in 0..3 {
             let side = if values[axis] < minima[axis] {
                 -1
@@ -207,12 +286,21 @@ impl ForceEvaluator {
             valid[axis] = values[axis] >= minima[axis] - BRIEF_ALLOWANCE_G
                 && values[axis] <= maxima[axis] + BRIEF_ALLOWANCE_G
                 && self.durations[axis] <= BRIEF_DURATION_SECONDS + 1e-12;
+            if !valid[axis] {
+                let bound = if side < 0 {
+                    minima[axis].abs()
+                } else {
+                    maxima[axis].abs()
+                };
+                axis_ratio[axis] = (values[axis].abs() / bound - 1.0).max(0.0);
+            }
         }
         EvaluatedForce {
             filtered,
             within_limits: valid.iter().all(|valid| *valid),
             axis_within_limits: valid,
             axis_exceeding_sustained: exceeding,
+            axis_ratio,
         }
     }
 }
@@ -280,6 +368,36 @@ mod tests {
     }
 
     #[test]
+    fn envelope_evaluator_judges_by_astm_duration_curves() {
+        let mut evaluator = EnvelopeEvaluator::new(TIME_STEP);
+        // 5.0 g for 1.0 s (200 steps) stays within the 6.0 g 1-second ASTM curve.
+        for _ in 0..200 {
+            assert!(evaluator.update(force(5.0)).within_limits);
+        }
+        // Continuing 5.0 g past 1.5 s (into the 4.0 g 2-second zone) exceeds the envelope.
+        let mut exceeded = false;
+        for _ in 0..200 {
+            exceeded |= !evaluator.update(force(5.0)).within_limits;
+        }
+        assert!(exceeded);
+        assert!(evaluator.finish_envelope().g_seconds > 0.0);
+    }
+
+    #[test]
+    fn envelope_evaluator_allows_brief_airtime_spike_but_rejects_sustained_excess() {
+        let mut brief = EnvelopeEvaluator::new(TIME_STEP);
+        for _ in 0..30 {
+            assert!(brief.update(force(-1.8)).within_limits);
+        }
+        let mut sustained = EnvelopeEvaluator::new(TIME_STEP);
+        let mut exceeded = false;
+        for _ in 0..120 {
+            exceeded |= !sustained.update(force(-1.8)).within_limits;
+        }
+        assert!(exceeded);
+    }
+
+    #[test]
     fn caps_and_duration_apply_on_each_axis() {
         let limits = wooden_twister_model().design_force_targets;
         for axis in 0..3 {
@@ -323,5 +441,24 @@ mod tests {
             let sample = force((i as f64 * 0.1).sin());
             assert_eq!(original.update(sample), restored.update(sample));
         }
+    }
+
+    #[test]
+    fn serialized_envelope_evaluator_continues_the_same_trace() {
+        let mut original = EnvelopeEvaluator::new(TIME_STEP);
+        for _ in 0..80 {
+            original.update(force(4.2));
+        }
+        let saved = postcard::to_allocvec(&original).unwrap();
+        let mut restored: EnvelopeEvaluator = postcard::from_bytes(&saved).unwrap();
+        for i in 0..150 {
+            let sample = force(3.5 + (i as f64 * 0.05).sin());
+            let first = original.update(sample);
+            let second = restored.update(sample);
+            assert_eq!(first.filtered, second.filtered);
+            assert_eq!(first.axis_within_limits, second.axis_within_limits);
+            assert_eq!(first.axis_ratio, second.axis_ratio);
+        }
+        assert_eq!(original.finish_envelope(), restored.finish_envelope());
     }
 }
